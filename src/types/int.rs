@@ -6,7 +6,10 @@
 ///   Int.abs(n)          → Int                  — absolute value
 ///   Int.min(a, b)       → Int                  — minimum of two ints
 ///   Int.max(a, b)       → Int                  — maximum of two ints
-///   Int.mod(a, b)       → Result<Int, String>  — modulo (error on b=0)
+///   Int.mod(a, b)       → Result<Int, String>  — Euclidean modulo:
+///                                                  result has the sign of `b`
+///                                                  (always >= 0 for b > 0).
+///                                                  Errors on b == 0.
 ///
 /// Stringification goes through `String.fromInt` (or `"{n}"` interpolation);
 /// widening to Float goes through `Float.fromInt`.
@@ -122,7 +125,7 @@ fn modulo(args: &[Value]) -> Result<Value, RuntimeError> {
             "division by zero".to_string(),
         ))))
     } else {
-        Ok(Value::Ok(Box::new(Value::Int(x % y))))
+        Ok(Value::Ok(Box::new(Value::Int(x.rem_euclid(*y)))))
     }
 }
 
@@ -284,7 +287,7 @@ fn modulo_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
         let inner = NanValue::new_string_value("division by zero", arena);
         Ok(NanValue::new_err_value(inner, arena))
     } else {
-        let inner = NanValue::new_int(x % y, arena);
+        let inner = NanValue::new_int(x.rem_euclid(y), arena);
         Ok(NanValue::new_ok_value(inner, arena))
     }
 }

@@ -122,6 +122,12 @@ pub(super) enum BuiltinName {
     /// scan: count occurrences, allocate output of exact size, fill.
     /// Empty needle returns `s` unchanged.
     StringReplace,
+    /// Internal `__int_mod_euclid(a: i64, b: i64) -> i64` — Euclidean
+    /// modulo (always in `[0, |b|)`). Powers `Int.mod` so result has
+    /// math-modulo semantics, not Rust `%` truncated remainder.
+    /// Caller is responsible for the b == 0 check; the helper assumes
+    /// b != 0 and would `i64.rem_s`-trap otherwise.
+    IntModEuclid,
 }
 
 impl BuiltinName {
@@ -174,6 +180,7 @@ impl BuiltinName {
             Self::ByteFromHex => "Byte.fromHex",
             Self::ByteToHex => "Byte.toHex",
             Self::StringReplace => "String.replace",
+            Self::IntModEuclid => "__int_mod_euclid",
         }
     }
 
@@ -206,6 +213,7 @@ impl BuiltinName {
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
             ]),
+            Self::IntModEuclid => Ok(vec![ValType::I64, ValType::I64]),
         }
     }
 
@@ -233,6 +241,7 @@ impl BuiltinName {
             Self::ByteFromHex => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
             Self::ByteToHex => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
+            Self::IntModEuclid => Ok(vec![ValType::I64]),
         }
     }
 
@@ -263,6 +272,7 @@ impl BuiltinName {
             Self::ByteFromHex => emit_byte_from_hex(registry),
             Self::ByteToHex => emit_byte_to_hex(registry),
             Self::StringReplace => emit_string_replace(registry),
+            Self::IntModEuclid => emit_int_mod_euclid(),
         }
     }
 }
@@ -2755,4 +2765,32 @@ fn emit_string_replace(registry: &TypeRegistry) -> Result<Function, WasmGcError>
     "#
     );
     wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__int_mod_euclid(a: i64, b: i64) -> i64` — Euclidean modulo.
+/// Algorithm mirrors Rust's `i64::rem_euclid`:
+///
+/// ```text
+/// q = a rem_s b
+/// r = if q < 0 { q + (if b < 0 { -b } else { b }) } else { q }
+/// ```
+///
+/// Result is always in `[0, |b|)`. Caller must ensure `b != 0`; the
+/// helper would `i64.rem_s`-trap on b == 0.
+fn emit_int_mod_euclid() -> Result<Function, WasmGcError> {
+    let wat = r#"
+        (module
+          (func (export "helper") (param $a i64) (param $b i64) (result i64)
+            (local $q i64)
+            (local.set $q (i64.rem_s (local.get $a) (local.get $b)))
+            (if (result i64) (i64.lt_s (local.get $q) (i64.const 0))
+              (then
+                (i64.add (local.get $q)
+                  (if (result i64) (i64.lt_s (local.get $b) (i64.const 0))
+                    (then (i64.sub (i64.const 0) (local.get $b)))
+                    (else (local.get $b)))))
+              (else (local.get $q))))
+        )
+    "#;
+    wat_helper::compile_wat_helper(wat)
 }

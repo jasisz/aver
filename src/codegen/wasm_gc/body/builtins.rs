@@ -253,11 +253,16 @@ pub(super) fn emit_dotted_builtin(
             });
             func.instruction(&Instruction::StructNew(res_idx));
             func.instruction(&Instruction::Else);
-            // Ok: tag=1, T=a rem b, E=null
+            // Ok: tag=1, T=Int.mod(a, b) via Euclidean helper, E=null
             func.instruction(&Instruction::I32Const(1));
             emit_expr(func, &args[0], slots, ctx)?;
             emit_expr(func, &args[1], slots, ctx)?;
-            func.instruction(&Instruction::I64RemS);
+            let mod_idx = ctx.fn_map.builtins.get("__int_mod_euclid").copied().ok_or(
+                WasmGcError::Validation(
+                    "Int.mod requires __int_mod_euclid helper to be registered".into(),
+                ),
+            )?;
+            func.instruction(&Instruction::Call(mod_idx));
             func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
                 s_idx,
             )));
@@ -745,11 +750,11 @@ pub(super) fn emit_result_with_default(
     let default_arg = &args[1];
 
     // Fused shape: `Result.withDefault(Int.mod(a, b), default)` —
-    // `Int.mod` is lowered to a bare `i64.rem_s` (no Result struct
-    // ever materialises), so the boxed-Result emit below would
+    // `Int.mod` is lowered to the Euclidean-modulo helper (no Result
+    // struct ever materialises), so the boxed-Result emit below would
     // expect a struct ref where there's only an i64 on the stack.
     // Emit the safe form here: if `b == 0` push `default`, else push
-    // `i64.rem_s(a, b)`.
+    // `__int_mod_euclid(a, b)`.
     if let Expr::FnCall(callee, inner_args) = &res_arg.node
         && let Expr::Attr(parent, member) = &callee.node
         && let Expr::Ident(p) = &parent.node
@@ -767,7 +772,12 @@ pub(super) fn emit_result_with_default(
         func.instruction(&Instruction::Else);
         emit_expr(func, &inner_args[0], slots, ctx)?;
         emit_expr(func, &inner_args[1], slots, ctx)?;
-        func.instruction(&Instruction::I64RemS);
+        let mod_idx = ctx.fn_map.builtins.get("__int_mod_euclid").copied().ok_or(
+            WasmGcError::Validation(
+                "Int.mod requires __int_mod_euclid helper to be registered".into(),
+            ),
+        )?;
+        func.instruction(&Instruction::Call(mod_idx));
         func.instruction(&Instruction::End);
         return Ok(());
     }

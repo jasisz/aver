@@ -344,6 +344,25 @@ fn int_mod_zero() {
 }
 
 #[test]
+fn int_mod_negative_dividend_positive_divisor() {
+    // Euclidean modulo always lands in [0, |b|). Diverges from Rust
+    // `%` (truncated remainder) which would return -1 here.
+    assert_eq!(eval("Int.mod(-7, 3)"), Value::Ok(Box::new(Value::Int(2))));
+}
+
+#[test]
+fn int_mod_negative_divisor() {
+    // Result is in [0, |b|) regardless of b's sign. 7 = (-3) * (-2) + 1.
+    assert_eq!(eval("Int.mod(7, -3)"), Value::Ok(Box::new(Value::Int(1))));
+}
+
+#[test]
+fn int_mod_both_negative() {
+    // -7 = (-3) * 3 + 2.
+    assert_eq!(eval("Int.mod(-7, -3)"), Value::Ok(Box::new(Value::Int(2))));
+}
+
+#[test]
 fn int_to_float() {
     assert_eq!(eval("Float.fromInt(5)"), Value::Float(5.0));
 }

@@ -4,6 +4,9 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Fixed
+- **`Int.mod` is Euclidean modulo across every backend.** Result lands in `[0, |b|)` regardless of operand signs — `Int.mod(-7, 3) = 2`, not `-1`. The Rust codegen already lowered to `i64::rem_euclid`; the VM (both Value and NanValue paths), the wasm-gc backend (per-(K,V) helper `__int_mod_euclid` registered on demand, called from both the boxed-Result and the fused `Result.withDefault` shapes), and the legacy `--target wasm` backend (inline `rem_euclid` sequence with two scratch i64 locals) now match. Surfaces what the name `mod` already promised: math-modulo, the same shape Python `%`, Haskell `mod`, and Mathematica `Mod[]` produce. Truncated remainder (the old behaviour, `Int.mod(-7, 3) = -1`) is gone — there's no `Int.rem` either after the 0.17 sweep, so consumers who genuinely want truncated semantics can spell it out via `a - (a / b) * b`. Legacy `--target wasm` still wasm-traps on `b == 0` (pre-existing limitation, requires registering the `"division by zero"` string literal in the runtime's global table — tracked separately); VM, wasm-gc, and Rust codegen return `Result.Err("division by zero")` per the surface contract, and the fused `Result.withDefault(Int.mod(a, b), default)` form sidesteps the trap on every backend.
+
 ## 0.17.0 "Purge" (2026-05-06)
 
 > _What was never used is no longer in the way._
