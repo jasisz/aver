@@ -79,7 +79,7 @@ verify zipArgs
     zipArgs(["x"], [Val.ValInt(1)], {}) => Map.set({}, "x", Val.ValInt(1))
     zipArgs([], [], {}) => {}
 
-fn mergeBindings(bindings: List<(String, Val)>, env: Map<String, Val>) -> Map<String, Val>
+fn mergeBindings(bindings: List<Tuple<String, Val>>, env: Map<String, Val>) -> Map<String, Val>
     ? "Add pattern match bindings to an env map."
     match bindings
         [] -> env

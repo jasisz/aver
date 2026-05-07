@@ -32,7 +32,7 @@ type Expr
     ExprConcat(List<Expr>)
     ExprTuple(List<Expr>)
     ExprList(List<Expr>)
-    ExprRecord(String, List<(String, Expr)>)
+    ExprRecord(String, List<Tuple<String, Expr>>)
     ExprFieldAccess(Expr, String)
     ExprCall(String, List<Expr>)
     ExprCallDirect(Int, List<Expr>)

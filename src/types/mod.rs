@@ -45,17 +45,11 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
         return Ok(fn_ty);
     }
 
+    // Paren-tuple types (`(A, B)`) were removed — `Tuple<A, B>` is
+    // the only spelling for tuple types now. Paren `(a, b)` stays as
+    // the tuple value literal in expression position.
     if s.starts_with('(') && s.ends_with(')') {
-        let inner = &s[1..s.len() - 1];
-        let parts = split_top_level(inner, ',')?;
-        if parts.len() < 2 {
-            return Err(s.to_string());
-        }
-        let elems = parts
-            .into_iter()
-            .map(parse_type_str_strict)
-            .collect::<Result<Vec<_>, _>>()?;
-        return Ok(Type::Tuple(elems));
+        return Err(s.to_string());
     }
 
     match s {
@@ -96,6 +90,17 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
                 let inner_ty = parse_type_str_strict(inner)?;
                 return Ok(Type::Vector(Box::new(inner_ty)));
             }
+            if let Some(inner) = strip_wrapper(s, "Tuple<", ">") {
+                let parts = split_top_level(inner, ',')?;
+                if parts.len() < 2 {
+                    return Err(s.to_string());
+                }
+                let elems = parts
+                    .into_iter()
+                    .map(parse_type_str_strict)
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(Type::Tuple(elems));
+            }
 
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type name
             // Supports dotted names like "Tcp.Connection"
@@ -122,13 +127,8 @@ pub fn parse_type_str(s: &str) -> Type {
         }
         return Type::Invalid;
     }
+    // Paren-tuple types removed; `(...)` in type position is invalid.
     if s.starts_with('(') && s.ends_with(')') {
-        let inner = &s[1..s.len() - 1];
-        if let Ok(parts) = split_top_level(inner, ',')
-            && parts.len() >= 2
-        {
-            return Type::Tuple(parts.into_iter().map(parse_type_str).collect());
-        }
         return Type::Invalid;
     }
     match s {
@@ -165,6 +165,12 @@ pub fn parse_type_str(s: &str) -> Type {
             }
             if let Some(inner) = strip_wrapper(s, "Vector<", ">") {
                 return Type::Vector(Box::new(parse_type_str(inner)));
+            }
+            if let Some(inner) = strip_wrapper(s, "Tuple<", ">")
+                && let Ok(parts) = split_top_level(inner, ',')
+                && parts.len() >= 2
+            {
+                return Type::Tuple(parts.into_iter().map(parse_type_str).collect());
             }
             // Capitalized identifier with only alphanumeric/_ and dot chars = user-defined type
             // Supports dotted names like "Tcp.Connection"

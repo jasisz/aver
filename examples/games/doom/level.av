@@ -278,7 +278,7 @@ verify roomFromSeed
     roomFromSeed(42).w <= 8 => true
     roomFromSeed(42).x >= 2 => true
 
-fn roomCenter(room: Room) -> (Float, Float)
+fn roomCenter(room: Room) -> Tuple<Float, Float>
     ? "Center of a room as float coordinates"
     (Float.fromInt(room.x + room.w / 2) + 0.5, Float.fromInt(room.y + room.h / 2) + 0.5)
 
@@ -385,7 +385,7 @@ fn getRooms(seed: Int) -> List<Room>
 verify getRooms
     List.len(getRooms(42)) => 6
 
-fn startPos(seed: Int) -> (Float, Float)
+fn startPos(seed: Int) -> Tuple<Float, Float>
     ? "Player start position: center of first room"
     match Vector.get(Vector.fromList(getRooms(seed)), 0)
         Option.Some(room) -> roomCenter(room)

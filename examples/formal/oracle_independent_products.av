@@ -8,11 +8,11 @@ fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
     ? "Return the per-branch oracle counter."
     n
 
-fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> (Int, Int)
+fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Tuple<Int, Int>
     ? "Expected pair for a two-branch independent product."
     (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 7, 12))
 
-fn pickPair() -> (Int, Int)
+fn pickPair() -> Tuple<Int, Int>
     ? "Draw two values in one independent product."
     ! [Random.int]
     (Random.int(1, 6), Random.int(7, 12))!
@@ -37,7 +37,7 @@ fn fakeReadByFile(path: BranchPath, n: Int, file: String) -> Result<String, Stri
         "fail-right.txt" -> Result.Err("right failed")
         _ -> Result.Err("unknown file")
 
-fn readPair(leftFile: String, rightFile: String) -> Result<(String, String), String>
+fn readPair(leftFile: String, rightFile: String) -> Result<Tuple<String, String>, String>
     ? "Read two files with ?!, unwrapping both Ok values or propagating the leftmost Err."
     ! [Disk.readText]
     pair = (Disk.readText(leftFile), Disk.readText(rightFile))?!

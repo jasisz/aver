@@ -53,7 +53,7 @@ verify normalizeFnReturn
     normalizeFnReturn(Result.Err("__aver_prop__:nope")) => Result.Ok(Val.ValErr(Val.ValStr("nope")))
     normalizeFnReturn(Result.Err("boom")) => Result.Err("boom")
 
-fn lookupField(fields: List<(String, Val)>, name: String) -> Result<Val, String>
+fn lookupField(fields: List<Tuple<String, Val>>, name: String) -> Result<Val, String>
     ? "Look up a record field by name."
     match fields
         [] -> Result.Err("unknown field: " + name)

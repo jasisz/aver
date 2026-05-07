@@ -72,7 +72,7 @@ impl Type {
             Type::Option(inner) => format!("Option<{}>", inner.display()),
             Type::List(inner) => format!("List<{}>", inner.display()),
             Type::Tuple(items) => format!(
-                "({})",
+                "Tuple<{}>",
                 items
                     .iter()
                     .map(Type::display)

@@ -24,7 +24,7 @@ fn display_type_for_expected(ty: &Type) -> String {
         Type::List(inner) => format!("List<{}>", display_type_for_expected(inner)),
         Type::Vector(inner) => format!("Vector<{}>", display_type_for_expected(inner)),
         Type::Tuple(items) => format!(
-            "({})",
+            "Tuple<{}>",
             items
                 .iter()
                 .map(display_type_for_expected)

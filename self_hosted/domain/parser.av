@@ -6,7 +6,7 @@ module Parser
     exposes [parse]
     effects []
 
-fn parseStmt(tokens: List<Token>, pos: Int) -> Result<(Stmt, Int), String>
+fn parseStmt(tokens: List<Token>, pos: Int) -> Result<Tuple<Stmt, Int>, String>
     ? "Parse a statement: binding (name = expr) or expression."
     t = Domain.ParserMatch.tokenAt(tokens, pos)
     match t
@@ -17,7 +17,7 @@ verify parseStmt
     parseStmt([Token.TkInt(42), Token.TkEof], 0) => Result.Ok((Stmt.StmtExpr(Expr.ExprInt(42)), 1))
     parseStmt([Token.TkEof], 0) => Result.Err("Expected expression, got Eof")
 
-fn parseStmtAfterIdent(tokens: List<Token>, pos: Int, name: String) -> Result<(Stmt, Int), String>
+fn parseStmtAfterIdent(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<Stmt, Int>, String>
     ? "After ident: if '=' or ':' follows it's a binding, otherwise reparse as expr."
     match Domain.ParserMatch.tokenAt(tokens, pos)
         Token.TkEq -> parseBinding(tokens, pos + 1, name)
@@ -38,7 +38,7 @@ fn skipTypeAnnotationAndEq(tokens: List<Token>, pos: Int) -> Int
 verify skipTypeAnnotationAndEq
     skipTypeAnnotationAndEq([Token.TkColon, Token.TkIdent("Int"), Token.TkEq, Token.TkEof], 0) => 3
 
-fn parseBinding(tokens: List<Token>, pos: Int, name: String) -> Result<(Stmt, Int), String>
+fn parseBinding(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<Stmt, Int>, String>
     ? "Parse: name = expr. Skips leading NL+INDENT and trailing DEDENT for multi-line exprs."
     r = Domain.Parser.Expr.parseExpr(tokens, pos)?
     match r
@@ -85,7 +85,7 @@ verify skipNDedents
     skipNDedents([Token.TkDedent, Token.TkEof], 0, 1) => 1
     skipNDedents([Token.TkEof], 0, 0) => 0
 
-fn parseStmtExpr(tokens: List<Token>, pos: Int) -> Result<(Stmt, Int), String>
+fn parseStmtExpr(tokens: List<Token>, pos: Int) -> Result<Tuple<Stmt, Int>, String>
     ? "Parse an expression statement."
     r = Domain.Parser.Expr.parseExpr(tokens, pos)?
     match r
@@ -95,7 +95,7 @@ verify parseStmtExpr
     parseStmtExpr([Token.TkInt(1), Token.TkEof], 0) => Result.Ok((Stmt.StmtExpr(Expr.ExprInt(1)), 1))
     parseStmtExpr([Token.TkEof], 0) => Result.Err("Expected expression, got Eof")
 
-fn parseStmtExprFrom(tokens: List<Token>, pos: Int, name: String) -> Result<(Stmt, Int), String>
+fn parseStmtExprFrom(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<Stmt, Int>, String>
     ? "Reparse as expression starting from an identifier (might be call or var in expr)."
     ir = Domain.Parser.Expr.parseIdentOrCall(tokens, pos, name)?
     match ir
@@ -105,7 +105,7 @@ verify parseStmtExprFrom
     parseStmtExprFrom([Token.TkLParen, Token.TkRParen, Token.TkEof], 0, "f") => Result.Ok((Stmt.StmtExpr(Expr.ExprCall("f", [])), 2))
     parseStmtExprFrom([Token.TkDot, Token.TkEof], 0, "x") => Result.Err("Expected field name after '.'")
 
-fn parseStmtExprFromMul(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+fn parseStmtExprFromMul(tokens: List<Token>, pos: Int, expr: Expr) -> Result<Tuple<Stmt, Int>, String>
     ? "Continue parsing expression statement from multiplicative level."
     mr = Domain.Parser.Expr.parseMulExprTail(tokens, pos, expr)?
     match mr
@@ -115,7 +115,7 @@ verify parseStmtExprFromMul
     parseStmtExprFromMul([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Stmt.StmtExpr(Expr.ExprInt(1)), 0))
     parseStmtExprFromMul([Token.TkStar, Token.TkEof], 0, Expr.ExprInt(1)) => Result.Err("Expected expression, got Eof")
 
-fn parseStmtExprFromAdd(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+fn parseStmtExprFromAdd(tokens: List<Token>, pos: Int, expr: Expr) -> Result<Tuple<Stmt, Int>, String>
     ? "Continue parsing expression statement from additive level."
     ar = Domain.Parser.Expr.parseAddExprTail(tokens, pos, expr)?
     match ar
@@ -125,7 +125,7 @@ verify parseStmtExprFromAdd
     parseStmtExprFromAdd([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Stmt.StmtExpr(Expr.ExprInt(1)), 0))
     parseStmtExprFromAdd([Token.TkPlus, Token.TkEof], 0, Expr.ExprInt(1)) => Result.Err("Expected expression, got Eof")
 
-fn parseStmtExprFromCmp(tokens: List<Token>, pos: Int, expr: Expr) -> Result<(Stmt, Int), String>
+fn parseStmtExprFromCmp(tokens: List<Token>, pos: Int, expr: Expr) -> Result<Tuple<Stmt, Int>, String>
     ? "Continue parsing expression statement from comparison level."
     cr = Domain.Parser.Expr.parseCmpExprTail(tokens, pos, expr)?
     match cr
@@ -135,7 +135,7 @@ verify parseStmtExprFromCmp
     parseStmtExprFromCmp([Token.TkEof], 0, Expr.ExprInt(1)) => Result.Ok((Stmt.StmtExpr(Expr.ExprInt(1)), 0))
     parseStmtExprFromCmp([Token.TkEqEq, Token.TkEof], 0, Expr.ExprInt(1)) => Result.Err("Expected expression, got Eof")
 
-fn parseStmtExprFromQ(tokens: List<Token>, pos: Int, expr: Expr) -> (Stmt, Int)
+fn parseStmtExprFromQ(tokens: List<Token>, pos: Int, expr: Expr) -> Tuple<Stmt, Int>
     ? "Check for postfix ? on expression statement."
     qr = Domain.Parser.Expr.parsePostfixQuestion(tokens, pos, expr)
     match qr
@@ -144,7 +144,7 @@ fn parseStmtExprFromQ(tokens: List<Token>, pos: Int, expr: Expr) -> (Stmt, Int)
 verify parseStmtExprFromQ
     parseStmtExprFromQ([Token.TkEof], 0, Expr.ExprInt(1)) => (Stmt.StmtExpr(Expr.ExprInt(1)), 0)
 
-fn parseFnDef(tokens: List<Token>, pos: Int) -> Result<(FnDef, Int), String>
+fn parseFnDef(tokens: List<Token>, pos: Int) -> Result<Tuple<FnDef, Int>, String>
     ? "Parse: fn NAME(params) NEWLINE body"
     t = Domain.ParserMatch.tokenAt(tokens, pos)
     match t
@@ -155,7 +155,7 @@ verify parseFnDef
     parseFnDef([Token.TkIdent("foo"), Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 5))
     parseFnDef([Token.TkEof], 0) => Result.Err("Expected function name after 'fn'")
 
-fn parseFnDefParams(tokens: List<Token>, pos: Int, name: String) -> Result<(FnDef, Int), String>
+fn parseFnDefParams(tokens: List<Token>, pos: Int, name: String) -> Result<Tuple<FnDef, Int>, String>
     ? "Parse parameter list and body."
     pos2 = Domain.ParserMatch.expect(tokens, pos, Token.TkLParen)?
     pr = Domain.ParserMatch.parseParamList(tokens, pos2, [])?
@@ -166,7 +166,7 @@ verify parseFnDefParams
     parseFnDefParams([Token.TkLParen, Token.TkRParen, Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, "foo") => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 4))
     parseFnDefParams([Token.TkEof], 0, "foo") => Result.Err("Expected LParen, got Eof")
 
-fn parseFnDefBody(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<(FnDef, Int), String>
+fn parseFnDefBody(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<Tuple<FnDef, Int>, String>
     ? "Parse function body: skip return type, newline, INDENT, ?, !, then statements until DEDENT."
     pos2 = Domain.ParserMatch.skipReturnType(tokens, pos)
     pos3 = Domain.ParserMatch.skipNewlines(tokens, pos2)
@@ -178,7 +178,7 @@ verify parseFnDefBody
     parseFnDefBody([Token.TkNewline, Token.TkInt(1), Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 2))
     parseFnDefBody([Token.TkNewline, Token.TkPlus, Token.TkEof], 0, "foo", []) => Result.Err("Expected expression, got Plus")
 
-fn parseFnDefBodyIndented(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<(FnDef, Int), String>
+fn parseFnDefBodyIndented(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<Tuple<FnDef, Int>, String>
     ? "Parse function body with INDENT/DEDENT."
     pos2 = Domain.ParserMatch.skipDescAndEffects(tokens, pos)
     sr = parseFnBodyStmtsIndented(tokens, pos2, [])?
@@ -189,7 +189,7 @@ verify parseFnDefBodyIndented
     parseFnDefBodyIndented([Token.TkInt(1), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 3))
     parseFnDefBodyIndented([Token.TkPlus, Token.TkDedent, Token.TkEof], 0, "foo", []) => Result.Err("Expected expression, got Plus")
 
-fn parseFnDefBodyFlat(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<(FnDef, Int), String>
+fn parseFnDefBodyFlat(tokens: List<Token>, pos: Int, name: String, params: List<String>) -> Result<Tuple<FnDef, Int>, String>
     ? "Parse function body without INDENT/DEDENT (fallback)."
     pos2 = Domain.ParserMatch.skipDescAndEffects(tokens, pos)
     sr = parseFnBodyStmtsFlat(tokens, pos2, [])?
@@ -200,7 +200,7 @@ verify parseFnDefBodyFlat
     parseFnDefBodyFlat([Token.TkInt(1), Token.TkEof], 0, "foo", []) => Result.Ok((FnDef(name = "foo", params = [], body = [Stmt.StmtExpr(Expr.ExprInt(1))], slotCount = 0, slotMap = {}, fastPath = FnFastPath.FastNone, tailLoop = false), 1))
     parseFnDefBodyFlat([Token.TkPlus, Token.TkEof], 0, "foo", []) => Result.Err("Expected expression, got Plus")
 
-fn parseFnBodyStmtsIndented(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
+fn parseFnBodyStmtsIndented(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<Tuple<List<Stmt>, Int>, String>
     ? "Parse statements until DEDENT or EOF."
     pos2 = Domain.ParserMatch.skipNewlines(tokens, pos)
     match Domain.ParserMatch.tokenAt(tokens, pos2)
@@ -213,7 +213,7 @@ verify parseFnBodyStmtsIndented
     parseFnBodyStmtsIndented([Token.TkInt(1), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, []) => Result.Ok(([Stmt.StmtExpr(Expr.ExprInt(1))], 3))
     parseFnBodyStmtsIndented([Token.TkPlus, Token.TkDedent, Token.TkEof], 0, []) => Result.Err("Expected expression, got Plus")
 
-fn parseFnBodyOneStmtIndented(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
+fn parseFnBodyOneStmtIndented(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<Tuple<List<Stmt>, Int>, String>
     ? "Parse one statement and continue with indented body."
     r = parseStmt(tokens, pos)?
     match r
@@ -223,7 +223,7 @@ verify parseFnBodyOneStmtIndented
     parseFnBodyOneStmtIndented([Token.TkInt(1), Token.TkNewline, Token.TkDedent, Token.TkEof], 0, []) => Result.Ok(([Stmt.StmtExpr(Expr.ExprInt(1))], 3))
     parseFnBodyOneStmtIndented([Token.TkPlus, Token.TkDedent, Token.TkEof], 0, []) => Result.Err("Expected expression, got Plus")
 
-fn parseFnBodyStmtsFlat(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
+fn parseFnBodyStmtsFlat(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<Tuple<List<Stmt>, Int>, String>
     ? "Parse statements in function body (flat mode)."
     match Domain.ParserMatch.isBodyEndFlat(tokens, pos)
         true -> Result.Ok((acc, pos))
@@ -234,7 +234,7 @@ verify parseFnBodyStmtsFlat
     parseFnBodyStmtsFlat([Token.TkInt(1), Token.TkEof], 0, []) => Result.Ok(([Stmt.StmtExpr(Expr.ExprInt(1))], 1))
     parseFnBodyStmtsFlat([Token.TkPlus, Token.TkEof], 0, []) => Result.Err("Expected expression, got Plus")
 
-fn parseFnBodyOneStmtFlat(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
+fn parseFnBodyOneStmtFlat(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<Tuple<List<Stmt>, Int>, String>
     ? "Parse one statement in function body and continue (flat mode)."
     r = parseStmt(tokens, pos)?
     match r
@@ -244,7 +244,7 @@ verify parseFnBodyOneStmtFlat
     parseFnBodyOneStmtFlat([Token.TkInt(1), Token.TkEof], 0, []) => Result.Ok(([Stmt.StmtExpr(Expr.ExprInt(1))], 1))
     parseFnBodyOneStmtFlat([Token.TkPlus, Token.TkEof], 0, []) => Result.Err("Expected expression, got Plus")
 
-fn parseFnBodyAfterStmtFlat(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<(List<Stmt>, Int), String>
+fn parseFnBodyAfterStmtFlat(tokens: List<Token>, pos: Int, acc: List<Stmt>) -> Result<Tuple<List<Stmt>, Int>, String>
     ? "After a body statement: single newline continues, anything else ends (flat mode)."
     match Domain.ParserMatch.tokenAt(tokens, pos)
         Token.TkNewline -> parseFnBodyStmtsFlat(tokens, pos + 1, acc)

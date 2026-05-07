@@ -772,11 +772,14 @@ pub(super) fn emit_result_with_default(
         func.instruction(&Instruction::Else);
         emit_expr(func, &inner_args[0], slots, ctx)?;
         emit_expr(func, &inner_args[1], slots, ctx)?;
-        let mod_idx = ctx.fn_map.builtins.get("__int_mod_euclid").copied().ok_or(
-            WasmGcError::Validation(
-                "Int.mod requires __int_mod_euclid helper to be registered".into(),
-            ),
-        )?;
+        let mod_idx =
+            ctx.fn_map
+                .builtins
+                .get("__int_mod_euclid")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "Int.mod requires __int_mod_euclid helper to be registered".into(),
+                ))?;
         func.instruction(&Instruction::Call(mod_idx));
         func.instruction(&Instruction::End);
         return Ok(());

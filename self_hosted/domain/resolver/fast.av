@@ -508,7 +508,7 @@ verify classifyFastForwardSlots
     classifyFastForwardSlots([Expr.ExprSlot(0)], []) => Option.Some([0])
     classifyFastForwardSlots([Expr.ExprInt(1)], []) => Option.None
 
-fn classifyBoolArms(arms: List<MatchArm>) -> Option<(FastLeaf, FastLeaf)>
+fn classifyBoolArms(arms: List<MatchArm>) -> Option<Tuple<FastLeaf, FastLeaf>>
     ? "Extract (then, else) leaves from a two-arm bool match, regardless of arm order."
     match arms
         [arm1, ..rest] -> match rest
@@ -522,7 +522,7 @@ verify classifyBoolArms
     classifyBoolArms([]) => Option.None
     classifyBoolArms([MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(0), bindingSlots = {})]) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
 
-fn classifyBoolArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<(FastLeaf, FastLeaf)>
+fn classifyBoolArmPair(arm1: MatchArm, arm2: MatchArm) -> Option<Tuple<FastLeaf, FastLeaf>>
     ? "Convert two bool-pattern arms into ordered leaves."
     leaf1 = classifyFastLeafExpr(arm1.body)
     leaf2 = classifyFastLeafExpr(arm2.body)
@@ -536,7 +536,7 @@ verify classifyBoolArmPair
     classifyBoolArmPair(MatchArm(pattern = Pattern.PatBool(true), body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatBool(false), body = Expr.ExprInt(0), bindingSlots = {})) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
     classifyBoolArmPair(MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(1), bindingSlots = {}), MatchArm(pattern = Pattern.PatWild, body = Expr.ExprInt(0), bindingSlots = {})) => Option.None
 
-fn classifyBoolArmPatterns(p1: Pattern, leaf1: FastLeaf, p2: Pattern, leaf2: FastLeaf) -> Option<(FastLeaf, FastLeaf)>
+fn classifyBoolArmPatterns(p1: Pattern, leaf1: FastLeaf, p2: Pattern, leaf2: FastLeaf) -> Option<Tuple<FastLeaf, FastLeaf>>
     ? "Order bool match arms into (trueLeaf, falseLeaf)."
     match p1
         Pattern.PatBool(b1) -> classifyBoolArmPatternsInner(b1, leaf1, p2, leaf2)
@@ -546,7 +546,7 @@ verify classifyBoolArmPatterns
     classifyBoolArmPatterns(Pattern.PatBool(true), FastLeaf.LeafConstInt(1), Pattern.PatBool(false), FastLeaf.LeafConstInt(0)) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
     classifyBoolArmPatterns(Pattern.PatWild, FastLeaf.LeafConstInt(1), Pattern.PatBool(false), FastLeaf.LeafConstInt(0)) => Option.None
 
-fn classifyBoolArmPatternsInner(b1: Bool, leaf1: FastLeaf, p2: Pattern, leaf2: FastLeaf) -> Option<(FastLeaf, FastLeaf)>
+fn classifyBoolArmPatternsInner(b1: Bool, leaf1: FastLeaf, p2: Pattern, leaf2: FastLeaf) -> Option<Tuple<FastLeaf, FastLeaf>>
     ? "Finish ordering bool match arms once the first arm bool is extracted."
     match p2
         Pattern.PatBool(b2) -> classifyBoolArmPatternsPair(b1, leaf1, b2, leaf2)
@@ -556,7 +556,7 @@ verify classifyBoolArmPatternsInner
     classifyBoolArmPatternsInner(true, FastLeaf.LeafConstInt(1), Pattern.PatBool(false), FastLeaf.LeafConstInt(0)) => Option.Some((FastLeaf.LeafConstInt(1), FastLeaf.LeafConstInt(0)))
     classifyBoolArmPatternsInner(true, FastLeaf.LeafConstInt(1), Pattern.PatWild, FastLeaf.LeafConstInt(0)) => Option.None
 
-fn classifyBoolArmPatternsPair(b1: Bool, leaf1: FastLeaf, b2: Bool, leaf2: FastLeaf) -> Option<(FastLeaf, FastLeaf)>
+fn classifyBoolArmPatternsPair(b1: Bool, leaf1: FastLeaf, b2: Bool, leaf2: FastLeaf) -> Option<Tuple<FastLeaf, FastLeaf>>
     ? "Return (trueLeaf, falseLeaf) when the two bool arms are complementary."
     match (b1, b2)
         (true, false) -> Option.Some((leaf1, leaf2))

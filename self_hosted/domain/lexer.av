@@ -496,7 +496,7 @@ fn tokenizeNewline(src: String, pos: Int) -> List<Token>
 verify tokenizeNewline
     tokenizeNewline("x", 0) => [Token.TkNewline, Token.TkInt(0 - 0 - 1), Token.TkIdent("x"), Token.TkEof]
 
-fn countIndent(src: String, pos: Int, spaces: Int) -> (Int, Int)
+fn countIndent(src: String, pos: Int, spaces: Int) -> Tuple<Int, Int>
     ? "Count leading spaces after newline. Skip blank lines (reset on another newline)."
     match pos >= String.len(src)
         true -> (spaces, pos)
@@ -505,7 +505,7 @@ fn countIndent(src: String, pos: Int, spaces: Int) -> (Int, Int)
 verify countIndent
     countIndent("  x", 0, 0) => (2, 2)
 
-fn countIndentChar(src: String, pos: Int, spaces: Int) -> (Int, Int)
+fn countIndentChar(src: String, pos: Int, spaces: Int) -> Tuple<Int, Int>
     ? "Check one character for indent counting."
     nextPos = pos + 1
     match String.charAt(src, pos)

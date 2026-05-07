@@ -175,7 +175,7 @@ verify nonEmptyJsonListRoundtripSafe
     nonEmptyJsonListRoundtripSafe([]) => false
     nonEmptyJsonListRoundtripSafe([Json.JsonInt(1), Json.JsonBool(false)]) => true
 
-fn jsonEntriesRoundtripSafe(entries: List<(String, Json)>) -> Bool
+fn jsonEntriesRoundtripSafe(entries: List<Tuple<String, Json>>) -> Bool
     ? "True when object values are safe and keys are distinct."
     match entries
         [] -> true
@@ -191,7 +191,7 @@ verify jsonEntriesRoundtripSafe
     jsonEntriesRoundtripSafe([("a", Json.JsonInt(1)), ("b", Json.JsonBool(false))]) => true
     jsonEntriesRoundtripSafe([("a", Json.JsonInt(1)), ("a", Json.JsonBool(false))]) => false
 
-fn nonEmptyJsonEntriesRoundtripSafe(entries: List<(String, Json)>) -> Bool
+fn nonEmptyJsonEntriesRoundtripSafe(entries: List<Tuple<String, Json>>) -> Bool
     ? "True when the object entry list is non-empty, distinct, and every value is round-trip safe."
     match entries
         [] -> false
@@ -201,7 +201,7 @@ verify nonEmptyJsonEntriesRoundtripSafe
     nonEmptyJsonEntriesRoundtripSafe([]) => false
     nonEmptyJsonEntriesRoundtripSafe([("a", Json.JsonInt(1)), ("b", Json.JsonBool(false))]) => true
 
-fn jsonEntryKeys(entries: List<(String, Json)>) -> List<String>
+fn jsonEntryKeys(entries: List<Tuple<String, Json>>) -> List<String>
     ? "Extract object keys in encounter order."
     match entries
         [] -> []
@@ -282,14 +282,14 @@ verify renderJsonListTail law parseArrayNextRoundtrip
     when jsonListRoundtripSafe(List.prepend(head, tail))
     parseArrayNext(renderJsonListTail(toString(head), tail) + "]", String.len(toString(head)), [head]) => ParseResult.Ok(Json.JsonList(List.prepend(head, tail)), String.len(renderJsonListTail(toString(head), tail)) + 1)
 
-fn renderJsonEntries(entries: List<(String, Json)>) -> String
+fn renderJsonEntries(entries: List<Tuple<String, Json>>) -> String
     ? "JSON helper: renderJsonEntries."
     match entries
         [] -> ""
         [entry, ..tail] -> renderJsonEntriesTail(entryToString(entry), tail)
 
 verify renderJsonEntries law parseObjectRoundtrip
-    given entries: List<(String, Json)> = [
+    given entries: List<Tuple<String, Json>> = [
         [],
         [("a", Json.JsonInt(1))],
         [("a", Json.JsonBool(false)), ("nested", Json.JsonList([Json.JsonString("x")]))],
@@ -298,7 +298,7 @@ verify renderJsonEntries law parseObjectRoundtrip
     when jsonEntriesRoundtripSafe(entries)
     parseObject(renderJsonEntries(entries) + "}}", 0) => ParseResult.Ok(Json.JsonObject(Map.fromList(entries)), String.len(renderJsonEntries(entries)) + 1)
 
-fn renderJsonEntriesTail(acc: String, rest: List<(String, Json)>) -> String
+fn renderJsonEntriesTail(acc: String, rest: List<Tuple<String, Json>>) -> String
     ? "JSON helper: renderJsonEntriesTail."
     match rest
         [] -> acc
@@ -309,12 +309,12 @@ verify renderJsonEntriesTail
     renderJsonEntriesTail("\"a\":1", [("b", Json.JsonInt(2))]) => "\"a\":1,\"b\":2"
 
 verify renderJsonEntriesTail law parseObjNextRoundtrip
-    given entry: (String, Json) = [
+    given entry: Tuple<String, Json> = [
         ("a", Json.JsonInt(1)),
         ("nested", Json.JsonBool(false)),
         ("quote\"", Json.JsonString("a\"b"))
     ]
-    given tail: List<(String, Json)> = [
+    given tail: List<Tuple<String, Json>> = [
         [],
         [("b", Json.JsonInt(2))],
         [("nested", Json.JsonList([Json.JsonString("x")]))]
@@ -322,7 +322,7 @@ verify renderJsonEntriesTail law parseObjNextRoundtrip
     when jsonEntriesRoundtripSafe(prependJsonEntry(entry, tail))
     parseObjNext(renderJsonEntriesTail(entryToString(entry), tail) + "}}", String.len(entryToString(entry)), Map.fromList(singletonJsonEntries(entry))) => ParseResult.Ok(Json.JsonObject(Map.fromList(prependJsonEntry(entry, tail))), String.len(renderJsonEntriesTail(entryToString(entry), tail)) + 1)
 
-fn entryToString(entry: (String, Json)) -> String
+fn entryToString(entry: Tuple<String, Json>) -> String
     ? "JSON helper: entryToString."
     match entry
         (key, val) -> "\"" + escapeJsonString(key) + "\":" + toString(val)
@@ -331,7 +331,7 @@ verify entryToString
     entryToString(("a\"b", Json.JsonInt(1))) => "\"a\\\"b\":1"
 
 verify entryToString law parseObjKeyRoundtrip
-    given entry: (String, Json) = [
+    given entry: Tuple<String, Json> = [
         ("a", Json.JsonInt(1)),
         ("quote\"", Json.JsonBool(false)),
         ("newline", Json.JsonString("a\"b")),
@@ -340,7 +340,7 @@ verify entryToString law parseObjKeyRoundtrip
     when jsonEntryRoundtripSafe(entry)
     parseObjKey(entryToString(entry) + "}}", 1, emptyJsonMap()) => ParseResult.Ok(Json.JsonObject(Map.fromList(singletonJsonEntries(entry))), String.len(entryToString(entry)) + 1)
 
-fn jsonEntryKey(entry: (String, Json)) -> String
+fn jsonEntryKey(entry: Tuple<String, Json>) -> String
     ? "JSON helper: jsonEntryKey."
     match entry
         (key, _) -> key
@@ -348,7 +348,7 @@ fn jsonEntryKey(entry: (String, Json)) -> String
 verify jsonEntryKey
     jsonEntryKey(("a", Json.JsonInt(1))) => "a"
 
-fn jsonEntryValue(entry: (String, Json)) -> Json
+fn jsonEntryValue(entry: Tuple<String, Json>) -> Json
     ? "JSON helper: jsonEntryValue."
     match entry
         (_, value) -> value
@@ -356,18 +356,18 @@ fn jsonEntryValue(entry: (String, Json)) -> Json
 verify jsonEntryValue
     jsonEntryValue(("a", Json.JsonInt(1))) => Json.JsonInt(1)
 
-fn singletonJsonEntries(entry: (String, Json)) -> List<(String, Json)>
+fn singletonJsonEntries(entry: Tuple<String, Json>) -> List<Tuple<String, Json>>
     ? "JSON helper: singletonJsonEntries."
     List.prepend(entry, [])
 
 verify singletonJsonEntries
     singletonJsonEntries(("a", Json.JsonInt(1))) => [("a", Json.JsonInt(1))]
 
-fn prependJsonEntry(entry: (String, Json), tail: List<(String, Json)>) -> List<(String, Json)>
+fn prependJsonEntry(entry: Tuple<String, Json>, tail: List<Tuple<String, Json>>) -> List<Tuple<String, Json>>
     ? "JSON helper: prependJsonEntry."
     List.prepend(entry, tail)
 
-fn jsonEntryRoundtripSafe(entry: (String, Json)) -> Bool
+fn jsonEntryRoundtripSafe(entry: Tuple<String, Json>) -> Bool
     ? "JSON helper: jsonEntryRoundtripSafe."
     jsonRoundtripSafe(jsonEntryValue(entry))
 
@@ -1110,7 +1110,7 @@ verify parseObjFields
     parseObjFields("x", 0, emptyJsonMap()) => ParseResult.Err("Expected string key", 0)
 
 verify parseObjFields law renderJsonEntriesFieldsRoundtrip
-    given entries: List<(String, Json)> = [
+    given entries: List<Tuple<String, Json>> = [
         [("a", Json.JsonInt(1))],
         [("a", Json.JsonBool(false)), ("nested", Json.JsonList([Json.JsonString("x")]))],
         [("quote\"", Json.JsonString("a\"b")), ("newline", Json.JsonString("line\nx"))]
@@ -1139,7 +1139,7 @@ verify parseObjKeyValue
     parseObjKeyValue(":1}}", 0, emptyJsonMap(), Json.JsonInt(1)) => ParseResult.Err("Expected string key", 0)
 
 verify parseObjKeyValue law valueRoundtrip
-    given entry: (String, Json) = [
+    given entry: Tuple<String, Json> = [
         ("a", Json.JsonInt(1)),
         ("quote\"", Json.JsonBool(false)),
         ("newline", Json.JsonString("a\"b")),
