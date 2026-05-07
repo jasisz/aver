@@ -51,7 +51,8 @@ pub struct BenchReport {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendInfo {
-    /// Target name as parsed from `--target` (`vm` / `wasm-local` / `rust`).
+    /// Target name as parsed from `--target`
+    /// (`vm` / `wasm-local` / `wasm-gc` / `rust`).
     pub name: String,
     /// Version of the `aver` binary that ran the bench (Cargo package
     /// version at compile time of this binary).

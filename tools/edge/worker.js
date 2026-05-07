@@ -90,21 +90,33 @@ function buildHeadersMap(jsHeaders) {
 }
 
 async function init() {
+  // Every aver-host import declared by `--target wasm-gc` carries a
+  // trailing `i32 caller_fn_idx` — the index into the exported
+  // `__caller_fn_name(idx)` table that identifies which Aver fn
+  // emitted the call (used by record/replay for caller_fn
+  // attribution). The bridge here doesn't surface that to JS, so
+  // every stub accepts and ignores the trailing arg. V8's import
+  // arity validation drops extra args on the floor, but writing the
+  // param keeps the stubs in sync with the wasm-gc ABI for stricter
+  // hosts (wasmtime CLI, Bun) and documents the contract.
   const imports = {
     aver: {
-      time_unix_ms: () => BigInt(Date.now()),
-      request_method: () => jsToAver(pendingReq.method),
-      request_url: () => jsToAver(new URL(pendingReq.url).pathname),
-      request_query: () => jsToAver(new URL(pendingReq.url).search.slice(1)),
-      request_body: () => jsToAver(pendingBody),
-      request_headers_load: () => buildHeadersMap(pendingReq.headers),
-      response_text: (status, bodyRef) => {
+      time_unix_ms: (_caller) => BigInt(Date.now()),
+      request_method: (_caller) => jsToAver(pendingReq.method),
+      request_url: (_caller) => jsToAver(new URL(pendingReq.url).pathname),
+      request_query: (_caller) => jsToAver(new URL(pendingReq.url).search.slice(1)),
+      request_body: (_caller) => jsToAver(pendingBody),
+      request_headers_load: (_caller) => buildHeadersMap(pendingReq.headers),
+      response_text: (status, bodyRef, _caller) => {
         pendingResponse.status = Number(status);
         pendingResponse.body = averToJs(bodyRef);
       },
-      response_set_header: (nameRef, valueRef) => {
+      response_set_header: (nameRef, valueRef, _caller) => {
         pendingResponse.headers.push([averToJs(nameRef), averToJs(valueRef)]);
       },
+      console_print: (msgRef, _caller) => { console.log(averToJs(msgRef)); },
+      console_error: (msgRef, _caller) => { console.error(averToJs(msgRef)); },
+      console_warn:  (msgRef, _caller) => { console.warn(averToJs(msgRef)); },
     },
   };
   const instance = await WebAssembly.instantiate(userWasm, imports);
