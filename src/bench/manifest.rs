@@ -60,12 +60,24 @@ pub enum BenchTarget {
     /// Native Rust binary produced by `aver compile --target rust` +
     /// `cargo build --release`. Subprocess spawn per iteration.
     Rust,
-    /// EXPERIMENTAL (0.15.3+ probe). In-process wasm-gc backend via
-    /// wasmtime with the GC + tail-call proposals enabled. Compiles
-    /// once with `aver compile --target wasm-gc`, instantiates +
-    /// invokes per iteration. Same pipeline as `wasm-local`; the
-    /// difference is the codegen backend that produced the bytes.
+    /// In-process wasm-gc backend via wasmtime with the GC + tail-call
+    /// proposals enabled. Compiles once with `aver compile --target
+    /// wasm-gc`, instantiates + invokes per iteration. wasmtime's GC
+    /// heap is the ceiling for alloc-heavy scenarios — the V8 column
+    /// (below) is the production-relevant number for any wasm-gc
+    /// deploy that lands in a browser, Cloudflare Workers, Node, Bun,
+    /// or Deno. Keep both around so the gap is visible.
     WasmGc,
+    /// Same wasm-gc bytes (`aver compile --target wasm-gc`), executed
+    /// under V8 via Node 22+ and `tools/wasm-gc-bench-v8.mjs`. Spawns
+    /// one Node process per scenario, parses raw sample timings off
+    /// stdout, then stitches the full `BenchReport` Rust-side. Memory
+    /// `project_v8_vs_wasmtime_gc.md` documents the engine gap that
+    /// motivates the dual column (string_interp is 2300× faster on V8
+    /// than on wasmtime as of 0.17.2). Requires `node` v22+ on PATH
+    /// or under `~/.nvm/versions/node/v22.*` — earlier Nodes ship a
+    /// V8 that rejects packed `i8` arrays.
+    WasmGcV8,
 }
 
 impl BenchTarget {
@@ -74,9 +86,10 @@ impl BenchTarget {
             "vm" => Ok(Self::Vm),
             "wasm-local" => Ok(Self::WasmLocal),
             "wasm-gc" => Ok(Self::WasmGc),
+            "wasm-gc-v8" => Ok(Self::WasmGcV8),
             "rust" => Ok(Self::Rust),
             other => Err(format!(
-                "unknown bench target '{}'; expected one of: vm, wasm-local, wasm-gc, rust",
+                "unknown bench target '{}'; expected one of: vm, wasm-local, wasm-gc, wasm-gc-v8, rust",
                 other
             )),
         }
@@ -87,6 +100,7 @@ impl BenchTarget {
             Self::Vm => "vm",
             Self::WasmLocal => "wasm-local",
             Self::WasmGc => "wasm-gc",
+            Self::WasmGcV8 => "wasm-gc-v8",
             Self::Rust => "rust",
         }
     }

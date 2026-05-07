@@ -535,11 +535,15 @@ pub(super) enum Commands {
         /// - `bench/scenarios/`         — directory globs every `*.toml`, alphabetical
         scenario: String,
         /// Bench target: `vm` (in-process), `wasm-local` (legacy
-        /// `--target wasm` + wasip1 bridge under wasmtime in-process,
-        /// requires the `wasm` feature), `wasm-gc` (`--target wasm-gc`
-        /// under wasmtime with engine GC + tail-calls, requires the
-        /// `wasm` feature), `rust` (native binary via
-        /// `aver compile --target rust` + `cargo build`).
+        /// `--target wasm` + wasip1 bridge under wasmtime in-process),
+        /// `wasm-gc` (same wasm-gc bytes under wasmtime — engine
+        /// ceiling for alloc-heavy workloads), `wasm-gc-v8` (the same
+        /// bytes under V8 via Node 22+ and `tools/wasm-gc-bench-v8.mjs`
+        /// — production-relevant for browser / Cloudflare Workers /
+        /// Node / Bun / Deno deploys; alloc-heavy scenarios run
+        /// dramatically faster on V8), `rust` (native binary via
+        /// `aver compile --target rust` + `cargo build`). All `wasm-*`
+        /// targets require the `wasm` feature.
         #[arg(long, default_value = "vm")]
         target: String,
         /// Number of timed iterations (ad-hoc `.av` mode only; ignored

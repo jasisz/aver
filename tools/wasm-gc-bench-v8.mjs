@@ -114,14 +114,24 @@ const fmt = (x) =>
 
 if (!isCompare) {
   const wasmPath = args[0];
+  const isJson = args.includes('--json');
   const bytes = fs.readFileSync(wasmPath);
   const instance = instantiate(bytes);
   const entry = pickEntry(instance);
   for (let i = 0; i < warmup; i++) entry();
-  const stats = summarise(timeIters(entry, iters));
-  console.log(
-    `v8 wall_time: min=${fmt(stats.min)} p50=${fmt(stats.p50)} p95=${fmt(stats.p95)} max=${fmt(stats.max)} mean=${fmt(stats.mean)}`,
-  );
+  const samples = timeIters(entry, iters);
+  if (isJson) {
+    // Wire-protocol for `aver bench --target wasm-gc-v8`: just the
+    // raw timing samples in milliseconds. The Rust bench harness
+    // computes stats and stitches together the full BenchReport so
+    // there's only one source of truth for the report shape.
+    process.stdout.write(JSON.stringify({ samples_ms: samples }) + '\n');
+  } else {
+    const stats = summarise(samples);
+    console.log(
+      `v8 wall_time: min=${fmt(stats.min)} p50=${fmt(stats.p50)} p95=${fmt(stats.p95)} max=${fmt(stats.max)} mean=${fmt(stats.mean)}`,
+    );
+  }
   process.exit(0);
 }
 

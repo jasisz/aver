@@ -60,6 +60,7 @@ pub fn run_scenario(manifest: &Manifest, target: BenchTarget) -> Result<BenchRep
         BenchTarget::Vm => run_vm(manifest),
         BenchTarget::WasmLocal => run_wasm_local(manifest),
         BenchTarget::WasmGc => run_wasm_gc(manifest),
+        BenchTarget::WasmGcV8 => run_wasm_gc_v8(manifest),
         BenchTarget::Rust => run_rust(manifest),
     }
 }
@@ -662,6 +663,194 @@ fn run_wasm_gc(_manifest: &Manifest) -> Result<BenchReport, RunError> {
         "wasm-gc target requires the `wasm` feature; rebuild with `cargo build --features wasm`"
             .to_string(),
     ))
+}
+
+// ── wasm-gc target under V8 ────────────────────────────────────────────
+
+/// Same `aver compile --target wasm-gc` bytes as the wasmtime
+/// runner above, executed under V8 (Node 22+) via
+/// `tools/wasm-gc-bench-v8.mjs`. Spawns one Node process per scenario;
+/// the script reports raw sample timings as JSON on stdout
+/// (`{"samples_ms": [...]}`) and the harness here computes stats
+/// then stitches the canonical `BenchReport` shape so the report
+/// layout matches every other target.
+///
+/// Why a second wasm-gc column at all: wasmtime 44's GC heap is the
+/// engine ceiling for alloc-heavy workloads — `string_interp` runs
+/// 2300× faster on V8 than on wasmtime as of 0.17.2 (memory
+/// `project_v8_vs_wasmtime_gc.md`). Keeping both visible prevents
+/// the wasm-gc backend from looking falsely slow when the bottleneck
+/// is the embed engine, not the codegen.
+#[cfg(feature = "wasm")]
+fn run_wasm_gc_v8(manifest: &Manifest) -> Result<BenchReport, RunError> {
+    use std::path::PathBuf;
+
+    let temp = tempfile::tempdir()
+        .map_err(|e| RunError::Setup(format!("create wasm-gc-v8 bench tempdir: {}", e)))?;
+    let out_dir = temp.path().join("out");
+    let aver_bin = std::env::current_exe()
+        .map_err(|e| RunError::Setup(format!("locate current aver binary: {}", e)))?;
+
+    // Compile once via the same `aver compile --target wasm-gc` path
+    // the wasmtime runner uses — the bytes are identical, only the
+    // host runtime differs.
+    let mut compile = Command::new(&aver_bin);
+    compile
+        .arg("compile")
+        .arg(&manifest.entry)
+        .arg("--target")
+        .arg("wasm-gc")
+        .arg("--name")
+        .arg(&manifest.name)
+        .arg("-o")
+        .arg(&out_dir);
+    if let Some(root) = manifest.entry.parent() {
+        compile.arg("--module-root").arg(root);
+    }
+    let status = compile
+        .status()
+        .map_err(|e| RunError::Setup(format!("spawn aver compile --target wasm-gc: {}", e)))?;
+    if !status.success() {
+        return Err(RunError::Compile(format!(
+            "aver compile (wasm-gc-v8) exited with {}",
+            status
+        )));
+    }
+    let wasm_path = out_dir.join(format!("{}.wasm", manifest.name));
+
+    // Locate Node 22+ — V8's wasm-gc support stabilised there. Earlier
+    // Nodes ship a V8 that rejects packed `i8` arrays. Try `node` on
+    // PATH first; fall back to `~/.nvm/versions/node/v22.*/bin/node`
+    // if installed via nvm.
+    let node_bin = locate_node22()
+        .ok_or_else(|| RunError::Setup(
+            "wasm-gc-v8 requires Node 22+ on PATH or under ~/.nvm/versions/node/v22.* — install via nvm or your package manager".to_string()
+        ))?;
+
+    // Locate the harness script. Prefer CARGO_MANIFEST_DIR (cargo
+    // run/test); fall back to the repo root via the binary's parent
+    // chain (production aver binary lives at <repo>/target/release/aver).
+    let harness = std::env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .map(|p| p.join("tools").join("wasm-gc-bench-v8.mjs"))
+        .or_else(|_| {
+            aver_bin
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .map(|repo| repo.join("tools").join("wasm-gc-bench-v8.mjs"))
+                .ok_or(())
+        })
+        .map_err(|_| RunError::Setup("locate tools/wasm-gc-bench-v8.mjs".to_string()))?;
+    if !harness.exists() {
+        return Err(RunError::Setup(format!(
+            "wasm-gc-v8 harness not found at {}",
+            harness.display()
+        )));
+    }
+
+    let total_iters = manifest.iterations + manifest.warmup;
+    let output = Command::new(&node_bin)
+        .arg(&harness)
+        .arg(&wasm_path)
+        .arg("--json")
+        .arg("--iters")
+        .arg(total_iters.to_string())
+        .arg("--warmup")
+        .arg("0") // we strip warmup ourselves to keep the slicing identical to other targets
+        .output()
+        .map_err(|e| RunError::Setup(format!("spawn node wasm-gc-bench-v8.mjs: {}", e)))?;
+    if !output.status.success() {
+        return Err(RunError::Runtime(format!(
+            "wasm-gc-bench-v8 exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    // Parse `{"samples_ms": [..]}` from stdout. Single line, last
+    // line wins (so `console.warn`s from V8 about deprecation etc.
+    // can land earlier without breaking the parse).
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.trim_start().starts_with('{'))
+        .ok_or_else(|| {
+            RunError::Runtime(format!(
+                "wasm-gc-bench-v8 stdout had no JSON line: {}",
+                stdout
+            ))
+        })?;
+    let parsed: serde_json::Value = serde_json::from_str(json_line)
+        .map_err(|e| RunError::Runtime(format!("parse wasm-gc-bench-v8 output: {}", e)))?;
+    let samples_arr = parsed
+        .get("samples_ms")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            RunError::Runtime("wasm-gc-bench-v8 output missing samples_ms array".to_string())
+        })?;
+    let samples: Vec<f64> = samples_arr
+        .iter()
+        .filter_map(|v| v.as_f64())
+        .skip(manifest.warmup)
+        .collect();
+
+    let passes = canonical_passes();
+    let mut report = build_report(
+        manifest,
+        BenchTarget::WasmGcV8,
+        &samples,
+        passes,
+        compute_visible_allocs(manifest),
+    );
+    // Same convention as the wasmtime wasm-gc runner: response_bytes
+    // is informational only — the harness doesn't decode return
+    // values across the JS boundary.
+    report.response_bytes = None;
+    Ok(report)
+}
+
+#[cfg(not(feature = "wasm"))]
+fn run_wasm_gc_v8(_manifest: &Manifest) -> Result<BenchReport, RunError> {
+    Err(RunError::Setup(
+        "wasm-gc-v8 target requires the `wasm` feature; rebuild with `cargo build --features wasm`"
+            .to_string(),
+    ))
+}
+
+#[cfg(feature = "wasm")]
+fn locate_node22() -> Option<std::path::PathBuf> {
+    // 1) Try `node` on PATH and check `--version >= v22.0.0`.
+    if let Ok(out) = Command::new("node").arg("--version").output()
+        && out.status.success()
+    {
+        let v = String::from_utf8_lossy(&out.stdout);
+        if let Some(major) = v.trim_start_matches('v').split('.').next()
+            && let Ok(n) = major.parse::<u32>()
+            && n >= 22
+        {
+            return Some(std::path::PathBuf::from("node"));
+        }
+    }
+    // 2) Fall back to `~/.nvm/versions/node/v22.*/bin/node`.
+    let home = std::env::var("HOME").ok()?;
+    let nvm_dir = std::path::PathBuf::from(home)
+        .join(".nvm")
+        .join("versions")
+        .join("node");
+    let mut v22_dirs: Vec<_> = std::fs::read_dir(&nvm_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("v22."))
+        })
+        .collect();
+    v22_dirs.sort();
+    v22_dirs.last().map(|p| p.join("bin").join("node"))
 }
 
 // ── Rust target ────────────────────────────────────────────────────────
