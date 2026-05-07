@@ -2,6 +2,18 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.17.2 (2026-05-07)
+
+### Changed
+- **VM ~1.46× faster (geo-mean).** Hoist bytecode pointer out of the dispatch loop, fuse `match n { LIT -> … }` into one `MATCH_INT_LITERAL`, typed arith + compare for `Int`/`Float` operands, builtin invoke takes `symbol_id` directly (no per-call hash lookup), profile flag cached. countdown ▼-71%, newtype ▼-42%, match_dispatch ▼-39%, fractal_seahorse ▼-12%.
+
+### Fixed
+- **`--target wasm-gc --handler X` (and `--preset cloudflare`).** Three compounding wasm-gc bugs broke every handler-mode compile since 0.16: missing `caller_fn_idx` in handler synthesis, duplicate user/builtin record entries in the rec group, and a data-count snapshot taken before the handler wrapper registered its caller_fn name. `tools/edge` deploys cleanly again.
+- **Cloudflare worker stubs** match the wasm-gc ABI (trailing `_caller` i32, `console_*` stubs).
+
+### Added
+- **`aver bench --target wasm-gc`** alongside `vm` / `wasm-local` / `rust`.
+
 ## 0.17.1 (2026-05-07)
 
 ### Removed (breaking)
