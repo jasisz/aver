@@ -981,7 +981,7 @@ fn match_list_cons_binds_head_and_tail() {
 #[test]
 fn match_tuple_pattern_binds_values() {
     let src =
-        "fn sum_pair(p: (Int, Int)) -> Int\n    match p\n        (a, b) -> a + b\n        _ -> 0\n";
+        "fn sum_pair(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a + b\n        _ -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -994,7 +994,7 @@ fn match_tuple_pattern_binds_values() {
 
 #[test]
 fn match_tuple_pattern_with_wildcard() {
-    let src = "fn first(p: (Int, Int)) -> Int\n    match p\n        (x, _) -> x\n        _ -> 0\n";
+    let src = "fn first(p: Tuple<Int, Int>) -> Int\n    match p\n        (x, _) -> x\n        _ -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -1007,7 +1007,7 @@ fn match_tuple_pattern_with_wildcard() {
 
 #[test]
 fn match_nested_tuple_pattern() {
-    let src = "fn flatten(p: ((Int, Int), Int)) -> Int\n    match p\n        ((a, b), c) -> a + b + c\n        _ -> 0\n";
+    let src = "fn flatten(p: Tuple<Tuple<Int, Int>, Int>) -> Int\n    match p\n        ((a, b), c) -> a + b + c\n        _ -> 0\n";
     assert_eq!(
         call_fn(
             src,
@@ -1023,7 +1023,7 @@ fn match_nested_tuple_pattern() {
 
 #[test]
 fn tuple_pattern_arity_mismatch_falls_through() {
-    let src = "fn test(p: (Int, Int)) -> Int\n    match p\n        (a, b, c) -> a + b + c\n        _ -> 42\n";
+    let src = "fn test(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b, c) -> a + b + c\n        _ -> 42\n";
     assert_eq!(
         call_fn(
             src,
@@ -2654,7 +2654,7 @@ fn memo_non_recursive_fn_still_works() {
 #[test]
 fn memo_tuple_args_do_not_collide() {
     let src = r#"
-fn pick(p: (Int, Int)) -> Int
+fn pick(p: Tuple<Int, Int>) -> Int
     match p == (1, 2)
         true -> 12
         false -> 99

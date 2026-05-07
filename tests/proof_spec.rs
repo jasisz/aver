@@ -110,13 +110,13 @@ fn proof_export_builds_pure_question_bang_when_backends_are_available() {
         \x20   ? \"right error\"\n\
         \x20   Result.Err(\"right\")\n\
         \n\
-        fn pairOk() -> Result<(Int, Int), String>\n\
+        fn pairOk() -> Result<Tuple<Int, Int>, String>\n\
         \x20   ? \"unwrap two successful Result branches\"\n\
         \x20   pair = (okOne(), okTwo())?!\n\
         \x20   match pair\n\
         \x20       (a, b) -> Result.Ok((a, b))\n\
         \n\
-        fn pairErr() -> Result<(Int, Int), String>\n\
+        fn pairErr() -> Result<Tuple<Int, Int>, String>\n\
         \x20   ? \"propagate the leftmost Result.Err\"\n\
         \x20   pair = (errLeft(), errRight())?!\n\
         \x20   match pair\n\
