@@ -324,6 +324,20 @@ pub struct FnResolution {
     /// target of a binding (resolver counted but no expression
     /// produced into it; usually a wildcard slot the backend skips).
     pub local_slot_types: std::sync::Arc<Vec<Type>>,
+    /// Whether each slot may share an arena entry with another slot.
+    /// Length == `local_count`. Set by `ir::alias::annotate_program_alias_slots`
+    /// post-`last_use`. Backends that have a `mem::take`-style fast path
+    /// for `Vector.set` / `Map.set` (the VM's `CALL_BUILTIN_OWNED` mask
+    /// + fused `VECTOR_SET_OR_KEEP`) must NOT take the fast path on a
+    /// flagged slot — rewriting the shared arena entry would mutate the
+    /// other binding too. Wasm-gc may use it to skip clone-on-write
+    /// when the slot is provably non-aliased; otherwise it falls back
+    /// to `array.copy` + `array.set` on the copy.
+    ///
+    /// Default `false` for slots the analysis hasn't reached (anything
+    /// pre-`last_use`, REPL, partial pipelines), which is the safe-but-
+    /// slow choice everywhere except the VM fast path.
+    pub aliased_slots: std::sync::Arc<Vec<bool>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -575,7 +575,20 @@ pub(super) fn emit_map_kv_call(
         return Ok(());
     }
     let target_idx = match method {
-        "set" => helpers.set,
+        "set" => {
+            // `Map.set` has two helpers: a clone-on-write `set` and a
+            // `set_in_place` that skips the entry-time `array.copy`.
+            // The IR alias pass + last-use tell us which is sound: if
+            // the map slot is uniquely owned at this call site, every
+            // alias-via-`Vector.new(_, m)` / `Map.get(_)` / param has
+            // either died or never existed, so mutating its keys /
+            // values arrays is safe.
+            if ctx.arg_uniquely_owned(&args[0]) {
+                helpers.set_in_place
+            } else {
+                helpers.set
+            }
+        }
         "get" => helpers.get,
         "len" => helpers.len,
         "keys" => helpers.keys,
@@ -613,7 +626,13 @@ pub(super) fn emit_vector_new(
         )));
     }
     let elem_aver = aver_type_str_of(&args[1]);
-    let canonical = format!("Vector<{}>", elem_aver);
+    // Registry trims whitespace from canonicals (`Map<String, Int>` →
+    // `Map<String,Int>`). Match that here so a `Map<K, V>` element
+    // produced by typecheck still resolves the right slot.
+    let canonical: String = format!("Vector<{}>", elem_aver)
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     let vec_idx = ctx
         .registry
         .vector_type_idx(&canonical)
@@ -1002,10 +1021,17 @@ pub(super) fn emit_map_get_or_default(
     Ok(())
 }
 
-/// Fused `Option.withDefault(Vector.set(v, i, x), v)`: bounds-checked
-/// `array.set` in place, return `v` regardless. Because the default IS
-/// the vector, both arms of the conceptual Option produce the same
-/// reference — no need to materialise None.
+/// Fused `Option.withDefault(Vector.set(v, i, x), v)`: clone-on-write.
+/// Allocates a fresh array of the same length, copies `v` into it,
+/// conditionally writes the new cell, returns the copy. The previous
+/// in-place `array.set` short-circuit was unsound: wasm-gc arrays are
+/// reference types, and `Vector.new(n, inner)` produces N elements
+/// pointing at the same `inner` ref, so a `Vector.get(outer, i)` /
+/// `Vector.set(row, …)` chain would silently rewrite every alias of
+/// that row. The scratch local that holds the copy is reserved at
+/// slot-allocation time (`SlotTable::vector_set_scratch`), one per
+/// distinct `Vector<T>` instantiation that this fn body actually
+/// calls `Vector.set` on.
 pub(super) fn emit_vector_set_or_default(
     func: &mut Function,
     vector: &Spanned<Expr>,
@@ -1023,27 +1049,82 @@ pub(super) fn emit_vector_set_or_default(
             "Vector.set: vector arg of type `{vec_aver}` is not a registered Vector<T>"
         )))?;
 
-    // 0 <= index < array.len, all i32. Aver Int is i64 → wrap once
-    // and reuse via re-emit (cheap when Resolved).
+    // Fast path: when the IR alias pass guarantees the vec slot has
+    // no other live alias and `last_use` says the binding is dead,
+    // the engine array can be mutated in place. Skip the
+    // `array.new_default` + `array.copy` and just `array.set` on the
+    // original handle — the result of the fused
+    // `Result.withDefault(Vector.set(v, i, x), v)` is the same handle
+    // anyway. No scratch local, no allocation.
+    if ctx.arg_uniquely_owned(vector) {
+        emit_expr(func, index, slots, ctx)?;
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64GeS);
+        emit_expr(func, index, slots, ctx)?;
+        func.instruction(&Instruction::I32WrapI64);
+        emit_expr(func, vector, slots, ctx)?;
+        func.instruction(&Instruction::ArrayLen);
+        func.instruction(&Instruction::I32LtU);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+        emit_expr(func, vector, slots, ctx)?;
+        emit_expr(func, index, slots, ctx)?;
+        func.instruction(&Instruction::I32WrapI64);
+        emit_expr(func, value, slots, ctx)?;
+        func.instruction(&Instruction::ArraySet(vec_idx));
+        func.instruction(&Instruction::End);
+        emit_expr(func, vector, slots, ctx)?;
+        return Ok(());
+    }
+
+    let scratch = slots
+        .vector_set_scratch
+        .get(&canonical)
+        .copied()
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "Vector.set: scratch local for `{canonical}` not reserved \
+                 (slot-pre-pass missed this site)"
+            ))
+        })?;
+
+    // Slow path (clone-on-write): the vec slot may share its engine
+    // array with another live binding. Allocate a fresh array, copy
+    // every cell, mutate the copy.
+    emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::ArrayNewDefault(vec_idx));
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::I32Const(0));
+    emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::I32Const(0));
+    emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: vec_idx,
+        array_type_index_src: vec_idx,
+    });
+
     emit_expr(func, index, slots, ctx)?;
     func.instruction(&Instruction::I64Const(0));
     func.instruction(&Instruction::I64GeS);
-
     emit_expr(func, index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
-    emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::ArrayLen);
     func.instruction(&Instruction::I32LtU);
-
     func.instruction(&Instruction::I32And);
     func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
-    emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::LocalGet(scratch));
     emit_expr(func, index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
     emit_expr(func, value, slots, ctx)?;
     func.instruction(&Instruction::ArraySet(vec_idx));
     func.instruction(&Instruction::End);
-    emit_expr(func, vector, slots, ctx)?;
+
+    func.instruction(&Instruction::LocalGet(scratch));
     Ok(())
 }
 
@@ -1476,12 +1557,14 @@ pub(super) fn emit_vector_get_boxed(
     Ok(())
 }
 
-/// Boxed `Vector.set(v, i, x) -> Option<Vector<T>>`. Mutates the
-/// backing array on bounds-check success, returns `Option.Some(v)`;
-/// OOB returns `Option.None`. Aver semantics: the returned handle
-/// is the same as the input (no copy) — Vector is mutable at the
-/// wasm level, surface code must use the returned ref to observe
-/// the change.
+/// Boxed `Vector.set(v, i, x) -> Option<Vector<T>>`. Clone-on-write:
+/// allocates a fresh array of the same length, copies `v` into it,
+/// writes the new cell, returns `Option.Some(copy)`. OOB returns
+/// `Option.None`. Aver-surface semantics: the input vector remains
+/// observable through any other reference unchanged; the returned
+/// `Some(_)` is the only path to the modified state. (See the
+/// header comment on `emit_vector_set_or_default` for the aliasing
+/// argument that forced the copy.)
 pub(super) fn emit_vector_set_boxed(
     func: &mut Function,
     vector: &Spanned<Expr>,
@@ -1510,7 +1593,52 @@ pub(super) fn emit_vector_set_boxed(
         heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
     });
     let block_ty = wasm_encoder::BlockType::Result(opt_ref);
-    // Bounds: 0 <= i < vec.len
+
+    // Fast path: alias-free + last_use → mutate the engine array in
+    // place. The boxed result is `Some(v)` (same handle) when in
+    // bounds, `None` otherwise — no `array.new_default` / `array.copy`.
+    if ctx.arg_uniquely_owned(vector) {
+        emit_expr(func, index, slots, ctx)?;
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64GeS);
+        emit_expr(func, index, slots, ctx)?;
+        func.instruction(&Instruction::I32WrapI64);
+        emit_expr(func, vector, slots, ctx)?;
+        func.instruction(&Instruction::ArrayLen);
+        func.instruction(&Instruction::I32LtU);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::If(block_ty));
+        emit_expr(func, vector, slots, ctx)?;
+        emit_expr(func, index, slots, ctx)?;
+        func.instruction(&Instruction::I32WrapI64);
+        emit_expr(func, value, slots, ctx)?;
+        func.instruction(&Instruction::ArraySet(vec_idx));
+        func.instruction(&Instruction::I32Const(1));
+        emit_expr(func, vector, slots, ctx)?;
+        func.instruction(&Instruction::StructNew(opt_idx));
+        func.instruction(&Instruction::Else);
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+            vec_idx,
+        )));
+        func.instruction(&Instruction::StructNew(opt_idx));
+        func.instruction(&Instruction::End);
+        return Ok(());
+    }
+
+    let scratch = slots
+        .vector_set_scratch
+        .get(&canonical)
+        .copied()
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "Vector.set: scratch local for `{canonical}` not reserved \
+                 (slot-pre-pass missed this site)"
+            ))
+        })?;
+
+    // Slow path (clone-on-write): the vec slot may share its engine
+    // array with another live binding. Bounds: 0 <= i < vec.len.
     emit_expr(func, index, slots, ctx)?;
     func.instruction(&Instruction::I64Const(0));
     func.instruction(&Instruction::I64GeS);
@@ -1521,15 +1649,34 @@ pub(super) fn emit_vector_set_boxed(
     func.instruction(&Instruction::I32LtU);
     func.instruction(&Instruction::I32And);
     func.instruction(&Instruction::If(block_ty));
-    // In-range: array.set vec[i] = x; return Some(vec)
+
+    // In-range: copy = array.new_default $T (array.len v); array.copy
+    // copy 0 v 0 (array.len v); copy[i] = x; return Some(copy)
     emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::ArrayNewDefault(vec_idx));
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::I32Const(0));
+    emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::I32Const(0));
+    emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: vec_idx,
+        array_type_index_src: vec_idx,
+    });
+
+    func.instruction(&Instruction::LocalGet(scratch));
     emit_expr(func, index, slots, ctx)?;
     func.instruction(&Instruction::I32WrapI64);
     emit_expr(func, value, slots, ctx)?;
     func.instruction(&Instruction::ArraySet(vec_idx));
-    // tag=1 + same vector ref
+
+    // tag=1 + the new copy ref
     func.instruction(&Instruction::I32Const(1));
-    emit_expr(func, vector, slots, ctx)?;
+    func.instruction(&Instruction::LocalGet(scratch));
     func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::Else);
     // OOB: tag=0, value=null vec ref

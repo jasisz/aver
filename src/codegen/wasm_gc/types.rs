@@ -1745,6 +1745,25 @@ fn collect_vectors_from_expr(
     use crate::ast::{Expr, StrPart};
     match expr {
         Expr::FnCall(callee, args) => {
+            // `Vector.new(n, fill)` instantiates `Vector<T>` where `T` is
+            // the *type* of the fill arg — and crucially, that may itself
+            // be a Vector (`Vector.new(3, inner_vec)` produces
+            // `Vector<Vector<Int>>`). The container's own type stamp
+            // tells us `T` directly; without this branch nested-Vector
+            // instantiations never surface for the walker, registry has
+            // no slot, codegen errors with "instantiation `Vector<…>`
+            // was not registered". Mirrors the InterpolatedStr / `+`
+            // branches that pre-register `Vector<String>` from a stamp.
+            if let Expr::Attr(parent, member) = &callee.node
+                && member == "new"
+                && let Expr::Ident(p) = &parent.node
+                && p == "Vector"
+                && args.len() == 2
+                && let Some(fill_ty) = args[1].ty()
+            {
+                let canonical = format!("Vector<{}>", fill_ty.display());
+                collect_vectors_from_str(&canonical, out, order, next_idx);
+            }
             collect_vectors_from_expr(&callee.node, out, order, next_idx);
             for a in args {
                 collect_vectors_from_expr(&a.node, out, order, next_idx);
