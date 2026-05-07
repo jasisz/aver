@@ -987,7 +987,6 @@ pub(super) fn display_check_path(path: &str, module_root: &str) -> String {
 pub(super) fn cmd_run_vm(
     file: &str,
     module_root_override: Option<&str>,
-    run_verify_blocks: bool,
     record_dir: Option<&str>,
     program_args: Vec<String>,
     profile: bool,
@@ -997,23 +996,6 @@ pub(super) fn cmd_run_vm(
         JsonValue, session::RecordedOutcome, session::SessionRecording,
         session_recording_to_string_pretty,
     };
-
-    if run_verify_blocks && record_dir.is_some() {
-        eprintln!(
-            "{}",
-            "Cannot combine --verify and --record in one run; record should capture only main flow."
-                .red()
-        );
-        process::exit(1);
-    }
-
-    if run_verify_blocks && entry_expression.is_some() {
-        eprintln!(
-            "{}",
-            "Cannot combine --verify with --expr / --input-file.".red()
-        );
-        process::exit(1);
-    }
 
     let module_root = super::shared::resolve_module_root_for_entry(file, module_root_override);
     let source = match super::shared::read_file(file) {
@@ -1273,36 +1255,6 @@ pub(super) fn cmd_run_vm(
         }
     }
 
-    if run_verify_blocks {
-        println!();
-        let cfg = load_runtime_policy(&module_root).unwrap_or_else(|e| {
-            eprintln!("{}", e.red());
-            process::exit(1);
-        });
-        match aver::diagnostics::vm_verify::run_verify_for_items_vm(
-            items,
-            cfg,
-            Some(&module_root),
-            file,
-        ) {
-            Ok(results) => {
-                let failed: usize = results.iter().map(|r| r.failed).sum();
-                let file_results = vec![VerifyFileResult {
-                    path: file.to_string(),
-                    source: source.clone(),
-                    blocks: results,
-                }];
-                render_verify_output(&file_results, &module_root, false, false);
-                if failed > 0 {
-                    process::exit(1);
-                }
-            }
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        }
-    }
 }
 
 /// Compile to WASM and execute with built-in host.
@@ -2069,19 +2021,9 @@ fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), 
 pub(super) fn cmd_run_self_hosted(
     file: &str,
     module_root_override: Option<&str>,
-    run_verify_blocks: bool,
     record_dir: Option<&str>,
     program_args: Vec<String>,
 ) {
-    if run_verify_blocks && record_dir.is_some() {
-        eprintln!(
-            "{}",
-            "Cannot combine --verify and --record in one run; record should capture only main flow."
-                .red()
-        );
-        process::exit(1);
-    }
-
     // Keep CLI parity with host `aver run` until the self-host carries its own
     // full front-end pipeline (type checker + TCO + module diagnostics).
     {
@@ -2190,11 +2132,6 @@ pub(super) fn cmd_run_self_hosted(
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
-    }
-
-    if run_verify_blocks {
-        println!();
-        cmd_verify(file, module_root_override, false, false, false, false);
     }
 }
 

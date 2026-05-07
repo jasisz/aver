@@ -236,9 +236,6 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
-        /// Also run verify blocks after execution
-        #[arg(long)]
-        verify: bool,
         /// Record effect calls and persist a replay session JSON into this directory
         #[arg(long)]
         record: Option<String>,
