@@ -89,6 +89,13 @@ impl VM {
             (c.as_ptr(), c.len())
         };
 
+        // Profile state is stable across one `execute_until` invocation —
+        // `start_profiling` flips it to `Some` before the call; nothing
+        // inside the loop turns it on or off. Cache the bool so the hot
+        // per-instruction path is one branch instead of an `Option::as_mut`
+        // null check + indirect store every tick.
+        let profile_active = self.profile.is_some();
+
         // Local macro: refresh `(code_ptr, code_len)` from current `fn_id`.
         // Used by every arm that mutates `fn_id`.
         macro_rules! refresh_code {
@@ -113,7 +120,9 @@ impl VM {
 
             let op = code[ip];
             ip += 1;
-            if let Some(profile) = self.profile.as_mut() {
+            if profile_active
+                && let Some(profile) = self.profile.as_mut()
+            {
                 profile.record_opcode(op);
             }
 
