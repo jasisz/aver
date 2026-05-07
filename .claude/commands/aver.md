@@ -41,7 +41,7 @@ Primitives: `Int`, `Float`, `String`, `Bool`, `Unit`
 
 Compound:
 - `Result<T, E>`, `Option<T>`, `List<T>`, `Vector<T>`, `Map<K, V>`
-- tuples: `(A, B, ...)`
+- tuples: type is `Tuple<A, B, ...>` (2+ elements). Value literal and pattern are both paren: `(a, b)`. The type spelling and the value spelling are deliberately different.
 - function types: `Fn(A) -> B`, `Fn(A) -> B ! [Console.print]`
 
 Notes:
@@ -219,13 +219,13 @@ Rules:
 
 - Arithmetic: `+`, `-`, `*`, `/` (operands must match types)
 - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- Error propagation: `expr?` (unwraps Result.Ok, propagates Err)
+- Error propagation: `expr?` (unwraps `Result.Ok`, propagates `Result.Err`). **Result-only** — does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match.
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
 - String interpolation: `"Hello, {name}!"`
 
 **These operators do NOT exist** — do not use them:
 
-- no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`
+- no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`. Euclidean modulo: result is always in `[0, |b|)`. `Int.mod(-7, 3) = Result.Ok(2)`, not `-1`. `b == 0` returns `Result.Err("division by zero")`
 - no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
 - no `!` (boolean not) as prefix — use `Bool.not(x)`
 - no `+=`, `-=`, `++`, `--` (mutation operators)
@@ -328,6 +328,9 @@ match Map.get(ages, "alice")
 16. `BranchPath.Root()` / `BranchPath.root()` — it's a nullary value constructor, no parens: just `BranchPath.Root`
 17. Two `given` for the same effect — rejected. Use a multi-value domain `given rnd: Random.int = [stubA, stubB]` for varied samples
 18. Plain `verify fn` on a fn with generative effects — you get a lint warning, use `verify fn law …` with `given` stubs or `verify fn trace` instead
+19. `()` as a Unit value literal — there is no `()` literal. Write `Unit`. Diagnostics render the value as `()`, but in source the only spelling is `Unit` (matches `Map<T, Unit>` set semantics, `Unit` field annotations, etc.). `Console.print(...)` returning Unit is implicit — you almost never write the literal directly
+20. `expr?` on an `Option<T>` — `?` is Result-only. For `Option`, use `Option.withDefault(opt, fallback)`, or `match opt { Option.Some(v) -> … ; Option.None -> … }`. `Vector.get` and `Map.get` return `Option`, so neither composes with `?` directly — wrap the value first
+21. `(A, B)` as a tuple type — type position uses `Tuple<A, B>` exclusively. Tuple **value** literals stay paren: `(1, 2)`, `[(1, 2), (3, 4)]`, `Result.Ok((a, b))`. Tuple **patterns** stay paren: `match p { (a, b) -> … }`. The type and the value spelling are deliberately different so grep-for-type and grep-for-value don't collide
 
 ### Style
 
