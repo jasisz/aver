@@ -42,12 +42,15 @@ pub(super) fn emit_dotted_builtin(
     }
 
     // `Args.get()` (no args, returns List<String>) — short-circuit
-    // before the effect dispatch. The host imports are `args_len(): i64`
-    // and `args_get(i: i64): String`; there is no `args_get_all`. We
-    // inline a `len` + reverse-loop over `args_get(i)` cons-building
-    // the list in source order, using four scratch slots reserved by
-    // `slots::SlotTable` (i, len, acc, s).
+    // before the effect dispatch. AverBridge inlines a `len` +
+    // reverse-loop over `args_get(i)` cons-building. Wasip2 calls
+    // `wasi:cli/environment.get-arguments` once and dispatches the
+    // canonical-ABI list<string> retptr through the shared
+    // `__rt_canonical_decode_list_string` helper.
     if dotted == "Args.get" && args.is_empty() {
+        if ctx.wasip2_lowering.is_some() {
+            return emit_args_get_wasip2(func, slots, ctx);
+        }
         emit_args_get_inline(func, slots, ctx)?;
         return Ok(());
     }
@@ -1843,6 +1846,69 @@ fn emit_console_print_wasip2(
         )
     })?;
     func.instruction(&Instruction::Call(write_fn));
+    Ok(())
+}
+
+/// Phase 1.3.2 — `Args.get() -> List<String>` on `--target wasip2`.
+///
+/// Allocates an 8-byte retptr area via `cabi_realloc(0, 0, 4, 8)`,
+/// calls `wasi:cli/environment.get-arguments(retptr)` (the host
+/// uses `cabi_realloc` again to allocate the list payload bytes
+/// in guest memory), then hands the retptr to the shared
+/// `__rt_canonical_decode_list_string` helper which walks
+/// `(list_ptr, list_len)` + per-entry `(str_ptr, str_len)` into a
+/// cons-built Aver `List<String>`. Five instructions at the call
+/// site; the per-element copy lives in the helper.
+fn emit_args_get_wasip2(
+    func: &mut wasm_encoder::Function,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Args.get on wasip2: lowering ctx missing".into())
+    })?;
+    let cabi_realloc = lowering.cabi_realloc_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Args.get on wasip2: cabi_realloc fn idx missing — wasip2_imports must register \
+             at least one slot for cabi_realloc to be allocated"
+                .into(),
+        )
+    })?;
+    let get_arguments = lowering.get_arguments_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Args.get on wasip2: wasi:cli/environment.get-arguments fn idx missing".into(),
+        )
+    })?;
+    let decoder = lowering.decode_list_string_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Args.get on wasip2: __rt_canonical_decode_list_string fn idx missing".into(),
+        )
+    })?;
+    let retptr_local = slots.args_get_wasip2_retptr_scratch.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Args.get on wasip2: i32 retptr scratch slot missing — \
+             SlotTable should have allocated via fn_needs_args_get_scratch"
+                .into(),
+        )
+    })?;
+
+    // retptr = cabi_realloc(0, 0, 4, 8)  (8 bytes for the list_ptr/
+    // list_len pair, 4-byte aligned).
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I32Const(4));
+    func.instruction(&Instruction::I32Const(8));
+    func.instruction(&Instruction::Call(cabi_realloc));
+    func.instruction(&Instruction::LocalSet(retptr_local));
+
+    // Host call writes (list_ptr, list_len) + per-entry (str_ptr,
+    // str_len) + utf-8 bytes via further cabi_realloc calls.
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::Call(get_arguments));
+
+    // Decoder pushes the materialised List<String> onto the stack.
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::Call(decoder));
     Ok(())
 }
 

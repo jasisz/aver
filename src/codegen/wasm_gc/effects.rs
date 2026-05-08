@@ -709,7 +709,9 @@ impl EffectName {
     /// wasm-gc emitter.
     ///
     /// Set grows as each phase commit lands: 1.2b1 wired Console.*,
-    /// 1.4 added Time.unixMs + Random.{int,float}.
+    /// 1.4 added Time.unixMs + Random.{int,float}, 1.3.2 added
+    /// ArgsGet (the user-facing `Args.get() -> List<String>` lowers
+    /// to `wasi:cli/environment.get-arguments`).
     pub(super) fn lowers_on_wasip2(self) -> bool {
         matches!(
             self,
@@ -718,7 +720,8 @@ impl EffectName {
                 | EffectName::ConsoleWarn
                 | EffectName::TimeUnixMs
                 | EffectName::RandomInt
-                | EffectName::RandomFloat,
+                | EffectName::RandomFloat
+                | EffectName::ArgsGet,
         )
     }
 }

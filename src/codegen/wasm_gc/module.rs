@@ -298,6 +298,10 @@ pub(super) fn emit_module_with(
                     EffectName::RandomInt | EffectName::RandomFloat => {
                         wasip2_imports.register(Wasip2ImportSlot::RandomGetRandomU64);
                     }
+                    EffectName::ArgsGet => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::CliEnvironmentGetArguments);
+                    }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
             }
@@ -500,6 +504,49 @@ pub(super) fn emit_module_with(
             None
         };
 
+    // 8c) `__rt_canonical_decode_list_string` — Phase 1.3.2.
+    //     Shared helper that walks a canonical-ABI lowered
+    //     `list<string>` retptr (`(list_ptr i32, list_len i32)`)
+    //     into an Aver `List<String>` (cons cells of GC `(array
+    //     i8)` strings). Emitted once per module when any list-
+    //     returning effect that lowers via this shape is registered;
+    //     today that's `Args.get` (more land in 1.3.3 / 1.5).
+    //
+    //     The fn signature uses the user module's `String` and
+    //     `List<String>` engine-GC type indices, so allocation is
+    //     gated on both being present in the registry. If the
+    //     registry didn't carry them yet, the discovery walker
+    //     would have failed earlier — defensive `Option` here just
+    //     keeps the helper out of programs that never reach
+    //     Args.get.
+    let decode_list_string: Option<DecodeListStringIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetArguments)
+            .is_some()
+        && let (Some(string_idx), Some(list_string_idx)) = (
+            registry.string_array_type_idx,
+            registry.list_type_idx("List<String>"),
+        )
+    {
+        let list_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(list_string_idx),
+        });
+        types.ty().function([ValType::I32], [list_ref]);
+        let decoder_type = next_type_idx;
+        next_type_idx += 1;
+        let decoder_fn = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DecodeListStringIndices {
+            fn_type: decoder_type,
+            fn_idx: decoder_fn,
+            string_type_idx: string_idx,
+            list_string_type_idx: list_string_idx,
+        })
+    } else {
+        None
+    };
+
     // 9) Wasm-owned value factories. JS host can't construct wasm-gc
     //    structs/variants directly, so any effect import that returns
     //    a structured ref needs per-type constructor helpers exported
@@ -624,6 +671,9 @@ pub(super) fn emit_module_with(
     }
     if let Some(c) = &cabi_realloc {
         funcs.function(c.fn_type);
+    }
+    if let Some(d) = &decode_list_string {
+        funcs.function(d.fn_type);
     }
     factory_exports.emit_function_entries(&mut funcs);
     // Caller-fn name table fns — fixed-shape entries (count + name),
@@ -791,6 +841,10 @@ pub(super) fn emit_module_with(
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::ClocksWallClockNow),
                 random_u64_fn_idx: wasip2_imports
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::RandomGetRandomU64),
+                get_arguments_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::CliEnvironmentGetArguments),
+                cabi_realloc_fn_idx: cabi_realloc.as_ref().map(|c| c.fn_idx),
+                decode_list_string_fn_idx: decode_list_string.as_ref().map(|d| d.fn_idx),
             })
         } else {
             None
@@ -1239,6 +1293,9 @@ pub(super) fn emit_module_with(
             .expect("cabi_realloc emit requires Wasip2Globals (same gate)")
             .bump_alloc_ptr;
         codes.function(&emit_cabi_realloc(bump_global));
+    }
+    if let Some(d) = &decode_list_string {
+        codes.function(&emit_decode_list_string(d.string_type_idx, d.list_string_type_idx));
     }
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
@@ -3475,6 +3532,20 @@ struct CabiReallocIndices {
     fn_idx: u32,
 }
 
+/// Phase 1.3.2 — `__rt_canonical_decode_list_string(retptr) ->
+/// List<String>` helper indices. Walks a canonical-ABI lowered
+/// `list<string>` (`(list_ptr i32, list_len i32)` at retptr +
+/// `(str_ptr i32, str_len i32)` per entry at `list_ptr + i*8`)
+/// into an Aver `List<String>` (cons cells of GC `(array i8)`
+/// strings). Allocated when at least one consumer is registered
+/// (today: `Args.get`; lands later for `Disk.listDir`, etc.).
+struct DecodeListStringIndices {
+    fn_type: u32,
+    fn_idx: u32,
+    string_type_idx: u32,
+    list_string_type_idx: u32,
+}
+
 struct BridgeIndices {
     from_lm_type: u32,
     to_lm_type: u32,
@@ -3788,5 +3859,148 @@ fn emit_cabi_realloc(bump_global: u32) -> wasm_encoder::Function {
     f.instruction(&Instruction::GlobalSet(bump_global));
     f.instruction(&Instruction::LocalGet(l_aligned));
     f.instruction(&Instruction::End);
+    f
+}
+
+/// Phase 1.3.2 — `__rt_canonical_decode_list_string(retptr) ->
+/// List<String>` body. Reads the canonical-ABI lowered
+/// `list<string>` at retptr (`(list_ptr i32, list_len i32)`),
+/// then for each entry (`(str_ptr i32, str_len i32)` at
+/// `list_ptr + i*8`) materialises a fresh GC `(array i8)`
+/// string and conses it onto the accumulator. Walks the entries
+/// in reverse so cons-built list comes out in source order.
+fn emit_decode_list_string(string_type_idx: u32, list_string_type_idx: u32) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+    let l_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_string_type_idx),
+    });
+    // Param 0: retptr (i32). Locals follow.
+    let mut f = Function::new(vec![
+        (7, ValType::I32), // 1=list_ptr, 2=list_len, 3=i, 4=entry_ptr, 5=str_ptr, 6=str_len, 7=j
+        (1, s_ref),         // 8=arr
+        (1, l_ref),         // 9=acc
+    ]);
+    let p_retptr = 0u32;
+    let l_list_ptr = 1u32;
+    let l_list_len = 2u32;
+    let l_i = 3u32;
+    let l_entry_ptr = 4u32;
+    let l_str_ptr = 5u32;
+    let l_str_len = 6u32;
+    let l_j = 7u32;
+    let l_arr = 8u32;
+    let l_acc = 9u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_off4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    // list_ptr / list_len from retptr.
+    f.instruction(&Instruction::LocalGet(p_retptr));
+    f.instruction(&Instruction::I32Load(mem4));
+    f.instruction(&Instruction::LocalSet(l_list_ptr));
+    f.instruction(&Instruction::LocalGet(p_retptr));
+    f.instruction(&Instruction::I32Load(mem4_off4));
+    f.instruction(&Instruction::LocalSet(l_list_len));
+
+    // acc = ref.null $list_string.
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(list_string_type_idx)));
+    f.instruction(&Instruction::LocalSet(l_acc));
+
+    // i = list_len - 1 (countdown so cons-built list ends up in source order).
+    f.instruction(&Instruction::LocalGet(l_list_len));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(l_i));
+
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    // if i < 0: br to surrounding block (depth 1).
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::BrIf(1));
+
+    // entry_ptr = list_ptr + i * 8.
+    f.instruction(&Instruction::LocalGet(l_list_ptr));
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::I32Const(3));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_entry_ptr));
+
+    // str_ptr / str_len from entry_ptr.
+    f.instruction(&Instruction::LocalGet(l_entry_ptr));
+    f.instruction(&Instruction::I32Load(mem4));
+    f.instruction(&Instruction::LocalSet(l_str_ptr));
+    f.instruction(&Instruction::LocalGet(l_entry_ptr));
+    f.instruction(&Instruction::I32Load(mem4_off4));
+    f.instruction(&Instruction::LocalSet(l_str_len));
+
+    // arr = array.new_default $string str_len.
+    f.instruction(&Instruction::LocalGet(l_str_len));
+    f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_arr));
+
+    // for j = 0; j < str_len; j++: arr[j] = LM[str_ptr + j].
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_str_len));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_str_ptr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::ArraySet(string_type_idx));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // inner loop
+    f.instruction(&Instruction::End); // inner block
+
+    // acc = struct.new $list_string {head: arr, tail: acc}.
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::LocalGet(l_acc));
+    f.instruction(&Instruction::StructNew(list_string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_acc));
+
+    // i -= 1.
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(l_i));
+
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // outer loop
+    f.instruction(&Instruction::End); // outer block
+
+    f.instruction(&Instruction::LocalGet(l_acc));
+    f.instruction(&Instruction::End); // fn end
     f
 }

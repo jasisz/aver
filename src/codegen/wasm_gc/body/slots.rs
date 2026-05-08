@@ -56,6 +56,15 @@ pub(super) struct SlotTable {
     /// runtime cost vs branching `SlotTable::build_for_fn` on the
     /// target. Phase 1.2b1.5.
     pub(super) console_print_wasip2_scratch: Option<u32>,
+    /// Scratch i32 slot holding the canonical-ABI retptr that
+    /// `cabi_realloc` returns for the wasip2 `Args.get()` call site
+    /// (and any later list-returning effect that hands the retptr
+    /// off to the shared `__rt_canonical_decode_list_string` helper).
+    /// Allocated when the fn body contains `Args.get()` (no-args).
+    /// On `AverBridge` the slot is allocated but unused — same
+    /// over-allocation trade-off as `console_print_wasip2_scratch`.
+    /// Phase 1.3.2.
+    pub(super) args_get_wasip2_retptr_scratch: Option<u32>,
 }
 
 impl SlotTable {
@@ -212,12 +221,26 @@ impl SlotTable {
         } else {
             None
         };
+        // Phase 1.3.2 — single i32 retptr scratch for the wasip2
+        // `Args.get()` call. The shared
+        // `__rt_canonical_decode_list_string` helper takes the
+        // retptr and does the entire list<string> → List<String>
+        // walk, so the call site only needs to remember which i32
+        // came back from `cabi_realloc(0, 0, 4, 8)`.
+        let args_get_wasip2_retptr_scratch = if fn_needs_args_get_scratch(fd) {
+            let idx = by_slot.len() as u32;
+            by_slot.push(ValType::I32);
+            Some(idx)
+        } else {
+            None
+        };
         Ok(Self {
             by_slot,
             subject_scratch,
             args_get_scratch,
             vector_set_scratch,
             console_print_wasip2_scratch,
+            args_get_wasip2_retptr_scratch,
         })
     }
 

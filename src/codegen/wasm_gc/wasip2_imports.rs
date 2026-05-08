@@ -69,6 +69,15 @@ pub(super) enum Wasip2ImportSlot {
     /// Phase 1.4 drives both `Random.int(min, max)` (modulo + offset)
     /// and `Random.float()` (53-bit precision scale to `[0.0, 1.0)`).
     RandomGetRandomU64,
+    /// `wasi:cli/environment.get-arguments: func() -> list<string>`.
+    /// Canonical-ABI signature: list-returning, lowered via retptr.
+    /// Host calls `cabi_realloc` to allocate the list backing bytes
+    /// in guest memory, then writes `(ptr: i32, len: i32)` (8 bytes
+    /// at the guest-supplied retptr). Each list entry is itself a
+    /// string lowered as `(ptr: i32, len: i32)` — 8 bytes per entry
+    /// — packed contiguously starting at `ptr`. Phase 1.3.2 drives
+    /// `Args.get() -> List<String>` (the no-args user-facing form).
+    CliEnvironmentGetArguments,
 }
 
 impl Wasip2ImportSlot {
@@ -88,6 +97,9 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::RandomGetRandomU64 => {
                 ("wasi:random/random@0.2.4", "get-random-u64")
             }
+            Wasip2ImportSlot::CliEnvironmentGetArguments => {
+                ("wasi:cli/environment@0.2.4", "get-arguments")
+            }
         }
     }
 
@@ -102,6 +114,11 @@ impl Wasip2ImportSlot {
             // `now: () -> datetime` — datetime exceeds 8-byte flat
             // limit, so it returns via retptr supplied by the guest.
             Wasip2ImportSlot::ClocksWallClockNow => vec![ValType::I32],
+            // `get-arguments: () -> list<string>` — list lowered via
+            // retptr (8 bytes: list_ptr i32 + list_len i32). Host
+            // also calls `cabi_realloc` to allocate the backing
+            // bytes and per-string utf-8 buffers.
+            Wasip2ImportSlot::CliEnvironmentGetArguments => vec![ValType::I32],
         }
     }
 
@@ -111,7 +128,8 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::CliGetStdout | Wasip2ImportSlot::CliGetStderr => vec![ValType::I32],
             // Result lowered via retptr — no inline return.
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush
-            | Wasip2ImportSlot::ClocksWallClockNow => Vec::new(),
+            | Wasip2ImportSlot::ClocksWallClockNow
+            | Wasip2ImportSlot::CliEnvironmentGetArguments => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }

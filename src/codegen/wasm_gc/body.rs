@@ -362,6 +362,25 @@ pub(super) struct Wasip2Lowering {
     /// `Some(...)` when at least one of `Random.{int, float}` is
     /// registered (the same import drives both).
     pub(super) random_u64_fn_idx: Option<u32>,
+
+    // ── Phase 1.3.2: Args.get + shared canonical-ABI decoders ──
+    /// `wasi:cli/environment.get-arguments` imported wasm fn idx.
+    /// `Some(...)` when `Args.get` is registered.
+    pub(super) get_arguments_fn_idx: Option<u32>,
+    /// `cabi_realloc` exported wasm fn idx — the bump-allocator
+    /// helper from Phase 1.3.1. Required by every list-returning
+    /// canonical-ABI import (host calls it to allocate the list
+    /// payload + per-element bytes in guest memory). `Some(...)`
+    /// when any wasip2 import is registered.
+    pub(super) cabi_realloc_fn_idx: Option<u32>,
+    /// `__rt_canonical_decode_list_string(retptr) -> List<String>`
+    /// helper wasm fn idx. Walks the canonical-ABI lowered form
+    /// `(list_ptr i32, list_len i32)` at retptr → Aver
+    /// `List<String>` (cons cells + GC `(array i8)` strings).
+    /// Shared across every list-returning effect: `Args.get`
+    /// today, `Disk.listDir` (Phase 1.5), more later. Emitted
+    /// once per module when any consumer is registered.
+    pub(super) decode_list_string_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {
