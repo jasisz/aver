@@ -724,7 +724,8 @@ impl EffectName {
                 | EffectName::RandomInt
                 | EffectName::RandomFloat
                 | EffectName::ArgsGet
-                | EffectName::EnvGet,
+                | EffectName::EnvGet
+                | EffectName::DiskExists,
         )
     }
 }

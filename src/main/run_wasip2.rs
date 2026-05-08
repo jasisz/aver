@@ -163,6 +163,19 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
         ctx_builder.arg(a);
     }
     ctx_builder.inherit_env();
+    // Phase 1.5 — preopen the current working directory as `.` so
+    // `wasi:filesystem/preopens.get-directories` returns at least
+    // one entry. Aver `Disk.*` calls then resolve guest paths
+    // (e.g. `Disk.readText("foo.txt")`) against the host CWD,
+    // matching what `aver run` (VM target) does. Full perms keep
+    // parity with the VM; later we may want a `--allow-disk` flag
+    // for the published component-runner story.
+    let _ = ctx_builder.preopened_dir(
+        ".",
+        ".",
+        wasmtime_wasi::DirPerms::all(),
+        wasmtime_wasi::FilePerms::all(),
+    );
     let ctx = ctx_builder.build();
 
     struct Host {

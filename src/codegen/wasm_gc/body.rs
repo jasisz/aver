@@ -418,6 +418,13 @@ pub(super) struct Wasip2Lowering {
     /// — the pollable is per-call, allocated and dropped inside
     /// the helper, so it never leaks to source-level Aver.
     pub(super) time_sleep_fn_idx: Option<u32>,
+    /// Phase 1.5.1 — `__rt_disk_exists(path: ref string) -> i32`
+    /// helper wasm fn idx. Lazy-fetches the first preopen
+    /// descriptor (cached in the disk_preopen_handle global),
+    /// marshals the path through `__rt_string_to_lm`, calls
+    /// `wasi:filesystem/types.[method]descriptor.stat-at` and
+    /// returns the boolean result tag (1 = exists, 0 = not).
+    pub(super) disk_exists_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

@@ -141,6 +141,33 @@ pub(super) enum Wasip2ImportSlot {
     /// sleep call.
     /// Canonical-ABI signature: `(handle: i32) -> ()`.
     IoPollResourceDropPollable,
+    /// `wasi:filesystem/preopens.get-directories: func() ->
+    /// list<tuple<descriptor, string>>`.
+    ///
+    /// Returns the program's preopened directories — the host
+    /// configures these before instantiation (e.g. wasmtime CLI's
+    /// `--dir`, our embedded runner preopens `.` so guest paths
+    /// resolve against host CWD). Each tuple is 12 bytes packed
+    /// `(descriptor i32, path_ptr i32, path_len i32)`. Phase 1.5
+    /// `Disk.*` use the FIRST entry's descriptor as the resolution
+    /// root and ignore the path string (CWD-relative).
+    /// Canonical-ABI signature: `(retptr: i32) -> ()`.
+    FilesystemPreopensGetDirectories,
+    /// `wasi:filesystem/types.[method]descriptor.stat-at: func(
+    ///   this: borrow<descriptor>, path-flags: path-flags,
+    ///   path: string) -> result<descriptor-stat, error-code>`.
+    ///
+    /// Phase 1.5.1 `Disk.exists` uses this purely to check the
+    /// result's tag — `Ok` ⇒ file exists, `Err` ⇒ doesn't. The
+    /// `descriptor-stat` payload (size, timestamps, link count,
+    /// etc.) is left untouched in the retptr buffer. retptr is
+    /// 96 bytes (8-byte tag + alignment + 80-byte
+    /// descriptor-stat). `path-flags = 1` (symlink-follow) so we
+    /// follow symlinks like POSIX `stat`.
+    /// Canonical-ABI signature:
+    ///   `(handle: i32, path_flags: i32, path_ptr: i32,
+    ///    path_len: i32, retptr: i32) -> ()`.
+    FilesystemTypesStatAt,
 }
 
 impl Wasip2ImportSlot {
@@ -178,6 +205,13 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::IoPollResourceDropPollable => {
                 ("wasi:io/poll@0.2.4", "[resource-drop]pollable")
             }
+            Wasip2ImportSlot::FilesystemPreopensGetDirectories => {
+                ("wasi:filesystem/preopens@0.2.4", "get-directories")
+            }
+            Wasip2ImportSlot::FilesystemTypesStatAt => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.stat-at",
+            ),
         }
     }
 
@@ -220,6 +254,19 @@ impl Wasip2ImportSlot {
             // `[resource-drop]pollable(this: pollable)` — single
             // i32 handle, no return.
             Wasip2ImportSlot::IoPollResourceDropPollable => vec![ValType::I32],
+            // `get-directories: () -> list<...>` — list lowered
+            // via retptr (8 bytes: list_ptr + list_len).
+            Wasip2ImportSlot::FilesystemPreopensGetDirectories => vec![ValType::I32],
+            // `stat-at(this, path-flags, path) -> result<...>` —
+            // borrow<descriptor> + flags i32 + string (ptr,len) +
+            // retptr for the result.
+            Wasip2ImportSlot::FilesystemTypesStatAt => vec![
+                ValType::I32, // descriptor handle
+                ValType::I32, // path-flags
+                ValType::I32, // path_ptr
+                ValType::I32, // path_len
+                ValType::I32, // retptr
+            ],
         }
     }
 
@@ -237,7 +284,9 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::IoPollResourceDropPollable
             | Wasip2ImportSlot::ClocksWallClockNow
             | Wasip2ImportSlot::CliEnvironmentGetArguments
-            | Wasip2ImportSlot::CliEnvironmentGetEnvironment => Vec::new(),
+            | Wasip2ImportSlot::CliEnvironmentGetEnvironment
+            | Wasip2ImportSlot::FilesystemPreopensGetDirectories
+            | Wasip2ImportSlot::FilesystemTypesStatAt => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }

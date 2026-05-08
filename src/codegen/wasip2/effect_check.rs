@@ -166,6 +166,13 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // Time.now graduated in Phase 1.4b (guest-side civil_from_days
     // + RFC3339-like digit emission on top of the wall-clock retptr
     // already wired by Time.unixMs).
+    // Disk.exists graduated in Phase 1.5.1 (preopens cache +
+    // stat-at result tag). Other Disk.* still pending — they need
+    // open-at + read-via-stream / write-via-stream / list-directory
+    // wired with proper error mapping (Phase 1.5.2+).
+    if effect == "Disk.exists" {
+        return None;
+    }
     if effect.starts_with("Disk.") {
         return Some(UnsupportedReason::PendingPhase {
             phase: "Phase 1.5",
@@ -239,6 +246,9 @@ mod tests {
         assert!(classify("Args.get").is_none());
         assert!(classify("Env.get").is_none());
         assert!(classify("Console.readLine").is_none());
+        // Disk.exists graduated in Phase 1.5.1; the rest of Disk.*
+        // remain on the PendingPhase path.
+        assert!(classify("Disk.exists").is_none());
         assert!(matches!(
             classify("Disk.readText"),
             Some(UnsupportedReason::PendingPhase { .. })

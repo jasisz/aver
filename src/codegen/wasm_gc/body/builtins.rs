@@ -93,6 +93,9 @@ pub(super) fn emit_dotted_builtin(
         if parent == "Time" && method == "sleep" {
             return emit_time_sleep_wasip2(func, args, slots, ctx);
         }
+        if parent == "Disk" && method == "exists" {
+            return emit_disk_exists_wasip2(func, args, slots, ctx);
+        }
     }
 
     // Registered effect import? Same shape — push args, push the
@@ -2193,6 +2196,38 @@ fn emit_time_sleep_wasip2(
     })?;
     emit_expr(func, &args[0], slots, ctx)?; // ms: i64
     func.instruction(&Instruction::Call(sleep_fn));
+    Ok(())
+}
+
+/// Phase 1.5.1 — `Disk.exists(path: String) -> Bool` on
+/// `--target wasip2`. Emits the path expression onto the stack
+/// and calls `__rt_disk_exists`, which lazy-fetches a preopen
+/// descriptor, runs `stat-at`, and returns the boolean tag.
+/// `false` on no-preopens / Err / wasi-error; `true` on Ok.
+fn emit_disk_exists_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.exists on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.exists on `--target wasip2` expects 1 arg (path: String), got {}",
+            args.len()
+        )));
+    }
+    let exists_fn = lowering.disk_exists_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.exists on wasip2: __rt_disk_exists fn idx missing — \
+             helper not allocated"
+                .into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?; // path: ref string
+    func.instruction(&Instruction::Call(exists_fn));
     Ok(())
 }
 

@@ -49,6 +49,11 @@ struct Wasip2Globals {
     /// lifetime — wasmtime cleans up at component exit, so we never
     /// emit `[resource-drop]input-stream` for it.
     stdin_handle: Option<u32>,
+    /// Phase 1.5.1 — caches the first `wasi:filesystem/preopens.
+    /// get-directories` entry's descriptor handle. Populated when
+    /// any `Disk.*` is registered. -1 sentinel = "not yet
+    /// fetched" or "no preopens"; helpers retry fetch on -1.
+    disk_preopen_handle: Option<u32>,
 }
 use super::body::hash_helpers::{HashHelperRegistry, HashKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
@@ -321,6 +326,11 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoPollResourceDropPollable);
+                    }
+                    EffectName::DiskExists => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesStatAt);
                     }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
@@ -644,6 +654,37 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 1.5.1 — `__rt_disk_exists(path: ref string) -> i32`
+    // helper. Lazy-fetches the first preopen descriptor (cached
+    // in `disk_preopen_handle` global), marshals the path bytes
+    // through `__rt_string_to_lm`, calls
+    // `wasi:filesystem/types.[method]descriptor.stat-at` and
+    // returns `1` for an `Ok` result, `0` for `Err` (and `0`
+    // when no preopens are configured at all). The
+    // `descriptor-stat` payload itself is left untouched.
+    let disk_exists: Option<DiskExistsIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesStatAt)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+    {
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [ValType::I32]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskExistsIndices { fn_type, fn_idx })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
@@ -842,6 +883,9 @@ pub(super) fn emit_module_with(
     if let Some(t) = &time_sleep {
         funcs.function(t.fn_type);
     }
+    if let Some(d) = &disk_exists {
+        funcs.function(d.fn_type);
+    }
     if let Some(e) = &env_get_lookup {
         funcs.function(e.fn_type);
     }
@@ -995,6 +1039,32 @@ pub(super) fn emit_module_with(
         } else {
             None
         };
+        // Phase 1.5.1 — disk preopen descriptor cache. -1 sentinel
+        // for "not yet fetched". On first `Disk.*` call the helper
+        // calls `wasi:filesystem/preopens.get-directories`, takes
+        // the first entry's descriptor handle, and caches it here.
+        // Program-lifetime — no `[resource-drop]descriptor` for
+        // the preopen, wasmtime cleans up at component exit.
+        let disk_preopen_handle = if wasip2_imports
+            .lookup_wasm_type_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
         let _ = next_global_idx;
         module.section(&globals);
         Some(Wasip2Globals {
@@ -1002,6 +1072,7 @@ pub(super) fn emit_module_with(
             stdout_handle,
             stderr_handle,
             stdin_handle,
+            disk_preopen_handle,
         })
     } else {
         None
@@ -1049,6 +1120,7 @@ pub(super) fn emit_module_with(
                     .as_ref()
                     .map(|c| c.fn_idx),
                 time_sleep_fn_idx: time_sleep.as_ref().map(|t| t.fn_idx),
+                disk_exists_fn_idx: disk_exists.as_ref().map(|d| d.fn_idx),
             })
         } else {
             None
@@ -1540,6 +1612,35 @@ pub(super) fn emit_module_with(
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable)
             .expect("time_sleep emit requires drop-pollable fn idx (gate matches)");
         codes.function(&emit_time_sleep(cabi, subscribe, poll, drop_pollable));
+    }
+    if disk_exists.is_some() {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_exists emit requires disk_preopen_handle global (gate matches)");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_exists emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_exists emit requires bridge (string marshalling)")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_exists emit requires get-directories fn idx (gate matches)");
+        let stat_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesStatAt)
+            .expect("disk_exists emit requires stat-at fn idx (gate matches)");
+        codes.function(&emit_disk_exists(
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            stat_at,
+        ));
     }
     if let Some(e) = &env_get_lookup {
         codes.function(&emit_env_get_lookup(
@@ -3854,6 +3955,14 @@ struct TimeSleepIndices {
     fn_idx: u32,
 }
 
+/// Phase 1.5.1 — `__rt_disk_exists(path: ref string) -> i32`
+/// helper indices. Lazy-fetches the first preopen descriptor and
+/// returns the bool tag of `stat-at` against the preopen.
+struct DiskExistsIndices {
+    fn_type: u32,
+    fn_idx: u32,
+}
+
 struct BridgeIndices {
     from_lm_type: u32,
     to_lm_type: u32,
@@ -5197,6 +5306,147 @@ fn emit_time_sleep(
     f.instruction(&Instruction::Call(drop_pollable_fn));
 
     f.instruction(&Instruction::End);
+    f
+}
+
+/// Phase 1.5.1 — `__rt_disk_exists(path: ref string) -> i32` body.
+///
+/// Pipeline:
+/// 1. Lazy-init the preopen descriptor — if the cache global is
+///    `-1`, call `wasi:filesystem/preopens.get-directories`,
+///    take the first entry's `(descriptor, _path_string)` tuple,
+///    cache the descriptor handle. If the list is empty, leave
+///    the cache at `-1` and return `0` (no preopens ⇒ nothing
+///    can exist by definition).
+/// 2. Marshal the path argument into LM[0..len] via
+///    `__rt_string_to_lm`; that helper writes utf-8 bytes and
+///    returns the byte count.
+/// 3. Allocate a 96-byte retptr in the cabi_realloc heap (large
+///    enough for `result<descriptor-stat, error-code>` —
+///    descriptor-stat itself is ~72 bytes; padding + result tag
+///    pushes the conservative size to 96).
+/// 4. Call `stat-at(preopen, path-flags=1 (symlink-follow),
+///    path_ptr=0, path_len, retptr)`.
+/// 5. Read the result tag at `LM[retptr]`; return `1` for `Ok`,
+///    `0` for `Err`.
+///
+/// We never read the descriptor-stat payload — `Disk.exists` is
+/// a Bool, all we need is the tag.
+fn emit_disk_exists(
+    preopen_global: u32,
+    cabi_realloc_fn: u32,
+    str_to_lm_fn: u32,
+    get_directories_fn: u32,
+    stat_at_fn: u32,
+) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, Instruction, MemArg};
+
+    // Locals: 1 = preopen, 2 = path_len, 3 = retptr, 4 = list_ptr,
+    // 5 = list_len. Param 0 is `ref null $string`.
+    // We don't reference the param's exact ref type here — that's
+    // baked into the function type allocated above; locals just
+    // carry the i32 working values.
+    let mut f = Function::new(vec![(5, ValType::I32)]);
+    let p_path = 0u32;
+    let l_preopen = 1u32;
+    let l_path_len = 2u32;
+    let l_retptr = 3u32;
+    let l_list_ptr = 4u32;
+    let l_list_len = 5u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    // ── lazy-init preopen ─────────────────────────────────────
+    f.instruction(&Instruction::GlobalGet(preopen_global));
+    f.instruction(&Instruction::LocalSet(l_preopen));
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // retptr = cabi_realloc(0, 0, 4, 8)
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_retptr));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::Call(get_directories_fn));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::I32Load(mem4));
+        f.instruction(&Instruction::LocalSet(l_list_ptr));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_list_len));
+        // list_len > 0 → take first descriptor (LM[list_ptr])
+        f.instruction(&Instruction::LocalGet(l_list_len));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32GtU);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::LocalGet(l_list_ptr));
+            f.instruction(&Instruction::I32Load(mem4));
+            f.instruction(&Instruction::LocalTee(l_preopen));
+            f.instruction(&Instruction::GlobalSet(preopen_global));
+        }
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::End);
+
+    // No preopens? exists ⇒ false.
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::Return);
+    }
+    f.instruction(&Instruction::End);
+
+    // ── marshal path bytes to LM[0..len] ──────────────────────
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::Call(str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_path_len));
+
+    // ── allocate retptr (96 bytes, alignment=8) ──────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Const(96));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    // ── stat-at(preopen, path_flags=1, path_ptr=0, path_len,
+    //           retptr) ──
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(1)); // path-flags = symlink-follow
+    f.instruction(&Instruction::I32Const(0)); // path_ptr = 0 (LM[0..len])
+    f.instruction(&Instruction::LocalGet(l_path_len));
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::Call(stat_at_fn));
+
+    // ── return tag == 0 (Ok) ⇒ 1; tag != 0 ⇒ 0 ───────────────
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Eqz);
+
+    f.instruction(&Instruction::End); // fn end
     f
 }
 
