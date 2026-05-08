@@ -82,6 +82,68 @@ fn wasip2_poc_pipeline_smoke_hello_world() {
 }
 
 #[test]
+fn wasip2_codegen_compile_to_component_wraps_minimal_core() {
+    use aver::codegen::wasip2;
+
+    // Minimal core wasm with a single preview1 import — same shape
+    // the wasm-gc backend will produce once Phase 1.2 maps Aver
+    // effects onto preview1 imports. Verifies the public
+    // `wasip2::compile_to_component` API: wrap the core, return
+    // (component bytes, WIT source) for the chosen world.
+    let core_wasm = wat::parse_str(
+        r#"
+(module
+  (import "wasi_snapshot_preview1" "fd_write"
+    (func (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (func (export "_start")
+    nop))
+"#,
+    )
+    .expect("wat parses");
+
+    let (component, wit) =
+        wasip2::compile_to_component(&core_wasm, wasip2::Wasip2World::CliCommand)
+            .expect("compile_to_component should succeed for CliCommand world");
+
+    // Component validates as a real WASI 0.2 component.
+    let mut validator =
+        wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all());
+    validator
+        .validate_all(&component)
+        .expect("component is well-formed");
+
+    // WIT artifact is non-empty and references the chosen world.
+    assert!(wit.contains("wasi:cli/command"), "WIT mentions the world");
+    assert!(wit.contains("package aver:user;"), "WIT carries our package");
+}
+
+#[test]
+fn wasip2_codegen_rejects_http_proxy_world_in_phase_1() {
+    use aver::codegen::wasip2;
+
+    // Phase 3 / 0.19 — `wasi:http/proxy` is rejected up front so
+    // the failure mode is clear (NotImplemented, not Wrap). Tracks
+    // decision in `decisions/architecture.av::Wasip2ComponentTarget`
+    // and the phasing in `docs/wasip2.md`.
+    let core_wasm = wat::parse_str(r#"(module (func (export "_start")))"#)
+        .expect("trivial wat parses");
+
+    let err = wasip2::compile_to_component(&core_wasm, wasip2::Wasip2World::HttpProxy)
+        .expect_err("HttpProxy world should be rejected in 0.18 Phase 1");
+
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("not yet implemented"),
+        "rejection mentions Phase 3 status: {msg}"
+    );
+    assert!(
+        msg.contains("wasi:http/proxy"),
+        "error names the offending world: {msg}"
+    );
+}
+
+#[test]
 fn wasip2_poc_gc_types_inside_core_validate_at_component_boundary() {
     // Core module that USES GC types internally. The exported
     // entrypoint takes/returns canonical types only — so the

@@ -258,6 +258,14 @@ mod tests {
                 wasmparser::ExternalKind::Memory => "memory",
                 wasmparser::ExternalKind::Global => "global",
                 wasmparser::ExternalKind::Tag => "tag",
+                // `FuncExact` (wasmparser 0.248+) is the exact-typed
+                // function ref the Component Model 0.3 work introduces.
+                // The legacy NaN-boxed runtime never emits one — it
+                // only exports plain func/memory/global/table — so
+                // appearing here would mean upstream changed the
+                // runtime WAT in an unexpected way. Surface that as
+                // a recognisable label rather than a panic.
+                wasmparser::ExternalKind::FuncExact => "func-exact",
             }
         }
 

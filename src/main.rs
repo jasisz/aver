@@ -217,6 +217,7 @@ fn main() {
             pack,
             preset,
             handler,
+            world,
             optimize,
             emit_ir_after,
             explain_passes,
@@ -319,6 +320,7 @@ fn main() {
                 bridge: effective_bridge,
                 pack: effective_pack,
                 handler: handler.as_deref(),
+                world: *world,
                 optimize: *optimize,
             });
         }

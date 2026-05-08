@@ -4234,8 +4234,26 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         bridge,
         pack,
         handler,
+        world,
         optimize,
     } = opts;
+
+    // `--target wasip2` follows its own pipeline: wasm-gc lowering
+    // gives the core module, then `wit-component` wraps it as a
+    // Component. Lives in `src/codegen/wasip2/` so the legacy +
+    // wasm-gc paths stay untouched. Phase 1 of 0.18 "Span" — see
+    // `docs/wasip2.md` for the contract.
+    if matches!(target, super::cli::CompileTarget::Wasip2) {
+        cmd_compile_wasip2(
+            file,
+            output_dir,
+            project_name,
+            module_root_override,
+            world,
+            optimize,
+        );
+        return;
+    }
 
     // WASM-side targets (wasm / wat / wasm+wat): simplified pipeline,
     // no replay/policy/guest-entry support yet
@@ -4758,6 +4776,183 @@ fn cmd_compile_wasm_gc(
     }
 }
 
+/// `--target wasip2` compile entry — Phase 1 of 0.18 "Span".
+///
+/// Reuses the wasm-gc lowering to produce a core module, then wraps
+/// it as a Component via `wit-component` plus the preview-1 adapter
+/// from `wasi-preview1-component-adapter-provider`. Outputs:
+///
+/// - `out/<name>.component.wasm` — the component bytes
+/// - `out/<name>.wit` — the component contract in WIT, per
+///   `docs/wasip2.md` point 5
+///
+/// Phase 1 status: the wrap path is wired end-to-end, but the
+/// wasm-gc backend still emits `aver/*` imports rather than
+/// `wasi_snapshot_preview1::*`. So this command currently succeeds
+/// only on programs whose lowered core module imports nothing the
+/// COMMAND adapter cannot satisfy — typically empty / pure
+/// functions. Hello-world style programs that call `Console.print`
+/// fail at the wrap step until Phase 1.2 maps Aver effects to
+/// preview-1 imports. The error from `wit-component` points at the
+/// offending import so the failure is actionable.
+fn cmd_compile_wasip2(
+    file: &str,
+    output_dir: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+    world: super::cli::Wasip2World,
+    optimize: Option<super::cli::WasmOptMode>,
+) {
+    #[cfg(not(feature = "wasip2"))]
+    {
+        let _ = (
+            file,
+            output_dir,
+            project_name,
+            module_root_override,
+            world,
+            optimize,
+        );
+        eprintln!(
+            "{}",
+            "--target wasip2 requires --features wasip2 \
+             (rebuild with: cargo build --features wasip2)"
+                .red()
+        );
+        process::exit(1);
+    }
+
+    #[cfg(feature = "wasip2")]
+    {
+        use aver::codegen::{wasip2 as wasip2_codegen, wasm_gc};
+
+        let module_root = resolve_module_root(module_root_override);
+        let source = match read_file(file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+        let mut items = match parse_file(&source) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+
+        use aver::ir::{PipelineConfig, TypecheckMode};
+        let neutral_policy = aver::ir::NeutralAllocPolicy;
+        let result = aver::ir::pipeline::run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full {
+                    base_dir: Some(&module_root),
+                }),
+                alloc_policy: Some(&neutral_policy),
+                run_interp_lower: false,
+                run_buffer_build: false,
+                ..Default::default()
+            },
+        );
+        if let Some(tc) = &result.typecheck
+            && !tc.errors.is_empty()
+        {
+            eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+            process::exit(1);
+        }
+
+        let dep_modules = load_compile_deps(&items, &module_root, false, false);
+        // Bypass the `flatten_multimodule` shim in this file (gated on
+        // the `wasm` feature) and call the wasm-gc library function
+        // directly — `wasip2` enables `wasm-compile` (which exposes
+        // it) but does not pull `wasm`.
+        aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        aver::ir::pipeline::resolve(&mut items);
+
+        let core_bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{}", format!("{e}").red());
+                process::exit(1);
+            }
+        };
+
+        let world_codegen = match world {
+            super::cli::Wasip2World::CliCommand => wasip2_codegen::Wasip2World::CliCommand,
+            super::cli::Wasip2World::HttpProxy => wasip2_codegen::Wasip2World::HttpProxy,
+        };
+
+        let (component_bytes, wit_source) =
+            match wasip2_codegen::compile_to_component(&core_bytes, world_codegen) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", format!("{e}").red());
+                    eprintln!(
+                        "{}",
+                        "  hint: Phase 1.2 of 0.18 \"Span\" maps Aver effects \
+                         (Console.*, Args.*, Env.*) to preview-1 imports the \
+                         COMMAND adapter satisfies — until it lands, only \
+                         programs whose lowered core has no `aver/*` imports \
+                         compile under --target wasip2"
+                            .yellow()
+                    );
+                    process::exit(1);
+                }
+            };
+
+        let out_path = Path::new(output_dir);
+        if let Err(e) = std::fs::create_dir_all(out_path) {
+            eprintln!(
+                "{}",
+                format!("Failed to create output directory: {}", e).red()
+            );
+            process::exit(1);
+        }
+        let stem = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
+            Path::new(file)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("program")
+                .to_string()
+        });
+        let component_file = out_path.join(format!("{}.component.wasm", stem));
+        let wit_file = out_path.join(format!("{}.wit", stem));
+
+        if let Err(e) = std::fs::write(&component_file, &component_bytes) {
+            eprintln!(
+                "{}",
+                format!("Failed to write component file: {}", e).red()
+            );
+            process::exit(1);
+        }
+        if let Err(e) = std::fs::write(&wit_file, &wit_source) {
+            eprintln!("{}", format!("Failed to write WIT file: {}", e).red());
+            process::exit(1);
+        }
+
+        // `--optimize` is reserved for Phase 1+: the post-pass would
+        // run `wasm-opt` against the inner core module before the
+        // component wrap. Not wired in Phase 1.0; flag is accepted
+        // for forward compatibility.
+        let _ = optimize;
+
+        println!(
+            "{} wasip2 → {} ({} bytes, world {})",
+            "•".cyan(),
+            component_file.display().to_string().cyan(),
+            component_bytes.len(),
+            world_codegen.wit_name(),
+        );
+        println!(
+            "{}        {}",
+            "•".cyan(),
+            wit_file.display().to_string().cyan(),
+        );
+    }
+}
+
 /// True if `bytes` declares any import whose module name is exactly
 /// `module`. Used to detect effect imports without false positives from
 /// data sections that happen to spell `aver_rt`.
@@ -5255,6 +5450,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) bridge: Option<super::cli::WasmBridge>,
     pub(super) pack: Option<super::cli::DeployPack>,
     pub(super) handler: Option<&'a str>,
+    pub(super) world: super::cli::Wasip2World,
     pub(super) optimize: Option<super::cli::WasmOptMode>,
 }
 

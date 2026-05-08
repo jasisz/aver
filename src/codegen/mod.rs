@@ -18,6 +18,8 @@ pub mod rust;
 pub mod wasm;
 #[cfg(feature = "wasm-compile")]
 pub mod wasm_gc;
+#[cfg(feature = "wasip2")]
+pub mod wasip2;
 
 use std::collections::{HashMap, HashSet};
 

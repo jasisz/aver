@@ -162,15 +162,50 @@ pub(super) enum CompileTarget {
     /// the design notes and the cross-engine bench matrix.
     #[value(name = "wasm-gc")]
     WasmGc,
+    /// WASI 0.2 / Component Model output (`--target wasip2`). Wraps
+    /// a wasm-gc core module via `wit-component` with the preview-1
+    /// adapter from `wasi-preview1-component-adapter-provider`,
+    /// emits `.component.wasm` plus a sibling `.wit`. Peer target
+    /// with `--target wasm-gc`, not a successor — `wasm-gc` runs on
+    /// browsers, Workers, and JS hosts via `aver/*` host imports;
+    /// `wasip2` runs on wasmtime, Spin, NGINX Unit, wasmCloud, and
+    /// every other Component Model host via canonical WIT imports.
+    /// `Terminal.*` is rejected at compile time. See
+    /// `docs/wasip2.md` for the full contract.
+    #[value(name = "wasip2")]
+    Wasip2,
 }
 
 impl CompileTarget {
     pub(super) fn needs_wasm_pipeline(self) -> bool {
         matches!(
             self,
-            CompileTarget::Wasm | CompileTarget::EdgeWasm | CompileTarget::WasmGc
+            CompileTarget::Wasm
+                | CompileTarget::EdgeWasm
+                | CompileTarget::WasmGc
+                | CompileTarget::Wasip2
         )
     }
+}
+
+/// WASI 0.2 world the component targets. Used only by
+/// `--target wasip2`; ignored by every other target. Defaults to
+/// `wasi:cli/command` (a long-lived process exporting `wasi:cli/run`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(super) enum Wasip2World {
+    /// Standard CLI / long-running process. Exports `wasi:cli/run`.
+    /// Effects reach the host via `wasi:cli/{stdin,stdout,stderr,
+    /// environment}`, `wasi:filesystem/{types,preopens}`,
+    /// `wasi:clocks`, `wasi:random`, `wasi:http/outgoing-handler`,
+    /// `wasi:sockets/tcp`. `Terminal.*` is rejected at compile time.
+    #[default]
+    #[value(name = "wasi:cli/command")]
+    CliCommand,
+    /// HTTP server shape (Phase 3 / 0.19). Exports
+    /// `wasi:http/incoming-handler`. Compile-rejected in 0.18 unless
+    /// the implementation lands cleanly inside the release window.
+    #[value(name = "wasi:http/proxy")]
+    HttpProxy,
 }
 
 /// Runtime policy handling for generated Rust projects.
@@ -455,6 +490,13 @@ pub(super) enum Commands {
         /// handler is whatever you point this flag at.
         #[arg(long)]
         handler: Option<String>,
+        /// WASI 0.2 world the component targets. Used only by
+        /// `--target wasip2`; ignored otherwise. Default
+        /// `wasi:cli/command` (long-running process exporting
+        /// `wasi:cli/run`). `wasi:http/proxy` is Phase 3 and
+        /// compile-rejected in 0.18 unless ready.
+        #[arg(long, value_enum, default_value = "wasi:cli/command")]
+        world: Wasip2World,
         /// Post-process generated WASM through a multi-stage size/speed
         /// pipeline (wasm-metadce → wasm-opt --converge --strip-*).
         /// Pass `size` for aggressive size reduction (`-Oz`) or `speed`
@@ -672,6 +714,44 @@ mod tests {
                 assert_eq!(policy, None);
                 assert_eq!(guest_entry.as_deref(), Some("runGuestProgram"));
                 assert!(!with_self_host_support);
+            }
+            _ => panic!("expected compile command"),
+        }
+    }
+
+    #[test]
+    fn compile_accepts_target_wasip2_with_default_world() {
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "examples/core/hello.av",
+            "--target",
+            "wasip2",
+        ]);
+        match cli.command {
+            Commands::Compile { target, world, .. } => {
+                assert_eq!(target, CompileTarget::Wasip2);
+                assert_eq!(world, Wasip2World::CliCommand);
+            }
+            _ => panic!("expected compile command"),
+        }
+    }
+
+    #[test]
+    fn compile_accepts_target_wasip2_with_explicit_world() {
+        let cli = Cli::parse_from([
+            "aver",
+            "compile",
+            "examples/core/hello.av",
+            "--target",
+            "wasip2",
+            "--world",
+            "wasi:http/proxy",
+        ]);
+        match cli.command {
+            Commands::Compile { target, world, .. } => {
+                assert_eq!(target, CompileTarget::Wasip2);
+                assert_eq!(world, Wasip2World::HttpProxy);
             }
             _ => panic!("expected compile command"),
         }
