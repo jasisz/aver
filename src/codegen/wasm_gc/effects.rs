@@ -720,6 +720,7 @@ impl EffectName {
                 | EffectName::ConsoleReadLine
                 | EffectName::TimeUnixMs
                 | EffectName::TimeNow
+                | EffectName::TimeSleep
                 | EffectName::RandomInt
                 | EffectName::RandomFloat
                 | EffectName::ArgsGet

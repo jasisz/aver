@@ -315,6 +315,13 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::CliStdinGetStdin);
                         wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
                     }
+                    EffectName::TimeSleep => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::ClocksMonotonicSubscribeDuration);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoPollResourceDropPollable);
+                    }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
             }
@@ -570,39 +577,6 @@ pub(super) fn emit_module_with(
     //     matches — preserves Aver's `Env.get(name) -> String`
     //     no-Option semantics.
     // Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
-    // ref null $string`. Pure-compute helper that turns the
-    // datetime returned by `wasi:clocks/wall-clock.now` into the
-    // RFC3339-like string Aver's `Time.now() -> String` exposes.
-    // Materialises a fresh 24-byte `(array i8)` and writes
-    // `YYYY-MM-DDTHH:MM:SS.mmmZ` into it. The civil_from_days
-    // arithmetic mirrors `aver-rt::format_utc_rfc3339_like`.
-    // Allocated whenever wasip2 + the clocks slot are wired —
-    // `wasm-opt -Oz` strips this when only `Time.unixMs` reaches
-    // the import (i.e. no source-level `Time.now`).
-    let format_iso8601: Option<FormatIso8601Indices> = if matches!(target, super::TargetMode::Wasip2)
-        && wasip2_imports
-            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::ClocksWallClockNow)
-            .is_some()
-        && let Some(string_idx) = registry.string_array_type_idx
-    {
-        let s_ref = ValType::Ref(wasm_encoder::RefType {
-            nullable: true,
-            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
-        });
-        types.ty().function([ValType::I64, ValType::I32], [s_ref]);
-        let fn_type = next_type_idx;
-        next_type_idx += 1;
-        let fn_idx = next_builtin_fn_idx;
-        next_builtin_fn_idx += 1;
-        Some(FormatIso8601Indices {
-            fn_type,
-            fn_idx,
-            string_type_idx: string_idx,
-        })
-    } else {
-        None
-    };
-
     // Phase 1.3.4 — `__rt_console_read_line() ->
     // Result<String, String>` body. Caches `wasi:cli/stdin.get-stdin`
     // in a wasm global (lazy-init via `-1` sentinel) and loops
@@ -641,6 +615,35 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 1.4c — `__rt_time_sleep(ms i64)` helper. Subscribes
+    // for a `ms * 1_000_000` nanosecond duration on the monotonic
+    // clock, polls the resulting pollable to completion, drops the
+    // pollable. Pollable is per-call (single-use), so the
+    // `[resource-drop]` here is mandatory — without it every call
+    // would leak a host-side handle. Allocation order matches the
+    // funcs/codes append order below; getting these out of sync
+    // mis-routes call-site `Call(idx)` to the wrong helper body.
+    let time_sleep: Option<TimeSleepIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::ClocksMonotonicSubscribeDuration)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollPoll)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable)
+            .is_some()
+    {
+        types.ty().function([ValType::I64], []);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(TimeSleepIndices { fn_type, fn_idx })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
@@ -664,6 +667,42 @@ pub(super) fn emit_module_with(
             fn_idx: lookup_fn,
             string_type_idx: string_idx,
             option_string_type_idx: option_string_idx,
+        })
+    } else {
+        None
+    };
+
+    // Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
+    // ref null $string`. Pure-compute helper that turns the
+    // datetime returned by `wasi:clocks/wall-clock.now` into the
+    // RFC3339-like string Aver's `Time.now() -> String` exposes.
+    // Materialises a fresh 24-byte `(array i8)` and writes
+    // `YYYY-MM-DDTHH:MM:SS.mmmZ` into it. The civil_from_days
+    // arithmetic mirrors `aver-rt::format_utc_rfc3339_like`.
+    // Allocated whenever wasip2 + the clocks slot are wired —
+    // `wasm-opt -Oz` strips this when only `Time.unixMs` reaches
+    // the import (i.e. no source-level `Time.now`). Allocation
+    // position is the LAST helper before factory exports because
+    // the funcs/codes append phase below emits its entry last.
+    let format_iso8601: Option<FormatIso8601Indices> = if matches!(target, super::TargetMode::Wasip2)
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::ClocksWallClockNow)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+    {
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([ValType::I64, ValType::I32], [s_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(FormatIso8601Indices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
         })
     } else {
         None
@@ -799,6 +838,9 @@ pub(super) fn emit_module_with(
     }
     if let Some(c) = &console_read_line {
         funcs.function(c.fn_type);
+    }
+    if let Some(t) = &time_sleep {
+        funcs.function(t.fn_type);
     }
     if let Some(e) = &env_get_lookup {
         funcs.function(e.fn_type);
@@ -1006,6 +1048,7 @@ pub(super) fn emit_module_with(
                 console_read_line_fn_idx: console_read_line
                     .as_ref()
                     .map(|c| c.fn_idx),
+                time_sleep_fn_idx: time_sleep.as_ref().map(|t| t.fn_idx),
             })
         } else {
             None
@@ -1481,6 +1524,22 @@ pub(super) fn emit_module_with(
             get_stdin,
             blocking_read,
         ));
+    }
+    if time_sleep.is_some() {
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("time_sleep emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let subscribe = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::ClocksMonotonicSubscribeDuration)
+            .expect("time_sleep emit requires subscribe-duration fn idx (gate matches)");
+        let poll = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollPoll)
+            .expect("time_sleep emit requires poll fn idx (gate matches)");
+        let drop_pollable = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable)
+            .expect("time_sleep emit requires drop-pollable fn idx (gate matches)");
+        codes.function(&emit_time_sleep(cabi, subscribe, poll, drop_pollable));
     }
     if let Some(e) = &env_get_lookup {
         codes.function(&emit_env_get_lookup(
@@ -3785,6 +3844,16 @@ struct ConsoleReadLineIndices {
     result_string_string_type_idx: u32,
 }
 
+/// Phase 1.4c — `__rt_time_sleep(ms i64) -> ()` helper indices.
+/// Wraps `subscribe-duration` + `poll` + `[resource-drop]pollable`
+/// in one body so the pollable resource never escapes the helper.
+/// Source-level Aver still sees `Time.sleep(ms) -> Unit` — the
+/// pollable model is an implementation detail of the wasip2 path.
+struct TimeSleepIndices {
+    fn_type: u32,
+    fn_idx: u32,
+}
+
 struct BridgeIndices {
     from_lm_type: u32,
     to_lm_type: u32,
@@ -5046,6 +5115,88 @@ fn emit_console_read_line(
     f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
     f.instruction(&Instruction::StructNew(result_type_idx));
     f.instruction(&Instruction::End); // fn end
+    f
+}
+
+/// Phase 1.4c — `__rt_time_sleep(ms i64) -> ()` body.
+///
+/// Pipeline: convert milliseconds to nanoseconds, fetch a fresh
+/// pollable from `wasi:clocks/monotonic-clock.subscribe-duration`,
+/// stash that pollable handle in a 4-byte LM buffer (the borrow
+/// list `poll` takes), allocate an 8-byte retptr for `poll`'s
+/// `list<u32>` result, call `poll` (host blocks until the timer
+/// pollable is ready), then `[resource-drop]pollable` the handle.
+///
+/// The pollable lives only inside this helper — no global cache,
+/// no source-level `Pollable` type — so this is the simplest
+/// place where the Component-Model "pollable" word actually
+/// touches Aver, and even then it stays implementation detail.
+/// Per-call `[resource-drop]` is mandatory: each `subscribe-
+/// duration` returns a brand-new handle, leaving them undropped
+/// would leak host-side resources at the rate of one per
+/// `Time.sleep` call.
+fn emit_time_sleep(
+    cabi_realloc_fn: u32,
+    subscribe_duration_fn: u32,
+    poll_fn: u32,
+    drop_pollable_fn: u32,
+) -> wasm_encoder::Function {
+    use wasm_encoder::{Function, Instruction, MemArg};
+
+    // Locals: 1 = pollable_handle, 2 = in_buf, 3 = retptr (param 0 = ms i64).
+    let mut f = Function::new(vec![(3, ValType::I32)]);
+    let p_ms = 0u32;
+    let l_pollable = 1u32;
+    let l_in_buf = 2u32;
+    let l_retptr = 3u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+
+    // ns = ms * 1_000_000  (i64; saturates well within i64 range
+    // for any practical sleep)
+    f.instruction(&Instruction::LocalGet(p_ms));
+    f.instruction(&Instruction::I64Const(1_000_000));
+    f.instruction(&Instruction::I64Mul);
+    f.instruction(&Instruction::Call(subscribe_duration_fn));
+    f.instruction(&Instruction::LocalSet(l_pollable));
+
+    // in_buf = cabi_realloc(0, 0, 4, 4); LM[in_buf] = pollable
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_in_buf));
+    f.instruction(&Instruction::LocalGet(l_in_buf));
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::I32Store(mem4));
+
+    // retptr = cabi_realloc(0, 0, 4, 8) — for `list<u32>` result
+    // of poll. Helper ignores the indices: the only pollable in
+    // `in` is our timer, and "ready" is the only outcome.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    // poll(in_buf, 1, retptr) — blocks until at least one
+    // pollable is ready (which means our timer fired).
+    f.instruction(&Instruction::LocalGet(l_in_buf));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::Call(poll_fn));
+
+    // [resource-drop] pollable — release the host-side handle.
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::Call(drop_pollable_fn));
+
+    f.instruction(&Instruction::End);
     f
 }
 

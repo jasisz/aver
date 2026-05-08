@@ -106,6 +106,41 @@ pub(super) enum Wasip2ImportSlot {
     /// `\n` or EOF and accumulating bytes into a `cabi_realloc`-
     /// owned buffer.
     InputStreamBlockingRead,
+    /// `wasi:clocks/monotonic-clock.subscribe-duration:
+    /// func(when: duration) -> pollable` where
+    /// `type duration = u64` (nanoseconds).
+    ///
+    /// Returns a fresh `pollable` resource handle that becomes
+    /// "ready" after the requested duration elapses on the
+    /// host's monotonic clock. Phase 1.4c uses it to back
+    /// `Time.sleep(ms)` — the pollable is short-lived (one
+    /// allocation + one poll + drop, all inside the helper),
+    /// so the resource lifecycle is per-call, not program-life.
+    /// Canonical-ABI signature: `(when: i64) -> i32`.
+    ClocksMonotonicSubscribeDuration,
+    /// `wasi:io/poll.poll: func(in: list<borrow<pollable>>) ->
+    /// list<u32>` — the synchronous wait primitive of WASI 0.2.
+    /// Blocks until at least one of the supplied pollables is
+    /// ready, returns the indices that became ready.
+    ///
+    /// Canonical-ABI signature: `in` lowers to `(in_ptr i32,
+    /// in_len i32)` (a contiguous list of pollable handles in
+    /// LM); the result `list<u32>` lowers via retptr (8 bytes:
+    /// `(out_ptr i32, out_len i32)` — the host calls
+    /// `cabi_realloc` to allocate the indices buffer). Phase 1.4c
+    /// `Time.sleep` ignores the returned indices (the only
+    /// pollable in `in` is the duration timer; "ready" is the
+    /// only outcome we care about).
+    ///   `(in_ptr: i32, in_len: i32, retptr: i32) -> ()`.
+    IoPollPoll,
+    /// `wasi:io/poll.[resource-drop]pollable: func(this:
+    /// pollable) -> ()`. Releases a pollable handle. Phase 1.4c
+    /// `Time.sleep` calls this once per invocation — the pollable
+    /// returned by `subscribe-duration` is single-use, so leaving
+    /// it would leak host-side resources at the rate of one per
+    /// sleep call.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    IoPollResourceDropPollable,
 }
 
 impl Wasip2ImportSlot {
@@ -136,6 +171,13 @@ impl Wasip2ImportSlot {
                 "wasi:io/streams@0.2.4",
                 "[method]input-stream.blocking-read",
             ),
+            Wasip2ImportSlot::ClocksMonotonicSubscribeDuration => {
+                ("wasi:clocks/monotonic-clock@0.2.4", "subscribe-duration")
+            }
+            Wasip2ImportSlot::IoPollPoll => ("wasi:io/poll@0.2.4", "poll"),
+            Wasip2ImportSlot::IoPollResourceDropPollable => {
+                ("wasi:io/poll@0.2.4", "[resource-drop]pollable")
+            }
         }
     }
 
@@ -166,6 +208,18 @@ impl Wasip2ImportSlot {
             // a single retptr regardless).
             Wasip2ImportSlot::CliEnvironmentGetArguments
             | Wasip2ImportSlot::CliEnvironmentGetEnvironment => vec![ValType::I32],
+            // `subscribe-duration(when: duration) -> pollable` —
+            // `duration` = u64 nanoseconds (i64 in flat lowering),
+            // returns the pollable handle inline (i32, fits flat).
+            Wasip2ImportSlot::ClocksMonotonicSubscribeDuration => vec![ValType::I64],
+            // `poll(in: list<borrow<pollable>>) -> list<u32>` —
+            // `in` lowered as (ptr, len), result via retptr.
+            Wasip2ImportSlot::IoPollPoll => {
+                vec![ValType::I32, ValType::I32, ValType::I32]
+            }
+            // `[resource-drop]pollable(this: pollable)` — single
+            // i32 handle, no return.
+            Wasip2ImportSlot::IoPollResourceDropPollable => vec![ValType::I32],
         }
     }
 
@@ -174,10 +228,13 @@ impl Wasip2ImportSlot {
             // Resource handle — i32 ID owned by the host.
             Wasip2ImportSlot::CliGetStdout
             | Wasip2ImportSlot::CliGetStderr
-            | Wasip2ImportSlot::CliStdinGetStdin => vec![ValType::I32],
+            | Wasip2ImportSlot::CliStdinGetStdin
+            | Wasip2ImportSlot::ClocksMonotonicSubscribeDuration => vec![ValType::I32],
             // Result lowered via retptr — no inline return.
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush
             | Wasip2ImportSlot::InputStreamBlockingRead
+            | Wasip2ImportSlot::IoPollPoll
+            | Wasip2ImportSlot::IoPollResourceDropPollable
             | Wasip2ImportSlot::ClocksWallClockNow
             | Wasip2ImportSlot::CliEnvironmentGetArguments
             | Wasip2ImportSlot::CliEnvironmentGetEnvironment => Vec::new(),

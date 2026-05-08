@@ -13,8 +13,8 @@
 //!
 //! 1. **Permanent** — WASI 0.2 fundamentally cannot satisfy the
 //!    effect (`Terminal.*` raw mode, `Env.set` against a read-only
-//!    environment, `Time.sleep` without the pollable model). These
-//!    will not land on `--target wasip2` regardless of phase.
+//!    environment). These will not land on `--target wasip2`
+//!    regardless of phase.
 //! 2. **Out of 0.18 release scope** — direct WIT lowering is
 //!    feasible but deliberately deferred (`Http.*`, `Tcp.*`,
 //!    `HttpServer.*`). Lands in 0.19+ via Phase 2 / 3 work.
@@ -132,15 +132,10 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
                    implementation can ever satisfy a write",
         });
     }
-    if effect == "Time.sleep" {
-        return Some(UnsupportedReason::Permanent {
-            hint: "sleep without burning CPU requires \
-                   `wasi:clocks/monotonic-clock.subscribe-duration` + \
-                   `wasi:io/poll.poll`, which is the pollable model 0.18 \
-                   keeps out of scope; busy-wait is rejected because it \
-                   spins host cycles and reads as an Aver runtime bug",
-        });
-    }
+    // Time.sleep graduated in Phase 1.4c — the wasip2 codegen now
+    // wraps `subscribe-duration` + `poll` + `[resource-drop]pollable`
+    // inside `__rt_time_sleep`. The pollable model is hidden in the
+    // helper; source-level Aver still sees `Time.sleep(ms) -> Unit`.
     // ---------- Out of 0.18 release scope ----------
     if effect.starts_with("Http.") {
         return Some(UnsupportedReason::OutOfRelease {
@@ -197,10 +192,11 @@ mod tests {
             classify("Env.set"),
             Some(UnsupportedReason::Permanent { .. })
         ));
-        assert!(matches!(
-            classify("Time.sleep"),
-            Some(UnsupportedReason::Permanent { .. })
-        ));
+        // Time.sleep moved out of `Permanent` in Phase 1.4c — it now
+        // lowers via subscribe-duration + poll + drop-pollable. The
+        // earlier reject was a 0.18 scope choice, not a fundamental
+        // limitation.
+        assert!(classify("Time.sleep").is_none());
     }
 
     #[test]
@@ -223,14 +219,16 @@ mod tests {
     fn classifies_pending_phase_rejects() {
         // Console.print/error/warn graduated in 1.2b1.5; Time.unixMs
         // and Random.{int,float} graduated in Phase 1.4; Time.now
-        // graduated in Phase 1.4b — the wasip2 codegen now lowers
-        // them to wasi:cli/io/streams / wasi:clocks / wasi:random
-        // natively.
+        // graduated in Phase 1.4b; Time.sleep graduated in Phase
+        // 1.4c (pollable model wrapped inside `__rt_time_sleep`) —
+        // the wasip2 codegen now lowers them to wasi:cli/io/streams
+        // / wasi:clocks / wasi:random / wasi:io/poll natively.
         assert!(classify("Console.print").is_none());
         assert!(classify("Console.error").is_none());
         assert!(classify("Console.warn").is_none());
         assert!(classify("Time.unixMs").is_none());
         assert!(classify("Time.now").is_none());
+        assert!(classify("Time.sleep").is_none());
         assert!(classify("Random.int").is_none());
         assert!(classify("Random.float").is_none());
         // Args.get graduated in Phase 1.3.2 (cabi_realloc + shared

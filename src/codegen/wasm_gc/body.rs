@@ -412,6 +412,12 @@ pub(super) struct Wasip2Lowering {
     /// buffer, and returns `Result.Ok(line)` (or `Result.Err("EOF")`
     /// when the first read produces zero bytes).
     pub(super) console_read_line_fn_idx: Option<u32>,
+    /// Phase 1.4c — `__rt_time_sleep(ms i64) -> ()` helper wasm
+    /// fn idx. Wraps `wasi:clocks/monotonic-clock.subscribe-
+    /// duration` + `wasi:io/poll.poll` + `[resource-drop]pollable`
+    /// — the pollable is per-call, allocated and dropped inside
+    /// the helper, so it never leaks to source-level Aver.
+    pub(super) time_sleep_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

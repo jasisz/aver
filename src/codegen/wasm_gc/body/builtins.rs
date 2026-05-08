@@ -90,6 +90,9 @@ pub(super) fn emit_dotted_builtin(
         if parent == "Console" && method == "readLine" {
             return emit_console_read_line_wasip2(func, args, ctx);
         }
+        if parent == "Time" && method == "sleep" {
+            return emit_time_sleep_wasip2(func, args, slots, ctx);
+        }
     }
 
     // Registered effect import? Same shape — push args, push the
@@ -2156,6 +2159,40 @@ fn emit_console_read_line_wasip2(
         )
     })?;
     func.instruction(&Instruction::Call(read_fn));
+    Ok(())
+}
+
+/// Phase 1.4c — `Time.sleep(ms: Int) -> Unit` on `--target wasip2`.
+///
+/// Emits the milliseconds expression onto the stack and calls
+/// `__rt_time_sleep`, which subscribes a pollable on the
+/// monotonic clock, waits for it via `wasi:io/poll.poll`, and
+/// drops the pollable. Source-level Aver still sees the same
+/// `Time.sleep(ms)` it sees on the VM target — pollables are
+/// implementation detail.
+fn emit_time_sleep_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Time.sleep on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Time.sleep on `--target wasip2` expects 1 arg (ms: Int), got {}",
+            args.len()
+        )));
+    }
+    let sleep_fn = lowering.time_sleep_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Time.sleep on wasip2: __rt_time_sleep fn idx missing — helper not allocated"
+                .into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?; // ms: i64
+    func.instruction(&Instruction::Call(sleep_fn));
     Ok(())
 }
 
