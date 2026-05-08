@@ -58,6 +58,49 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
         apply_hostile_expansion, format_type_errors, inject_hostile_effect_stubs_for_blocks,
     };
 
+    // Pre-flight rejects for features the wasm-gc backend can't yet
+    // compile or dispatch. Each one points the user at VM verify.
+    use crate::ast::VerifyKind;
+    use crate::types::checker::effect_classification::{EffectDimension, classify};
+    let preview_blocks = merge_verify_blocks(&items);
+    for block in &preview_blocks {
+        if block.trace {
+            return Err(format!(
+                "verify --wasm-gc: trace projections (`.trace.*`) not yet supported (block at line {}). Use `aver verify` (VM) for trace cases.",
+                block.line
+            ));
+        }
+        let givens = match &block.kind {
+            VerifyKind::Law(law) => law.givens.as_slice(),
+            VerifyKind::Cases => block.cases_givens.as_slice(),
+        };
+        for given in givens {
+            if let Some(c) = classify(&given.type_name)
+                && !matches!(c.dimension, EffectDimension::Output)
+            {
+                return Err(format!(
+                    "verify --wasm-gc: effect Oracle stubs (`given {}: {} = ...`) not yet supported (block at line {}). The wasm-gc backend has no `BranchPath` runtime and no per-case linker remap, so classified-effect dispatch can't override the import. Use `aver verify` (VM) for cases that mock classified effects.",
+                    given.name, given.type_name, block.line
+                ));
+            }
+        }
+        // Cases that mention `BranchPath` directly in expressions can't
+        // compile to wasm-gc — the BranchPath module is VM-side Oracle
+        // infrastructure and the wasm-gc backend has no constructor for
+        // it. Surface the case file/line so the user can either move
+        // the test to VM verify or split the BranchPath-touching
+        // verification out.
+        for (lhs, rhs) in &block.cases {
+            if expr_mentions_ident(lhs, "BranchPath") || expr_mentions_ident(rhs, "BranchPath") {
+                return Err(format!(
+                    "verify --wasm-gc: case mentions `BranchPath` (block at line {}). The wasm-gc backend has no BranchPath primitive — Oracle counter-tracking is VM-only. Use `aver verify` (VM) for this block.",
+                    block.line
+                ));
+            }
+        }
+    }
+    drop(preview_blocks);
+
     crate::ir::pipeline::tco(&mut items);
 
     if mode == ExpansionMode::Hostile {
@@ -94,30 +137,6 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
         }
     }
 
-    // Effect-Oracle stubs (user-given a non-Output classified effect) need
-    // per-case linker import remapping in wasmtime. The VM uses
-    // `install_oracle_stubs` runtime override; wasm imports are bound at
-    // instantiation, so we'd have to re-instantiate per case (or rewrite
-    // call sites to dispatch through a host-controlled table). Out of
-    // scope for this cut. Pure verify cases and value-givens work fine.
-    use crate::ast::VerifyKind;
-    use crate::types::checker::effect_classification::{EffectDimension, classify};
-    for block in &blocks {
-        let givens = match &block.kind {
-            VerifyKind::Law(law) => law.givens.as_slice(),
-            VerifyKind::Cases => block.cases_givens.as_slice(),
-        };
-        for given in givens {
-            if let Some(c) = classify(&given.type_name)
-                && !matches!(c.dimension, EffectDimension::Output)
-            {
-                return Err(format!(
-                    "verify --wasm-gc: effect Oracle stubs (`given {}: {} = ...`) not yet supported (block at line {}). Use `aver verify` (VM) for cases that mock classified effects.",
-                    given.name, given.type_name, block.line
-                ));
-            }
-        }
-    }
 
     let plans = build_verify_wasm_gc_plans(&mut items, &blocks);
 
@@ -196,39 +215,65 @@ struct WasmGcVerifyPlan {
 /// `return_type: "Unit"` and a typecheck mode that's lenient on the
 /// mismatch; wasm-gc's full typecheck pass demands the declaration
 /// match the body, so we emit `-> Bool` explicitly here.
-fn make_verify_bool_helper(name: String, line: usize, body_expr: Spanned<Expr>) -> TopLevel {
+fn make_verify_bool_helper(
+    name: String,
+    line: usize,
+    body_expr: Spanned<Expr>,
+    effects: Vec<Spanned<String>>,
+) -> TopLevel {
     use std::sync::Arc as Rc;
     TopLevel::FnDef(FnDef {
         name,
         line,
         params: vec![],
         return_type: "Bool".to_string(),
-        effects: vec![],
+        effects,
         desc: None,
         body: Rc::new(FnBody::from_expr(body_expr)),
         resolution: None,
     })
 }
 
-fn make_verify_string_helper(name: String, line: usize, body_expr: Spanned<Expr>) -> TopLevel {
+fn make_verify_string_helper(
+    name: String,
+    line: usize,
+    body_expr: Spanned<Expr>,
+    effects: Vec<Spanned<String>>,
+) -> TopLevel {
     use std::sync::Arc as Rc;
     TopLevel::FnDef(FnDef {
         name,
         line,
         params: vec![],
         return_type: "String".to_string(),
-        effects: vec![],
+        effects,
         desc: None,
         body: Rc::new(FnBody::from_expr(body_expr)),
         resolution: None,
     })
 }
 
-/// Synthesize a `String`-typed expression that renders `expr`'s value
-/// at runtime, when the type is one we know how to stringify with
-/// stdlib primitives. Returns `None` for compound types (List/Map/
-/// Vector/Variant/Record) — those fall back to source-text on fail.
-fn repr_expr_for(expr: &Spanned<Expr>, line: usize) -> Option<Spanned<Expr>> {
+/// Collect the effect declaration of the `verify`-block's target fn so
+/// the synthesized helpers (`__verify_X_check`, `__verify_X_guard`,
+/// `__verify_X_*_repr`) inherit the same effect surface. Without this,
+/// the wasm-gc full typecheck rejects helpers with declared `effects:
+/// []` that transitively call effect-y fns (`twoFloatsDistinct` calls
+/// `Random.float` → check helper indirectly does too).
+fn collect_block_fn_effects(items: &[TopLevel], fn_name: &str) -> Vec<Spanned<String>> {
+    items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::FnDef(fd) if fd.name == fn_name => Some(fd.effects.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Synthesize a `String`-typed expression that renders the user's
+/// LHS / RHS expression at runtime. Returns `None` for types we can't
+/// stringify with stdlib primitives. Compound types (List/Map/Vector/
+/// Variant/Record) fall back to source-text rendering on fail.
+fn repr_expr_via_clone(expr: &Spanned<Expr>, line: usize) -> Option<Spanned<Expr>> {
     use crate::types::Type;
     let ty = expr.ty()?;
     let mk_attr_call = |module: &str, method: &str| {
@@ -279,14 +324,17 @@ fn build_verify_wasm_gc_plans(
             VerifyKind::Law(law) => Some(&law.sample_guards),
             VerifyKind::Cases => None,
         };
+        let block_effects = collect_block_fn_effects(items, &block.fn_name);
 
         for (case_idx, (left_expr, right_expr)) in block.cases.iter().cloned().enumerate() {
             let prefix = format!("__verify_{}_{}_{}", block.fn_name, block_idx, case_idx);
             let check_name = format!("{}_check", prefix);
 
             // `__verify_X_check() -> Bool` returns `lhs == rhs`. Wasm-gc
-            // backend lowers the `==` per-type via eq_helpers, so this
-            // works for primitive and compound shapes alike.
+            // backend lowers `==` per-type via eq_helpers, so structural
+            // equality on Result/Option/Tuple/Record/List/Map/Vector
+            // works without a host-side decoder. Bare BinOp on cloned
+            // sub-expressions; the second pipeline pass restamps `ty`.
             let check_expr = Spanned::new(
                 Expr::BinOp(
                     BinOp::Eq,
@@ -299,6 +347,7 @@ fn build_verify_wasm_gc_plans(
                 check_name.clone(),
                 block.line,
                 check_expr,
+                block_effects.clone(),
             ));
 
             // Guard helper, same shape as VM verify.
@@ -306,20 +355,35 @@ fn build_verify_wasm_gc_plans(
                 .or_else(|| sample_guards.and_then(|gs| gs.get(case_idx)).cloned());
             let guard_name = guard_expr.map(|guard_expr| {
                 let name = format!("{}_guard", prefix);
-                items.push(make_verify_bool_helper(name.clone(), block.line, guard_expr));
+                items.push(make_verify_bool_helper(
+                    name.clone(),
+                    block.line,
+                    guard_expr,
+                    block_effects.clone(),
+                ));
                 name
             });
 
             // Repr helpers — only for primitive return types. Compound
             // types fall through to source-text rendering on fail.
-            let left_repr = repr_expr_for(&left_expr, block.line).map(|repr_body| {
+            let left_repr = repr_expr_via_clone(&left_expr, block.line).map(|repr_body| {
                 let name = format!("{}_left_repr", prefix);
-                items.push(make_verify_string_helper(name.clone(), block.line, repr_body));
+                items.push(make_verify_string_helper(
+                    name.clone(),
+                    block.line,
+                    repr_body,
+                    block_effects.clone(),
+                ));
                 name
             });
-            let right_repr = repr_expr_for(&right_expr, block.line).map(|repr_body| {
+            let right_repr = repr_expr_via_clone(&right_expr, block.line).map(|repr_body| {
                 let name = format!("{}_right_repr", prefix);
-                items.push(make_verify_string_helper(name.clone(), block.line, repr_body));
+                items.push(make_verify_string_helper(
+                    name.clone(),
+                    block.line,
+                    repr_body,
+                    block_effects.clone(),
+                ));
                 name
             });
 
@@ -619,6 +683,55 @@ fn load_module_recursive(
         analysis: pipeline_result.analysis,
     });
     Ok(())
+}
+
+/// Recursive scan: does `expr` (or any subexpression) reference the
+/// bare ident `name`? Used to gate the BranchPath upfront reject —
+/// wasm-gc has no BranchPath primitive.
+fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
+    match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n == name,
+        Expr::Attr(inner, _) => expr_mentions_ident(inner, name),
+        Expr::FnCall(callee, args) => {
+            expr_mentions_ident(callee, name)
+                || args.iter().any(|a| expr_mentions_ident(a, name))
+        }
+        Expr::BinOp(_, a, b) => expr_mentions_ident(a, name) || expr_mentions_ident(b, name),
+        Expr::Match { subject, arms } => {
+            expr_mentions_ident(subject, name)
+                || arms.iter().any(|a| expr_mentions_ident(&a.body, name))
+        }
+        Expr::Constructor(c, payload) => {
+            c.split('.').next() == Some(name)
+                || payload
+                    .as_ref()
+                    .map(|p| expr_mentions_ident(p, name))
+                    .unwrap_or(false)
+        }
+        Expr::ErrorProp(inner) => expr_mentions_ident(inner, name),
+        Expr::List(items) | Expr::Tuple(items) => {
+            items.iter().any(|e| expr_mentions_ident(e, name))
+        }
+        Expr::MapLiteral(pairs) => pairs
+            .iter()
+            .any(|(k, v)| expr_mentions_ident(k, name) || expr_mentions_ident(v, name)),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, e)| expr_mentions_ident(e, name))
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_mentions_ident(base, name)
+                || updates.iter().any(|(_, e)| expr_mentions_ident(e, name))
+        }
+        Expr::TailCall(tc) => tc.args.iter().any(|a| expr_mentions_ident(a, name)),
+        Expr::IndependentProduct(items, _) => {
+            items.iter().any(|e| expr_mentions_ident(e, name))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ast::StrPart::Parsed(e) => expr_mentions_ident(e, name),
+            _ => false,
+        }),
+        Expr::Literal(_) => false,
+    }
 }
 
 fn invoke_bool(
