@@ -32,6 +32,7 @@
 //!   source of truth for the import / export surface.
 
 mod error;
+mod wasi_bundle;
 mod wit;
 mod wrap;
 

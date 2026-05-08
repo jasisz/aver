@@ -80,19 +80,25 @@ pub fn compile_to_component(
         ));
     }
 
+    // Build a Resolve seeded with the bundled WASI 0.2.4 WIT
+    // package set, then push the user package on top. Order matters:
+    // the user world `include`s `wasi:cli/command`, so wasi:* packages
+    // must be available first.
+    let mut resolve = Resolve::default();
+    super::wasi_bundle::push_wasi_packages(&mut resolve)?;
+
     let wit_source = super::wit::emit_world_wit(world);
 
-    // Parse our generated WIT into a `Resolve` so the metadata encoder
-    // has typed input. `parse` reads from a string — the path argument
-    // is for error messages only, no filesystem access.
+    // Parse our generated WIT into the same `Resolve`. `parse` reads
+    // from a string — the path argument is for error messages only,
+    // no filesystem access.
     let unresolved =
         UnresolvedPackageGroup::parse("aver-generated.wit", &wit_source).map_err(|e| {
             Wasip2Error::Wrap(format!("WIT parse failed for generated package: {e}"))
         })?;
-    let mut resolve = Resolve::default();
     let pkg_id = resolve
         .push_group(unresolved)
-        .map_err(|e| Wasip2Error::Wrap(format!("push WIT package into Resolve: {e}")))?;
+        .map_err(|e| Wasip2Error::Wrap(format!("push aver:user package into Resolve: {e}")))?;
     let world_id = resolve
         .select_world(&[pkg_id], Some(world.local_name()))
         .map_err(|e| {

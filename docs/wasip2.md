@@ -2,14 +2,16 @@
 
 > Status: Phase 1 of 0.18 "Span". This document is the contract. Anything not on this page is out of scope until the contract is updated and a decision block in `decisions/architecture.av` says otherwise.
 
-`--target wasip2` produces a WebAssembly Component (`.component.wasm` plus a sibling `.wit`) that imports WASI 0.2 worlds **directly** — no preview-1 adapter, no compatibility bridge. Aver effects lower to WIT/WASI imports; Aver values stay private inside the core module; WIT/canonical ABI is the only thing the host sees. The component runs on every Component Model host: `wasmtime run` / `wasmtime serve`, Spin, NGINX Unit, wasmCloud, Fermyon Cloud.
+`--target wasip2` produces a WebAssembly Component (`.component.wasm` plus a sibling `.wit`) that imports WASI 0.2 worlds **directly** — no preview-1 adapter, no compatibility bridge. Aver effects lower to WIT/WASI imports; Aver values stay private inside the core module; WIT/canonical ABI is the only thing the host sees. The component is intended for WASI 0.2 Component Model hosts such as wasmtime, Spin, NGINX Unit, wasmCloud, and Fermyon Cloud. Exact support depends on the world and interfaces used by the generated WIT — Component Model alone is not sufficient; the host also has to provide the specific interfaces the world declares.
+
+This is not a general "export Aver as a WIT library" feature. In 0.18 the only public export shape is `wasi:cli/run` (the entry function the `wasi:cli/command` world requires). Arbitrary Aver functions are not exported as WIT interfaces. The component is something a host runs, not a typed library other components link against.
 
 ## Two targets, two jobs
 
 | Target | Job | Hosts |
 |---|---|---|
 | `--target wasm-gc` | Portable core wasm with engine GC + tail calls. Self-contained binary, host wires `aver/*` imports. | Browsers (Chrome 119+, Firefox 120+, Safari 18.2+), Cloudflare Workers (via `--preset cloudflare --handler <fn>`), Node 22+, Deno, Bun, embedded wasmtime |
-| `--target wasip2` | WASI 0.2 component with WIT-typed import surface. Imports satisfied by the host's standard WASI implementation. | wasmtime, Spin 3.x, NGINX Unit, wasmCloud, Fermyon Cloud, anything that takes a `.component.wasm` |
+| `--target wasip2` | WASI 0.2 component whose public import/export surface is described by WIT. The wasm-gc emitter produces core imports/exports in canonical-ABI-compatible shapes; component-type metadata declares which WIT world they correspond to; `ComponentEncoder` builds the actual component boundary from the two. | wasmtime, Spin 3.x, NGINX Unit, wasmCloud, Fermyon Cloud — any host that takes a `.component.wasm` AND provides the world's interfaces |
 
 Cloudflare Workers and browsers do not run components natively; they stay on `--target wasm-gc`. `--preset cloudflare` is a wasm-gc preset and stays that way.
 
@@ -46,24 +48,27 @@ The wasm-gc emitter does **not** implement the Component Model boundary. It emit
 
 ## Component contract
 
-Seven properties every `--target wasip2` build must satisfy:
+Eight properties every `--target wasip2` build must satisfy:
 
-1. **Imports are declared effects only.** Every WIT import the component declares maps to an effect that appears in the program's `! [...]` lists, and every declared effect maps to a WIT import. No silent capability creep, no host hooks beyond what the source asks for.
+1. **Imports are declared effects only.** Every WIT import in the component is justified by at least one declared Aver effect (`! [...]`), and every declared effect either lowers to one or more WIT imports in the selected world or is rejected at compile time. A single Aver call may translate into several WIT calls in the generated glue (e.g., `Console.print` cache + stream write); a single WIT interface may serve many Aver effects (e.g., `wasi:io/streams` for both stdout writes and stdin reads). No silent capability creep, no host hooks beyond what the source asks for.
 2. **Exports are the handler shape only.** A program with a `main` function exports `wasi:cli/run`; a program compiled with `--world wasi:http/proxy` (Phase 3 / 0.19) exports `wasi:http/incoming-handler`. No internal Aver functions, types, or runtime helpers leak out as public exports.
 3. **All public ABI goes through WIT.** Anything that crosses the component boundary uses canonical WIT types: strings, lists, records, variants, results. No Aver-specific encoding.
 4. **No Aver values cross the boundary.** Per-instantiation `Map<K, V>`, `List<T>`, `Vector<T>`, `Option<T>`, `Result<T, E>`, tuples, records, and variants stay inside the user core module. The canonical ABI for engine-GC types is still pre-proposal upstream; we do not encode anything that would break when it lands.
 5. **Generated WIT is emitted next to the artifact.** `aver compile --target wasip2 -o out` produces `out/<name>.component.wasm` and `out/<name>.wit`. The WIT is human-readable and is the source of truth for what the component imports and exports — no hidden surface in custom sections.
 6. **Component validates with `wasm-tools`.** `wasm-tools validate --features component-model out/<name>.component.wasm` exits zero on every artifact `aver compile --target wasip2` produces. Bench scenarios and example programs are gated on this in CI.
 7. **WASI resources stay implementation-internal.** Stdout / stderr `output-stream` handles, filesystem descriptors, pollables, and similar resource handles may be cached and reused inside the per-effect glue. They are **not** exposed as Aver-level values. There is no `Resource<T>` / `Handle<T>` / `Stream<T>` type on the Aver surface in 0.18. Adding one is a deliberate language decision for 0.19+, not a side effect of WIT lowering.
+8. **Filesystem access is preopen-scoped.** `Disk.*` paths resolve only against WASI preopened directories. Absolute paths and paths that escape preopens return `Result.Err("path not preopened")` (a *dynamic* host capability gap, distinct from compile-time rejects). The Aver source-level `Disk` API stays unchanged; the wasip2 lowering enforces the WASI capability model at the boundary.
 
 ## `aver run --wasip2 file.av`
 
-Compiles the source to a component, instantiates it via embedded wasmtime, and runs the `wasi:cli/run` export:
+Compiles the source to a `wasi:cli/command` component, instantiates it via embedded wasmtime, and runs the `wasi:cli/run` export:
 
 - Effects are recorded at the **Aver call level**, above the WIT import boundary. Recordings are interchangeable with VM, wasm-gc, and self-host traces (same `recording.json` shape since 0.16.1).
 - Diagnostics are Aver-shaped. Wasmtime trap messages translate through the same path that `aver run --wasm-gc` uses today; users see Aver source spans, not core-wasm offsets.
 - No build cache. Compile is fast enough that adding a cache layer is not worth the cache-invalidation contract.
-- `--record <dir>` and `--replay <recording.json>` work on Phase 1 effects (Console / Args / Env / Time / Random / basic Disk) in 0.18.
+- `--record <dir>` and `--replay <recording.json>` work on Phase 1 effects (Console / Args / Env.get / Time.now / Time.unixMs / Random / basic Disk) in 0.18.
+
+External hosts: `wasmtime run` for command components is the canonical path; `wasmtime serve` and other server-capable hosts (Spin's `wasi:http/proxy` runtime, NGINX Unit) target the HTTP/proxy world, which is Phase 3 / 0.19+ and out of 0.18 scope.
 
 ## `aver compile --target wasip2 -o out`
 
@@ -89,21 +94,31 @@ Aver effects lower directly to WASI 0.2 imports. The mapping is fixed per effect
 | Aver effect | WIT import (the glue calls into) |
 |---|---|
 | `Args.get` | `wasi:cli/environment.get-arguments` |
-| `Env.get` / `Env.set` | `wasi:cli/environment.get-environment` (`set` is no-op on WASI 0.2 — environment is read-only) |
-| `Console.print` / `error` / `warn` | `wasi:cli/stdout.get-stdout` (cached) + `wasi:io/streams.[method]write` |
-| `Console.readLine` | `wasi:cli/stdin.get-stdin` (cached) + `wasi:io/streams.[method]blocking-read` |
-| `Disk.readText` / `writeText` / `appendText` / `exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | `wasi:filesystem/preopens.get-directories` (cached) + `wasi:filesystem/types.[method]*` |
+| `Env.get` | `wasi:cli/environment.get-environment` |
+| `Env.set` | **Compile-rejected** — WASI 0.2 environment is read-only by design (no host can ever satisfy a write). Same "cannot-ever-support" category as `Terminal.*`. |
+| `Console.print` / `error` / `warn` | `wasi:cli/stdout.get-stdout` / `wasi:cli/stderr.get-stderr` (cached) + `wasi:io/streams.output-stream.[method]blocking-write-and-flush` |
+| `Console.readLine` | `wasi:cli/stdin.get-stdin` (cached) + `wasi:io/streams.input-stream.[method]blocking-read` |
+| `Disk.readText` / `writeText` / `appendText` / `exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | `wasi:filesystem/preopens.get-directories` (cached) + `wasi:filesystem/types.[method]*`. Paths outside preopens return `Result.Err("path not preopened")` — capability model, contract point 8. |
 | `Time.now` / `unixMs` | `wasi:clocks/wall-clock.now` |
-| `Time.sleep` | `wasi:clocks/monotonic-clock.now` + busy-wait (`subscribe-duration` is async/poll, out of 0.18 scope) |
+| `Time.sleep` | **Compile-rejected** in 0.18 — requires the `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` pollable model to do without burning CPU. Busy-wait is unacceptable: it pales as "works" but spins host cycles, breaks under per-component CPU caps, and reads as an Aver runtime bug rather than a target gap. Phase that adds pollables (0.19+) flips this on. |
 | `Random.int` / `float` | `wasi:random/random.get-random-bytes` + Aver-side decode |
 | `Http.*` | **Compile-rejected** — out of 0.18 scope (Phase 2 / 0.19) |
 | `HttpServer.listen` / `listenWith` | **Compile-rejected** — out of 0.18 scope (Phase 3 / 0.19) |
 | `Tcp.*` | **Compile-rejected** — out of 0.18 scope (Phase 2 / 0.19) |
 | `Terminal.*` (12 methods) | **Compile-rejected** — WASI 0.2 has no raw/cooked-mode operations |
 
-### Why `Terminal.*` is rejected, not stubbed
+### Why `Terminal.*` / `Env.set` / `Time.sleep` are rejected, not stubbed
 
-WASI 0.2 has `wasi:cli/terminal-input` and `terminal-output` as TTY signals, but no standardised raw/cooked-mode operations (`set-raw-mode`, `set-echo`, `get-window-size`). A program that declares `! [Terminal.readKey]` is statically incompatible with the wasip2 target — that is a target-level error, not a runtime host failure. Compile fails with:
+The axis is **static target capability** vs **dynamic host capability**. `Result.Err` stubs are reserved for *dynamic* host capability gaps: missing preopen (`Disk.readText("/etc/passwd")` on a host that didn't preopen `/`), missing env var, denied permission. A target that *cannot ever* support an effect is a different category and gets a different shape — a compile-time `target-effect-unsupported` error.
+
+In 0.18:
+
+- **`Terminal.*`** — WASI 0.2 has `wasi:cli/terminal-input` and `terminal-output` as TTY signals, but no standardised raw/cooked-mode operations (`set-raw-mode`, `set-echo`, `get-window-size`). The capability is structurally absent.
+- **`Env.set`** — WASI 0.2 environment is read-only. There is no host implementation that could ever satisfy a write. Silent no-op would be a trap: source declares "I set X" and the program runs as if it succeeded while the environment is unchanged.
+- **`Time.sleep`** — sleep without burning CPU requires `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll`, which is the pollables/streams story 0.18 keeps out of scope. Busy-waiting on `now()` is rejected because it spins host cycles, breaks under per-component CPU caps, and looks like an Aver runtime bug rather than a target gap.
+- **`Http.*`, `Tcp.*`, `HttpServer.listen`** — out of 0.18 scope by deliberate design (Phase 2 / 3, 0.19+). Same compile-time `target-effect-unsupported` shape so the user sees one consistent error type rather than a mix of stubs and rejects.
+
+Compile output for any of these:
 
 ```
 error[target-effect-unsupported]:
@@ -115,8 +130,6 @@ error[target-effect-unsupported]:
   Or replace Terminal.* with Console.* / Args / stdin-compatible APIs.
 ```
 
-`Result.Err` stubs are reserved for *dynamic* host capability gaps: missing preopen, missing env var, denied permission. A target that *cannot ever* support an effect is a different category and gets a different shape. Same rule applies to HTTP/sockets in 0.18: they are out of scope by design, so the compiler rejects them rather than stubbing.
-
 ## Phasing inside 0.18
 
 | Phase | Scope | Status target |
@@ -125,9 +138,9 @@ error[target-effect-unsupported]:
 | 1.0 / 1.1 | `--target wasip2` CLI plumbing, end-to-end pipeline for no-effect programs | 0.18 core (done) |
 | 1.2 | `wasi:cli/stdout` + `wasi:io/streams` glue. `Console.print` → stream write end-to-end | 0.18 core |
 | 1.3 | `wasi:cli/stdin` + `wasi:cli/environment`. `Console.readLine` / `Args.get` / `Env.get` | 0.18 core |
-| 1.4 | `wasi:clocks` + `wasi:random`. `Time.*` / `Random.*` | 0.18 core |
-| 1.5 | `wasi:filesystem`. Basic `Disk.*` (read/write/exists/delete/listDir/makeDir) | 0.18 core |
-| 1.6 | Reject `Terminal` / `Http` / `Tcp` / `HttpServer` at compile time with `target-effect-unsupported` | 0.18 core |
+| 1.4 | `wasi:clocks/wall-clock.now` for `Time.now` / `Time.unixMs`; `wasi:random` for `Random.*`. `Time.sleep` is rejected in 0.18. | 0.18 core |
+| 1.5 | `wasi:filesystem`. Basic `Disk.*` (read/write/exists/delete/listDir/makeDir). Paths that escape preopens return `Result.Err("path not preopened")` per contract point 8. | 0.18 core |
+| 1.6 | Reject `Terminal.*` / `Env.set` / `Time.sleep` / `Http.*` / `Tcp.*` / `HttpServer.*` at compile time with `target-effect-unsupported` | 0.18 core |
 | 1.7 | `aver run --wasip2` (embedded wasmtime + `wasmtime-wasi`) | 0.18 core |
 
 After Phase 1 lands green and the effect matrix in `docs/effects.md` has no "maybe this works" cells for 0.18 scope, the legacy `--target wasm` backend is deleted: `src/codegen/wasm/`, the `wasm-legacy` Cargo feature, the `--bridge` flag, the `Bridge` enum, the `wasm-runtime` subcommand, and the legacy bundling code in `src/main/commands.rs`. See decision `DropLegacyNanBoxedWasm` in `decisions/architecture.av`.
