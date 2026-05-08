@@ -159,11 +159,7 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     }
     // ---------- Pending phase rejects (0.18 in-flight) ----------
     // Each entry vanishes as the phase commit lands.
-    if matches!(effect, "Console.print" | "Console.error" | "Console.warn") {
-        return Some(UnsupportedReason::PendingPhase {
-            phase: "Phase 1.2b1",
-        });
-    }
+    // (`Console.print`/`error`/`warn` graduated in Phase 1.2b1.5.)
     if effect == "Console.readLine" {
         return Some(UnsupportedReason::PendingPhase {
             phase: "Phase 1.3",
@@ -234,8 +230,14 @@ mod tests {
 
     #[test]
     fn classifies_pending_phase_rejects() {
+        // Console.print/error/warn graduated in 1.2b1.5 — the wasip2
+        // codegen now lowers them to wasi:cli/io/streams natively.
+        assert!(classify("Console.print").is_none());
+        assert!(classify("Console.error").is_none());
+        assert!(classify("Console.warn").is_none());
+        // Console.readLine still pending (Phase 1.3).
         assert!(matches!(
-            classify("Console.print"),
+            classify("Console.readLine"),
             Some(UnsupportedReason::PendingPhase { .. })
         ));
         assert!(matches!(

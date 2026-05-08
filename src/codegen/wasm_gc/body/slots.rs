@@ -46,6 +46,16 @@ pub(super) struct SlotTable {
     /// produces N elements aliasing the same `inner` ref, and the
     /// previous `array.set` in place silently rewrote every alias.
     pub(super) vector_set_scratch: HashMap<String, u32>,
+    /// Scratch i32 slot for the wasip2 `Console.{print, error, warn}`
+    /// call-site lowering. Holds the byte length returned from
+    /// `__rt_string_to_lm` so the canonical-ABI retptr can be
+    /// computed as `(len + 15) & -16` at write time. Allocated when
+    /// the body contains at least one `Console.{print, error, warn}`
+    /// call site, regardless of `TargetMode`. On `AverBridge` the
+    /// scratch is allocated but unused — one i32 local has zero
+    /// runtime cost vs branching `SlotTable::build_for_fn` on the
+    /// target. Phase 1.2b1.5.
+    pub(super) console_print_wasip2_scratch: Option<u32>,
 }
 
 impl SlotTable {
@@ -189,11 +199,25 @@ impl SlotTable {
                 vector_set_scratch.insert(canonical, local_idx);
             }
         }
+        // Phase 1.2b1.5 — i32 scratch for the wasip2 Console.* call-
+        // site glue (caches the byte length returned from
+        // `__rt_string_to_lm` so retptr can be computed as
+        // `(len + 15) & -16` at the canonical-ABI write call). Cheap
+        // to over-allocate on AverBridge (one unused i32 local) so we
+        // skip threading `TargetMode` through the slot builder.
+        let console_print_wasip2_scratch = if fn_needs_console_print_wasip2_scratch(fd) {
+            let idx = by_slot.len() as u32;
+            by_slot.push(ValType::I32);
+            Some(idx)
+        } else {
+            None
+        };
         Ok(Self {
             by_slot,
             subject_scratch,
             args_get_scratch,
             vector_set_scratch,
+            console_print_wasip2_scratch,
         })
     }
 
@@ -266,6 +290,76 @@ fn expr_reaches_args_get_no_args(expr: &Expr) -> bool {
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
             if let crate::ast::StrPart::Parsed(inner) = p {
                 expr_reaches_args_get_no_args(&inner.node)
+            } else {
+                false
+            }
+        }),
+        _ => false,
+    }
+}
+
+/// True if the body reaches at least one `Console.print` /
+/// `Console.error` / `Console.warn` call. Used to gate the i32 scratch
+/// slot that the wasip2 call-site lowering uses to cache the
+/// `__rt_string_to_lm` byte-length return for the retptr computation.
+pub(super) fn fn_needs_console_print_wasip2_scratch(fd: &FnDef) -> bool {
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(stmt_reaches_console_print)
+}
+
+fn stmt_reaches_console_print(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_reaches_console_print(&e.node),
+    }
+}
+
+fn expr_reaches_console_print(expr: &Expr) -> bool {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            if let Expr::Attr(parent, member) = &callee.node
+                && let Expr::Ident(p) = &parent.node
+                && p == "Console"
+                && matches!(member.as_str(), "print" | "error" | "warn")
+            {
+                return true;
+            }
+            expr_reaches_console_print(&callee.node)
+                || args.iter().any(|a| expr_reaches_console_print(&a.node))
+        }
+        Expr::BinOp(_, l, r) => {
+            expr_reaches_console_print(&l.node) || expr_reaches_console_print(&r.node)
+        }
+        Expr::Match { subject, arms } => {
+            expr_reaches_console_print(&subject.node)
+                || arms.iter().any(|a| expr_reaches_console_print(&a.body.node))
+        }
+        Expr::TailCall(boxed) => boxed
+            .args
+            .iter()
+            .any(|a| expr_reaches_console_print(&a.node)),
+        Expr::Attr(obj, _) => expr_reaches_console_print(&obj.node),
+        Expr::ErrorProp(inner) => expr_reaches_console_print(&inner.node),
+        Expr::Constructor(_, payload) => payload
+            .as_deref()
+            .is_some_and(|p| expr_reaches_console_print(&p.node)),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, e)| expr_reaches_console_print(&e.node)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_reaches_console_print(&base.node)
+                || updates
+                    .iter()
+                    .any(|(_, e)| expr_reaches_console_print(&e.node))
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(|e| expr_reaches_console_print(&e.node))
+        }
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_reaches_console_print(&k.node) || expr_reaches_console_print(&v.node)
+        }),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
+            if let crate::ast::StrPart::Parsed(inner) = p {
+                expr_reaches_console_print(&inner.node)
             } else {
                 false
             }

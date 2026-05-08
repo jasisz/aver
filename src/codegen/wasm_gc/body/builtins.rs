@@ -52,6 +52,26 @@ pub(super) fn emit_dotted_builtin(
         return Ok(());
     }
 
+    // Phase 1.2b1.5 — `--target wasip2` lowering for the
+    // `Console.{print, error, warn}` trio. Bypasses the AverBridge
+    // `aver/console_print` import path and emits canonical-ABI
+    // calls directly: lazy-init the cached `output-stream` handle
+    // (one i32 global, sentinel `-1`), marshal the Aver String into
+    // LM[0..len] via `__rt_string_to_lm`, then call
+    // `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
+    // with `(handle, ptr=0, len, retptr=(len+15)&-16)`. The retptr
+    // area receives the host-written `result<_, stream-error>`
+    // tag; we ignore it (Aver `Console.print` is `Unit`, matches
+    // the wasm-gc target's fire-and-forget shape). Defensive
+    // `memory.grow(1)` after the marshal ensures retptr+12 fits
+    // even when `len` lands exactly on a page boundary.
+    if ctx.wasip2_lowering.is_some()
+        && parent == "Console"
+        && matches!(method, "print" | "error" | "warn")
+    {
+        return emit_console_print_wasip2(func, method, args, slots, ctx);
+    }
+
     // Registered effect import? Same shape — push args, push the
     // current fn name via `global.get` (one immutable global per fn
     // name, init by `array.new_data` at instantiation) so the host
@@ -1686,5 +1706,123 @@ pub(super) fn emit_vector_set_boxed(
     )));
     func.instruction(&Instruction::StructNew(opt_idx));
     func.instruction(&Instruction::End);
+    Ok(())
+}
+
+/// Phase 1.2b1.5 — call-site lowering for `Console.print` /
+/// `Console.error` / `Console.warn` on `--target wasip2`.
+///
+/// Sequence (single arg `s: String`):
+///   1. Lazy-init the cached `output-stream` handle. The handle
+///      global starts at `-1`; on first call, invoke
+///      `wasi:cli/{stdout,stderr}.get-stdout/stderr` (returns the
+///      i32 resource handle) and store it.
+///   2. Push `s` (engine-GC `(ref null $string)`), call
+///      `__rt_string_to_lm` — that helper writes the utf-8 bytes
+///      to LM[0..len], grows memory if needed, and returns `len`.
+///      Stash `len` in the per-fn i32 scratch slot.
+///   3. Defensive `memory.grow(1)` so the retptr area
+///      `[(len+15)&-16, (len+15)&-16 + 12)` cannot fall past the
+///      memory boundary even when `len` lands on a page boundary.
+///   4. Call `wasi:io/streams.[method]output-stream.blocking-write-
+///      and-flush(handle, ptr=0, len, retptr=(len+15)&-16)`. The
+///      host writes a 12-byte `result<_, stream-error>` tag at
+///      `retptr`; we ignore it (Aver `Console.*` is `Unit`).
+fn emit_console_print_wasip2(
+    func: &mut wasm_encoder::Function,
+    method: &str,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation(
+            "emit_console_print_wasip2 invoked without wasip2 lowering ctx".into(),
+        )
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Console.{method} on `--target wasip2` expects 1 arg (the String), got {}",
+            args.len()
+        )));
+    }
+    let len_local = slots.console_print_wasip2_scratch.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Console.* on wasip2: i32 scratch slot was not allocated by SlotTable — \
+             `fn_needs_console_print_wasip2_scratch` did not flag this fn"
+                .into(),
+        )
+    })?;
+
+    // Pick stream: stdout for `print`, stderr for `error` / `warn`.
+    // The matching `get_*_fn_idx` and `*_handle_global` must be
+    // populated whenever this method's effect is registered;
+    // anything else is a wiring bug in `module::emit_module_with`.
+    let (handle_global, get_fn) = match method {
+        "print" => (
+            lowering.stdout_handle_global.ok_or_else(|| {
+                WasmGcError::Validation(
+                    "Console.print on wasip2: stdout_handle global missing — \
+                     wasip2_imports did not register CliGetStdout"
+                        .into(),
+                )
+            })?,
+            lowering.get_stdout_fn_idx.ok_or_else(|| {
+                WasmGcError::Validation(
+                    "Console.print on wasip2: get_stdout fn idx missing".into(),
+                )
+            })?,
+        ),
+        "error" | "warn" => (
+            lowering.stderr_handle_global.ok_or_else(|| {
+                WasmGcError::Validation(
+                    "Console.error/warn on wasip2: stderr_handle global missing".into(),
+                )
+            })?,
+            lowering.get_stderr_fn_idx.ok_or_else(|| {
+                WasmGcError::Validation(
+                    "Console.error/warn on wasip2: get_stderr fn idx missing".into(),
+                )
+            })?,
+        ),
+        _ => {
+            return Err(WasmGcError::Validation(format!(
+                "Console.{method} is not lowered on `--target wasip2`"
+            )));
+        }
+    };
+
+    // Step 1: lazy-init handle.
+    func.instruction(&Instruction::GlobalGet(handle_global));
+    func.instruction(&Instruction::I32Const(-1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    func.instruction(&Instruction::Call(get_fn));
+    func.instruction(&Instruction::GlobalSet(handle_global));
+    func.instruction(&Instruction::End);
+
+    // Step 2: marshal s → LM[0..len], stash len.
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(lowering.str_to_lm_fn_idx));
+    func.instruction(&Instruction::LocalSet(len_local));
+
+    // Step 3: defensive memory.grow(1) so retptr+12 stays in-bounds
+    // even when len landed exactly on a page boundary.
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::MemoryGrow(0));
+    func.instruction(&Instruction::Drop);
+
+    // Step 4: blocking-write-and-flush(handle, ptr=0, len, retptr).
+    func.instruction(&Instruction::GlobalGet(handle_global));
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::LocalGet(len_local));
+    // retptr = (len + 15) & -16 (16-byte aligned, just past the
+    // string bytes). Computed inline to avoid a second scratch slot.
+    func.instruction(&Instruction::LocalGet(len_local));
+    func.instruction(&Instruction::I32Const(15));
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::I32Const(-16));
+    func.instruction(&Instruction::I32And);
+    func.instruction(&Instruction::Call(lowering.blocking_write_fn_idx));
     Ok(())
 }

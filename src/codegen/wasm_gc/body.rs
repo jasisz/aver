@@ -160,6 +160,7 @@ pub(super) fn emit_fn_body(
     registry: &TypeRegistry,
     effect_idx_lookup: &HashMap<String, u32>,
     caller_fn_collector: &std::cell::RefCell<CallerFnCollector>,
+    wasip2_lowering: Option<&Wasip2Lowering>,
 ) -> Result<Vec<ValType>, WasmGcError> {
     let slots = SlotTable::build_for_fn(fd, registry, fn_map)?;
     let FnBody::Block(stmts) = fd.body.as_ref();
@@ -190,6 +191,7 @@ pub(super) fn emit_fn_body(
         binding_names: &binding_names,
         effect_idx_lookup,
         caller_fn_collector,
+        wasip2_lowering,
     };
 
     for (i, stmt) in stmts.iter().enumerate() {
@@ -314,6 +316,44 @@ pub(super) struct EmitCtx<'a> {
     /// are emitted from `names` after every fn body has been
     /// produced.
     pub(super) caller_fn_collector: &'a std::cell::RefCell<CallerFnCollector>,
+    /// `Some(...)` when the wasm-gc emitter was invoked under
+    /// `TargetMode::Wasip2` AND the program registers at least one
+    /// of `Console.print` / `Console.error` / `Console.warn`. Carries
+    /// the fn / global / helper indices the call-site lowering needs
+    /// to emit canonical-ABI imports of `wasi:cli/{stdout,stderr}`
+    /// and `wasi:io/streams.[method]output-stream.blocking-write-and-
+    /// flush`. Phase 1.2b1.5.
+    pub(super) wasip2_lowering: Option<&'a Wasip2Lowering>,
+}
+
+/// Phase 1.2b1.5 — concrete fn / global / helper indices the
+/// call-site lowering for `Console.{print, error, warn}` needs on
+/// `TargetMode::Wasip2`. Built once per module in `module.rs` after
+/// the import section / globals section / bridge fn indices have
+/// been allocated, then handed to every `emit_fn_body` call as a
+/// borrowed reference.
+pub(super) struct Wasip2Lowering {
+    /// `wasi:cli/stdout.get-stdout` imported wasm fn idx. `Some(...)`
+    /// when at least `Console.print` is registered; else `None`.
+    pub(super) get_stdout_fn_idx: Option<u32>,
+    /// `wasi:cli/stderr.get-stderr` imported wasm fn idx. `Some(...)`
+    /// when at least `Console.{error, warn}` is registered.
+    pub(super) get_stderr_fn_idx: Option<u32>,
+    /// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
+    /// imported wasm fn idx. Always `Some(...)` when this struct
+    /// itself is constructed.
+    pub(super) blocking_write_fn_idx: u32,
+    /// Mutable i32 global caching the stdout `output-stream` resource
+    /// handle. Initial value `-1` ("not yet resolved"). `Some(idx)`
+    /// when the `Console.print` slot was registered.
+    pub(super) stdout_handle_global: Option<u32>,
+    /// Same shape for stderr.
+    pub(super) stderr_handle_global: Option<u32>,
+    /// `__rt_string_to_lm` helper wasm fn idx. Reused from the
+    /// existing JS-bridge helper machinery — on wasip2 it stays
+    /// internal (not exported) and copies utf-8 bytes from the
+    /// Aver `(ref null $string)` to LM[0..len].
+    pub(super) str_to_lm_fn_idx: u32,
 }
 
 impl<'a> EmitCtx<'a> {

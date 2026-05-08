@@ -696,7 +696,42 @@ pub(super) fn emit_module_with(
     } else {
         None
     };
-    let _ = wasip2_globals; // Phase 1.2b1.5 reads these from the call-site lowering ctx.
+
+    // Phase 1.2b1.5 — `Wasip2Lowering` collects every fn / global /
+    // helper idx the call-site lowering for `Console.print` /
+    // `Console.error` / `Console.warn` needs to emit canonical-ABI
+    // calls instead of the AverBridge `aver/console_print` import.
+    // Constructed only when wasip2 imports were registered AND the
+    // bridge fn machinery is in place (the latter implies
+    // `__rt_string_to_lm` has been allocated — the call site uses
+    // it to marshal the Aver String into LM[0..len]).
+    let wasip2_lowering: Option<super::body::Wasip2Lowering> = match (
+        target,
+        wasip2_imports.import_count() > 0,
+        bridge.as_ref(),
+        wasip2_globals.as_ref(),
+    ) {
+        (super::TargetMode::Wasip2, true, Some(b), Some(g)) => {
+            use super::wasip2_imports::Wasip2ImportSlot;
+            let blocking_write_fn_idx = wasip2_imports
+                .lookup_wasm_fn_idx(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush)
+                .ok_or_else(|| WasmGcError::Validation(
+                    "wasip2 lowering: blocking-write-and-flush slot must be registered when any \
+                     Console.* effect is registered".into(),
+                ))?;
+            Some(super::body::Wasip2Lowering {
+                get_stdout_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::CliGetStdout),
+                get_stderr_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::CliGetStderr),
+                blocking_write_fn_idx,
+                stdout_handle_global: g.stdout_handle,
+                stderr_handle_global: g.stderr_handle,
+                str_to_lm_fn_idx: b.to_lm_fn,
+            })
+        }
+        _ => None,
+    };
 
     // (caller_fn delivery moved from per-fn globals to an exported
     // name table; segment append + `__caller_fn_*` exports are
@@ -727,12 +762,23 @@ pub(super) fn emit_module_with(
         builtin_idx_lookup.insert(name.canonical().to_string(), idx);
     }
     let mut effect_idx_lookup: HashMap<String, u32> = HashMap::new();
-    for name in effect_registry.iter() {
-        let idx = effect_registry
-            .lookup_wasm_fn_idx(name)
-            .expect("registered effect has wasm fn idx");
-        effect_idx_lookup.insert(name.canonical().to_string(), idx);
+    if matches!(target, super::TargetMode::AverBridge) {
+        for name in effect_registry.iter() {
+            let idx = effect_registry
+                .lookup_wasm_fn_idx(name)
+                .expect("registered effect has wasm fn idx");
+            effect_idx_lookup.insert(name.canonical().to_string(), idx);
+        }
     }
+    // On `TargetMode::Wasip2` the EffectRegistry is populated by
+    // discovery but never `assign_slots`'d (the import section uses
+    // the parallel `Wasip2ImportRegistry` instead), so its
+    // `lookup_wasm_fn_idx` returns None for every effect. Leave
+    // `effect_idx_lookup` empty: the wasip2 call-site lowering goes
+    // through `ctx.wasip2_lowering`, not `ctx.fn_map.effects` /
+    // `ctx.effect_idx_lookup`. Effects that the wasip2 path doesn't
+    // yet lower (`?!` / `!` independent-product markers, etc.) are
+    // out-of-scope for Phase 1.2b1; rejection lives upstream.
     let mut map_helpers_lookup: HashMap<String, super::maps::MapKVHelpers> = HashMap::new();
     for canonical in &registry.map_order {
         if let Some(h) = map_helpers.kv_helpers(canonical) {
@@ -876,6 +922,7 @@ pub(super) fn emit_module_with(
             &registry,
             &effect_idx_lookup,
             &caller_fn_collector,
+            wasip2_lowering.as_ref(),
         )?;
     }
     let caller_fn_segment_count = caller_fn_collector.borrow().names.len() as u32;
@@ -931,6 +978,7 @@ pub(super) fn emit_module_with(
             &registry,
             &effect_idx_lookup,
             &caller_fn_collector,
+            wasip2_lowering.as_ref(),
         )?;
 
         let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
@@ -943,6 +991,7 @@ pub(super) fn emit_module_with(
             &registry,
             &effect_idx_lookup,
             &caller_fn_collector,
+            wasip2_lowering.as_ref(),
         )?;
         codes.function(&func);
     }
