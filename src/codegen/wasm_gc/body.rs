@@ -33,6 +33,7 @@ use crate::ast::{FnBody, FnDef, Stmt};
 use crate::ir::CallLowerCtx;
 
 mod builtins;
+mod builtins_wasip2;
 mod emit;
 pub(super) mod eq_helpers;
 pub(super) mod hash_helpers;
