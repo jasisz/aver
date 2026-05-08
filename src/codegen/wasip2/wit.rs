@@ -4,13 +4,17 @@
 //! `.component.wasm` we emit ships a sibling `.wit` whose contents
 //! are the human-readable view of the import / export surface.
 //!
-//! Phase 1 transitional: emits an empty world in the `aver:user`
+//! Phase 1.2a transitional: emits an empty world in the `aver:user`
 //! package. The wasm-gc core's `_start` and any internal exports
 //! become private to the component (not surfaced through the world).
-//! Phase 1.2+ extends this to `include wasi:cli/command;` once WASI
-//! WIT bundles are wired into the binary; per-effect imports beyond
-//! the upstream WASI worlds (rare — most effects map cleanly) are
-//! composed via `wit-encoder` from there.
+//! Phase 1.2b switches the body to `include wasi:cli/command@0.2.4;`
+//! once the wasm-gc backend exports a matching `wasi:cli/run`. The
+//! WASI WIT bundle that backs the include is already vendored under
+//! `wit/wasi-0.2.4/` and loaded by `wasi_bundle::push_wasi_packages`.
+//!
+//! WIT emission is by inline `format!` while the surface is small
+//! and template-shaped. Add `wit-encoder` (structured builder) only
+//! if per-effect imports beyond the standard WASI worlds need it.
 
 use super::wrap::Wasip2World;
 

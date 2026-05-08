@@ -27,9 +27,13 @@
 //! - `error.rs` — typed error enum, source-side diagnostics.
 //! - `wrap.rs` — `wit-component::ComponentEncoder` invocation,
 //!   adapter selection per world.
-//! - `wit.rs` — WIT emission via `wit-encoder`. The artifact
-//!   shipped alongside the component is human-readable and is the
-//!   source of truth for the import / export surface.
+//! - `wit.rs` — WIT source emission. Phase 1.2a uses inline
+//!   `format!` since the world body is small and template-like.
+//!   Switches to `wit-encoder` (structured builder) only if
+//!   per-effect imports beyond the standard WASI worlds force it.
+//! - `wasi_bundle.rs` — vendored WASI 0.2.4 WIT package set,
+//!   embedded via `include_str!` and pushed into the per-build
+//!   `Resolve` so the user world can `include wasi:cli/command;`.
 
 mod error;
 mod wasi_bundle;
