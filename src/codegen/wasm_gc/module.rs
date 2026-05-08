@@ -37,10 +37,16 @@ use crate::types::Type as AverType;
 
 use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
 
-pub(super) fn emit_module(
+pub(super) fn emit_module_with(
     items: &[TopLevel],
     handler_name: Option<&str>,
+    target: super::TargetMode,
 ) -> Result<Vec<u8>, WasmGcError> {
+    // Phase 1.2b1.1 plumbing — `target` is threaded but not yet
+    // branched on; subsequent commits in this phase introduce
+    // wasip2-specific imports / exports / globals using it. Marked
+    // `_` to silence unused-variable warnings until then.
+    let _ = target;
     let registry = TypeRegistry::build_with_handler(items, handler_name.is_some());
 
     // Lazy caller_fn name registry — populated during user-fn body

@@ -4902,13 +4902,19 @@ fn cmd_compile_wasip2(
             process::exit(1);
         }
 
-        let core_bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("{}", format!("{e}").red());
-                process::exit(1);
-            }
-        };
+        // Phase 1.2b1 — wasip2 path goes through its own wasm-gc
+        // entry. At commit 1.2b1.1 this is plumbing only (delegates
+        // to the same `emit_module_with` body as `--target wasm-gc`),
+        // but every later commit in this phase changes the bytes
+        // produced under `TargetMode::Wasip2`.
+        let core_bytes =
+            match wasm_gc::compile_to_wasm_gc_for_wasip2(&items, result.analysis.as_ref()) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("{}", format!("{e}").red());
+                    process::exit(1);
+                }
+            };
 
         let world_codegen = match world {
             super::cli::Wasip2World::CliCommand => wasip2_codegen::Wasip2World::CliCommand,
