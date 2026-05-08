@@ -589,6 +589,28 @@ fn main() -> Int
     buggy(0)
 "#;
 
+/// Like `run_verify_summary` but returns the entire trimmed stdout
+/// (not just the Summary line) so tests can assert on rendered
+/// expected/actual values inside mismatch diagnostics.
+fn run_verify_full_stdout(prefix: &str, source: &str, wasm_gc: bool) -> String {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module(prefix, source);
+    let module_root = path.parent().expect("temp module has parent");
+    let mut cmd = Command::new(aver_bin);
+    cmd.current_dir(&repo_root)
+        .arg("verify")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(module_root);
+    if wasm_gc {
+        cmd.arg("--wasm-gc");
+    }
+    let out = cmd.output().expect("expected `aver verify` to execute");
+    cleanup(&path);
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
 fn run_verify_summary(prefix: &str, source: &str, wasm_gc: bool) -> (bool, String) {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
@@ -653,6 +675,32 @@ fn cross_verify_fail_wasm_gc() {
         summary.contains("1/3 cases passed | 2 failed"),
         "wasm-gc summary unexpected: {}",
         summary
+    );
+}
+
+/// Wasm-gc verify must surface actual runtime values for primitive
+/// return types — not just `<wasm-gc reports pass/fail only>`. The
+/// `__verify_X_left_repr() -> String` helper synthesizes a
+/// `String.fromInt(left_expr)` call (for `Type::Int`) which the
+/// backend lowers to a real wasm fn; the host decodes the resulting
+/// String via `__rt_string_to_lm`.
+#[test]
+fn cross_verify_fail_renders_actual_int_wasm_gc() {
+    let stdout = run_verify_full_stdout(
+        "aver-cross-vfyactual-wasmgc",
+        VERIFY_FAIL_SRC,
+        true,
+    );
+    // buggy(0) => 0 fails with actual=1; buggy(10) => 100 fails with actual=11.
+    assert!(
+        stdout.contains("expected: 0") && stdout.contains("actual: 1"),
+        "wasm-gc didn't render actual Int values for the buggy(0) case:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("expected: 100") && stdout.contains("actual: 11"),
+        "wasm-gc didn't render actual Int values for the buggy(10) case:\n{}",
+        stdout
     );
 }
 

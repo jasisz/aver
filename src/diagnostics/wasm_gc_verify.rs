@@ -22,7 +22,10 @@
 
 #![cfg(feature = "wasm")]
 
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Spanned, TopLevel, VerifyBlock, VerifyKind};
+use crate::ast::{
+    BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, TopLevel, VerifyBlock,
+    VerifyKind,
+};
 use crate::checker::{
     VerifyCaseOutcome, VerifyCaseResult, VerifyResult, expr_to_str, merge_verify_blocks,
 };
@@ -168,10 +171,18 @@ struct WasmGcVerifyCaseFns {
     /// Synthesized `__verify_X_guard() -> Bool` if the case has a `when`
     /// clause or hostile-profile rebinding.
     guard: Option<String>,
+    /// Synthesized `__verify_X_left_repr() -> String` when the LHS type
+    /// is a primitive (Int/Float/Bool/Str) so the host can render the
+    /// actual runtime value on fail. None for compound types — falls
+    /// back to source-text rendering.
+    left_repr: Option<String>,
+    right_repr: Option<String>,
     /// Source-code rendering of the case (`lhs == rhs`) for diagnostics.
     case_expr: String,
-    /// Pre-computed `expected` rendering used in `Mismatch` outcomes.
-    expected_str: String,
+    /// Source-code rendering of the LHS / RHS expressions, used as a
+    /// fallback when no runtime repr helper was synthesized.
+    lhs_src: String,
+    rhs_src: String,
 }
 
 struct WasmGcVerifyPlan {
@@ -197,6 +208,61 @@ fn make_verify_bool_helper(name: String, line: usize, body_expr: Spanned<Expr>) 
         body: Rc::new(FnBody::from_expr(body_expr)),
         resolution: None,
     })
+}
+
+fn make_verify_string_helper(name: String, line: usize, body_expr: Spanned<Expr>) -> TopLevel {
+    use std::sync::Arc as Rc;
+    TopLevel::FnDef(FnDef {
+        name,
+        line,
+        params: vec![],
+        return_type: "String".to_string(),
+        effects: vec![],
+        desc: None,
+        body: Rc::new(FnBody::from_expr(body_expr)),
+        resolution: None,
+    })
+}
+
+/// Synthesize a `String`-typed expression that renders `expr`'s value
+/// at runtime, when the type is one we know how to stringify with
+/// stdlib primitives. Returns `None` for compound types (List/Map/
+/// Vector/Variant/Record) — those fall back to source-text on fail.
+fn repr_expr_for(expr: &Spanned<Expr>, line: usize) -> Option<Spanned<Expr>> {
+    use crate::types::Type;
+    let ty = expr.ty()?;
+    let mk_attr_call = |module: &str, method: &str| {
+        let callee = Spanned::new(
+            Expr::Attr(
+                Box::new(Spanned::new(Expr::Ident(module.to_string()), line)),
+                method.to_string(),
+            ),
+            line,
+        );
+        Spanned::new(Expr::FnCall(Box::new(callee), vec![expr.clone()]), line)
+    };
+    match ty {
+        Type::Int => Some(mk_attr_call("String", "fromInt")),
+        Type::Float => Some(mk_attr_call("String", "fromFloat")),
+        Type::Str => Some(expr.clone()),
+        Type::Bool => Some(Spanned::new(
+            Expr::Match {
+                subject: Box::new(expr.clone()),
+                arms: vec![
+                    MatchArm::new(
+                        Pattern::Literal(Literal::Bool(true)),
+                        Spanned::new(Expr::Literal(Literal::Str("true".to_string())), line),
+                    ),
+                    MatchArm::new(
+                        Pattern::Literal(Literal::Bool(false)),
+                        Spanned::new(Expr::Literal(Literal::Str("false".to_string())), line),
+                    ),
+                ],
+            },
+            line,
+        )),
+        _ => None,
+    }
 }
 
 fn build_verify_wasm_gc_plans(
@@ -244,15 +310,31 @@ fn build_verify_wasm_gc_plans(
                 name
             });
 
-            let lhs_str = expr_to_str(&left_expr);
-            let rhs_str = expr_to_str(&right_expr);
-            let case_expr = format!("{} == {}", lhs_str, rhs_str);
+            // Repr helpers — only for primitive return types. Compound
+            // types fall through to source-text rendering on fail.
+            let left_repr = repr_expr_for(&left_expr, block.line).map(|repr_body| {
+                let name = format!("{}_left_repr", prefix);
+                items.push(make_verify_string_helper(name.clone(), block.line, repr_body));
+                name
+            });
+            let right_repr = repr_expr_for(&right_expr, block.line).map(|repr_body| {
+                let name = format!("{}_right_repr", prefix);
+                items.push(make_verify_string_helper(name.clone(), block.line, repr_body));
+                name
+            });
+
+            let lhs_src = expr_to_str(&left_expr);
+            let rhs_src = expr_to_str(&right_expr);
+            let case_expr = format!("{} == {}", lhs_src, rhs_src);
 
             case_plans.push(WasmGcVerifyCaseFns {
                 check: check_name,
                 guard: guard_name,
+                left_repr,
+                right_repr,
                 case_expr,
-                expected_str: rhs_str,
+                lhs_src,
+                rhs_src,
             });
         }
 
@@ -387,10 +469,21 @@ fn run_verify_cases_in_wasmtime(
                 }
                 Ok(false) => {
                     failed += 1;
-                    VerifyCaseOutcome::Mismatch {
-                        expected: case.expected_str.clone(),
-                        actual: "<lhs ≠ rhs (wasm-gc verify reports pass/fail only — actual value rendering is a follow-up)>".to_string(),
-                    }
+                    let expected = match &case.right_repr {
+                        Some(name) => match invoke_string(&mut store, &instance, name) {
+                            Ok(s) => s,
+                            Err(_) => case.rhs_src.clone(),
+                        },
+                        None => case.rhs_src.clone(),
+                    };
+                    let actual = match &case.left_repr {
+                        Some(name) => match invoke_string(&mut store, &instance, name) {
+                            Ok(s) => s,
+                            Err(_) => format!("<{}: wasm-gc compound-value repr is a follow-up>", case.lhs_src),
+                        },
+                        None => format!("<{}: wasm-gc compound-value repr is a follow-up>", case.lhs_src),
+                    };
+                    VerifyCaseOutcome::Mismatch { expected, actual }
                 }
                 Err(e) => {
                     failed += 1;
@@ -546,4 +639,42 @@ fn invoke_bool(
             fn_name, v
         )),
     }
+}
+
+/// Invoke a `() -> String` exported helper and decode the resulting
+/// wasm-gc String AnyRef back into a host `String`. Reuses the
+/// `__rt_string_to_lm` runtime export every emitted module carries.
+fn invoke_string(
+    store: &mut wasmtime::Store<()>,
+    instance: &wasmtime::Instance,
+    fn_name: &str,
+) -> Result<String, String> {
+    use wasmtime::Val;
+    let func = instance
+        .get_func(&mut *store, fn_name)
+        .ok_or_else(|| format!("wasm-gc verify: export `{}` not found", fn_name))?;
+    let mut out = vec![Val::AnyRef(None); 1];
+    func.call(&mut *store, &[], &mut out)
+        .map_err(|e| format!("wasm-gc verify: call `{}` failed: {}", fn_name, e))?;
+    let to_lm = instance
+        .get_func(&mut *store, "__rt_string_to_lm")
+        .ok_or_else(|| "wasm-gc verify: missing __rt_string_to_lm export".to_string())?;
+    let memory = instance
+        .get_memory(&mut *store, "memory")
+        .ok_or_else(|| "wasm-gc verify: missing memory export".to_string())?;
+    let mut len_out = [Val::I32(0)];
+    to_lm
+        .call(&mut *store, &out, &mut len_out)
+        .map_err(|e| format!("wasm-gc verify: __rt_string_to_lm trap: {}", e))?;
+    let len = match len_out[0] {
+        Val::I32(n) => n.max(0) as usize,
+        _ => 0,
+    };
+    let mut buf = vec![0u8; len];
+    if len > 0 {
+        memory
+            .read(&store, 0, &mut buf)
+            .map_err(|e| format!("wasm-gc verify: memory read for repr: {}", e))?;
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
