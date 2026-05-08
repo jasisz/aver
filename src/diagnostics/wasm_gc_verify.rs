@@ -85,15 +85,14 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
             }
         }
         // Cases that mention `BranchPath` directly in expressions can't
-        // compile to wasm-gc — the BranchPath module is VM-side Oracle
-        // infrastructure and the wasm-gc backend has no constructor for
-        // it. Surface the case file/line so the user can either move
-        // the test to VM verify or split the BranchPath-touching
-        // verification out.
+        // compile to wasm-gc — the resolver leaves namespace idents like
+        // `Ident("BranchPath")` un-Resolved and the wasm-gc emitter
+        // explicitly bails on bare Idents (it has no namespace dispatch
+        // path; VM uses arena-side namespace lookup at runtime).
         for (lhs, rhs) in &block.cases {
             if expr_mentions_ident(lhs, "BranchPath") || expr_mentions_ident(rhs, "BranchPath") {
                 return Err(format!(
-                    "verify --wasm-gc: case mentions `BranchPath` (block at line {}). The wasm-gc backend has no BranchPath primitive — Oracle counter-tracking is VM-only. Use `aver verify` (VM) for this block.",
+                    "verify --wasm-gc: case mentions `BranchPath` (block at line {}). The wasm-gc backend has no namespace-value dispatch — Oracle counter-tracking is VM-only. Use `aver verify` (VM) for this block.",
                     block.line
                 ));
             }
