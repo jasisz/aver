@@ -107,8 +107,7 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
         inject_hostile_effect_stubs_for_blocks(&mut items, &preview);
     }
 
-    let tc =
-        crate::ir::pipeline::typecheck(&items, &crate::ir::TypecheckMode::Full { base_dir });
+    let tc = crate::ir::pipeline::typecheck(&items, &crate::ir::TypecheckMode::Full { base_dir });
     if !tc.errors.is_empty() {
         return Err(format_type_errors(&tc.errors));
     }
@@ -135,7 +134,6 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
             ));
         }
     }
-
 
     let plans = build_verify_wasm_gc_plans(&mut items, &blocks);
 
@@ -414,7 +412,9 @@ fn run_verify_cases_in_wasmtime(
     bytes: &[u8],
     plans: &[WasmGcVerifyPlan],
 ) -> Result<Vec<VerifyResult>, String> {
-    use wasmtime::{Caller, Config, Engine, ExternType, FuncType, Linker, Module, Store, Val, ValType};
+    use wasmtime::{
+        Caller, Config, Engine, ExternType, FuncType, Linker, Module, Store, Val, ValType,
+    };
 
     let mut config = Config::new();
     config.wasm_gc(true);
@@ -425,8 +425,8 @@ fn run_verify_cases_in_wasmtime(
     config.wasm_bulk_memory(true);
     let engine = Engine::new(&config).map_err(|e| format!("wasmtime engine: {}", e))?;
 
-    let module = Module::new(&engine, bytes)
-        .map_err(|e| format!("wasm-gc module load failed: {}", e))?;
+    let module =
+        Module::new(&engine, bytes).map_err(|e| format!("wasm-gc module load failed: {}", e))?;
 
     let mut store: Store<()> = Store::new(&engine, ());
     let mut linker: Linker<()> = Linker::new(&engine);
@@ -462,7 +462,12 @@ fn run_verify_cases_in_wasmtime(
                     Ok(())
                 },
             )
-            .map_err(|e| format!("wasm-gc verify: linker stub for `{}::{}`: {}", module_name, field_name, e))?;
+            .map_err(|e| {
+                format!(
+                    "wasm-gc verify: linker stub for `{}::{}`: {}",
+                    module_name, field_name, e
+                )
+            })?;
     }
 
     let instance = linker
@@ -542,9 +547,15 @@ fn run_verify_cases_in_wasmtime(
                     let actual = match &case.left_repr {
                         Some(name) => match invoke_string(&mut store, &instance, name) {
                             Ok(s) => s,
-                            Err(_) => format!("<{}: wasm-gc compound-value repr is a follow-up>", case.lhs_src),
+                            Err(_) => format!(
+                                "<{}: wasm-gc compound-value repr is a follow-up>",
+                                case.lhs_src
+                            ),
                         },
-                        None => format!("<{}: wasm-gc compound-value repr is a follow-up>", case.lhs_src),
+                        None => format!(
+                            "<{}: wasm-gc compound-value repr is a follow-up>",
+                            case.lhs_src
+                        ),
                     };
                     VerifyCaseOutcome::Mismatch { expected, actual }
                 }
@@ -614,8 +625,8 @@ fn load_module_recursive(
             name, module_root
         )
     })?;
-    let source = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Read '{}': {}", path.display(), e))?;
+    let source =
+        std::fs::read_to_string(&path).map_err(|e| format!("Read '{}': {}", path.display(), e))?;
     let mut items = crate::source::parse_source(&source)
         .map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
     crate::source::require_module_declaration(&items, path.to_str().unwrap_or(name))?;
@@ -692,8 +703,7 @@ fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
         Expr::Ident(n) | Expr::Resolved { name: n, .. } => n == name,
         Expr::Attr(inner, _) => expr_mentions_ident(inner, name),
         Expr::FnCall(callee, args) => {
-            expr_mentions_ident(callee, name)
-                || args.iter().any(|a| expr_mentions_ident(a, name))
+            expr_mentions_ident(callee, name) || args.iter().any(|a| expr_mentions_ident(a, name))
         }
         Expr::BinOp(_, a, b) => expr_mentions_ident(a, name) || expr_mentions_ident(b, name),
         Expr::Match { subject, arms } => {
@@ -722,9 +732,7 @@ fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
                 || updates.iter().any(|(_, e)| expr_mentions_ident(e, name))
         }
         Expr::TailCall(tc) => tc.args.iter().any(|a| expr_mentions_ident(a, name)),
-        Expr::IndependentProduct(items, _) => {
-            items.iter().any(|e| expr_mentions_ident(e, name))
-        }
+        Expr::IndependentProduct(items, _) => items.iter().any(|e| expr_mentions_ident(e, name)),
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
             crate::ast::StrPart::Parsed(e) => expr_mentions_ident(e, name),
             _ => false,

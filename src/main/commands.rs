@@ -1254,7 +1254,6 @@ pub(super) fn cmd_run_vm(
             process::exit(1);
         }
     }
-
 }
 
 /// Compile to WASM and execute with built-in host.
@@ -2568,9 +2567,7 @@ fn run_verify_for_file(
             #[cfg(not(feature = "wasm"))]
             {
                 let _ = (items, &path);
-                return Err(
-                    "verify --wasm-gc requires building with --features wasm".to_string()
-                );
+                return Err("verify --wasm-gc requires building with --features wasm".to_string());
             }
         } else {
             aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(

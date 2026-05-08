@@ -686,11 +686,7 @@ fn cross_verify_fail_wasm_gc() {
 /// String via `__rt_string_to_lm`.
 #[test]
 fn cross_verify_fail_renders_actual_int_wasm_gc() {
-    let stdout = run_verify_full_stdout(
-        "aver-cross-vfyactual-wasmgc",
-        VERIFY_FAIL_SRC,
-        true,
-    );
+    let stdout = run_verify_full_stdout("aver-cross-vfyactual-wasmgc", VERIFY_FAIL_SRC, true);
     // buggy(0) => 0 fails with actual=1; buggy(10) => 100 fails with actual=11.
     assert!(
         stdout.contains("expected: 0") && stdout.contains("actual: 1"),
