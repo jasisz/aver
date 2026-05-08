@@ -656,7 +656,7 @@ impl<'a> ExprEmitter<'a> {
             }
             "Float.pi" if args.is_empty() => {
                 self.instructions
-                    .push(Instruction::F64Const(std::f64::consts::PI));
+                    .push(Instruction::F64Const(std::f64::consts::PI.into()));
             }
             "Int.fromFloat" if args.len() == 1 => {
                 self.instructions.push(Instruction::I64TruncF64S);

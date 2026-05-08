@@ -541,7 +541,7 @@ impl<'a> ExprEmitter<'a> {
         match ok_wasm_type {
             WasmType::I32 => self.instructions.push(Instruction::I32Const(0)),
             WasmType::I64 => self.instructions.push(Instruction::I64Const(0)),
-            WasmType::F64 => self.instructions.push(Instruction::F64Const(0.0)),
+            WasmType::F64 => self.instructions.push(Instruction::F64Const(0.0_f64.into())),
         }
         self.emit_end();
     }
@@ -2064,7 +2064,7 @@ impl<'a> ExprEmitter<'a> {
             Literal::Int(i) => self.instructions.push(Instruction::I64Const(*i)),
             Literal::Float(f) => self
                 .instructions
-                .push(Instruction::F64Const(f64::from_bits(f.to_bits()))),
+                .push(Instruction::F64Const(f64::from_bits(f.to_bits()).into())),
             Literal::Bool(b) => {
                 self.instructions
                     .push(Instruction::I32Const(if *b { 1 } else { 0 }))

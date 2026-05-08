@@ -1015,6 +1015,8 @@ fn emit_user_types(
                 fields: fields.into_boxed_slice(),
             }),
             shared: false,
+            descriptor: None,
+            describes: None,
         },
     };
     let mk_array = |elem: wasm_encoder::FieldType| SubType {
@@ -1023,6 +1025,8 @@ fn emit_user_types(
         composite_type: CompositeType {
             inner: CompositeInnerType::Array(ArrayType(elem)),
             shared: false,
+            descriptor: None,
+            describes: None,
         },
     };
     // Records / variants — registered first in `TypeRegistry::build`,

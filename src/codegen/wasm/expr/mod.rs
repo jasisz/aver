@@ -275,7 +275,7 @@ impl<'a> ExprEmitter<'a> {
         match wt {
             WasmType::I32 => self.instructions.push(Instruction::I32Const(0)),
             WasmType::I64 => self.instructions.push(Instruction::I64Const(0)),
-            WasmType::F64 => self.instructions.push(Instruction::F64Const(0.0)),
+            WasmType::F64 => self.instructions.push(Instruction::F64Const(0.0_f64.into())),
         }
     }
 

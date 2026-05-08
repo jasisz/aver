@@ -152,7 +152,7 @@ pub(super) fn emit_dotted_builtin(
             Ok(())
         }
         "Float.pi" if args.is_empty() => {
-            func.instruction(&Instruction::F64Const(std::f64::consts::PI));
+            func.instruction(&Instruction::F64Const(std::f64::consts::PI.into()));
             Ok(())
         }
         "Int.abs" if args.len() == 1 => {

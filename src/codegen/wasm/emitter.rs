@@ -1271,7 +1271,7 @@ fn emit_default_value_to_func(func: &mut wasm_encoder::Function, wt: WasmType) {
     match wt {
         WasmType::I32 => func.instruction(&Instruction::I32Const(0)),
         WasmType::I64 => func.instruction(&Instruction::I64Const(0)),
-        WasmType::F64 => func.instruction(&Instruction::F64Const(0.0)),
+        WasmType::F64 => func.instruction(&Instruction::F64Const(0.0_f64.into())),
     };
 }
 

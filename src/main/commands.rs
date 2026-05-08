@@ -4765,10 +4765,14 @@ fn cmd_compile_wasm_gc(
 fn wasm_imports_module(bytes: &[u8], module: &str) -> bool {
     for payload in wasmparser::Parser::new(0).parse_all(bytes) {
         if let Ok(wasmparser::Payload::ImportSection(reader)) = payload {
-            for import in reader {
-                if let Ok(import) = import
-                    && import.module == module
-                {
+            for group in reader {
+                let Ok(group) = group else { continue };
+                let matches = match group {
+                    wasmparser::Imports::Single(_, imp) => imp.module == module,
+                    wasmparser::Imports::Compact1 { module: m, .. } => m == module,
+                    wasmparser::Imports::Compact2 { module: m, .. } => m == module,
+                };
+                if matches {
                     return true;
                 }
             }

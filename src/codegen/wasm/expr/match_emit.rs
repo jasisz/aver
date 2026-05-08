@@ -345,7 +345,7 @@ impl<'a> ExprEmitter<'a> {
                     }
                     ir::DispatchLiteral::Float(f) => {
                         if let Ok(n) = f.parse::<f64>() {
-                            self.instructions.push(Instruction::F64Const(n));
+                            self.instructions.push(Instruction::F64Const(n.into()));
                             self.instructions.push(Instruction::F64Eq);
                         } else {
                             self.codegen_error(
@@ -778,7 +778,7 @@ impl<'a> ExprEmitter<'a> {
                         self.instructions.push(Instruction::I64Eq);
                     }
                     Literal::Float(n) => {
-                        self.instructions.push(Instruction::F64Const(*n));
+                        self.instructions.push(Instruction::F64Const((*n).into()));
                         self.instructions.push(Instruction::F64Eq);
                     }
                     Literal::Str(s) => {
@@ -1048,7 +1048,7 @@ impl<'a> ExprEmitter<'a> {
                 self.instructions.push(Instruction::I64Eq);
             }
             Literal::Float(n) => {
-                self.instructions.push(Instruction::F64Const(*n));
+                self.instructions.push(Instruction::F64Const((*n).into()));
                 self.instructions.push(Instruction::F64Eq);
             }
             Literal::Str(s) => {
