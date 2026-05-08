@@ -1653,7 +1653,10 @@ fn collect_options_from_expr(
                     let dotted = format!("{p}.{member}");
                     if matches!(
                         dotted.as_str(),
-                        "String.charAt" | "Char.fromCode" | "Terminal.readKey"
+                        "String.charAt"
+                            | "Char.fromCode"
+                            | "Terminal.readKey"
+                            | "Env.get"
                     ) {
                         let canonical = "Option<String>".to_string();
                         if !out.contains_key(&canonical) {
