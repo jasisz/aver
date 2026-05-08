@@ -289,13 +289,24 @@ pub(super) enum Commands {
         #[arg(long)]
         profile: bool,
         /// Compile to WASM and execute with built-in host (aver/* import ABI)
-        #[arg(long, conflicts_with_all = ["self_host", "profile", "wasm_gc"])]
+        #[arg(long, conflicts_with_all = ["self_host", "profile", "wasm_gc", "wasip2"])]
         wasm: bool,
         /// Compile via the wasm-gc backend (engine GC + tail calls) and
         /// execute with built-in host. Same `aver/*` effect surface as
         /// `--wasm`, different ABI (GC structs, factory exports).
-        #[arg(long = "wasm-gc", conflicts_with_all = ["self_host", "profile", "wasm"])]
+        #[arg(long = "wasm-gc", conflicts_with_all = ["self_host", "profile", "wasm", "wasip2"])]
         wasm_gc: bool,
+        /// Compile to a WASI 0.2 component (`--target wasip2` shape) and
+        /// execute it via embedded wasmtime + wasmtime-wasi. Aver effects
+        /// reach the host through canonical-ABI WASI imports — no `aver/*`
+        /// bridge, no preview-1 adapter. Same effect set as
+        /// `aver compile --target wasip2`: `Console.{print, error, warn}`,
+        /// `Time.unixMs`, `Random.{int, float}` work today; `Terminal`,
+        /// `Env.set`, `Time.sleep`, `Http`, `Tcp`, `HttpServer` are
+        /// rejected; `Console.readLine`, `Args.get`, `Env.get`, `Disk.*`
+        /// pending later phases of 0.18 "Span".
+        #[arg(long = "wasip2", conflicts_with_all = ["self_host", "profile", "wasm", "wasm_gc"])]
+        wasip2: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --
         #[arg(last = true)]
         program_args: Vec<String>,

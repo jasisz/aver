@@ -21,6 +21,9 @@ mod repl;
 mod replay_cmd;
 #[path = "main/run_wasm_gc.rs"]
 mod run_wasm_gc;
+#[cfg(feature = "wasip2")]
+#[path = "main/run_wasip2.rs"]
+mod run_wasip2;
 #[path = "main/shared.rs"]
 mod shared;
 #[path = "main/why_cmd.rs"]
@@ -44,6 +47,7 @@ fn main() {
             profile,
             wasm,
             wasm_gc,
+            wasip2,
             program_args,
         } => {
             let expressions = match shared::collect_entry_expressions(expr, input_file.as_deref()) {
@@ -65,7 +69,36 @@ fn main() {
                 std::process::exit(1);
             }
 
-            if *wasm {
+            if *wasip2 {
+                if !expressions.is_empty() {
+                    use colored::Colorize;
+                    eprintln!(
+                        "{}",
+                        "--expr / --input-file are not supported with --wasip2 yet (Phase 1.7 \
+                         minimal scope — extends in a follow-up)"
+                            .red()
+                    );
+                    std::process::exit(1);
+                }
+                #[cfg(feature = "wasip2")]
+                run_wasip2::cmd_run_wasip2(
+                    file,
+                    module_root.as_deref(),
+                    record.as_deref(),
+                    program_args.clone(),
+                );
+                #[cfg(not(feature = "wasip2"))]
+                {
+                    use colored::Colorize;
+                    eprintln!(
+                        "{}",
+                        "--wasip2 requires --features wasip2 (rebuild with: \
+                         cargo build --features wasip2)"
+                            .red()
+                    );
+                    std::process::exit(1);
+                }
+            } else if *wasm {
                 commands::cmd_run_wasm(file, module_root.as_deref(), program_args.clone());
             } else if *wasm_gc {
                 if expressions.is_empty() {
