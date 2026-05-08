@@ -309,11 +309,14 @@ pub(super) enum Commands {
         /// hints, not contracts.
         #[arg(long)]
         hostile: bool,
-        /// Execute verify cases via the wasm-gc backend instead of the VM.
-        /// Cross-target check: catches divergences between VM and wasm-gc
-        /// codegen. Limits today: single-file modules only (no cross-module
-        /// `depends [...]`), no `.trace.*` projections, fail diagnostics
-        /// show LHS == RHS source rather than actual values.
+        /// Execute verify cases via the wasm-gc backend instead of the
+        /// VM. Cross-target check: catches divergences between VM and
+        /// wasm-gc codegen on equality. Cross-module `depends [...]`
+        /// supported; primitive return types render actual runtime
+        /// values on fail. Trace projections (`.trace.*`), classified-
+        /// effect Oracle stubs (`given X: Time = stub`), and case
+        /// bodies mentioning `BranchPath` are rejected with a pointer
+        /// back to plain `aver verify` (VM).
         #[arg(long = "wasm-gc")]
         wasm_gc: bool,
     },
