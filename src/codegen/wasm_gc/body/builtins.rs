@@ -81,6 +81,9 @@ pub(super) fn emit_dotted_builtin(
         if parent == "Random" && method == "float" {
             return emit_random_float_wasip2(func, args, ctx);
         }
+        if parent == "Env" && method == "get" {
+            return emit_env_get_wasip2(func, args, slots, ctx);
+        }
     }
 
     // Registered effect import? Same shape — push args, push the
@@ -1909,6 +1912,92 @@ fn emit_args_get_wasip2(
     // Decoder pushes the materialised List<String> onto the stack.
     func.instruction(&Instruction::LocalGet(retptr_local));
     func.instruction(&Instruction::Call(decoder));
+    Ok(())
+}
+
+/// Phase 1.3.3 — `Env.get(name: String) -> Option<String>` on
+/// `--target wasip2`. Marshals the key via `__rt_string_to_lm`
+/// (writes utf-8 bytes at LM[0..key_len], returns key_len),
+/// allocates a fresh 8-byte retptr via `cabi_realloc` (lands at
+/// >= page 2, disjoint from key bytes), calls
+/// `wasi:cli/environment.get-environment(retptr)` (the host fills
+/// the retptr area with `(list_ptr, list_len)` and uses
+/// `cabi_realloc` callbacks for per-entry `(key_ptr, key_len,
+/// val_ptr, val_len)` blocks plus the utf-8 buffers), then hands
+/// `(retptr, key_ptr=0, key_len)` to `__rt_canonical_env_lookup`
+/// which linear-searches and returns `Option.Some(value)` on hit
+/// or `Option.None` on miss — the helper wraps the discriminant
+/// itself so call sites don't need to.
+fn emit_env_get_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Env.get on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Env.get on `--target wasip2` expects 1 arg (the key String), got {}",
+            args.len()
+        )));
+    }
+    let str_to_lm = lowering.str_to_lm_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Env.get on wasip2: __rt_string_to_lm fn idx missing — bridge not allocated"
+                .into(),
+        )
+    })?;
+    let cabi_realloc = lowering.cabi_realloc_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Env.get on wasip2: cabi_realloc fn idx missing".into(),
+        )
+    })?;
+    let get_environment = lowering.get_environment_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Env.get on wasip2: wasi:cli/environment.get-environment fn idx missing".into(),
+        )
+    })?;
+    let lookup = lowering.env_get_lookup_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Env.get on wasip2: __rt_canonical_env_lookup fn idx missing".into(),
+        )
+    })?;
+    let scratch = slots.env_get_wasip2_scratch.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Env.get on wasip2: [retptr, key_len] scratch pair missing — \
+             SlotTable should have allocated via fn_needs_env_get_wasip2_scratch"
+                .into(),
+        )
+    })?;
+    let retptr_local = scratch[0];
+    let key_len_local = scratch[1];
+
+    // key bytes → LM[0..key_len], stash key_len.
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(str_to_lm));
+    func.instruction(&Instruction::LocalSet(key_len_local));
+
+    // retptr = cabi_realloc(0, 0, 4, 8).
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I32Const(4));
+    func.instruction(&Instruction::I32Const(8));
+    func.instruction(&Instruction::Call(cabi_realloc));
+    func.instruction(&Instruction::LocalSet(retptr_local));
+
+    // Host call writes (list_ptr, list_len) at retptr + per-entry
+    // tuples + utf-8 buffers (all via further cabi_realloc bumps).
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::Call(get_environment));
+
+    // __rt_canonical_env_lookup(retptr, key_ptr=0, key_len) →
+    // matching value String (or empty on no-match).
+    func.instruction(&Instruction::LocalGet(retptr_local));
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::LocalGet(key_len_local));
+    func.instruction(&Instruction::Call(lookup));
     Ok(())
 }
 

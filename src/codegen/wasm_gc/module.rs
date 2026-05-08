@@ -302,6 +302,10 @@ pub(super) fn emit_module_with(
                         wasip2_imports
                             .register(Wasip2ImportSlot::CliEnvironmentGetArguments);
                     }
+                    EffectName::EnvGet => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::CliEnvironmentGetEnvironment);
+                    }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
             }
@@ -547,6 +551,43 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // 8d) `__rt_canonical_env_lookup` — Phase 1.3.3.
+    //     Linear-search lookup over the canonical-ABI lowered
+    //     `list<tuple<string, string>>` retptr that
+    //     `wasi:cli/environment.get-environment` writes to.
+    //     Signature: `(retptr i32, key_ptr i32, key_len i32) ->
+    //     ref null $string`. Returns the matching value as a
+    //     fresh GC `(array i8)`, or an empty array when no key
+    //     matches — preserves Aver's `Env.get(name) -> String`
+    //     no-Option semantics.
+    let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(option_string_idx) = registry.option_type_idx("Option<String>")
+    {
+        let opt_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(option_string_idx),
+        });
+        types
+            .ty()
+            .function([ValType::I32, ValType::I32, ValType::I32], [opt_ref]);
+        let lookup_type = next_type_idx;
+        next_type_idx += 1;
+        let lookup_fn = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(EnvGetLookupIndices {
+            fn_type: lookup_type,
+            fn_idx: lookup_fn,
+            string_type_idx: string_idx,
+            option_string_type_idx: option_string_idx,
+        })
+    } else {
+        None
+    };
+
     // 9) Wasm-owned value factories. JS host can't construct wasm-gc
     //    structs/variants directly, so any effect import that returns
     //    a structured ref needs per-type constructor helpers exported
@@ -674,6 +715,9 @@ pub(super) fn emit_module_with(
     }
     if let Some(d) = &decode_list_string {
         funcs.function(d.fn_type);
+    }
+    if let Some(e) = &env_get_lookup {
+        funcs.function(e.fn_type);
     }
     factory_exports.emit_function_entries(&mut funcs);
     // Caller-fn name table fns — fixed-shape entries (count + name),
@@ -845,6 +889,9 @@ pub(super) fn emit_module_with(
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::CliEnvironmentGetArguments),
                 cabi_realloc_fn_idx: cabi_realloc.as_ref().map(|c| c.fn_idx),
                 decode_list_string_fn_idx: decode_list_string.as_ref().map(|d| d.fn_idx),
+                get_environment_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::CliEnvironmentGetEnvironment),
+                env_get_lookup_fn_idx: env_get_lookup.as_ref().map(|e| e.fn_idx),
             })
         } else {
             None
@@ -1296,6 +1343,12 @@ pub(super) fn emit_module_with(
     }
     if let Some(d) = &decode_list_string {
         codes.function(&emit_decode_list_string(d.string_type_idx, d.list_string_type_idx));
+    }
+    if let Some(e) = &env_get_lookup {
+        codes.function(&emit_env_get_lookup(
+            e.string_type_idx,
+            e.option_string_type_idx,
+        ));
     }
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
@@ -3546,6 +3599,21 @@ struct DecodeListStringIndices {
     list_string_type_idx: u32,
 }
 
+/// Phase 1.3.3 — `__rt_canonical_env_lookup(retptr, key_ptr,
+/// key_len) -> Option<String>` helper indices. Walks the
+/// `list<tuple<string, string>>` canonical-ABI lowered at retptr
+/// and returns `Option.Some(value)` for the matching key — or
+/// `Option.None` when no entry matches. Aver's surface signature
+/// is `Env.get(name) -> Option<String>`, so this helper has to
+/// produce the discriminated struct itself; emitting a bare
+/// `(array i8)` would force every call site to invent a wrapper.
+struct EnvGetLookupIndices {
+    fn_type: u32,
+    fn_idx: u32,
+    string_type_idx: u32,
+    option_string_type_idx: u32,
+}
+
 struct BridgeIndices {
     from_lm_type: u32,
     to_lm_type: u32,
@@ -4001,6 +4069,242 @@ fn emit_decode_list_string(string_type_idx: u32, list_string_type_idx: u32) -> w
     f.instruction(&Instruction::End); // outer block
 
     f.instruction(&Instruction::LocalGet(l_acc));
+    f.instruction(&Instruction::End); // fn end
+    f
+}
+
+/// Phase 1.3.3 — `__rt_canonical_env_lookup(retptr, key_ptr,
+/// key_len) -> Option<String>` body. Walks the canonical-ABI
+/// lowered `list<tuple<string, string>>` at retptr, linear-
+/// searches for an entry whose key matches the caller-supplied
+/// LM byte range, and on hit returns
+/// `Option.Some(<value bytes>)` — i.e. `struct.new $option_string`
+/// with discriminant 1 and a freshly allocated `(array i8)`
+/// payload. On miss returns `Option.None` (`struct.new
+/// $option_string` with discriminant 0 + null payload). Aver's
+/// `Env.get(name) -> Option<String>` is the source of truth here;
+/// returning a bare `(array i8)` would force every call site to
+/// invent its own wrapper.
+fn emit_env_get_lookup(
+    string_type_idx: u32,
+    option_string_type_idx: u32,
+) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+    // Params: 0=retptr, 1=key_ptr, 2=key_len. Locals follow.
+    let mut f = Function::new(vec![
+        (8, ValType::I32), // 3=list_ptr 4=list_len 5=i 6=entry_ptr 7=e_key_ptr 8=e_key_len 9=j 10=mismatch
+        (1, s_ref),         // 11=arr
+    ]);
+    let p_retptr = 0u32;
+    let p_key_ptr = 1u32;
+    let p_key_len = 2u32;
+    let l_list_ptr = 3u32;
+    let l_list_len = 4u32;
+    let l_i = 5u32;
+    let l_entry_ptr = 6u32;
+    let l_e_key_ptr = 7u32;
+    let l_e_key_len = 8u32;
+    let l_j = 9u32;
+    let l_mismatch = 10u32;
+    let l_arr = 11u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o8 = MemArg {
+        offset: 8,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o12 = MemArg {
+        offset: 12,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    // list_ptr / list_len from retptr.
+    f.instruction(&Instruction::LocalGet(p_retptr));
+    f.instruction(&Instruction::I32Load(mem4));
+    f.instruction(&Instruction::LocalSet(l_list_ptr));
+    f.instruction(&Instruction::LocalGet(p_retptr));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_list_len));
+
+    // i = 0
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_i));
+
+    // Outer block(label=found-match) carries the matched-value
+    // result; outer loop scans entries until we either br-found
+    // (with the value String on the stack) or fall through.
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    // if i >= list_len: br to surrounding block (no match, fall
+    // through to empty-string return).
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::LocalGet(l_list_len));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+
+    // entry_ptr = list_ptr + i * 16 (each tuple<string, string> is
+    // 4 i32 fields = 16 bytes packed).
+    f.instruction(&Instruction::LocalGet(l_list_ptr));
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_entry_ptr));
+
+    // e_key_ptr / e_key_len from entry.
+    f.instruction(&Instruction::LocalGet(l_entry_ptr));
+    f.instruction(&Instruction::I32Load(mem4));
+    f.instruction(&Instruction::LocalSet(l_e_key_ptr));
+    f.instruction(&Instruction::LocalGet(l_entry_ptr));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_e_key_len));
+
+    // Quick reject if lengths differ; advance i and restart the
+    // outer loop. Depth count from inside this If: 0=If, 1=outer
+    // Loop, 2=outer Block — `Br(1)` jumps to the Loop label
+    // (= top of outer loop, the canonical "continue").
+    f.instruction(&Instruction::LocalGet(l_e_key_len));
+    f.instruction(&Instruction::LocalGet(p_key_len));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::LocalGet(l_i));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(l_i));
+        f.instruction(&Instruction::Br(1));
+    }
+    f.instruction(&Instruction::End);
+
+    // Lengths match. Byte-by-byte compare LM[key_ptr..] vs
+    // LM[e_key_ptr..]. mismatch=0 by default; flip to 1 on first
+    // diff and break out of the inner loop.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_mismatch));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(p_key_len));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(p_key_ptr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::LocalGet(l_e_key_ptr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::LocalSet(l_mismatch));
+        f.instruction(&Instruction::Br(2)); // break inner loop
+    }
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // inner loop
+    f.instruction(&Instruction::End); // inner block
+
+    // If mismatch: advance i, continue.
+    f.instruction(&Instruction::LocalGet(l_mismatch));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // Match! Read e_val_ptr / e_val_len from entry (offsets 8
+        // and 12 — the second `string` of the flattened
+        // tuple<string, string>) and copy bytes into a fresh GC
+        // `(array i8)`. Return through the outer block.
+        f.instruction(&Instruction::LocalGet(l_entry_ptr));
+        f.instruction(&Instruction::I32Load(mem4_o8));
+        f.instruction(&Instruction::LocalSet(l_e_key_ptr)); // reuse: now holds val_ptr
+        f.instruction(&Instruction::LocalGet(l_entry_ptr));
+        f.instruction(&Instruction::I32Load(mem4_o12));
+        f.instruction(&Instruction::LocalSet(l_e_key_len)); // reuse: now holds val_len
+
+        f.instruction(&Instruction::LocalGet(l_e_key_len));
+        f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+        f.instruction(&Instruction::LocalSet(l_arr));
+
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalSet(l_j));
+        f.instruction(&Instruction::Block(BlockType::Empty));
+        f.instruction(&Instruction::Loop(BlockType::Empty));
+        f.instruction(&Instruction::LocalGet(l_j));
+        f.instruction(&Instruction::LocalGet(l_e_key_len));
+        f.instruction(&Instruction::I32GeU);
+        f.instruction(&Instruction::BrIf(1));
+        f.instruction(&Instruction::LocalGet(l_arr));
+        f.instruction(&Instruction::LocalGet(l_j));
+        f.instruction(&Instruction::LocalGet(l_e_key_ptr));
+        f.instruction(&Instruction::LocalGet(l_j));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::I32Load8U(mem1));
+        f.instruction(&Instruction::ArraySet(string_type_idx));
+        f.instruction(&Instruction::LocalGet(l_j));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(l_j));
+        f.instruction(&Instruction::Br(0));
+        f.instruction(&Instruction::End); // copy loop
+        f.instruction(&Instruction::End); // copy block
+
+        // Build `Option.Some(arr)` and return it: discriminant=1
+        // followed by the array payload, then `struct.new
+        // $option_string`.
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::LocalGet(l_arr));
+        f.instruction(&Instruction::StructNew(option_string_type_idx));
+        f.instruction(&Instruction::Return);
+    }
+    f.instruction(&Instruction::End); // mismatch==0 branch
+
+    // Mismatch — advance i, retry outer loop.
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_i));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // outer loop
+    f.instruction(&Instruction::End); // outer block
+
+    // No-match fallthrough: build `Option.None` — discriminant=0
+    // and a null `(array i8)` payload, wrapped in
+    // `struct.new $option_string`. The match arm for `Option.None`
+    // never reads the payload, so a null is the cheapest valid
+    // value (avoids an `array.new_default` heap allocation).
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+    f.instruction(&Instruction::StructNew(option_string_type_idx));
     f.instruction(&Instruction::End); // fn end
     f
 }

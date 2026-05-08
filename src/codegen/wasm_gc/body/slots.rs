@@ -65,6 +65,14 @@ pub(super) struct SlotTable {
     /// over-allocation trade-off as `console_print_wasip2_scratch`.
     /// Phase 1.3.2.
     pub(super) args_get_wasip2_retptr_scratch: Option<u32>,
+    /// Scratch i32 pair `[retptr, key_len]` for the wasip2
+    /// `Env.get(name)` call site. `retptr` holds the
+    /// `cabi_realloc(0, 0, 4, 8)` return; `key_len` holds the byte
+    /// count returned from `__rt_string_to_lm(name)` so the lookup
+    /// helper can compare lengths in O(1) before walking bytes.
+    /// Allocated when the fn body contains at least one `Env.get`
+    /// call. Phase 1.3.3.
+    pub(super) env_get_wasip2_scratch: Option<[u32; 2]>,
 }
 
 impl SlotTable {
@@ -234,6 +242,15 @@ impl SlotTable {
         } else {
             None
         };
+        let env_get_wasip2_scratch = if fn_needs_env_get_wasip2_scratch(fd) {
+            let retptr = by_slot.len() as u32;
+            by_slot.push(ValType::I32);
+            let key_len = by_slot.len() as u32;
+            by_slot.push(ValType::I32);
+            Some([retptr, key_len])
+        } else {
+            None
+        };
         Ok(Self {
             by_slot,
             subject_scratch,
@@ -241,6 +258,7 @@ impl SlotTable {
             vector_set_scratch,
             console_print_wasip2_scratch,
             args_get_wasip2_retptr_scratch,
+            env_get_wasip2_scratch,
         })
     }
 
@@ -383,6 +401,74 @@ fn expr_reaches_console_print(expr: &Expr) -> bool {
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
             if let crate::ast::StrPart::Parsed(inner) = p {
                 expr_reaches_console_print(&inner.node)
+            } else {
+                false
+            }
+        }),
+        _ => false,
+    }
+}
+
+/// True if the body reaches at least one `Env.get(name)` call.
+/// Used to gate the wasip2 `[retptr, key_len]` scratch pair.
+pub(super) fn fn_needs_env_get_wasip2_scratch(fd: &FnDef) -> bool {
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(stmt_reaches_env_get)
+}
+
+fn stmt_reaches_env_get(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_reaches_env_get(&e.node),
+    }
+}
+
+fn expr_reaches_env_get(expr: &Expr) -> bool {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            if let Expr::Attr(parent, member) = &callee.node
+                && let Expr::Ident(p) = &parent.node
+                && p == "Env"
+                && member == "get"
+            {
+                return true;
+            }
+            expr_reaches_env_get(&callee.node)
+                || args.iter().any(|a| expr_reaches_env_get(&a.node))
+        }
+        Expr::BinOp(_, l, r) => {
+            expr_reaches_env_get(&l.node) || expr_reaches_env_get(&r.node)
+        }
+        Expr::Match { subject, arms } => {
+            expr_reaches_env_get(&subject.node)
+                || arms.iter().any(|a| expr_reaches_env_get(&a.body.node))
+        }
+        Expr::TailCall(boxed) => boxed
+            .args
+            .iter()
+            .any(|a| expr_reaches_env_get(&a.node)),
+        Expr::Attr(obj, _) => expr_reaches_env_get(&obj.node),
+        Expr::ErrorProp(inner) => expr_reaches_env_get(&inner.node),
+        Expr::Constructor(_, payload) => payload
+            .as_deref()
+            .is_some_and(|p| expr_reaches_env_get(&p.node)),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, e)| expr_reaches_env_get(&e.node)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_reaches_env_get(&base.node)
+                || updates
+                    .iter()
+                    .any(|(_, e)| expr_reaches_env_get(&e.node))
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(|e| expr_reaches_env_get(&e.node))
+        }
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_reaches_env_get(&k.node) || expr_reaches_env_get(&v.node)
+        }),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
+            if let crate::ast::StrPart::Parsed(inner) = p {
+                expr_reaches_env_get(&inner.node)
             } else {
                 false
             }

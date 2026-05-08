@@ -381,6 +381,20 @@ pub(super) struct Wasip2Lowering {
     /// today, `Disk.listDir` (Phase 1.5), more later. Emitted
     /// once per module when any consumer is registered.
     pub(super) decode_list_string_fn_idx: Option<u32>,
+
+    // ── Phase 1.3.3: Env.get ──────────────────────────────────
+    /// `wasi:cli/environment.get-environment` imported wasm fn idx.
+    /// `Some(...)` when `Env.get` is registered.
+    pub(super) get_environment_fn_idx: Option<u32>,
+    /// `__rt_canonical_env_lookup(retptr, key_ptr, key_len) ->
+    /// String` helper wasm fn idx. Walks the canonical-ABI
+    /// lowered `list<tuple<string, string>>` at retptr,
+    /// linear-searches for an entry whose key matches the
+    /// caller-supplied LM byte range, and materialises the
+    /// matching value as a fresh GC `(array i8)`. Returns an
+    /// empty `(array i8)` when no match — preserves Aver
+    /// `Env.get(name) -> String` semantics (no Option/Result).
+    pub(super) env_get_lookup_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

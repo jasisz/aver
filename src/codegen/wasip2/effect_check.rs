@@ -166,15 +166,9 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
         });
     }
     // Args.get graduated in Phase 1.3.2 (cabi_realloc + shared
-    // canonical-ABI list<string> decoder). Env.get still pending —
-    // wasi:cli/environment.get-environment returns
-    // list<tuple<string, string>>, plus needs per-call name lookup;
-    // lands separately in Phase 1.3.3.
-    if effect == "Env.get" {
-        return Some(UnsupportedReason::PendingPhase {
-            phase: "Phase 1.3.3",
-        });
-    }
+    // list<string> decoder); Env.get graduated in Phase 1.3.3
+    // (canonical-ABI list<tuple<string,string>> + linear-search
+    // lookup helper).
     // Time.unixMs and Random.{int,float} graduated in Phase 1.4.
     // Time.now (ISO string) still needs guest-side date formatting
     // — defer to Phase 1.4b.
@@ -250,17 +244,15 @@ mod tests {
             Some(UnsupportedReason::PendingPhase { .. })
         ));
         // Args.get graduated in Phase 1.3.2 (cabi_realloc + shared
-        // list<string> decoder helper).
+        // list<string> decoder helper); Env.get graduated in
+        // Phase 1.3.3 (canonical-ABI list<tuple> + lookup helper).
         assert!(classify("Args.get").is_none());
-        // Env.get + Console.readLine still pending — different
-        // shapes (list<tuple<string,string>> + per-call
-        // input-stream + resource-drop respectively).
+        assert!(classify("Env.get").is_none());
+        // Console.readLine still pending — needs per-call
+        // input-stream resource handle + `[resource-drop]` (Phase
+        // 1.3.4).
         assert!(matches!(
             classify("Console.readLine"),
-            Some(UnsupportedReason::PendingPhase { .. })
-        ));
-        assert!(matches!(
-            classify("Env.get"),
             Some(UnsupportedReason::PendingPhase { .. })
         ));
         assert!(matches!(

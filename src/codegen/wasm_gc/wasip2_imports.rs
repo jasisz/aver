@@ -78,6 +78,14 @@ pub(super) enum Wasip2ImportSlot {
     /// — packed contiguously starting at `ptr`. Phase 1.3.2 drives
     /// `Args.get() -> List<String>` (the no-args user-facing form).
     CliEnvironmentGetArguments,
+    /// `wasi:cli/environment.get-environment: func() ->
+    /// list<tuple<string, string>>`. Canonical-ABI signature:
+    /// list-returning via retptr (8 bytes: list_ptr + list_len);
+    /// each entry is a flattened tuple — 16 bytes packed
+    /// `(key_ptr i32, key_len i32, val_ptr i32, val_len i32)`.
+    /// Phase 1.3.3 drives `Env.get(name) -> String` via a
+    /// linear-search lookup helper.
+    CliEnvironmentGetEnvironment,
 }
 
 impl Wasip2ImportSlot {
@@ -100,6 +108,9 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::CliEnvironmentGetArguments => {
                 ("wasi:cli/environment@0.2.4", "get-arguments")
             }
+            Wasip2ImportSlot::CliEnvironmentGetEnvironment => {
+                ("wasi:cli/environment@0.2.4", "get-environment")
+            }
         }
     }
 
@@ -118,7 +129,11 @@ impl Wasip2ImportSlot {
             // retptr (8 bytes: list_ptr i32 + list_len i32). Host
             // also calls `cabi_realloc` to allocate the backing
             // bytes and per-string utf-8 buffers.
-            Wasip2ImportSlot::CliEnvironmentGetArguments => vec![ValType::I32],
+            // Same retptr-only param shape for `get-environment`
+            // (the per-entry layout differs but the import takes
+            // a single retptr regardless).
+            Wasip2ImportSlot::CliEnvironmentGetArguments
+            | Wasip2ImportSlot::CliEnvironmentGetEnvironment => vec![ValType::I32],
         }
     }
 
@@ -129,7 +144,8 @@ impl Wasip2ImportSlot {
             // Result lowered via retptr — no inline return.
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush
             | Wasip2ImportSlot::ClocksWallClockNow
-            | Wasip2ImportSlot::CliEnvironmentGetArguments => Vec::new(),
+            | Wasip2ImportSlot::CliEnvironmentGetArguments
+            | Wasip2ImportSlot::CliEnvironmentGetEnvironment => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }
