@@ -28,6 +28,14 @@ use super::WasmGcError;
 use super::body::eq_helpers::{EqHelperRegistry, EqKind};
 #[allow(dead_code)]
 struct Wasip2Globals {
+    /// Global idx of the bump-allocator cursor backing
+    /// `cabi_realloc` — Phase 1.3.1. Always allocated when this
+    /// struct is constructed (i.e., wasip2 imports active). Initial
+    /// value `65536` (start of page 2): page 1 stays as the
+    /// transient transport buffer for `__rt_string_to_lm` /
+    /// `Console.*` writes; persistent `cabi_realloc` allocations
+    /// grow upward from page 2.
+    bump_alloc_ptr: u32,
     /// Global idx caching the `wasi:cli/stdout.get-stdout` resource
     /// handle, lazy-initialised on first use. `None` when the program
     /// does not register `Console.print` (the only effect that calls
@@ -463,6 +471,35 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // 8b) `cabi_realloc` — Phase 1.3.1. The Component Model
+    //     canonical ABI requires a guest export named exactly
+    //     `cabi_realloc(old_ptr i32, old_size i32, align i32,
+    //     new_size i32) -> i32` whenever ANY imported function
+    //     returns a list, string, or other host-allocated value.
+    //     Phase 1.3.1 emits it scaffolding-style on every wasip2
+    //     build that has imports active; the first real consumers
+    //     (Args.get / Env.get / Console.readLine / Disk.readText)
+    //     come in 1.3.2+. wit-component is happy to carry an
+    //     unused export — host just never calls it.
+    let cabi_realloc: Option<CabiReallocIndices> =
+        if matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0 {
+            types
+                .ty()
+                .function([ValType::I32, ValType::I32, ValType::I32, ValType::I32], [
+                    ValType::I32,
+                ]);
+            let realloc_type = next_type_idx;
+            next_type_idx += 1;
+            let realloc_fn = next_builtin_fn_idx;
+            next_builtin_fn_idx += 1;
+            Some(CabiReallocIndices {
+                fn_type: realloc_type,
+                fn_idx: realloc_fn,
+            })
+        } else {
+            None
+        };
+
     // 9) Wasm-owned value factories. JS host can't construct wasm-gc
     //    structs/variants directly, so any effect import that returns
     //    a structured ref needs per-type constructor helpers exported
@@ -585,6 +622,9 @@ pub(super) fn emit_module_with(
         funcs.function(b.pages_type);
         funcs.function(b.grow_type);
     }
+    if let Some(c) = &cabi_realloc {
+        funcs.function(c.fn_type);
+    }
     factory_exports.emit_function_entries(&mut funcs);
     // Caller-fn name table fns — fixed-shape entries (count + name),
     // their bodies land at the very end of the code section once
@@ -653,6 +693,25 @@ pub(super) fn emit_module_with(
     {
         let mut globals = wasm_encoder::GlobalSection::new();
         let mut next_global_idx: u32 = 0;
+        // Global 0 — bump-alloc cursor for `cabi_realloc`. Initial
+        // value `65536` (= page 2 base). Page 1 stays reserved for
+        // the `__rt_string_to_lm` transient buffer that
+        // `Console.*` writes use; persistent `cabi_realloc` heap
+        // grows upward from page 2 with `memory.grow` on overflow.
+        // Allocated unconditionally on the wasip2 path so the
+        // cabi_realloc helper has a stable global idx to read /
+        // write — Phase 1.3.1 onwards consumes it; earlier phases
+        // tolerate the unused global (12 bytes of section overhead).
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &wasm_encoder::ConstExpr::i32_const(65536),
+        );
+        let bump_alloc_ptr = next_global_idx;
+        next_global_idx += 1;
         let stdout_handle = if wasip2_imports
             .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStdout)
             .is_some()
@@ -685,10 +744,8 @@ pub(super) fn emit_module_with(
             );
             let idx = next_global_idx;
             // No further globals after stderr in Phase 1.2b1; the
-            // counter would be incremented in step with the future
-            // `stdin_handle` (Phase 1.3 / `Console.readLine`) so it
-            // exists as scaffolding even when the value is currently
-            // unused after the last assignment.
+            // counter is left in step for the future `stdin_handle`
+            // (Phase 1.3 / `Console.readLine`).
             let _ = next_global_idx;
             Some(idx)
         } else {
@@ -696,6 +753,7 @@ pub(super) fn emit_module_with(
         };
         module.section(&globals);
         Some(Wasip2Globals {
+            bump_alloc_ptr,
             stdout_handle,
             stderr_handle,
         })
@@ -858,11 +916,32 @@ pub(super) fn emit_module_with(
         exports.export(&fd.name, ExportKind::Func, wasm_idx);
     }
     if let Some(b) = &bridge {
-        exports.export("__rt_string_from_lm", ExportKind::Func, b.from_lm_fn);
-        exports.export("__rt_string_to_lm", ExportKind::Func, b.to_lm_fn);
-        exports.export("__rt_memory_pages", ExportKind::Func, b.pages_fn);
-        exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
+        // The four `__rt_*` exports are JS-host-callable only — wasip2
+        // hosts (wasmtime / Spin / wasmCloud) consume the canonical-
+        // ABI surface, never these names. Skip them when target is
+        // Wasip2 to keep the component contract clean (no leaked JS
+        // runtime names in a non-JS world).
+        if matches!(target, super::TargetMode::AverBridge) {
+            exports.export("__rt_string_from_lm", ExportKind::Func, b.from_lm_fn);
+            exports.export("__rt_string_to_lm", ExportKind::Func, b.to_lm_fn);
+            exports.export("__rt_memory_pages", ExportKind::Func, b.pages_fn);
+            exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
+        }
         exports.export("memory", ExportKind::Memory, 0);
+    } else if cabi_realloc.is_some() {
+        // wasip2 path with no bridge (theoretical — cabi_realloc
+        // gates on `wasip2_imports.import_count() > 0` which only
+        // fires when an effect that needs LM is registered, and
+        // every such effect today implies a String). Defensive
+        // export so the host can find memory regardless.
+        exports.export("memory", ExportKind::Memory, 0);
+    }
+    if let Some(c) = &cabi_realloc {
+        // Required by Component Model canonical ABI as the guest's
+        // realloc callback. Phase 1.3.1 ships the impl; consumers
+        // (Args.get / Env.get / Console.readLine / Disk.readText)
+        // start landing in 1.3.2.
+        exports.export("cabi_realloc", ExportKind::Func, c.fn_idx);
     }
     factory_exports.emit_exports(&mut exports);
     if let Some(hw) = &handler_wrapper {
@@ -1146,6 +1225,20 @@ pub(super) fn emit_module_with(
 
     if bridge.is_some() {
         emit_bridge_bodies(&mut codes, &registry)?;
+    }
+
+    if cabi_realloc.is_some() {
+        // `wasip2_globals` is `Some` whenever `cabi_realloc` is —
+        // both gate on `wasip2_imports.import_count() > 0` and
+        // `Wasip2Globals::bump_alloc_ptr` is allocated
+        // unconditionally on that path. Unwrap is sound;
+        // `expect` carries a louder message than a silent panic
+        // if the invariant ever drifts.
+        let bump_global = wasip2_globals
+            .as_ref()
+            .expect("cabi_realloc emit requires Wasip2Globals (same gate)")
+            .bump_alloc_ptr;
+        codes.function(&emit_cabi_realloc(bump_global));
     }
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
@@ -3373,6 +3466,15 @@ fn emit_handler_wrapper(
 /// with `TextDecoder.decode(memory.subarray(0, len))`. One boundary
 /// crossing per direction; the inner copy loop runs at native speed
 /// inside wasm.
+/// Phase 1.3.1 — `cabi_realloc` export indices. Allocated when
+/// the wasip2 path is active so the Component Model canonical-ABI
+/// realloc contract has a real impl. Bump-allocator backing global
+/// lives in `Wasip2Globals::bump_alloc_ptr`.
+struct CabiReallocIndices {
+    fn_type: u32,
+    fn_idx: u32,
+}
+
 struct BridgeIndices {
     from_lm_type: u32,
     to_lm_type: u32,
@@ -3568,4 +3670,123 @@ fn validate(bytes: &[u8]) -> Result<(), WasmGcError> {
         .validate_all(bytes)
         .map_err(|e| WasmGcError::Validation(format!("{e}")))?;
     Ok(())
+}
+
+/// Phase 1.3.1 — `cabi_realloc(old_ptr, old_size, align, new_size)
+/// -> new_ptr` body. Bump-allocator over linear memory backed by
+/// the wasip2 `bump_alloc_ptr` global (initialised to 65536 = page
+/// 2 base). Behaviour:
+///
+/// - `align` is a power of two (1, 2, 4, 8, ...). The bump cursor
+///   is aligned UP to `align` before the allocation lands.
+/// - Allocation grows linear memory by enough pages to fit the
+///   request when needed (`memory.grow` returns -1 on failure;
+///   we propagate by returning the unaligned cursor — Component
+///   Model treats out-of-memory as a trap regardless).
+/// - Realloc (when `old_ptr != 0 && old_size > 0`) copies
+///   `min(old_size, new_size)` bytes from the old buffer to the
+///   newly-allocated one via `memory.copy`. The old bytes are
+///   leaked (no free in a bump allocator) — fine for a CLI command
+///   that runs to completion.
+/// - When `new_size == 0` the function still returns a valid
+///   pointer (the unchanged cursor); callers treat zero-size as
+///   "free", which is a no-op for us.
+///
+/// `bump_global` is the wasm global idx of `Wasip2Globals::
+/// bump_alloc_ptr` in the user module. The body emits `global.get`
+/// / `global.set` against that exact idx.
+fn emit_cabi_realloc(bump_global: u32) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, Instruction, MemArg};
+
+    // Locals beyond params: $aligned (i32, the post-alignment
+    // cursor), $end (i32, $aligned + new_size).
+    let mut f = Function::new(vec![(2, ValType::I32)]);
+    // Param indices: 0=old_ptr, 1=old_size, 2=align, 3=new_size.
+    // Local indices: 4=aligned, 5=end.
+    let p_old_ptr = 0u32;
+    let p_old_size = 1u32;
+    let p_align = 2u32;
+    let p_new_size = 3u32;
+    let l_aligned = 4u32;
+    let l_end = 5u32;
+
+    // aligned = (cursor + (align - 1)) & ~(align - 1)
+    f.instruction(&Instruction::GlobalGet(bump_global));
+    f.instruction(&Instruction::LocalGet(p_align));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(p_align));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Xor);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalSet(l_aligned));
+
+    // end = aligned + new_size
+    f.instruction(&Instruction::LocalGet(l_aligned));
+    f.instruction(&Instruction::LocalGet(p_new_size));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_end));
+
+    // if end > memory.size * 65536: grow by ceil((end - memory_bytes) / 65536) pages.
+    f.instruction(&Instruction::LocalGet(l_end));
+    f.instruction(&Instruction::MemorySize(0));
+    f.instruction(&Instruction::I32Const(16));
+    f.instruction(&Instruction::I32Shl); // memory.size * 65536
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // pages_needed = ((end + 65535) >> 16) - memory.size
+        f.instruction(&Instruction::LocalGet(l_end));
+        f.instruction(&Instruction::I32Const(65535));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::I32Const(16));
+        f.instruction(&Instruction::I32ShrU);
+        f.instruction(&Instruction::MemorySize(0));
+        f.instruction(&Instruction::I32Sub);
+        f.instruction(&Instruction::MemoryGrow(0));
+        f.instruction(&Instruction::Drop); // -1 on failure leaves caller to fault on access
+    }
+    f.instruction(&Instruction::End);
+
+    // Copy from old_ptr if this is a realloc (old_ptr != 0 && old_size > 0).
+    f.instruction(&Instruction::LocalGet(p_old_ptr));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::LocalGet(p_old_size));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // memory.copy(dst=aligned, src=old_ptr, n=min(old_size, new_size))
+        f.instruction(&Instruction::LocalGet(l_aligned));
+        f.instruction(&Instruction::LocalGet(p_old_ptr));
+        // n = old_size if old_size <= new_size else new_size
+        f.instruction(&Instruction::LocalGet(p_old_size));
+        f.instruction(&Instruction::LocalGet(p_new_size));
+        f.instruction(&Instruction::LocalGet(p_old_size));
+        f.instruction(&Instruction::LocalGet(p_new_size));
+        f.instruction(&Instruction::I32LtU);
+        f.instruction(&Instruction::Select);
+        let _ = MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }; // unused — MemoryCopy takes src/dst memory indices
+        f.instruction(&Instruction::MemoryCopy {
+            src_mem: 0,
+            dst_mem: 0,
+        });
+    }
+    f.instruction(&Instruction::End);
+
+    // Update the bump cursor and return the aligned ptr.
+    f.instruction(&Instruction::LocalGet(l_end));
+    f.instruction(&Instruction::GlobalSet(bump_global));
+    f.instruction(&Instruction::LocalGet(l_aligned));
+    f.instruction(&Instruction::End);
+    f
 }
