@@ -26,6 +26,17 @@ use wasm_encoder::{
 
 use super::WasmGcError;
 use super::body::eq_helpers::{EqHelperRegistry, EqKind};
+#[allow(dead_code)]
+struct Wasip2Globals {
+    /// Global idx caching the `wasi:cli/stdout.get-stdout` resource
+    /// handle, lazy-initialised on first use. `None` when the program
+    /// does not register `Console.print` (the only effect that calls
+    /// `get-stdout`). Phase 1.2b1.5 is the consumer.
+    stdout_handle: Option<u32>,
+    /// Same shape, for `wasi:cli/stderr.get-stderr`. Populated when
+    /// `Console.error` or `Console.warn` is registered.
+    stderr_handle: Option<u32>,
+}
 use super::body::hash_helpers::{HashHelperRegistry, HashKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
 use super::builtins::{BuiltinName, BuiltinRegistry};
@@ -583,16 +594,28 @@ pub(super) fn emit_module_with(
     });
     module.section(&funcs);
 
-    // ── Memory section (bridge LM only) ────────────────────────────
+    // ── Memory section ─────────────────────────────────────────────
+    //
     // 1 page initial, 2048 max (128 MiB ceiling — matches Cloudflare
     // Workers' per-request memory limit). The bridge helpers grow
     // on demand: `__rt_string_to_lm` checks if it can fit the
-    // outgoing array and calls `memory.grow` if not. JS host can
-    // also grow upfront via `__rt_memory_grow` before writing into
-    // LM with `TextEncoder.encodeInto`. Memory is not a guest heap
-    // (engine GC owns that); it exists solely as a transport buffer
-    // between JS host and the `(array i8)` carrier.
-    if bridge.is_some() {
+    // outgoing array and calls `memory.grow` if not.
+    //
+    // Two reasons to emit memory:
+    // - AverBridge with a JS-host bridge: `__rt_string_to_lm` /
+    //   `__rt_string_from_lm` need transport space for the
+    //   `(array i8)` ↔ `(ptr, len)` boundary the JS host reads.
+    // - Wasip2 with any registered canonical-ABI import: same LM
+    //   transport, same helpers internally — `wasi:io/streams.
+    //   [method]output-stream.blocking-write-and-flush` takes a
+    //   `(ptr, len)` lowered from a `list<u8>`, plus a 12-byte
+    //   retptr scratch area for the host-written
+    //   `result<_, stream-error>`. The helpers are NOT exported
+    //   on wasip2 (no JS host calls them); they exist purely for
+    //   internal wasm-side glue at effect call sites.
+    let need_memory_for_wasip2 = matches!(target, super::TargetMode::Wasip2)
+        && wasip2_imports.import_count() > 0;
+    if bridge.is_some() || need_memory_for_wasip2 {
         let mut memories = wasm_encoder::MemorySection::new();
         memories.memory(wasm_encoder::MemoryType {
             minimum: 1,
@@ -603,6 +626,77 @@ pub(super) fn emit_module_with(
         });
         module.section(&memories);
     }
+
+    // ── Globals section (wasip2 resource-handle caches) ────────────
+    //
+    // On `TargetMode::Wasip2`, when `Console.print` / `error` / `warn`
+    // is registered, the call-site glue caches the host-supplied
+    // `output-stream` resource handle in a wasm global. -1 is the
+    // sentinel for "not yet initialised"; the first call evaluates
+    // the matching `wasi:cli/{stdout,stderr}.get-stdout/stderr`
+    // import and stores the result. Per-call branch is one
+    // `i32.eq` + `if` — negligible against the syscall it guards.
+    //
+    // Globals are emitted only when at least one of stdout/stderr
+    // is actually used (`OutputStreamBlockingWriteAndFlush` registered
+    // implies at least one of `CliGetStdout` / `CliGetStderr` does
+    // too). Empty Aver programs hit neither and skip the section
+    // entirely — no semantic change vs. Phase 1.2b1.3.
+    let wasip2_globals: Option<Wasip2Globals> = if matches!(target, super::TargetMode::Wasip2)
+        && wasip2_imports.import_count() > 0
+    {
+        let mut globals = wasm_encoder::GlobalSection::new();
+        let mut next_global_idx: u32 = 0;
+        let stdout_handle = if wasip2_imports
+            .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStdout)
+            .is_some()
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        let stderr_handle = if wasip2_imports
+            .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStderr)
+            .is_some()
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            let idx = next_global_idx;
+            // No further globals after stderr in Phase 1.2b1; the
+            // counter would be incremented in step with the future
+            // `stdin_handle` (Phase 1.3 / `Console.readLine`) so it
+            // exists as scaffolding even when the value is currently
+            // unused after the last assignment.
+            let _ = next_global_idx;
+            Some(idx)
+        } else {
+            None
+        };
+        module.section(&globals);
+        Some(Wasip2Globals {
+            stdout_handle,
+            stderr_handle,
+        })
+    } else {
+        None
+    };
+    let _ = wasip2_globals; // Phase 1.2b1.5 reads these from the call-site lowering ctx.
 
     // (caller_fn delivery moved from per-fn globals to an exported
     // name table; segment append + `__caller_fn_*` exports are
