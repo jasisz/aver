@@ -19,8 +19,13 @@ use super::types::TypeRegistry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum EffectName {
-    /// `Console.print(String) -> Unit`. Imported as `aver.console_print`
-    /// — the host writes the string to its stdout (or equivalent).
+    /// `Console.print(String) -> Unit`. On `TargetMode::AverBridge`,
+    /// imported as `aver.console_print` (host writes to stdout). On
+    /// `TargetMode::Wasip2` the same source-side effect lowers to
+    /// canonical-ABI `wasi:cli/stdout.get-stdout` (cached) plus
+    /// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
+    /// in the per-effect glue at the call site — see
+    /// `EffectName::lowers_on_wasip2` and `Wasip2ImportSlot`.
     ConsolePrint,
     ConsoleError,
     ConsoleWarn,
@@ -692,6 +697,21 @@ impl EffectRegistry {
 
     pub(super) fn lookup_wasm_type_idx(&self, name: EffectName) -> Option<u32> {
         self.wasm_type_idx.get(&name).copied()
+    }
+}
+
+impl EffectName {
+    /// True iff Phase 1.2b1 wires this effect on `TargetMode::Wasip2`.
+    /// Drives the population of `Wasip2ImportRegistry` from the
+    /// effects discovered by the per-fn walker. Stays `false` for
+    /// every effect Phase 1.2b1 does not lower; those effects are
+    /// rejected upstream by `wasip2::effect_check` before reaching
+    /// the wasm-gc emitter.
+    pub(super) fn lowers_on_wasip2(self) -> bool {
+        matches!(
+            self,
+            EffectName::ConsolePrint | EffectName::ConsoleError | EffectName::ConsoleWarn,
+        )
     }
 }
 

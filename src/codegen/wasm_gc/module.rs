@@ -42,11 +42,6 @@ pub(super) fn emit_module_with(
     handler_name: Option<&str>,
     target: super::TargetMode,
 ) -> Result<Vec<u8>, WasmGcError> {
-    // Phase 1.2b1.1 plumbing — `target` is threaded but not yet
-    // branched on; subsequent commits in this phase introduce
-    // wasip2-specific imports / exports / globals using it. Marked
-    // `_` to silence unused-variable warnings until then.
-    let _ = target;
     let registry = TypeRegistry::build_with_handler(items, handler_name.is_some());
 
     // Lazy caller_fn name registry — populated during user-fn body
@@ -230,12 +225,64 @@ pub(super) fn emit_module_with(
 
     // 2) Effect import types. Imports take fn idx 0..K so their
     //    type slots come right after user types.
+    //
+    //    Phase 1.2b1.2 — branch on `target`. AverBridge keeps the
+    //    existing `aver/*` import shape (one wasm import per
+    //    registered `EffectName`). Wasip2 substitutes a parallel
+    //    `Wasip2ImportRegistry` whose slots speak Component-Model
+    //    canonical-ABI names (`wasi:cli/stdout.get-stdout` etc.).
+    //    For Phase 1.2b1.2 the wasip2 registry is empty unless the
+    //    upstream effect-check let a Console.* effect through —
+    //    which only happens once Phase 1.2b1.5 graduates the trio
+    //    from `pending` to `wired`.
     let mut next_type_idx = registry.user_type_count;
-    effect_registry.assign_slots(&mut next_type_idx);
-    for name in effect_registry.iter() {
-        let p = name.params(&registry)?;
-        let r = name.results(&registry)?;
-        types.ty().function(p, r);
+    let mut wasip2_imports = super::wasip2_imports::Wasip2ImportRegistry::new();
+    match target {
+        super::TargetMode::AverBridge => {
+            effect_registry.assign_slots(&mut next_type_idx);
+            for name in effect_registry.iter() {
+                let p = name.params(&registry)?;
+                let r = name.results(&registry)?;
+                types.ty().function(p, r);
+            }
+        }
+        super::TargetMode::Wasip2 => {
+            // Populate the wasip2 registry from each effect that
+            // lowers on this target. The slot set per effect is:
+            //   Console.print → CliGetStdout + OutputStreamBlockingWriteAndFlush
+            //   Console.error → CliGetStderr + OutputStreamBlockingWriteAndFlush
+            //   Console.warn  → CliGetStderr + OutputStreamBlockingWriteAndFlush
+            // (warn → stderr matches the VM and wasm-gc target's
+            // default semantics — `Console.warn` writes to fd 2.)
+            use super::effects::EffectName;
+            use super::wasip2_imports::Wasip2ImportSlot;
+            for name in effect_registry.iter() {
+                if !name.lowers_on_wasip2() {
+                    continue;
+                }
+                match name {
+                    EffectName::ConsolePrint => {
+                        wasip2_imports.register(Wasip2ImportSlot::CliGetStdout);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                        );
+                    }
+                    EffectName::ConsoleError | EffectName::ConsoleWarn => {
+                        wasip2_imports.register(Wasip2ImportSlot::CliGetStderr);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                        );
+                    }
+                    _ => {} // unreachable; `lowers_on_wasip2` only matches the trio above.
+                }
+            }
+            wasip2_imports.assign_slots(&mut next_type_idx);
+            for slot in wasip2_imports.iter() {
+                let p = slot.params();
+                let r = slot.results();
+                types.ty().function(p, r);
+            }
+        }
     }
 
     // 3) `_start` type — () -> ().
@@ -255,7 +302,14 @@ pub(super) fn emit_module_with(
     }
 
     // 5) One fn type per registered builtin.
-    let import_count = effect_registry.import_count();
+    //
+    //    `import_count` is the wasm-fn-idx offset every other
+    //    function uses, so it must reflect whichever registry
+    //    drove the import-type emission above (per `target`).
+    let import_count: u32 = match target {
+        super::TargetMode::AverBridge => effect_registry.import_count(),
+        super::TargetMode::Wasip2 => wasip2_imports.import_count(),
+    };
     let mut next_builtin_fn_idx = import_count + 1 + (fn_defs.len() as u32);
     builtin_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     for name in builtin_registry.iter() {
@@ -431,16 +485,38 @@ pub(super) fn emit_module_with(
     module.section(&types);
 
     // ── Import section ─────────────────────────────────────────────
-    if effect_registry.import_count() > 0 {
-        let mut imports = ImportSection::new();
-        for name in effect_registry.iter() {
-            let (module_, field) = name.import_pair();
-            let type_idx = effect_registry
-                .lookup_wasm_type_idx(name)
-                .expect("just-assigned effect type idx");
-            imports.import(module_, field, EntityType::Function(type_idx));
+    //
+    // Same per-target branch as the import-type emission above.
+    // AverBridge writes `(import "aver" "<name>" ...)` per
+    // registered effect; Wasip2 writes the canonical-ABI form
+    // (`(import "wasi:cli/stdout@0.2.4" "get-stdout" ...)` etc.).
+    match target {
+        super::TargetMode::AverBridge => {
+            if effect_registry.import_count() > 0 {
+                let mut imports = ImportSection::new();
+                for name in effect_registry.iter() {
+                    let (module_, field) = name.import_pair();
+                    let type_idx = effect_registry
+                        .lookup_wasm_type_idx(name)
+                        .expect("just-assigned effect type idx");
+                    imports.import(module_, field, EntityType::Function(type_idx));
+                }
+                module.section(&imports);
+            }
         }
-        module.section(&imports);
+        super::TargetMode::Wasip2 => {
+            if wasip2_imports.import_count() > 0 {
+                let mut imports = ImportSection::new();
+                for slot in wasip2_imports.iter() {
+                    let (module_, field) = slot.module_field_pair();
+                    let type_idx = wasip2_imports
+                        .lookup_wasm_type_idx(slot)
+                        .expect("just-assigned wasip2 import type idx");
+                    imports.import(module_, field, EntityType::Function(type_idx));
+                }
+                module.section(&imports);
+            }
+        }
     }
 
     // ── Function section ───────────────────────────────────────────

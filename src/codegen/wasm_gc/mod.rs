@@ -20,6 +20,7 @@ mod module;
 #[cfg(test)]
 mod tests;
 mod types;
+mod wasip2_imports;
 mod wat_helper;
 
 pub use flatten::flatten_multimodule;
