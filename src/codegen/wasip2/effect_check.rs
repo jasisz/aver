@@ -169,14 +169,10 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // list<string> decoder); Env.get graduated in Phase 1.3.3
     // (canonical-ABI list<tuple<string,string>> + linear-search
     // lookup helper).
-    // Time.unixMs and Random.{int,float} graduated in Phase 1.4.
-    // Time.now (ISO string) still needs guest-side date formatting
-    // — defer to Phase 1.4b.
-    if effect == "Time.now" {
-        return Some(UnsupportedReason::PendingPhase {
-            phase: "Phase 1.4b",
-        });
-    }
+    // Time.unixMs and Random.{int,float} graduated in Phase 1.4;
+    // Time.now graduated in Phase 1.4b (guest-side civil_from_days
+    // + RFC3339-like digit emission on top of the wall-clock retptr
+    // already wired by Time.unixMs).
     if effect.starts_with("Disk.") {
         return Some(UnsupportedReason::PendingPhase {
             phase: "Phase 1.5",
@@ -228,21 +224,17 @@ mod tests {
     #[test]
     fn classifies_pending_phase_rejects() {
         // Console.print/error/warn graduated in 1.2b1.5; Time.unixMs
-        // and Random.{int,float} graduated in Phase 1.4 — the wasip2
-        // codegen now lowers them to wasi:cli/io/streams /
-        // wasi:clocks / wasi:random natively.
+        // and Random.{int,float} graduated in Phase 1.4; Time.now
+        // graduated in Phase 1.4b — the wasip2 codegen now lowers
+        // them to wasi:cli/io/streams / wasi:clocks / wasi:random
+        // natively.
         assert!(classify("Console.print").is_none());
         assert!(classify("Console.error").is_none());
         assert!(classify("Console.warn").is_none());
         assert!(classify("Time.unixMs").is_none());
+        assert!(classify("Time.now").is_none());
         assert!(classify("Random.int").is_none());
         assert!(classify("Random.float").is_none());
-        // Time.now (ISO string) still pending until 1.4b adds
-        // guest-side datetime formatting.
-        assert!(matches!(
-            classify("Time.now"),
-            Some(UnsupportedReason::PendingPhase { .. })
-        ));
         // Args.get graduated in Phase 1.3.2 (cabi_realloc + shared
         // list<string> decoder helper); Env.get graduated in
         // Phase 1.3.3 (canonical-ABI list<tuple> + lookup helper).

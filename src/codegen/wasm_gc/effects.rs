@@ -718,6 +718,7 @@ impl EffectName {
                 | EffectName::ConsoleError
                 | EffectName::ConsoleWarn
                 | EffectName::TimeUnixMs
+                | EffectName::TimeNow
                 | EffectName::RandomInt
                 | EffectName::RandomFloat
                 | EffectName::ArgsGet

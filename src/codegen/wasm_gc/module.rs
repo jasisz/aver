@@ -292,7 +292,7 @@ pub(super) fn emit_module_with(
                             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
                         );
                     }
-                    EffectName::TimeUnixMs => {
+                    EffectName::TimeUnixMs | EffectName::TimeNow => {
                         wasip2_imports.register(Wasip2ImportSlot::ClocksWallClockNow);
                     }
                     EffectName::RandomInt | EffectName::RandomFloat => {
@@ -560,6 +560,40 @@ pub(super) fn emit_module_with(
     //     fresh GC `(array i8)`, or an empty array when no key
     //     matches — preserves Aver's `Env.get(name) -> String`
     //     no-Option semantics.
+    // Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
+    // ref null $string`. Pure-compute helper that turns the
+    // datetime returned by `wasi:clocks/wall-clock.now` into the
+    // RFC3339-like string Aver's `Time.now() -> String` exposes.
+    // Materialises a fresh 24-byte `(array i8)` and writes
+    // `YYYY-MM-DDTHH:MM:SS.mmmZ` into it. The civil_from_days
+    // arithmetic mirrors `aver-rt::format_utc_rfc3339_like`.
+    // Allocated whenever wasip2 + the clocks slot are wired —
+    // `wasm-opt -Oz` strips this when only `Time.unixMs` reaches
+    // the import (i.e. no source-level `Time.now`).
+    let format_iso8601: Option<FormatIso8601Indices> = if matches!(target, super::TargetMode::Wasip2)
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::ClocksWallClockNow)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+    {
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([ValType::I64, ValType::I32], [s_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(FormatIso8601Indices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
@@ -718,6 +752,9 @@ pub(super) fn emit_module_with(
     }
     if let Some(e) = &env_get_lookup {
         funcs.function(e.fn_type);
+    }
+    if let Some(fmt) = &format_iso8601 {
+        funcs.function(fmt.fn_type);
     }
     factory_exports.emit_function_entries(&mut funcs);
     // Caller-fn name table fns — fixed-shape entries (count + name),
@@ -892,6 +929,7 @@ pub(super) fn emit_module_with(
                 get_environment_fn_idx: wasip2_imports
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::CliEnvironmentGetEnvironment),
                 env_get_lookup_fn_idx: env_get_lookup.as_ref().map(|e| e.fn_idx),
+                fmt_iso8601_fn_idx: format_iso8601.as_ref().map(|f| f.fn_idx),
             })
         } else {
             None
@@ -1349,6 +1387,9 @@ pub(super) fn emit_module_with(
             e.string_type_idx,
             e.option_string_type_idx,
         ));
+    }
+    if let Some(fmt) = &format_iso8601 {
+        codes.function(&emit_format_iso8601(fmt.string_type_idx));
     }
 
     factory_exports.emit_bodies(&mut codes, &registry)?;
@@ -3614,6 +3655,20 @@ struct EnvGetLookupIndices {
     option_string_type_idx: u32,
 }
 
+/// Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
+/// ref null $string` helper indices. Pure-compute helper, no
+/// retptr / no LM read. Turns the (secs, nanos) datetime returned
+/// by `wasi:clocks/wall-clock.now` into Aver's RFC3339-like
+/// `Time.now() -> String`. Algorithm matches
+/// `aver-rt::format_utc_rfc3339_like` (Howard Hinnant's
+/// civil_from_days for date math, fixed-width digit emission for
+/// the 24-byte output buffer).
+struct FormatIso8601Indices {
+    fn_type: u32,
+    fn_idx: u32,
+    string_type_idx: u32,
+}
+
 struct BridgeIndices {
     from_lm_type: u32,
     to_lm_type: u32,
@@ -4307,4 +4362,276 @@ fn emit_env_get_lookup(
     f.instruction(&Instruction::StructNew(option_string_type_idx));
     f.instruction(&Instruction::End); // fn end
     f
+}
+
+/// Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) -> ref
+/// null $string` body. Pure-compute helper, no LM read / no
+/// retptr. Builds the 24-byte UTF-8 buffer
+/// `YYYY-MM-DDTHH:MM:SS.mmmZ` from the `(seconds, nanoseconds)`
+/// pair `wasi:clocks/wall-clock.now` produces.
+///
+/// Date math uses Howard Hinnant's `civil_from_days` (the same
+/// algorithm `aver-rt::format_utc_rfc3339_like` uses on the
+/// host); positive-z fast path only — wasi-clocks returns u64
+/// seconds so the value is always >= 0 in practice. The output
+/// is materialised as a fresh `(array i8)` and the digit writes
+/// are inlined: ~24 short stanzas × ~6 instructions each.
+///
+/// `wasm-opt -Oz` strips this when no source-level `Time.now`
+/// reaches the helper (Time.unixMs alone never calls it).
+fn emit_format_iso8601(string_type_idx: u32) -> wasm_encoder::Function {
+    use wasm_encoder::{Function, HeapType, Instruction, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+    // Param indices: 0 = secs (i64), 1 = nanos (i32).
+    // Local indices follow: i64 group 2..=9, i32 group 10..=20,
+    // ref group at 21.
+    let mut f = Function::new(vec![
+        (8, ValType::I64),  // 2..=9: z, era, doe, yoe, y, doy, mp_i64, days
+        (11, ValType::I32), // 10..=20: hour, minute, second, ms, mp, day, month, year, sod, _, _
+        (1, s_ref),         // 21: arr
+    ]);
+    let p_secs = 0u32;
+    let p_nanos = 1u32;
+    let l_z = 2u32;
+    let l_era = 3u32;
+    let l_doe = 4u32;
+    let l_yoe = 5u32;
+    let l_y = 6u32;
+    let l_doy = 7u32;
+    let l_mp_i64 = 8u32;
+    let l_days = 9u32;
+    let l_hour = 10u32;
+    let l_minute = 11u32;
+    let l_second = 12u32;
+    let l_ms = 13u32;
+    let l_mp = 14u32;
+    let l_day = 15u32;
+    let l_month = 16u32;
+    let l_year = 17u32;
+    let l_sod = 18u32;
+    let l_arr = 21u32;
+
+    // ── time-of-day pieces ──────────────────────────────────
+    // days = secs / 86400 (i64; positive-domain assumption)
+    f.instruction(&Instruction::LocalGet(p_secs));
+    f.instruction(&Instruction::I64Const(86_400));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::LocalSet(l_days));
+    // sod = (secs % 86400) wrapped to i32 (always 0..86399)
+    f.instruction(&Instruction::LocalGet(p_secs));
+    f.instruction(&Instruction::I64Const(86_400));
+    f.instruction(&Instruction::I64RemS);
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(l_sod));
+    // hour = sod / 3600
+    f.instruction(&Instruction::LocalGet(l_sod));
+    f.instruction(&Instruction::I32Const(3_600));
+    f.instruction(&Instruction::I32DivU);
+    f.instruction(&Instruction::LocalSet(l_hour));
+    // minute = (sod % 3600) / 60
+    f.instruction(&Instruction::LocalGet(l_sod));
+    f.instruction(&Instruction::I32Const(3_600));
+    f.instruction(&Instruction::I32RemU);
+    f.instruction(&Instruction::I32Const(60));
+    f.instruction(&Instruction::I32DivU);
+    f.instruction(&Instruction::LocalSet(l_minute));
+    // second = sod % 60
+    f.instruction(&Instruction::LocalGet(l_sod));
+    f.instruction(&Instruction::I32Const(60));
+    f.instruction(&Instruction::I32RemU);
+    f.instruction(&Instruction::LocalSet(l_second));
+    // ms = nanos / 1_000_000
+    f.instruction(&Instruction::LocalGet(p_nanos));
+    f.instruction(&Instruction::I32Const(1_000_000));
+    f.instruction(&Instruction::I32DivU);
+    f.instruction(&Instruction::LocalSet(l_ms));
+
+    // ── civil_from_days (positive-z fast path) ─────────────
+    // z = days + 719468
+    f.instruction(&Instruction::LocalGet(l_days));
+    f.instruction(&Instruction::I64Const(719_468));
+    f.instruction(&Instruction::I64Add);
+    f.instruction(&Instruction::LocalSet(l_z));
+    // era = z / 146_097
+    f.instruction(&Instruction::LocalGet(l_z));
+    f.instruction(&Instruction::I64Const(146_097));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::LocalSet(l_era));
+    // doe = z - era * 146_097
+    f.instruction(&Instruction::LocalGet(l_z));
+    f.instruction(&Instruction::LocalGet(l_era));
+    f.instruction(&Instruction::I64Const(146_097));
+    f.instruction(&Instruction::I64Mul);
+    f.instruction(&Instruction::I64Sub);
+    f.instruction(&Instruction::LocalSet(l_doe));
+    // yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365
+    f.instruction(&Instruction::LocalGet(l_doe));
+    f.instruction(&Instruction::LocalGet(l_doe));
+    f.instruction(&Instruction::I64Const(1_460));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::I64Sub);
+    f.instruction(&Instruction::LocalGet(l_doe));
+    f.instruction(&Instruction::I64Const(36_524));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::I64Add);
+    f.instruction(&Instruction::LocalGet(l_doe));
+    f.instruction(&Instruction::I64Const(146_096));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::I64Sub);
+    f.instruction(&Instruction::I64Const(365));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::LocalSet(l_yoe));
+    // y = yoe + era * 400
+    f.instruction(&Instruction::LocalGet(l_yoe));
+    f.instruction(&Instruction::LocalGet(l_era));
+    f.instruction(&Instruction::I64Const(400));
+    f.instruction(&Instruction::I64Mul);
+    f.instruction(&Instruction::I64Add);
+    f.instruction(&Instruction::LocalSet(l_y));
+    // doy = doe - (365*yoe + yoe/4 - yoe/100)
+    f.instruction(&Instruction::LocalGet(l_doe));
+    f.instruction(&Instruction::LocalGet(l_yoe));
+    f.instruction(&Instruction::I64Const(365));
+    f.instruction(&Instruction::I64Mul);
+    f.instruction(&Instruction::LocalGet(l_yoe));
+    f.instruction(&Instruction::I64Const(4));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::I64Add);
+    f.instruction(&Instruction::LocalGet(l_yoe));
+    f.instruction(&Instruction::I64Const(100));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::I64Sub);
+    f.instruction(&Instruction::I64Sub);
+    f.instruction(&Instruction::LocalSet(l_doy));
+    // mp = (5*doy + 2) / 153 (i64, then narrow to i32)
+    f.instruction(&Instruction::LocalGet(l_doy));
+    f.instruction(&Instruction::I64Const(5));
+    f.instruction(&Instruction::I64Mul);
+    f.instruction(&Instruction::I64Const(2));
+    f.instruction(&Instruction::I64Add);
+    f.instruction(&Instruction::I64Const(153));
+    f.instruction(&Instruction::I64DivS);
+    f.instruction(&Instruction::LocalSet(l_mp_i64));
+    f.instruction(&Instruction::LocalGet(l_mp_i64));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalSet(l_mp));
+    // day = doy_lo - (153*mp + 2)/5 + 1 (all i32 — doy fits in i32 since 0..=365)
+    f.instruction(&Instruction::LocalGet(l_doy));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalGet(l_mp));
+    f.instruction(&Instruction::I32Const(153));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(5));
+    f.instruction(&Instruction::I32DivS);
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_day));
+    // month = mp + (mp < 10 ? 3 : -9)
+    f.instruction(&Instruction::LocalGet(l_mp));
+    f.instruction(&Instruction::I32Const(3));
+    f.instruction(&Instruction::I32Const(-9));
+    f.instruction(&Instruction::LocalGet(l_mp));
+    f.instruction(&Instruction::I32Const(10));
+    f.instruction(&Instruction::I32LtS);
+    f.instruction(&Instruction::Select);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_month));
+    // year = y_lo + (month <= 2 ? 1 : 0)
+    f.instruction(&Instruction::LocalGet(l_y));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(l_month));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32LeS);
+    f.instruction(&Instruction::Select);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_year));
+
+    // arr = (array.new_default $string 24)
+    f.instruction(&Instruction::I32Const(24));
+    f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_arr));
+
+    // ── digit / separator writes ───────────────────────────
+    // Each stanza pushes (arr, idx, byte_value) and `array.set`s
+    // it. Digit stanzas do `((val / divisor) % 10) + '0'`; ASCII
+    // separators push the literal byte.
+    write_digit(&mut f, l_arr, 0, l_year, 1_000, string_type_idx);
+    write_digit(&mut f, l_arr, 1, l_year, 100, string_type_idx);
+    write_digit(&mut f, l_arr, 2, l_year, 10, string_type_idx);
+    write_digit(&mut f, l_arr, 3, l_year, 1, string_type_idx);
+    write_byte(&mut f, l_arr, 4, b'-', string_type_idx);
+    write_digit(&mut f, l_arr, 5, l_month, 10, string_type_idx);
+    write_digit(&mut f, l_arr, 6, l_month, 1, string_type_idx);
+    write_byte(&mut f, l_arr, 7, b'-', string_type_idx);
+    write_digit(&mut f, l_arr, 8, l_day, 10, string_type_idx);
+    write_digit(&mut f, l_arr, 9, l_day, 1, string_type_idx);
+    write_byte(&mut f, l_arr, 10, b'T', string_type_idx);
+    write_digit(&mut f, l_arr, 11, l_hour, 10, string_type_idx);
+    write_digit(&mut f, l_arr, 12, l_hour, 1, string_type_idx);
+    write_byte(&mut f, l_arr, 13, b':', string_type_idx);
+    write_digit(&mut f, l_arr, 14, l_minute, 10, string_type_idx);
+    write_digit(&mut f, l_arr, 15, l_minute, 1, string_type_idx);
+    write_byte(&mut f, l_arr, 16, b':', string_type_idx);
+    write_digit(&mut f, l_arr, 17, l_second, 10, string_type_idx);
+    write_digit(&mut f, l_arr, 18, l_second, 1, string_type_idx);
+    write_byte(&mut f, l_arr, 19, b'.', string_type_idx);
+    write_digit(&mut f, l_arr, 20, l_ms, 100, string_type_idx);
+    write_digit(&mut f, l_arr, 21, l_ms, 10, string_type_idx);
+    write_digit(&mut f, l_arr, 22, l_ms, 1, string_type_idx);
+    write_byte(&mut f, l_arr, 23, b'Z', string_type_idx);
+
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::End); // fn end
+    f
+}
+
+/// Inline helper for `emit_format_iso8601`: writes
+/// `arr[pos] = ((val_local / divisor) % 10) + '0'`. `divisor == 1`
+/// short-circuits the division step.
+fn write_digit(
+    f: &mut wasm_encoder::Function,
+    l_arr: u32,
+    pos: i32,
+    val_local: u32,
+    divisor: i32,
+    string_type_idx: u32,
+) {
+    use wasm_encoder::Instruction;
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::I32Const(pos));
+    f.instruction(&Instruction::LocalGet(val_local));
+    if divisor > 1 {
+        f.instruction(&Instruction::I32Const(divisor));
+        f.instruction(&Instruction::I32DivU);
+    }
+    f.instruction(&Instruction::I32Const(10));
+    f.instruction(&Instruction::I32RemU);
+    f.instruction(&Instruction::I32Const(b'0' as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::ArraySet(string_type_idx));
+}
+
+/// Inline helper for `emit_format_iso8601`: writes a fixed ASCII
+/// byte at `arr[pos]`.
+fn write_byte(
+    f: &mut wasm_encoder::Function,
+    l_arr: u32,
+    pos: i32,
+    byte: u8,
+    string_type_idx: u32,
+) {
+    use wasm_encoder::Instruction;
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::I32Const(pos));
+    f.instruction(&Instruction::I32Const(byte as i32));
+    f.instruction(&Instruction::ArraySet(string_type_idx));
 }

@@ -395,6 +395,15 @@ pub(super) struct Wasip2Lowering {
     /// empty `(array i8)` when no match — preserves Aver
     /// `Env.get(name) -> String` semantics (no Option/Result).
     pub(super) env_get_lookup_fn_idx: Option<u32>,
+    /// Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
+    /// ref null $string` helper wasm fn idx. Pure-compute helper
+    /// that turns the datetime returned by
+    /// `wasi:clocks/wall-clock.now` into Aver's RFC3339-like
+    /// `Time.now() -> String` value. Allocated whenever wasip2 +
+    /// the clocks slot are wired (i.e. unconditionally with
+    /// Time.unixMs); `wasm-opt -Oz` strips this when no source
+    /// `Time.now` reaches the helper.
+    pub(super) fmt_iso8601_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

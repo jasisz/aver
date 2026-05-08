@@ -84,6 +84,9 @@ pub(super) fn emit_dotted_builtin(
         if parent == "Env" && method == "get" {
             return emit_env_get_wasip2(func, args, slots, ctx);
         }
+        if parent == "Time" && method == "now" {
+            return emit_time_now_wasip2(func, args, ctx);
+        }
     }
 
     // Registered effect import? Same shape — push args, push the
@@ -2058,6 +2061,67 @@ fn emit_time_unix_ms_wasip2(
     func.instruction(&Instruction::I64Const(1_000_000));
     func.instruction(&Instruction::I64DivU);
     func.instruction(&Instruction::I64Add);
+    Ok(())
+}
+
+/// Phase 1.4b — `Time.now() -> String` on `--target wasip2`.
+///
+/// Calls `wasi:clocks/wall-clock.now(retptr=0)` (the host writes
+/// `(seconds: u64, nanoseconds: u32)` into LM[0..16] — same retptr
+/// shape Time.unixMs already uses), loads the two fields, and
+/// hands them to `__rt_format_iso8601` which materialises a fresh
+/// 24-byte `(array i8)` containing the RFC3339-like string. The
+/// helper itself never reads LM, so the LM[0..16] window is free
+/// to be reused immediately afterwards.
+fn emit_time_now_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Time.now on wasip2: lowering ctx missing".into())
+    })?;
+    if !args.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "Time.now on `--target wasip2` expects 0 args, got {}",
+            args.len()
+        )));
+    }
+    let now_fn = lowering.clocks_now_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Time.now on wasip2: clocks-now fn idx missing — slot not registered".into(),
+        )
+    })?;
+    let fmt_fn = lowering.fmt_iso8601_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Time.now on wasip2: __rt_format_iso8601 fn idx missing — helper not allocated"
+                .into(),
+        )
+    })?;
+
+    // now(retptr=0). Host writes 16 bytes at LM[0..16].
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::Call(now_fn));
+
+    // Load secs (i64 @ LM[0]) and nanos (i32 @ LM[8]); push to
+    // stack in `(secs, nanos)` order matching the helper's params.
+    let secs_mem = wasm_encoder::MemArg {
+        offset: 0,
+        align: 3, // log2(8)
+        memory_index: 0,
+    };
+    let nanos_mem = wasm_encoder::MemArg {
+        offset: 8,
+        align: 2, // log2(4)
+        memory_index: 0,
+    };
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I64Load(secs_mem));
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I32Load(nanos_mem));
+
+    // Helper returns the formatted ref string on the stack.
+    func.instruction(&Instruction::Call(fmt_fn));
     Ok(())
 }
 
