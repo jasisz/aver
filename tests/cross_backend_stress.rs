@@ -538,6 +538,124 @@ fn cross_vector_aliasing_pin_wasm_gc() {
         VECTOR_ALIASING_OUT,
     );
 }
+// ─── Verify cross-target ────────────────────────────────────────────────
+//
+// `aver verify` and `aver verify --wasm-gc` evaluate the same verify
+// blocks via two different backends. They must agree on pass/fail —
+// codegen divergence between VM and wasm-gc would surface as one
+// reporting OK and the other not. The wasm-gc executor synthesizes a
+// `__verify_X_check() -> Bool` helper per case that runs `lhs == rhs`
+// inside wasm; the host only decodes a single i32 per case.
+
+const VERIFY_PASS_SRC: &str = r#"module Tmp
+    effects []
+
+fn add(a: Int, b: Int) -> Int
+    a + b
+
+verify add
+    add(2, 3) => 5
+    add(0, 0) => 0
+    add(0 - 1, 1) => 0
+
+fn classify(n: Int) -> String
+    match n
+        0 -> "zero"
+        _ -> match n > 0
+            true -> "positive"
+            false -> "negative"
+
+verify classify
+    classify(0) => "zero"
+    classify(7) => "positive"
+    classify(0 - 3) => "negative"
+
+fn main() -> Int
+    add(1, 2)
+"#;
+
+const VERIFY_FAIL_SRC: &str = r#"module Tmp
+    effects []
+
+fn buggy(a: Int) -> Int
+    a + 1
+
+verify buggy
+    buggy(0) => 0
+    buggy(5) => 6
+    buggy(10) => 100
+
+fn main() -> Int
+    buggy(0)
+"#;
+
+fn run_verify_summary(prefix: &str, source: &str, wasm_gc: bool) -> (bool, String) {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module(prefix, source);
+    let module_root = path.parent().expect("temp module has parent");
+    let mut cmd = Command::new(aver_bin);
+    cmd.current_dir(&repo_root)
+        .arg("verify")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(module_root);
+    if wasm_gc {
+        cmd.arg("--wasm-gc");
+    }
+    let out = cmd.output().expect("expected `aver verify` to execute");
+    cleanup(&path);
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let summary = stdout
+        .lines()
+        .find(|l| l.starts_with("Summary:"))
+        .unwrap_or("")
+        .to_string();
+    (out.status.success(), summary)
+}
+
+#[test]
+fn cross_verify_pass_vm() {
+    let (ok, summary) = run_verify_summary("aver-cross-vfypass-vm", VERIFY_PASS_SRC, false);
+    assert!(ok, "VM verify failed:\nsummary: {}", summary);
+    assert!(
+        summary.contains("6/6 cases passed | 0 failed"),
+        "VM summary unexpected: {}",
+        summary
+    );
+}
+#[test]
+fn cross_verify_pass_wasm_gc() {
+    let (ok, summary) = run_verify_summary("aver-cross-vfypass-wasmgc", VERIFY_PASS_SRC, true);
+    assert!(ok, "wasm-gc verify failed:\nsummary: {}", summary);
+    assert!(
+        summary.contains("6/6 cases passed | 0 failed"),
+        "wasm-gc summary unexpected: {}",
+        summary
+    );
+}
+
+#[test]
+fn cross_verify_fail_vm() {
+    let (ok, summary) = run_verify_summary("aver-cross-vfyfail-vm", VERIFY_FAIL_SRC, false);
+    assert!(!ok, "VM verify unexpectedly passed: {}", summary);
+    assert!(
+        summary.contains("1/3 cases passed | 2 failed"),
+        "VM summary unexpected: {}",
+        summary
+    );
+}
+#[test]
+fn cross_verify_fail_wasm_gc() {
+    let (ok, summary) = run_verify_summary("aver-cross-vfyfail-wasmgc", VERIFY_FAIL_SRC, true);
+    assert!(!ok, "wasm-gc verify unexpectedly passed: {}", summary);
+    assert!(
+        summary.contains("1/3 cases passed | 2 failed"),
+        "wasm-gc summary unexpected: {}",
+        summary
+    );
+}
+
 #[test]
 fn cross_vector_aliasing_pin_self_host() {
     assert_eq_with_label(

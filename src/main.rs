@@ -137,6 +137,7 @@ fn main() {
             verbose,
             json,
             hostile,
+            wasm_gc,
         } => {
             commands::cmd_verify(
                 file,
@@ -145,6 +146,7 @@ fn main() {
                 *verbose,
                 *json,
                 *hostile,
+                *wasm_gc,
             );
         }
         Commands::Audit {

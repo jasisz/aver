@@ -309,6 +309,13 @@ pub(super) enum Commands {
         /// hints, not contracts.
         #[arg(long)]
         hostile: bool,
+        /// Execute verify cases via the wasm-gc backend instead of the VM.
+        /// Cross-target check: catches divergences between VM and wasm-gc
+        /// codegen. Limits today: single-file modules only (no cross-module
+        /// `depends [...]`), no `.trace.*` projections, fail diagnostics
+        /// show LHS == RHS source rather than actual values.
+        #[arg(long = "wasm-gc")]
+        wasm_gc: bool,
     },
     /// Run check + verify + format-check in one pass
     Audit {

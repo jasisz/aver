@@ -17,6 +17,8 @@ pub mod model;
 pub mod verify_run;
 #[cfg(feature = "runtime")]
 pub mod vm_verify;
+#[cfg(all(feature = "runtime", feature = "wasm"))]
+pub mod wasm_gc_verify;
 pub mod why;
 
 pub use analyze::{AnalyzeOptions, analyze_source};

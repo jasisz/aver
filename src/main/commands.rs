@@ -2540,6 +2540,7 @@ fn run_verify_for_file(
     module_root: &str,
     deps: bool,
     hostile: bool,
+    wasm_gc: bool,
 ) -> Result<Vec<VerifyFileResult>, String> {
     use aver::verify_law::expand::ExpansionMode;
 
@@ -2553,13 +2554,33 @@ fn run_verify_for_file(
         ExpansionMode::Declared
     };
     for (path, source, items) in units {
-        let blocks = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(
-            items,
-            config.clone(),
-            Some(module_root),
-            &path,
-            mode,
-        )?;
+        let blocks = if wasm_gc {
+            #[cfg(feature = "wasm")]
+            {
+                aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc_with_mode(
+                    items,
+                    config.clone(),
+                    Some(module_root),
+                    &path,
+                    mode,
+                )?
+            }
+            #[cfg(not(feature = "wasm"))]
+            {
+                let _ = (items, &path);
+                return Err(
+                    "verify --wasm-gc requires building with --features wasm".to_string()
+                );
+            }
+        } else {
+            aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(
+                items,
+                config.clone(),
+                Some(module_root),
+                &path,
+                mode,
+            )?
+        };
         file_results.push(VerifyFileResult {
             path,
             source,
@@ -2984,7 +3005,16 @@ pub(super) fn cmd_verify(
     verbose: bool,
     json: bool,
     hostile: bool,
+    wasm_gc: bool,
 ) {
+    if wasm_gc && deps {
+        eprintln!(
+            "{}",
+            "verify --wasm-gc + --deps not yet supported. Run --wasm-gc on single-file modules, or drop --wasm-gc for the multi-module case."
+                .red()
+        );
+        process::exit(1);
+    }
     // 0.13 Limit: --hostile reruns each `verify ... law` against an adversarial
     // world. Domain side (this commit) injects boundary values per typed
     // `given`; effect side (next commit) responds with worst-case classified-
@@ -3004,7 +3034,7 @@ pub(super) fn cmd_verify(
     let mut printed_any = false;
 
     for file in &inputs {
-        match run_verify_for_file(file, &module_root, deps, hostile) {
+        match run_verify_for_file(file, &module_root, deps, hostile, wasm_gc) {
             Ok(file_results) => {
                 // Render immediately — streaming output
                 let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());
@@ -3022,7 +3052,8 @@ pub(super) fn cmd_verify(
                 }
                 all_file_results.extend(file_results);
             }
-            Err(_e) => {
+            Err(e) => {
+                eprintln!("{}: {}", display_check_path(file, &module_root).red(), e);
                 skipped_typecheck.push(display_check_path(file, &module_root));
                 failed_files.push(file.clone());
             }
