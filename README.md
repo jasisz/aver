@@ -17,14 +17,8 @@ It is built around one idea: the risky part of AI-written code is usually not sy
 - pure behavior lives in colocated `verify` blocks
 - selected effectful behavior can be verified with explicit stubs and trace assertions
 - effectful runs can be recorded and replayed deterministically
-- `aver why` scores every function's justification coverage: description, verify, decisions
-- `aver audit` runs all three axes — static checks, verify execution, format compliance — as a single CI gate
-- `aver context` exports the contract-level view of a module graph for humans or LLMs
-- `aver compile` turns an Aver module graph into a Rust/Cargo project or a standalone WASM module
-- `aver compile --emit-ir-after=PASS` prints the IR snapshot after any pipeline stage (`tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze`); a `diff -u` between two stages shows exactly what each pass rewrote
-- `aver compile --explain-passes [--json]` reports per-pass decisions (tail-call conversions, fusion sites + sinks, slots resolved, alloc/recursion facts) — typed JSON for CI gates that fail on observability regressions
-- `aver bench` runs scenario manifests across `vm` / `wasm-local` / `rust` targets with structured reports (NDJSON for batch); `--baseline-dir` autodetects per-host baselines for CI gating — see [docs/bench.md](docs/bench.md)
-- `aver proof` exports the pure subset of an Aver module graph to a Lean 4 proof project (default) or Dafny verification file (`--backend dafny`)
+
+The toolchain (run / verify / check / audit / why / context / compile / bench / proof / replay) lives in [docs/cli.md](docs/cli.md). Backend-specific deep dives: [docs/bench.md](docs/bench.md), [docs/transpilation.md](docs/transpilation.md), [docs/lean.md](docs/lean.md), [docs/dafny.md](docs/dafny.md), [docs/wasm.md](docs/wasm.md), [docs/rust.md](docs/rust.md).
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
@@ -466,13 +460,7 @@ aver context file.av
 aver compile file.av -o out/
 ```
 
-`aver verify` runs only the example cases from `verify` blocks and fails on mismatches or example errors. `aver check` handles static contract diagnostics such as missing `verify` blocks and coverage-style warnings. Both `check` and `verify` accept `--deps` to walk transitive `depends [...]` modules.
-
-For recursive code, `aver check` also warns when a recursive function still contains non-tail recursive calls after TCO. Tail-recursive code remains the preferred shape for large linear traversals; the warning is there to point out where accumulator-style rewrites may matter.
-
-`aver context` defaults to `--depth auto --budget 10kb` with priority scoring. Use `--focus <symbol>` to zoom into a function's dependency cone, `--budget 24kb` for a larger export, or `--depth unlimited` for the full graph.
-
-For replay, formatting, REPL, and the full command surface, use `aver --help` and the docs below.
+Full per-command reference, including flags, replay, formatting, REPL, and the audit / why / proof / bench surface: [docs/cli.md](docs/cli.md). Both `check` and `verify` accept `--deps` to walk transitive `depends [...]` modules; `aver verify --wasm-gc` runs the same cases through the wasm-gc backend as a cross-target check.
 
 ---
 

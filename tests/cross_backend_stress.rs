@@ -83,6 +83,27 @@ fn run_wasm(prefix: &str, source: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+fn run_wasm_gc(prefix: &str, source: &str) -> String {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module(prefix, source);
+    let out = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("run")
+        .arg(&path)
+        .arg("--wasm-gc")
+        .output()
+        .expect("expected `aver run --wasm-gc` to execute");
+    cleanup(&path);
+    assert!(
+        out.status.success(),
+        "{} wasm-gc run failed:\n{}",
+        prefix,
+        format_output(&out)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 fn run_self_host(prefix: &str, source: &str) -> String {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
@@ -280,6 +301,34 @@ fn main()
 // len = 2000, sum 1..2000 = 2000 * 2001 / 2 = 2 001 000
 const LIST_FROM_VECTOR_OUT: &str = "2000\n2001000";
 
+/// Pin the alias-corruption invariant: `outer = Vector.new(3, inner)`
+/// must NOT make the inner storage of `outer[0]` share an arena cell
+/// with `inner` such that mutating one bleeds into the other. The fused
+/// `Option.withDefault(Vector.set(row0, 1, 9), row0)` only touches a
+/// fresh local; both `row0` (read out of `outer`) and `inner` must
+/// remain `0 0 0`. A backend that takes the in-place fast path on
+/// `row0` without proving uniqueness produces `0 9 0` on either or
+/// both rows. See conversation 2026-05-07: three rounds of consultation
+/// landed on conservative aliasing as the right 0.17.x posture.
+const VECTOR_ALIASING_SRC: &str = r#"module Tmp
+
+fn cellStr(v: Vector<Int>, i: Int) -> String
+    String.fromInt(Option.withDefault(Vector.get(v, i), -1))
+
+fn show(v: Vector<Int>) -> String
+    cellStr(v, 0) + cellStr(v, 1) + cellStr(v, 2)
+
+fn main()
+    ! [Console.print]
+    inner = Vector.new(3, 0)
+    outer = Vector.new(3, inner)
+    row0 = Option.withDefault(Vector.get(outer, 0), Vector.new(0, 0))
+    _ = Option.withDefault(Vector.set(row0, 1, 9), row0)
+    Console.print(show(row0))
+    Console.print(show(inner))
+"#;
+const VECTOR_ALIASING_OUT: &str = "000\n000";
+
 // ─── Per-backend cross-checks ──────────────────────────────────────────
 //
 // One #[test] fn per (source × backend). Verbose vs a paste-macro
@@ -462,5 +511,200 @@ fn cross_list_from_vector_2k_self_host() {
         "self-host",
         &run_self_host("aver-cross-lfv2k-sh", LIST_FROM_VECTOR_SRC),
         LIST_FROM_VECTOR_OUT,
+    );
+}
+
+#[test]
+fn cross_vector_aliasing_pin_vm() {
+    assert_eq_with_label(
+        "VM",
+        &run_vm("aver-cross-alias-vm", VECTOR_ALIASING_SRC),
+        VECTOR_ALIASING_OUT,
+    );
+}
+#[test]
+fn cross_vector_aliasing_pin_wasm() {
+    assert_eq_with_label(
+        "WASM",
+        &run_wasm("aver-cross-alias-wasm", VECTOR_ALIASING_SRC),
+        VECTOR_ALIASING_OUT,
+    );
+}
+#[test]
+fn cross_vector_aliasing_pin_wasm_gc() {
+    assert_eq_with_label(
+        "wasm-gc",
+        &run_wasm_gc("aver-cross-alias-wasmgc", VECTOR_ALIASING_SRC),
+        VECTOR_ALIASING_OUT,
+    );
+}
+// ─── Verify cross-target ────────────────────────────────────────────────
+//
+// `aver verify` and `aver verify --wasm-gc` evaluate the same verify
+// blocks via two different backends. They must agree on pass/fail —
+// codegen divergence between VM and wasm-gc would surface as one
+// reporting OK and the other not. The wasm-gc executor synthesizes a
+// `__verify_X_check() -> Bool` helper per case that runs `lhs == rhs`
+// inside wasm; the host only decodes a single i32 per case.
+
+const VERIFY_PASS_SRC: &str = r#"module Tmp
+    effects []
+
+fn add(a: Int, b: Int) -> Int
+    a + b
+
+verify add
+    add(2, 3) => 5
+    add(0, 0) => 0
+    add(0 - 1, 1) => 0
+
+fn classify(n: Int) -> String
+    match n
+        0 -> "zero"
+        _ -> match n > 0
+            true -> "positive"
+            false -> "negative"
+
+verify classify
+    classify(0) => "zero"
+    classify(7) => "positive"
+    classify(0 - 3) => "negative"
+
+fn main() -> Int
+    add(1, 2)
+"#;
+
+const VERIFY_FAIL_SRC: &str = r#"module Tmp
+    effects []
+
+fn buggy(a: Int) -> Int
+    a + 1
+
+verify buggy
+    buggy(0) => 0
+    buggy(5) => 6
+    buggy(10) => 100
+
+fn main() -> Int
+    buggy(0)
+"#;
+
+/// Like `run_verify_summary` but returns the entire trimmed stdout
+/// (not just the Summary line) so tests can assert on rendered
+/// expected/actual values inside mismatch diagnostics.
+fn run_verify_full_stdout(prefix: &str, source: &str, wasm_gc: bool) -> String {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module(prefix, source);
+    let module_root = path.parent().expect("temp module has parent");
+    let mut cmd = Command::new(aver_bin);
+    cmd.current_dir(&repo_root)
+        .arg("verify")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(module_root);
+    if wasm_gc {
+        cmd.arg("--wasm-gc");
+    }
+    let out = cmd.output().expect("expected `aver verify` to execute");
+    cleanup(&path);
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+fn run_verify_summary(prefix: &str, source: &str, wasm_gc: bool) -> (bool, String) {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let path = temp_module(prefix, source);
+    let module_root = path.parent().expect("temp module has parent");
+    let mut cmd = Command::new(aver_bin);
+    cmd.current_dir(&repo_root)
+        .arg("verify")
+        .arg(&path)
+        .arg("--module-root")
+        .arg(module_root);
+    if wasm_gc {
+        cmd.arg("--wasm-gc");
+    }
+    let out = cmd.output().expect("expected `aver verify` to execute");
+    cleanup(&path);
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let summary = stdout
+        .lines()
+        .find(|l| l.starts_with("Summary:"))
+        .unwrap_or("")
+        .to_string();
+    (out.status.success(), summary)
+}
+
+#[test]
+fn cross_verify_pass_vm() {
+    let (ok, summary) = run_verify_summary("aver-cross-vfypass-vm", VERIFY_PASS_SRC, false);
+    assert!(ok, "VM verify failed:\nsummary: {}", summary);
+    assert!(
+        summary.contains("6/6 cases passed | 0 failed"),
+        "VM summary unexpected: {}",
+        summary
+    );
+}
+#[test]
+fn cross_verify_pass_wasm_gc() {
+    let (ok, summary) = run_verify_summary("aver-cross-vfypass-wasmgc", VERIFY_PASS_SRC, true);
+    assert!(ok, "wasm-gc verify failed:\nsummary: {}", summary);
+    assert!(
+        summary.contains("6/6 cases passed | 0 failed"),
+        "wasm-gc summary unexpected: {}",
+        summary
+    );
+}
+
+#[test]
+fn cross_verify_fail_vm() {
+    let (ok, summary) = run_verify_summary("aver-cross-vfyfail-vm", VERIFY_FAIL_SRC, false);
+    assert!(!ok, "VM verify unexpectedly passed: {}", summary);
+    assert!(
+        summary.contains("1/3 cases passed | 2 failed"),
+        "VM summary unexpected: {}",
+        summary
+    );
+}
+#[test]
+fn cross_verify_fail_wasm_gc() {
+    let (ok, summary) = run_verify_summary("aver-cross-vfyfail-wasmgc", VERIFY_FAIL_SRC, true);
+    assert!(!ok, "wasm-gc verify unexpectedly passed: {}", summary);
+    assert!(
+        summary.contains("1/3 cases passed | 2 failed"),
+        "wasm-gc summary unexpected: {}",
+        summary
+    );
+}
+
+/// Wasm-gc verify must surface actual runtime values for primitive
+/// return types — not just `<wasm-gc reports pass/fail only>`. The
+/// `__verify_X_left_repr() -> String` helper synthesizes a
+/// `String.fromInt(left_expr)` call (for `Type::Int`) which the
+/// backend lowers to a real wasm fn; the host decodes the resulting
+/// String via `__rt_string_to_lm`.
+#[test]
+fn cross_verify_fail_renders_actual_int_wasm_gc() {
+    let stdout = run_verify_full_stdout("aver-cross-vfyactual-wasmgc", VERIFY_FAIL_SRC, true);
+    // buggy(0) => 0 fails with actual=1; buggy(10) => 100 fails with actual=11.
+    assert!(
+        stdout.contains("expected: 0") && stdout.contains("actual: 1"),
+        "wasm-gc didn't render actual Int values for the buggy(0) case:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("expected: 100") && stdout.contains("actual: 11"),
+        "wasm-gc didn't render actual Int values for the buggy(10) case:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn cross_vector_aliasing_pin_self_host() {
+    assert_eq_with_label(
+        "self-host",
+        &run_self_host("aver-cross-alias-sh", VECTOR_ALIASING_SRC),
+        VECTOR_ALIASING_OUT,
     );
 }

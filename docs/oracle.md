@@ -518,15 +518,12 @@ the spec narrower. Pick one.
 
 ### What `--hostile` does not do
 
-- It does not run effect-side adversarial responses (the worst-case
-  classified-effect oracles — `Time.now` cycling backward, `Disk.readText`
-  returning `Err`, etc.). That's a separate feature, follow-up release.
 - It does not invent values for user-defined types (`Type::Named`). If a
   given is over `MyShape`, `--hostile` leaves the declared list alone —
   there is no boundary set that respects user constructors.
-- It does not synthesise `List<T>` / `Option<T>` / `Result<T, E>` values
-  in 0.13. The boundary set for those is empty; declared values pass
-  through unchanged.
+- It does not synthesise `List<T>` / `Option<T>` / `Result<T, E>` values.
+  The boundary set for those is empty; declared values pass through
+  unchanged.
 
 ## Current limits
 

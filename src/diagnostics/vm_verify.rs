@@ -61,7 +61,10 @@ type HostileCaseTuple = (
     Option<Spanned<Expr>>,
 );
 
-fn apply_hostile_expansion(block: &mut VerifyBlock, items: &[TopLevel]) -> Result<(), String> {
+pub(crate) fn apply_hostile_expansion(
+    block: &mut VerifyBlock,
+    items: &[TopLevel],
+) -> Result<(), String> {
     let value_expanded: Vec<HostileCaseTuple> = match &block.kind {
         VerifyKind::Law(law) => expand_law_cases(law, ExpansionMode::Hostile)
             .into_iter()
@@ -243,7 +246,10 @@ fn collect_effect_profile_combinations(
 /// rationale. Runs before type-check so synthetic stubs go through the
 /// regular checker and compile to ordinary user-space fns the runner
 /// can install as oracle stubs.
-fn inject_hostile_effect_stubs_for_blocks(items: &mut Vec<TopLevel>, blocks: &[VerifyBlock]) {
+pub(crate) fn inject_hostile_effect_stubs_for_blocks(
+    items: &mut Vec<TopLevel>,
+    blocks: &[VerifyBlock],
+) {
     let existing: std::collections::HashSet<String> = items
         .iter()
         .filter_map(|i| match i {
@@ -526,7 +532,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
     Ok(results)
 }
 
-fn format_type_errors(errors: &[crate::types::checker::TypeError]) -> String {
+pub(crate) fn format_type_errors(errors: &[crate::types::checker::TypeError]) -> String {
     let mut out = Vec::new();
     for te in errors {
         out.push(format!("error[{}:{}]: {}", te.line, te.col, te.message));
@@ -567,7 +573,7 @@ enum VmVerifyEval {
 /// uninstall machinery is bypassed for guard purposes, but the case
 /// body itself still sees the profile via the standard
 /// `install_oracle_stubs` path.
-fn guard_for_case(block: &VerifyBlock, case_idx: usize) -> Option<Spanned<Expr>> {
+pub(crate) fn guard_for_case(block: &VerifyBlock, case_idx: usize) -> Option<Spanned<Expr>> {
     use crate::ast_rewrite::rewrite_idents_scoped;
     use std::collections::HashMap;
 
@@ -607,7 +613,7 @@ fn guard_for_case(block: &VerifyBlock, case_idx: usize) -> Option<Spanned<Expr>>
     }))
 }
 
-fn make_verify_vm_helper(
+pub(crate) fn make_verify_helper(
     name: String,
     line: usize,
     expr: Spanned<Expr>,
@@ -656,13 +662,13 @@ fn build_verify_vm_plans(
             } else {
                 left_expr
             };
-            items.push(make_verify_vm_helper(
+            items.push(make_verify_helper(
                 left_name.clone(),
                 block.line,
                 left_expr,
                 true,
             ));
-            items.push(make_verify_vm_helper(
+            items.push(make_verify_helper(
                 right_name.clone(),
                 block.line,
                 right_expr,
@@ -679,7 +685,7 @@ fn build_verify_vm_plans(
                 .or_else(|| sample_guards.and_then(|gs| gs.get(case_idx)).cloned());
             let guard_name = guard_expr.map(|guard_expr| {
                 let name = format!("{}_guard", prefix);
-                items.push(make_verify_vm_helper(
+                items.push(make_verify_helper(
                     name.clone(),
                     block.line,
                     guard_expr,

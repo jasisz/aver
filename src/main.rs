@@ -37,7 +37,6 @@ fn main() {
         Commands::Run {
             file,
             module_root,
-            verify,
             record,
             expr,
             input_file,
@@ -95,7 +94,6 @@ fn main() {
                 commands::cmd_run_self_hosted(
                     file,
                     module_root.as_deref(),
-                    *verify,
                     record.as_deref(),
                     program_args.clone(),
                 );
@@ -103,7 +101,6 @@ fn main() {
                 commands::cmd_run_vm(
                     file,
                     module_root.as_deref(),
-                    *verify,
                     record.as_deref(),
                     program_args.clone(),
                     *profile,
@@ -116,7 +113,6 @@ fn main() {
                     commands::cmd_run_vm(
                         file,
                         module_root.as_deref(),
-                        *verify,
                         record.as_deref(),
                         program_args.clone(),
                         *profile,
@@ -141,6 +137,7 @@ fn main() {
             verbose,
             json,
             hostile,
+            wasm_gc,
         } => {
             commands::cmd_verify(
                 file,
@@ -149,6 +146,7 @@ fn main() {
                 *verbose,
                 *json,
                 *hostile,
+                *wasm_gc,
             );
         }
         Commands::Audit {

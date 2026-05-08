@@ -1398,6 +1398,16 @@ fn transpile_unified(
     }
     let subtype_block = crate::types::checker::oracle_subtypes::lean_subtypes(&declared);
     if !subtype_block.is_empty() {
+        // Fold subtype block into the union body BEFORE computing
+        // `needed_helpers` — the Oracle subtype block is what
+        // introduces `BranchPath` references (e.g. `abbrev
+        // TimeUnixMsOracle := BranchPath → Int → Int`) for files that
+        // declare classified effects but never spell `BranchPath` in
+        // user code. Without this, AverCommon.lean misses the
+        // `structure BranchPath` block and Main.lean fails build with
+        // `unknown identifier 'BranchPath'`.
+        union_body.push_str(&subtype_block);
+        union_body.push('\n');
         entry_parts.push(subtype_block);
     }
     entry_parts.push(entry_body);

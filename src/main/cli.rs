@@ -236,9 +236,6 @@ pub(super) enum Commands {
         /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
-        /// Also run verify blocks after execution
-        #[arg(long)]
-        verify: bool,
         /// Record effect calls and persist a replay session JSON into this directory
         #[arg(long)]
         record: Option<String>,
@@ -312,6 +309,16 @@ pub(super) enum Commands {
         /// hints, not contracts.
         #[arg(long)]
         hostile: bool,
+        /// Execute verify cases via the wasm-gc backend instead of the
+        /// VM. Cross-target check: catches divergences between VM and
+        /// wasm-gc codegen on equality. Cross-module `depends [...]`
+        /// supported; primitive return types render actual runtime
+        /// values on fail. Trace projections (`.trace.*`), classified-
+        /// effect Oracle stubs (`given X: Time = stub`), and case
+        /// bodies mentioning `BranchPath` are rejected with a pointer
+        /// back to plain `aver verify` (VM).
+        #[arg(long = "wasm-gc")]
+        wasm_gc: bool,
     },
     /// Run check + verify + format-check in one pass
     Audit {

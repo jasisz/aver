@@ -367,6 +367,17 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     }
     let subtype_block = crate::types::checker::oracle_subtypes::dafny_subtype_predicates(&declared);
     if !subtype_block.is_empty() {
+        // Fold subtype block into the union body BEFORE computing
+        // `needed_helpers` — the Oracle subtype block introduces
+        // `BranchPath` references (e.g. `predicate IsTimeUnixMsNonneg(
+        // f: (BranchPath, int) -> int)`) for files that declare
+        // classified effects but never spell `BranchPath` in user
+        // code. Without this, common.dfy misses the `datatype
+        // BranchPath` block and Main.dfy fails verification with
+        // `Type or type parameter is not declared in this scope:
+        // BranchPath`.
+        union_body.push_str(&subtype_block);
+        union_body.push('\n');
         entry_parts.push(subtype_block);
     }
     entry_parts.push(entry_body);

@@ -987,7 +987,6 @@ pub(super) fn display_check_path(path: &str, module_root: &str) -> String {
 pub(super) fn cmd_run_vm(
     file: &str,
     module_root_override: Option<&str>,
-    run_verify_blocks: bool,
     record_dir: Option<&str>,
     program_args: Vec<String>,
     profile: bool,
@@ -997,23 +996,6 @@ pub(super) fn cmd_run_vm(
         JsonValue, session::RecordedOutcome, session::SessionRecording,
         session_recording_to_string_pretty,
     };
-
-    if run_verify_blocks && record_dir.is_some() {
-        eprintln!(
-            "{}",
-            "Cannot combine --verify and --record in one run; record should capture only main flow."
-                .red()
-        );
-        process::exit(1);
-    }
-
-    if run_verify_blocks && entry_expression.is_some() {
-        eprintln!(
-            "{}",
-            "Cannot combine --verify with --expr / --input-file.".red()
-        );
-        process::exit(1);
-    }
 
     let module_root = super::shared::resolve_module_root_for_entry(file, module_root_override);
     let source = match super::shared::read_file(file) {
@@ -1270,37 +1252,6 @@ pub(super) fn cmd_run_vm(
         Err(e) => {
             eprintln!("{}", format!("{}", e).red());
             process::exit(1);
-        }
-    }
-
-    if run_verify_blocks {
-        println!();
-        let cfg = load_runtime_policy(&module_root).unwrap_or_else(|e| {
-            eprintln!("{}", e.red());
-            process::exit(1);
-        });
-        match aver::diagnostics::vm_verify::run_verify_for_items_vm(
-            items,
-            cfg,
-            Some(&module_root),
-            file,
-        ) {
-            Ok(results) => {
-                let failed: usize = results.iter().map(|r| r.failed).sum();
-                let file_results = vec![VerifyFileResult {
-                    path: file.to_string(),
-                    source: source.clone(),
-                    blocks: results,
-                }];
-                render_verify_output(&file_results, &module_root, false, false);
-                if failed > 0 {
-                    process::exit(1);
-                }
-            }
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
         }
     }
 }
@@ -2069,19 +2020,9 @@ fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), 
 pub(super) fn cmd_run_self_hosted(
     file: &str,
     module_root_override: Option<&str>,
-    run_verify_blocks: bool,
     record_dir: Option<&str>,
     program_args: Vec<String>,
 ) {
-    if run_verify_blocks && record_dir.is_some() {
-        eprintln!(
-            "{}",
-            "Cannot combine --verify and --record in one run; record should capture only main flow."
-                .red()
-        );
-        process::exit(1);
-    }
-
     // Keep CLI parity with host `aver run` until the self-host carries its own
     // full front-end pipeline (type checker + TCO + module diagnostics).
     {
@@ -2190,11 +2131,6 @@ pub(super) fn cmd_run_self_hosted(
 
     if !status.success() {
         process::exit(status.code().unwrap_or(1));
-    }
-
-    if run_verify_blocks {
-        println!();
-        cmd_verify(file, module_root_override, false, false, false, false);
     }
 }
 
@@ -2603,6 +2539,7 @@ fn run_verify_for_file(
     module_root: &str,
     deps: bool,
     hostile: bool,
+    wasm_gc: bool,
 ) -> Result<Vec<VerifyFileResult>, String> {
     use aver::verify_law::expand::ExpansionMode;
 
@@ -2616,13 +2553,31 @@ fn run_verify_for_file(
         ExpansionMode::Declared
     };
     for (path, source, items) in units {
-        let blocks = aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(
-            items,
-            config.clone(),
-            Some(module_root),
-            &path,
-            mode,
-        )?;
+        let blocks = if wasm_gc {
+            #[cfg(feature = "wasm")]
+            {
+                aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc_with_mode(
+                    items,
+                    config.clone(),
+                    Some(module_root),
+                    &path,
+                    mode,
+                )?
+            }
+            #[cfg(not(feature = "wasm"))]
+            {
+                let _ = (items, &path);
+                return Err("verify --wasm-gc requires building with --features wasm".to_string());
+            }
+        } else {
+            aver::diagnostics::vm_verify::run_verify_for_items_vm_with_mode(
+                items,
+                config.clone(),
+                Some(module_root),
+                &path,
+                mode,
+            )?
+        };
         file_results.push(VerifyFileResult {
             path,
             source,
@@ -3047,6 +3002,7 @@ pub(super) fn cmd_verify(
     verbose: bool,
     json: bool,
     hostile: bool,
+    wasm_gc: bool,
 ) {
     // 0.13 Limit: --hostile reruns each `verify ... law` against an adversarial
     // world. Domain side (this commit) injects boundary values per typed
@@ -3067,7 +3023,7 @@ pub(super) fn cmd_verify(
     let mut printed_any = false;
 
     for file in &inputs {
-        match run_verify_for_file(file, &module_root, deps, hostile) {
+        match run_verify_for_file(file, &module_root, deps, hostile, wasm_gc) {
             Ok(file_results) => {
                 // Render immediately — streaming output
                 let has_blocks = file_results.iter().any(|fr| !fr.blocks.is_empty());
@@ -3085,7 +3041,8 @@ pub(super) fn cmd_verify(
                 }
                 all_file_results.extend(file_results);
             }
-            Err(_e) => {
+            Err(e) => {
+                eprintln!("{}: {}", display_check_path(file, &module_root).red(), e);
                 skipped_typecheck.push(display_check_path(file, &module_root));
                 failed_files.push(file.clone());
             }

@@ -2,6 +2,19 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.17.3 (2026-05-08)
+
+### Fixed
+- **`aver proof` BranchPath prelude gating.** Files with classified effects (`Time.unixMs`, `Random.int`, `Disk.readText`) emit Oracle subtype predicates that reference `BranchPath` (`abbrev TimeUnixMsOracle := BranchPath → Int → Int` in Lean, `predicate IsTimeUnixMsNonneg(f: (BranchPath, int) -> int)` in Dafny). The `union_body` substring check that decides whether to ship the `BranchPath` structure / datatype in the prelude ran BEFORE the subtype block was appended — `AverCommon.lean` and `common.dfy` ended up missing the declaration and the build failed with `unknown identifier 'BranchPath'` (Lean) / `Type or type parameter is not declared in this scope: BranchPath` (Dafny). Fold the subtype block into `union_body` before computing `needed_helpers`. Same one-line reorder in both backends.
+
+### Removed (breaking)
+- **`aver run --verify` removed.** Run and verify are two different commands; bundling them forced a guard for every flag combination (`--verify --record`, `--verify --expr`, `--verify --wasm-gc` not yet wired). Callers compose: `aver run x.av && aver verify x.av`. Pre-1.0; no users to deprecate against.
+
+### Added
+- **`aver verify --wasm-gc`** runs verify cases via the wasm-gc backend instead of the VM. Cross-target check — catches divergence between VM and wasm-gc codegen on equality. Synthesizes a `__verify_X_check() -> Bool` helper per case and lets wasm-gc lower `==` natively via the per-type eq_helpers registry; the host decodes a single i32 per case. Cross-module `depends [...]` supported. Failure diagnostics render the actual runtime value for primitive return types (Int/Float/Bool/Str) via synthesized `__verify_X_repr() -> String` helpers + the `__rt_string_to_lm` decode bridge. Trace projections (`.trace.*`), classified-effect Oracle stubs (`given X: Time = stub`), and case bodies mentioning `BranchPath` are rejected upfront with an actionable pointer back to VM verify — those depend on namespace-value dispatch and runtime override that the wasm-gc backend doesn't have yet.
+- **`aver bench --target wasm-gc-v8`** alongside `wasm-gc-wasmtime` — runs the wasm-gc bytes under V8 (Node 22+ via `tools/wasm-gc-bench-v8.mjs`) so alloc-heavy workloads aren't pinned to wasmtime's GC engine speed.
+- **`tests/cross_backend_stress.rs::cross_vector_aliasing_pin_*`** — pins the `Vector.set` aliasing corruption repro across all four backends (VM, legacy wasm, wasm-gc, self-host). Future `ir::alias` relaxation must keep this green or it ships unsound.
+
 ## 0.17.2 (2026-05-07)
 
 ### Changed
