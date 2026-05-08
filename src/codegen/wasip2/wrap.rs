@@ -1,18 +1,18 @@
-//! Component wrapping: core wasm + preview-1 adapter →
+//! Component wrapping: core wasm + component-type metadata →
 //! `.component.wasm`.
 //!
-//! The actual lowering of effects to preview-1 imports lives in the
-//! wasm-gc backend (Phase 1.2+ — modifies `src/codegen/wasm_gc/
-//! effects.rs` to emit `wasi_snapshot_preview1::*` imports when the
-//! target is `Wasip2`). This module is target-agnostic past that
-//! point: it accepts core wasm bytes, picks the adapter that
-//! matches the requested world, and asks `wit-component` to wrap.
+//! Direct WIT lowering — no preview-1 adapter. The wasm-gc backend
+//! emits core imports/exports in canonical-ABI-compatible shapes;
+//! we encode a `component-type:<world>` custom section describing
+//! the WIT world (via `wit-component::metadata`) and append it to
+//! the core bytes; `wit-component::ComponentEncoder::module(...)
+//! .encode()` then produces the component. The host sees the WIT
+//! view; it never sees Aver runtime layout. See
+//! `feedback_aver_no_preview1_adapter` for the architectural
+//! decision and `docs/wasip2.md` for the contract.
 
-use wasi_preview1_component_adapter_provider::{
-    WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER,
-    WASI_SNAPSHOT_PREVIEW1_PROXY_ADAPTER,
-};
-use wit_component::ComponentEncoder;
+use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
+use wit_parser::{Resolve, UnresolvedPackageGroup};
 
 use super::error::Wasip2Error;
 
@@ -25,7 +25,7 @@ pub enum Wasip2World {
     /// `wasi:cli/run`. Default for 0.18 "Span" Phase 1.
     CliCommand,
     /// `wasi:http/proxy` — HTTP server shape. Phase 3 / 0.19;
-    /// compile-rejected in 0.18 unless trivially landable.
+    /// compile-rejected in 0.18.
     HttpProxy,
 }
 
@@ -39,10 +39,15 @@ impl Wasip2World {
         }
     }
 
-    fn adapter_bytes(self) -> &'static [u8] {
+    /// Kebab-case world identifier inside our generated package.
+    /// Phase 1 emits this as a top-level world in `aver:user`; later
+    /// phases include or extend the upstream WASI world of the same
+    /// shape (`wasi:cli/command` etc.) once the WASI WIT bundle is
+    /// wired into the binary.
+    pub(super) fn local_name(self) -> &'static str {
         match self {
-            Wasip2World::CliCommand => WASI_SNAPSHOT_PREVIEW1_COMMAND_ADAPTER,
-            Wasip2World::HttpProxy => WASI_SNAPSHOT_PREVIEW1_PROXY_ADAPTER,
+            Wasip2World::CliCommand => "command",
+            Wasip2World::HttpProxy => "http-proxy",
         }
     }
 }
@@ -50,43 +55,68 @@ impl Wasip2World {
 /// Wrap a core wasm-gc module as a Component.
 ///
 /// `core_wasm` is the output of the wasm-gc backend re-targeted at
-/// `wasi_snapshot_preview1` imports. Returns the component bytes
-/// alongside the WIT source emitted next to the artifact (per the
-/// component contract in `docs/wasip2.md` — point 5).
+/// canonical-ABI-compatible boundary shapes. Returns the component
+/// bytes alongside the WIT source emitted next to the artifact (per
+/// the component contract in `docs/wasip2.md` — point 5).
 ///
-/// Phase 1 status:
-/// - `CliCommand` is supported end-to-end through this wrap call as
-///   long as the core module's imports match what the COMMAND adapter
-///   provides.
-/// - `HttpProxy` is rejected with `Wasip2Error::NotImplemented` —
-///   Phase 3 work, lands in 0.19 unless trivial.
+/// Phase 1 transitional shape: the world declared in metadata is an
+/// empty `world command {}` — Aver's effect-bearing core imports
+/// arrive in Phase 1.2+, when WASI WIT bundles are wired so the
+/// world can `include wasi:cli/command;`. The wrap pipeline itself
+/// is end-to-end here; only the imported surface grows.
+///
+/// `HttpProxy` is rejected with `Wasip2Error::NotImplemented` —
+/// Phase 3 / 0.19 work, lands when designed deliberately.
 pub fn compile_to_component(
     core_wasm: &[u8],
     world: Wasip2World,
 ) -> Result<(Vec<u8>, String), Wasip2Error> {
     if matches!(world, Wasip2World::HttpProxy) {
         return Err(Wasip2Error::NotImplemented(
-            "world `wasi:http/proxy` (Phase 3) is not wired in 0.18 Phase 1 — \
-             use `--world wasi:cli/command` for the long-running process shape, \
-             or wait for the Phase 3 / 0.19 increment"
+            "world `wasi:http/proxy` (Phase 3) is not wired in 0.18 — \
+             use `--world wasi:cli/command` for the long-running process \
+             shape, or wait for the deliberate Phase 3 / 0.19+ design"
                 .to_string(),
         ));
     }
 
-    let component = ComponentEncoder::default()
-        .module(core_wasm)
-        .map_err(|e| Wasip2Error::Wrap(format!("ComponentEncoder::module rejected core: {e}")))?
-        .validate(true)
-        .adapter(WASI_SNAPSHOT_PREVIEW1_ADAPTER_NAME, world.adapter_bytes())
+    let wit_source = super::wit::emit_world_wit(world);
+
+    // Parse our generated WIT into a `Resolve` so the metadata encoder
+    // has typed input. `parse` reads from a string — the path argument
+    // is for error messages only, no filesystem access.
+    let unresolved =
+        UnresolvedPackageGroup::parse("aver-generated.wit", &wit_source).map_err(|e| {
+            Wasip2Error::Wrap(format!("WIT parse failed for generated package: {e}"))
+        })?;
+    let mut resolve = Resolve::default();
+    let pkg_id = resolve
+        .push_group(unresolved)
+        .map_err(|e| Wasip2Error::Wrap(format!("push WIT package into Resolve: {e}")))?;
+    let world_id = resolve
+        .select_world(&[pkg_id], Some(world.local_name()))
         .map_err(|e| {
             Wasip2Error::Wrap(format!(
-                "ComponentEncoder::adapter (preview1 → {}) rejected: {e}",
-                world.wit_name()
+                "select world `{}` in generated package: {e}",
+                world.local_name()
             ))
-        })?
+        })?;
+
+    // Embed `component-type:<world>` custom section into a copy of the
+    // core wasm. ComponentEncoder reads this section to know which
+    // WIT world the core's signatures correspond to.
+    let mut core = core_wasm.to_vec();
+    embed_component_metadata(&mut core, &resolve, world_id, StringEncoding::UTF8).map_err(
+        |e| Wasip2Error::Wrap(format!("embed component-type metadata: {e}")),
+    )?;
+
+    // Wrap as a component WITHOUT the preview-1 adapter.
+    let component = ComponentEncoder::default()
+        .module(&core)
+        .map_err(|e| Wasip2Error::Wrap(format!("ComponentEncoder::module rejected core: {e}")))?
+        .validate(true)
         .encode()
         .map_err(|e| Wasip2Error::Wrap(format!("ComponentEncoder::encode failed: {e}")))?;
 
-    let wit = super::wit::emit_world_wit(world);
-    Ok((component, wit))
+    Ok((component, wit_source))
 }

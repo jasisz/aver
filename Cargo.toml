@@ -53,13 +53,15 @@ wasm-compile = ["dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser", "dep:wa
 # (~9.4 kLoC of Rust + the embedded runtime blob).
 wasm-legacy = ["wasm-compile"]
 # 0.18 "Span" — `--target wasip2` (WASI 0.2 Component Model output).
-# Wraps a wasm-gc core module via `wit-component` with the
-# preview1 adapter from `wasi-preview1-component-adapter-provider`
-# (paired with `wasmtime` major). WIT is emitted inline via
-# `wit-encoder`, so the component build does not shell out.
-# See docs/wasip2.md for the contract and decisions/architecture.av
-# for the rationale.
-wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-encoder", "dep:wasi-preview1-component-adapter-provider"]
+# Direct WIT lowering: the wasm-gc backend emits a core module in
+# canonical-ABI-compatible shapes, we embed a `component-type:<world>`
+# custom section (encoded via `wit-component::metadata`) describing
+# the WIT world, and `wit-component::ComponentEncoder` produces the
+# component without a preview1 adapter. Aver effects map directly
+# to WIT/WASI imports — there is no preview1 ABI to preserve. See
+# docs/wasip2.md for the contract and feedback_aver_no_preview1_adapter
+# for the architectural rationale.
+wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-encoder", "dep:wit-parser"]
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
@@ -79,12 +81,13 @@ wasmparser = { version = "0.248", optional = true }
 wasmprinter = { version = "0.248", optional = true }
 wasmtime = { version = "44", optional = true, default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc", "component-model"] }
 wat = { version = "1", optional = true }
-# wasip2 feature deps — versions paired by upstream release train
-# (wasm-tools 1.248 / wit-component 0.248 / wit-encoder 0.248 /
-# wasi-preview1-component-adapter-provider 44 ↔ wasmtime 44).
+# wasip2 feature deps — versions paired by upstream wasm-tools 1.248
+# release train. `wasi-preview1-component-adapter-provider` is NOT
+# a dep: Aver effects lower directly to WIT/WASI imports, no
+# preview1 adapter wrap (see feedback_aver_no_preview1_adapter).
 wit-component = { version = "0.248", optional = true }
 wit-encoder = { version = "0.248", optional = true }
-wasi-preview1-component-adapter-provider = { version = "44", optional = true }
+wit-parser = { version = "0.248", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
