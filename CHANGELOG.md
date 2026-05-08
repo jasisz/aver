@@ -4,6 +4,9 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.17.3 (2026-05-08)
 
+### Fixed
+- **`aver proof` BranchPath prelude gating.** Files with classified effects (`Time.unixMs`, `Random.int`, `Disk.readText`) emit Oracle subtype predicates that reference `BranchPath` (`abbrev TimeUnixMsOracle := BranchPath → Int → Int` in Lean, `predicate IsTimeUnixMsNonneg(f: (BranchPath, int) -> int)` in Dafny). The `union_body` substring check that decides whether to ship the `BranchPath` structure / datatype in the prelude ran BEFORE the subtype block was appended — `AverCommon.lean` and `common.dfy` ended up missing the declaration and the build failed with `unknown identifier 'BranchPath'` (Lean) / `Type or type parameter is not declared in this scope: BranchPath` (Dafny). Fold the subtype block into `union_body` before computing `needed_helpers`. Same one-line reorder in both backends.
+
 ### Removed (breaking)
 - **`aver run --verify` removed.** Run and verify are two different commands; bundling them forced a guard for every flag combination (`--verify --record`, `--verify --expr`, `--verify --wasm-gc` not yet wired). Callers compose: `aver run x.av && aver verify x.av`. Pre-1.0; no users to deprecate against.
 
