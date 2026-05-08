@@ -701,16 +701,24 @@ impl EffectRegistry {
 }
 
 impl EffectName {
-    /// True iff Phase 1.2b1 wires this effect on `TargetMode::Wasip2`.
+    /// True iff this effect is wired on `TargetMode::Wasip2` today.
     /// Drives the population of `Wasip2ImportRegistry` from the
     /// effects discovered by the per-fn walker. Stays `false` for
-    /// every effect Phase 1.2b1 does not lower; those effects are
-    /// rejected upstream by `wasip2::effect_check` before reaching
-    /// the wasm-gc emitter.
+    /// every effect not yet lowered; those effects are rejected
+    /// upstream by `wasip2::effect_check` before reaching the
+    /// wasm-gc emitter.
+    ///
+    /// Set grows as each phase commit lands: 1.2b1 wired Console.*,
+    /// 1.4 added Time.unixMs + Random.{int,float}.
     pub(super) fn lowers_on_wasip2(self) -> bool {
         matches!(
             self,
-            EffectName::ConsolePrint | EffectName::ConsoleError | EffectName::ConsoleWarn,
+            EffectName::ConsolePrint
+                | EffectName::ConsoleError
+                | EffectName::ConsoleWarn
+                | EffectName::TimeUnixMs
+                | EffectName::RandomInt
+                | EffectName::RandomFloat,
         )
     }
 }

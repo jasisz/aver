@@ -326,34 +326,42 @@ pub(super) struct EmitCtx<'a> {
     pub(super) wasip2_lowering: Option<&'a Wasip2Lowering>,
 }
 
-/// Phase 1.2b1.5 — concrete fn / global / helper indices the
-/// call-site lowering for `Console.{print, error, warn}` needs on
-/// `TargetMode::Wasip2`. Built once per module in `module.rs` after
-/// the import section / globals section / bridge fn indices have
-/// been allocated, then handed to every `emit_fn_body` call as a
-/// borrowed reference.
+/// Concrete fn / global / helper indices the wasip2 call-site
+/// lowering reads. Built once per module in `module.rs` after the
+/// import section / globals section / bridge fn indices have been
+/// allocated, then handed to every `emit_fn_body` call as a
+/// borrowed reference. Each `Option<...>` field is populated when
+/// at least one effect that needs it is registered.
 pub(super) struct Wasip2Lowering {
-    /// `wasi:cli/stdout.get-stdout` imported wasm fn idx. `Some(...)`
-    /// when at least `Console.print` is registered; else `None`.
+    // ── Phase 1.2b1.5: Console.{print, error, warn} ─────────────
+    /// `wasi:cli/stdout.get-stdout` imported wasm fn idx.
     pub(super) get_stdout_fn_idx: Option<u32>,
-    /// `wasi:cli/stderr.get-stderr` imported wasm fn idx. `Some(...)`
-    /// when at least `Console.{error, warn}` is registered.
+    /// `wasi:cli/stderr.get-stderr` imported wasm fn idx.
     pub(super) get_stderr_fn_idx: Option<u32>,
     /// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
-    /// imported wasm fn idx. Always `Some(...)` when this struct
-    /// itself is constructed.
-    pub(super) blocking_write_fn_idx: u32,
+    /// imported wasm fn idx. `Some(...)` when any `Console.*` is
+    /// registered; `None` otherwise.
+    pub(super) blocking_write_fn_idx: Option<u32>,
     /// Mutable i32 global caching the stdout `output-stream` resource
-    /// handle. Initial value `-1` ("not yet resolved"). `Some(idx)`
-    /// when the `Console.print` slot was registered.
+    /// handle. Initial value `-1` ("not yet resolved").
     pub(super) stdout_handle_global: Option<u32>,
     /// Same shape for stderr.
     pub(super) stderr_handle_global: Option<u32>,
     /// `__rt_string_to_lm` helper wasm fn idx. Reused from the
     /// existing JS-bridge helper machinery — on wasip2 it stays
     /// internal (not exported) and copies utf-8 bytes from the
-    /// Aver `(ref null $string)` to LM[0..len].
-    pub(super) str_to_lm_fn_idx: u32,
+    /// Aver `(ref null $string)` to LM[0..len]. `Some(...)` when
+    /// any string-marshalling effect (i.e., `Console.*`) is wired.
+    pub(super) str_to_lm_fn_idx: Option<u32>,
+
+    // ── Phase 1.4: Time.unixMs / Random.{int, float} ───────────
+    /// `wasi:clocks/wall-clock.now` imported wasm fn idx.
+    /// `Some(...)` when `Time.unixMs` is registered.
+    pub(super) clocks_now_fn_idx: Option<u32>,
+    /// `wasi:random/random.get-random-u64` imported wasm fn idx.
+    /// `Some(...)` when at least one of `Random.{int, float}` is
+    /// registered (the same import drives both).
+    pub(super) random_u64_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

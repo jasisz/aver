@@ -54,6 +54,21 @@ pub(super) enum Wasip2ImportSlot {
     /// is `Unit`, matching the wasm-gc target's fire-and-forget
     /// semantics.
     OutputStreamBlockingWriteAndFlush,
+    /// `wasi:clocks/wall-clock.now: func() -> datetime` where
+    /// `datetime = record { seconds: u64, nanoseconds: u32 }`.
+    ///
+    /// Canonical-ABI signature with the `datetime` record lowered via
+    /// retptr (16 bytes — u64 at retptr+0, u32 at retptr+8, 4 bytes
+    /// of padding):
+    ///   `(retptr: i32) -> ()`.
+    /// Phase 1.4 drives `Time.unixMs` (computed in guest as
+    /// `seconds * 1000 + nanoseconds / 1_000_000`).
+    ClocksWallClockNow,
+    /// `wasi:random/random.get-random-u64: func() -> u64`.
+    /// Canonical-ABI signature: inline 64-bit return, `() -> i64`.
+    /// Phase 1.4 drives both `Random.int(min, max)` (modulo + offset)
+    /// and `Random.float()` (53-bit precision scale to `[0.0, 1.0)`).
+    RandomGetRandomU64,
 }
 
 impl Wasip2ImportSlot {
@@ -69,15 +84,24 @@ impl Wasip2ImportSlot {
                 "wasi:io/streams@0.2.4",
                 "[method]output-stream.blocking-write-and-flush",
             ),
+            Wasip2ImportSlot::ClocksWallClockNow => ("wasi:clocks/wall-clock@0.2.4", "now"),
+            Wasip2ImportSlot::RandomGetRandomU64 => {
+                ("wasi:random/random@0.2.4", "get-random-u64")
+            }
         }
     }
 
     pub(super) fn params(self) -> Vec<ValType> {
         match self {
-            Wasip2ImportSlot::CliGetStdout | Wasip2ImportSlot::CliGetStderr => Vec::new(),
+            Wasip2ImportSlot::CliGetStdout
+            | Wasip2ImportSlot::CliGetStderr
+            | Wasip2ImportSlot::RandomGetRandomU64 => Vec::new(),
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush => {
                 vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32]
             }
+            // `now: () -> datetime` — datetime exceeds 8-byte flat
+            // limit, so it returns via retptr supplied by the guest.
+            Wasip2ImportSlot::ClocksWallClockNow => vec![ValType::I32],
         }
     }
 
@@ -86,7 +110,10 @@ impl Wasip2ImportSlot {
             // Resource handle — i32 ID owned by the host.
             Wasip2ImportSlot::CliGetStdout | Wasip2ImportSlot::CliGetStderr => vec![ValType::I32],
             // Result lowered via retptr — no inline return.
-            Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush => Vec::new(),
+            Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush
+            | Wasip2ImportSlot::ClocksWallClockNow => Vec::new(),
+            // u64 return — fits in flat representation, no retptr.
+            Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }
     }
 }

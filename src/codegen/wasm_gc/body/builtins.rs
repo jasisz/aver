@@ -65,11 +65,19 @@ pub(super) fn emit_dotted_builtin(
     // the wasm-gc target's fire-and-forget shape). Defensive
     // `memory.grow(1)` after the marshal ensures retptr+12 fits
     // even when `len` lands exactly on a page boundary.
-    if ctx.wasip2_lowering.is_some()
-        && parent == "Console"
-        && matches!(method, "print" | "error" | "warn")
-    {
-        return emit_console_print_wasip2(func, method, args, slots, ctx);
+    if ctx.wasip2_lowering.is_some() {
+        if parent == "Console" && matches!(method, "print" | "error" | "warn") {
+            return emit_console_print_wasip2(func, method, args, slots, ctx);
+        }
+        if parent == "Time" && method == "unixMs" {
+            return emit_time_unix_ms_wasip2(func, args, ctx);
+        }
+        if parent == "Random" && method == "int" {
+            return emit_random_int_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Random" && method == "float" {
+            return emit_random_float_wasip2(func, args, ctx);
+        }
     }
 
     // Registered effect import? Same shape — push args, push the
@@ -1802,8 +1810,14 @@ fn emit_console_print_wasip2(
     func.instruction(&Instruction::End);
 
     // Step 2: marshal s → LM[0..len], stash len.
+    let str_to_lm = lowering.str_to_lm_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Console.* on wasip2: __rt_string_to_lm fn idx missing — bridge not allocated"
+                .into(),
+        )
+    })?;
     emit_expr(func, &args[0], slots, ctx)?;
-    func.instruction(&Instruction::Call(lowering.str_to_lm_fn_idx));
+    func.instruction(&Instruction::Call(str_to_lm));
     func.instruction(&Instruction::LocalSet(len_local));
 
     // Step 3: defensive memory.grow(1) so retptr+12 stays in-bounds
@@ -1823,6 +1837,155 @@ fn emit_console_print_wasip2(
     func.instruction(&Instruction::I32Add);
     func.instruction(&Instruction::I32Const(-16));
     func.instruction(&Instruction::I32And);
-    func.instruction(&Instruction::Call(lowering.blocking_write_fn_idx));
+    let write_fn = lowering.blocking_write_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Console.* on wasip2: blocking-write-and-flush fn idx missing".into(),
+        )
+    })?;
+    func.instruction(&Instruction::Call(write_fn));
+    Ok(())
+}
+
+/// Phase 1.4 — `Time.unixMs() -> Int` on `--target wasip2`.
+///
+/// Lowers to `wasi:clocks/wall-clock.now: () -> datetime` (canonical
+/// ABI: `(retptr: i32) -> ()`; host writes 16 bytes at retptr —
+/// `seconds: u64` at +0, `nanoseconds: u32` at +8, 4 bytes pad).
+/// Reads back the two fields, computes
+/// `seconds * 1000 + nanoseconds / 1_000_000` as i64.
+///
+/// Retptr placement: `LM[0..16]`. Console.print's transport buffer
+/// also writes at LM[0..len], but the two effects run sequentially
+/// inside the guest — Console.print bytes are stale from the host's
+/// perspective the moment that call returns, so reusing LM[0..16]
+/// for the clocks retptr is sound. Memory section is unconditionally
+/// emitted on wasip2 with imports, so the page-1 LM is available.
+fn emit_time_unix_ms_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Time.unixMs on wasip2: lowering ctx missing".into())
+    })?;
+    if !args.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "Time.unixMs on `--target wasip2` expects 0 args, got {}",
+            args.len()
+        )));
+    }
+    let now_fn = lowering.clocks_now_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Time.unixMs on wasip2: clocks-now fn idx missing".into())
+    })?;
+    // Call now(retptr=0). Host writes datetime to LM[0..16].
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::Call(now_fn));
+    // unixMs = seconds * 1000 + (nanoseconds / 1_000_000)
+    //        = i64.load LM[0]  * 1000
+    //        + i64.extend_i32_u (i32.load LM[8]) / 1_000_000
+    let mem_arg = wasm_encoder::MemArg {
+        offset: 0,
+        align: 3, // log2(8) — i64 alignment
+        memory_index: 0,
+    };
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I64Load(mem_arg));
+    func.instruction(&Instruction::I64Const(1000));
+    func.instruction(&Instruction::I64Mul);
+    let ns_mem_arg = wasm_encoder::MemArg {
+        offset: 8,
+        align: 2, // log2(4) — i32 alignment
+        memory_index: 0,
+    };
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I32Load(ns_mem_arg));
+    func.instruction(&Instruction::I64ExtendI32U);
+    func.instruction(&Instruction::I64Const(1_000_000));
+    func.instruction(&Instruction::I64DivU);
+    func.instruction(&Instruction::I64Add);
+    Ok(())
+}
+
+/// Phase 1.4 — `Random.int(min: Int, max: Int) -> Int` on
+/// `--target wasip2`.
+///
+/// Lowers to `wasi:random/random.get-random-u64: () -> u64` plus
+/// guest-side modulo by `(max - min + 1)` and offset by `min`. The
+/// modulo is the standard slightly-biased pattern (acceptable for
+/// non-cryptographic use, matches the wasm-gc target's existing
+/// shape via `aver/random_int`).
+fn emit_random_int_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Random.int on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Random.int on `--target wasip2` expects 2 args (min, max), got {}",
+            args.len()
+        )));
+    }
+    let rand_fn = lowering.random_u64_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Random.int on wasip2: random get-random-u64 fn idx missing".into(),
+        )
+    })?;
+    // result = min + ((u64 % (max - min + 1)) as i64).
+    // Stack discipline:
+    //   push min
+    //   push (get-random-u64() % (max - min + 1))
+    //   i64.add
+    emit_expr(func, &args[0], slots, ctx)?; // min: i64
+    func.instruction(&Instruction::Call(rand_fn)); // u64 -> i64 representation
+    emit_expr(func, &args[1], slots, ctx)?; // max
+    emit_expr(func, &args[0], slots, ctx)?; // min (re-eval for max - min)
+    func.instruction(&Instruction::I64Sub);
+    func.instruction(&Instruction::I64Const(1));
+    func.instruction(&Instruction::I64Add);
+    func.instruction(&Instruction::I64RemU); // modulo unsigned
+    func.instruction(&Instruction::I64Add);
+    Ok(())
+}
+
+/// Phase 1.4 — `Random.float() -> Float` on `--target wasip2`.
+///
+/// Lowers to `wasi:random/random.get-random-u64: () -> u64` plus
+/// the standard 53-bit-precision scale to `[0.0, 1.0)`:
+///   `(u64 >> 11) * 2^-53`.
+/// Matches the convention used by JS `Math.random` and Rust's
+/// `rand::Rng::gen::<f64>()` — both produce 53 random mantissa
+/// bits with no exponent bits set.
+fn emit_random_float_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Random.float on wasip2: lowering ctx missing".into())
+    })?;
+    if !args.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "Random.float on `--target wasip2` expects 0 args, got {}",
+            args.len()
+        )));
+    }
+    let rand_fn = lowering.random_u64_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Random.float on wasip2: random get-random-u64 fn idx missing".into(),
+        )
+    })?;
+    func.instruction(&Instruction::Call(rand_fn));
+    func.instruction(&Instruction::I64Const(11));
+    func.instruction(&Instruction::I64ShrU);
+    func.instruction(&Instruction::F64ConvertI64U);
+    // 2^-53 = 1.0 / (1 << 53). Computed as a literal const.
+    func.instruction(&Instruction::F64Const(
+        (1.0_f64 / (1u64 << 53) as f64).into(),
+    ));
+    func.instruction(&Instruction::F64Mul);
     Ok(())
 }

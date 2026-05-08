@@ -170,14 +170,12 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
             phase: "Phase 1.3",
         });
     }
-    if matches!(effect, "Time.now" | "Time.unixMs") {
+    // Time.unixMs and Random.{int,float} graduated in Phase 1.4.
+    // Time.now (ISO string) still needs guest-side date formatting
+    // — defer to Phase 1.4b.
+    if effect == "Time.now" {
         return Some(UnsupportedReason::PendingPhase {
-            phase: "Phase 1.4",
-        });
-    }
-    if effect.starts_with("Random.") {
-        return Some(UnsupportedReason::PendingPhase {
-            phase: "Phase 1.4",
+            phase: "Phase 1.4b",
         });
     }
     if effect.starts_with("Disk.") {
@@ -230,12 +228,25 @@ mod tests {
 
     #[test]
     fn classifies_pending_phase_rejects() {
-        // Console.print/error/warn graduated in 1.2b1.5 — the wasip2
-        // codegen now lowers them to wasi:cli/io/streams natively.
+        // Console.print/error/warn graduated in 1.2b1.5; Time.unixMs
+        // and Random.{int,float} graduated in Phase 1.4 — the wasip2
+        // codegen now lowers them to wasi:cli/io/streams /
+        // wasi:clocks / wasi:random natively.
         assert!(classify("Console.print").is_none());
         assert!(classify("Console.error").is_none());
         assert!(classify("Console.warn").is_none());
-        // Console.readLine still pending (Phase 1.3).
+        assert!(classify("Time.unixMs").is_none());
+        assert!(classify("Random.int").is_none());
+        assert!(classify("Random.float").is_none());
+        // Time.now (ISO string) still pending until 1.4b adds
+        // guest-side datetime formatting.
+        assert!(matches!(
+            classify("Time.now"),
+            Some(UnsupportedReason::PendingPhase { .. })
+        ));
+        // Console.readLine / Args.get / Env.get still pending —
+        // need cabi_realloc for list-returning canonical-ABI imports
+        // (Phase 1.3).
         assert!(matches!(
             classify("Console.readLine"),
             Some(UnsupportedReason::PendingPhase { .. })
@@ -246,14 +257,6 @@ mod tests {
         ));
         assert!(matches!(
             classify("Env.get"),
-            Some(UnsupportedReason::PendingPhase { .. })
-        ));
-        assert!(matches!(
-            classify("Time.now"),
-            Some(UnsupportedReason::PendingPhase { .. })
-        ));
-        assert!(matches!(
-            classify("Random.int"),
             Some(UnsupportedReason::PendingPhase { .. })
         ));
         assert!(matches!(

@@ -284,7 +284,13 @@ pub(super) fn emit_module_with(
                             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
                         );
                     }
-                    _ => {} // unreachable; `lowers_on_wasip2` only matches the trio above.
+                    EffectName::TimeUnixMs => {
+                        wasip2_imports.register(Wasip2ImportSlot::ClocksWallClockNow);
+                    }
+                    EffectName::RandomInt | EffectName::RandomFloat => {
+                        wasip2_imports.register(Wasip2ImportSlot::RandomGetRandomU64);
+                    }
+                    _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
             }
             wasip2_imports.assign_slots(&mut next_type_idx);
@@ -705,33 +711,32 @@ pub(super) fn emit_module_with(
     // bridge fn machinery is in place (the latter implies
     // `__rt_string_to_lm` has been allocated — the call site uses
     // it to marshal the Aver String into LM[0..len]).
-    let wasip2_lowering: Option<super::body::Wasip2Lowering> = match (
-        target,
-        wasip2_imports.import_count() > 0,
-        bridge.as_ref(),
-        wasip2_globals.as_ref(),
-    ) {
-        (super::TargetMode::Wasip2, true, Some(b), Some(g)) => {
+    let wasip2_lowering: Option<super::body::Wasip2Lowering> =
+        if matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0 {
             use super::wasip2_imports::Wasip2ImportSlot;
-            let blocking_write_fn_idx = wasip2_imports
-                .lookup_wasm_fn_idx(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush)
-                .ok_or_else(|| WasmGcError::Validation(
-                    "wasip2 lowering: blocking-write-and-flush slot must be registered when any \
-                     Console.* effect is registered".into(),
-                ))?;
+            // Console.* needs both the bridge `__rt_string_to_lm`
+            // helper and the resource-handle globals; clocks /
+            // random don't. So those fields are populated only when
+            // their owning effects are registered, not as a
+            // precondition for `Some(...)` on the whole struct.
             Some(super::body::Wasip2Lowering {
                 get_stdout_fn_idx: wasip2_imports
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::CliGetStdout),
                 get_stderr_fn_idx: wasip2_imports
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::CliGetStderr),
-                blocking_write_fn_idx,
-                stdout_handle_global: g.stdout_handle,
-                stderr_handle_global: g.stderr_handle,
-                str_to_lm_fn_idx: b.to_lm_fn,
+                blocking_write_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush),
+                stdout_handle_global: wasip2_globals.as_ref().and_then(|g| g.stdout_handle),
+                stderr_handle_global: wasip2_globals.as_ref().and_then(|g| g.stderr_handle),
+                str_to_lm_fn_idx: bridge.as_ref().map(|b| b.to_lm_fn),
+                clocks_now_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::ClocksWallClockNow),
+                random_u64_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::RandomGetRandomU64),
             })
-        }
-        _ => None,
-    };
+        } else {
+            None
+        };
 
     // (caller_fn delivery moved from per-fn globals to an exported
     // name table; segment append + `__caller_fn_*` exports are
