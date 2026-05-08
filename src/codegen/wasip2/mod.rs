@@ -35,10 +35,12 @@
 //!   embedded via `include_str!` and pushed into the per-build
 //!   `Resolve` so the user world can `include wasi:cli/command;`.
 
+mod effect_check;
 mod error;
 mod wasi_bundle;
 mod wit;
 mod wrap;
 
+pub use effect_check::{UnsupportedEffect, UnsupportedReason, check_supported_effects, render_errors};
 pub use error::Wasip2Error;
 pub use wrap::{Wasip2World, compile_to_component};

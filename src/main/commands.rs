@@ -4871,6 +4871,37 @@ fn cmd_compile_wasip2(
         aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
         aver::ir::pipeline::resolve(&mut items);
 
+        // Phase 1.6 — static effect-set check. Catches every Aver
+        // effect that `--target wasip2` cannot lower today, BEFORE
+        // wasm-gc emits anything. Three categories: permanent (WASI
+        // 0.2 cannot satisfy by design), out-of-release (Phase 2/3
+        // / 0.19+), and pending-phase (planned but not yet wired in
+        // 0.18). All surfaced as `target-effect-unsupported` so the
+        // user sees one consistent error class. See
+        // docs/wasip2.md "Why X is rejected, not stubbed".
+        if let Err(unsupported) = wasip2_codegen::check_supported_effects(&items) {
+            eprintln!(
+                "{}",
+                format!(
+                    "error[target-effect-unsupported]: \
+                     {} effect site(s) cannot be lowered by `--target wasip2`",
+                    unsupported.len()
+                )
+                .red()
+            );
+            eprintln!(
+                "{}",
+                wasip2_codegen::render_errors(&unsupported).yellow()
+            );
+            eprintln!(
+                "{}",
+                "  See docs/wasip2.md (\"Why X is rejected, not stubbed\") \
+                 for the static-target vs dynamic-host axis."
+                    .yellow()
+            );
+            process::exit(1);
+        }
+
         let core_bytes = match wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref()) {
             Ok(b) => b,
             Err(e) => {
@@ -4891,11 +4922,11 @@ fn cmd_compile_wasip2(
                     eprintln!("{}", format!("{e}").red());
                     eprintln!(
                         "{}",
-                        "  hint: Phase 1.2 of 0.18 \"Span\" maps Aver effects \
-                         (Console.*, Args.*, Env.*) to preview-1 imports the \
-                         COMMAND adapter satisfies — until it lands, only \
-                         programs whose lowered core has no `aver/*` imports \
-                         compile under --target wasip2"
+                        "  hint: Phase 1.6 already rejects every effect that \
+                         `--target wasip2` cannot lower today, so this failure \
+                         points at a wasm-gc emit shape the component model did \
+                         not expect (rare). Report with the program that \
+                         triggered it."
                             .yellow()
                     );
                     process::exit(1);
