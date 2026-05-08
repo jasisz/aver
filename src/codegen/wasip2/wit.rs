@@ -31,20 +31,16 @@ use super::wrap::Wasip2World;
 pub fn emit_world_wit(world: Wasip2World) -> String {
     let local_name = world.local_name();
     let (header_note, body) = match world {
-        // `wasi:cli/imports` is the imports-only world from the
-        // upstream `wasi-0.2.4` bundle — it declares every WASI 0.2
-        // import the command shape can ever use (cli/{stdin, stdout,
-        // stderr, environment, exit, terminal-*}, plus all of clocks,
-        // filesystem, sockets, random, io) but does NOT mandate any
-        // exports. That matches Phase 1.2a's core, whose only export
-        // is `_start` from the wasm-gc emitter. Phase 1.2b1 graduates
-        // this to `include wasi:cli/command@0.2.4;` (the command shape
-        // also requires `wasi:cli/run.run` as an export) once the
-        // wasm-gc backend emits that export with the right canonical
-        // ABI shape.
+        // `wasi:cli/command` is the canonical CLI shape from the
+        // upstream `wasi-0.2.4` bundle: every cli/io/clocks/random/
+        // filesystem/sockets import that the imports-only world
+        // declares, PLUS the required `wasi:cli/run.run` export.
+        // The wasm-gc emitter exports `wasi:cli/run@0.2.4#run`
+        // (canonical-ABI mangled name) when `target == Wasip2`, so
+        // the contract is satisfiable at this commit.
         Wasip2World::CliCommand => (
-            "// Phase 1.2b1 will graduate to: include wasi:cli/command@0.2.4;",
-            "  include wasi:cli/imports@0.2.4;",
+            "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world.",
+            "  include wasi:cli/command@0.2.4;",
         ),
         // Phase 3 / 0.19. Compile-rejected upstream in `wrap.rs`; the
         // body still pretty-prints something honest for the artifact.

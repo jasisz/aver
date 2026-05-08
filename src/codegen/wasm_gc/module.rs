@@ -285,8 +285,19 @@ pub(super) fn emit_module_with(
         }
     }
 
-    // 3) `_start` type — () -> ().
-    types.ty().function([], []);
+    // 3) Entry-point type. AverBridge keeps `_start: () -> ()` —
+    //    the JS host calls `_start` for its side effects and
+    //    discards any value `main` returns. Wasip2 needs the
+    //    canonical-ABI signature for `wasi:cli/run.run`, which is
+    //    `() -> i32` (lowered `result<_, _>`: `0 == Ok`,
+    //    `1 == Err`). The body emit branches in step with this
+    //    type allocation later in the code section.
+    let start_returns_i32 = matches!(target, super::TargetMode::Wasip2);
+    if start_returns_i32 {
+        types.ty().function([], [ValType::I32]);
+    } else {
+        types.ty().function([], []);
+    }
     let start_type_idx = next_type_idx;
     next_type_idx += 1;
 
@@ -682,8 +693,21 @@ pub(super) fn emit_module_with(
     };
 
     // ── Export section ─────────────────────────────────────────────
+    //
+    // Entry-point export name follows the `target`. AverBridge keeps
+    // `_start` (the convention every JS host the wasm-gc backend
+    // serves understands). Wasip2 exports `wasi:cli/run@0.2.4#run`
+    // — the canonical-ABI export name for the WIT function
+    // `wasi:cli/run.run`. `wit_component::ComponentEncoder` matches
+    // this name against the `wasi:cli/command` world's required
+    // `run` export when binding the metadata-declared component
+    // surface to the core module.
     let mut exports = ExportSection::new();
-    exports.export("_start", ExportKind::Func, start_wasm_idx);
+    let start_export_name: &str = match target {
+        super::TargetMode::AverBridge => "_start",
+        super::TargetMode::Wasip2 => "wasi:cli/run@0.2.4#run",
+    };
+    exports.export(start_export_name, ExportKind::Func, start_wasm_idx);
     for (i, fd) in fn_defs.iter().enumerate() {
         let wasm_idx = import_count + 1 + (i as u32);
         exports.export(&fd.name, ExportKind::Func, wasm_idx);
@@ -775,10 +799,16 @@ pub(super) fn emit_module_with(
     // ── Code section ───────────────────────────────────────────────
     let mut codes = CodeSection::new();
 
-    // _start: call main if present, drop its return value. Caller_fn
-    // globals are NOT init here — the wasm-level `(start
-    // __init_globals)` section handles that on instantiation, before
-    // any export gets called.
+    // Entry-point body. AverBridge `_start: () -> ()` calls main
+    // and drops its return — the JS host doesn't read a value back,
+    // it observes side effects via `aver/*` imports.
+    //
+    // Wasip2 `wasi:cli/run.run: () -> i32` calls main, drops a
+    // non-Unit return (Aver's `main: Unit` makes the drop a no-op),
+    // then pushes `i32.const 0` — `Ok` in the canonical-ABI lowering
+    // of `result<_, _>`. Trapping behaviour stays the same: any
+    // host-side trap (e.g. divide-by-zero) propagates up through
+    // wasmtime as a regular trap, not as `Err(1)`.
     let mut start = Function::new([]);
     if let Some(idx) = main_idx {
         let main_idx_wasm = import_count + 1 + (idx as u32);
@@ -787,6 +817,9 @@ pub(super) fn emit_module_with(
         if main_returns_value {
             start.instruction(&Instruction::Drop);
         }
+    }
+    if start_returns_i32 {
+        start.instruction(&Instruction::I32Const(0));
     }
     start.instruction(&Instruction::End);
     codes.function(&start);

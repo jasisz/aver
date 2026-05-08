@@ -51,14 +51,17 @@ fn validate_component(bytes: &[u8]) {
 
 #[test]
 fn pipeline_smoke_no_effects() {
-    // Trivial core: empty `_start`, nothing else. No imports, no
-    // GC types, no LM accesses. Smallest possible "this is a wasm
-    // module" the wrap path has to handle.
+    // Trivial core: exports `wasi:cli/run@0.2.4#run` with the
+    // canonical-ABI signature `() -> i32` (returns 0 for `Ok`).
+    // That is the export the `wasi:cli/command` world the user
+    // package now `include`s requires; without it the encoder
+    // would reject. Mirrors what the real wasm-gc emitter
+    // produces under `TargetMode::Wasip2` since Phase 1.2b1.3.
     let core_wasm = wat::parse_str(
         r#"
 (module
-  (func (export "_start")
-    nop))
+  (func (export "wasi:cli/run@0.2.4#run") (result i32)
+    i32.const 0))
 "#,
     )
     .expect("wat parses");
@@ -92,7 +95,7 @@ fn gc_types_inside_core_validate_at_component_boundary() {
 (module
   (rec
     (type $box (struct (field $val (mut i32)))))
-  (func (export "_start")
+  (func (export "wasi:cli/run@0.2.4#run") (result i32)
     (local $b (ref $box))
     i32.const 42
     struct.new $box
@@ -103,7 +106,7 @@ fn gc_types_inside_core_validate_at_component_boundary() {
     i32.const 1
     i32.add
     struct.set $box $val
-    nop))
+    i32.const 0))
 "#,
     )
     .expect("wat parses (with GC types)");
@@ -121,8 +124,7 @@ fn rejects_http_proxy_world_in_phase_1() {
     // the failure mode is clear (NotImplemented, not Wrap). Tracks
     // decision in `decisions/architecture.av::Wasip2ComponentTarget`
     // and the phasing in `docs/wasip2.md`.
-    let core_wasm = wat::parse_str(r#"(module (func (export "_start")))"#)
-        .expect("trivial wat parses");
+    let core_wasm = wat::parse_str(r#"(module (func))"#).expect("trivial wat parses");
 
     let err = wasip2::compile_to_component(&core_wasm, wasip2::Wasip2World::HttpProxy)
         .expect_err("HttpProxy world should be rejected in 0.18 Phase 1");
