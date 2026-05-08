@@ -12,10 +12,11 @@ use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::builtins_wasip2::{
     emit_args_get_wasip2, emit_console_print_wasip2, emit_console_read_line_wasip2,
-    emit_disk_delete_dir_wasip2, emit_disk_delete_wasip2, emit_disk_exists_wasip2,
-    emit_disk_make_dir_wasip2, emit_disk_read_text_wasip2, emit_disk_write_text_wasip2,
-    emit_env_get_wasip2, emit_random_float_wasip2, emit_random_int_wasip2,
-    emit_time_now_wasip2, emit_time_sleep_wasip2, emit_time_unix_ms_wasip2,
+    emit_disk_append_text_wasip2, emit_disk_delete_dir_wasip2, emit_disk_delete_wasip2,
+    emit_disk_exists_wasip2, emit_disk_make_dir_wasip2, emit_disk_read_text_wasip2,
+    emit_disk_write_text_wasip2, emit_env_get_wasip2, emit_random_float_wasip2,
+    emit_random_int_wasip2, emit_time_now_wasip2, emit_time_sleep_wasip2,
+    emit_time_unix_ms_wasip2,
 };
 use super::emit::{emit_default_value, emit_expr};
 use super::infer::aver_type_str_of;
@@ -108,6 +109,9 @@ pub(super) fn emit_dotted_builtin(
         }
         if parent == "Disk" && method == "writeText" {
             return emit_disk_write_text_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "appendText" {
+            return emit_disk_append_text_wasip2(func, args, slots, ctx);
         }
         if parent == "Disk" && method == "delete" {
             return emit_disk_delete_wasip2(func, args, slots, ctx);

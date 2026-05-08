@@ -371,6 +371,23 @@ pub(super) fn emit_module_with(
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                     }
+                    EffectName::DiskAppendText => {
+                        // Same shape as writeText, but uses
+                        // append-via-stream + open-flags=CREATE only.
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesAppendViaStream);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                        );
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                    }
                     EffectName::DiskDelete => {
                         wasip2_imports
                             .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
@@ -852,6 +869,56 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 1.5.5 — `__rt_disk_append_text(path, content) ->
+    // Result<Unit, String>`. Reuses the same body emitter as
+    // `__rt_disk_write_text` flipped to append mode (open-flags
+    // = CREATE only, append-via-stream instead of
+    // write-via-stream).
+    let disk_append_text: Option<DiskWriteTextIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesAppendViaStream)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<Unit,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref.clone(), s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskWriteTextIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_unit_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
     // Phase 1.5.4 — `Disk.delete`, `Disk.deleteDir`, `Disk.makeDir`
     // share a generic helper: lazy-init preopen, marshal path,
     // call the matching `<op>-at`, return `Result.Ok(Unit)` on Ok-tag
@@ -1120,6 +1187,9 @@ pub(super) fn emit_module_with(
     if let Some(d) = &disk_write_text {
         funcs.function(d.fn_type);
     }
+    if let Some(d) = &disk_append_text {
+        funcs.function(d.fn_type);
+    }
     if let Some(d) = &disk_delete {
         funcs.function(d.fn_type);
     }
@@ -1366,6 +1436,7 @@ pub(super) fn emit_module_with(
                 disk_exists_fn_idx: disk_exists.as_ref().map(|d| d.fn_idx),
                 disk_read_text_fn_idx: disk_read_text.as_ref().map(|d| d.fn_idx),
                 disk_write_text_fn_idx: disk_write_text.as_ref().map(|d| d.fn_idx),
+                disk_append_text_fn_idx: disk_append_text.as_ref().map(|d| d.fn_idx),
                 disk_delete_fn_idx: disk_delete.as_ref().map(|d| d.fn_idx),
                 disk_delete_dir_fn_idx: disk_delete_dir.as_ref().map(|d| d.fn_idx),
                 disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
@@ -1990,6 +2061,63 @@ pub(super) fn emit_module_with(
             blocking_write,
             drop_descriptor,
             drop_output_stream,
+            false, // is_append: writeText uses CREATE | TRUNCATE + write-via-stream
+        ));
+    }
+    if let Some(at) = &disk_append_text {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_append_text emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_append_text emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_append_text emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_append_text emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_append_text emit requires open-at fn idx");
+        let append_via_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesAppendViaStream,
+            )
+            .expect("disk_append_text emit requires append-via-stream fn idx");
+        let blocking_write = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            )
+            .expect("disk_append_text emit requires blocking-write-and-flush fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_append_text emit requires drop-descriptor fn idx");
+        let drop_output_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("disk_append_text emit requires drop-output-stream fn idx");
+        codes.function(&emit_disk_write_text(
+            at.string_type_idx,
+            at.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            append_via_stream,
+            blocking_write,
+            drop_descriptor,
+            drop_output_stream,
+            true, // is_append: CREATE only + append-via-stream (no offset arg)
         ));
     }
     // Three single-call ops share `emit_disk_simple_path_op` —

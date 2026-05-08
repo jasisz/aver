@@ -439,6 +439,11 @@ pub(super) struct Wasip2Lowering {
     /// write-via-stream + blocking-write-and-flush + per-call
     /// resource drops.
     pub(super) disk_write_text_fn_idx: Option<u32>,
+    /// Phase 1.5.5 — `__rt_disk_append_text(path, content) ->
+    /// Result<Unit, String>`. Same body emitter as
+    /// `__rt_disk_write_text` flipped to append mode (no
+    /// truncate, append-via-stream instead of write-via-stream).
+    pub(super) disk_append_text_fn_idx: Option<u32>,
     /// Phase 1.5.4 — single-call wasi ops sharing
     /// `emit_disk_simple_path_op` (preopen + path marshalling +
     /// 4-byte retptr + tag check). One fn each per Aver effect

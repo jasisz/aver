@@ -176,6 +176,7 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
         "Disk.exists"
             | "Disk.readText"
             | "Disk.writeText"
+            | "Disk.appendText"
             | "Disk.delete"
             | "Disk.deleteDir"
             | "Disk.makeDir"
@@ -255,18 +256,19 @@ mod tests {
         assert!(classify("Args.get").is_none());
         assert!(classify("Env.get").is_none());
         assert!(classify("Console.readLine").is_none());
-        // Disk.exists graduated in Phase 1.5.1; Disk.readText
-        // in 1.5.2; Disk.writeText in 1.5.3; Disk.delete /
-        // deleteDir / makeDir in 1.5.4. The rest (`appendText`,
-        // `listDir`) remain on the PendingPhase path.
+        // Disk.exists graduated in 1.5.1; readText in 1.5.2;
+        // writeText in 1.5.3; delete / deleteDir / makeDir in
+        // 1.5.4; appendText in 1.5.5. Only listDir remains on
+        // the PendingPhase path.
         assert!(classify("Disk.exists").is_none());
         assert!(classify("Disk.readText").is_none());
         assert!(classify("Disk.writeText").is_none());
+        assert!(classify("Disk.appendText").is_none());
         assert!(classify("Disk.delete").is_none());
         assert!(classify("Disk.deleteDir").is_none());
         assert!(classify("Disk.makeDir").is_none());
         assert!(matches!(
-            classify("Disk.appendText"),
+            classify("Disk.listDir"),
             Some(UnsupportedReason::PendingPhase { .. })
         ));
     }

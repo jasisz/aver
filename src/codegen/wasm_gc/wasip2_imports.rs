@@ -249,6 +249,14 @@ pub(super) enum Wasip2ImportSlot {
     /// `wasi:filesystem/types.[method]descriptor.create-directory-at`
     /// — same shape as unlink-file-at; backs `Disk.makeDir`.
     FilesystemTypesCreateDirectoryAt,
+    /// `wasi:filesystem/types.[method]descriptor.append-via-stream:
+    ///   func(this: borrow<descriptor>) -> result<output-stream,
+    ///     error-code>`. Same retptr shape as `write-via-stream`,
+    /// no offset arg (the host appends at end-of-file). Backs
+    /// `Disk.appendText` (Phase 1.5.5).
+    /// Canonical-ABI signature:
+    ///   `(handle: i32, retptr: i32) -> ()`.
+    FilesystemTypesAppendViaStream,
 }
 
 impl Wasip2ImportSlot {
@@ -325,6 +333,10 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt => (
                 "wasi:filesystem/types@0.2.4",
                 "[method]descriptor.create-directory-at",
+            ),
+            Wasip2ImportSlot::FilesystemTypesAppendViaStream => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.append-via-stream",
             ),
         }
     }
@@ -425,6 +437,11 @@ impl Wasip2ImportSlot {
                 ValType::I32, // path_len
                 ValType::I32, // retptr
             ],
+            // `append-via-stream(this) -> result<output-stream, _>`
+            // — no offset, retptr only.
+            Wasip2ImportSlot::FilesystemTypesAppendViaStream => {
+                vec![ValType::I32, ValType::I32]
+            }
         }
     }
 
@@ -453,7 +470,8 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::IoStreamsResourceDropOutputStream
             | Wasip2ImportSlot::FilesystemTypesUnlinkFileAt
             | Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt
-            | Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt => Vec::new(),
+            | Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt
+            | Wasip2ImportSlot::FilesystemTypesAppendViaStream => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }

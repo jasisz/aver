@@ -742,3 +742,33 @@ pub(super) fn emit_disk_make_dir_wasip2(
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
+
+/// Phase 1.5.5 — `Disk.appendText(path, content) ->
+/// Result<Unit, String>` on `--target wasip2`. Pushes both args
+/// and calls `__rt_disk_append_text`, which uses the same body
+/// emitter as `__rt_disk_write_text` flipped to append mode.
+pub(super) fn emit_disk_append_text_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.appendText on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.appendText on `--target wasip2` expects 2 args (path, content), got {}",
+            args.len()
+        )));
+    }
+    let fn_idx = lowering.disk_append_text_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.appendText on wasip2: __rt_disk_append_text fn idx missing".into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    emit_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}

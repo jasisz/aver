@@ -728,6 +728,7 @@ impl EffectName {
                 | EffectName::DiskExists
                 | EffectName::DiskReadText
                 | EffectName::DiskWriteText
+                | EffectName::DiskAppendText
                 | EffectName::DiskDelete
                 | EffectName::DiskDeleteDir
                 | EffectName::DiskMakeDir,

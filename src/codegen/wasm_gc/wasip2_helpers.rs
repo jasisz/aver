@@ -1886,6 +1886,13 @@ pub(super) fn emit_disk_write_text(
     blocking_write_fn: u32,
     drop_descriptor_fn: u32,
     drop_output_stream_fn: u32,
+    // When `true`, lower to `Disk.appendText` instead — opens the
+    // file with `create` only (no truncate, so existing content
+    // stays), and calls `append-via-stream(fd) -> result<output-
+    // stream, _>` (1 arg + retptr) instead of `write-via-stream(
+    // fd, offset=0, retptr)` (2 args + retptr). The host appends
+    // at end-of-file in this mode.
+    is_append: bool,
 ) -> wasm_encoder::Function {
     use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
 
@@ -2010,7 +2017,10 @@ pub(super) fn emit_disk_write_text(
     f.instruction(&Instruction::I32Const(1)); // path-flags = symlink-follow
     f.instruction(&Instruction::I32Const(0)); // path_ptr = 0
     f.instruction(&Instruction::LocalGet(l_path_len));
-    f.instruction(&Instruction::I32Const(5)); // open-flags = CREATE | TRUNCATE
+    // open-flags = CREATE (1) for append, CREATE | TRUNCATE (5)
+    // for plain write. Both make the file if missing; only write
+    // wipes pre-existing content.
+    f.instruction(&Instruction::I32Const(if is_append { 1 } else { 5 }));
     f.instruction(&Instruction::I32Const(2)); // descriptor-flags = WRITE
     f.instruction(&Instruction::LocalGet(l_retptr_open));
     f.instruction(&Instruction::Call(open_at_fn));
@@ -2028,7 +2038,9 @@ pub(super) fn emit_disk_write_text(
     f.instruction(&Instruction::I32Load(mem4_o4));
     f.instruction(&Instruction::LocalSet(l_fd));
 
-    // ── write-via-stream(fd, 0_i64, retptr_stream) ────────────
+    // ── {write,append}-via-stream(fd[, 0_i64], retptr_stream) ──
+    // write-via-stream takes (fd, offset, retptr); append-via-
+    // stream takes (fd, retptr) — no offset, host appends at EOF.
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(4));
@@ -2037,7 +2049,9 @@ pub(super) fn emit_disk_write_text(
     f.instruction(&Instruction::LocalSet(l_retptr_stream));
 
     f.instruction(&Instruction::LocalGet(l_fd));
-    f.instruction(&Instruction::I64Const(0));
+    if !is_append {
+        f.instruction(&Instruction::I64Const(0));
+    }
     f.instruction(&Instruction::LocalGet(l_retptr_stream));
     f.instruction(&Instruction::Call(write_via_stream_fn));
 
@@ -2049,7 +2063,14 @@ pub(super) fn emit_disk_write_text(
     {
         f.instruction(&Instruction::LocalGet(l_fd));
         f.instruction(&Instruction::Call(drop_descriptor_fn));
-        emit_err(&mut f, b"write-via-stream failed");
+        emit_err(
+            &mut f,
+            if is_append {
+                b"append-via-stream failed"
+            } else {
+                b"write-via-stream failed"
+            },
+        );
     }
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::LocalGet(l_retptr_stream));
