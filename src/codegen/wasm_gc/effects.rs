@@ -727,7 +727,10 @@ impl EffectName {
                 | EffectName::EnvGet
                 | EffectName::DiskExists
                 | EffectName::DiskReadText
-                | EffectName::DiskWriteText,
+                | EffectName::DiskWriteText
+                | EffectName::DiskDelete
+                | EffectName::DiskDeleteDir
+                | EffectName::DiskMakeDir,
         )
     }
 }

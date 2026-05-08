@@ -166,13 +166,20 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // Time.now graduated in Phase 1.4b (guest-side civil_from_days
     // + RFC3339-like digit emission on top of the wall-clock retptr
     // already wired by Time.unixMs).
-    // Disk.exists graduated in Phase 1.5.1 (preopens cache +
-    // stat-at); Disk.readText in 1.5.2 (open-at + read-via-stream
-    // + blocking-read); Disk.writeText in 1.5.3 (open-at create+
-    // truncate + write-via-stream + blocking-write-and-flush).
-    // Remaining (`appendText` / `listDir` / `delete` / `deleteDir`
-    // / `makeDir`) still pending on the same preopens substrate.
-    if effect == "Disk.exists" || effect == "Disk.readText" || effect == "Disk.writeText" {
+    // Disk.exists graduated in Phase 1.5.1; Disk.readText in
+    // 1.5.2; Disk.writeText in 1.5.3; Disk.delete / deleteDir /
+    // makeDir in 1.5.4 (single-call wasi ops sharing
+    // `emit_disk_simple_path_op`). Remaining (`appendText` /
+    // `listDir`) still pending.
+    if matches!(
+        effect,
+        "Disk.exists"
+            | "Disk.readText"
+            | "Disk.writeText"
+            | "Disk.delete"
+            | "Disk.deleteDir"
+            | "Disk.makeDir"
+    ) {
         return None;
     }
     if effect.starts_with("Disk.") {
@@ -249,11 +256,15 @@ mod tests {
         assert!(classify("Env.get").is_none());
         assert!(classify("Console.readLine").is_none());
         // Disk.exists graduated in Phase 1.5.1; Disk.readText
-        // in 1.5.2; Disk.writeText in 1.5.3. The rest of Disk.*
-        // remain on the PendingPhase path.
+        // in 1.5.2; Disk.writeText in 1.5.3; Disk.delete /
+        // deleteDir / makeDir in 1.5.4. The rest (`appendText`,
+        // `listDir`) remain on the PendingPhase path.
         assert!(classify("Disk.exists").is_none());
         assert!(classify("Disk.readText").is_none());
         assert!(classify("Disk.writeText").is_none());
+        assert!(classify("Disk.delete").is_none());
+        assert!(classify("Disk.deleteDir").is_none());
+        assert!(classify("Disk.makeDir").is_none());
         assert!(matches!(
             classify("Disk.appendText"),
             Some(UnsupportedReason::PendingPhase { .. })

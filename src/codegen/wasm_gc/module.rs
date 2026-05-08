@@ -63,10 +63,10 @@ use super::maps::MapHelperRegistry;
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
 use super::wasip2_helpers::{
     CabiReallocIndices, ConsoleReadLineIndices, DecodeListStringIndices, DiskExistsIndices,
-    DiskReadTextIndices, DiskWriteTextIndices, EnvGetLookupIndices, FormatIso8601Indices,
-    TimeSleepIndices, emit_cabi_realloc, emit_console_read_line, emit_decode_list_string,
-    emit_disk_exists, emit_disk_read_text, emit_disk_write_text, emit_env_get_lookup,
-    emit_format_iso8601, emit_time_sleep,
+    DiskReadTextIndices, DiskSimplePathOpIndices, DiskWriteTextIndices, EnvGetLookupIndices,
+    FormatIso8601Indices, TimeSleepIndices, emit_cabi_realloc, emit_console_read_line,
+    emit_decode_list_string, emit_disk_exists, emit_disk_read_text, emit_disk_simple_path_op,
+    emit_disk_write_text, emit_env_get_lookup, emit_format_iso8601, emit_time_sleep,
 };
 use super::wat_helper;
 use crate::types::Type as AverType;
@@ -370,6 +370,24 @@ pub(super) fn emit_module_with(
                         );
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                    }
+                    EffectName::DiskDelete => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesUnlinkFileAt);
+                    }
+                    EffectName::DiskDeleteDir => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt);
+                    }
+                    EffectName::DiskMakeDir => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt);
                     }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
@@ -834,6 +852,67 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 1.5.4 — `Disk.delete`, `Disk.deleteDir`, `Disk.makeDir`
+    // share a generic helper: lazy-init preopen, marshal path,
+    // call the matching `<op>-at`, return `Result.Ok(Unit)` on Ok-tag
+    // / `Result.Err(<msg>)` on Err. Each Aver effect gets its own
+    // wasm fn (different op fn idx + different err message), so
+    // separate Indices structs per effect — but the body emitter is
+    // a single helper parametrised by the wasi op + message.
+    let alloc_path_op = |types: &mut wasm_encoder::TypeSection,
+                        next_type_idx: &mut u32,
+                        next_builtin_fn_idx: &mut u32,
+                        op_slot: super::wasip2_imports::Wasip2ImportSlot|
+     -> Option<DiskSimplePathOpIndices> {
+        if !cabi_realloc.is_some()
+            || wasip2_imports
+                .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories)
+                .is_none()
+            || wasip2_imports.lookup_wasm_fn_idx(op_slot).is_none()
+        {
+            return None;
+        }
+        let string_idx = registry.string_array_type_idx?;
+        let result_idx = registry.result_type_idx("Result<Unit,String>")?;
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [r_ref]);
+        let fn_type = *next_type_idx;
+        *next_type_idx += 1;
+        let fn_idx = *next_builtin_fn_idx;
+        *next_builtin_fn_idx += 1;
+        Some(DiskSimplePathOpIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_unit_string_type_idx: result_idx,
+        })
+    };
+    let disk_delete = alloc_path_op(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesUnlinkFileAt,
+    );
+    let disk_delete_dir = alloc_path_op(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt,
+    );
+    let disk_make_dir = alloc_path_op(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt,
+    );
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
@@ -1039,6 +1118,15 @@ pub(super) fn emit_module_with(
         funcs.function(d.fn_type);
     }
     if let Some(d) = &disk_write_text {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_delete {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_delete_dir {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_make_dir {
         funcs.function(d.fn_type);
     }
     if let Some(e) = &env_get_lookup {
@@ -1278,6 +1366,9 @@ pub(super) fn emit_module_with(
                 disk_exists_fn_idx: disk_exists.as_ref().map(|d| d.fn_idx),
                 disk_read_text_fn_idx: disk_read_text.as_ref().map(|d| d.fn_idx),
                 disk_write_text_fn_idx: disk_write_text.as_ref().map(|d| d.fn_idx),
+                disk_delete_fn_idx: disk_delete.as_ref().map(|d| d.fn_idx),
+                disk_delete_dir_fn_idx: disk_delete_dir.as_ref().map(|d| d.fn_idx),
+                disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
             })
         } else {
             None
@@ -1899,6 +1990,109 @@ pub(super) fn emit_module_with(
             blocking_write,
             drop_descriptor,
             drop_output_stream,
+        ));
+    }
+    // Three single-call ops share `emit_disk_simple_path_op` —
+    // identical pipeline (preopen + path + 4-byte retptr + tag
+    // check), only the wasi op fn idx and Err message differ.
+    if let Some(d) = &disk_delete {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_delete emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_delete emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_delete emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_delete emit requires get-directories fn idx");
+        let op_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesUnlinkFileAt)
+            .expect("disk_delete emit requires unlink-file-at fn idx");
+        codes.function(&emit_disk_simple_path_op(
+            d.string_type_idx,
+            d.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            op_fn,
+            b"delete failed",
+        ));
+    }
+    if let Some(d) = &disk_delete_dir {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_delete_dir emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_delete_dir emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_delete_dir emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_delete_dir emit requires get-directories fn idx");
+        let op_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt,
+            )
+            .expect("disk_delete_dir emit requires remove-directory-at fn idx");
+        codes.function(&emit_disk_simple_path_op(
+            d.string_type_idx,
+            d.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            op_fn,
+            b"deleteDir failed",
+        ));
+    }
+    if let Some(d) = &disk_make_dir {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_make_dir emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_make_dir emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_make_dir emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_make_dir emit requires get-directories fn idx");
+        let op_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt,
+            )
+            .expect("disk_make_dir emit requires create-directory-at fn idx");
+        codes.function(&emit_disk_simple_path_op(
+            d.string_type_idx,
+            d.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            op_fn,
+            b"makeDir failed",
         ));
     }
     if let Some(e) = &env_get_lookup {

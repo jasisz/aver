@@ -439,6 +439,13 @@ pub(super) struct Wasip2Lowering {
     /// write-via-stream + blocking-write-and-flush + per-call
     /// resource drops.
     pub(super) disk_write_text_fn_idx: Option<u32>,
+    /// Phase 1.5.4 — single-call wasi ops sharing
+    /// `emit_disk_simple_path_op` (preopen + path marshalling +
+    /// 4-byte retptr + tag check). One fn each per Aver effect
+    /// since the wasi op fn idx + Err message differ.
+    pub(super) disk_delete_fn_idx: Option<u32>,
+    pub(super) disk_delete_dir_fn_idx: Option<u32>,
+    pub(super) disk_make_dir_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

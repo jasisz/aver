@@ -661,3 +661,84 @@ pub(super) fn emit_disk_write_text_wasip2(
     func.instruction(&Instruction::Call(write_fn));
     Ok(())
 }
+
+/// Phase 1.5.4 — `Disk.delete(path) -> Result<Unit, String>` on
+/// `--target wasip2`. Pushes the path onto the stack and calls
+/// `__rt_disk_delete` (single wasi `unlink-file-at` underneath).
+pub(super) fn emit_disk_delete_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.delete on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.delete on `--target wasip2` expects 1 arg (path), got {}",
+            args.len()
+        )));
+    }
+    let fn_idx = lowering.disk_delete_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.delete on wasip2: __rt_disk_delete fn idx missing — helper not allocated"
+                .into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}
+
+/// Phase 1.5.4 — `Disk.deleteDir(path) -> Result<Unit, String>`.
+pub(super) fn emit_disk_delete_dir_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.deleteDir on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.deleteDir on `--target wasip2` expects 1 arg (path), got {}",
+            args.len()
+        )));
+    }
+    let fn_idx = lowering.disk_delete_dir_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.deleteDir on wasip2: __rt_disk_delete_dir fn idx missing".into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}
+
+/// Phase 1.5.4 — `Disk.makeDir(path) -> Result<Unit, String>`.
+pub(super) fn emit_disk_make_dir_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.makeDir on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.makeDir on `--target wasip2` expects 1 arg (path), got {}",
+            args.len()
+        )));
+    }
+    let fn_idx = lowering.disk_make_dir_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.makeDir on wasip2: __rt_disk_make_dir fn idx missing".into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}

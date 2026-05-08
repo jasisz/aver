@@ -143,6 +143,19 @@ pub(super) struct DiskWriteTextIndices {
     pub(super) result_unit_string_type_idx: u32,
 }
 
+/// Phase 1.5.4 — generic helper indices for the single-wasi-call
+/// `Disk.{delete, deleteDir, makeDir}` ops, all of which share
+/// the same `(this, path) -> result<_, error-code>` shape.
+/// One instance per Aver effect — the body emit
+/// (`emit_disk_simple_path_op`) is shared, only the wasi op fn
+/// idx and the Err message differ.
+pub(super) struct DiskSimplePathOpIndices {
+    pub(super) fn_type: u32,
+    pub(super) fn_idx: u32,
+    pub(super) string_type_idx: u32,
+    pub(super) result_unit_string_type_idx: u32,
+}
+
 /// Phase 1.3.1 — `cabi_realloc(old_ptr, old_size, align, new_size)
 /// -> new_ptr` body. Bump-allocator over linear memory backed by
 /// the wasip2 `bump_alloc_ptr` global (initialised to 65536 = page
@@ -2084,6 +2097,170 @@ pub(super) fn emit_disk_write_text(
     f.instruction(&Instruction::Call(drop_descriptor_fn));
 
     // ── Result.Ok(Unit) — tag=1, ok=0, err=null ─────────────
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+    f.instruction(&Instruction::StructNew(result_type_idx));
+
+    f.instruction(&Instruction::End); // fn end
+    f
+}
+
+/// Phase 1.5.4 — generic body for the single-call
+/// `Disk.{delete, deleteDir, makeDir}` ops. Each op's wasi WIT
+/// signature is `func(this: borrow<descriptor>, path: string)
+/// -> result<_, error-code>`, so only the host fn idx +
+/// Err-string distinguish the three.
+///
+/// Pipeline:
+///   1. Lazy-init preopen (shared cache).
+///   2. Marshal `path` to LM[0..path_len].
+///   3. Allocate 4-byte retptr (`tag i8` + `error-code u8`,
+///      padded). On Err host writes tag=1 + error code.
+///   4. Call `<op>-at(preopen, path_ptr=0, path_len, retptr)`.
+///   5. Read tag at retptr+0; tag == 0 ⇒ `Result.Ok(Unit)`,
+///      tag != 0 ⇒ `Result.Err(<msg>)` with the caller-supplied
+///      bytes inlined into a fresh GC `(array i8)`.
+pub(super) fn emit_disk_simple_path_op(
+    string_type_idx: u32,
+    result_type_idx: u32,
+    preopen_global: u32,
+    cabi_realloc_fn: u32,
+    str_to_lm_fn: u32,
+    get_directories_fn: u32,
+    op_fn: u32,
+    err_msg: &[u8],
+) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+
+    // Locals (after 1 ref-s param at idx 0):
+    //   5 i32 locals (idx 1..=5): preopen, path_len, retptr,
+    //     list_ptr, list_len.
+    //   1 ref-s local at idx 6: arr (Err string scratch).
+    let mut f = Function::new(vec![(5, ValType::I32), (1, s_ref.clone())]);
+    let p_path = 0u32;
+    let l_preopen = 1u32;
+    let l_path_len = 2u32;
+    let l_retptr = 3u32;
+    let l_list_ptr = 4u32;
+    let l_list_len = 5u32;
+    let l_arr = 6u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    let emit_err = |f: &mut Function| {
+        f.instruction(&Instruction::I32Const(err_msg.len() as i32));
+        f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+        f.instruction(&Instruction::LocalSet(l_arr));
+        for (i, b) in err_msg.iter().enumerate() {
+            f.instruction(&Instruction::LocalGet(l_arr));
+            f.instruction(&Instruction::I32Const(i as i32));
+            f.instruction(&Instruction::I32Const(*b as i32));
+            f.instruction(&Instruction::ArraySet(string_type_idx));
+        }
+        // tag=0 (Err), ok=0 (Unit placeholder), err=arr
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalGet(l_arr));
+        f.instruction(&Instruction::StructNew(result_type_idx));
+        f.instruction(&Instruction::Return);
+    };
+
+    // ── lazy-init preopen ─────────────────────────────────────
+    f.instruction(&Instruction::GlobalGet(preopen_global));
+    f.instruction(&Instruction::LocalSet(l_preopen));
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_retptr));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::Call(get_directories_fn));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::I32Load(mem4));
+        f.instruction(&Instruction::LocalSet(l_list_ptr));
+        f.instruction(&Instruction::LocalGet(l_retptr));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_list_len));
+        f.instruction(&Instruction::LocalGet(l_list_len));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32GtU);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::LocalGet(l_list_ptr));
+            f.instruction(&Instruction::I32Load(mem4));
+            f.instruction(&Instruction::LocalTee(l_preopen));
+            f.instruction(&Instruction::GlobalSet(preopen_global));
+        }
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f);
+    }
+    f.instruction(&Instruction::End);
+
+    // ── marshal path → LM[0..path_len] ────────────────────────
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::Call(str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_path_len));
+
+    // ── allocate retptr (4 bytes) + call op ──────────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(0)); // path_ptr = 0
+    f.instruction(&Instruction::LocalGet(l_path_len));
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::Call(op_fn));
+
+    // ── tag check ───────────────────────────────────────────
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f);
+    }
+    f.instruction(&Instruction::End);
+
+    // ── Result.Ok(Unit) ─────────────────────────────────────
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));

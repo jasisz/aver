@@ -235,6 +235,20 @@ pub(super) enum Wasip2ImportSlot {
     /// never dropped). Canonical-ABI signature:
     ///   `(handle: i32) -> ()`.
     IoStreamsResourceDropOutputStream,
+    /// `wasi:filesystem/types.[method]descriptor.unlink-file-at:
+    ///   func(this: borrow<descriptor>, path: string)
+    ///   -> result<_, error-code>`. Backs `Disk.delete` (Phase
+    /// 1.5.4). Canonical-ABI signature:
+    ///   `(handle: i32, path_ptr: i32, path_len: i32,
+    ///    retptr: i32) -> ()`. retptr is 4 bytes — `tag` at
+    /// offset 0 plus `error-code` at offset 1 on Err.
+    FilesystemTypesUnlinkFileAt,
+    /// `wasi:filesystem/types.[method]descriptor.remove-directory-at`
+    /// — same shape as unlink-file-at; backs `Disk.deleteDir`.
+    FilesystemTypesRemoveDirectoryAt,
+    /// `wasi:filesystem/types.[method]descriptor.create-directory-at`
+    /// — same shape as unlink-file-at; backs `Disk.makeDir`.
+    FilesystemTypesCreateDirectoryAt,
 }
 
 impl Wasip2ImportSlot {
@@ -300,6 +314,18 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::IoStreamsResourceDropOutputStream => {
                 ("wasi:io/streams@0.2.4", "[resource-drop]output-stream")
             }
+            Wasip2ImportSlot::FilesystemTypesUnlinkFileAt => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.unlink-file-at",
+            ),
+            Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.remove-directory-at",
+            ),
+            Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.create-directory-at",
+            ),
         }
     }
 
@@ -388,6 +414,17 @@ impl Wasip2ImportSlot {
                 ValType::I64, // offset
                 ValType::I32, // retptr
             ],
+            // `unlink-file-at(this, path) -> result<_, error-code>`,
+            // shape shared with remove-directory-at and
+            // create-directory-at.
+            Wasip2ImportSlot::FilesystemTypesUnlinkFileAt
+            | Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt
+            | Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt => vec![
+                ValType::I32, // descriptor handle
+                ValType::I32, // path_ptr
+                ValType::I32, // path_len
+                ValType::I32, // retptr
+            ],
         }
     }
 
@@ -413,7 +450,10 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor
             | Wasip2ImportSlot::IoStreamsResourceDropInputStream
             | Wasip2ImportSlot::FilesystemTypesWriteViaStream
-            | Wasip2ImportSlot::IoStreamsResourceDropOutputStream => Vec::new(),
+            | Wasip2ImportSlot::IoStreamsResourceDropOutputStream
+            | Wasip2ImportSlot::FilesystemTypesUnlinkFileAt
+            | Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt
+            | Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }
