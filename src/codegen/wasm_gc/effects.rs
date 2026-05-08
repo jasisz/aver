@@ -725,7 +725,8 @@ impl EffectName {
                 | EffectName::RandomFloat
                 | EffectName::ArgsGet
                 | EffectName::EnvGet
-                | EffectName::DiskExists,
+                | EffectName::DiskExists
+                | EffectName::DiskReadText,
         )
     }
 }

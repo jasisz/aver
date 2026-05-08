@@ -332,6 +332,20 @@ pub(super) fn emit_module_with(
                             .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
                         wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesStatAt);
                     }
+                    EffectName::DiskReadText => {
+                        // Shares the preopens cache with Disk.exists.
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesReadViaStream);
+                        wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                    }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
             }
@@ -685,6 +699,62 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 1.5.2 — `__rt_disk_read_text(path: ref string) ->
+    // ref null $result_string_string`. Lazy-fetches the preopen,
+    // calls `open-at` to obtain a per-call file descriptor,
+    // calls `read-via-stream` to obtain a per-call input-stream,
+    // loops `blocking-read` (chunk size 65536) until EOF, copies
+    // the accumulated bytes into a fresh GC `(array i8)` for the
+    // `Result.Ok` payload, then drops both the input-stream and
+    // file descriptor. Any failure short-circuits to a generic
+    // `Result.Err("…")` (open failure / stream failure / read
+    // failure are all categorised by the operation that produced
+    // the error code, ignoring the specific `error-code` enum).
+    let disk_read_text: Option<DiskReadTextIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadViaStream)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<String,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskReadTextIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_string_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
@@ -884,6 +954,9 @@ pub(super) fn emit_module_with(
         funcs.function(t.fn_type);
     }
     if let Some(d) = &disk_exists {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_read_text {
         funcs.function(d.fn_type);
     }
     if let Some(e) = &env_get_lookup {
@@ -1121,6 +1194,7 @@ pub(super) fn emit_module_with(
                     .map(|c| c.fn_idx),
                 time_sleep_fn_idx: time_sleep.as_ref().map(|t| t.fn_idx),
                 disk_exists_fn_idx: disk_exists.as_ref().map(|d| d.fn_idx),
+                disk_read_text_fn_idx: disk_read_text.as_ref().map(|d| d.fn_idx),
             })
         } else {
             None
@@ -1640,6 +1714,53 @@ pub(super) fn emit_module_with(
             str_to_lm,
             get_directories,
             stat_at,
+        ));
+    }
+    if let Some(rt) = &disk_read_text {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_read_text emit requires disk_preopen_handle global (gate matches)");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_read_text emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_read_text emit requires bridge (string marshalling)")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_read_text emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_read_text emit requires open-at fn idx");
+        let read_via_stream = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadViaStream)
+            .expect("disk_read_text emit requires read-via-stream fn idx");
+        let blocking_read = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .expect("disk_read_text emit requires blocking-read fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor)
+            .expect("disk_read_text emit requires drop-descriptor fn idx");
+        let drop_input_stream = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream)
+            .expect("disk_read_text emit requires drop-input-stream fn idx");
+        codes.function(&emit_disk_read_text(
+            rt.string_type_idx,
+            rt.result_string_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            read_via_stream,
+            blocking_read,
+            drop_descriptor,
+            drop_input_stream,
         ));
     }
     if let Some(e) = &env_get_lookup {
@@ -3963,6 +4084,19 @@ struct DiskExistsIndices {
     fn_idx: u32,
 }
 
+/// Phase 1.5.2 — `__rt_disk_read_text(path: ref string) ->
+/// ref null $result_string_string` helper indices. Reads the
+/// file at `path` (relative to the cached preopen) into a fresh
+/// GC `(array i8)` and returns it wrapped in `Result.Ok`. Any
+/// failure (open / stream / read) collapses to a generic
+/// `Result.Err("…")` describing the failed step.
+struct DiskReadTextIndices {
+    fn_type: u32,
+    fn_idx: u32,
+    string_type_idx: u32,
+    result_string_string_type_idx: u32,
+}
+
 struct BridgeIndices {
     from_lm_type: u32,
     to_lm_type: u32,
@@ -5445,6 +5579,404 @@ fn emit_disk_exists(
     f.instruction(&Instruction::LocalGet(l_retptr));
     f.instruction(&Instruction::I32Load8U(mem1));
     f.instruction(&Instruction::I32Eqz);
+
+    f.instruction(&Instruction::End); // fn end
+    f
+}
+
+/// Phase 1.5.2 — `__rt_disk_read_text(path: ref string) ->
+/// ref null $result_string_string` body.
+///
+/// Pipeline (failure at any step short-circuits to a generic
+/// `Result.Err("…")`):
+///   1. Lazy-init preopen via `wasi:filesystem/preopens.
+///      get-directories` (same cache as `__rt_disk_exists`); if
+///      no preopens are available ⇒ `Err("no preopens")`.
+///   2. Marshal `path` through `__rt_string_to_lm` to LM[0..len].
+///   3. `open-at(preopen, path-flags=symlink-follow, path,
+///      open-flags=0, descriptor-flags=READ=1)` ⇒ on Err
+///      `Err("open failed")`; on Ok stash the file descriptor.
+///   4. `read-via-stream(fd, offset=0)` ⇒ on Err drop fd, return
+///      `Err("read-via-stream failed")`; on Ok stash the
+///      input-stream handle.
+///   5. Loop `[method]input-stream.blocking-read(stream, 65536,
+///      retptr)`: on Ok-with-bytes append into the cabi_realloc
+///      growing buffer (doubles when full); on Ok-empty or
+///      Err-closed exit cleanly; on Err-failure drop both
+///      resources and return `Err("read failed")`.
+///   6. Drop the input-stream and file descriptor (per-call
+///      resources, mandatory or they leak host-side).
+///   7. Materialise the buffer bytes into a fresh GC
+///      `(array i8)` and wrap in `Result.Ok`.
+fn emit_disk_read_text(
+    string_type_idx: u32,
+    result_type_idx: u32,
+    preopen_global: u32,
+    cabi_realloc_fn: u32,
+    str_to_lm_fn: u32,
+    get_directories_fn: u32,
+    open_at_fn: u32,
+    read_via_stream_fn: u32,
+    blocking_read_fn: u32,
+    drop_descriptor_fn: u32,
+    drop_input_stream_fn: u32,
+) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+
+    // Locals:
+    // i32 (16): preopen, path_len, retptr_open, retptr_stream,
+    //           retptr_read, fd, stream, buf_ptr, buf_cap, buf_len,
+    //           data_ptr, data_len, j, list_ptr, list_len, new_cap
+    // ref s: arr (Ok payload OR per-call err string scratch)
+    let mut f = Function::new(vec![(16, ValType::I32), (1, s_ref.clone())]);
+    let p_path = 0u32;
+    let l_preopen = 1u32;
+    let l_path_len = 2u32;
+    let l_retptr_open = 3u32;
+    let l_retptr_stream = 4u32;
+    let l_retptr_read = 5u32;
+    let l_fd = 6u32;
+    let l_stream = 7u32;
+    let l_buf_ptr = 8u32;
+    let l_buf_cap = 9u32;
+    let l_buf_len = 10u32;
+    let l_data_ptr = 11u32;
+    let l_data_len = 12u32;
+    let l_j = 13u32;
+    let l_list_ptr = 14u32;
+    let l_list_len = 15u32;
+    let l_new_cap = 16u32;
+    let l_arr = 17u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o8 = MemArg {
+        offset: 8,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    // Helper closures factored as plain emit fns: build a fresh
+    // string of the given bytes and push the constructed
+    // `Result.Err(<bytes>)` then `Return`. Inlined per call site;
+    // saves a few dozen lines vs. repeating the byte writes.
+    let emit_err = |f: &mut Function, msg: &[u8]| {
+        f.instruction(&Instruction::I32Const(msg.len() as i32));
+        f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+        f.instruction(&Instruction::LocalSet(l_arr));
+        for (i, b) in msg.iter().enumerate() {
+            f.instruction(&Instruction::LocalGet(l_arr));
+            f.instruction(&Instruction::I32Const(i as i32));
+            f.instruction(&Instruction::I32Const(*b as i32));
+            f.instruction(&Instruction::ArraySet(string_type_idx));
+        }
+        // tag=0 (Err), ok=null, err=arr
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+        f.instruction(&Instruction::LocalGet(l_arr));
+        f.instruction(&Instruction::StructNew(result_type_idx));
+        f.instruction(&Instruction::Return);
+    };
+
+    // ── lazy-init preopen (mirrors emit_disk_exists) ─────────
+    f.instruction(&Instruction::GlobalGet(preopen_global));
+    f.instruction(&Instruction::LocalSet(l_preopen));
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_retptr_open));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::Call(get_directories_fn));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::I32Load(mem4));
+        f.instruction(&Instruction::LocalSet(l_list_ptr));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_list_len));
+        f.instruction(&Instruction::LocalGet(l_list_len));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32GtU);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::LocalGet(l_list_ptr));
+            f.instruction(&Instruction::I32Load(mem4));
+            f.instruction(&Instruction::LocalTee(l_preopen));
+            f.instruction(&Instruction::GlobalSet(preopen_global));
+        }
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"no preopens");
+    }
+    f.instruction(&Instruction::End);
+
+    // ── marshal path bytes to LM[0..len] ──────────────────────
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::Call(str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_path_len));
+
+    // ── open-at(preopen, 1, 0, path_len, 0, 1, retptr_open) ──
+    // open_flags=0 (no create/truncate/exclusive/directory),
+    // descriptor_flags=1 (READ).
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_open));
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(1)); // path-flags = symlink-follow
+    f.instruction(&Instruction::I32Const(0)); // path_ptr = 0
+    f.instruction(&Instruction::LocalGet(l_path_len));
+    f.instruction(&Instruction::I32Const(0)); // open-flags = 0
+    f.instruction(&Instruction::I32Const(1)); // descriptor-flags = READ
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::Call(open_at_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"open failed");
+    }
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_fd));
+
+    // ── read-via-stream(fd, 0_i64, retptr_stream) ─────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_stream));
+
+    f.instruction(&Instruction::LocalGet(l_fd));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::Call(read_via_stream_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // Drop the file descriptor before returning Err.
+        f.instruction(&Instruction::LocalGet(l_fd));
+        f.instruction(&Instruction::Call(drop_descriptor_fn));
+        emit_err(&mut f, b"read-via-stream failed");
+    }
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_stream));
+
+    // ── allocate growing buffer + per-iteration retptr (12B) ─
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_buf_ptr));
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::LocalSet(l_buf_cap));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_buf_len));
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(12));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_read));
+
+    // ── read loop: blocking-read(stream, 65536, retptr_read) ─
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    f.instruction(&Instruction::LocalGet(l_stream));
+    f.instruction(&Instruction::I64Const(65_536));
+    f.instruction(&Instruction::LocalGet(l_retptr_read));
+    f.instruction(&Instruction::Call(blocking_read_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr_read));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // Err — at retptr+4 sits the stream-error tag (0=
+        // last-operation-failed, 1=closed). closed is EOF (good);
+        // last-operation-failed is a real failure → drop + Err.
+        f.instruction(&Instruction::LocalGet(l_retptr_read));
+        f.instruction(&Instruction::I32Load8U(MemArg {
+            offset: 4,
+            align: 0,
+            memory_index: 0,
+        }));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Eq);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            // closed → exit loop, build Ok(buf).
+            f.instruction(&Instruction::Br(3));
+        }
+        f.instruction(&Instruction::End);
+        // last-operation-failed → drop both, return Err.
+        f.instruction(&Instruction::LocalGet(l_stream));
+        f.instruction(&Instruction::Call(drop_input_stream_fn));
+        f.instruction(&Instruction::LocalGet(l_fd));
+        f.instruction(&Instruction::Call(drop_descriptor_fn));
+        emit_err(&mut f, b"read failed");
+    }
+    f.instruction(&Instruction::End);
+
+    // Ok branch — read (data_ptr, data_len) at retptr+4 / +8.
+    f.instruction(&Instruction::LocalGet(l_retptr_read));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_data_ptr));
+    f.instruction(&Instruction::LocalGet(l_retptr_read));
+    f.instruction(&Instruction::I32Load(mem4_o8));
+    f.instruction(&Instruction::LocalSet(l_data_len));
+
+    // Empty Ok = EOF; exit loop. Depth 0=Loop, 1=Block — br 1
+    // jumps to the Block end (= falls through to drops + Ok build).
+    f.instruction(&Instruction::LocalGet(l_data_len));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
+
+    // Grow buffer if needed: while buf_cap < buf_len + data_len,
+    // buf_cap *= 2; then realloc.
+    f.instruction(&Instruction::LocalGet(l_buf_cap));
+    f.instruction(&Instruction::LocalSet(l_new_cap));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_new_cap));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::LocalGet(l_data_len));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(l_new_cap));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalSet(l_new_cap));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // grow loop
+    f.instruction(&Instruction::End); // grow block
+    // Realloc only if cap actually grew.
+    f.instruction(&Instruction::LocalGet(l_new_cap));
+    f.instruction(&Instruction::LocalGet(l_buf_cap));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::LocalGet(l_buf_ptr));
+        f.instruction(&Instruction::LocalGet(l_buf_cap));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::LocalGet(l_new_cap));
+        f.instruction(&Instruction::Call(cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_buf_ptr));
+        f.instruction(&Instruction::LocalGet(l_new_cap));
+        f.instruction(&Instruction::LocalSet(l_buf_cap));
+    }
+    f.instruction(&Instruction::End);
+
+    // memory.copy(dst=buf_ptr+buf_len, src=data_ptr, n=data_len)
+    f.instruction(&Instruction::LocalGet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(l_data_ptr));
+    f.instruction(&Instruction::LocalGet(l_data_len));
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
+
+    // buf_len += data_len
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::LocalGet(l_data_len));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_buf_len));
+
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // read loop
+    f.instruction(&Instruction::End); // read block
+
+    // ── drops ───────────────────────────────────────────────
+    f.instruction(&Instruction::LocalGet(l_stream));
+    f.instruction(&Instruction::Call(drop_input_stream_fn));
+    f.instruction(&Instruction::LocalGet(l_fd));
+    f.instruction(&Instruction::Call(drop_descriptor_fn));
+
+    // ── Result.Ok(arr) — copy buf_ptr[0..buf_len] into a fresh
+    //   `(array i8)` of size buf_len ───────────────────────────
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_arr));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::ArraySet(string_type_idx));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // copy loop
+    f.instruction(&Instruction::End); // copy block
+
+    // tag=1 (Ok), ok=arr, err=null
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+    f.instruction(&Instruction::StructNew(result_type_idx));
 
     f.instruction(&Instruction::End); // fn end
     f

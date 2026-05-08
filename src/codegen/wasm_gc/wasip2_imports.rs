@@ -168,6 +168,53 @@ pub(super) enum Wasip2ImportSlot {
     ///   `(handle: i32, path_flags: i32, path_ptr: i32,
     ///    path_len: i32, retptr: i32) -> ()`.
     FilesystemTypesStatAt,
+    /// `wasi:filesystem/types.[method]descriptor.open-at: func(
+    ///   this: borrow<descriptor>,
+    ///   path-flags: path-flags,
+    ///   path: string,
+    ///   open-flags: open-flags,
+    ///   flags: descriptor-flags,
+    /// ) -> result<descriptor, error-code>`.
+    ///
+    /// Phase 1.5.2 `Disk.readText` uses this to open a file
+    /// relative to the cached preopen descriptor; on Ok the
+    /// freshly-opened descriptor handle lands at retptr+4. retptr
+    /// size is 8 bytes (`tag i8` padded to 4 + descriptor handle
+    /// i32). The Err branch carries an `error-code` u8 at
+    /// retptr+4 — Phase 1.5.2 ignores its specific value and
+    /// reports a generic "open failed".
+    /// Canonical-ABI signature:
+    ///   `(handle: i32, path_flags: i32, path_ptr: i32,
+    ///    path_len: i32, open_flags: i32, descriptor_flags: i32,
+    ///    retptr: i32) -> ()`.
+    FilesystemTypesOpenAt,
+    /// `wasi:filesystem/types.[method]descriptor.read-via-stream:
+    ///   func(this: borrow<descriptor>, offset: filesize)
+    ///   -> result<input-stream, error-code>`.
+    ///
+    /// Phase 1.5.2 calls this with `offset = 0` to obtain a fresh
+    /// input-stream over the whole file, then loops
+    /// `[method]input-stream.blocking-read` until EOF. retptr
+    /// shape is identical to open-at's: 8 bytes (`tag i8` + i32
+    /// handle on Ok / `error-code u8` on Err).
+    /// Canonical-ABI signature:
+    ///   `(handle: i32, offset: i64, retptr: i32) -> ()`.
+    FilesystemTypesReadViaStream,
+    /// `wasi:filesystem/types.[resource-drop]descriptor:
+    ///   func(this: descriptor) -> ()`. Releases a file
+    /// descriptor handle. Phase 1.5.2 calls this once per
+    /// `Disk.readText` invocation for the per-call file
+    /// descriptor (NOT for the cached preopen — that one is
+    /// program-lifetime and freed by wasmtime at component exit).
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    FilesystemTypesResourceDropDescriptor,
+    /// `wasi:io/streams.[resource-drop]input-stream:
+    ///   func(this: input-stream) -> ()`. Releases a stream
+    /// handle. Phase 1.5.2 calls this once per `Disk.readText`
+    /// for the per-call read stream (the `Console.readLine`
+    /// stdin stream is program-lifetime and never dropped).
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    IoStreamsResourceDropInputStream,
 }
 
 impl Wasip2ImportSlot {
@@ -212,6 +259,20 @@ impl Wasip2ImportSlot {
                 "wasi:filesystem/types@0.2.4",
                 "[method]descriptor.stat-at",
             ),
+            Wasip2ImportSlot::FilesystemTypesOpenAt => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.open-at",
+            ),
+            Wasip2ImportSlot::FilesystemTypesReadViaStream => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.read-via-stream",
+            ),
+            Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor => {
+                ("wasi:filesystem/types@0.2.4", "[resource-drop]descriptor")
+            }
+            Wasip2ImportSlot::IoStreamsResourceDropInputStream => {
+                ("wasi:io/streams@0.2.4", "[resource-drop]input-stream")
+            }
         }
     }
 
@@ -267,6 +328,30 @@ impl Wasip2ImportSlot {
                 ValType::I32, // path_len
                 ValType::I32, // retptr
             ],
+            // `open-at(this, path-flags, path, open-flags, flags)
+            // -> result<descriptor, error-code>` — same string
+            // lowering as stat-at plus two flag i32s.
+            Wasip2ImportSlot::FilesystemTypesOpenAt => vec![
+                ValType::I32, // descriptor handle
+                ValType::I32, // path-flags
+                ValType::I32, // path_ptr
+                ValType::I32, // path_len
+                ValType::I32, // open-flags
+                ValType::I32, // descriptor-flags
+                ValType::I32, // retptr
+            ],
+            // `read-via-stream(this, offset) ->
+            // result<input-stream, error-code>` — borrow<descriptor>,
+            // u64 offset, retptr for the 8-byte result.
+            Wasip2ImportSlot::FilesystemTypesReadViaStream => vec![
+                ValType::I32, // descriptor handle
+                ValType::I64, // offset
+                ValType::I32, // retptr
+            ],
+            // `[resource-drop]<X>(this)` — single i32 handle,
+            // no return.
+            Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor
+            | Wasip2ImportSlot::IoStreamsResourceDropInputStream => vec![ValType::I32],
         }
     }
 
@@ -286,7 +371,11 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::CliEnvironmentGetArguments
             | Wasip2ImportSlot::CliEnvironmentGetEnvironment
             | Wasip2ImportSlot::FilesystemPreopensGetDirectories
-            | Wasip2ImportSlot::FilesystemTypesStatAt => Vec::new(),
+            | Wasip2ImportSlot::FilesystemTypesStatAt
+            | Wasip2ImportSlot::FilesystemTypesOpenAt
+            | Wasip2ImportSlot::FilesystemTypesReadViaStream
+            | Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor
+            | Wasip2ImportSlot::IoStreamsResourceDropInputStream => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }

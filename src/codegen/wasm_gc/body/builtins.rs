@@ -96,6 +96,9 @@ pub(super) fn emit_dotted_builtin(
         if parent == "Disk" && method == "exists" {
             return emit_disk_exists_wasip2(func, args, slots, ctx);
         }
+        if parent == "Disk" && method == "readText" {
+            return emit_disk_read_text_wasip2(func, args, slots, ctx);
+        }
     }
 
     // Registered effect import? Same shape — push args, push the
@@ -2228,6 +2231,38 @@ fn emit_disk_exists_wasip2(
     })?;
     emit_expr(func, &args[0], slots, ctx)?; // path: ref string
     func.instruction(&Instruction::Call(exists_fn));
+    Ok(())
+}
+
+/// Phase 1.5.2 — `Disk.readText(path: String) ->
+/// Result<String, String>` on `--target wasip2`. Pushes the path
+/// expression onto the stack and calls `__rt_disk_read_text`,
+/// which owns the open-at + read-via-stream + blocking-read loop
+/// + per-call resource drops.
+fn emit_disk_read_text_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.readText on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.readText on `--target wasip2` expects 1 arg (path: String), got {}",
+            args.len()
+        )));
+    }
+    let read_fn = lowering.disk_read_text_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.readText on wasip2: __rt_disk_read_text fn idx missing — \
+             helper not allocated"
+                .into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?; // path: ref string
+    func.instruction(&Instruction::Call(read_fn));
     Ok(())
 }
 

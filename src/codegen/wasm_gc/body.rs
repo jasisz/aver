@@ -425,6 +425,13 @@ pub(super) struct Wasip2Lowering {
     /// `wasi:filesystem/types.[method]descriptor.stat-at` and
     /// returns the boolean result tag (1 = exists, 0 = not).
     pub(super) disk_exists_fn_idx: Option<u32>,
+    /// Phase 1.5.2 — `__rt_disk_read_text(path: ref string) ->
+    /// ref null $result_string_string` helper wasm fn idx. Owns
+    /// open-at + read-via-stream + blocking-read loop + per-call
+    /// resource drops. Returns `Result.Ok(content)` on success,
+    /// `Result.Err("…")` on any wasi failure (open / stream /
+    /// read).
+    pub(super) disk_read_text_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {
