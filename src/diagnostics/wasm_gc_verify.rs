@@ -55,18 +55,6 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
         apply_hostile_expansion, format_type_errors, inject_hostile_effect_stubs_for_blocks,
     };
 
-    // Reject cross-module deps for now. wasm-gc compile path would need
-    // `load_compile_deps` + `flatten_multimodule` wired here; out of
-    // scope for the first cut.
-    if let Some(TopLevel::Module(m)) = items.iter().find(|i| matches!(i, TopLevel::Module(_)))
-        && !m.depends.is_empty()
-    {
-        return Err(
-            "verify --wasm-gc: cross-module `depends [...]` not yet supported. Run --wasm-gc on single-file modules, or use VM verify (`aver verify`) for multi-module programs."
-                .to_string(),
-        );
-    }
-
     crate::ir::pipeline::tco(&mut items);
 
     if mode == ExpansionMode::Hostile {
@@ -151,6 +139,21 @@ pub fn run_verify_for_items_wasm_gc_with_mode(
         && !tc.errors.is_empty()
     {
         return Err(format_type_errors(&tc.errors));
+    }
+
+    // Cross-module support: load every transitive `depends [...]`
+    // module, run them through the same wasm-gc-compatible pipeline,
+    // flatten into the entry items so `compile_to_wasm_gc` sees one
+    // self-contained AST. Mirrors the `try_run_wasm_gc` setup in
+    // `src/main/run_wasm_gc.rs`.
+    let dep_modules = if let Some(root) = base_dir {
+        load_compile_deps(&items, root)?
+    } else {
+        Vec::new()
+    };
+    if !dep_modules.is_empty() {
+        crate::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        crate::ir::pipeline::resolve(&mut items);
     }
 
     let bytes = crate::codegen::wasm_gc::compile_to_wasm_gc(&items, result.analysis.as_ref())
@@ -418,6 +421,111 @@ fn run_verify_cases_in_wasmtime(
     }
 
     Ok(results)
+}
+
+fn load_compile_deps(
+    items: &[TopLevel],
+    module_root: &str,
+) -> Result<Vec<crate::codegen::ModuleInfo>, String> {
+    let module = items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m),
+        _ => None,
+    });
+    let Some(module) = module else {
+        return Ok(vec![]);
+    };
+    let mut result = Vec::new();
+    let mut loaded = std::collections::HashSet::new();
+    for dep_name in &module.depends {
+        load_module_recursive(dep_name, module_root, &mut result, &mut loaded)?;
+    }
+    Ok(result)
+}
+
+fn load_module_recursive(
+    name: &str,
+    module_root: &str,
+    result: &mut Vec<crate::codegen::ModuleInfo>,
+    loaded: &mut std::collections::HashSet<String>,
+) -> Result<(), String> {
+    if !loaded.insert(name.to_string()) {
+        return Ok(());
+    }
+
+    let path = crate::source::find_module_file(name, module_root).ok_or_else(|| {
+        format!(
+            "Cannot find module '{}' in module root '{}'",
+            name, module_root
+        )
+    })?;
+    let source = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Read '{}': {}", path.display(), e))?;
+    let mut items = crate::source::parse_source(&source)
+        .map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
+    crate::source::require_module_declaration(&items, path.to_str().unwrap_or(name))?;
+
+    let neutral_policy = crate::ir::NeutralAllocPolicy;
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut items,
+        crate::ir::PipelineConfig {
+            typecheck: Some(crate::ir::TypecheckMode::Full {
+                base_dir: Some(module_root),
+            }),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            alloc_policy: Some(&neutral_policy),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = pipeline_result.typecheck.as_ref()
+        && !tc.errors.is_empty()
+    {
+        return Err(format!(
+            "Type errors in dependency module '{}':\n{}",
+            name,
+            tc.errors
+                .iter()
+                .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    let transitive: Vec<String> = items
+        .iter()
+        .find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.depends.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    for dep in &transitive {
+        load_module_recursive(dep, module_root, result, loaded)?;
+    }
+
+    let depends = transitive;
+    let type_defs: Vec<_> = items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::TypeDef(td) => Some(td.clone()),
+            _ => None,
+        })
+        .collect();
+    let fn_defs: Vec<_> = items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+            _ => None,
+        })
+        .collect();
+
+    result.push(crate::codegen::ModuleInfo {
+        prefix: name.to_string(),
+        depends,
+        type_defs,
+        fn_defs,
+        analysis: pipeline_result.analysis,
+    });
+    Ok(())
 }
 
 fn invoke_bool(

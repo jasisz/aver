@@ -3007,14 +3007,6 @@ pub(super) fn cmd_verify(
     hostile: bool,
     wasm_gc: bool,
 ) {
-    if wasm_gc && deps {
-        eprintln!(
-            "{}",
-            "verify --wasm-gc + --deps not yet supported. Run --wasm-gc on single-file modules, or drop --wasm-gc for the multi-module case."
-                .red()
-        );
-        process::exit(1);
-    }
     // 0.13 Limit: --hostile reruns each `verify ... law` against an adversarial
     // world. Domain side (this commit) injects boundary values per typed
     // `given`; effect side (next commit) responds with worst-case classified-
