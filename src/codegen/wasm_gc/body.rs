@@ -404,6 +404,14 @@ pub(super) struct Wasip2Lowering {
     /// Time.unixMs); `wasm-opt -Oz` strips this when no source
     /// `Time.now` reaches the helper.
     pub(super) fmt_iso8601_fn_idx: Option<u32>,
+    /// Phase 1.3.4 — `__rt_console_read_line() -> ref null
+    /// $result_string_string` helper wasm fn idx. Loops 1-byte
+    /// `wasi:io/streams.[method]input-stream.blocking-read` calls
+    /// against the cached `wasi:cli/stdin.get-stdin` handle until
+    /// `\n` or EOF, accumulates into a `cabi_realloc`-owned
+    /// buffer, and returns `Result.Ok(line)` (or `Result.Err("EOF")`
+    /// when the first read produces zero bytes).
+    pub(super) console_read_line_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

@@ -159,12 +159,10 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     }
     // ---------- Pending phase rejects (0.18 in-flight) ----------
     // Each entry vanishes as the phase commit lands.
-    // (`Console.print`/`error`/`warn` graduated in Phase 1.2b1.5.)
-    if effect == "Console.readLine" {
-        return Some(UnsupportedReason::PendingPhase {
-            phase: "Phase 1.3",
-        });
-    }
+    // (`Console.print`/`error`/`warn` graduated in Phase 1.2b1.5;
+    // `Console.readLine` graduated in Phase 1.3.4 — the wasip2
+    // codegen now lowers it via cached stdin handle + blocking-
+    // read loop in `__rt_console_read_line`.)
     // Args.get graduated in Phase 1.3.2 (cabi_realloc + shared
     // list<string> decoder); Env.get graduated in Phase 1.3.3
     // (canonical-ABI list<tuple<string,string>> + linear-search
@@ -237,16 +235,12 @@ mod tests {
         assert!(classify("Random.float").is_none());
         // Args.get graduated in Phase 1.3.2 (cabi_realloc + shared
         // list<string> decoder helper); Env.get graduated in
-        // Phase 1.3.3 (canonical-ABI list<tuple> + lookup helper).
+        // Phase 1.3.3 (canonical-ABI list<tuple> + lookup helper);
+        // Console.readLine graduated in Phase 1.3.4 (stdin handle
+        // cache + blocking-read loop + Result construction).
         assert!(classify("Args.get").is_none());
         assert!(classify("Env.get").is_none());
-        // Console.readLine still pending — needs per-call
-        // input-stream resource handle + `[resource-drop]` (Phase
-        // 1.3.4).
-        assert!(matches!(
-            classify("Console.readLine"),
-            Some(UnsupportedReason::PendingPhase { .. })
-        ));
+        assert!(classify("Console.readLine").is_none());
         assert!(matches!(
             classify("Disk.readText"),
             Some(UnsupportedReason::PendingPhase { .. })

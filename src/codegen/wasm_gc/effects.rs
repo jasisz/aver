@@ -717,6 +717,7 @@ impl EffectName {
             EffectName::ConsolePrint
                 | EffectName::ConsoleError
                 | EffectName::ConsoleWarn
+                | EffectName::ConsoleReadLine
                 | EffectName::TimeUnixMs
                 | EffectName::TimeNow
                 | EffectName::RandomInt

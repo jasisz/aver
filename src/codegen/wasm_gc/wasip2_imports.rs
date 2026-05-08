@@ -86,6 +86,26 @@ pub(super) enum Wasip2ImportSlot {
     /// Phase 1.3.3 drives `Env.get(name) -> String` via a
     /// linear-search lookup helper.
     CliEnvironmentGetEnvironment,
+    /// `wasi:cli/stdin.get-stdin: func() -> input-stream`.
+    /// Returns the program-lifetime stdin resource handle;
+    /// Phase 1.3.4 caches it in a wasm global (lazy lookup,
+    /// never dropped — wasmtime cleans up at component exit).
+    /// Canonical-ABI signature: `() -> i32`.
+    CliStdinGetStdin,
+    /// `wasi:io/streams.[method]input-stream.blocking-read:
+    /// func(this: borrow<input-stream>, len: u64) ->
+    ///   result<list<u8>, stream-error>`.
+    ///
+    /// Canonical-ABI signature with the result lowered via retptr
+    /// (12 bytes — `tag i8` at offset 0, then either
+    /// `(data_ptr i32, data_len i32)` for Ok or
+    /// `(err_tag i8, err_handle i32)` for Err):
+    ///   `(handle: i32, len: i64, retptr: i32) -> ()`.
+    /// Phase 1.3.4 drives `Console.readLine() ->
+    /// Result<String, String>` by looping `len = 1` reads until
+    /// `\n` or EOF and accumulating bytes into a `cabi_realloc`-
+    /// owned buffer.
+    InputStreamBlockingRead,
 }
 
 impl Wasip2ImportSlot {
@@ -111,6 +131,11 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::CliEnvironmentGetEnvironment => {
                 ("wasi:cli/environment@0.2.4", "get-environment")
             }
+            Wasip2ImportSlot::CliStdinGetStdin => ("wasi:cli/stdin@0.2.4", "get-stdin"),
+            Wasip2ImportSlot::InputStreamBlockingRead => (
+                "wasi:io/streams@0.2.4",
+                "[method]input-stream.blocking-read",
+            ),
         }
     }
 
@@ -118,9 +143,16 @@ impl Wasip2ImportSlot {
         match self {
             Wasip2ImportSlot::CliGetStdout
             | Wasip2ImportSlot::CliGetStderr
+            | Wasip2ImportSlot::CliStdinGetStdin
             | Wasip2ImportSlot::RandomGetRandomU64 => Vec::new(),
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush => {
                 vec![ValType::I32, ValType::I32, ValType::I32, ValType::I32]
+            }
+            // `blocking-read(this, len) -> result<list<u8>, stream-error>`
+            // — `this` borrows the input-stream handle (i32), `len` is
+            // u64, return lowered via retptr.
+            Wasip2ImportSlot::InputStreamBlockingRead => {
+                vec![ValType::I32, ValType::I64, ValType::I32]
             }
             // `now: () -> datetime` — datetime exceeds 8-byte flat
             // limit, so it returns via retptr supplied by the guest.
@@ -140,9 +172,12 @@ impl Wasip2ImportSlot {
     pub(super) fn results(self) -> Vec<ValType> {
         match self {
             // Resource handle — i32 ID owned by the host.
-            Wasip2ImportSlot::CliGetStdout | Wasip2ImportSlot::CliGetStderr => vec![ValType::I32],
+            Wasip2ImportSlot::CliGetStdout
+            | Wasip2ImportSlot::CliGetStderr
+            | Wasip2ImportSlot::CliStdinGetStdin => vec![ValType::I32],
             // Result lowered via retptr — no inline return.
             Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush
+            | Wasip2ImportSlot::InputStreamBlockingRead
             | Wasip2ImportSlot::ClocksWallClockNow
             | Wasip2ImportSlot::CliEnvironmentGetArguments
             | Wasip2ImportSlot::CliEnvironmentGetEnvironment => Vec::new(),

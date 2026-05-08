@@ -44,6 +44,11 @@ struct Wasip2Globals {
     /// Same shape, for `wasi:cli/stderr.get-stderr`. Populated when
     /// `Console.error` or `Console.warn` is registered.
     stderr_handle: Option<u32>,
+    /// Same shape, for `wasi:cli/stdin.get-stdin`. Populated when
+    /// `Console.readLine` is registered. The resource is program-
+    /// lifetime — wasmtime cleans up at component exit, so we never
+    /// emit `[resource-drop]input-stream` for it.
+    stdin_handle: Option<u32>,
 }
 use super::body::hash_helpers::{HashHelperRegistry, HashKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
@@ -305,6 +310,10 @@ pub(super) fn emit_module_with(
                     EffectName::EnvGet => {
                         wasip2_imports
                             .register(Wasip2ImportSlot::CliEnvironmentGetEnvironment);
+                    }
+                    EffectName::ConsoleReadLine => {
+                        wasip2_imports.register(Wasip2ImportSlot::CliStdinGetStdin);
+                        wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
                     }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
@@ -594,6 +603,44 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 1.3.4 — `__rt_console_read_line() ->
+    // Result<String, String>` body. Caches `wasi:cli/stdin.get-stdin`
+    // in a wasm global (lazy-init via `-1` sentinel) and loops
+    // 1-byte `wasi:io/streams.[method]input-stream.blocking-read`
+    // calls until `\n` or EOF, accumulating into a `cabi_realloc`-
+    // owned buffer that doubles on overflow. Returns
+    // `Result.Ok(line)` on success (including partial-line-then-EOF
+    // — Unix convention) and `Result.Err("EOF")` only when the
+    // first read produces zero bytes.
+    let console_read_line: Option<ConsoleReadLineIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliStdinGetStdin)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<String,String>")
+    {
+        let res_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        types.ty().function([], [res_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(ConsoleReadLineIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_string_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
@@ -750,6 +797,9 @@ pub(super) fn emit_module_with(
     if let Some(d) = &decode_list_string {
         funcs.function(d.fn_type);
     }
+    if let Some(c) = &console_read_line {
+        funcs.function(c.fn_type);
+    }
     if let Some(e) = &env_get_lookup {
         funcs.function(e.fn_type);
     }
@@ -874,19 +924,42 @@ pub(super) fn emit_module_with(
                 &wasm_encoder::ConstExpr::i32_const(-1),
             );
             let idx = next_global_idx;
-            // No further globals after stderr in Phase 1.2b1; the
-            // counter is left in step for the future `stdin_handle`
-            // (Phase 1.3 / `Console.readLine`).
-            let _ = next_global_idx;
+            next_global_idx += 1;
             Some(idx)
         } else {
             None
         };
+        // Phase 1.3.4 — stdin handle cache global. Same lazy-init
+        // pattern as stdout/stderr: starts as -1 sentinel, every
+        // `Console.readLine` call site checks the global and runs
+        // `wasi:cli/stdin.get-stdin` once on first read. The
+        // resource is program-lifetime (wasmtime cleans up at
+        // component exit) so we never emit `[resource-drop]`.
+        let stdin_handle = if wasip2_imports
+            .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliStdinGetStdin)
+            .is_some()
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        let _ = next_global_idx;
         module.section(&globals);
         Some(Wasip2Globals {
             bump_alloc_ptr,
             stdout_handle,
             stderr_handle,
+            stdin_handle,
         })
     } else {
         None
@@ -930,6 +1003,9 @@ pub(super) fn emit_module_with(
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::CliEnvironmentGetEnvironment),
                 env_get_lookup_fn_idx: env_get_lookup.as_ref().map(|e| e.fn_idx),
                 fmt_iso8601_fn_idx: format_iso8601.as_ref().map(|f| f.fn_idx),
+                console_read_line_fn_idx: console_read_line
+                    .as_ref()
+                    .map(|c| c.fn_idx),
             })
         } else {
             None
@@ -1381,6 +1457,30 @@ pub(super) fn emit_module_with(
     }
     if let Some(d) = &decode_list_string {
         codes.function(&emit_decode_list_string(d.string_type_idx, d.list_string_type_idx));
+    }
+    if let Some(c) = &console_read_line {
+        let stdin_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.stdin_handle)
+            .expect("console_read_line emit requires stdin_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("console_read_line emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let get_stdin = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliStdinGetStdin)
+            .expect("console_read_line emit requires CliStdinGetStdin fn idx (gate matches)");
+        let blocking_read = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .expect("console_read_line emit requires InputStreamBlockingRead fn idx");
+        codes.function(&emit_console_read_line(
+            c.string_type_idx,
+            c.result_string_string_type_idx,
+            stdin_global,
+            cabi,
+            get_stdin,
+            blocking_read,
+        ));
     }
     if let Some(e) = &env_get_lookup {
         codes.function(&emit_env_get_lookup(
@@ -3669,6 +3769,22 @@ struct FormatIso8601Indices {
     string_type_idx: u32,
 }
 
+/// Phase 1.3.4 — `__rt_console_read_line() -> ref null
+/// $result_string_string` helper indices. Loops 1-byte
+/// `blocking-read` calls until `\n` or EOF; the accumulator
+/// lives in a `cabi_realloc`-owned LM buffer that doubles on
+/// overflow, then gets copied into a fresh GC `(array i8)` for
+/// the `Result.Ok` payload. EOF on the first read is the only
+/// path to `Result.Err("EOF")`; partial-line-then-close yields
+/// `Result.Ok(buf)` (Unix convention for missing trailing
+/// newline).
+struct ConsoleReadLineIndices {
+    fn_type: u32,
+    fn_idx: u32,
+    string_type_idx: u32,
+    result_string_string_type_idx: u32,
+}
+
 struct BridgeIndices {
     from_lm_type: u32,
     to_lm_type: u32,
@@ -4635,3 +4751,301 @@ fn write_byte(
     f.instruction(&Instruction::I32Const(byte as i32));
     f.instruction(&Instruction::ArraySet(string_type_idx));
 }
+
+/// Phase 1.3.4 — `__rt_console_read_line() -> ref null
+/// $result_string_string` body. Lazy-fetches stdin via
+/// `wasi:cli/stdin.get-stdin` (cached in the supplied global),
+/// allocates a 256-byte initial buffer + a 12-byte retptr in the
+/// `cabi_realloc` heap, then loops 1-byte
+/// `wasi:io/streams.[method]input-stream.blocking-read` calls.
+///
+/// Per iteration: read the result tag; on `Ok`, look at the
+/// `(data_ptr, data_len)` pair; on `data_len == 0` exit as EOF;
+/// otherwise inspect the byte — `\n` ends the line, `\r` is
+/// silently skipped (Windows-style newline tolerance), anything
+/// else is appended to the buffer (which doubles in capacity
+/// when full). `Err` from the host is treated as EOF.
+///
+/// Final result: `Result.Ok(line)` whenever any bytes were
+/// collected (even when terminated by close/error — Unix
+/// convention for the missing trailing newline); `Result.Err("EOF")`
+/// only when the very first read produced zero usable bytes.
+fn emit_console_read_line(
+    string_type_idx: u32,
+    result_type_idx: u32,
+    stdin_handle_global: u32,
+    cabi_realloc_fn: u32,
+    get_stdin_fn: u32,
+    blocking_read_fn: u32,
+) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+    let r_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(result_type_idx),
+    });
+
+    // Locals (after zero params):
+    // i32 group: stdin_handle, buf_ptr, buf_cap, buf_len, retptr,
+    //            byte, j, data_ptr, data_len, should_err, new_cap (11)
+    // ref s: arr (the OK payload)
+    let mut f = Function::new(vec![
+        (11, ValType::I32), // 0..=10
+        (1, s_ref.clone()), // 11: arr
+    ]);
+
+    let l_stdin_handle = 0u32;
+    let l_buf_ptr = 1u32;
+    let l_buf_cap = 2u32;
+    let l_buf_len = 3u32;
+    let l_retptr = 4u32;
+    let l_byte = 5u32;
+    let l_j = 6u32;
+    let l_data_ptr = 7u32;
+    let l_data_len = 8u32;
+    let l_should_err = 9u32;
+    let l_new_cap = 10u32;
+    let l_arr = 11u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o8 = MemArg {
+        offset: 8,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    // ── lazy-init stdin handle ──────────────────────────────
+    f.instruction(&Instruction::GlobalGet(stdin_handle_global));
+    f.instruction(&Instruction::LocalSet(l_stdin_handle));
+    f.instruction(&Instruction::LocalGet(l_stdin_handle));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::Call(get_stdin_fn));
+        f.instruction(&Instruction::LocalTee(l_stdin_handle));
+        f.instruction(&Instruction::GlobalSet(stdin_handle_global));
+    }
+    f.instruction(&Instruction::End);
+
+    // ── alloc buffer (256 bytes, alignment=1) ────────────────
+    f.instruction(&Instruction::I32Const(0)); // old_ptr
+    f.instruction(&Instruction::I32Const(0)); // old_size
+    f.instruction(&Instruction::I32Const(1)); // align
+    f.instruction(&Instruction::I32Const(256)); // new_size
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_buf_ptr));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::LocalSet(l_buf_cap));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_buf_len));
+
+    // ── alloc retptr (12 bytes, alignment=4) ─────────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(12));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    // should_err = 0 (default; flipped to 1 only when EOF before any byte).
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_should_err));
+
+    // ── outer block "done" + inner loop "next" ──────────────
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    // blocking-read(stdin_handle, 1, retptr).
+    f.instruction(&Instruction::LocalGet(l_stdin_handle));
+    f.instruction(&Instruction::I64Const(1));
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::Call(blocking_read_fn));
+
+    // Read the result tag at LM[retptr+0].
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // Err branch — treat as EOF: flip should_err only when
+        // no bytes were collected, then break out of the loop.
+        f.instruction(&Instruction::LocalGet(l_buf_len));
+        f.instruction(&Instruction::I32Eqz);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::I32Const(1));
+            f.instruction(&Instruction::LocalSet(l_should_err));
+        }
+        f.instruction(&Instruction::End);
+        f.instruction(&Instruction::Br(2)); // exit outer block
+    }
+    f.instruction(&Instruction::End);
+
+    // Ok branch — load (data_ptr, data_len) at retptr+4 / +8.
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_data_ptr));
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load(mem4_o8));
+    f.instruction(&Instruction::LocalSet(l_data_len));
+
+    // Empty Ok = EOF (host returned an empty list). Same handling
+    // as the Err branch.
+    f.instruction(&Instruction::LocalGet(l_data_len));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::LocalGet(l_buf_len));
+        f.instruction(&Instruction::I32Eqz);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::I32Const(1));
+            f.instruction(&Instruction::LocalSet(l_should_err));
+        }
+        f.instruction(&Instruction::End);
+        f.instruction(&Instruction::Br(2)); // exit outer block
+    }
+    f.instruction(&Instruction::End);
+
+    // byte = LM[data_ptr]. (1-byte read => data_len == 1.)
+    f.instruction(&Instruction::LocalGet(l_data_ptr));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::LocalSet(l_byte));
+
+    // if byte == '\n' (10): exit outer block.
+    f.instruction(&Instruction::LocalGet(l_byte));
+    f.instruction(&Instruction::I32Const(10));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::Br(2));
+    }
+    f.instruction(&Instruction::End);
+
+    // if byte == '\r' (13): skip (continue).
+    f.instruction(&Instruction::LocalGet(l_byte));
+    f.instruction(&Instruction::I32Const(13));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::Br(1)); // continue inner loop
+    }
+    f.instruction(&Instruction::End);
+
+    // Grow buffer if full (buf_len >= buf_cap).
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::LocalGet(l_buf_cap));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // new_cap = buf_cap * 2
+        f.instruction(&Instruction::LocalGet(l_buf_cap));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Shl);
+        f.instruction(&Instruction::LocalSet(l_new_cap));
+        // buf_ptr = cabi_realloc(buf_ptr, buf_cap, 1, new_cap)
+        f.instruction(&Instruction::LocalGet(l_buf_ptr));
+        f.instruction(&Instruction::LocalGet(l_buf_cap));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::LocalGet(l_new_cap));
+        f.instruction(&Instruction::Call(cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_buf_ptr));
+        f.instruction(&Instruction::LocalGet(l_new_cap));
+        f.instruction(&Instruction::LocalSet(l_buf_cap));
+    }
+    f.instruction(&Instruction::End);
+
+    // LM[buf_ptr + buf_len] = byte
+    f.instruction(&Instruction::LocalGet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(l_byte));
+    f.instruction(&Instruction::I32Store8(mem1));
+
+    // buf_len += 1
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_buf_len));
+
+    // continue inner loop.
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // inner loop
+    f.instruction(&Instruction::End); // outer block
+
+    // ── build Result ────────────────────────────────────────
+    f.instruction(&Instruction::LocalGet(l_should_err));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // Result.Err("EOF") — discriminant 0, ok=null payload, err=arr.
+        f.instruction(&Instruction::I32Const(3));
+        f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+        f.instruction(&Instruction::LocalSet(l_arr));
+        write_byte(&mut f, l_arr, 0, b'E', string_type_idx);
+        write_byte(&mut f, l_arr, 1, b'O', string_type_idx);
+        write_byte(&mut f, l_arr, 2, b'F', string_type_idx);
+        // Stack: tag=0, ok=null, err=arr
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+        f.instruction(&Instruction::LocalGet(l_arr));
+        f.instruction(&Instruction::StructNew(result_type_idx));
+        f.instruction(&Instruction::Return);
+    }
+    f.instruction(&Instruction::End);
+
+    // Result.Ok(line) — copy buf bytes to fresh GC array of size buf_len.
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_arr));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::ArraySet(string_type_idx));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // copy loop
+    f.instruction(&Instruction::End); // copy block
+
+    // Stack: tag=1, ok=arr, err=null
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+    f.instruction(&Instruction::StructNew(result_type_idx));
+    f.instruction(&Instruction::End); // fn end
+    f
+}
+

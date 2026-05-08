@@ -87,6 +87,9 @@ pub(super) fn emit_dotted_builtin(
         if parent == "Time" && method == "now" {
             return emit_time_now_wasip2(func, args, ctx);
         }
+        if parent == "Console" && method == "readLine" {
+            return emit_console_read_line_wasip2(func, args, ctx);
+        }
     }
 
     // Registered effect import? Same shape — push args, push the
@@ -2122,6 +2125,37 @@ fn emit_time_now_wasip2(
 
     // Helper returns the formatted ref string on the stack.
     func.instruction(&Instruction::Call(fmt_fn));
+    Ok(())
+}
+
+/// Phase 1.3.4 — `Console.readLine() -> Result<String, String>` on
+/// `--target wasip2`. The whole machinery — stdin handle caching,
+/// 1-byte blocking-read loop, buffer growth, `\n` / `\r` handling,
+/// `Result` construction — lives in the
+/// `__rt_console_read_line` helper. The call site is one
+/// instruction: `Call $__rt_console_read_line`.
+fn emit_console_read_line_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Console.readLine on wasip2: lowering ctx missing".into())
+    })?;
+    if !args.is_empty() {
+        return Err(WasmGcError::Validation(format!(
+            "Console.readLine on `--target wasip2` expects 0 args, got {}",
+            args.len()
+        )));
+    }
+    let read_fn = lowering.console_read_line_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Console.readLine on wasip2: __rt_console_read_line fn idx missing — \
+             helper not allocated"
+                .into(),
+        )
+    })?;
+    func.instruction(&Instruction::Call(read_fn));
     Ok(())
 }
 
