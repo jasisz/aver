@@ -215,6 +215,26 @@ pub(super) enum Wasip2ImportSlot {
     /// stdin stream is program-lifetime and never dropped).
     /// Canonical-ABI signature: `(handle: i32) -> ()`.
     IoStreamsResourceDropInputStream,
+    /// `wasi:filesystem/types.[method]descriptor.write-via-stream:
+    ///   func(this: borrow<descriptor>, offset: filesize)
+    ///   -> result<output-stream, error-code>`.
+    ///
+    /// Phase 1.5.3 calls this with `offset = 0` to obtain an
+    /// output-stream over an open file (created via `open-at`
+    /// with `create | truncate` for `writeText`, or via
+    /// `append` flag for `appendText`). retptr layout matches
+    /// `read-via-stream`: 8 bytes (`tag i8` + handle/error i32).
+    /// Canonical-ABI signature:
+    ///   `(handle: i32, offset: i64, retptr: i32) -> ()`.
+    FilesystemTypesWriteViaStream,
+    /// `wasi:io/streams.[resource-drop]output-stream:
+    ///   func(this: output-stream) -> ()`. Releases an
+    /// output-stream handle. Phase 1.5.3 calls this once per
+    /// `Disk.writeText` for the per-call write stream (the
+    /// `Console.print` stdout stream is program-lifetime and
+    /// never dropped). Canonical-ABI signature:
+    ///   `(handle: i32) -> ()`.
+    IoStreamsResourceDropOutputStream,
 }
 
 impl Wasip2ImportSlot {
@@ -272,6 +292,13 @@ impl Wasip2ImportSlot {
             }
             Wasip2ImportSlot::IoStreamsResourceDropInputStream => {
                 ("wasi:io/streams@0.2.4", "[resource-drop]input-stream")
+            }
+            Wasip2ImportSlot::FilesystemTypesWriteViaStream => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.write-via-stream",
+            ),
+            Wasip2ImportSlot::IoStreamsResourceDropOutputStream => {
+                ("wasi:io/streams@0.2.4", "[resource-drop]output-stream")
             }
         }
     }
@@ -351,7 +378,16 @@ impl Wasip2ImportSlot {
             // `[resource-drop]<X>(this)` — single i32 handle,
             // no return.
             Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor
-            | Wasip2ImportSlot::IoStreamsResourceDropInputStream => vec![ValType::I32],
+            | Wasip2ImportSlot::IoStreamsResourceDropInputStream
+            | Wasip2ImportSlot::IoStreamsResourceDropOutputStream => vec![ValType::I32],
+            // `write-via-stream(this, offset) ->
+            // result<output-stream, error-code>` — same shape as
+            // read-via-stream.
+            Wasip2ImportSlot::FilesystemTypesWriteViaStream => vec![
+                ValType::I32, // descriptor handle
+                ValType::I64, // offset
+                ValType::I32, // retptr
+            ],
         }
     }
 
@@ -375,7 +411,9 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::FilesystemTypesOpenAt
             | Wasip2ImportSlot::FilesystemTypesReadViaStream
             | Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor
-            | Wasip2ImportSlot::IoStreamsResourceDropInputStream => Vec::new(),
+            | Wasip2ImportSlot::IoStreamsResourceDropInputStream
+            | Wasip2ImportSlot::FilesystemTypesWriteViaStream
+            | Wasip2ImportSlot::IoStreamsResourceDropOutputStream => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }

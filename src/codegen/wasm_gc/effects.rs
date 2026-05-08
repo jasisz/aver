@@ -726,7 +726,8 @@ impl EffectName {
                 | EffectName::ArgsGet
                 | EffectName::EnvGet
                 | EffectName::DiskExists
-                | EffectName::DiskReadText,
+                | EffectName::DiskReadText
+                | EffectName::DiskWriteText,
         )
     }
 }

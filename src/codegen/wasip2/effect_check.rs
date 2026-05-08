@@ -167,12 +167,12 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // + RFC3339-like digit emission on top of the wall-clock retptr
     // already wired by Time.unixMs).
     // Disk.exists graduated in Phase 1.5.1 (preopens cache +
-    // stat-at); Disk.readText graduated in Phase 1.5.2 (open-at
-    // + read-via-stream + blocking-read loop + drops). The rest
-    // of Disk.* (writeText / listDir / delete / makeDir / …)
-    // still pending — same preopens substrate, different per-method
-    // wasi calls + error shapes (Phase 1.5.3+).
-    if effect == "Disk.exists" || effect == "Disk.readText" {
+    // stat-at); Disk.readText in 1.5.2 (open-at + read-via-stream
+    // + blocking-read); Disk.writeText in 1.5.3 (open-at create+
+    // truncate + write-via-stream + blocking-write-and-flush).
+    // Remaining (`appendText` / `listDir` / `delete` / `deleteDir`
+    // / `makeDir`) still pending on the same preopens substrate.
+    if effect == "Disk.exists" || effect == "Disk.readText" || effect == "Disk.writeText" {
         return None;
     }
     if effect.starts_with("Disk.") {
@@ -249,12 +249,13 @@ mod tests {
         assert!(classify("Env.get").is_none());
         assert!(classify("Console.readLine").is_none());
         // Disk.exists graduated in Phase 1.5.1; Disk.readText
-        // graduated in Phase 1.5.2; the rest of Disk.* remain
-        // on the PendingPhase path.
+        // in 1.5.2; Disk.writeText in 1.5.3. The rest of Disk.*
+        // remain on the PendingPhase path.
         assert!(classify("Disk.exists").is_none());
         assert!(classify("Disk.readText").is_none());
+        assert!(classify("Disk.writeText").is_none());
         assert!(matches!(
-            classify("Disk.writeText"),
+            classify("Disk.appendText"),
             Some(UnsupportedReason::PendingPhase { .. })
         ));
     }

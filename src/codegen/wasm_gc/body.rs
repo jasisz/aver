@@ -433,6 +433,12 @@ pub(super) struct Wasip2Lowering {
     /// `Result.Err("…")` on any wasi failure (open / stream /
     /// read).
     pub(super) disk_read_text_fn_idx: Option<u32>,
+    /// Phase 1.5.3 — `__rt_disk_write_text(path: ref string,
+    /// content: ref string) -> ref null $result_unit_string`
+    /// helper wasm fn idx. Owns open-at(create+truncate) +
+    /// write-via-stream + blocking-write-and-flush + per-call
+    /// resource drops.
+    pub(super) disk_write_text_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

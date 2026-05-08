@@ -130,6 +130,19 @@ pub(super) struct DiskReadTextIndices {
     pub(super) string_type_idx: u32,
     pub(super) result_string_string_type_idx: u32,
 }
+
+/// Phase 1.5.3 — `__rt_disk_write_text(path, content) ->
+/// ref null $result_unit_string` helper indices. Mirrors
+/// DiskReadTextIndices but for the write side: open-at with
+/// `create | truncate` + `write-via-stream` +
+/// `blocking-write-and-flush` + drops.
+pub(super) struct DiskWriteTextIndices {
+    pub(super) fn_type: u32,
+    pub(super) fn_idx: u32,
+    pub(super) string_type_idx: u32,
+    pub(super) result_unit_string_type_idx: u32,
+}
+
 /// Phase 1.3.1 — `cabi_realloc(old_ptr, old_size, align, new_size)
 /// -> new_ptr` body. Bump-allocator over linear memory backed by
 /// the wasip2 `bump_alloc_ptr` global (initialised to 65536 = page
@@ -1818,3 +1831,264 @@ pub(super) fn emit_disk_read_text(
     f
 }
 
+
+/// Phase 1.5.3 — `__rt_disk_write_text(path: ref string,
+/// content: ref string) -> ref null $result_unit_string` body.
+///
+/// Pipeline (failure at any step short-circuits to a generic
+/// `Result.Err("…")`):
+///   1. Lazy-init preopen (shared cache global with `Disk.exists`
+///      / `Disk.readText`); empty list ⇒ `Err("no preopens")`.
+///   2. Marshal `path` through `__rt_string_to_lm` to LM[0..len].
+///   3. `open-at(preopen, path-flags=symlink-follow, path,
+///      open-flags=create|truncate (=5),
+///      descriptor-flags=WRITE (=2))` ⇒ on Err `Err("open
+///      failed")`; on Ok stash the file descriptor.
+///   4. `write-via-stream(fd, offset=0)` ⇒ on Err drop fd,
+///      `Err("write-via-stream failed")`; on Ok stash the
+///      output-stream handle.
+///   5. Marshal `content` through `__rt_string_to_lm` —
+///      OVERWRITES the path bytes at LM[0..]. Fine because the
+///      host already consumed the path during the open-at call;
+///      we don't need those bytes any more.
+///   6. `[method]output-stream.blocking-write-and-flush(stream,
+///      ptr=0, len=content_len, retptr)` writes the bytes. The
+///      retptr's tag at offset 0 says `0=Ok / 1=Err`. On Err
+///      drop both resources and return `Err("write failed")`.
+///   7. Drop output-stream + file descriptor (per-call resources;
+///      mandatory or they leak host-side).
+///   8. Build `Result.Ok(Unit)` — `Unit` payload is a single
+///      `i32 = 0` placeholder (matches the wasm-gc Result struct
+///      shape `(i32 tag, T ok, E err)` where `T = Unit` lowers to
+///      i32).
+pub(super) fn emit_disk_write_text(
+    string_type_idx: u32,
+    result_type_idx: u32,
+    preopen_global: u32,
+    cabi_realloc_fn: u32,
+    str_to_lm_fn: u32,
+    get_directories_fn: u32,
+    open_at_fn: u32,
+    write_via_stream_fn: u32,
+    blocking_write_fn: u32,
+    drop_descriptor_fn: u32,
+    drop_output_stream_fn: u32,
+) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+
+    // Locals layout (after 2 ref-s params at idx 0, 1):
+    //   10 i32 locals (idx 2..=11): preopen, path_len, content_len,
+    //     retptr_open, retptr_stream, retptr_write, fd, stream,
+    //     list_ptr, list_len.
+    //   1 ref-s local at idx 12: arr (Err string scratch).
+    let mut f = Function::new(vec![(10, ValType::I32), (1, s_ref.clone())]);
+    let p_path = 0u32;
+    let p_content = 1u32;
+    let l_preopen = 2u32;
+    let l_path_len = 3u32;
+    let l_content_len = 4u32;
+    let l_retptr_open = 5u32;
+    let l_retptr_stream = 6u32;
+    let l_retptr_write = 7u32;
+    let l_fd = 8u32;
+    let l_stream = 9u32;
+    let l_list_ptr = 10u32;
+    let l_list_len = 11u32;
+    let l_arr = 12u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    let emit_err = |f: &mut Function, msg: &[u8]| {
+        f.instruction(&Instruction::I32Const(msg.len() as i32));
+        f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+        f.instruction(&Instruction::LocalSet(l_arr));
+        for (i, b) in msg.iter().enumerate() {
+            f.instruction(&Instruction::LocalGet(l_arr));
+            f.instruction(&Instruction::I32Const(i as i32));
+            f.instruction(&Instruction::I32Const(*b as i32));
+            f.instruction(&Instruction::ArraySet(string_type_idx));
+        }
+        // tag=0 (Err), ok=0 (Unit placeholder), err=arr
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalGet(l_arr));
+        f.instruction(&Instruction::StructNew(result_type_idx));
+        f.instruction(&Instruction::Return);
+    };
+
+    // ── lazy-init preopen ─────────────────────────────────────
+    f.instruction(&Instruction::GlobalGet(preopen_global));
+    f.instruction(&Instruction::LocalSet(l_preopen));
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_retptr_open));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::Call(get_directories_fn));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::I32Load(mem4));
+        f.instruction(&Instruction::LocalSet(l_list_ptr));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_list_len));
+        f.instruction(&Instruction::LocalGet(l_list_len));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32GtU);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::LocalGet(l_list_ptr));
+            f.instruction(&Instruction::I32Load(mem4));
+            f.instruction(&Instruction::LocalTee(l_preopen));
+            f.instruction(&Instruction::GlobalSet(preopen_global));
+        }
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"no preopens");
+    }
+    f.instruction(&Instruction::End);
+
+    // ── marshal path → LM[0..path_len] ────────────────────────
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::Call(str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_path_len));
+
+    // ── open-at(preopen, 1, 0, path_len, 5, 2, retptr) ───────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_open));
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(1)); // path-flags = symlink-follow
+    f.instruction(&Instruction::I32Const(0)); // path_ptr = 0
+    f.instruction(&Instruction::LocalGet(l_path_len));
+    f.instruction(&Instruction::I32Const(5)); // open-flags = CREATE | TRUNCATE
+    f.instruction(&Instruction::I32Const(2)); // descriptor-flags = WRITE
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::Call(open_at_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"open failed");
+    }
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_fd));
+
+    // ── write-via-stream(fd, 0_i64, retptr_stream) ────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_stream));
+
+    f.instruction(&Instruction::LocalGet(l_fd));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::Call(write_via_stream_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::LocalGet(l_fd));
+        f.instruction(&Instruction::Call(drop_descriptor_fn));
+        emit_err(&mut f, b"write-via-stream failed");
+    }
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_stream));
+
+    // ── marshal content → LM[0..content_len] (overwrites path) ──
+    f.instruction(&Instruction::LocalGet(p_content));
+    f.instruction(&Instruction::Call(str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_content_len));
+
+    // ── allocate retptr_write (12 bytes for result<_, stream-error>) ──
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(12));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_write));
+
+    // ── blocking-write-and-flush(stream, 0, content_len, retptr) ──
+    f.instruction(&Instruction::LocalGet(l_stream));
+    f.instruction(&Instruction::I32Const(0)); // ptr = 0 (LM[0..len])
+    f.instruction(&Instruction::LocalGet(l_content_len));
+    f.instruction(&Instruction::LocalGet(l_retptr_write));
+    f.instruction(&Instruction::Call(blocking_write_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr_write));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::LocalGet(l_stream));
+        f.instruction(&Instruction::Call(drop_output_stream_fn));
+        f.instruction(&Instruction::LocalGet(l_fd));
+        f.instruction(&Instruction::Call(drop_descriptor_fn));
+        emit_err(&mut f, b"write failed");
+    }
+    f.instruction(&Instruction::End);
+
+    // ── drops ───────────────────────────────────────────────
+    f.instruction(&Instruction::LocalGet(l_stream));
+    f.instruction(&Instruction::Call(drop_output_stream_fn));
+    f.instruction(&Instruction::LocalGet(l_fd));
+    f.instruction(&Instruction::Call(drop_descriptor_fn));
+
+    // ── Result.Ok(Unit) — tag=1, ok=0, err=null ─────────────
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+    f.instruction(&Instruction::StructNew(result_type_idx));
+
+    f.instruction(&Instruction::End); // fn end
+    f
+}

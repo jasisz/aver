@@ -628,3 +628,36 @@ pub(super) fn emit_random_float_wasip2(
     func.instruction(&Instruction::F64Mul);
     Ok(())
 }
+
+/// Phase 1.5.3 — `Disk.writeText(path: String, content: String)
+/// -> Result<Unit, String>` on `--target wasip2`. Pushes both
+/// args onto the stack and calls `__rt_disk_write_text`, which
+/// owns the open-at(create+truncate) + write-via-stream +
+/// blocking-write-and-flush + per-call resource drops.
+pub(super) fn emit_disk_write_text_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.writeText on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.writeText on `--target wasip2` expects 2 args (path, content), got {}",
+            args.len()
+        )));
+    }
+    let write_fn = lowering.disk_write_text_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.writeText on wasip2: __rt_disk_write_text fn idx missing — \
+             helper not allocated"
+                .into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?; // path
+    emit_expr(func, &args[1], slots, ctx)?; // content
+    func.instruction(&Instruction::Call(write_fn));
+    Ok(())
+}

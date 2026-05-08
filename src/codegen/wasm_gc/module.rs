@@ -63,9 +63,10 @@ use super::maps::MapHelperRegistry;
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
 use super::wasip2_helpers::{
     CabiReallocIndices, ConsoleReadLineIndices, DecodeListStringIndices, DiskExistsIndices,
-    DiskReadTextIndices, EnvGetLookupIndices, FormatIso8601Indices, TimeSleepIndices,
-    emit_cabi_realloc, emit_console_read_line, emit_decode_list_string, emit_disk_exists,
-    emit_disk_read_text, emit_env_get_lookup, emit_format_iso8601, emit_time_sleep,
+    DiskReadTextIndices, DiskWriteTextIndices, EnvGetLookupIndices, FormatIso8601Indices,
+    TimeSleepIndices, emit_cabi_realloc, emit_console_read_line, emit_decode_list_string,
+    emit_disk_exists, emit_disk_read_text, emit_disk_write_text, emit_env_get_lookup,
+    emit_format_iso8601, emit_time_sleep,
 };
 use super::wat_helper;
 use crate::types::Type as AverType;
@@ -351,6 +352,24 @@ pub(super) fn emit_module_with(
                         );
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                    }
+                    EffectName::DiskWriteText => {
+                        // Shares preopens / open-at / blocking-write-and-flush
+                        // / drop-descriptor with earlier phases; adds
+                        // write-via-stream and the output-stream drop.
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesWriteViaStream);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                        );
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                     }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
@@ -761,6 +780,60 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 1.5.3 — `__rt_disk_write_text(path: ref string,
+    // content: ref string) -> ref null $result_unit_string`.
+    // Mirrors `__rt_disk_read_text`'s skeleton (preopens cache +
+    // open-at + via-stream + blocking-* + drops) flipped to the
+    // write side: `open-flags = create | truncate` (`5`),
+    // `descriptor-flags = WRITE` (`2`), `write-via-stream` for
+    // the output-stream, `blocking-write-and-flush` for the
+    // bytes themselves. Failure at any step short-circuits to
+    // `Result.Err("...")`.
+    let disk_write_text: Option<DiskWriteTextIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesWriteViaStream)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<Unit,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref.clone(), s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskWriteTextIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_unit_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
@@ -963,6 +1036,9 @@ pub(super) fn emit_module_with(
         funcs.function(d.fn_type);
     }
     if let Some(d) = &disk_read_text {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_write_text {
         funcs.function(d.fn_type);
     }
     if let Some(e) = &env_get_lookup {
@@ -1201,6 +1277,7 @@ pub(super) fn emit_module_with(
                 time_sleep_fn_idx: time_sleep.as_ref().map(|t| t.fn_idx),
                 disk_exists_fn_idx: disk_exists.as_ref().map(|d| d.fn_idx),
                 disk_read_text_fn_idx: disk_read_text.as_ref().map(|d| d.fn_idx),
+                disk_write_text_fn_idx: disk_write_text.as_ref().map(|d| d.fn_idx),
             })
         } else {
             None
@@ -1767,6 +1844,61 @@ pub(super) fn emit_module_with(
             blocking_read,
             drop_descriptor,
             drop_input_stream,
+        ));
+    }
+    if let Some(wt) = &disk_write_text {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_write_text emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_write_text emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_write_text emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_write_text emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_write_text emit requires open-at fn idx");
+        let write_via_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesWriteViaStream,
+            )
+            .expect("disk_write_text emit requires write-via-stream fn idx");
+        let blocking_write = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            )
+            .expect("disk_write_text emit requires blocking-write-and-flush fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_write_text emit requires drop-descriptor fn idx");
+        let drop_output_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("disk_write_text emit requires drop-output-stream fn idx");
+        codes.function(&emit_disk_write_text(
+            wt.string_type_idx,
+            wt.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            write_via_stream,
+            blocking_write,
+            drop_descriptor,
+            drop_output_stream,
         ));
     }
     if let Some(e) = &env_get_lookup {
