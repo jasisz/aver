@@ -17,7 +17,7 @@ Cloudflare Workers and browsers do not run components natively; they stay on `--
 
 ## Why no preview-1 adapter
 
-The preview-1 component adapter is the right tool for migrating existing preview-1 wasm modules into the Component Model — it preserves their original ABI and translates calls at the boundary. Aver does not need that. Aver effects are typed and declared in source (`! [Console.print, Time.unixMs]`); there is no preview-1 ABI to preserve. Routing through the adapter would replace the legacy `--bridge wasip1` shape with another compatibility bridge — exactly the architecture 0.18 is removing. Direct WIT lowering is the natural shape for a language whose effects already match WIT semantics.
+The preview-1 component adapter is the right tool for migrating existing preview-1 wasm modules into the Component Model — it preserves their original ABI and translates calls at the boundary. Aver does not need that. Aver effects are typed and declared in source (`! [Console.print, Time.unixMs]`); there is no preview-1 ABI to preserve. Routing through the adapter would just replicate one compatibility shim with another. Direct WIT lowering is the natural shape for a language whose effects already match WIT semantics.
 
 ## Architecture
 
@@ -137,13 +137,12 @@ error[target-effect-unsupported]:
 | 0 | Audit legacy coupling, wire `wit-component`/`wit-encoder` deps, prove the wrap pipeline | Foundation |
 | 1.0 / 1.1 | `--target wasip2` CLI plumbing, end-to-end pipeline for no-effect programs | 0.18 core (done) |
 | 1.2 | `wasi:cli/stdout` + `wasi:io/streams` glue. `Console.print` → stream write end-to-end | 0.18 core |
-| 1.3 | `wasi:cli/stdin` + `wasi:cli/environment`. `Console.readLine` / `Args.get` / `Env.get` | 0.18 core |
-| 1.4 | `wasi:clocks/wall-clock.now` for `Time.now` / `Time.unixMs`; `wasi:random` for `Random.*`. `Time.sleep` is rejected in 0.18. | 0.18 core |
-| 1.5 | `wasi:filesystem`. Basic `Disk.*` (read/write/exists/delete/listDir/makeDir). Paths that escape preopens return `Result.Err("path not preopened")` per contract point 8. | 0.18 core |
-| 1.6 | Reject `Terminal.*` / `Env.set` / `Time.sleep` / `Http.*` / `Tcp.*` / `HttpServer.*` at compile time with `target-effect-unsupported` | 0.18 core |
-| 1.7 | `aver run --wasip2` (embedded wasmtime + `wasmtime-wasi`) | 0.18 core |
-
-After Phase 1 lands green and the effect matrix in `docs/effects.md` has no "maybe this works" cells for 0.18 scope, the legacy `--target wasm` backend is deleted: `src/codegen/wasm/`, the `wasm-legacy` Cargo feature, the `--bridge` flag, the `Bridge` enum, the `wasm-runtime` subcommand, and the legacy bundling code in `src/main/commands.rs`. See decision `DropLegacyNanBoxedWasm` in `decisions/architecture.av`.
+| 1.3 | `wasi:cli/stdin` + `wasi:cli/environment`. `Console.readLine` / `Args.get` / `Env.get` | ✅ shipped |
+| 1.4 | `wasi:clocks/wall-clock.now` for `Time.now` / `Time.unixMs`; `wasi:random` for `Random.*`; `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` for `Time.sleep`. | ✅ shipped |
+| 1.5 | `wasi:filesystem`. All seven `Disk.*` methods (`exists` / `readText` / `writeText` / `appendText` / `delete` / `deleteDir` / `makeDir` / `listDir`). Paths resolve relative to the cached preopen. | ✅ shipped |
+| 1.6 | Reject `Terminal.*` / `Env.set` at compile time as permanent (WASI 0.2 has no terminal interface; environment is read-only). `Http.*` / `Tcp.*` / `HttpServer.*` deferred to 0.19+. | ✅ shipped |
+| 1.7 | `aver run --wasip2` (embedded wasmtime + `wasmtime-wasi`) with CWD preopened as `.` | ✅ shipped |
+| 1.8 | Drop the legacy `--target wasm` backend (`src/codegen/wasm/`, `wasm-legacy` feature, `--bridge` flag, `wasm-runtime` subcommand, legacy bundling in `src/main/commands.rs`) | ✅ shipped |
 
 ## Out of scope for 0.18
 

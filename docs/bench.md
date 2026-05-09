@@ -35,17 +35,19 @@ Use `.av` for one-off measurement, `.toml` for inventoried scenarios that gate `
 
 ```bash
 aver bench bench/scenarios/fib.toml --target=vm           # default — in-process VM
-aver bench bench/scenarios/fib.toml --target=wasm-local   # wasmtime in-process (--features wasm)
+aver bench bench/scenarios/fib.toml --target=wasm-gc      # embedded wasmtime, GC engine (--features wasm)
+aver bench bench/scenarios/fib.toml --target=wasm-gc-v8   # subprocess Node/V8 host
 aver bench bench/scenarios/fib.toml --target=rust         # native binary, subprocess per iter
 ```
 
-| Target       | What runs                                                        | Spawn cost |
-|--------------|------------------------------------------------------------------|------------|
-| `vm`         | `vm::compile_program_with_modules` + `VM::run`, in-process       | none       |
-| `wasm-local` | `aver compile --target wasm --bridge wasip1` → wasmtime instance | none       |
-| `rust`       | `aver compile --target rust` + `cargo build --release` → spawn   | ~1-2 ms    |
+| Target        | What runs                                                                  | Spawn cost |
+|---------------|----------------------------------------------------------------------------|------------|
+| `vm`          | `vm::compile_program_with_modules` + `VM::run`, in-process                 | none       |
+| `wasm-gc`     | `aver compile --target wasm-gc` → embedded wasmtime engine (GC + tail-call) | none       |
+| `wasm-gc-v8`  | `aver compile --target wasm-gc` → subprocess `node` running it via V8       | ~5-15 ms   |
+| `rust`        | `aver compile --target rust` + `cargo build --release` → spawn             | ~1-2 ms    |
 
-WASM imports are stubbed in-process for bench programs that don't touch host effects (no print, no fs, no rand). Programs that need real WASI behaviour aren't bench candidates today; the stubs return `errno 0` for every call.
+The wasm-gc bench target stubs `aver/*` host imports in-process for programs that don't touch real host effects (no print, no fs, no rand). Programs that need real I/O aren't bench candidates today; the stubs return `errno 0` for every call.
 
 The Rust target spawns a fresh process every iteration — that's ~1-2 ms on macOS, dominating wall-clock for programs that finish in pure compute under that. Same shape as cargo bench's `run_external` measurements.
 
@@ -83,7 +85,7 @@ wall_time_p95_pct = 35.0    # default 30.0
 }
 ```
 
-`backend.aver_version` is the package version of the binary that ran the bench (`CARGO_PKG_VERSION` at compile time). `backend.build` is `release` or `debug`. `backend.wasmtime_version` is set only for `--target=wasm-local`. `host.os`/`host.arch` come from `std::env::consts`; `host.cpus` from `std::thread::available_parallelism`.
+`backend.aver_version` is the package version of the binary that ran the bench (`CARGO_PKG_VERSION` at compile time). `backend.build` is `release` or `debug`. `backend.wasmtime_version` is set only for `--target=wasm-gc`. `host.os`/`host.arch` come from `std::env::consts`; `host.cpus` from `std::thread::available_parallelism`.
 
 `compiler_visible_allocs` is populated as of 0.15.2 (IR-level alloc-site count via `NeutralAllocPolicy`). `response_bytes` stays `null` until stdout capture lands later in the cycle.
 

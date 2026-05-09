@@ -156,11 +156,11 @@ aver context decisions/architecture.av --decisions-only
 aver context decisions/architecture.av --decisions-only -o docs/decisions.md
 aver context examples/core/calculator.av
 
-# WASM backend (requires: cargo build --features wasm)
-aver run examples/core/calculator.av --wasm
-aver run examples/core/lambda.av --wasm
-aver compile examples/core/calculator.av --target wasm
-aver compile examples/core/calculator.av --target wasm --adapter wasi
+# WASM backends (requires: cargo build --features wasm,wasip2)
+aver run examples/core/calculator.av --wasm-gc
+aver run examples/core/calculator.av --wasip2
+aver compile examples/core/calculator.av --target wasm-gc
+aver compile examples/core/calculator.av --target wasip2
 ```
 
 ## Spec test suite

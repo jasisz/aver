@@ -17,7 +17,7 @@ Options:
   -o, --output <OUTPUT>            Output directory for the generated project
       --name <NAME>                Project name (default: derived from file name)
       --module-root <MODULE_ROOT>  Resolve `depends [...]` from this root (default: current working directory)
-      --target <TARGET>            rust (default) | wasm | edge-wasm
+      --target <TARGET>            rust (default) | wasm-gc | wasip2
       --with-replay                Emit optional record/replay runtime support
       --guest-entry <GUEST_ENTRY>  Scope replay/policy to this generated guest entry (requires --with-replay)
       --policy <POLICY>            Runtime policy mode: embed | runtime

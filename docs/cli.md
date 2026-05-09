@@ -136,8 +136,8 @@ aver compile file.av --explain-passes
 ```
 
 - Default: Rust codegen, emits a modular Cargo project
-- `--target wasm-gc`: native WebAssembly GC + tail-call output (recommended). Self-contained binary, engine handles GC/recursion, per-instantiation helpers DCE'd to what each program calls. Modern host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+).
-- `--target wasm`: legacy fallback for pre-2024 hosts. Bundles a custom NaN-boxed runtime via `wasm-merge`.
+- `--target wasm-gc`: native WebAssembly GC + tail-call output. Self-contained binary, engine handles GC/recursion, per-instantiation helpers DCE'd to what each program calls. Modern host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+, Cloudflare Workers).
+- `--target wasip2`: WASI 0.2 / Component Model output. Wraps a wasm-gc core module with `wit-component`, lowers Aver effects directly to canonical-ABI WASI imports (no preview-1 adapter). Emits `.component.wasm` + sibling `.wit`. Runs on wasmtime, Spin, NGINX Unit, wasmCloud, every other Component Model host. See [`docs/wasip2.md`](wasip2.md) for the full effect surface.
 - `--optimize size|speed`: post-process with binaryen `-Oz` (size) or `-O3` (speed).
 - `--preset cloudflare --handler <fn>`: Cloudflare Workers pack — `--target wasm-gc --pack cloudflare`, drops `worker.js` + `wrangler.toml` next to the wasm. `<fn>` must have signature `Fn(HttpRequest) -> HttpResponse`.
 - `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze` }. `diff -u` between two stages shows exactly what each pass rewrote.
@@ -152,7 +152,8 @@ aver bench bench/scenarios/fib.toml                          # named manifest
 aver bench bench/scenarios/fib.toml --json                   # structured report
 aver bench bench/scenarios/                                  # directory mode (every *.toml)
 aver bench bench/scenarios/ --json                           # NDJSON
-aver bench bench/scenarios/fib.toml --target=wasm-local      # requires --features wasm
+aver bench bench/scenarios/fib.toml --target=wasm-gc         # embedded wasmtime, requires --features wasm
+aver bench bench/scenarios/fib.toml --target=wasm-gc-v8      # subprocess Node/V8
 aver bench bench/scenarios/fib.toml --target=rust            # native binary, subprocess per iter
 aver bench bench/scenarios/fib.toml --save-baseline base.json
 aver bench bench/scenarios/fib.toml --compare base.json --fail-on-regression
