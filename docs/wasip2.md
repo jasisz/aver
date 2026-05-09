@@ -133,11 +133,11 @@ error[target-effect-unsupported]:
 
 ## Phasing inside 0.18
 
-| Phase | Scope | Status target |
+| Phase | Scope | Status |
 |---|---|---|
-| 0 | Audit legacy coupling, wire `wit-component`/`wit-encoder` deps, prove the wrap pipeline | Foundation |
-| 1.0 / 1.1 | `--target wasip2` CLI plumbing, end-to-end pipeline for no-effect programs | 0.18 core (done) |
-| 1.2 | `wasi:cli/stdout` + `wasi:io/streams` glue. `Console.print` → stream write end-to-end | 0.18 core |
+| 0 | Audit legacy coupling, wire `wit-component`/`wit-encoder` deps, prove the wrap pipeline | ✅ shipped |
+| 1.0 / 1.1 | `--target wasip2` CLI plumbing, end-to-end pipeline for no-effect programs | ✅ shipped |
+| 1.2 | `wasi:cli/stdout` + `wasi:io/streams` glue. `Console.print` / `error` / `warn` → stream write end-to-end | ✅ shipped |
 | 1.3 | `wasi:cli/stdin` + `wasi:cli/environment`. `Console.readLine` / `Args.get` / `Env.get` | ✅ shipped |
 | 1.4 | `wasi:clocks/wall-clock.now` for `Time.now` / `Time.unixMs`; `wasi:random` for `Random.*`; `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` for `Time.sleep`. | ✅ shipped |
 | 1.5 | `wasi:filesystem`. All seven `Disk.*` methods (`exists` / `readText` / `writeText` / `appendText` / `delete` / `deleteDir` / `makeDir` / `listDir`). Paths resolve relative to the cached preopen. | ✅ shipped |
