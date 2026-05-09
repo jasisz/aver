@@ -153,6 +153,7 @@ pub(super) struct FnEntry {
 /// emitting `return_call $self` on `Expr::TailCall` to the same fn.
 /// Mutual-TCO across SCC members goes through a `return_call_indirect`
 /// table; that wiring lives in module.rs.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_fn_body(
     func: &mut Function,
     fd: &FnDef,

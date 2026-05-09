@@ -1080,7 +1080,7 @@ pub(super) fn emit_console_read_line(
         nullable: true,
         heap_type: HeapType::Concrete(string_type_idx),
     });
-    let r_ref = ValType::Ref(RefType {
+    let _r_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(result_type_idx),
     });
@@ -1091,7 +1091,7 @@ pub(super) fn emit_console_read_line(
     // ref s: arr (the OK payload)
     let mut f = Function::new(vec![
         (11, ValType::I32), // 0..=10
-        (1, s_ref.clone()), // 11: arr
+        (1, s_ref), // 11: arr
     ]);
 
     let l_stdin_handle = 0u32;
@@ -1107,7 +1107,7 @@ pub(super) fn emit_console_read_line(
     let l_new_cap = 10u32;
     let l_arr = 11u32;
 
-    let mem4 = MemArg {
+    let _mem4 = MemArg {
         offset: 0,
         align: 2,
         memory_index: 0,
@@ -1592,6 +1592,7 @@ pub(super) fn emit_disk_exists(
 ///      resources, mandatory or they leak host-side).
 ///   7. Materialise the buffer bytes into a fresh GC
 ///      `(array i8)` and wrap in `Result.Ok`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_disk_read_text(
     string_type_idx: u32,
     result_type_idx: u32,
@@ -1617,7 +1618,7 @@ pub(super) fn emit_disk_read_text(
     //           retptr_read, fd, stream, buf_ptr, buf_cap, buf_len,
     //           data_ptr, data_len, j, list_ptr, list_len, new_cap
     // ref s: arr (Ok payload OR per-call err string scratch)
-    let mut f = Function::new(vec![(16, ValType::I32), (1, s_ref.clone())]);
+    let mut f = Function::new(vec![(16, ValType::I32), (1, s_ref)]);
     let p_path = 0u32;
     let l_preopen = 1u32;
     let l_path_len = 2u32;
@@ -1995,6 +1996,7 @@ pub(super) fn emit_disk_read_text(
 ///      `i32 = 0` placeholder (matches the wasm-gc Result struct
 ///      shape `(i32 tag, T ok, E err)` where `T = Unit` lowers to
 ///      i32).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_disk_write_text(
     string_type_idx: u32,
     result_type_idx: u32,
@@ -2030,7 +2032,7 @@ pub(super) fn emit_disk_write_text(
     // (write_off added in 1.5.7 for the chunked-write loop —
     //  wasmtime-wasi caps blocking-write-and-flush at 4096 bytes
     //  per call.)
-    let mut f = Function::new(vec![(11, ValType::I32), (1, s_ref.clone())]);
+    let mut f = Function::new(vec![(11, ValType::I32), (1, s_ref)]);
     let p_path = 0u32;
     let p_content = 1u32;
     let l_preopen = 2u32;
@@ -2295,6 +2297,7 @@ pub(super) fn emit_disk_write_text(
 ///   5. Read tag at retptr+0; tag == 0 ⇒ `Result.Ok(Unit)`,
 ///      tag != 0 ⇒ `Result.Err(<msg>)` with the caller-supplied
 ///      bytes inlined into a fresh GC `(array i8)`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_disk_simple_path_op(
     string_type_idx: u32,
     result_type_idx: u32,
@@ -2316,7 +2319,7 @@ pub(super) fn emit_disk_simple_path_op(
     //   5 i32 locals (idx 1..=5): preopen, path_len, retptr,
     //     list_ptr, list_len.
     //   1 ref-s local at idx 6: arr (Err string scratch).
-    let mut f = Function::new(vec![(5, ValType::I32), (1, s_ref.clone())]);
+    let mut f = Function::new(vec![(5, ValType::I32), (1, s_ref)]);
     let p_path = 0u32;
     let l_preopen = 1u32;
     let l_path_len = 2u32;
@@ -2478,6 +2481,7 @@ pub(super) fn emit_disk_simple_path_op(
 ///   - +12: directory-entry.name_ptr i32
 ///   - +16: directory-entry.name_len i32
 ///   - +4 (when result is Err): error-code u8 (we ignore which)
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_disk_list_dir(
     string_type_idx: u32,
     list_string_type_idx: u32,
@@ -2511,8 +2515,8 @@ pub(super) fn emit_disk_list_dir(
     //   1 ref-list local at idx 14: acc (cons accumulator).
     let mut f = Function::new(vec![
         (12, ValType::I32),
-        (1, s_ref.clone()),
-        (1, l_ref.clone()),
+        (1, s_ref),
+        (1, l_ref),
     ]);
     let p_path = 0u32;
     let l_preopen = 1u32;

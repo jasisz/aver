@@ -228,14 +228,14 @@ pub(super) fn emit_args_get_wasip2(
 /// (writes utf-8 bytes at LM[0..key_len], returns key_len),
 /// allocates a fresh 8-byte retptr via `cabi_realloc` (lands at
 /// >= page 2, disjoint from key bytes), calls
-/// `wasi:cli/environment.get-environment(retptr)` (the host fills
-/// the retptr area with `(list_ptr, list_len)` and uses
-/// `cabi_realloc` callbacks for per-entry `(key_ptr, key_len,
+/// > `wasi:cli/environment.get-environment(retptr)` (the host fills
+/// > the retptr area with `(list_ptr, list_len)` and uses
+/// > `cabi_realloc` callbacks for per-entry `(key_ptr, key_len,
 /// val_ptr, val_len)` blocks plus the utf-8 buffers), then hands
-/// `(retptr, key_ptr=0, key_len)` to `__rt_canonical_env_lookup`
-/// which linear-searches and returns `Option.Some(value)` on hit
-/// or `Option.None` on miss — the helper wraps the discriminant
-/// itself so call sites don't need to.
+/// > `(retptr, key_ptr=0, key_len)` to `__rt_canonical_env_lookup`
+/// > which linear-searches and returns `Option.Some(value)` on hit
+/// > or `Option.None` on miss — the helper wraps the discriminant
+/// > itself so call sites don't need to.
 pub(super) fn emit_env_get_wasip2(
     func: &mut wasm_encoder::Function,
     args: &[Spanned<Expr>],

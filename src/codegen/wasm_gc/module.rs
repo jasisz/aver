@@ -863,7 +863,7 @@ pub(super) fn emit_module_with(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(string_idx),
         });
-        types.ty().function([s_ref.clone(), s_ref], [r_ref]);
+        types.ty().function([s_ref, s_ref], [r_ref]);
         let fn_type = next_type_idx;
         next_type_idx += 1;
         let fn_idx = next_builtin_fn_idx;
@@ -923,7 +923,7 @@ pub(super) fn emit_module_with(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(string_idx),
         });
-        types.ty().function([s_ref.clone(), s_ref], [r_ref]);
+        types.ty().function([s_ref, s_ref], [r_ref]);
         let fn_type = next_type_idx;
         next_type_idx += 1;
         let fn_idx = next_builtin_fn_idx;
@@ -950,7 +950,7 @@ pub(super) fn emit_module_with(
                          next_builtin_fn_idx: &mut u32,
                          op_slot: super::wasip2_imports::Wasip2ImportSlot|
      -> Option<DiskSimplePathOpIndices> {
-        if !cabi_realloc.is_some()
+        if cabi_realloc.is_none()
             || wasip2_imports
                 .lookup_wasm_fn_idx(
                     super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
