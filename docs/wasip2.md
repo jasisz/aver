@@ -99,15 +99,15 @@ Aver effects lower directly to WASI 0.2 imports. The mapping is fixed per effect
 | `Console.print` / `error` / `warn` | `wasi:cli/stdout.get-stdout` / `wasi:cli/stderr.get-stderr` (cached) + `wasi:io/streams.output-stream.[method]blocking-write-and-flush` |
 | `Console.readLine` | `wasi:cli/stdin.get-stdin` (cached) + `wasi:io/streams.input-stream.[method]blocking-read` |
 | `Disk.readText` / `writeText` / `appendText` / `exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | `wasi:filesystem/preopens.get-directories` (cached) + `wasi:filesystem/types.[method]*`. Paths outside preopens return `Result.Err("path not preopened")` — capability model, contract point 8. |
-| `Time.now` / `unixMs` | `wasi:clocks/wall-clock.now` |
-| `Time.sleep` | **Compile-rejected** in 0.18 — requires the `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` pollable model to do without burning CPU. Busy-wait is unacceptable: it pales as "works" but spins host cycles, breaks under per-component CPU caps, and reads as an Aver runtime bug rather than a target gap. Phase that adds pollables (0.19+) flips this on. |
-| `Random.int` / `float` | `wasi:random/random.get-random-bytes` + Aver-side decode |
+| `Time.now` / `unixMs` | `wasi:clocks/wall-clock.now` (Time.now formats RFC3339 guest-side via Howard Hinnant's `civil_from_days`) |
+| `Time.sleep` | `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` + `[resource-drop]pollable` (per-call pollable, real wait — not busy-loop) |
+| `Random.int` / `float` | `wasi:random/random.get-random-u64` + Aver-side range scaling |
 | `Http.*` | **Compile-rejected** — out of 0.18 scope (Phase 2 / 0.19) |
 | `HttpServer.listen` / `listenWith` | **Compile-rejected** — out of 0.18 scope (Phase 3 / 0.19) |
 | `Tcp.*` | **Compile-rejected** — out of 0.18 scope (Phase 2 / 0.19) |
 | `Terminal.*` (12 methods) | **Compile-rejected** — WASI 0.2 has no raw/cooked-mode operations |
 
-### Why `Terminal.*` / `Env.set` / `Time.sleep` are rejected, not stubbed
+### Why `Terminal.*` / `Env.set` are rejected, not stubbed
 
 The axis is **static target capability** vs **dynamic host capability**. `Result.Err` stubs are reserved for *dynamic* host capability gaps: missing preopen (`Disk.readText("/etc/passwd")` on a host that didn't preopen `/`), missing env var, denied permission. A target that *cannot ever* support an effect is a different category and gets a different shape — a compile-time `target-effect-unsupported` error.
 
@@ -115,8 +115,9 @@ In 0.18:
 
 - **`Terminal.*`** — WASI 0.2 has `wasi:cli/terminal-input` and `terminal-output` as TTY signals, but no standardised raw/cooked-mode operations (`set-raw-mode`, `set-echo`, `get-window-size`). The capability is structurally absent.
 - **`Env.set`** — WASI 0.2 environment is read-only. There is no host implementation that could ever satisfy a write. Silent no-op would be a trap: source declares "I set X" and the program runs as if it succeeded while the environment is unchanged.
-- **`Time.sleep`** — sleep without burning CPU requires `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll`, which is the pollables/streams story 0.18 keeps out of scope. Busy-waiting on `now()` is rejected because it spins host cycles, breaks under per-component CPU caps, and looks like an Aver runtime bug rather than a target gap.
 - **`Http.*`, `Tcp.*`, `HttpServer.listen`** — out of 0.18 scope by deliberate design (Phase 2 / 3, 0.19+). Same compile-time `target-effect-unsupported` shape so the user sees one consistent error type rather than a mix of stubs and rejects.
+
+(Earlier 0.18 betas grouped `Time.sleep` with the structural rejects on the assumption that the pollable model was out of scope. That was a scoping mistake — pollables can be wrapped *inside* a single helper without leaking to source. Phase 1.4c shipped `__rt_time_sleep` doing exactly that, so `Time.sleep` lowers natively now.)
 
 Compile output for any of these:
 

@@ -1,7 +1,7 @@
 //! Static effect-set check for `--target wasip2`.
 //!
 //! Phase 1.6 of 0.18 "Span" — see `docs/wasip2.md` ("Why Terminal.* /
-//! Env.set / Time.sleep are rejected, not stubbed"). The axis is
+//! Env.set are rejected, not stubbed"). The axis is
 //! **static target capability** vs **dynamic host capability**:
 //! `Result.Err` stubs are reserved for the latter (missing preopen,
 //! denied permission, …). This pass catches the former at compile
