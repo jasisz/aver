@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.18.0 "Span" (unreleased)
+## 0.18.0 "Span" (2026-05-09)
 
 > _Cross the Component Model boundary the same way Aver crosses the source/wasm one — typed effects in, canonical-ABI imports out._
 
@@ -14,10 +14,6 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Removed (breaking)
 - **`--target wasm` deleted.** The pre-2024 NaN-boxed wasm32 backend (`src/codegen/wasm/`, ~9.5 kLoC) is gone, plus the `wasm-legacy` Cargo feature, the `--bridge {wasip1,fetch,none}` flag, the `aver wasm-runtime` subcommand, and the legacy bundling code in `src/main/commands.rs`. Modern hosts run `--target wasm-gc`; standalone runtimes use `--target wasip2`. `--target edge-wasm` went too — it depended on the deleted `codegen::wasm::emit_wasm_with_adapter`.
 - **`BenchTarget::WasmLocal` removed** — bench targets are now `vm` / `wasm-gc` / `wasm-gc-v8` / `rust`.
-
-### Fixed
-- **`Disk.writeText` open-flags** — was using `5` (`CREATE | EXCLUSIVE`) which made every second write to an existing path fail with `Result.Err("open failed")`. Should be `9` (`CREATE | TRUNCATE`). Caught by the 100× roundtrip stress fixture.
-- **`Console.*` and `Disk.{writeText,appendText}` chunked write** — wasmtime-wasi caps each `blocking-write-and-flush` call at 4096 bytes per WIT spec, but earlier 0.18 betas emitted a single call regardless of length (any payload > 4096 bytes trapped). Both call sites now share `emit_chunked_blocking_write` which walks the buffer in 4096-byte slices.
 
 ### Internal
 - **`module.rs` / `builtins.rs` / `types.rs` split.** `wasm_gc/module.rs` 5984 → 4197 (extracted `wasip2_helpers.rs`); `body/builtins.rs` 2351 → 1740 (extracted `body/builtins_wasip2.rs`); `wasm_gc/types.rs` 2778 → 1934 (extracted `types_discovery.rs` for `collect_*` AST walkers). Pure code movement, no behaviour change.
