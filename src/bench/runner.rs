@@ -230,6 +230,9 @@ fn run_wasm_gc(manifest: &Manifest) -> Result<BenchReport, RunError> {
     // call we don't want to fail at 10K iterations. Default is
     // 1MB; bump to 8MB.
     config.max_wasm_stack(8 * 1024 * 1024);
+    // `component-model-async` (pulled in by the `wasip2` feature)
+    // enforces `max_wasm_stack <= async_stack_size` at Engine::new.
+    config.async_stack_size(12 * 1024 * 1024);
     let engine = Engine::new(&config)
         .map_err(|e| RunError::Setup(format!("wasmtime engine config: {}", e)))?;
     let module = Module::new(&engine, &bytes)

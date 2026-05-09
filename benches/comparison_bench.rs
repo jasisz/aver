@@ -63,6 +63,9 @@ fn build_wasm_gc_harness(wasm_path: &std::path::Path) -> WasmGcHarness {
     config.wasm_bulk_memory(true);
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     config.max_wasm_stack(8 * 1024 * 1024);
+    // `component-model-async` (pulled in by the `wasip2` feature)
+    // enforces `max_wasm_stack <= async_stack_size` at Engine::new.
+    config.async_stack_size(12 * 1024 * 1024);
     let engine = Engine::new(&config).expect("wasmtime gc engine");
     let module = Module::new(&engine, &bytes).expect("wasmtime gc compile module");
     // Probe `main`'s declared return type once. `_start` always exists
