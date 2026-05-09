@@ -1,14 +1,16 @@
 //! `--target wasip2` — WASI 0.2 / Component Model output.
 //!
-//! Wraps a wasm-gc core module via `wit-component` with the
-//! preview-1 adapter from `wasi-preview1-component-adapter-provider`,
-//! emits `.component.wasm` plus a sibling `.wit`. Peer target with
+//! Wraps a wasm-gc core module via `wit-component`. The core module
+//! already imports canonical-ABI WIT functions (e.g. `wasi:cli/stdout`,
+//! `wasi:filesystem/preopens`, `wasi:io/streams`) — there is no
+//! preview-1 adapter, no shim layer; effects lower directly. Emits
+//! `.component.wasm` plus a sibling `.wit`. Peer target with
 //! `--target wasm-gc`, not a successor — the wasm-gc backend keeps
 //! shipping for browsers / Workers / JS hosts via `aver/*` host
 //! imports; `wasip2` is for wasmtime / Spin / NGINX Unit / wasmCloud
 //! / every Component Model host via canonical WIT imports.
 //!
-//! Phase 1 of 0.18 "Span" — see `docs/wasip2.md` for the full
+//! Shipped in 0.18 "Span" — see `docs/wasip2.md` for the full
 //! seven-point contract this module enforces and the effect map.
 //!
 //! # Architectural assumption
@@ -25,12 +27,12 @@
 //! # Sub-modules
 //!
 //! - `error.rs` — typed error enum, source-side diagnostics.
-//! - `wrap.rs` — `wit-component::ComponentEncoder` invocation,
-//!   adapter selection per world.
-//! - `wit.rs` — WIT source emission. Phase 1.2a uses inline
-//!   `format!` since the world body is small and template-like.
-//!   Switches to `wit-encoder` (structured builder) only if
-//!   per-effect imports beyond the standard WASI worlds force it.
+//! - `wrap.rs` — `wit-component::ComponentEncoder` invocation. No
+//!   adapters: the core module already speaks canonical ABI.
+//! - `wit.rs` — WIT source emission via inline `format!` since the
+//!   world body is small and template-like. Switches to
+//!   `wit-encoder` (structured builder) only if per-effect imports
+//!   beyond the standard WASI worlds force it.
 //! - `wasi_bundle.rs` — vendored WASI 0.2.4 WIT package set,
 //!   embedded via `include_str!` and pushed into the per-build
 //!   `Resolve` so the user world can `include wasi:cli/command;`.

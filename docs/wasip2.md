@@ -83,7 +83,7 @@ out/
 Flags:
 
 - `--world <world>` — which WIT world the component targets. Default `wasi:cli/command`. Other accepted values in 0.18: `wasi:http/proxy` is reserved for Phase 3 / 0.19 and rejected at compile time. Programs whose effects do not fit the chosen world fail at compile time with `target-effect-unsupported` pointing at the offending call.
-- `--optimize {size,speed}` — passes through to `wasm-opt` on the inner core module before component wrapping. Same flag as `--target wasm-gc`.
+- `--optimize {size,speed}` — **rejected** on `--target wasip2`. Upstream `wasm-opt` does not yet handle wasm-gc + Component Model bytes cleanly, so the flag is refused at the CLI rather than silently dropped. Use `--target wasm-gc` if you need post-pass size/speed optimization; we will wire it for wasip2 once the toolchain catches up.
 
 The compiler does not shell out. WIT emission goes through `wit-encoder`; component-type metadata is encoded via `wit-component::metadata` and embedded as a custom section in the core module; the actual component wrap goes through `wit_component::ComponentEncoder`. Single binary, no toolchain to install on the user's machine.
 

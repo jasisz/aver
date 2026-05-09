@@ -219,11 +219,11 @@ pub(super) enum Commands {
         /// execute it via embedded wasmtime + wasmtime-wasi. Aver effects
         /// reach the host through canonical-ABI WASI imports — no `aver/*`
         /// bridge, no preview-1 adapter. Same effect set as
-        /// `aver compile --target wasip2`: `Console.{print, error, warn}`,
-        /// `Time.unixMs`, `Random.{int, float}` work today; `Terminal`,
-        /// `Env.set`, `Time.sleep`, `Http`, `Tcp`, `HttpServer` are
-        /// rejected; `Console.readLine`, `Args.get`, `Env.get`, `Disk.*`
-        /// pending later phases of 0.18 "Span".
+        /// `aver compile --target wasip2`: `Console.{print, error, warn,
+        /// readLine}`, `Time.{unixMs, now, sleep}`, `Random.{int, float}`,
+        /// `Args.get`, `Env.get`, all `Disk.*`. `Terminal`, `Env.set`,
+        /// `Http`, `Tcp`, `HttpServer` are rejected (see docs/wasip2.md
+        /// "Why X is rejected, not stubbed").
         #[arg(long = "wasip2", conflicts_with_all = ["self_host", "profile", "wasm_gc"])]
         wasip2: bool,
         /// Arguments passed to the Aver program (available via Args.get()), after --

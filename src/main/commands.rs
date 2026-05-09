@@ -3708,25 +3708,26 @@ fn cmd_compile_wasm_gc(
     }
 }
 
-/// `--target wasip2` compile entry — Phase 1 of 0.18 "Span".
+/// `--target wasip2` compile entry — 0.18 "Span".
 ///
-/// Reuses the wasm-gc lowering to produce a core module, then wraps
-/// it as a Component via `wit-component` plus the preview-1 adapter
-/// from `wasi-preview1-component-adapter-provider`. Outputs:
+/// The wasm-gc backend produces a core module that already imports
+/// canonical-ABI WIT functions (e.g. `wasi:cli/stdout@0.2.4`,
+/// `wasi:filesystem/preopens@0.2.4`, `wasi:io/streams@0.2.4`).
+/// `wit-component` wraps it as a Component bound to the chosen WIT
+/// world — no preview-1 adapter, no shim layer; effects lower
+/// directly. Outputs:
 ///
 /// - `out/<name>.component.wasm` — the component bytes
 /// - `out/<name>.wit` — the component contract in WIT, per
 ///   `docs/wasip2.md` point 5
 ///
-/// Phase 1 status: the wrap path is wired end-to-end, but the
-/// wasm-gc backend still emits `aver/*` imports rather than
-/// `wasi_snapshot_preview1::*`. So this command currently succeeds
-/// only on programs whose lowered core module imports nothing the
-/// COMMAND adapter cannot satisfy — typically empty / pure
-/// functions. Hello-world style programs that call `Console.print`
-/// fail at the wrap step until Phase 1.2 maps Aver effects to
-/// preview-1 imports. The error from `wit-component` points at the
-/// offending import so the failure is actionable.
+/// Effect surface today: `Console.print/error/warn`,
+/// `Console.readLine`, `Time.unixMs/now/sleep`, `Random.int/float`,
+/// `Args.get`, `Env.get`, all `Disk.*`. Effects that the wasip2
+/// pipeline cannot lower (`Terminal.*`, `Http.*`, `HttpServer.*`,
+/// `Tcp.*`) are rejected at this command's entry — see
+/// `docs/wasip2.md` "Why X is rejected, not stubbed" for the
+/// dynamic-host vs static-target axis.
 fn cmd_compile_wasip2(
     file: &str,
     output_dir: &str,
@@ -3757,6 +3758,22 @@ fn cmd_compile_wasip2(
     #[cfg(feature = "wasip2")]
     {
         use aver::codegen::{wasip2 as wasip2_codegen, wasm_gc};
+
+        // `--optimize` runs `wasm-opt` against a core module, which
+        // doesn't yet handle wasm-gc + Component Model bytes cleanly
+        // upstream. Rather than silently drop the flag, reject it
+        // with a clear diagnostic — the wasm-gc target accepts it
+        // for the legacy core flow.
+        if optimize.is_some() {
+            eprintln!(
+                "{}",
+                "--optimize is not supported on `--target wasip2`: wasm-opt does not yet \
+                 handle wasm-gc + Component Model output. Use `--target wasm-gc` if you \
+                 need post-pass size/speed optimization."
+                    .red()
+            );
+            process::exit(1);
+        }
 
         let module_root = resolve_module_root(module_root_override);
         let source = match read_file(file) {
@@ -3894,12 +3911,6 @@ fn cmd_compile_wasip2(
             eprintln!("{}", format!("Failed to write WIT file: {}", e).red());
             process::exit(1);
         }
-
-        // `--optimize` is reserved for Phase 1+: the post-pass would
-        // run `wasm-opt` against the inner core module before the
-        // component wrap. Not wired in Phase 1.0; flag is accepted
-        // for forward compatibility.
-        let _ = optimize;
 
         println!(
             "{} wasip2 → {} ({} bytes, world {})",
