@@ -413,25 +413,21 @@ pub(super) fn emit_module_with(
                             .register(Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme);
                         wasip2_imports
                             .register(Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority);
-                        wasip2_imports.register(
-                            Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery,
-                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery);
                         wasip2_imports.register(Wasip2ImportSlot::HttpOutgoingHandlerHandle);
-                        wasip2_imports.register(
-                            Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe,
-                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                         wasip2_imports
                             .register(Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet);
                         wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingResponseStatus);
-                        wasip2_imports
-                            .register(Wasip2ImportSlot::HttpTypesIncomingResponseConsume);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingResponseConsume);
                         wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingBodyStream);
                         wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
                         wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingBodyFinish);
-                        wasip2_imports
-                            .register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                        wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
                         wasip2_imports
                             .register(Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest);
                         wasip2_imports.register(

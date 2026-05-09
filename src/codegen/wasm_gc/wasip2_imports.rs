@@ -580,36 +580,31 @@ impl Wasip2ImportSlot {
                 "wasi:http/types@0.2.4",
                 "[method]future-incoming-response.get",
             ),
-            Wasip2ImportSlot::HttpTypesIncomingResponseStatus => (
-                "wasi:http/types@0.2.4",
-                "[method]incoming-response.status",
-            ),
-            Wasip2ImportSlot::HttpTypesIncomingResponseConsume => (
-                "wasi:http/types@0.2.4",
-                "[method]incoming-response.consume",
-            ),
+            Wasip2ImportSlot::HttpTypesIncomingResponseStatus => {
+                ("wasi:http/types@0.2.4", "[method]incoming-response.status")
+            }
+            Wasip2ImportSlot::HttpTypesIncomingResponseConsume => {
+                ("wasi:http/types@0.2.4", "[method]incoming-response.consume")
+            }
             Wasip2ImportSlot::HttpTypesIncomingBodyStream => {
                 ("wasi:http/types@0.2.4", "[method]incoming-body.stream")
             }
             Wasip2ImportSlot::HttpTypesIncomingBodyFinish => {
                 ("wasi:http/types@0.2.4", "[static]incoming-body.finish")
             }
-            Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest => (
-                "wasi:http/types@0.2.4",
-                "[resource-drop]outgoing-request",
-            ),
+            Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest => {
+                ("wasi:http/types@0.2.4", "[resource-drop]outgoing-request")
+            }
             Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse => (
                 "wasi:http/types@0.2.4",
                 "[resource-drop]future-incoming-response",
             ),
-            Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse => (
-                "wasi:http/types@0.2.4",
-                "[resource-drop]incoming-response",
-            ),
-            Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers => (
-                "wasi:http/types@0.2.4",
-                "[resource-drop]future-trailers",
-            ),
+            Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse => {
+                ("wasi:http/types@0.2.4", "[resource-drop]incoming-response")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers => {
+                ("wasi:http/types@0.2.4", "[resource-drop]future-trailers")
+            }
         }
     }
 

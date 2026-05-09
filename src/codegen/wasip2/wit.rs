@@ -50,7 +50,8 @@ pub fn emit_world_wit(world: Wasip2World, needs_http: bool) -> String {
         // source of truth, no risk of drift between codegen and
         // world declaration.
         Wasip2World::CliCommand => {
-            let header = "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world.";
+            let header =
+                "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world.";
             let body = if needs_http {
                 "  include wasi:cli/command@0.2.4;\n  \n  // Phase 2 / 0.19 — Http.* effects on `--target wasip2` lower\n  // directly to `wasi:http/outgoing-handler.handle` plus the\n  // future-incoming-response / incoming-response choreography.\n  // WASI 0.3 collapses this into native `future<T>` / `stream<u8>`\n  // types and three imports; a `Wasip3World` variant lands when\n  // the spec stabilises.\n  import wasi:http/outgoing-handler@0.2.4;".to_string()
             } else {

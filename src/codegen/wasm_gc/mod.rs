@@ -22,6 +22,7 @@ mod tests;
 mod types;
 mod types_discovery;
 mod wasip2_helpers;
+mod wasip2_http;
 mod wasip2_imports;
 mod wat_helper;
 
