@@ -153,6 +153,57 @@ pub(super) struct HttpGetHelperFns {
 /// fill the slots and amortise the allocation.
 const INITIAL_CAP: i32 = 16384;
 
+/// `wasi:http/types.error-code` variant case names, ordered by
+/// canonical-ABI discriminant. The host writes the discriminant
+/// byte at retptr+24 when `future-incoming-response.get` returns
+/// the inner `Err` arm. Each name maps directly; payload-bearing
+/// variants (DNS-error, TLS-alert-received, internal-error, …)
+/// reduce to the variant name only — extracting the inner
+/// option<string> / record details is a follow-up. Order MUST
+/// match the WIT spec since the host writes raw discriminant
+/// indices.
+const ERROR_CODE_NAMES: &[&[u8]] = &[
+    b"http: DNS-timeout",
+    b"http: DNS-error",
+    b"http: destination-not-found",
+    b"http: destination-unavailable",
+    b"http: destination-IP-prohibited",
+    b"http: destination-IP-unroutable",
+    b"http: connection-refused",
+    b"http: connection-terminated",
+    b"http: connection-timeout",
+    b"http: connection-read-timeout",
+    b"http: connection-write-timeout",
+    b"http: connection-limit-reached",
+    b"http: TLS-protocol-error",
+    b"http: TLS-certificate-error",
+    b"http: TLS-alert-received",
+    b"http: HTTP-request-denied",
+    b"http: HTTP-request-length-required",
+    b"http: HTTP-request-body-size",
+    b"http: HTTP-request-method-invalid",
+    b"http: HTTP-request-URI-invalid",
+    b"http: HTTP-request-URI-too-long",
+    b"http: HTTP-request-header-section-size",
+    b"http: HTTP-request-header-size",
+    b"http: HTTP-request-trailer-section-size",
+    b"http: HTTP-request-trailer-size",
+    b"http: HTTP-response-incomplete",
+    b"http: HTTP-response-header-section-size",
+    b"http: HTTP-response-header-size",
+    b"http: HTTP-response-body-size",
+    b"http: HTTP-response-trailer-section-size",
+    b"http: HTTP-response-trailer-size",
+    b"http: HTTP-response-transfer-coding",
+    b"http: HTTP-response-content-coding",
+    b"http: HTTP-response-timeout",
+    b"http: HTTP-upgrade-failed",
+    b"http: HTTP-protocol-error",
+    b"http: loop-detected",
+    b"http: configuration-error",
+    b"http: internal-error",
+];
+
 /// Body emitter. See module-level docstring for the per-step
 /// pipeline. Keep this fn under ~800 LoC; if it grows past that,
 /// split URL parsing into its own emitted helper (allocate a fn
@@ -731,8 +782,13 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::End);
 
     // Inner result tag at offset 16: 0 = Ok (incoming-response
-    // handle at +24), 1 = Err (error-code discriminant at +24,
-    // payload at +32 — connection refused, DNS error, etc.).
+    // handle at +24), 1 = Err (error-code discriminant at +24).
+    // On Err, dispatch on the error-code byte to surface the
+    // specific failure (connection-refused vs DNS-timeout vs
+    // TLS-protocol-error etc.) instead of a generic message.
+    // Each case bails via emit_err's Return; an unknown disc
+    // (host bug or future variant) falls through to a generic
+    // "http: unknown error" tail.
     f.instruction(&Instruction::LocalGet(l_retptr3));
     f.instruction(&Instruction::I32Load8U(MemArg {
         offset: 16,
@@ -745,7 +801,32 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     {
         f.instruction(&Instruction::LocalGet(l_future));
         f.instruction(&Instruction::Call(h.drop_future_response_fn));
-        emit_err(&mut f, b"http: response error");
+
+        // Read error-code variant discriminant at retptr+24.
+        // Stash via l_h_idx (i32 scratch — header parsing's
+        // counter is dead at this point because the inner-Err
+        // branch returns before reaching the headers loop).
+        f.instruction(&Instruction::LocalGet(l_retptr3));
+        f.instruction(&Instruction::I32Load8U(MemArg {
+            offset: 24,
+            align: 0,
+            memory_index: 0,
+        }));
+        f.instruction(&Instruction::LocalSet(l_h_idx));
+
+        for (disc, name) in ERROR_CODE_NAMES.iter().enumerate() {
+            f.instruction(&Instruction::LocalGet(l_h_idx));
+            f.instruction(&Instruction::I32Const(disc as i32));
+            f.instruction(&Instruction::I32Eq);
+            f.instruction(&Instruction::If(BlockType::Empty));
+            emit_err(&mut f, name);
+            f.instruction(&Instruction::End);
+        }
+        // Fallback for an unknown discriminant (host bug or
+        // post-0.2.4 spec extension). No way to surface the
+        // raw byte through emit_err's static-bytes API; pick
+        // a clear message.
+        emit_err(&mut f, b"http: unknown error");
     }
     f.instruction(&Instruction::End);
 

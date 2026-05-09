@@ -289,3 +289,50 @@ fn main() -> Unit
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn http_get_surfaces_connection_refused() {
+    // Bind to port 0, immediately close — gives us a port number
+    // that's unlikely to be in use. The kernel's TCP backoff means
+    // a connect() to that port within ~10s reliably gets RST →
+    // wasi-http returns error-code::connection-refused (disc 6),
+    // and our error-code dispatcher should surface the variant
+    // name verbatim.
+    let dir = tempdir("refused");
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("local_addr").port();
+    drop(listener);
+
+    let src = format!(
+        r#"
+fn main() -> Unit
+    ! [Http.get, Console.print]
+    response = Http.get("http://127.0.0.1:{port}/")
+    match response
+        Result.Ok(r) -> Console.print("status={{r.status}}")
+        Result.Err(e) -> Console.print("err={{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "refused.av", &src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+    assert!(
+        out.status.success(),
+        "wasip2_http connection-refused compile/run failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    // The wasi-http impl might surface the failure at handle()
+    // (connection-failed retptr tag) OR at future.get's inner
+    // result Err arm (error-code::connection-refused). Accept
+    // either path — both are "host couldn't reach the server".
+    let acceptable = s.contains("err=http: connection-refused")
+        || s.contains("err=http: connection failed")
+        || s.contains("err=http: connection-terminated");
+    assert!(
+        acceptable,
+        "expected a connection-refused/failed Err message from a port nobody listens on, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
