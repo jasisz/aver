@@ -78,9 +78,7 @@ pub(super) fn emit_console_print_wasip2(
                 )
             })?,
             lowering.get_stdout_fn_idx.ok_or_else(|| {
-                WasmGcError::Validation(
-                    "Console.print on wasip2: get_stdout fn idx missing".into(),
-                )
+                WasmGcError::Validation("Console.print on wasip2: get_stdout fn idx missing".into())
             })?,
         ),
         "error" | "warn" => (
@@ -114,8 +112,7 @@ pub(super) fn emit_console_print_wasip2(
     // Step 2: marshal s → LM[0..len], stash len.
     let str_to_lm = lowering.str_to_lm_fn_idx.ok_or_else(|| {
         WasmGcError::Validation(
-            "Console.* on wasip2: __rt_string_to_lm fn idx missing — bridge not allocated"
-                .into(),
+            "Console.* on wasip2: __rt_string_to_lm fn idx missing — bridge not allocated".into(),
         )
     })?;
     emit_expr(func, &args[0], slots, ctx)?;
@@ -245,9 +242,9 @@ pub(super) fn emit_env_get_wasip2(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
-        WasmGcError::Validation("Env.get on wasip2: lowering ctx missing".into())
-    })?;
+    let lowering = ctx
+        .wasip2_lowering
+        .ok_or_else(|| WasmGcError::Validation("Env.get on wasip2: lowering ctx missing".into()))?;
     if args.len() != 1 {
         return Err(WasmGcError::Validation(format!(
             "Env.get on `--target wasip2` expects 1 arg (the key String), got {}",
@@ -256,14 +253,11 @@ pub(super) fn emit_env_get_wasip2(
     }
     let str_to_lm = lowering.str_to_lm_fn_idx.ok_or_else(|| {
         WasmGcError::Validation(
-            "Env.get on wasip2: __rt_string_to_lm fn idx missing — bridge not allocated"
-                .into(),
+            "Env.get on wasip2: __rt_string_to_lm fn idx missing — bridge not allocated".into(),
         )
     })?;
     let cabi_realloc = lowering.cabi_realloc_fn_idx.ok_or_else(|| {
-        WasmGcError::Validation(
-            "Env.get on wasip2: cabi_realloc fn idx missing".into(),
-        )
+        WasmGcError::Validation("Env.get on wasip2: cabi_realloc fn idx missing".into())
     })?;
     let get_environment = lowering.get_environment_fn_idx.ok_or_else(|| {
         WasmGcError::Validation(
@@ -402,8 +396,7 @@ pub(super) fn emit_time_now_wasip2(
     })?;
     let fmt_fn = lowering.fmt_iso8601_fn_idx.ok_or_else(|| {
         WasmGcError::Validation(
-            "Time.now on wasip2: __rt_format_iso8601 fn idx missing — helper not allocated"
-                .into(),
+            "Time.now on wasip2: __rt_format_iso8601 fn idx missing — helper not allocated".into(),
         )
     })?;
 
@@ -489,8 +482,7 @@ pub(super) fn emit_time_sleep_wasip2(
     }
     let sleep_fn = lowering.time_sleep_fn_idx.ok_or_else(|| {
         WasmGcError::Validation(
-            "Time.sleep on wasip2: __rt_time_sleep fn idx missing — helper not allocated"
-                .into(),
+            "Time.sleep on wasip2: __rt_time_sleep fn idx missing — helper not allocated".into(),
         )
     })?;
     emit_expr(func, &args[0], slots, ctx)?; // ms: i64
@@ -586,9 +578,7 @@ pub(super) fn emit_random_int_wasip2(
         )));
     }
     let rand_fn = lowering.random_u64_fn_idx.ok_or_else(|| {
-        WasmGcError::Validation(
-            "Random.int on wasip2: random get-random-u64 fn idx missing".into(),
-        )
+        WasmGcError::Validation("Random.int on wasip2: random get-random-u64 fn idx missing".into())
     })?;
     // result = min + ((u64 % (max - min + 1)) as i64).
     // Stack discipline:
@@ -699,8 +689,7 @@ pub(super) fn emit_disk_delete_wasip2(
     }
     let fn_idx = lowering.disk_delete_fn_idx.ok_or_else(|| {
         WasmGcError::Validation(
-            "Disk.delete on wasip2: __rt_disk_delete fn idx missing — helper not allocated"
-                .into(),
+            "Disk.delete on wasip2: __rt_disk_delete fn idx missing — helper not allocated".into(),
         )
     })?;
     emit_expr(func, &args[0], slots, ctx)?;
@@ -751,9 +740,7 @@ pub(super) fn emit_disk_make_dir_wasip2(
         )));
     }
     let fn_idx = lowering.disk_make_dir_fn_idx.ok_or_else(|| {
-        WasmGcError::Validation(
-            "Disk.makeDir on wasip2: __rt_disk_make_dir fn idx missing".into(),
-        )
+        WasmGcError::Validation("Disk.makeDir on wasip2: __rt_disk_make_dir fn idx missing".into())
     })?;
     emit_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(fn_idx));
@@ -810,9 +797,7 @@ pub(super) fn emit_disk_list_dir_wasip2(
         )));
     }
     let fn_idx = lowering.disk_list_dir_fn_idx.ok_or_else(|| {
-        WasmGcError::Validation(
-            "Disk.listDir on wasip2: __rt_disk_list_dir fn idx missing".into(),
-        )
+        WasmGcError::Validation("Disk.listDir on wasip2: __rt_disk_list_dir fn idx missing".into())
     })?;
     emit_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(fn_idx));

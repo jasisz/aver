@@ -584,10 +584,7 @@ pub(super) fn collect_options_from_expr(
                     let dotted = format!("{p}.{member}");
                     if matches!(
                         dotted.as_str(),
-                        "String.charAt"
-                            | "Char.fromCode"
-                            | "Terminal.readKey"
-                            | "Env.get"
+                        "String.charAt" | "Char.fromCode" | "Terminal.readKey" | "Env.get"
                     ) {
                         let canonical = "Option<String>".to_string();
                         if !out.contains_key(&canonical) {
@@ -814,7 +811,10 @@ pub(super) fn collect_maps_from_str(type_str: &str, out: &mut Vec<String>) {
 /// `collect_tuples_from_expr`. Recurses into sub-expressions so
 /// nested literals / fn args / match arms all get their stamps
 /// harvested.
-pub(super) fn collect_maps_from_expr(expr: &crate::ast::Spanned<crate::ast::Expr>, out: &mut Vec<String>) {
+pub(super) fn collect_maps_from_expr(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    out: &mut Vec<String>,
+) {
     use crate::ast::Expr;
     if let Some(ty) = expr.ty() {
         let display = ty.display();

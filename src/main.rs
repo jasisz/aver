@@ -19,11 +19,11 @@ mod format_cmd;
 mod repl;
 #[path = "main/replay_cmd.rs"]
 mod replay_cmd;
-#[path = "main/run_wasm_gc.rs"]
-mod run_wasm_gc;
 #[cfg(feature = "wasip2")]
 #[path = "main/run_wasip2.rs"]
 mod run_wasip2;
+#[path = "main/run_wasm_gc.rs"]
+mod run_wasm_gc;
 #[path = "main/shared.rs"]
 mod shared;
 #[path = "main/why_cmd.rs"]
@@ -31,7 +31,7 @@ mod why_cmd;
 
 use cli::{Cli, Commands, CompilePolicyMode};
 #[allow(unused_imports)]
-use cli::{CompileTarget, DeployPack, DeployPreset, WasmBridge};
+use cli::{CompileTarget, DeployPack, DeployPreset};
 
 fn main() {
     let cli = Cli::parse();
@@ -45,7 +45,6 @@ fn main() {
             input_file,
             self_host,
             profile,
-            wasm,
             wasm_gc,
             wasip2,
             program_args,
@@ -59,11 +58,11 @@ fn main() {
                 }
             };
 
-            if !expressions.is_empty() && (*wasm || *self_host) {
+            if !expressions.is_empty() && *self_host {
                 use colored::Colorize;
                 eprintln!(
                     "{}",
-                    "--expr / --input-file are not supported with --wasm / --self-host in this release"
+                    "--expr / --input-file are not supported with --self-host in this release"
                         .red()
                 );
                 std::process::exit(1);
@@ -98,8 +97,6 @@ fn main() {
                     );
                     std::process::exit(1);
                 }
-            } else if *wasm {
-                commands::cmd_run_wasm(file, module_root.as_deref(), program_args.clone());
             } else if *wasm_gc {
                 if expressions.is_empty() {
                     run_wasm_gc::cmd_run_wasm_gc(
@@ -246,7 +243,6 @@ fn main() {
             policy,
             guest_entry,
             with_self_host_support,
-            bridge,
             pack,
             preset,
             handler,
@@ -261,31 +257,22 @@ fn main() {
             } else {
                 CompilePolicyMode::Embed
             });
-            // Expand --preset into the (target, bridge, pack) triple it
-            // stands for. Clap's `conflicts_with_all` already rejects
-            // mixing --preset with explicit axes.
-            let (effective_target, effective_bridge, effective_pack) = match preset {
+            // Expand --preset into the (target, pack) pair it stands for.
+            // Clap's `conflicts_with_all` already rejects mixing --preset
+            // with explicit axes.
+            let (effective_target, effective_pack) = match preset {
                 // wasm-gc + the synthesised `aver_http_handle` wrapper is
                 // the production shape on Cloudflare Workers: workerd
                 // ships a stable wasm-gc + tail-call V8, the runtime is
                 // inlined as per-instantiation `__rt_*` helpers (no
                 // `WebAssembly.instantiate(bytes, …)` from runtime-fetched
-                // bytes — that's the path Workers reject), and the
-                // emitted binary is ~20% smaller than the legacy
-                // `--target wasm` + wasm-merge bundle. The bridge axis
-                // does not apply: `--handler <fn>` synthesises a thin
-                // wrapper that reads request fields via `Request.*` host
-                // imports and writes the response via `Response.*`, no
-                // separate fetch shim. The accompanying worker.js
-                // template is the LM string transport plus a 138-line
-                // request adapter — no JSPI, no NaN-box dance. User must
+                // bytes — that's the path Workers reject). User must
                 // pass `--handler <fn>` (validated below).
                 Some(cli::DeployPreset::Cloudflare) => (
                     cli::CompileTarget::WasmGc,
-                    None,
                     Some(cli::DeployPack::Cloudflare),
                 ),
-                None => (*target, *bridge, *pack),
+                None => (*target, *pack),
             };
             if matches!(preset, Some(cli::DeployPreset::Cloudflare)) && handler.is_none() {
                 use colored::Colorize;
@@ -294,34 +281,6 @@ fn main() {
                     "--preset cloudflare requires --handler <fn> (the Aver fn with signature \
                      `Fn(HttpRequest) -> HttpResponse` to expose as the request handler)"
                         .red()
-                );
-                std::process::exit(1);
-            }
-            // `--bridge` is a legacy concept tied to `--target wasm` —
-            // wasm-gc has its own shape for both axes the legacy bridges
-            // covered: HTTP via `--handler <fn>` (synth `aver_http_handle`
-            // wrapper, no separate fetch shim) and standalone runtime via
-            // the planned `--target wasip2` Component Model output. Reject
-            // up front rather than silently ignoring the flag.
-            if matches!(effective_target, cli::CompileTarget::WasmGc) && effective_bridge.is_some()
-            {
-                use colored::Colorize;
-                let hint = match effective_bridge {
-                    Some(cli::WasmBridge::Fetch) => {
-                        "use `--handler <fn>` (HTTP synth wrapper) or `--preset cloudflare \
-                         --handler <fn>` (full Workers pack) instead"
-                    }
-                    Some(cli::WasmBridge::Wasip1) => {
-                        "wasm-gc skips preview 1 by design — `--target wasm --bridge wasip1` \
-                         is the legacy standalone-WASI path; `--target wasip2` (Component \
-                         Model, `wasi:http/proxy` + `wasi:filesystem` + `wasi:sockets`) is \
-                         planned as the modern wasm-gc companion"
-                    }
-                    Some(cli::WasmBridge::None) | None => "drop `--bridge` (wasm-gc default)",
-                };
-                eprintln!(
-                    "{}",
-                    format!("--bridge is not supported with --target wasm-gc; {hint}").red()
                 );
                 std::process::exit(1);
             }
@@ -350,20 +309,11 @@ fn main() {
                 policy_mode: &policy_mode,
                 guest_entry: guest_entry.as_deref(),
                 with_self_host_support: *with_self_host_support,
-                bridge: effective_bridge,
                 pack: effective_pack,
                 handler: handler.as_deref(),
                 world: *world,
                 optimize: *optimize,
             });
-        }
-        Commands::WasmRuntime {
-            output,
-            artifact,
-            optimize,
-            wat,
-        } => {
-            commands::cmd_wasm_runtime(output, *artifact, *optimize, *wat);
         }
         Commands::Why {
             file,

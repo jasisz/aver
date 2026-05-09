@@ -83,7 +83,7 @@ impl BackendInfo {
             "release"
         };
         let wasmtime_version = match target {
-            crate::bench::manifest::BenchTarget::WasmLocal => Some(WASMTIME_VERSION.to_string()),
+            crate::bench::manifest::BenchTarget::WasmGc => Some(WASMTIME_VERSION.to_string()),
             _ => None,
         };
         Self {

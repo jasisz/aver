@@ -92,10 +92,8 @@ pub fn compile_to_component(
     // Parse our generated WIT into the same `Resolve`. `parse` reads
     // from a string — the path argument is for error messages only,
     // no filesystem access.
-    let unresolved =
-        UnresolvedPackageGroup::parse("aver-generated.wit", &wit_source).map_err(|e| {
-            Wasip2Error::Wrap(format!("WIT parse failed for generated package: {e}"))
-        })?;
+    let unresolved = UnresolvedPackageGroup::parse("aver-generated.wit", &wit_source)
+        .map_err(|e| Wasip2Error::Wrap(format!("WIT parse failed for generated package: {e}")))?;
     let pkg_id = resolve
         .push_group(unresolved)
         .map_err(|e| Wasip2Error::Wrap(format!("push aver:user package into Resolve: {e}")))?;
@@ -112,9 +110,8 @@ pub fn compile_to_component(
     // core wasm. ComponentEncoder reads this section to know which
     // WIT world the core's signatures correspond to.
     let mut core = core_wasm.to_vec();
-    embed_component_metadata(&mut core, &resolve, world_id, StringEncoding::UTF8).map_err(
-        |e| Wasip2Error::Wrap(format!("embed component-type metadata: {e}")),
-    )?;
+    embed_component_metadata(&mut core, &resolve, world_id, StringEncoding::UTF8)
+        .map_err(|e| Wasip2Error::Wrap(format!("embed component-type metadata: {e}")))?;
 
     // Wrap as a component WITHOUT the preview-1 adapter.
     let component = ComponentEncoder::default()

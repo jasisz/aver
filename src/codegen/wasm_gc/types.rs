@@ -1100,7 +1100,6 @@ impl TypeRegistry {
     }
 }
 
-
 /// Split a canonical `Map<K, V>` into its `K` and `V` parts (both
 /// borrowed slices of the input). Returns `None` if the string
 /// doesn't match the expected shape.

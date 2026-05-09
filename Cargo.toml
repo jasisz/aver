@@ -43,15 +43,8 @@ runtime = ["dep:aver-rt", "aver-memory/runtime", "aver-rt/random", "dep:clap", "
 runtime-net = ["runtime", "aver-rt/http"]
 terminal = ["aver-rt/terminal"]
 tty-render = ["dep:colored"]
-wasm = ["wasm-compile", "wasm-legacy", "dep:wasmtime"]
+wasm = ["wasm-compile", "dep:wasmtime"]
 wasm-compile = ["dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser", "dep:wat"]
-# Pre-2024 NaN-boxed wasm32 backend (`--target wasm`,
-# `--bridge {wasip1,fetch}`, standalone `aver_runtime.wasm`). Pulled
-# in by the CLI `wasm` feature so legacy targets keep building, but
-# NOT by `playground` — the browser host only speaks wasm-gc, so
-# `aver_bg.wasm` doesn't need to ship the legacy emitter
-# (~9.4 kLoC of Rust + the embedded runtime blob).
-wasm-legacy = ["wasm-compile"]
 # 0.18 "Span" — `--target wasip2` (WASI 0.2 Component Model output).
 # Direct WIT lowering: the wasm-gc backend emits a core module in
 # canonical-ABI-compatible shapes, we embed a `component-type:<world>`

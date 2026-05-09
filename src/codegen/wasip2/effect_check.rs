@@ -185,9 +185,7 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
         return None;
     }
     if effect.starts_with("Disk.") {
-        return Some(UnsupportedReason::PendingPhase {
-            phase: "Phase 1.5",
-        });
+        return Some(UnsupportedReason::PendingPhase { phase: "Phase 1.5" });
     }
     None
 }

@@ -2,15 +2,11 @@
 //! iterations timing each. Three targets:
 //!
 //! - `vm` — in-process `vm::compile_program_with_modules` + `VM::run`.
-//! - `wasm-local` — legacy `aver compile --target wasm` (NaN-boxed
-//!   wasm32 + wasip1 bridge); wasmtime Engine + Module built once,
-//!   each iteration creates a fresh Store + Instance and invokes
-//!   `_start`. Mirrors the `cargo bench` shape so VM/WASM numbers
-//!   are directly comparable.
 //! - `wasm-gc` — `aver compile --target wasm-gc` (engine GC + tail
-//!   calls, no NaN-boxing); same in-process wasmtime harness with
+//!   calls, no NaN-boxing); in-process wasmtime harness with
 //!   `wasm_gc` / `wasm_tail_call` / `wasm_function_references`
 //!   enabled. Console / Time imports get bench-mode no-op stubs.
+//! - `wasm-gc-v8` — same wasm-gc bytes executed under V8 via Node 22+.
 //! - `rust` — `aver compile --target rust` + `cargo build --release`
 //!   produces a native binary; each iteration spawns it once. Includes
 //!   process spawn overhead (~1-2 ms on macOS) — for programs that
@@ -58,7 +54,6 @@ impl std::fmt::Display for RunError {
 pub fn run_scenario(manifest: &Manifest, target: BenchTarget) -> Result<BenchReport, RunError> {
     match target {
         BenchTarget::Vm => run_vm(manifest),
-        BenchTarget::WasmLocal => run_wasm_local(manifest),
         BenchTarget::WasmGc => run_wasm_gc(manifest),
         BenchTarget::WasmGcV8 => run_wasm_gc_v8(manifest),
         BenchTarget::Rust => run_rust(manifest),
@@ -167,298 +162,6 @@ fn run_one_vm(
     let value = result.to_value(&machine.arena);
     let bytes = crate::value::aver_display(&value).map(|s| s.len());
     Ok(bytes)
-}
-
-// ── WASM target ────────────────────────────────────────────────────────
-
-#[cfg(feature = "wasm")]
-fn run_wasm_local(manifest: &Manifest) -> Result<BenchReport, RunError> {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use wasmtime::{Caller, Engine, Linker, Module, Store};
-
-    // Compile the entry to a standalone WASI-bundled `.wasm` once. We
-    // shell out to the same `aver compile --target wasm --bridge wasip1`
-    // path the CLI uses so the produced bytes are identical to what
-    // `aver compile` writes for users — bench measures the production
-    // artifact, not a special bench-only build.
-    let temp = tempfile::tempdir()
-        .map_err(|e| RunError::Setup(format!("create wasm bench tempdir: {}", e)))?;
-    let out_dir = temp.path().join("out");
-    let aver_bin = std::env::current_exe()
-        .map_err(|e| RunError::Setup(format!("locate current aver binary: {}", e)))?;
-
-    let mut compile = Command::new(&aver_bin);
-    compile
-        .arg("compile")
-        .arg(&manifest.entry)
-        .arg("--target")
-        .arg("wasm")
-        .arg("--bridge")
-        .arg("wasip1")
-        .arg("--name")
-        .arg(&manifest.name)
-        .arg("-o")
-        .arg(&out_dir);
-    if let Some(root) = manifest.entry.parent() {
-        compile.arg("--module-root").arg(root);
-    }
-    let status = compile
-        .status()
-        .map_err(|e| RunError::Setup(format!("spawn aver compile --target wasm: {}", e)))?;
-    if !status.success() {
-        return Err(RunError::Compile(format!(
-            "aver compile --target wasm exited with {}",
-            status
-        )));
-    }
-
-    let wasm_path = out_dir.join(format!("{}.wasm", manifest.name));
-    let bytes = std::fs::read(&wasm_path)
-        .map_err(|e| RunError::Setup(format!("read {}: {}", wasm_path.display(), e)))?;
-    let engine = Engine::default();
-    let module = Module::new(&engine, &bytes)
-        .map_err(|e| RunError::Setup(format!("wasmtime compile module: {}", e)))?;
-
-    let run_one = |module: &Module, engine: &Engine| -> Result<u64, RunError> {
-        let mut store = Store::new(engine, ());
-        let mut linker = Linker::new(engine);
-        // Aver's wasip1 bridge declares the full wasi_snapshot_preview1
-        // import set unconditionally. Bench programs that don't actually
-        // touch the host (no fs, no rand) get no-op stubs returning
-        // errno 0. The exception is `fd_write`: we read the iovec list
-        // from guest memory, sum the byte lengths, write the total back
-        // to `nwritten`, and accumulate the count into a per-iteration
-        // counter so `BenchReport.response_bytes` can report what the
-        // guest tried to write.
-        let ws = "wasi_snapshot_preview1";
-        let bytes_written = Arc::new(AtomicU64::new(0));
-        let bw = bytes_written.clone();
-        linker
-            .func_wrap(
-                ws,
-                "fd_write",
-                move |mut caller: Caller<'_, ()>,
-                      _fd: i32,
-                      iovs_ptr: i32,
-                      iovs_len: i32,
-                      nwritten_ptr: i32|
-                      -> i32 {
-                    let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory())
-                    else {
-                        return 0;
-                    };
-                    let mut total: u32 = 0;
-                    let mut iov_buf = [0u8; 8];
-                    for i in 0..iovs_len {
-                        let off = (iovs_ptr as usize).saturating_add((i as usize) * 8);
-                        if memory.read(&caller, off, &mut iov_buf).is_err() {
-                            break;
-                        }
-                        let len = u32::from_le_bytes(iov_buf[4..8].try_into().unwrap());
-                        total = total.saturating_add(len);
-                    }
-                    let _ = memory.write(&mut caller, nwritten_ptr as usize, &total.to_le_bytes());
-                    bw.fetch_add(total as u64, Ordering::Relaxed);
-                    0
-                },
-            )
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "fd_read",
-                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| l.func_wrap(ws, "fd_close", |_: Caller<'_, ()>, _: i32| -> i32 { 0 }))
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "fd_seek",
-                    |_: Caller<'_, ()>, _: i32, _: i64, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "fd_fdstat_get",
-                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "fd_prestat_get",
-                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 8 },
-                )
-            }) // BADF — no preopens
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "fd_prestat_dir_name",
-                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "path_open",
-                    |_: Caller<'_, ()>,
-                     _: i32,
-                     _: i32,
-                     _: i32,
-                     _: i32,
-                     _: i32,
-                     _: i64,
-                     _: i64,
-                     _: i32,
-                     _: i32|
-                     -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "path_filestat_get",
-                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "path_remove_directory",
-                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "path_unlink_file",
-                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "path_create_directory",
-                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "path_rename",
-                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32| -> i32 {
-                        0
-                    },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "fd_filestat_get",
-                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "fd_readdir",
-                    |_: Caller<'_, ()>, _: i32, _: i32, _: i32, _: i64, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "args_sizes_get",
-                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(ws, "args_get", |_: Caller<'_, ()>, _: i32, _: i32| -> i32 {
-                    0
-                })
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "environ_sizes_get",
-                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "environ_get",
-                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "clock_time_get",
-                    |_: Caller<'_, ()>, _: i32, _: i64, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| {
-                l.func_wrap(
-                    ws,
-                    "random_get",
-                    |_: Caller<'_, ()>, _: i32, _: i32| -> i32 { 0 },
-                )
-            })
-            .and_then(|l| l.func_wrap(ws, "proc_exit", |_: Caller<'_, ()>, _: i32| {}))
-            .and_then(|l| l.func_wrap(ws, "sched_yield", |_: Caller<'_, ()>| -> i32 { 0 }))
-            .map_err(|e| RunError::Setup(format!("stub wasi imports: {}", e)))?;
-        let instance = linker
-            .instantiate(&mut store, module)
-            .map_err(|e| RunError::Runtime(format!("instantiate: {}", e)))?;
-        let start = instance
-            .get_typed_func::<(), ()>(&mut store, "_start")
-            .map_err(|e| RunError::Runtime(format!("_start export: {}", e)))?;
-        start
-            .call(&mut store, ())
-            .map_err(|e| RunError::Runtime(format!("invoke _start: {}", e)))?;
-        Ok(bytes_written.load(Ordering::Relaxed))
-    };
-
-    let mut samples: Vec<f64> = Vec::with_capacity(manifest.iterations);
-    for _ in 0..manifest.warmup {
-        run_one(&module, &engine)?;
-    }
-    let mut last_bytes: u64 = 0;
-    for _ in 0..manifest.iterations {
-        let t = Instant::now();
-        last_bytes = run_one(&module, &engine)?;
-        samples.push(t.elapsed().as_secs_f64() * 1000.0);
-    }
-
-    // Pipeline stages aren't observable through the spawned compile;
-    // record the canonical full-pipeline label so the JSON shape stays
-    // consistent across targets.
-    let passes = canonical_passes();
-    let mut report = build_report(
-        manifest,
-        BenchTarget::WasmLocal,
-        &samples,
-        passes,
-        compute_visible_allocs(manifest),
-    );
-    // wasm-local response_bytes counts what the guest actually tried to
-    // write through `fd_write` (sum of iovec lengths). Differs from the
-    // VM target's "rendered return value" semantics — same-target
-    // baselines still gate cleanly because we never compare across
-    // targets.
-    report.response_bytes = Some(last_bytes as usize);
-    Ok(report)
-}
-
-#[cfg(not(feature = "wasm"))]
-fn run_wasm_local(_manifest: &Manifest) -> Result<BenchReport, RunError> {
-    Err(RunError::Setup(
-        "wasm-local target requires the `wasm` feature; rebuild with `cargo build --features wasm`"
-            .to_string(),
-    ))
 }
 
 // ── wasm-gc target (0.15.3 probe) ──────────────────────────────────────
@@ -961,7 +664,7 @@ fn run_rust(manifest: &Manifest) -> Result<BenchReport, RunError> {
         compute_visible_allocs(manifest),
     );
     // Rust target captures actual stdout from the spawned binary.
-    // Same "actual bytes printed" semantics as wasm-local; differs
+    // Same "actual bytes printed" semantics as wasm-gc; differs
     // from the VM target's "rendered return value" semantics, but
     // baselines compare same-target only.
     report.response_bytes = Some(last_bytes);
@@ -1012,7 +715,7 @@ fn build_report(
 }
 
 /// Parse + run pipeline + count IR-level alloc sites. Same numbers
-/// across `vm` / `wasm-local` / `rust` since the policy is target-stable
+/// across `vm` / `wasm-gc` / `rust` since the policy is target-stable
 /// (`NeutralAllocPolicy`). `None` only when parse/typecheck fails — in
 /// that case the runner already returned an error before calling this,
 /// so in practice the field is always populated for successful runs.

@@ -379,7 +379,9 @@ fn expr_reaches_console_print(expr: &Expr) -> bool {
         }
         Expr::Match { subject, arms } => {
             expr_reaches_console_print(&subject.node)
-                || arms.iter().any(|a| expr_reaches_console_print(&a.body.node))
+                || arms
+                    .iter()
+                    .any(|a| expr_reaches_console_print(&a.body.node))
         }
         Expr::TailCall(boxed) => boxed
             .args
@@ -439,40 +441,32 @@ fn expr_reaches_env_get(expr: &Expr) -> bool {
             {
                 return true;
             }
-            expr_reaches_env_get(&callee.node)
-                || args.iter().any(|a| expr_reaches_env_get(&a.node))
+            expr_reaches_env_get(&callee.node) || args.iter().any(|a| expr_reaches_env_get(&a.node))
         }
-        Expr::BinOp(_, l, r) => {
-            expr_reaches_env_get(&l.node) || expr_reaches_env_get(&r.node)
-        }
+        Expr::BinOp(_, l, r) => expr_reaches_env_get(&l.node) || expr_reaches_env_get(&r.node),
         Expr::Match { subject, arms } => {
             expr_reaches_env_get(&subject.node)
                 || arms.iter().any(|a| expr_reaches_env_get(&a.body.node))
         }
-        Expr::TailCall(boxed) => boxed
-            .args
-            .iter()
-            .any(|a| expr_reaches_env_get(&a.node)),
+        Expr::TailCall(boxed) => boxed.args.iter().any(|a| expr_reaches_env_get(&a.node)),
         Expr::Attr(obj, _) => expr_reaches_env_get(&obj.node),
         Expr::ErrorProp(inner) => expr_reaches_env_get(&inner.node),
         Expr::Constructor(_, payload) => payload
             .as_deref()
             .is_some_and(|p| expr_reaches_env_get(&p.node)),
-        Expr::RecordCreate { fields, .. } => fields
-            .iter()
-            .any(|(_, e)| expr_reaches_env_get(&e.node)),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, e)| expr_reaches_env_get(&e.node))
+        }
         Expr::RecordUpdate { base, updates, .. } => {
             expr_reaches_env_get(&base.node)
-                || updates
-                    .iter()
-                    .any(|(_, e)| expr_reaches_env_get(&e.node))
+                || updates.iter().any(|(_, e)| expr_reaches_env_get(&e.node))
         }
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(|e| expr_reaches_env_get(&e.node))
         }
-        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
-            expr_reaches_env_get(&k.node) || expr_reaches_env_get(&v.node)
-        }),
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_reaches_env_get(&k.node) || expr_reaches_env_get(&v.node)),
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
             if let crate::ast::StrPart::Parsed(inner) = p {
                 expr_reaches_env_get(&inner.node)

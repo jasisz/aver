@@ -203,7 +203,12 @@ fn main() -> Unit
     let out = run_wasip2(&dir, &fixture, &[&payload]);
     assert_ok(&out, "print.av");
     let s = stdout(&out);
-    assert_eq!(s.len(), 5_000, "expected exactly 5000 bytes printed, got {} bytes", s.len());
+    assert_eq!(
+        s.len(),
+        5_000,
+        "expected exactly 5000 bytes printed, got {} bytes",
+        s.len()
+    );
     assert!(s.chars().all(|c| c == 'y'), "expected all y's");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -214,8 +219,7 @@ fn list_dir_many_entries() {
     let stress_dir = dir.join("entries");
     std::fs::create_dir_all(&stress_dir).expect("mkdir entries");
     for i in 0..200 {
-        std::fs::write(stress_dir.join(format!("file_{i:03}.txt")), b"x")
-            .expect("write entry");
+        std::fs::write(stress_dir.join(format!("file_{i:03}.txt")), b"x").expect("write entry");
     }
 
     let src = r#"
@@ -323,7 +327,12 @@ fn main() -> Unit
     assert_ok(&out, "sleep.av");
     let s = stdout(&out);
     let line = s.lines().find(|l| l.starts_with("elapsed_ms=")).expect(&s);
-    let elapsed: i64 = line.strip_prefix("elapsed_ms=").unwrap().trim().parse().expect(&s);
+    let elapsed: i64 = line
+        .strip_prefix("elapsed_ms=")
+        .unwrap()
+        .trim()
+        .parse()
+        .expect(&s);
     // 10 × 50 ms = 500 ms minimum. Tolerate up to 2× for CI noise
     // (real wall-clock test). If we ever start busy-waiting or
     // no-op'ing Time.sleep, this drops to ~0 and fails.

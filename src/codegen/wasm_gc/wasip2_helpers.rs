@@ -399,7 +399,10 @@ pub(super) fn emit_cabi_realloc(bump_global: u32) -> wasm_encoder::Function {
 /// `list_ptr + i*8`) materialises a fresh GC `(array i8)`
 /// string and conses it onto the accumulator. Walks the entries
 /// in reverse so cons-built list comes out in source order.
-pub(super) fn emit_decode_list_string(string_type_idx: u32, list_string_type_idx: u32) -> wasm_encoder::Function {
+pub(super) fn emit_decode_list_string(
+    string_type_idx: u32,
+    list_string_type_idx: u32,
+) -> wasm_encoder::Function {
     use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
 
     let s_ref = ValType::Ref(RefType {
@@ -413,8 +416,8 @@ pub(super) fn emit_decode_list_string(string_type_idx: u32, list_string_type_idx
     // Param 0: retptr (i32). Locals follow.
     let mut f = Function::new(vec![
         (7, ValType::I32), // 1=list_ptr, 2=list_len, 3=i, 4=entry_ptr, 5=str_ptr, 6=str_len, 7=j
-        (1, s_ref),         // 8=arr
-        (1, l_ref),         // 9=acc
+        (1, s_ref),        // 8=arr
+        (1, l_ref),        // 9=acc
     ]);
     let p_retptr = 0u32;
     let l_list_ptr = 1u32;
@@ -452,7 +455,9 @@ pub(super) fn emit_decode_list_string(string_type_idx: u32, list_string_type_idx
     f.instruction(&Instruction::LocalSet(l_list_len));
 
     // acc = ref.null $list_string.
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(list_string_type_idx)));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(
+        list_string_type_idx,
+    )));
     f.instruction(&Instruction::LocalSet(l_acc));
 
     // i = list_len - 1 (countdown so cons-built list ends up in source order).
@@ -560,7 +565,7 @@ pub(super) fn emit_env_get_lookup(
     // Params: 0=retptr, 1=key_ptr, 2=key_len. Locals follow.
     let mut f = Function::new(vec![
         (8, ValType::I32), // 3=list_ptr 4=list_len 5=i 6=entry_ptr 7=e_key_ptr 8=e_key_len 9=j 10=mismatch
-        (1, s_ref),         // 11=arr
+        (1, s_ref),        // 11=arr
     ]);
     let p_retptr = 0u32;
     let p_key_ptr = 1u32;
@@ -1961,7 +1966,6 @@ pub(super) fn emit_disk_read_text(
     f
 }
 
-
 /// Phase 1.5.3 — `__rt_disk_write_text(path: ref string,
 /// content: ref string) -> ref null $result_unit_string` body.
 ///
@@ -2554,7 +2558,9 @@ pub(super) fn emit_disk_list_dir(
         }
         // tag=0 (Err), ok=null list, err=arr
         f.instruction(&Instruction::I32Const(0));
-        f.instruction(&Instruction::RefNull(HeapType::Concrete(list_string_type_idx)));
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(
+            list_string_type_idx,
+        )));
         f.instruction(&Instruction::LocalGet(l_arr));
         f.instruction(&Instruction::StructNew(result_type_idx));
         f.instruction(&Instruction::Return);
@@ -2677,7 +2683,9 @@ pub(super) fn emit_disk_list_dir(
     f.instruction(&Instruction::LocalSet(l_retptr_entry));
 
     // ── acc = ref.null $list_string ──────────────────────────
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(list_string_type_idx)));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(
+        list_string_type_idx,
+    )));
     f.instruction(&Instruction::LocalSet(l_acc));
 
     // ── iterate read-directory-entry until Ok(None) or Err ──

@@ -33,7 +33,13 @@ use super::error::Wasip2Error;
 /// top of everything else.
 pub fn push_wasi_packages(resolve: &mut Resolve) -> Result<(), Wasip2Error> {
     const PACKAGE_ORDER: &[&str] = &[
-        "io", "clocks", "random", "filesystem", "sockets", "cli", "http",
+        "io",
+        "clocks",
+        "random",
+        "filesystem",
+        "sockets",
+        "cli",
+        "http",
     ];
     for pkg_name in PACKAGE_ORDER {
         let mut map = SourceMap::default();
@@ -50,14 +56,10 @@ pub fn push_wasi_packages(resolve: &mut Resolve) -> Result<(), Wasip2Error> {
             )));
         }
         let group = map.parse().map_err(|(_, e)| {
-            Wasip2Error::Wrap(format!(
-                "parse vendored WASI WIT package `{pkg_name}`: {e}"
-            ))
+            Wasip2Error::Wrap(format!("parse vendored WASI WIT package `{pkg_name}`: {e}"))
         })?;
         resolve.push_group(group).map_err(|e| {
-            Wasip2Error::Wrap(format!(
-                "push vendored WASI WIT package `{pkg_name}`: {e}"
-            ))
+            Wasip2Error::Wrap(format!("push vendored WASI WIT package `{pkg_name}`: {e}"))
         })?;
     }
     Ok(())

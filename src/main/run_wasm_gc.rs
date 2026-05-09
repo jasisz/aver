@@ -1,6 +1,6 @@
 //! `aver run --wasm-gc` — embedded wasmtime host for the wasm-gc backend.
 //!
-//! Mirrors the legacy `cmd_run_wasm` shape but configured for engine
+//! Compile-and-run path configured for engine
 //! GC + tail calls. Effect imports are wired against native Rust
 //! implementations (Console.print/error/warn cross via the
 //! `__rt_string_*` LM transport bridge that every emitted module

@@ -41,8 +41,7 @@
 use aver::codegen::wasip2;
 
 fn validate_component(bytes: &[u8]) {
-    let mut validator =
-        wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all());
+    let mut validator = wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all());
     validator
         .validate_all(bytes)
         .expect("wasmparser must accept the produced component");

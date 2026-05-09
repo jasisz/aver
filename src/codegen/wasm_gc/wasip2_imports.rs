@@ -299,9 +299,7 @@ impl Wasip2ImportSlot {
                 "[method]output-stream.blocking-write-and-flush",
             ),
             Wasip2ImportSlot::ClocksWallClockNow => ("wasi:clocks/wall-clock@0.2.4", "now"),
-            Wasip2ImportSlot::RandomGetRandomU64 => {
-                ("wasi:random/random@0.2.4", "get-random-u64")
-            }
+            Wasip2ImportSlot::RandomGetRandomU64 => ("wasi:random/random@0.2.4", "get-random-u64"),
             Wasip2ImportSlot::CliEnvironmentGetArguments => {
                 ("wasi:cli/environment@0.2.4", "get-arguments")
             }
@@ -323,14 +321,12 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::FilesystemPreopensGetDirectories => {
                 ("wasi:filesystem/preopens@0.2.4", "get-directories")
             }
-            Wasip2ImportSlot::FilesystemTypesStatAt => (
-                "wasi:filesystem/types@0.2.4",
-                "[method]descriptor.stat-at",
-            ),
-            Wasip2ImportSlot::FilesystemTypesOpenAt => (
-                "wasi:filesystem/types@0.2.4",
-                "[method]descriptor.open-at",
-            ),
+            Wasip2ImportSlot::FilesystemTypesStatAt => {
+                ("wasi:filesystem/types@0.2.4", "[method]descriptor.stat-at")
+            }
+            Wasip2ImportSlot::FilesystemTypesOpenAt => {
+                ("wasi:filesystem/types@0.2.4", "[method]descriptor.open-at")
+            }
             Wasip2ImportSlot::FilesystemTypesReadViaStream => (
                 "wasi:filesystem/types@0.2.4",
                 "[method]descriptor.read-via-stream",
