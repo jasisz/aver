@@ -78,6 +78,14 @@ pub(super) struct SlotTable {
     /// Allocated when the fn body contains at least one `Env.get`
     /// call. Phase 1.3.3.
     pub(super) env_get_wasip2_scratch: Option<[u32; 2]>,
+    /// Scratch i64 slot for the wasip2 `Random.int(min, max)` call.
+    /// `min` is referenced twice during lowering (once as the offset
+    /// added at the end, once subtracted from `max` to compute the
+    /// modulo bound). Without a scratch we'd re-`emit_expr` the same
+    /// arg, which double-runs any side effects in `min` (e.g.
+    /// `Random.int(readBound(), 10)`). Stash `min` once after first
+    /// emit and reuse via LocalGet.
+    pub(super) random_int_wasip2_min_scratch: Option<u32>,
 }
 
 impl SlotTable {
@@ -258,6 +266,13 @@ impl SlotTable {
         } else {
             None
         };
+        let random_int_wasip2_min_scratch = if fn_needs_random_int_wasip2_scratch(fd) {
+            let idx = by_slot.len() as u32;
+            by_slot.push(ValType::I64);
+            Some(idx)
+        } else {
+            None
+        };
         Ok(Self {
             by_slot,
             subject_scratch,
@@ -266,6 +281,7 @@ impl SlotTable {
             console_print_wasip2_scratch,
             args_get_wasip2_retptr_scratch,
             env_get_wasip2_scratch,
+            random_int_wasip2_min_scratch,
         })
     }
 
@@ -470,6 +486,72 @@ fn expr_reaches_env_get(expr: &Expr) -> bool {
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
             if let crate::ast::StrPart::Parsed(inner) = p {
                 expr_reaches_env_get(&inner.node)
+            } else {
+                false
+            }
+        }),
+        _ => false,
+    }
+}
+
+/// True if the body reaches at least one `Random.int(min, max)` call.
+/// Gates the wasip2 i64 scratch slot that stashes `min` once so the
+/// call-site lowering doesn't double-evaluate it.
+pub(super) fn fn_needs_random_int_wasip2_scratch(fd: &FnDef) -> bool {
+    let FnBody::Block(stmts) = fd.body.as_ref();
+    stmts.iter().any(stmt_reaches_random_int)
+}
+
+fn stmt_reaches_random_int(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_reaches_random_int(&e.node),
+    }
+}
+
+fn expr_reaches_random_int(expr: &Expr) -> bool {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            if let Expr::Attr(parent, member) = &callee.node
+                && let Expr::Ident(p) = &parent.node
+                && p == "Random"
+                && member == "int"
+            {
+                return true;
+            }
+            expr_reaches_random_int(&callee.node)
+                || args.iter().any(|a| expr_reaches_random_int(&a.node))
+        }
+        Expr::BinOp(_, l, r) => {
+            expr_reaches_random_int(&l.node) || expr_reaches_random_int(&r.node)
+        }
+        Expr::Match { subject, arms } => {
+            expr_reaches_random_int(&subject.node)
+                || arms.iter().any(|a| expr_reaches_random_int(&a.body.node))
+        }
+        Expr::TailCall(boxed) => boxed.args.iter().any(|a| expr_reaches_random_int(&a.node)),
+        Expr::Attr(obj, _) => expr_reaches_random_int(&obj.node),
+        Expr::ErrorProp(inner) => expr_reaches_random_int(&inner.node),
+        Expr::Constructor(_, payload) => payload
+            .as_deref()
+            .is_some_and(|p| expr_reaches_random_int(&p.node)),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, e)| expr_reaches_random_int(&e.node))
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_reaches_random_int(&base.node)
+                || updates
+                    .iter()
+                    .any(|(_, e)| expr_reaches_random_int(&e.node))
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(|e| expr_reaches_random_int(&e.node))
+        }
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_reaches_random_int(&k.node) || expr_reaches_random_int(&v.node)),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
+            if let crate::ast::StrPart::Parsed(inner) = p {
+                expr_reaches_random_int(&inner.node)
             } else {
                 false
             }

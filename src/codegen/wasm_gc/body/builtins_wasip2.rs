@@ -580,15 +580,32 @@ pub(super) fn emit_random_int_wasip2(
     let rand_fn = lowering.random_u64_fn_idx.ok_or_else(|| {
         WasmGcError::Validation("Random.int on wasip2: random get-random-u64 fn idx missing".into())
     })?;
+    let min_scratch = slots.random_int_wasip2_min_scratch.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Random.int on wasip2: i64 min scratch slot missing — \
+             SlotTable should have allocated via fn_needs_random_int_wasip2_scratch"
+                .into(),
+        )
+    })?;
     // result = min + ((u64 % (max - min + 1)) as i64).
+    //
+    // `min` is referenced twice (the offset and `max - min`), so we
+    // evaluate `args[0]` exactly once into a scratch local. Without
+    // this, `Random.int(readBound(), 10)` would call `readBound()`
+    // twice — call-by-value violation, and any host-visible side
+    // effect inside `readBound` would fire twice.
+    //
     // Stack discipline:
-    //   push min
+    //   eval args[0] → LocalSet(min_scratch)
+    //   push min_scratch
     //   push (get-random-u64() % (max - min + 1))
     //   i64.add
     emit_expr(func, &args[0], slots, ctx)?; // min: i64
+    func.instruction(&Instruction::LocalSet(min_scratch));
+    func.instruction(&Instruction::LocalGet(min_scratch));
     func.instruction(&Instruction::Call(rand_fn)); // u64 -> i64 representation
     emit_expr(func, &args[1], slots, ctx)?; // max
-    emit_expr(func, &args[0], slots, ctx)?; // min (re-eval for max - min)
+    func.instruction(&Instruction::LocalGet(min_scratch));
     func.instruction(&Instruction::I64Sub);
     func.instruction(&Instruction::I64Const(1));
     func.instruction(&Instruction::I64Add);

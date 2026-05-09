@@ -41,13 +41,19 @@ pub(super) fn cmd_run_wasip2(
     #[cfg(feature = "wasip2")]
     {
         if record_dir.is_some() {
+            // Recording requires a separate plumbing pass against the
+            // canonical-ABI WASI imports, which is a future-phase task.
+            // Reject the flag rather than silently dropping it — the
+            // user explicitly asked for an artifact and would otherwise
+            // get a successful run with no recording on disk.
             eprintln!(
                 "{}",
-                "--record is not yet wired for --wasip2 (Phase 1.7 minimal scope — \
-                 the recorder needs a separate plumbing pass against the canonical-ABI \
-                 host imports). Use `aver run --wasm-gc --record` for now."
-                    .yellow()
+                "--record is not yet supported on --wasip2: the recorder needs a \
+                 separate plumbing pass against the canonical-ABI WASI imports. \
+                 Use `aver run --wasm-gc --record` until that lands."
+                    .red()
             );
+            process::exit(1);
         }
         let component_bytes = match build_component_bytes(file, module_root_override) {
             Ok(b) => b,

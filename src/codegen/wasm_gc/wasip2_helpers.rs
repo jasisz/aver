@@ -1383,6 +1383,21 @@ pub(super) fn emit_time_sleep(
         memory_index: 0,
     };
 
+    // ms < 0 is a programmer error — the VM target traps with
+    // "Time.sleep: ms must be non-negative". Without this guard
+    // wasip2 would multiply a negative i64 by 1_000_000 and pass
+    // the result into the host `subscribe-duration(duration: u64)`,
+    // where the two's-complement reinterpretation produces an
+    // absurdly long sleep instead of an error. Trap explicitly
+    // before the host sees it; wasmtime surfaces the trap with a
+    // stack frame pointing at `__rt_time_sleep`.
+    f.instruction(&Instruction::LocalGet(p_ms));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64LtS);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Unreachable);
+    f.instruction(&Instruction::End);
+
     // ns = ms * 1_000_000  (i64; saturates well within i64 range
     // for any practical sleep)
     f.instruction(&Instruction::LocalGet(p_ms));

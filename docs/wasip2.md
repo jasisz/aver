@@ -66,7 +66,7 @@ Compiles the source to a `wasi:cli/command` component, instantiates it via embed
 - Effects are recorded at the **Aver call level**, above the WIT import boundary. Recordings are interchangeable with VM, wasm-gc, and self-host traces (same `recording.json` shape since 0.16.1).
 - Diagnostics are Aver-shaped. Wasmtime trap messages translate through the same path that `aver run --wasm-gc` uses today; users see Aver source spans, not core-wasm offsets.
 - No build cache. Compile is fast enough that adding a cache layer is not worth the cache-invalidation contract.
-- `--record <dir>` and `--replay <recording.json>` work on Phase 1 effects (Console / Args / Env.get / Time.now / Time.unixMs / Random / basic Disk) in 0.18.
+- `--record <dir>` / `--replay <recording.json>` are **not yet wired** for `--wasip2` and the flags are rejected at CLI time. Recording requires a separate plumbing pass against the canonical-ABI WASI imports; until that lands, use `aver run --wasm-gc --record` (recordings are interchangeable across backends). The earlier sentence about effects being recorded "at the Aver call level" describes the cross-backend recording shape, not what `--wasip2` itself accepts.
 
 External hosts: `wasmtime run` for command components is the canonical path; `wasmtime serve` and other server-capable hosts (Spin's `wasi:http/proxy` runtime, NGINX Unit) target the HTTP/proxy world, which is Phase 3 / 0.19+ and out of 0.18 scope.
 
