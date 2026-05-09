@@ -1091,7 +1091,7 @@ pub(super) fn emit_console_read_line(
     // ref s: arr (the OK payload)
     let mut f = Function::new(vec![
         (11, ValType::I32), // 0..=10
-        (1, s_ref), // 11: arr
+        (1, s_ref),         // 11: arr
     ]);
 
     let l_stdin_handle = 0u32;
@@ -2513,11 +2513,7 @@ pub(super) fn emit_disk_list_dir(
     //     name_ptr, name_len, j, list_ptr, list_len.
     //   1 ref-s local at idx 13: arr (entry name + Err scratch).
     //   1 ref-list local at idx 14: acc (cons accumulator).
-    let mut f = Function::new(vec![
-        (12, ValType::I32),
-        (1, s_ref),
-        (1, l_ref),
-    ]);
+    let mut f = Function::new(vec![(12, ValType::I32), (1, s_ref), (1, l_ref)]);
     let p_path = 0u32;
     let l_preopen = 1u32;
     let l_path_len = 2u32;
