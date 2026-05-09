@@ -451,6 +451,11 @@ pub(super) struct Wasip2Lowering {
     pub(super) disk_delete_fn_idx: Option<u32>,
     pub(super) disk_delete_dir_fn_idx: Option<u32>,
     pub(super) disk_make_dir_fn_idx: Option<u32>,
+    /// Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
+    /// ref null $result_list_string_string` helper wasm fn idx.
+    /// Owns open-at(directory) + read-directory + entry-iteration
+    /// loop + drops; cons-builds a `List<String>` of entry names.
+    pub(super) disk_list_dir_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

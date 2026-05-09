@@ -156,6 +156,19 @@ pub(super) struct DiskSimplePathOpIndices {
     pub(super) result_unit_string_type_idx: u32,
 }
 
+/// Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
+/// ref null $result_list_string_string` helper indices. Drives
+/// `read-directory-entry` until `Ok(None)`, accumulates entry
+/// names into a cons-built `List<String>`. Order is filesystem-
+/// dependent (matches POSIX `readdir` semantics).
+pub(super) struct DiskListDirIndices {
+    pub(super) fn_type: u32,
+    pub(super) fn_idx: u32,
+    pub(super) string_type_idx: u32,
+    pub(super) list_string_type_idx: u32,
+    pub(super) result_list_string_string_type_idx: u32,
+}
+
 /// Phase 1.3.1 — `cabi_realloc(old_ptr, old_size, align, new_size)
 /// -> new_ptr` body. Bump-allocator over linear memory backed by
 /// the wasip2 `bump_alloc_ptr` global (initialised to 65536 = page
@@ -2284,6 +2297,352 @@ pub(super) fn emit_disk_simple_path_op(
     // ── Result.Ok(Unit) ─────────────────────────────────────
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
+    f.instruction(&Instruction::StructNew(result_type_idx));
+
+    f.instruction(&Instruction::End); // fn end
+    f
+}
+
+/// Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
+/// ref null $result_list_string_string` body.
+///
+/// Pipeline (any wasi failure ⇒ `Result.Err("…")`):
+///   1. Lazy-init preopen.
+///   2. Marshal `path` to LM[0..len].
+///   3. `open-at(preopen, path-flags=symlink-follow, path,
+///      open-flags=DIRECTORY (=2), descriptor-flags=READ (=1))`
+///      ⇒ Err ⇒ `Result.Err("opendir failed")`.
+///   4. `read-directory(fd)` ⇒ Err ⇒ drop fd, `Result.Err(
+///      "read-directory failed")`. Ok ⇒ stash the
+///      `directory-entry-stream` handle.
+///   5. Loop `read-directory-entry(stream)`:
+///      - `Ok(None)` ⇒ EOF, exit loop.
+///      - `Ok(Some(entry))` ⇒ allocate fresh GC `(array i8)`
+///        of size name_len, copy bytes from LM[name_ptr..],
+///        cons onto growing list (head = newest).
+///      - `Err(_)` ⇒ drop both, `Result.Err("readdir failed")`.
+///   6. Drop directory-entry-stream + descriptor (per-call,
+///      mandatory).
+///   7. Wrap the cons-built list in `Result.Ok`.
+///
+/// Order of returned entries is filesystem-dependent — same
+/// guarantee POSIX `readdir` makes (i.e. none).
+///
+/// retptr layout for `read-directory-entry`'s
+/// `result<option<directory-entry>, error-code>` (20 bytes total,
+/// 4-byte aligned):
+///   - +0: result tag i8
+///   - +4: option tag i8 (when result is Ok)
+///   - +8: directory-entry.type i8 (when option is Some)
+///   - +12: directory-entry.name_ptr i32
+///   - +16: directory-entry.name_len i32
+///   - +4 (when result is Err): error-code u8 (we ignore which)
+pub(super) fn emit_disk_list_dir(
+    string_type_idx: u32,
+    list_string_type_idx: u32,
+    result_type_idx: u32,
+    preopen_global: u32,
+    cabi_realloc_fn: u32,
+    str_to_lm_fn: u32,
+    get_directories_fn: u32,
+    open_at_fn: u32,
+    read_directory_fn: u32,
+    read_directory_entry_fn: u32,
+    drop_descriptor_fn: u32,
+    drop_dir_entry_stream_fn: u32,
+) -> wasm_encoder::Function {
+    use wasm_encoder::{BlockType, Function, HeapType, Instruction, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(string_type_idx),
+    });
+    let l_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(list_string_type_idx),
+    });
+
+    // Locals (after 1 ref-s param at idx 0):
+    //   12 i32 locals (idx 1..=12): preopen, path_len,
+    //     retptr_open, retptr_stream, retptr_entry, fd, dstream,
+    //     name_ptr, name_len, j, list_ptr, list_len.
+    //   1 ref-s local at idx 13: arr (entry name + Err scratch).
+    //   1 ref-list local at idx 14: acc (cons accumulator).
+    let mut f = Function::new(vec![
+        (12, ValType::I32),
+        (1, s_ref.clone()),
+        (1, l_ref.clone()),
+    ]);
+    let p_path = 0u32;
+    let l_preopen = 1u32;
+    let l_path_len = 2u32;
+    let l_retptr_open = 3u32;
+    let l_retptr_stream = 4u32;
+    let l_retptr_entry = 5u32;
+    let l_fd = 6u32;
+    let l_dstream = 7u32;
+    let l_name_ptr = 8u32;
+    let l_name_len = 9u32;
+    let l_j = 10u32;
+    let l_list_ptr = 11u32;
+    let l_list_len = 12u32;
+    let l_arr = 13u32;
+    let l_acc = 14u32;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    let emit_err = |f: &mut Function, msg: &[u8]| {
+        f.instruction(&Instruction::I32Const(msg.len() as i32));
+        f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+        f.instruction(&Instruction::LocalSet(l_arr));
+        for (i, b) in msg.iter().enumerate() {
+            f.instruction(&Instruction::LocalGet(l_arr));
+            f.instruction(&Instruction::I32Const(i as i32));
+            f.instruction(&Instruction::I32Const(*b as i32));
+            f.instruction(&Instruction::ArraySet(string_type_idx));
+        }
+        // tag=0 (Err), ok=null list, err=arr
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(list_string_type_idx)));
+        f.instruction(&Instruction::LocalGet(l_arr));
+        f.instruction(&Instruction::StructNew(result_type_idx));
+        f.instruction(&Instruction::Return);
+    };
+
+    // ── lazy-init preopen ─────────────────────────────────────
+    f.instruction(&Instruction::GlobalGet(preopen_global));
+    f.instruction(&Instruction::LocalSet(l_preopen));
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_retptr_open));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::Call(get_directories_fn));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::I32Load(mem4));
+        f.instruction(&Instruction::LocalSet(l_list_ptr));
+        f.instruction(&Instruction::LocalGet(l_retptr_open));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_list_len));
+        f.instruction(&Instruction::LocalGet(l_list_len));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32GtU);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::LocalGet(l_list_ptr));
+            f.instruction(&Instruction::I32Load(mem4));
+            f.instruction(&Instruction::LocalTee(l_preopen));
+            f.instruction(&Instruction::GlobalSet(preopen_global));
+        }
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"no preopens");
+    }
+    f.instruction(&Instruction::End);
+
+    // ── marshal path ─────────────────────────────────────────
+    f.instruction(&Instruction::LocalGet(p_path));
+    f.instruction(&Instruction::Call(str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_path_len));
+
+    // ── open-at(preopen, 1, 0, path_len, 2 (DIRECTORY), 1
+    //   (READ), retptr) ──
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_open));
+
+    f.instruction(&Instruction::LocalGet(l_preopen));
+    f.instruction(&Instruction::I32Const(1)); // path-flags = symlink-follow
+    f.instruction(&Instruction::I32Const(0)); // path_ptr = 0
+    f.instruction(&Instruction::LocalGet(l_path_len));
+    f.instruction(&Instruction::I32Const(2)); // open-flags = DIRECTORY
+    f.instruction(&Instruction::I32Const(1)); // descriptor-flags = READ
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::Call(open_at_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        emit_err(&mut f, b"opendir failed");
+    }
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_retptr_open));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_fd));
+
+    // ── read-directory(fd, retptr_stream) ─────────────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_stream));
+
+    f.instruction(&Instruction::LocalGet(l_fd));
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::Call(read_directory_fn));
+
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::LocalGet(l_fd));
+        f.instruction(&Instruction::Call(drop_descriptor_fn));
+        emit_err(&mut f, b"read-directory failed");
+    }
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_retptr_stream));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_dstream));
+
+    // ── allocate retptr_entry (20 bytes) ─────────────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(20));
+    f.instruction(&Instruction::Call(cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_entry));
+
+    // ── acc = ref.null $list_string ──────────────────────────
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(list_string_type_idx)));
+    f.instruction(&Instruction::LocalSet(l_acc));
+
+    // ── iterate read-directory-entry until Ok(None) or Err ──
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    f.instruction(&Instruction::LocalGet(l_dstream));
+    f.instruction(&Instruction::LocalGet(l_retptr_entry));
+    f.instruction(&Instruction::Call(read_directory_entry_fn));
+
+    // result tag at retptr+0
+    f.instruction(&Instruction::LocalGet(l_retptr_entry));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // Err — drop both, return Err("readdir failed")
+        f.instruction(&Instruction::LocalGet(l_dstream));
+        f.instruction(&Instruction::Call(drop_dir_entry_stream_fn));
+        f.instruction(&Instruction::LocalGet(l_fd));
+        f.instruction(&Instruction::Call(drop_descriptor_fn));
+        emit_err(&mut f, b"readdir failed");
+    }
+    f.instruction(&Instruction::End);
+
+    // option tag at retptr+4
+    f.instruction(&Instruction::LocalGet(l_retptr_entry));
+    f.instruction(&Instruction::I32Load8U(MemArg {
+        offset: 4,
+        align: 0,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1)); // None ⇒ exit Block (EOF)
+
+    // Some(entry) — read name_ptr at +12, name_len at +16
+    f.instruction(&Instruction::LocalGet(l_retptr_entry));
+    f.instruction(&Instruction::I32Load(MemArg {
+        offset: 12,
+        align: 2,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalSet(l_name_ptr));
+    f.instruction(&Instruction::LocalGet(l_retptr_entry));
+    f.instruction(&Instruction::I32Load(MemArg {
+        offset: 16,
+        align: 2,
+        memory_index: 0,
+    }));
+    f.instruction(&Instruction::LocalSet(l_name_len));
+
+    // arr = array.new_default $string name_len
+    f.instruction(&Instruction::LocalGet(l_name_len));
+    f.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_arr));
+
+    // for j = 0..name_len: arr[j] = LM[name_ptr + j]
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_name_len));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_name_ptr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::ArraySet(string_type_idx));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // copy loop
+    f.instruction(&Instruction::End); // copy block
+
+    // acc = struct.new $list_string {head: arr, tail: acc}
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::LocalGet(l_acc));
+    f.instruction(&Instruction::StructNew(list_string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_acc));
+
+    // continue
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // outer loop
+    f.instruction(&Instruction::End); // outer block
+
+    // ── drops ───────────────────────────────────────────────
+    f.instruction(&Instruction::LocalGet(l_dstream));
+    f.instruction(&Instruction::Call(drop_dir_entry_stream_fn));
+    f.instruction(&Instruction::LocalGet(l_fd));
+    f.instruction(&Instruction::Call(drop_descriptor_fn));
+
+    // ── Result.Ok(acc) — tag=1, ok=acc, err=null ─────────────
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_acc));
     f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
     f.instruction(&Instruction::StructNew(result_type_idx));
 

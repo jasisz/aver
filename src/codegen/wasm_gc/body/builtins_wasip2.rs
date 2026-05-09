@@ -772,3 +772,32 @@ pub(super) fn emit_disk_append_text_wasip2(
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
+
+/// Phase 1.5.6 — `Disk.listDir(path) -> Result<List<String>, String>`
+/// on `--target wasip2`. Pushes the path arg and calls
+/// `__rt_disk_list_dir`, which owns the open-at(directory) +
+/// read-directory + entry-iteration loop + drops.
+pub(super) fn emit_disk_list_dir_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Disk.listDir on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Disk.listDir on `--target wasip2` expects 1 arg (path), got {}",
+            args.len()
+        )));
+    }
+    let fn_idx = lowering.disk_list_dir_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Disk.listDir on wasip2: __rt_disk_list_dir fn idx missing".into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}

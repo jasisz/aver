@@ -63,10 +63,11 @@ use super::maps::MapHelperRegistry;
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
 use super::wasip2_helpers::{
     CabiReallocIndices, ConsoleReadLineIndices, DecodeListStringIndices, DiskExistsIndices,
-    DiskReadTextIndices, DiskSimplePathOpIndices, DiskWriteTextIndices, EnvGetLookupIndices,
-    FormatIso8601Indices, TimeSleepIndices, emit_cabi_realloc, emit_console_read_line,
-    emit_decode_list_string, emit_disk_exists, emit_disk_read_text, emit_disk_simple_path_op,
-    emit_disk_write_text, emit_env_get_lookup, emit_format_iso8601, emit_time_sleep,
+    DiskListDirIndices, DiskReadTextIndices, DiskSimplePathOpIndices, DiskWriteTextIndices,
+    EnvGetLookupIndices, FormatIso8601Indices, TimeSleepIndices, emit_cabi_realloc,
+    emit_console_read_line, emit_decode_list_string, emit_disk_exists, emit_disk_list_dir,
+    emit_disk_read_text, emit_disk_simple_path_op, emit_disk_write_text, emit_env_get_lookup,
+    emit_format_iso8601, emit_time_sleep,
 };
 use super::wat_helper;
 use crate::types::Type as AverType;
@@ -405,6 +406,22 @@ pub(super) fn emit_module_with(
                             .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
                         wasip2_imports
                             .register(Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt);
+                    }
+                    EffectName::DiskListDir => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesReadDirectory);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry,
+                        );
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+                        );
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream,
+                        );
                     }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
@@ -980,6 +997,60 @@ pub(super) fn emit_module_with(
         super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt,
     );
 
+    // Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
+    // ref null $result_list_string_string`. Opens path as a
+    // directory, drives `read-directory-entry` until None,
+    // accumulates each entry's name into a cons-built
+    // `List<String>`. Order is filesystem-dependent (matches
+    // POSIX `readdir` which doesn't promise any order either);
+    // call sites that need a sorted list call `List.sort` after.
+    let disk_list_dir: Option<DiskListDirIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadDirectory)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(list_string_idx) = registry.list_type_idx("List<String>")
+        && let Some(result_idx) = registry.result_type_idx("Result<List<String>,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskListDirIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            list_string_type_idx: list_string_idx,
+            result_list_string_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment)
@@ -1197,6 +1268,9 @@ pub(super) fn emit_module_with(
         funcs.function(d.fn_type);
     }
     if let Some(d) = &disk_make_dir {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_list_dir {
         funcs.function(d.fn_type);
     }
     if let Some(e) = &env_get_lookup {
@@ -1440,6 +1514,7 @@ pub(super) fn emit_module_with(
                 disk_delete_fn_idx: disk_delete.as_ref().map(|d| d.fn_idx),
                 disk_delete_dir_fn_idx: disk_delete_dir.as_ref().map(|d| d.fn_idx),
                 disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
+                disk_list_dir_fn_idx: disk_list_dir.as_ref().map(|d| d.fn_idx),
             })
         } else {
             None
@@ -2221,6 +2296,62 @@ pub(super) fn emit_module_with(
             get_directories,
             op_fn,
             b"makeDir failed",
+        ));
+    }
+    if let Some(ld) = &disk_list_dir {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_list_dir emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_list_dir emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_list_dir emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_list_dir emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_list_dir emit requires open-at fn idx");
+        let read_directory = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadDirectory,
+            )
+            .expect("disk_list_dir emit requires read-directory fn idx");
+        let read_dir_entry = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry,
+            )
+            .expect("disk_list_dir emit requires read-directory-entry fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_list_dir emit requires drop-descriptor fn idx");
+        let drop_dir_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream,
+            )
+            .expect("disk_list_dir emit requires drop-directory-entry-stream fn idx");
+        codes.function(&emit_disk_list_dir(
+            ld.string_type_idx,
+            ld.list_string_type_idx,
+            ld.result_list_string_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            read_directory,
+            read_dir_entry,
+            drop_descriptor,
+            drop_dir_stream,
         ));
     }
     if let Some(e) = &env_get_lookup {

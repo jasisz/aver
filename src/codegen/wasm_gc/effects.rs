@@ -731,7 +731,8 @@ impl EffectName {
                 | EffectName::DiskAppendText
                 | EffectName::DiskDelete
                 | EffectName::DiskDeleteDir
-                | EffectName::DiskMakeDir,
+                | EffectName::DiskMakeDir
+                | EffectName::DiskListDir,
         )
     }
 }

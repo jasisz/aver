@@ -257,6 +257,32 @@ pub(super) enum Wasip2ImportSlot {
     /// Canonical-ABI signature:
     ///   `(handle: i32, retptr: i32) -> ()`.
     FilesystemTypesAppendViaStream,
+    /// `wasi:filesystem/types.[method]descriptor.read-directory:
+    ///   func(this: borrow<descriptor>)
+    ///   -> result<directory-entry-stream, error-code>`.
+    /// Backs `Disk.listDir` (Phase 1.5.6). retptr is 8 bytes —
+    /// `tag i8` + `directory-entry-stream` handle i32 on Ok or
+    /// `error-code` u8 on Err.
+    /// Canonical-ABI signature:
+    ///   `(handle: i32, retptr: i32) -> ()`.
+    FilesystemTypesReadDirectory,
+    /// `wasi:filesystem/types.[method]directory-entry-stream.
+    ///   read-directory-entry: func(this:
+    ///     borrow<directory-entry-stream>)
+    ///   -> result<option<directory-entry>, error-code>`.
+    /// Returns the next entry or `Ok(None)` at EOF. retptr is
+    /// 20 bytes (`result tag i8` + alignment + `option tag i8` +
+    /// alignment + directory-entry's `(type i8, name (ptr i32,
+    /// len i32))`).
+    /// Canonical-ABI signature:
+    ///   `(handle: i32, retptr: i32) -> ()`.
+    FilesystemTypesDirectoryEntryStreamReadDirectoryEntry,
+    /// `wasi:filesystem/types.[resource-drop]directory-entry-stream:
+    ///   func(this: directory-entry-stream) -> ()`. Releases a
+    /// directory iterator handle. Phase 1.5.6 calls this once per
+    /// `Disk.listDir` invocation.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    FilesystemTypesResourceDropDirectoryEntryStream,
 }
 
 impl Wasip2ImportSlot {
@@ -337,6 +363,18 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::FilesystemTypesAppendViaStream => (
                 "wasi:filesystem/types@0.2.4",
                 "[method]descriptor.append-via-stream",
+            ),
+            Wasip2ImportSlot::FilesystemTypesReadDirectory => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]descriptor.read-directory",
+            ),
+            Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry => (
+                "wasi:filesystem/types@0.2.4",
+                "[method]directory-entry-stream.read-directory-entry",
+            ),
+            Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream => (
+                "wasi:filesystem/types@0.2.4",
+                "[resource-drop]directory-entry-stream",
             ),
         }
     }
@@ -438,9 +476,15 @@ impl Wasip2ImportSlot {
                 ValType::I32, // retptr
             ],
             // `append-via-stream(this) -> result<output-stream, _>`
-            // — no offset, retptr only.
-            Wasip2ImportSlot::FilesystemTypesAppendViaStream => {
+            // — no offset, retptr only. Same shape for
+            // read-directory and read-directory-entry.
+            Wasip2ImportSlot::FilesystemTypesAppendViaStream
+            | Wasip2ImportSlot::FilesystemTypesReadDirectory
+            | Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry => {
                 vec![ValType::I32, ValType::I32]
+            }
+            Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream => {
+                vec![ValType::I32]
             }
         }
     }
@@ -471,7 +515,10 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::FilesystemTypesUnlinkFileAt
             | Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt
             | Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt
-            | Wasip2ImportSlot::FilesystemTypesAppendViaStream => Vec::new(),
+            | Wasip2ImportSlot::FilesystemTypesAppendViaStream
+            | Wasip2ImportSlot::FilesystemTypesReadDirectory
+            | Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry
+            | Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
         }
