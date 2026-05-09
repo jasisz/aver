@@ -17,7 +17,7 @@ Cloudflare Workers and browsers do not run components natively; they stay on `--
 
 ## Why no preview-1 adapter
 
-The preview-1 component adapter is the right tool for migrating existing preview-1 wasm modules into the Component Model — it preserves their original ABI and translates calls at the boundary. Aver does not need that. Aver effects are typed and declared in source (`! [Console.print, Time.unixMs]`); there is no preview-1 ABI to preserve. Routing through the adapter would just replicate one compatibility shim with another. Direct WIT lowering is the natural shape for a language whose effects already match WIT semantics.
+The preview-1 component adapter is the right tool for migrating existing preview-1 wasm modules into the Component Model — it preserves their original ABI and translates calls at the boundary. Aver does not need that. Aver effects are typed and declared in source (`! [Console.print, Time.unixMs]`); there is no preview-1 ABI to preserve. Routing through the adapter would just replicate one compatibility shim with another. Direct WIT lowering is the natural shape for a language whose effects already declare the host capabilities the component imports.
 
 ## Architecture
 
@@ -96,12 +96,12 @@ Aver effects lower directly to WASI 0.2 imports. The mapping is fixed per effect
 | `Args.get` | `wasi:cli/environment.get-arguments` |
 | `Env.get` | `wasi:cli/environment.get-environment` |
 | `Env.set` | **Compile-rejected** — WASI 0.2 environment is read-only by design (no host can ever satisfy a write). Same "cannot-ever-support" category as `Terminal.*`. |
-| `Console.print` / `error` / `warn` | `wasi:cli/stdout.get-stdout` / `wasi:cli/stderr.get-stderr` (cached) + `wasi:io/streams.output-stream.[method]blocking-write-and-flush` |
+| `Console.print` / `error` / `warn` | `wasi:cli/stdout.get-stdout` / `wasi:cli/stderr.get-stderr` (cached) + `wasi:io/streams.output-stream.[method]blocking-write-and-flush`. 0.18 uses blocking write-and-flush for command-component semantics and simple replayability — one `Console.*` call ⇒ at most one host-side flush, easy to record/replay deterministically. WASI output-streams are fundamentally non-blocking with a polling model; `blocking-write-and-flush` is a binding-level convenience helper that bundles `check-write` + `write` + `flush` + `subscribe`/`poll` into one call. Buffered stdout/stderr could land later as an optimisation, but the semantic unit stays the Aver `Console` call. |
 | `Console.readLine` | `wasi:cli/stdin.get-stdin` (cached) + `wasi:io/streams.input-stream.[method]blocking-read` |
 | `Disk.readText` / `writeText` / `appendText` / `exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | `wasi:filesystem/preopens.get-directories` (cached) + `wasi:filesystem/types.[method]*`. Paths outside preopens return `Result.Err("path not preopened")` — capability model, contract point 8. |
 | `Time.now` / `unixMs` | `wasi:clocks/wall-clock.now` (Time.now formats RFC3339 guest-side via Howard Hinnant's `civil_from_days`) |
 | `Time.sleep` | `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` + `[resource-drop]pollable` (per-call pollable, real wait — not busy-loop) |
-| `Random.int` / `float` | `wasi:random/random.get-random-u64` + Aver-side range scaling |
+| `Random.int` / `float` | `wasi:random/random.get-random-u64` + Aver-side range scaling. This is the secure `wasi:random/random` interface (same contract as `get-random-bytes`, just returning 8 cryptographically-secure bytes packed into a u64); we deliberately do NOT use `wasi:random/insecure.get-insecure-random-u64`. If we later need finer byte-level control (e.g. for `Random.bytes(n)`), the switch to `get-random-bytes` is mechanical. |
 | `Http.*` | **Compile-rejected** — out of 0.18 scope (Phase 2 / 0.19) |
 | `HttpServer.listen` / `listenWith` | **Compile-rejected** — out of 0.18 scope (Phase 3 / 0.19) |
 | `Tcp.*` | **Compile-rejected** — out of 0.18 scope (Phase 2 / 0.19) |
