@@ -64,15 +64,17 @@ pub(super) struct HttpGetIndices {
     /// `HttpResponse` struct type idx (status: i64, body: ref
     /// string, headers: ref map).
     pub http_response_type_idx: u32,
-    /// `Map<String, List<String>>` slot triple — used to allocate
-    /// the empty `headers` field. The body emits the same
-    /// `array.new_default + struct.new` sequence as
-    /// `emit_map_empty` so source-level `headers` survives a
-    /// `Map.len`/`Map.get` call without a separate Map.empty
-    /// helper invocation.
+    /// `Map<String, List<String>>` slot triple — initialised empty
+    /// via the inline `array.new_default + struct.new` sequence
+    /// (matches `emit_map_empty`), then populated entry-by-entry
+    /// via `Map.set` (`map_set_fn` in `HttpGetHelperFns`).
     pub headers_keys_array_type_idx: u32,
     pub headers_values_array_type_idx: u32,
     pub headers_map_type_idx: u32,
+    /// `List<String>` cons-cell type idx. Each header value lands
+    /// in a singleton `[value]` list (struct.new with head=string,
+    /// tail=null) before being inserted into the headers map.
+    pub list_string_type_idx: u32,
 }
 
 /// Bundle of wasm fn indices the body references via `Call(idx)`.
@@ -106,6 +108,33 @@ pub(super) struct HttpGetHelperFns {
     pub drop_future_response_fn: u32,
     pub drop_incoming_response_fn: u32,
     pub drop_future_trailers_fn: u32,
+    /// Step F — drop incoming-body on error paths between
+    /// `consume()` and `body.finish()`. On the happy path
+    /// `body.finish` transfers ownership; on stream/read failure
+    /// we own a live body handle that needs explicit drop.
+    pub drop_incoming_body_fn: u32,
+    /// Step G — `[method]incoming-response.headers: (this) ->
+    /// own<fields>`. Returns the fields handle carrying response
+    /// headers. Must be dropped (via `drop_fields_fn`) BEFORE the
+    /// parent incoming-response is dropped.
+    pub headers_fn: u32,
+    /// Step G — `[method]fields.entries: (this, retptr) -> ()`.
+    /// Writes (entries_ptr i32, entries_len i32) at retptr; each
+    /// entry is 16 bytes: (str_ptr, str_len, val_ptr, val_len).
+    pub entries_fn: u32,
+    /// Step G — `[resource-drop]fields`. Called after entries are
+    /// drained, before drop_incoming_response.
+    pub drop_fields_fn: u32,
+    /// `__rt_string_from_lm(len)` — bridge helper for converting
+    /// LM[0..len] bytes into a fresh Aver `(array i8)`. Used by
+    /// the headers loop to materialise field-name and field-value
+    /// strings (we memory.copy from cabi_realloc heap to LM[0..]
+    /// then call this).
+    pub from_lm_fn: u32,
+    /// `Map.set` for the `Map<String, List<String>>` headers
+    /// instantiation. Sourced from `fn_map.map_helpers["Map<
+    /// String,List<String>>"].set` at wiring time.
+    pub map_set_fn: u32,
 }
 
 /// Same `INITIAL_CAP` as `emit_map_empty` in `maps.rs`. Wastes
@@ -159,13 +188,33 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     //   28 = new_cap           (i32)  scratch for capacity doubling
     //   29 = k                 (i32)  byte-copy iterator
     //   30 = trailers          (i32)  future-trailers handle
-    //   31 = arr (ref string)         body string ref + Err scratch
-    //   32 = resp (ref HttpResponse)  built before wrapping in Result.Ok
+    //   31 = h_fields          (i32)  fields handle from incoming-response.headers
+    //   32 = h_retptr          (i32)  retptr for fields.entries (8 bytes)
+    //   33 = h_entries_ptr     (i32)  list base address
+    //   34 = h_entries_len     (i32)  list length (entry count)
+    //   35 = h_idx             (i32)  loop counter
+    //   36 = h_entry_addr      (i32)  entries_ptr + idx*16
+    //   37 = h_name_ptr        (i32)  per-entry: field-key str ptr
+    //   38 = h_name_len        (i32)
+    //   39 = h_val_ptr         (i32)  per-entry: field-value list ptr
+    //   40 = h_val_len         (i32)
+    //   41 = arr (ref string)         body string ref + Err scratch
+    //   42 = resp (ref HttpResponse)  built before wrapping in Result.Ok
+    //   43 = h_map (ref map)          accumulated Map<String, List<String>>
     let resp_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(indices.http_response_type_idx),
     });
-    let mut f = Function::new(vec![(30, ValType::I32), (1, s_ref), (1, resp_ref)]);
+    let map_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.headers_map_type_idx),
+    });
+    let mut f = Function::new(vec![
+        (40, ValType::I32),
+        (1, s_ref),
+        (1, resp_ref),
+        (1, map_ref),
+    ]);
 
     let p_url = 0u32;
     let l_url_len = 1u32;
@@ -198,8 +247,19 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     let l_new_cap = 28u32;
     let l_k = 29u32;
     let l_trailers = 30u32;
-    let l_arr = 31u32;
-    let l_resp = 32u32;
+    let l_h_fields = 31u32;
+    let l_h_retptr = 32u32;
+    let l_h_entries_ptr = 33u32;
+    let l_h_entries_len = 34u32;
+    let l_h_idx = 35u32;
+    let l_h_entry_addr = 36u32;
+    let l_h_name_ptr = 37u32;
+    let l_h_name_len = 38u32;
+    let l_h_val_ptr = 39u32;
+    let l_h_val_len = 40u32;
+    let l_arr = 41u32;
+    let l_resp = 42u32;
+    let l_h_map = 43u32;
 
     let mem4 = MemArg {
         offset: 0,
@@ -686,6 +746,153 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     // wasi returns the u16 zero-extended in an i32 — no extra
     // load needed. Local l_in_buf now holds the status code.
 
+    // ── 11b. headers — Step G ──────────────────────────────────
+    //
+    // headers = response.headers() → own<fields>
+    // entries = fields.entries() → list<tuple<field-key, field-value>>
+    // for each entry:
+    //   key = string from LM (via memory.copy + __rt_string_from_lm)
+    //   val = string from LM (same)
+    //   singleton = struct.new $list_string (val, ref.null)
+    //   map = Map.set(map, key, singleton)
+    // drop fields  (child of incoming-response, must drop before
+    //              drop_incoming_response)
+    //
+    // Multi-valued headers (same field-key in multiple entries —
+    // e.g. Set-Cookie) are mapped via simple insert: each Map.set
+    // overwrites the previous value. Surfacing the full multi-set
+    // would require Map.get + List.prepend per entry; deferred to
+    // a follow-up since real HTTP responses rarely repeat header
+    // names besides Set-Cookie.
+
+    // Initialise empty map (matches `emit_map_empty`).
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(keys_arr_idx));
+    f.instruction(&Instruction::I32Const(INITIAL_CAP));
+    f.instruction(&Instruction::ArrayNewDefault(values_arr_idx));
+    f.instruction(&Instruction::StructNew(map_idx));
+    f.instruction(&Instruction::LocalSet(l_h_map));
+
+    // headers = response.headers() → fields handle
+    f.instruction(&Instruction::LocalGet(l_response));
+    f.instruction(&Instruction::Call(h.headers_fn));
+    f.instruction(&Instruction::LocalSet(l_h_fields));
+
+    // retptr for fields.entries — list<tuple<...>> lowers to
+    // (ptr i32, len i32) = 8 bytes via retptr.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_h_retptr));
+
+    f.instruction(&Instruction::LocalGet(l_h_fields));
+    f.instruction(&Instruction::LocalGet(l_h_retptr));
+    f.instruction(&Instruction::Call(h.entries_fn));
+
+    f.instruction(&Instruction::LocalGet(l_h_retptr));
+    f.instruction(&Instruction::I32Load(mem4));
+    f.instruction(&Instruction::LocalSet(l_h_entries_ptr));
+    f.instruction(&Instruction::LocalGet(l_h_retptr));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_h_entries_len));
+
+    // Loop i = 0..entries_len.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_h_idx));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    {
+        // exit when idx >= entries_len.
+        f.instruction(&Instruction::LocalGet(l_h_idx));
+        f.instruction(&Instruction::LocalGet(l_h_entries_len));
+        f.instruction(&Instruction::I32GeU);
+        f.instruction(&Instruction::BrIf(1));
+
+        // entry_addr = entries_ptr + idx * 16.
+        f.instruction(&Instruction::LocalGet(l_h_entries_ptr));
+        f.instruction(&Instruction::LocalGet(l_h_idx));
+        f.instruction(&Instruction::I32Const(16));
+        f.instruction(&Instruction::I32Mul);
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(l_h_entry_addr));
+
+        // Read tuple<string, list<u8>> at entry_addr:
+        //   +0 name_ptr i32, +4 name_len i32,
+        //   +8 val_ptr  i32, +12 val_len  i32
+        f.instruction(&Instruction::LocalGet(l_h_entry_addr));
+        f.instruction(&Instruction::I32Load(mem4));
+        f.instruction(&Instruction::LocalSet(l_h_name_ptr));
+        f.instruction(&Instruction::LocalGet(l_h_entry_addr));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_h_name_len));
+        f.instruction(&Instruction::LocalGet(l_h_entry_addr));
+        f.instruction(&Instruction::I32Load(mem4_o8));
+        f.instruction(&Instruction::LocalSet(l_h_val_ptr));
+        f.instruction(&Instruction::LocalGet(l_h_entry_addr));
+        f.instruction(&Instruction::I32Load(MemArg {
+            offset: 12,
+            align: 2,
+            memory_index: 0,
+        }));
+        f.instruction(&Instruction::LocalSet(l_h_val_len));
+
+        // Build map.set(l_h_map, name_str, [val_str]) →
+        //   stack: [map, name_str, singleton] → call → [new_map]
+        f.instruction(&Instruction::LocalGet(l_h_map));
+
+        // name_str: memory.copy name bytes → LM[0..name_len],
+        //           call __rt_string_from_lm(name_len).
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalGet(l_h_name_ptr));
+        f.instruction(&Instruction::LocalGet(l_h_name_len));
+        f.instruction(&Instruction::MemoryCopy {
+            src_mem: 0,
+            dst_mem: 0,
+        });
+        f.instruction(&Instruction::LocalGet(l_h_name_len));
+        f.instruction(&Instruction::Call(h.from_lm_fn));
+
+        // val_str: same shape (overwrites LM[0..] — fine, name was
+        // already lifted into a fresh GC array by from_lm).
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalGet(l_h_val_ptr));
+        f.instruction(&Instruction::LocalGet(l_h_val_len));
+        f.instruction(&Instruction::MemoryCopy {
+            src_mem: 0,
+            dst_mem: 0,
+        });
+        f.instruction(&Instruction::LocalGet(l_h_val_len));
+        f.instruction(&Instruction::Call(h.from_lm_fn));
+
+        // singleton = [val_str] = struct.new $list_string (val, null)
+        f.instruction(&Instruction::RefNull(HeapType::Concrete(
+            indices.list_string_type_idx,
+        )));
+        f.instruction(&Instruction::StructNew(indices.list_string_type_idx));
+
+        // Map.set(map, name_str, singleton) → new map ref.
+        f.instruction(&Instruction::Call(h.map_set_fn));
+        f.instruction(&Instruction::LocalSet(l_h_map));
+
+        // idx++; continue.
+        f.instruction(&Instruction::LocalGet(l_h_idx));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(l_h_idx));
+        f.instruction(&Instruction::Br(0));
+    }
+    f.instruction(&Instruction::End); // Loop
+    f.instruction(&Instruction::End); // Block
+
+    // Drop fields BEFORE drop_incoming_response (fields is a
+    // child resource of incoming-response per WIT).
+    f.instruction(&Instruction::LocalGet(l_h_fields));
+    f.instruction(&Instruction::Call(h.drop_fields_fn));
+
     // ── 12. consume(response, retptr4) — assume Ok ─────────────
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
@@ -732,6 +939,11 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::I32Ne);
     f.instruction(&Instruction::If(BlockType::Empty));
     {
+        // Step F — body has been consumed but stream() failed.
+        // Drop body explicitly (finish() never runs on this path).
+        // Order: child resources first, then parent.
+        f.instruction(&Instruction::LocalGet(l_body));
+        f.instruction(&Instruction::Call(h.drop_incoming_body_fn));
         f.instruction(&Instruction::LocalGet(l_response));
         f.instruction(&Instruction::Call(h.drop_incoming_response_fn));
         emit_err(&mut f, b"http: body stream failed");
@@ -786,9 +998,12 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         f.instruction(&Instruction::If(BlockType::Empty));
         f.instruction(&Instruction::Br(3)); // exit Block (depth 0=If, 1=Loop, 2=Block)
         f.instruction(&Instruction::End);
-        // Real failure — drop stream + response, return Err.
+        // Real failure — drop stream + body + response (child→parent
+        // order). Step F: body was leaked here pre-fix.
         f.instruction(&Instruction::LocalGet(l_stream));
         f.instruction(&Instruction::Call(h.drop_input_stream_fn));
+        f.instruction(&Instruction::LocalGet(l_body));
+        f.instruction(&Instruction::Call(h.drop_incoming_body_fn));
         f.instruction(&Instruction::LocalGet(l_response));
         f.instruction(&Instruction::Call(h.drop_incoming_response_fn));
         emit_err(&mut f, b"http: read failed");
@@ -935,20 +1150,9 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     // body: ref string (l_arr, populated above).
     f.instruction(&Instruction::LocalGet(l_arr));
 
-    // headers: empty Map<String, List<String>>. Inline the
-    // size+cap+keys+values+struct.new sequence used by
-    // emit_map_empty (matches the canonical call-site of
-    // `Map.empty`). TODO: surface real headers via
-    // `[method]incoming-response.headers` — would need an
-    // additional import slot and a list<tuple<string, list<string>>>
-    // decoder. Out of scope for v1 PoC.
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::ArrayNewDefault(keys_arr_idx));
-    f.instruction(&Instruction::I32Const(INITIAL_CAP));
-    f.instruction(&Instruction::ArrayNewDefault(values_arr_idx));
-    f.instruction(&Instruction::StructNew(map_idx));
+    // headers: Map<String, List<String>> built from
+    // incoming-response.headers + fields.entries in step 11b.
+    f.instruction(&Instruction::LocalGet(l_h_map));
 
     f.instruction(&Instruction::StructNew(resp_idx));
     f.instruction(&Instruction::LocalSet(l_resp));

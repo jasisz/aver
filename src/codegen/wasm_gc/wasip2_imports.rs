@@ -461,6 +461,40 @@ pub(super) enum Wasip2ImportSlot {
     /// immediately (trailers aren't surfaced to source).
     /// Canonical-ABI signature: `(handle: i32) -> ()`.
     HttpTypesResourceDropFutureTrailers,
+    /// `wasi:http/types.[resource-drop]incoming-body`. Used by the
+    /// error paths between `consume()` and `body.finish()` —
+    /// `body.finish` transfers ownership on the happy path, but
+    /// any failure (body.stream Err, blocking-read Err) leaves
+    /// the body handle live and we must drop it explicitly.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropIncomingBody,
+    /// `wasi:http/types.[method]incoming-response.headers:
+    ///   func(this: borrow<incoming-response>) -> headers`.
+    /// Returns an `own<fields>` resource carrying the response
+    /// headers. The fields resource is a child of incoming-
+    /// response — must be dropped BEFORE the parent (otherwise
+    /// drop_incoming_response panics).
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    HttpTypesIncomingResponseHeaders,
+    /// `wasi:http/types.[method]fields.entries:
+    ///   func(this: borrow<fields>) -> list<tuple<field-key, field-value>>`.
+    /// `field-key` = string, `field-value` = list<u8>. Each
+    /// (name, value) pair is one tuple; multi-valued headers
+    /// surface as multiple entries with the same field-key.
+    /// Retptr writes (entries_ptr i32, entries_len i32) at
+    /// offset 0 / +4. Each entry is 16 bytes:
+    /// - +0: field-key str_ptr i32
+    /// - +4: field-key str_len i32
+    /// - +8: field-value list_ptr i32
+    /// - +12: field-value list_len i32
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesFieldsEntries,
+    /// `wasi:http/types.[resource-drop]fields`. Drops the fields
+    /// handle returned by `incoming-response.headers`. Must be
+    /// called BEFORE `[resource-drop]incoming-response` since
+    /// fields is a child resource.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropFields,
 }
 
 impl Wasip2ImportSlot {
@@ -604,6 +638,18 @@ impl Wasip2ImportSlot {
             }
             Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers => {
                 ("wasi:http/types@0.2.4", "[resource-drop]future-trailers")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropIncomingBody => {
+                ("wasi:http/types@0.2.4", "[resource-drop]incoming-body")
+            }
+            Wasip2ImportSlot::HttpTypesIncomingResponseHeaders => {
+                ("wasi:http/types@0.2.4", "[method]incoming-response.headers")
+            }
+            Wasip2ImportSlot::HttpTypesFieldsEntries => {
+                ("wasi:http/types@0.2.4", "[method]fields.entries")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropFields => {
+                ("wasi:http/types@0.2.4", "[resource-drop]fields")
             }
         }
     }
@@ -749,16 +795,20 @@ impl Wasip2ImportSlot {
             ],
             // `[method]future-incoming-response.subscribe(this) -> pollable`
             // and `[method]incoming-response.status(this) -> status-code`
-            // — both flat: single i32 in, single i32 out.
+            // and `[method]incoming-response.headers(this) -> headers`
+            // — all flat: single i32 in, single i32 out.
             Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe
-            | Wasip2ImportSlot::HttpTypesIncomingResponseStatus => vec![ValType::I32],
+            | Wasip2ImportSlot::HttpTypesIncomingResponseStatus
+            | Wasip2ImportSlot::HttpTypesIncomingResponseHeaders => vec![ValType::I32],
             // `[method]future-incoming-response.get(this) -> opt<...>` /
             // `incoming-response.consume(this) -> result<incoming-body>` /
-            // `incoming-body.stream(this) -> result<input-stream>`
+            // `incoming-body.stream(this) -> result<input-stream>` /
+            // `[method]fields.entries(this) -> list<tuple<...>>`
             // — all `(this, retptr)`.
             Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet
             | Wasip2ImportSlot::HttpTypesIncomingResponseConsume
-            | Wasip2ImportSlot::HttpTypesIncomingBodyStream => {
+            | Wasip2ImportSlot::HttpTypesIncomingBodyStream
+            | Wasip2ImportSlot::HttpTypesFieldsEntries => {
                 vec![ValType::I32, ValType::I32]
             }
             // `[static]incoming-body.finish(this) -> future-trailers`.
@@ -767,7 +817,9 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest
             | Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse
             | Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse
-            | Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers => vec![ValType::I32],
+            | Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers
+            | Wasip2ImportSlot::HttpTypesResourceDropIncomingBody
+            | Wasip2ImportSlot::HttpTypesResourceDropFields => vec![ValType::I32],
         }
     }
 
@@ -815,17 +867,21 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery
             | Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe
             | Wasip2ImportSlot::HttpTypesIncomingResponseStatus
+            | Wasip2ImportSlot::HttpTypesIncomingResponseHeaders
             | Wasip2ImportSlot::HttpTypesIncomingBodyFinish => vec![ValType::I32],
             // Result-via-retptr — no inline return.
             Wasip2ImportSlot::HttpOutgoingHandlerHandle
             | Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet
             | Wasip2ImportSlot::HttpTypesIncomingResponseConsume
-            | Wasip2ImportSlot::HttpTypesIncomingBodyStream => Vec::new(),
+            | Wasip2ImportSlot::HttpTypesIncomingBodyStream
+            | Wasip2ImportSlot::HttpTypesFieldsEntries => Vec::new(),
             // Resource drops — no return.
             Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest
             | Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse
             | Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse
-            | Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers => Vec::new(),
+            | Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers
+            | Wasip2ImportSlot::HttpTypesResourceDropIncomingBody
+            | Wasip2ImportSlot::HttpTypesResourceDropFields => Vec::new(),
         }
     }
 }

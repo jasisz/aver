@@ -117,11 +117,26 @@ fn http_get_returns_status_and_body() {
 
     let src = format!(
         r#"
+fn first_or(items: List<String>, dflt: String) -> String
+    match items
+        [] -> dflt
+        [head, ..rest] -> head
+
+fn header(headers: Map<String, List<String>>, name: String) -> String
+    match Map.get(headers, name)
+        Option.Some(values) -> first_or(values, "missing")
+        Option.None -> "absent"
+
+fn dump(r: HttpResponse) -> Unit
+    ! [Console.print]
+    ct: String = header(r.headers, "content-type")
+    Console.print("status={{r.status}} body_len={{String.len(r.body)}} headers_len={{Map.len(r.headers)}} ct={{ct}}")
+
 fn main() -> Unit
     ! [Http.get, Console.print]
     response = Http.get("http://127.0.0.1:{port}/")
     match response
-        Result.Ok(r) -> Console.print("status={{r.status}} body_len={{String.len(r.body)}}")
+        Result.Ok(r) -> dump(r)
         Result.Err(e) -> Console.print("err: {{e}}")
 "#
     );
@@ -155,6 +170,20 @@ fn main() -> Unit
     assert!(
         s.contains(&format!("body_len={expected_len}")),
         "expected body_len={expected_len} (matches fixture file size), got:\n{s}"
+    );
+    // Headers map populated — Python http.server always emits at
+    // least content-type, content-length, server, date (wasi-http
+    // normalises field names to lowercase). Asserting a positive
+    // count + the content-type lookup hitting "text/html" proves
+    // both incoming-response.headers + fields.entries + Map.set
+    // wiring round-trips correctly.
+    assert!(
+        s.contains("headers_len=") && !s.contains("headers_len=0"),
+        "expected non-zero headers count, got:\n{s}"
+    );
+    assert!(
+        s.contains("ct=text/html"),
+        "expected ct=text/html (Python http.server default for .html), got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

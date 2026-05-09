@@ -437,6 +437,16 @@ pub(super) fn emit_module_with(
                             .register(Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse);
                         wasip2_imports
                             .register(Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers);
+                        // Step F: drop incoming-body on error paths
+                        // (between consume() and finish()).
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesResourceDropIncomingBody);
+                        // Step G: surface real response headers via
+                        // incoming-response.headers + fields.entries +
+                        // [resource-drop]fields (child of response).
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingResponseHeaders);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesFieldsEntries);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesResourceDropFields);
                     }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
@@ -1167,10 +1177,23 @@ pub(super) fn emit_module_with(
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers)
             .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropIncomingBody)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingResponseHeaders)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesFieldsEntries)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFields)
+            .is_some()
         && let Some(string_idx) = registry.string_array_type_idx
         && let Some(result_idx) = registry.result_type_idx("Result<HttpResponse,String>")
         && let Some(resp_idx) = registry.record_type_idx("HttpResponse")
         && let Some(map_slots) = registry.map_slots("Map<String,List<String>>")
+        && let Some(list_string_idx) = registry.list_type_idx("List<String>")
     {
         let r_ref = ValType::Ref(wasm_encoder::RefType {
             nullable: true,
@@ -1194,6 +1217,7 @@ pub(super) fn emit_module_with(
             headers_keys_array_type_idx: map_slots.keys_array,
             headers_values_array_type_idx: map_slots.values_array,
             headers_map_type_idx: map_slots.map,
+            list_string_type_idx: list_string_idx,
         })
     } else {
         None
@@ -2613,6 +2637,32 @@ pub(super) fn emit_module_with(
                 super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers,
                 "HttpTypesResourceDropFutureTrailers",
             ),
+            // Step F + G additions.
+            drop_incoming_body_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropIncomingBody,
+                "HttpTypesResourceDropIncomingBody",
+            ),
+            headers_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingResponseHeaders,
+                "HttpTypesIncomingResponseHeaders",
+            ),
+            entries_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesFieldsEntries,
+                "HttpTypesFieldsEntries",
+            ),
+            drop_fields_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFields,
+                "HttpTypesResourceDropFields",
+            ),
+            from_lm_fn: bridge
+                .as_ref()
+                .expect("http_get emit requires bridge (from_lm helper)")
+                .from_lm_fn,
+            map_set_fn: fn_map
+                .map_helpers
+                .get("Map<String,List<String>>")
+                .expect("http_get emit requires Map<String,List<String>> helpers")
+                .set,
         };
         codes.function(&super::wasip2_http::emit_http_get(hg, &helpers));
     }
