@@ -221,17 +221,25 @@ All commands use the bytecode VM. For VM internals, see [docs/vm.md](docs/vm.md)
 ### WASM
 
 ```bash
-# Compile to .wasm (requires --features wasm)
-aver compile hello.av --target wasm
+# Native WebAssembly GC + tail-call output for browsers / Workers
+aver compile hello.av --target wasm-gc
 
-# Compile with the WASI preview-1 bridge for standalone wasmtime
-aver compile hello.av --target wasm --bridge wasip1
+# Run through embedded wasmtime (uses the same wasm-gc emit path)
+aver run hello.av --wasm-gc
 
-# Run via built-in WASM host
-aver run hello.av --wasm
+# WASI 0.2 / Component Model output (wasmtime, Spin, NGINX Unit, etc.)
+aver compile hello.av --target wasip2
+
+# Run a wasip2 component through embedded wasmtime + wasi
+aver run hello.av --wasip2 -- some-arg
 ```
 
-See [docs/wasm.md](docs/wasm.md) for ABI, memory model, and browser hosting.
+`--target wasm-gc` is the default modern target (Chrome 119+ /
+Firefox 120+ / Safari 18.2+ / wasmtime 25+ / Node 22+ / Workers).
+`--target wasip2` is its peer for the Component Model side. The
+pre-2024 NaN-boxed wasm32 backend (`--target wasm` + `--bridge`)
+was dropped in 0.18 — see [`src/codegen/wasm_gc/README.md`](src/codegen/wasm_gc/README.md)
+and [`docs/wasip2.md`](docs/wasip2.md) for the design notes.
 
 ### Native Rust
 

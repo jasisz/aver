@@ -62,27 +62,6 @@ fn run_vm(prefix: &str, source: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-fn run_wasm(prefix: &str, source: &str) -> String {
-    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-    let path = temp_module(prefix, source);
-    let out = Command::new(aver_bin)
-        .current_dir(&repo_root)
-        .arg("run")
-        .arg(&path)
-        .arg("--wasm")
-        .output()
-        .expect("expected `aver run --wasm` to execute");
-    cleanup(&path);
-    assert!(
-        out.status.success(),
-        "{} WASM run failed:\n{}",
-        prefix,
-        format_output(&out)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
 fn run_wasm_gc(prefix: &str, source: &str) -> String {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
@@ -352,14 +331,6 @@ fn cross_overwrite_same_key_vm() {
     );
 }
 #[test]
-fn cross_overwrite_same_key_wasm() {
-    assert_eq_with_label(
-        "WASM",
-        &run_wasm("aver-cross-overwrite-wasm", OVERWRITE_SRC),
-        OVERWRITE_OUT,
-    );
-}
-#[test]
 fn cross_overwrite_same_key_self_host() {
     assert_eq_with_label(
         "self-host",
@@ -373,14 +344,6 @@ fn cross_map_unique_keys_5k_vm() {
     assert_eq_with_label(
         "VM",
         &run_vm("aver-cross-uniq5k-vm", UNIQUE_KEYS_SRC),
-        UNIQUE_KEYS_OUT,
-    );
-}
-#[test]
-fn cross_map_unique_keys_5k_wasm() {
-    assert_eq_with_label(
-        "WASM",
-        &run_wasm("aver-cross-uniq5k-wasm", UNIQUE_KEYS_SRC),
         UNIQUE_KEYS_OUT,
     );
 }
@@ -402,14 +365,6 @@ fn cross_vector_tco_3k_vm() {
     );
 }
 #[test]
-fn cross_vector_tco_3k_wasm() {
-    assert_eq_with_label(
-        "WASM",
-        &run_wasm("aver-cross-vec3k-wasm", VECTOR_TCO_SRC),
-        VECTOR_TCO_OUT,
-    );
-}
-#[test]
 fn cross_vector_tco_3k_self_host() {
     assert_eq_with_label(
         "self-host",
@@ -421,14 +376,6 @@ fn cross_vector_tco_3k_self_host() {
 #[test]
 fn cross_mixed_map_vector_tco_vm() {
     assert_eq_with_label("VM", &run_vm("aver-cross-mixed-vm", MIXED_SRC), MIXED_OUT);
-}
-#[test]
-fn cross_mixed_map_vector_tco_wasm() {
-    assert_eq_with_label(
-        "WASM",
-        &run_wasm("aver-cross-mixed-wasm", MIXED_SRC),
-        MIXED_OUT,
-    );
 }
 #[test]
 fn cross_mixed_map_vector_tco_self_host() {
@@ -444,14 +391,6 @@ fn cross_nested_record_map_list_vm() {
     assert_eq_with_label(
         "VM",
         &run_vm("aver-cross-nested-vm", NESTED_SRC),
-        NESTED_OUT,
-    );
-}
-#[test]
-fn cross_nested_record_map_list_wasm() {
-    assert_eq_with_label(
-        "WASM",
-        &run_wasm("aver-cross-nested-wasm", NESTED_SRC),
         NESTED_OUT,
     );
 }
@@ -473,14 +412,6 @@ fn cross_map_resize_8k_vm() {
     );
 }
 #[test]
-fn cross_map_resize_8k_wasm() {
-    assert_eq_with_label(
-        "WASM",
-        &run_wasm("aver-cross-resize8k-wasm", RESIZE_SRC),
-        RESIZE_OUT,
-    );
-}
-#[test]
 fn cross_map_resize_8k_self_host() {
     assert_eq_with_label(
         "self-host",
@@ -498,14 +429,6 @@ fn cross_list_from_vector_2k_vm() {
     );
 }
 #[test]
-fn cross_list_from_vector_2k_wasm() {
-    assert_eq_with_label(
-        "WASM",
-        &run_wasm("aver-cross-lfv2k-wasm", LIST_FROM_VECTOR_SRC),
-        LIST_FROM_VECTOR_OUT,
-    );
-}
-#[test]
 fn cross_list_from_vector_2k_self_host() {
     assert_eq_with_label(
         "self-host",
@@ -519,14 +442,6 @@ fn cross_vector_aliasing_pin_vm() {
     assert_eq_with_label(
         "VM",
         &run_vm("aver-cross-alias-vm", VECTOR_ALIASING_SRC),
-        VECTOR_ALIASING_OUT,
-    );
-}
-#[test]
-fn cross_vector_aliasing_pin_wasm() {
-    assert_eq_with_label(
-        "WASM",
-        &run_wasm("aver-cross-alias-wasm", VECTOR_ALIASING_SRC),
         VECTOR_ALIASING_OUT,
     );
 }

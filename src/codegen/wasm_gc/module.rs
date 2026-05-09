@@ -26,20 +26,58 @@ use wasm_encoder::{
 
 use super::WasmGcError;
 use super::body::eq_helpers::{EqHelperRegistry, EqKind};
+#[allow(dead_code)]
+struct Wasip2Globals {
+    /// Global idx of the bump-allocator cursor backing
+    /// `cabi_realloc` — Phase 1.3.1. Always allocated when this
+    /// struct is constructed (i.e., wasip2 imports active). Initial
+    /// value `65536` (start of page 2): page 1 stays as the
+    /// transient transport buffer for `__rt_string_to_lm` /
+    /// `Console.*` writes; persistent `cabi_realloc` allocations
+    /// grow upward from page 2.
+    bump_alloc_ptr: u32,
+    /// Global idx caching the `wasi:cli/stdout.get-stdout` resource
+    /// handle, lazy-initialised on first use. `None` when the program
+    /// does not register `Console.print` (the only effect that calls
+    /// `get-stdout`). Phase 1.2b1.5 is the consumer.
+    stdout_handle: Option<u32>,
+    /// Same shape, for `wasi:cli/stderr.get-stderr`. Populated when
+    /// `Console.error` or `Console.warn` is registered.
+    stderr_handle: Option<u32>,
+    /// Same shape, for `wasi:cli/stdin.get-stdin`. Populated when
+    /// `Console.readLine` is registered. The resource is program-
+    /// lifetime — wasmtime cleans up at component exit, so we never
+    /// emit `[resource-drop]input-stream` for it.
+    stdin_handle: Option<u32>,
+    /// Phase 1.5.1 — caches the first `wasi:filesystem/preopens.
+    /// get-directories` entry's descriptor handle. Populated when
+    /// any `Disk.*` is registered. -1 sentinel = "not yet
+    /// fetched" or "no preopens"; helpers retry fetch on -1.
+    disk_preopen_handle: Option<u32>,
+}
 use super::body::hash_helpers::{HashHelperRegistry, HashKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
 use super::types::{TypeRegistry, param_types, record_struct_type, return_results};
+use super::wasip2_helpers::{
+    CabiReallocIndices, ConsoleReadLineIndices, DecodeListStringIndices, DiskExistsIndices,
+    DiskListDirIndices, DiskReadTextIndices, DiskSimplePathOpIndices, DiskWriteTextIndices,
+    EnvGetLookupIndices, FormatIso8601Indices, TimeSleepIndices, emit_cabi_realloc,
+    emit_console_read_line, emit_decode_list_string, emit_disk_exists, emit_disk_list_dir,
+    emit_disk_read_text, emit_disk_simple_path_op, emit_disk_write_text, emit_env_get_lookup,
+    emit_format_iso8601, emit_time_sleep,
+};
 use super::wat_helper;
 use crate::types::Type as AverType;
 
 use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
 
-pub(super) fn emit_module(
+pub(super) fn emit_module_with(
     items: &[TopLevel],
     handler_name: Option<&str>,
+    target: super::TargetMode,
 ) -> Result<Vec<u8>, WasmGcError> {
     let registry = TypeRegistry::build_with_handler(items, handler_name.is_some());
 
@@ -224,16 +262,164 @@ pub(super) fn emit_module(
 
     // 2) Effect import types. Imports take fn idx 0..K so their
     //    type slots come right after user types.
+    //
+    //    Phase 1.2b1.2 — branch on `target`. AverBridge keeps the
+    //    existing `aver/*` import shape (one wasm import per
+    //    registered `EffectName`). Wasip2 substitutes a parallel
+    //    `Wasip2ImportRegistry` whose slots speak Component-Model
+    //    canonical-ABI names (`wasi:cli/stdout.get-stdout` etc.).
+    //    For Phase 1.2b1.2 the wasip2 registry is empty unless the
+    //    upstream effect-check let a Console.* effect through —
+    //    which only happens once Phase 1.2b1.5 graduates the trio
+    //    from `pending` to `wired`.
     let mut next_type_idx = registry.user_type_count;
-    effect_registry.assign_slots(&mut next_type_idx);
-    for name in effect_registry.iter() {
-        let p = name.params(&registry)?;
-        let r = name.results(&registry)?;
-        types.ty().function(p, r);
+    let mut wasip2_imports = super::wasip2_imports::Wasip2ImportRegistry::new();
+    match target {
+        super::TargetMode::AverBridge => {
+            effect_registry.assign_slots(&mut next_type_idx);
+            for name in effect_registry.iter() {
+                let p = name.params(&registry)?;
+                let r = name.results(&registry)?;
+                types.ty().function(p, r);
+            }
+        }
+        super::TargetMode::Wasip2 => {
+            // Populate the wasip2 registry from each effect that
+            // lowers on this target. The slot set per effect is:
+            //   Console.print → CliGetStdout + OutputStreamBlockingWriteAndFlush
+            //   Console.error → CliGetStderr + OutputStreamBlockingWriteAndFlush
+            //   Console.warn  → CliGetStderr + OutputStreamBlockingWriteAndFlush
+            // (warn → stderr matches the VM and wasm-gc target's
+            // default semantics — `Console.warn` writes to fd 2.)
+            use super::effects::EffectName;
+            use super::wasip2_imports::Wasip2ImportSlot;
+            for name in effect_registry.iter() {
+                if !name.lowers_on_wasip2() {
+                    continue;
+                }
+                match name {
+                    EffectName::ConsolePrint => {
+                        wasip2_imports.register(Wasip2ImportSlot::CliGetStdout);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                    }
+                    EffectName::ConsoleError | EffectName::ConsoleWarn => {
+                        wasip2_imports.register(Wasip2ImportSlot::CliGetStderr);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                    }
+                    EffectName::TimeUnixMs | EffectName::TimeNow => {
+                        wasip2_imports.register(Wasip2ImportSlot::ClocksWallClockNow);
+                    }
+                    EffectName::RandomInt | EffectName::RandomFloat => {
+                        wasip2_imports.register(Wasip2ImportSlot::RandomGetRandomU64);
+                    }
+                    EffectName::ArgsGet => {
+                        wasip2_imports.register(Wasip2ImportSlot::CliEnvironmentGetArguments);
+                    }
+                    EffectName::EnvGet => {
+                        wasip2_imports.register(Wasip2ImportSlot::CliEnvironmentGetEnvironment);
+                    }
+                    EffectName::ConsoleReadLine => {
+                        wasip2_imports.register(Wasip2ImportSlot::CliStdinGetStdin);
+                        wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
+                    }
+                    EffectName::TimeSleep => {
+                        wasip2_imports.register(Wasip2ImportSlot::ClocksMonotonicSubscribeDuration);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
+                    }
+                    EffectName::DiskExists => {
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesStatAt);
+                    }
+                    EffectName::DiskReadText => {
+                        // Shares the preopens cache with Disk.exists.
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesReadViaStream);
+                        wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor);
+                        wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                    }
+                    EffectName::DiskWriteText => {
+                        // Shares preopens / open-at / blocking-write-and-flush
+                        // / drop-descriptor with earlier phases; adds
+                        // write-via-stream and the output-stream drop.
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesWriteViaStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                    }
+                    EffectName::DiskAppendText => {
+                        // Same shape as writeText, but uses
+                        // append-via-stream + open-flags=CREATE only.
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesAppendViaStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                    }
+                    EffectName::DiskDelete => {
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesUnlinkFileAt);
+                    }
+                    EffectName::DiskDeleteDir => {
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt);
+                    }
+                    EffectName::DiskMakeDir => {
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt);
+                    }
+                    EffectName::DiskListDir => {
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemPreopensGetDirectories);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesOpenAt);
+                        wasip2_imports.register(Wasip2ImportSlot::FilesystemTypesReadDirectory);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry,
+                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream,
+                        );
+                    }
+                    _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
+                }
+            }
+            wasip2_imports.assign_slots(&mut next_type_idx);
+            for slot in wasip2_imports.iter() {
+                let p = slot.params();
+                let r = slot.results();
+                types.ty().function(p, r);
+            }
+        }
     }
 
-    // 3) `_start` type — () -> ().
-    types.ty().function([], []);
+    // 3) Entry-point type. AverBridge keeps `_start: () -> ()` —
+    //    the JS host calls `_start` for its side effects and
+    //    discards any value `main` returns. Wasip2 needs the
+    //    canonical-ABI signature for `wasi:cli/run.run`, which is
+    //    `() -> i32` (lowered `result<_, _>`: `0 == Ok`,
+    //    `1 == Err`). The body emit branches in step with this
+    //    type allocation later in the code section.
+    let start_returns_i32 = matches!(target, super::TargetMode::Wasip2);
+    if start_returns_i32 {
+        types.ty().function([], [ValType::I32]);
+    } else {
+        types.ty().function([], []);
+    }
     let start_type_idx = next_type_idx;
     next_type_idx += 1;
 
@@ -249,7 +435,14 @@ pub(super) fn emit_module(
     }
 
     // 5) One fn type per registered builtin.
-    let import_count = effect_registry.import_count();
+    //
+    //    `import_count` is the wasm-fn-idx offset every other
+    //    function uses, so it must reflect whichever registry
+    //    drove the import-type emission above (per `target`).
+    let import_count: u32 = match target {
+        super::TargetMode::AverBridge => effect_registry.import_count(),
+        super::TargetMode::Wasip2 => wasip2_imports.import_count(),
+    };
     let mut next_builtin_fn_idx = import_count + 1 + (fn_defs.len() as u32);
     builtin_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     for name in builtin_registry.iter() {
@@ -375,6 +568,560 @@ pub(super) fn emit_module(
         None
     };
 
+    // 8b) `cabi_realloc` — Phase 1.3.1. The Component Model
+    //     canonical ABI requires a guest export named exactly
+    //     `cabi_realloc(old_ptr i32, old_size i32, align i32,
+    //     new_size i32) -> i32` whenever ANY imported function
+    //     returns a list, string, or other host-allocated value.
+    //     Phase 1.3.1 emits it scaffolding-style on every wasip2
+    //     build that has imports active; the first real consumers
+    //     (Args.get / Env.get / Console.readLine / Disk.readText)
+    //     come in 1.3.2+. wit-component is happy to carry an
+    //     unused export — host just never calls it.
+    let cabi_realloc: Option<CabiReallocIndices> =
+        if matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0 {
+            types.ty().function(
+                [ValType::I32, ValType::I32, ValType::I32, ValType::I32],
+                [ValType::I32],
+            );
+            let realloc_type = next_type_idx;
+            next_type_idx += 1;
+            let realloc_fn = next_builtin_fn_idx;
+            next_builtin_fn_idx += 1;
+            Some(CabiReallocIndices {
+                fn_type: realloc_type,
+                fn_idx: realloc_fn,
+            })
+        } else {
+            None
+        };
+
+    // 8c) `__rt_canonical_decode_list_string` — Phase 1.3.2.
+    //     Shared helper that walks a canonical-ABI lowered
+    //     `list<string>` retptr (`(list_ptr i32, list_len i32)`)
+    //     into an Aver `List<String>` (cons cells of GC `(array
+    //     i8)` strings). Emitted once per module when any list-
+    //     returning effect that lowers via this shape is registered;
+    //     today that's `Args.get` (more land in 1.3.3 / 1.5).
+    //
+    //     The fn signature uses the user module's `String` and
+    //     `List<String>` engine-GC type indices, so allocation is
+    //     gated on both being present in the registry. If the
+    //     registry didn't carry them yet, the discovery walker
+    //     would have failed earlier — defensive `Option` here just
+    //     keeps the helper out of programs that never reach
+    //     Args.get.
+    let decode_list_string: Option<DecodeListStringIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetArguments)
+            .is_some()
+        && let (Some(string_idx), Some(list_string_idx)) = (
+            registry.string_array_type_idx,
+            registry.list_type_idx("List<String>"),
+        ) {
+        let list_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(list_string_idx),
+        });
+        types.ty().function([ValType::I32], [list_ref]);
+        let decoder_type = next_type_idx;
+        next_type_idx += 1;
+        let decoder_fn = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DecodeListStringIndices {
+            fn_type: decoder_type,
+            fn_idx: decoder_fn,
+            string_type_idx: string_idx,
+            list_string_type_idx: list_string_idx,
+        })
+    } else {
+        None
+    };
+
+    // 8d) `__rt_canonical_env_lookup` — Phase 1.3.3.
+    //     Linear-search lookup over the canonical-ABI lowered
+    //     `list<tuple<string, string>>` retptr that
+    //     `wasi:cli/environment.get-environment` writes to.
+    //     Signature: `(retptr i32, key_ptr i32, key_len i32) ->
+    //     ref null $string`. Returns the matching value as a
+    //     fresh GC `(array i8)`, or an empty array when no key
+    //     matches — preserves Aver's `Env.get(name) -> String`
+    //     no-Option semantics.
+    // Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
+    // Phase 1.3.4 — `__rt_console_read_line() ->
+    // Result<String, String>` body. Caches `wasi:cli/stdin.get-stdin`
+    // in a wasm global (lazy-init via `-1` sentinel) and loops
+    // 1-byte `wasi:io/streams.[method]input-stream.blocking-read`
+    // calls until `\n` or EOF, accumulating into a `cabi_realloc`-
+    // owned buffer that doubles on overflow. Returns
+    // `Result.Ok(line)` on success (including partial-line-then-EOF
+    // — Unix convention) and `Result.Err("EOF")` only when the
+    // first read produces zero bytes.
+    let console_read_line: Option<ConsoleReadLineIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliStdinGetStdin)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<String,String>")
+    {
+        let res_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        types.ty().function([], [res_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(ConsoleReadLineIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_string_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
+    // Phase 1.4c — `__rt_time_sleep(ms i64)` helper. Subscribes
+    // for a `ms * 1_000_000` nanosecond duration on the monotonic
+    // clock, polls the resulting pollable to completion, drops the
+    // pollable. Pollable is per-call (single-use), so the
+    // `[resource-drop]` here is mandatory — without it every call
+    // would leak a host-side handle. Allocation order matches the
+    // funcs/codes append order below; getting these out of sync
+    // mis-routes call-site `Call(idx)` to the wrong helper body.
+    let time_sleep: Option<TimeSleepIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollPoll)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable)
+            .is_some()
+    {
+        types.ty().function([ValType::I64], []);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(TimeSleepIndices { fn_type, fn_idx })
+    } else {
+        None
+    };
+
+    // Phase 1.5.1 — `__rt_disk_exists(path: ref string) -> i32`
+    // helper. Lazy-fetches the first preopen descriptor (cached
+    // in `disk_preopen_handle` global), marshals the path bytes
+    // through `__rt_string_to_lm`, calls
+    // `wasi:filesystem/types.[method]descriptor.stat-at` and
+    // returns `1` for an `Ok` result, `0` for `Err` (and `0`
+    // when no preopens are configured at all). The
+    // `descriptor-stat` payload itself is left untouched.
+    let disk_exists: Option<DiskExistsIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesStatAt)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+    {
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [ValType::I32]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskExistsIndices { fn_type, fn_idx })
+    } else {
+        None
+    };
+
+    // Phase 1.5.2 — `__rt_disk_read_text(path: ref string) ->
+    // ref null $result_string_string`. Lazy-fetches the preopen,
+    // calls `open-at` to obtain a per-call file descriptor,
+    // calls `read-via-stream` to obtain a per-call input-stream,
+    // loops `blocking-read` (chunk size 65536) until EOF, copies
+    // the accumulated bytes into a fresh GC `(array i8)` for the
+    // `Result.Ok` payload, then drops both the input-stream and
+    // file descriptor. Any failure short-circuits to a generic
+    // `Result.Err("…")` (open failure / stream failure / read
+    // failure are all categorised by the operation that produced
+    // the error code, ignoring the specific `error-code` enum).
+    let disk_read_text: Option<DiskReadTextIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadViaStream,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<String,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskReadTextIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_string_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
+    // Phase 1.5.3 — `__rt_disk_write_text(path: ref string,
+    // content: ref string) -> ref null $result_unit_string`.
+    // Mirrors `__rt_disk_read_text`'s skeleton (preopens cache +
+    // open-at + via-stream + blocking-* + drops) flipped to the
+    // write side: `open-flags = create | truncate` (`5`),
+    // `descriptor-flags = WRITE` (`2`), `write-via-stream` for
+    // the output-stream, `blocking-write-and-flush` for the
+    // bytes themselves. Failure at any step short-circuits to
+    // `Result.Err("...")`.
+    let disk_write_text: Option<DiskWriteTextIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesWriteViaStream,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<Unit,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref, s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskWriteTextIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_unit_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
+    // Phase 1.5.5 — `__rt_disk_append_text(path, content) ->
+    // Result<Unit, String>`. Reuses the same body emitter as
+    // `__rt_disk_write_text` flipped to append mode (open-flags
+    // = CREATE only, append-via-stream instead of
+    // write-via-stream).
+    let disk_append_text: Option<DiskWriteTextIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesAppendViaStream,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<Unit,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref, s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskWriteTextIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_unit_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
+    // Phase 1.5.4 — `Disk.delete`, `Disk.deleteDir`, `Disk.makeDir`
+    // share a generic helper: lazy-init preopen, marshal path,
+    // call the matching `<op>-at`, return `Result.Ok(Unit)` on Ok-tag
+    // / `Result.Err(<msg>)` on Err. Each Aver effect gets its own
+    // wasm fn (different op fn idx + different err message), so
+    // separate Indices structs per effect — but the body emitter is
+    // a single helper parametrised by the wasi op + message.
+    let alloc_path_op = |types: &mut wasm_encoder::TypeSection,
+                         next_type_idx: &mut u32,
+                         next_builtin_fn_idx: &mut u32,
+                         op_slot: super::wasip2_imports::Wasip2ImportSlot|
+     -> Option<DiskSimplePathOpIndices> {
+        if cabi_realloc.is_none()
+            || wasip2_imports
+                .lookup_wasm_fn_idx(
+                    super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                )
+                .is_none()
+            || wasip2_imports.lookup_wasm_fn_idx(op_slot).is_none()
+        {
+            return None;
+        }
+        let string_idx = registry.string_array_type_idx?;
+        let result_idx = registry.result_type_idx("Result<Unit,String>")?;
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [r_ref]);
+        let fn_type = *next_type_idx;
+        *next_type_idx += 1;
+        let fn_idx = *next_builtin_fn_idx;
+        *next_builtin_fn_idx += 1;
+        Some(DiskSimplePathOpIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_unit_string_type_idx: result_idx,
+        })
+    };
+    let disk_delete = alloc_path_op(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesUnlinkFileAt,
+    );
+    let disk_delete_dir = alloc_path_op(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt,
+    );
+    let disk_make_dir = alloc_path_op(
+        &mut types,
+        &mut next_type_idx,
+        &mut next_builtin_fn_idx,
+        super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt,
+    );
+
+    // Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
+    // ref null $result_list_string_string`. Opens path as a
+    // directory, drives `read-directory-entry` until None,
+    // accumulates each entry's name into a cons-built
+    // `List<String>`. Order is filesystem-dependent (matches
+    // POSIX `readdir` which doesn't promise any order either);
+    // call sites that need a sorted list call `List.sort` after.
+    let disk_list_dir: Option<DiskListDirIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadDirectory)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(list_string_idx) = registry.list_type_idx("List<String>")
+        && let Some(result_idx) = registry.result_type_idx("Result<List<String>,String>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(DiskListDirIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            list_string_type_idx: list_string_idx,
+            result_list_string_string_type_idx: result_idx,
+        })
+    } else {
+        None
+    };
+
+    let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::CliEnvironmentGetEnvironment,
+            )
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(option_string_idx) = registry.option_type_idx("Option<String>")
+    {
+        let opt_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(option_string_idx),
+        });
+        types
+            .ty()
+            .function([ValType::I32, ValType::I32, ValType::I32], [opt_ref]);
+        let lookup_type = next_type_idx;
+        next_type_idx += 1;
+        let lookup_fn = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(EnvGetLookupIndices {
+            fn_type: lookup_type,
+            fn_idx: lookup_fn,
+            string_type_idx: string_idx,
+            option_string_type_idx: option_string_idx,
+        })
+    } else {
+        None
+    };
+
+    // Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
+    // ref null $string`. Pure-compute helper that turns the
+    // datetime returned by `wasi:clocks/wall-clock.now` into the
+    // RFC3339-like string Aver's `Time.now() -> String` exposes.
+    // Materialises a fresh 24-byte `(array i8)` and writes
+    // `YYYY-MM-DDTHH:MM:SS.mmmZ` into it. The civil_from_days
+    // arithmetic mirrors `aver-rt::format_utc_rfc3339_like`.
+    // Allocated whenever wasip2 + the clocks slot are wired —
+    // `wasm-opt -Oz` strips this when only `Time.unixMs` reaches
+    // the import (i.e. no source-level `Time.now`). Allocation
+    // position is the LAST helper before factory exports because
+    // the funcs/codes append phase below emits its entry last.
+    let format_iso8601: Option<FormatIso8601Indices> =
+        if matches!(target, super::TargetMode::Wasip2)
+            && wasip2_imports
+                .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::ClocksWallClockNow)
+                .is_some()
+            && let Some(string_idx) = registry.string_array_type_idx
+        {
+            let s_ref = ValType::Ref(wasm_encoder::RefType {
+                nullable: true,
+                heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+            });
+            types.ty().function([ValType::I64, ValType::I32], [s_ref]);
+            let fn_type = next_type_idx;
+            next_type_idx += 1;
+            let fn_idx = next_builtin_fn_idx;
+            next_builtin_fn_idx += 1;
+            Some(FormatIso8601Indices {
+                fn_type,
+                fn_idx,
+                string_type_idx: string_idx,
+            })
+        } else {
+            None
+        };
+
     // 9) Wasm-owned value factories. JS host can't construct wasm-gc
     //    structs/variants directly, so any effect import that returns
     //    a structured ref needs per-type constructor helpers exported
@@ -425,16 +1172,38 @@ pub(super) fn emit_module(
     module.section(&types);
 
     // ── Import section ─────────────────────────────────────────────
-    if effect_registry.import_count() > 0 {
-        let mut imports = ImportSection::new();
-        for name in effect_registry.iter() {
-            let (module_, field) = name.import_pair();
-            let type_idx = effect_registry
-                .lookup_wasm_type_idx(name)
-                .expect("just-assigned effect type idx");
-            imports.import(module_, field, EntityType::Function(type_idx));
+    //
+    // Same per-target branch as the import-type emission above.
+    // AverBridge writes `(import "aver" "<name>" ...)` per
+    // registered effect; Wasip2 writes the canonical-ABI form
+    // (`(import "wasi:cli/stdout@0.2.4" "get-stdout" ...)` etc.).
+    match target {
+        super::TargetMode::AverBridge => {
+            if effect_registry.import_count() > 0 {
+                let mut imports = ImportSection::new();
+                for name in effect_registry.iter() {
+                    let (module_, field) = name.import_pair();
+                    let type_idx = effect_registry
+                        .lookup_wasm_type_idx(name)
+                        .expect("just-assigned effect type idx");
+                    imports.import(module_, field, EntityType::Function(type_idx));
+                }
+                module.section(&imports);
+            }
         }
-        module.section(&imports);
+        super::TargetMode::Wasip2 => {
+            if wasip2_imports.import_count() > 0 {
+                let mut imports = ImportSection::new();
+                for slot in wasip2_imports.iter() {
+                    let (module_, field) = slot.module_field_pair();
+                    let type_idx = wasip2_imports
+                        .lookup_wasm_type_idx(slot)
+                        .expect("just-assigned wasip2 import type idx");
+                    imports.import(module_, field, EntityType::Function(type_idx));
+                }
+                module.section(&imports);
+            }
+        }
     }
 
     // ── Function section ───────────────────────────────────────────
@@ -475,6 +1244,48 @@ pub(super) fn emit_module(
         funcs.function(b.pages_type);
         funcs.function(b.grow_type);
     }
+    if let Some(c) = &cabi_realloc {
+        funcs.function(c.fn_type);
+    }
+    if let Some(d) = &decode_list_string {
+        funcs.function(d.fn_type);
+    }
+    if let Some(c) = &console_read_line {
+        funcs.function(c.fn_type);
+    }
+    if let Some(t) = &time_sleep {
+        funcs.function(t.fn_type);
+    }
+    if let Some(d) = &disk_exists {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_read_text {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_write_text {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_append_text {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_delete {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_delete_dir {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_make_dir {
+        funcs.function(d.fn_type);
+    }
+    if let Some(d) = &disk_list_dir {
+        funcs.function(d.fn_type);
+    }
+    if let Some(e) = &env_get_lookup {
+        funcs.function(e.fn_type);
+    }
+    if let Some(fmt) = &format_iso8601 {
+        funcs.function(fmt.fn_type);
+    }
     factory_exports.emit_function_entries(&mut funcs);
     // Caller-fn name table fns — fixed-shape entries (count + name),
     // their bodies land at the very end of the code section once
@@ -490,16 +1301,28 @@ pub(super) fn emit_module(
     });
     module.section(&funcs);
 
-    // ── Memory section (bridge LM only) ────────────────────────────
+    // ── Memory section ─────────────────────────────────────────────
+    //
     // 1 page initial, 2048 max (128 MiB ceiling — matches Cloudflare
     // Workers' per-request memory limit). The bridge helpers grow
     // on demand: `__rt_string_to_lm` checks if it can fit the
-    // outgoing array and calls `memory.grow` if not. JS host can
-    // also grow upfront via `__rt_memory_grow` before writing into
-    // LM with `TextEncoder.encodeInto`. Memory is not a guest heap
-    // (engine GC owns that); it exists solely as a transport buffer
-    // between JS host and the `(array i8)` carrier.
-    if bridge.is_some() {
+    // outgoing array and calls `memory.grow` if not.
+    //
+    // Two reasons to emit memory:
+    // - AverBridge with a JS-host bridge: `__rt_string_to_lm` /
+    //   `__rt_string_from_lm` need transport space for the
+    //   `(array i8)` ↔ `(ptr, len)` boundary the JS host reads.
+    // - Wasip2 with any registered canonical-ABI import: same LM
+    //   transport, same helpers internally — `wasi:io/streams.
+    //   [method]output-stream.blocking-write-and-flush` takes a
+    //   `(ptr, len)` lowered from a `list<u8>`, plus a 12-byte
+    //   retptr scratch area for the host-written
+    //   `result<_, stream-error>`. The helpers are NOT exported
+    //   on wasip2 (no JS host calls them); they exist purely for
+    //   internal wasm-side glue at effect call sites.
+    let need_memory_for_wasip2 =
+        matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0;
+    if bridge.is_some() || need_memory_for_wasip2 {
         let mut memories = wasm_encoder::MemorySection::new();
         memories.memory(wasm_encoder::MemoryType {
             minimum: 1,
@@ -510,6 +1333,196 @@ pub(super) fn emit_module(
         });
         module.section(&memories);
     }
+
+    // ── Globals section (wasip2 resource-handle caches) ────────────
+    //
+    // On `TargetMode::Wasip2`, when `Console.print` / `error` / `warn`
+    // is registered, the call-site glue caches the host-supplied
+    // `output-stream` resource handle in a wasm global. -1 is the
+    // sentinel for "not yet initialised"; the first call evaluates
+    // the matching `wasi:cli/{stdout,stderr}.get-stdout/stderr`
+    // import and stores the result. Per-call branch is one
+    // `i32.eq` + `if` — negligible against the syscall it guards.
+    //
+    // Globals are emitted only when at least one of stdout/stderr
+    // is actually used (`OutputStreamBlockingWriteAndFlush` registered
+    // implies at least one of `CliGetStdout` / `CliGetStderr` does
+    // too). Empty Aver programs hit neither and skip the section
+    // entirely — no semantic change vs. Phase 1.2b1.3.
+    let wasip2_globals: Option<Wasip2Globals> =
+        if matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0 {
+            let mut globals = wasm_encoder::GlobalSection::new();
+            let mut next_global_idx: u32 = 0;
+            // Global 0 — bump-alloc cursor for `cabi_realloc`. Initial
+            // value `65536` (= page 2 base). Page 1 stays reserved for
+            // the `__rt_string_to_lm` transient buffer that
+            // `Console.*` writes use; persistent `cabi_realloc` heap
+            // grows upward from page 2 with `memory.grow` on overflow.
+            // Allocated unconditionally on the wasip2 path so the
+            // cabi_realloc helper has a stable global idx to read /
+            // write — Phase 1.3.1 onwards consumes it; earlier phases
+            // tolerate the unused global (12 bytes of section overhead).
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(65536),
+            );
+            let bump_alloc_ptr = next_global_idx;
+            next_global_idx += 1;
+            let stdout_handle = if wasip2_imports
+                .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStdout)
+                .is_some()
+            {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::I32,
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::i32_const(-1),
+                );
+                let idx = next_global_idx;
+                next_global_idx += 1;
+                Some(idx)
+            } else {
+                None
+            };
+            let stderr_handle = if wasip2_imports
+                .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStderr)
+                .is_some()
+            {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::I32,
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::i32_const(-1),
+                );
+                let idx = next_global_idx;
+                next_global_idx += 1;
+                Some(idx)
+            } else {
+                None
+            };
+            // Phase 1.3.4 — stdin handle cache global. Same lazy-init
+            // pattern as stdout/stderr: starts as -1 sentinel, every
+            // `Console.readLine` call site checks the global and runs
+            // `wasi:cli/stdin.get-stdin` once on first read. The
+            // resource is program-lifetime (wasmtime cleans up at
+            // component exit) so we never emit `[resource-drop]`.
+            let stdin_handle = if wasip2_imports
+                .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliStdinGetStdin)
+                .is_some()
+            {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::I32,
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::i32_const(-1),
+                );
+                let idx = next_global_idx;
+                next_global_idx += 1;
+                Some(idx)
+            } else {
+                None
+            };
+            // Phase 1.5.1 — disk preopen descriptor cache. -1 sentinel
+            // for "not yet fetched". On first `Disk.*` call the helper
+            // calls `wasi:filesystem/preopens.get-directories`, takes
+            // the first entry's descriptor handle, and caches it here.
+            // Program-lifetime — no `[resource-drop]descriptor` for
+            // the preopen, wasmtime cleans up at component exit.
+            let disk_preopen_handle = if wasip2_imports
+                .lookup_wasm_type_idx(
+                    super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+                )
+                .is_some()
+            {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::I32,
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::i32_const(-1),
+                );
+                let idx = next_global_idx;
+                next_global_idx += 1;
+                Some(idx)
+            } else {
+                None
+            };
+            let _ = next_global_idx;
+            module.section(&globals);
+            Some(Wasip2Globals {
+                bump_alloc_ptr,
+                stdout_handle,
+                stderr_handle,
+                stdin_handle,
+                disk_preopen_handle,
+            })
+        } else {
+            None
+        };
+
+    // Phase 1.2b1.5 — `Wasip2Lowering` collects every fn / global /
+    // helper idx the call-site lowering for `Console.print` /
+    // `Console.error` / `Console.warn` needs to emit canonical-ABI
+    // calls instead of the AverBridge `aver/console_print` import.
+    // Constructed only when wasip2 imports were registered AND the
+    // bridge fn machinery is in place (the latter implies
+    // `__rt_string_to_lm` has been allocated — the call site uses
+    // it to marshal the Aver String into LM[0..len]).
+    let wasip2_lowering: Option<super::body::Wasip2Lowering> =
+        if matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0 {
+            use super::wasip2_imports::Wasip2ImportSlot;
+            // Console.* needs both the bridge `__rt_string_to_lm`
+            // helper and the resource-handle globals; clocks /
+            // random don't. So those fields are populated only when
+            // their owning effects are registered, not as a
+            // precondition for `Some(...)` on the whole struct.
+            Some(super::body::Wasip2Lowering {
+                get_stdout_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::CliGetStdout),
+                get_stderr_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::CliGetStderr),
+                blocking_write_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush),
+                stdout_handle_global: wasip2_globals.as_ref().and_then(|g| g.stdout_handle),
+                stderr_handle_global: wasip2_globals.as_ref().and_then(|g| g.stderr_handle),
+                str_to_lm_fn_idx: bridge.as_ref().map(|b| b.to_lm_fn),
+                clocks_now_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::ClocksWallClockNow),
+                random_u64_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::RandomGetRandomU64),
+                get_arguments_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::CliEnvironmentGetArguments),
+                cabi_realloc_fn_idx: cabi_realloc.as_ref().map(|c| c.fn_idx),
+                decode_list_string_fn_idx: decode_list_string.as_ref().map(|d| d.fn_idx),
+                get_environment_fn_idx: wasip2_imports
+                    .lookup_wasm_fn_idx(Wasip2ImportSlot::CliEnvironmentGetEnvironment),
+                env_get_lookup_fn_idx: env_get_lookup.as_ref().map(|e| e.fn_idx),
+                fmt_iso8601_fn_idx: format_iso8601.as_ref().map(|f| f.fn_idx),
+                console_read_line_fn_idx: console_read_line.as_ref().map(|c| c.fn_idx),
+                time_sleep_fn_idx: time_sleep.as_ref().map(|t| t.fn_idx),
+                disk_exists_fn_idx: disk_exists.as_ref().map(|d| d.fn_idx),
+                disk_read_text_fn_idx: disk_read_text.as_ref().map(|d| d.fn_idx),
+                disk_write_text_fn_idx: disk_write_text.as_ref().map(|d| d.fn_idx),
+                disk_append_text_fn_idx: disk_append_text.as_ref().map(|d| d.fn_idx),
+                disk_delete_fn_idx: disk_delete.as_ref().map(|d| d.fn_idx),
+                disk_delete_dir_fn_idx: disk_delete_dir.as_ref().map(|d| d.fn_idx),
+                disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
+                disk_list_dir_fn_idx: disk_list_dir.as_ref().map(|d| d.fn_idx),
+            })
+        } else {
+            None
+        };
 
     // (caller_fn delivery moved from per-fn globals to an exported
     // name table; segment append + `__caller_fn_*` exports are
@@ -540,12 +1553,23 @@ pub(super) fn emit_module(
         builtin_idx_lookup.insert(name.canonical().to_string(), idx);
     }
     let mut effect_idx_lookup: HashMap<String, u32> = HashMap::new();
-    for name in effect_registry.iter() {
-        let idx = effect_registry
-            .lookup_wasm_fn_idx(name)
-            .expect("registered effect has wasm fn idx");
-        effect_idx_lookup.insert(name.canonical().to_string(), idx);
+    if matches!(target, super::TargetMode::AverBridge) {
+        for name in effect_registry.iter() {
+            let idx = effect_registry
+                .lookup_wasm_fn_idx(name)
+                .expect("registered effect has wasm fn idx");
+            effect_idx_lookup.insert(name.canonical().to_string(), idx);
+        }
     }
+    // On `TargetMode::Wasip2` the EffectRegistry is populated by
+    // discovery but never `assign_slots`'d (the import section uses
+    // the parallel `Wasip2ImportRegistry` instead), so its
+    // `lookup_wasm_fn_idx` returns None for every effect. Leave
+    // `effect_idx_lookup` empty: the wasip2 call-site lowering goes
+    // through `ctx.wasip2_lowering`, not `ctx.fn_map.effects` /
+    // `ctx.effect_idx_lookup`. Effects that the wasip2 path doesn't
+    // yet lower (`?!` / `!` independent-product markers, etc.) are
+    // out-of-scope for Phase 1.2b1; rejection lives upstream.
     let mut map_helpers_lookup: HashMap<String, super::maps::MapKVHelpers> = HashMap::new();
     for canonical in &registry.map_order {
         if let Some(h) = map_helpers.kv_helpers(canonical) {
@@ -600,18 +1624,52 @@ pub(super) fn emit_module(
     };
 
     // ── Export section ─────────────────────────────────────────────
+    //
+    // Entry-point export name follows the `target`. AverBridge keeps
+    // `_start` (the convention every JS host the wasm-gc backend
+    // serves understands). Wasip2 exports `wasi:cli/run@0.2.4#run`
+    // — the canonical-ABI export name for the WIT function
+    // `wasi:cli/run.run`. `wit_component::ComponentEncoder` matches
+    // this name against the `wasi:cli/command` world's required
+    // `run` export when binding the metadata-declared component
+    // surface to the core module.
     let mut exports = ExportSection::new();
-    exports.export("_start", ExportKind::Func, start_wasm_idx);
+    let start_export_name: &str = match target {
+        super::TargetMode::AverBridge => "_start",
+        super::TargetMode::Wasip2 => "wasi:cli/run@0.2.4#run",
+    };
+    exports.export(start_export_name, ExportKind::Func, start_wasm_idx);
     for (i, fd) in fn_defs.iter().enumerate() {
         let wasm_idx = import_count + 1 + (i as u32);
         exports.export(&fd.name, ExportKind::Func, wasm_idx);
     }
     if let Some(b) = &bridge {
-        exports.export("__rt_string_from_lm", ExportKind::Func, b.from_lm_fn);
-        exports.export("__rt_string_to_lm", ExportKind::Func, b.to_lm_fn);
-        exports.export("__rt_memory_pages", ExportKind::Func, b.pages_fn);
-        exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
+        // The four `__rt_*` exports are JS-host-callable only — wasip2
+        // hosts (wasmtime / Spin / wasmCloud) consume the canonical-
+        // ABI surface, never these names. Skip them when target is
+        // Wasip2 to keep the component contract clean (no leaked JS
+        // runtime names in a non-JS world).
+        if matches!(target, super::TargetMode::AverBridge) {
+            exports.export("__rt_string_from_lm", ExportKind::Func, b.from_lm_fn);
+            exports.export("__rt_string_to_lm", ExportKind::Func, b.to_lm_fn);
+            exports.export("__rt_memory_pages", ExportKind::Func, b.pages_fn);
+            exports.export("__rt_memory_grow", ExportKind::Func, b.grow_fn);
+        }
         exports.export("memory", ExportKind::Memory, 0);
+    } else if cabi_realloc.is_some() {
+        // wasip2 path with no bridge (theoretical — cabi_realloc
+        // gates on `wasip2_imports.import_count() > 0` which only
+        // fires when an effect that needs LM is registered, and
+        // every such effect today implies a String). Defensive
+        // export so the host can find memory regardless.
+        exports.export("memory", ExportKind::Memory, 0);
+    }
+    if let Some(c) = &cabi_realloc {
+        // Required by Component Model canonical ABI as the guest's
+        // realloc callback. Phase 1.3.1 ships the impl; consumers
+        // (Args.get / Env.get / Console.readLine / Disk.readText)
+        // start landing in 1.3.2.
+        exports.export("cabi_realloc", ExportKind::Func, c.fn_idx);
     }
     factory_exports.emit_exports(&mut exports);
     if let Some(hw) = &handler_wrapper {
@@ -676,6 +1734,7 @@ pub(super) fn emit_module(
             &registry,
             &effect_idx_lookup,
             &caller_fn_collector,
+            wasip2_lowering.as_ref(),
         )?;
     }
     let caller_fn_segment_count = caller_fn_collector.borrow().names.len() as u32;
@@ -693,10 +1752,16 @@ pub(super) fn emit_module(
     // ── Code section ───────────────────────────────────────────────
     let mut codes = CodeSection::new();
 
-    // _start: call main if present, drop its return value. Caller_fn
-    // globals are NOT init here — the wasm-level `(start
-    // __init_globals)` section handles that on instantiation, before
-    // any export gets called.
+    // Entry-point body. AverBridge `_start: () -> ()` calls main
+    // and drops its return — the JS host doesn't read a value back,
+    // it observes side effects via `aver/*` imports.
+    //
+    // Wasip2 `wasi:cli/run.run: () -> i32` calls main, drops a
+    // non-Unit return (Aver's `main: Unit` makes the drop a no-op),
+    // then pushes `i32.const 0` — `Ok` in the canonical-ABI lowering
+    // of `result<_, _>`. Trapping behaviour stays the same: any
+    // host-side trap (e.g. divide-by-zero) propagates up through
+    // wasmtime as a regular trap, not as `Err(1)`.
     let mut start = Function::new([]);
     if let Some(idx) = main_idx {
         let main_idx_wasm = import_count + 1 + (idx as u32);
@@ -705,6 +1770,9 @@ pub(super) fn emit_module(
         if main_returns_value {
             start.instruction(&Instruction::Drop);
         }
+    }
+    if start_returns_i32 {
+        start.instruction(&Instruction::I32Const(0));
     }
     start.instruction(&Instruction::End);
     codes.function(&start);
@@ -722,6 +1790,7 @@ pub(super) fn emit_module(
             &registry,
             &effect_idx_lookup,
             &caller_fn_collector,
+            wasip2_lowering.as_ref(),
         )?;
 
         let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
@@ -734,6 +1803,7 @@ pub(super) fn emit_module(
             &registry,
             &effect_idx_lookup,
             &caller_fn_collector,
+            wasip2_lowering.as_ref(),
         )?;
         codes.function(&func);
     }
@@ -885,6 +1955,432 @@ pub(super) fn emit_module(
         emit_bridge_bodies(&mut codes, &registry)?;
     }
 
+    if cabi_realloc.is_some() {
+        // `wasip2_globals` is `Some` whenever `cabi_realloc` is —
+        // both gate on `wasip2_imports.import_count() > 0` and
+        // `Wasip2Globals::bump_alloc_ptr` is allocated
+        // unconditionally on that path. Unwrap is sound;
+        // `expect` carries a louder message than a silent panic
+        // if the invariant ever drifts.
+        let bump_global = wasip2_globals
+            .as_ref()
+            .expect("cabi_realloc emit requires Wasip2Globals (same gate)")
+            .bump_alloc_ptr;
+        codes.function(&emit_cabi_realloc(bump_global));
+    }
+    if let Some(d) = &decode_list_string {
+        codes.function(&emit_decode_list_string(
+            d.string_type_idx,
+            d.list_string_type_idx,
+        ));
+    }
+    if let Some(c) = &console_read_line {
+        let stdin_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.stdin_handle)
+            .expect("console_read_line emit requires stdin_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("console_read_line emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let get_stdin = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::CliStdinGetStdin)
+            .expect("console_read_line emit requires CliStdinGetStdin fn idx (gate matches)");
+        let blocking_read = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .expect("console_read_line emit requires InputStreamBlockingRead fn idx");
+        codes.function(&emit_console_read_line(
+            c.string_type_idx,
+            c.result_string_string_type_idx,
+            stdin_global,
+            cabi,
+            get_stdin,
+            blocking_read,
+        ));
+    }
+    if time_sleep.is_some() {
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("time_sleep emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let subscribe = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::ClocksMonotonicSubscribeDuration,
+            )
+            .expect("time_sleep emit requires subscribe-duration fn idx (gate matches)");
+        let poll = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollPoll)
+            .expect("time_sleep emit requires poll fn idx (gate matches)");
+        let drop_pollable = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable)
+            .expect("time_sleep emit requires drop-pollable fn idx (gate matches)");
+        codes.function(&emit_time_sleep(cabi, subscribe, poll, drop_pollable));
+    }
+    if disk_exists.is_some() {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_exists emit requires disk_preopen_handle global (gate matches)");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_exists emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_exists emit requires bridge (string marshalling)")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_exists emit requires get-directories fn idx (gate matches)");
+        let stat_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesStatAt)
+            .expect("disk_exists emit requires stat-at fn idx (gate matches)");
+        codes.function(&emit_disk_exists(
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            stat_at,
+        ));
+    }
+    if let Some(rt) = &disk_read_text {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_read_text emit requires disk_preopen_handle global (gate matches)");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_read_text emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_read_text emit requires bridge (string marshalling)")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_read_text emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_read_text emit requires open-at fn idx");
+        let read_via_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadViaStream,
+            )
+            .expect("disk_read_text emit requires read-via-stream fn idx");
+        let blocking_read = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .expect("disk_read_text emit requires blocking-read fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_read_text emit requires drop-descriptor fn idx");
+        let drop_input_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("disk_read_text emit requires drop-input-stream fn idx");
+        codes.function(&emit_disk_read_text(
+            rt.string_type_idx,
+            rt.result_string_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            read_via_stream,
+            blocking_read,
+            drop_descriptor,
+            drop_input_stream,
+        ));
+    }
+    if let Some(wt) = &disk_write_text {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_write_text emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_write_text emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_write_text emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_write_text emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_write_text emit requires open-at fn idx");
+        let write_via_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesWriteViaStream,
+            )
+            .expect("disk_write_text emit requires write-via-stream fn idx");
+        let blocking_write = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            )
+            .expect("disk_write_text emit requires blocking-write-and-flush fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_write_text emit requires drop-descriptor fn idx");
+        let drop_output_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("disk_write_text emit requires drop-output-stream fn idx");
+        codes.function(&emit_disk_write_text(
+            wt.string_type_idx,
+            wt.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            write_via_stream,
+            blocking_write,
+            drop_descriptor,
+            drop_output_stream,
+            false, // is_append: writeText uses CREATE | TRUNCATE + write-via-stream
+        ));
+    }
+    if let Some(at) = &disk_append_text {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_append_text emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_append_text emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_append_text emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_append_text emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_append_text emit requires open-at fn idx");
+        let append_via_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesAppendViaStream,
+            )
+            .expect("disk_append_text emit requires append-via-stream fn idx");
+        let blocking_write = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            )
+            .expect("disk_append_text emit requires blocking-write-and-flush fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_append_text emit requires drop-descriptor fn idx");
+        let drop_output_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("disk_append_text emit requires drop-output-stream fn idx");
+        codes.function(&emit_disk_write_text(
+            at.string_type_idx,
+            at.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            append_via_stream,
+            blocking_write,
+            drop_descriptor,
+            drop_output_stream,
+            true, // is_append: CREATE only + append-via-stream (no offset arg)
+        ));
+    }
+    // Three single-call ops share `emit_disk_simple_path_op` —
+    // identical pipeline (preopen + path + 4-byte retptr + tag
+    // check), only the wasi op fn idx and Err message differ.
+    if let Some(d) = &disk_delete {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_delete emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_delete emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_delete emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_delete emit requires get-directories fn idx");
+        let op_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesUnlinkFileAt,
+            )
+            .expect("disk_delete emit requires unlink-file-at fn idx");
+        codes.function(&emit_disk_simple_path_op(
+            d.string_type_idx,
+            d.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            op_fn,
+            b"delete failed",
+        ));
+    }
+    if let Some(d) = &disk_delete_dir {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_delete_dir emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_delete_dir emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_delete_dir emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_delete_dir emit requires get-directories fn idx");
+        let op_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesRemoveDirectoryAt,
+            )
+            .expect("disk_delete_dir emit requires remove-directory-at fn idx");
+        codes.function(&emit_disk_simple_path_op(
+            d.string_type_idx,
+            d.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            op_fn,
+            b"deleteDir failed",
+        ));
+    }
+    if let Some(d) = &disk_make_dir {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_make_dir emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_make_dir emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_make_dir emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_make_dir emit requires get-directories fn idx");
+        let op_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesCreateDirectoryAt,
+            )
+            .expect("disk_make_dir emit requires create-directory-at fn idx");
+        codes.function(&emit_disk_simple_path_op(
+            d.string_type_idx,
+            d.result_unit_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            op_fn,
+            b"makeDir failed",
+        ));
+    }
+    if let Some(ld) = &disk_list_dir {
+        let preopen_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.disk_preopen_handle)
+            .expect("disk_list_dir emit requires disk_preopen_handle global");
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("disk_list_dir emit requires cabi_realloc fn idx")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("disk_list_dir emit requires bridge")
+            .to_lm_fn;
+        let get_directories = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .expect("disk_list_dir emit requires get-directories fn idx");
+        let open_at = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesOpenAt)
+            .expect("disk_list_dir emit requires open-at fn idx");
+        let read_directory = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesReadDirectory,
+            )
+            .expect("disk_list_dir emit requires read-directory fn idx");
+        let read_dir_entry = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesDirectoryEntryStreamReadDirectoryEntry,
+            )
+            .expect("disk_list_dir emit requires read-directory-entry fn idx");
+        let drop_descriptor = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDescriptor,
+            )
+            .expect("disk_list_dir emit requires drop-descriptor fn idx");
+        let drop_dir_stream = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream,
+            )
+            .expect("disk_list_dir emit requires drop-directory-entry-stream fn idx");
+        codes.function(&emit_disk_list_dir(
+            ld.string_type_idx,
+            ld.list_string_type_idx,
+            ld.result_list_string_string_type_idx,
+            preopen_global,
+            cabi,
+            str_to_lm,
+            get_directories,
+            open_at,
+            read_directory,
+            read_dir_entry,
+            drop_descriptor,
+            drop_dir_stream,
+        ));
+    }
+    if let Some(e) = &env_get_lookup {
+        codes.function(&emit_env_get_lookup(
+            e.string_type_idx,
+            e.option_string_type_idx,
+        ));
+    }
+    if let Some(fmt) = &format_iso8601 {
+        codes.function(&emit_format_iso8601(fmt.string_type_idx));
+    }
+
     factory_exports.emit_bodies(&mut codes, &registry)?;
 
     // `__caller_fn_count` + `__caller_fn_name` bodies. Emitted after
@@ -1015,6 +2511,8 @@ fn emit_user_types(
                 fields: fields.into_boxed_slice(),
             }),
             shared: false,
+            descriptor: None,
+            describes: None,
         },
     };
     let mk_array = |elem: wasm_encoder::FieldType| SubType {
@@ -1023,6 +2521,8 @@ fn emit_user_types(
         composite_type: CompositeType {
             inner: CompositeInnerType::Array(ArrayType(elem)),
             shared: false,
+            descriptor: None,
+            describes: None,
         },
     };
     // Records / variants — registered first in `TypeRegistry::build`,

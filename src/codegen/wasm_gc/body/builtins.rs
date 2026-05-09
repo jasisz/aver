@@ -10,6 +10,14 @@ use crate::ir::{LeafOp, classify_leaf_op};
 
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
+use super::builtins_wasip2::{
+    emit_args_get_wasip2, emit_console_print_wasip2, emit_console_read_line_wasip2,
+    emit_disk_append_text_wasip2, emit_disk_delete_dir_wasip2, emit_disk_delete_wasip2,
+    emit_disk_exists_wasip2, emit_disk_list_dir_wasip2, emit_disk_make_dir_wasip2,
+    emit_disk_read_text_wasip2, emit_disk_write_text_wasip2, emit_env_get_wasip2,
+    emit_random_float_wasip2, emit_random_int_wasip2, emit_time_now_wasip2, emit_time_sleep_wasip2,
+    emit_time_unix_ms_wasip2,
+};
 use super::emit::{emit_default_value, emit_expr};
 use super::infer::aver_type_str_of;
 use super::{EmitCtx, SlotTable};
@@ -42,14 +50,81 @@ pub(super) fn emit_dotted_builtin(
     }
 
     // `Args.get()` (no args, returns List<String>) — short-circuit
-    // before the effect dispatch. The host imports are `args_len(): i64`
-    // and `args_get(i: i64): String`; there is no `args_get_all`. We
-    // inline a `len` + reverse-loop over `args_get(i)` cons-building
-    // the list in source order, using four scratch slots reserved by
-    // `slots::SlotTable` (i, len, acc, s).
+    // before the effect dispatch. AverBridge inlines a `len` +
+    // reverse-loop over `args_get(i)` cons-building. Wasip2 calls
+    // `wasi:cli/environment.get-arguments` once and dispatches the
+    // canonical-ABI list<string> retptr through the shared
+    // `__rt_canonical_decode_list_string` helper.
     if dotted == "Args.get" && args.is_empty() {
+        if ctx.wasip2_lowering.is_some() {
+            return emit_args_get_wasip2(func, slots, ctx);
+        }
         emit_args_get_inline(func, slots, ctx)?;
         return Ok(());
+    }
+
+    // Phase 1.2b1.5 — `--target wasip2` lowering for the
+    // `Console.{print, error, warn}` trio. Bypasses the AverBridge
+    // `aver/console_print` import path and emits canonical-ABI
+    // calls directly: lazy-init the cached `output-stream` handle
+    // (one i32 global, sentinel `-1`), marshal the Aver String into
+    // LM[0..len] via `__rt_string_to_lm`, then call
+    // `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
+    // with `(handle, ptr=0, len, retptr=(len+15)&-16)`. The retptr
+    // area receives the host-written `result<_, stream-error>`
+    // tag; we ignore it (Aver `Console.print` is `Unit`, matches
+    // the wasm-gc target's fire-and-forget shape). Defensive
+    // `memory.grow(1)` after the marshal ensures retptr+12 fits
+    // even when `len` lands exactly on a page boundary.
+    if ctx.wasip2_lowering.is_some() {
+        if parent == "Console" && matches!(method, "print" | "error" | "warn") {
+            return emit_console_print_wasip2(func, method, args, slots, ctx);
+        }
+        if parent == "Time" && method == "unixMs" {
+            return emit_time_unix_ms_wasip2(func, args, ctx);
+        }
+        if parent == "Random" && method == "int" {
+            return emit_random_int_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Random" && method == "float" {
+            return emit_random_float_wasip2(func, args, ctx);
+        }
+        if parent == "Env" && method == "get" {
+            return emit_env_get_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Time" && method == "now" {
+            return emit_time_now_wasip2(func, args, ctx);
+        }
+        if parent == "Console" && method == "readLine" {
+            return emit_console_read_line_wasip2(func, args, ctx);
+        }
+        if parent == "Time" && method == "sleep" {
+            return emit_time_sleep_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "exists" {
+            return emit_disk_exists_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "readText" {
+            return emit_disk_read_text_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "writeText" {
+            return emit_disk_write_text_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "appendText" {
+            return emit_disk_append_text_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "delete" {
+            return emit_disk_delete_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "deleteDir" {
+            return emit_disk_delete_dir_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "makeDir" {
+            return emit_disk_make_dir_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Disk" && method == "listDir" {
+            return emit_disk_list_dir_wasip2(func, args, slots, ctx);
+        }
     }
 
     // Registered effect import? Same shape — push args, push the
@@ -152,7 +227,7 @@ pub(super) fn emit_dotted_builtin(
             Ok(())
         }
         "Float.pi" if args.is_empty() => {
-            func.instruction(&Instruction::F64Const(std::f64::consts::PI));
+            func.instruction(&Instruction::F64Const(std::f64::consts::PI.into()));
             Ok(())
         }
         "Int.abs" if args.len() == 1 => {

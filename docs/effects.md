@@ -8,12 +8,12 @@ Every effect in the standard library has a typed signature on the source side an
 |---|---|---|
 | **VM** (`aver run`) | bytecode interpreter | local CLI, dev loop |
 | **Rust codegen** (`aver compile`) | Cargo project + native binary | server-side Rust deployments |
-| **wasm-gc** (`--target wasm-gc`, recommended) | self-contained `.wasm` with engine GC + tail calls; per-instantiation helpers DCE'd to what the program calls. `--handler <fn>` synthesises a fetch-style HTTP wrapper; `--preset cloudflare --handler <fn>` packages it for Workers | Cloudflare Workers, modern browsers (Chrome 119+, Firefox 120+, Safari 18.2+), wasmtime 25+, Node 22+, Deno, Bun |
-| **wasm legacy** (`--target wasm`, pre-2024 hosts) | single bundled `.wasm` with NaN-boxed runtime inlined via `wasm-merge`. `--bridge fetch` for JS hosts, `--bridge wasip1` for standalone WASI preview 1, `--bridge none` for custom embedders | older runtimes that don't speak the GC + tail-call proposals |
+| **wasm-gc** (`--target wasm-gc`) | self-contained `.wasm` with engine GC + tail calls; per-instantiation helpers DCE'd to what the program calls. `--handler <fn>` synthesises a fetch-style HTTP wrapper; `--preset cloudflare --handler <fn>` packages it for Workers | Cloudflare Workers, modern browsers (Chrome 119+, Firefox 120+, Safari 18.2+), wasmtime 25+, Node 22+, Deno, Bun |
+| **wasip2** (`--target wasip2`) | `.component.wasm` + sibling `.wit`. wasm-gc core module wrapped via `wit-component`; Aver effects lower directly to canonical-ABI WASI imports — no preview-1 adapter | wasmtime, Spin, NGINX Unit, wasmCloud, every other Component Model host |
 | **Lean / Dafny proof export** (`aver proof`) | `.lean` / `.dfy` projects | offline verification |
 | **Self-host** (`aver run --self-host`) | Aver-in-Aver bootstrap | development sanity, replay coverage |
 
-The two WASM rows are independent compilation paths, not bridges of one path. `--target wasm-gc` does not accept `--bridge` — its HTTP shape is `--handler <fn>`, and standalone-runtime support arrives via the planned `--target wasip2` Component Model output (see *Future* at the bottom). `--target wasm` keeps the legacy `--bridge fetch | wasip1 | none` axis for hosts that can't run wasm-gc.
+The two WASM rows are independent compilation paths. `--target wasm-gc` covers JS hosts and embedded wasmtime via `aver/*` host imports; `--target wasip2` covers Component Model hosts via canonical-ABI WIT imports. The pre-2024 NaN-boxed `--target wasm` backend was dropped in 0.18 (Phase 1.8 of "Span") — modern hosts run the wasm-gc pipeline, standalone runtimes use wasip2.
 
 `Lean` / `Dafny` columns describe the **proof export** treatment, not the runtime. Effects render as Oracle-style stubs with effect-list contracts and invariant lemmas; user-side theorems carry the per-effect bounds (`Random.int` in `[min, max]`, `Time.unixMs ≥ 0`, …) as hypotheses. See `docs/oracle.md` for the full Oracle model.
 
@@ -28,28 +28,28 @@ The two WASM rows are independent compilation paths, not bridges of one path. `-
 
 ## Matrix
 
-The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host wires `aver/*` imports). The HTTP-handler shape (`--handler <fn>`, `--preset cloudflare`) is the same column with `Request.*` / `Response.*` host imports replacing the corresponding effect cells when `aver_http_handle()` runs — see *Notes per backend* below.
+The wasm-gc column covers the **default invocation** (`--target wasm-gc`, host wires `aver/*` imports). The HTTP-handler shape (`--handler <fn>`, `--preset cloudflare`) is the same column with `Request.*` / `Response.*` host imports replacing the corresponding effect cells when `aver_http_handle()` runs — see *Notes per backend* below. The wasip2 column is what `--target wasip2` produces today (0.18 "Span" landed all 17 effect call sites listed); cells marked `n/a` indicate the effect can't structurally land on WASI 0.2 and is rejected at compile time by `wasip2::effect_check`.
 
-| Effect | VM | Rust | **wasm-gc** | `wasm` `--bridge fetch` | `wasm` `--bridge wasip1` | `wasm` `--bridge none` | Lean | Dafny |
-|---|---|---|---|---|---|---|---|---|
-| `Args.get` | ✅ | ✅ | ✅ wasmtime / host wires | ⚠️ from URL query | ✅ `wasi.args_get` | host wires | Oracle | Oracle |
-| `Console.print` | ✅ | ✅ | ✅ wasmtime / `console.log` | ✅ `console.log` | ✅ `fd_write(1)` | host wires | Oracle | Oracle |
-| `Console.error` | ✅ | ✅ | ✅ wasmtime / `console.error` | ✅ `console.error` | ✅ `fd_write(2)` | host wires | Oracle | Oracle |
-| `Console.warn` | ✅ | ✅ | ✅ wasmtime / `console.warn` | ✅ `console.warn` | ✅ `fd_write(2)` | host wires | Oracle | Oracle |
-| `Console.readLine` | ✅ | ✅ | ✅ wasmtime / host stdin | ⚠️ no stdin in CF | ✅ `fd_read(0)` | host wires | Oracle | Oracle |
-| `Disk.readText` / `writeText` / `appendText` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ❌ no FS | ❌ stub (preview-2 ticket) | host wires | Oracle | Oracle |
-| `Disk.exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ❌ no FS | ❌ stub | host wires | Oracle | Oracle |
-| `Env.get` | ✅ | ✅ | ✅ wasmtime / Workers `env` | ✅ Workers `env` binding | ✅ `wasi.environ_get` walker | host wires | Oracle | Oracle |
-| `Env.set` | ✅ | ✅ | ⚠️ wasmtime / no-op in JS | ⚠️ no-op (`env` frozen) | ⚠️ no-op (no `setenv` in preview 1) | host wires | Oracle | Oracle |
-| `Http.get` / `head` / `delete` / `post` / `put` / `patch` | ✅ | ✅ | ✅ wasmtime / ✅ JSPI-suspending `fetch()` | ✅ JSPI-suspending `fetch()` | ❌ `Result.Err` (lands as `--target wasip2`) | host wires | Oracle | Oracle |
-| `HttpServer.listen` / `listenWith` | ✅ (`runtime-net`) | ✅ (`runtime-net`) | n/a — `--handler <fn>` shape | n/a — handler shape | ❌ stub (lands as `--target wasip2 --world wasi:http/proxy`) | host wires | Oracle | Oracle |
-| `Random.int` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `Math.random` | ✅ `wasi.random_get` | host wires | Oracle (`[min, max]` lemma) | Oracle |
-| `Random.float` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `Math.random` | ✅ `wasi.random_get` | host wires | Oracle (`[0.0, 1.0)` lemma) | Oracle |
-| `Tcp.connect` / `send` / `ping` / `writeLine` / `readLine` / `close` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ❌ no raw TCP | ❌ stub (preview-2 ticket) | host wires | Oracle | Oracle |
-| `Terminal.*` (12 methods) | ✅ via `crossterm` (`terminal` feature) | ✅ via `crossterm` | ✅ wasmtime / ❌ in JS hosts | ❌ no terminal | ❌ no terminal | host wires | Oracle | Oracle |
-| `Time.now` (ISO string) | ✅ | ✅ | ✅ wasmtime / `new Date().toISOString()` | ✅ `new Date().toISOString()` | ✅ `wasi.clock_time_get` | host wires | Oracle | Oracle |
-| `Time.unixMs` | ✅ | ✅ | ✅ wasmtime / `Date.now()` | ✅ `Date.now()` | ✅ `wasi.clock_time_get` | host wires | Oracle (`≥ 0` lemma) | Oracle |
-| `Time.sleep` | ✅ | ✅ | ✅ wasmtime / ⚠️ blocks worker isolate | ⚠️ blocks worker isolate (use sparingly) | ✅ busy-wait via `clock_time_get` | host wires | Oracle | Oracle |
+| Effect | VM | Rust | **wasm-gc** | **wasip2** | Lean | Dafny |
+|---|---|---|---|---|---|---|
+| `Args.get` | ✅ | ✅ | ✅ wasmtime / host wires | ✅ `wasi:cli/environment.get-arguments` | Oracle | Oracle |
+| `Console.print` | ✅ | ✅ | ✅ wasmtime / `console.log` | ✅ `wasi:cli/stdout` + `blocking-write-and-flush` | Oracle | Oracle |
+| `Console.error` | ✅ | ✅ | ✅ wasmtime / `console.error` | ✅ `wasi:cli/stderr` + `blocking-write-and-flush` | Oracle | Oracle |
+| `Console.warn` | ✅ | ✅ | ✅ wasmtime / `console.warn` | ✅ `wasi:cli/stderr` (warn → stderr) | Oracle | Oracle |
+| `Console.readLine` | ✅ | ✅ | ✅ wasmtime / host stdin | ✅ `wasi:cli/stdin` + `blocking-read` line loop | Oracle | Oracle |
+| `Disk.readText` / `writeText` / `appendText` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/preopens` + `open-at` + via-stream | Oracle | Oracle |
+| `Disk.exists` / `delete` / `deleteDir` / `listDir` / `makeDir` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ✅ `wasi:filesystem/types` (stat-at / unlink-file-at / etc.) | Oracle | Oracle |
+| `Env.get` | ✅ | ✅ | ✅ wasmtime / Workers `env` | ✅ `wasi:cli/environment.get-environment` + linear search | Oracle | Oracle |
+| `Env.set` | ✅ | ✅ | ⚠️ wasmtime / no-op in JS | n/a — WASI 0.2 environment is read-only by design | Oracle | Oracle |
+| `Http.get` / `head` / `delete` / `post` / `put` / `patch` | ✅ | ✅ | ✅ wasmtime / ✅ JSPI-suspending `fetch()` | ❌ deferred to 0.19+ (lowering planned for `wasi:http`) | Oracle | Oracle |
+| `HttpServer.listen` / `listenWith` | ✅ (`runtime-net`) | ✅ (`runtime-net`) | n/a — `--handler <fn>` shape | ❌ deferred to 0.19+ (lowers via `wasi:http/proxy`) | Oracle | Oracle |
+| `Random.int` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` + range scale | Oracle (`[min, max]` lemma) | Oracle |
+| `Random.float` | ✅ | ✅ | ✅ wasmtime / `Math.random` | ✅ `wasi:random/random.get-random-u64` → `[0.0, 1.0)` | Oracle (`[0.0, 1.0)` lemma) | Oracle |
+| `Tcp.connect` / `send` / `ping` / `writeLine` / `readLine` / `close` | ✅ | ✅ | ✅ wasmtime / ❌ in JS hosts | ❌ deferred to 0.19+ (lowers via `wasi:sockets`) | Oracle | Oracle |
+| `Terminal.*` (12 methods) | ✅ via `crossterm` (`terminal` feature) | ✅ via `crossterm` | ✅ wasmtime / ❌ in JS hosts | n/a — WASI 0.2 has no terminal interface | Oracle | Oracle |
+| `Time.now` (ISO string) | ✅ | ✅ | ✅ wasmtime / `new Date().toISOString()` | ✅ `wasi:clocks/wall-clock.now` + guest-side civil_from_days | Oracle | Oracle |
+| `Time.unixMs` | ✅ | ✅ | ✅ wasmtime / `Date.now()` | ✅ `wasi:clocks/wall-clock.now` → ms | Oracle (`≥ 0` lemma) | Oracle |
+| `Time.sleep` | ✅ | ✅ | ✅ wasmtime / ⚠️ blocks worker isolate | ✅ `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` | Oracle | Oracle |
 
 `Print.value` / `Format.value` are no longer needed — `Console.print` / `error` / `warn` take `String` since 0.16, so stringification happens at the call site (interpolation `"{x}"` for primitives, a per-type render fn for compound shapes).
 
@@ -66,33 +66,19 @@ The recommended target. Same `aver/*` import surface across every host that runs
 
 `HttpServer.listen` is n/a on wasm-gc — the deployment shape is "the host calls into your handler", which is exactly what `--handler <fn>` declares. There's no listening loop to write.
 
-### wasm legacy (`--target wasm`)
+### wasip2 (`--target wasip2`)
 
-For runtimes that don't speak wasm-gc + tail-call proposals. The legacy backend bundles a custom NaN-boxed runtime (alloc, GC, hashmap, string/list/vector ops) and picks one of three bridges:
-
-- **`--bridge fetch`** — Cloudflare Workers, Deno Deploy, Bun, browser playgrounds, any embedder that supplies the Web Fetch API plus standard JS primitives. `Http.*` synchronously calls into a JSPI-suspending host import (`WebAssembly.Suspending` wraps the `await fetch(...)` shape, `WebAssembly.promising` wraps the exported `aver_http_handle`). Hosts without JSPI fall back to a sync stub returning `Result.Err`. Filesystem and raw TCP stub to `❌`. `HttpServer.listen` is `n/a` (worker IS the server).
-- **`--bridge wasip1`** — standalone `wasmtime` / `wasmer`, anything satisfying `wasi_snapshot_preview1.*`. Covers stdin/stdout/stderr, files, args, env, time, random; preview 1 explicitly does **not** ship sockets, an HTTP client, or a server runtime, so those effects stub to `Result.Err`.
-- **`--bridge none`** — `aver/*` imports stay unresolved. The consuming host wires them at instantiate time. Every effect is whatever the host says it is; the matrix shows `host wires`.
-
-### Why no `--bridge wasip1` for wasm-gc
-
-By design. wasm-gc + preview 1 would mean "modern engine GC + retrograde standalone runtime" — preview 1 is being deprecated upstream in favour of preview 2 / the Component Model, and porting the legacy `aver_to_wasi.wasm` shim to wasm-gc string types would re-implement an ABI we want to leave behind. The standalone-runtime story for wasm-gc is `--target wasip2` (planned, see below).
-
-## Future: `--target wasip2` (Component Model)
-
-Distinct from `--bridge`. Component Model is a different compilation target (`.component.wasm` output, WIT worlds, host-owned resource handles), not a swap-out shim — so it gets its own `--target` rather than another bridge.
+Component Model output landed in 0.18 "Span". Aver effects lower **directly** to canonical-ABI WASI imports — the wasm-gc backend emits a core module shaped to canonical-ABI conventions, the wrapper embeds a `component-type:wasi:cli/command` custom section via `wit-component::metadata`, and the resulting `.component.wasm` runs on every Component Model host (wasmtime, Spin, NGINX Unit, wasmCloud, …) without a preview-1 adapter. See [`docs/wasip2.md`](wasip2.md) for the full contract.
 
 ```
-aver compile app.av --target wasip2 --world wasi:http/proxy
-aver compile app.av --target wasip2 --world wasi:cli/command
+aver compile app.av --target wasip2 -o out
+aver run app.av --wasip2  -- alpha beta   # embedded wasmtime + wasmtime-wasi
 ```
 
-The matrix once `wasip2` ships, paired with wasm-gc:
+What lands today (0.18) vs. deferred:
 
-- `Http.*` → ✅ via WIT-typed request/response/streams
-- `HttpServer.listen` → ✅ via `wasi:http/proxy`'s `incoming-handler` (handler shape maps 1:1 from Aver's `fn handler(req) -> resp`)
-- `Disk.*` → ✅ via `wasi:filesystem`
-- `Tcp.*` → ✅ via `wasi:sockets`
-- `Args` / `Env` / `Time` / `Random` / `Console` → ✅ via the corresponding WIT interfaces
+- ✅ Console (`print`/`error`/`warn`/`readLine`), Args.get, Env.get, Time (`unixMs`/`now`/`sleep`), Random (`int`/`float`), Disk (all 7: `exists`/`readText`/`writeText`/`appendText`/`delete`/`deleteDir`/`makeDir`/`listDir`).
+- ❌ Http.*, Tcp.*, HttpServer.* — deferred to 0.19+ (Phase 2/3 of the Span follow-up); will lower via `wasi:http` and `wasi:sockets` respectively.
+- n/a Env.set, Terminal.* — structurally absent from WASI 0.2 (read-only environment by design; no terminal interface). Rejected at compile time.
 
-That row fills in once the target lands. For now: `--target wasm-gc` covers Workers + browsers + Node + wasmtime end to end via `aver/*` imports, and `--target wasm --bridge wasip1` covers offline-CLI compute + files + env on legacy preview-1 runtimes.
+Effect calls > 4 KB on `Console.*` / `Disk.write*` chunk through `blocking-write-and-flush` (wasmtime-wasi enforces a 4096-byte limit per call); the chunked-write loop lives in `emit_chunked_blocking_write` and is shared by both call sites. `Time.sleep` uses `subscribe-duration` + `poll` + `[resource-drop]pollable` (real wait, not busy-loop).

@@ -1256,767 +1256,6 @@ pub(super) fn cmd_run_vm(
     }
 }
 
-/// Compile to WASM and execute with built-in host.
-/// Uses aver/* import ABI — host provides capabilities natively.
-pub(super) fn cmd_run_wasm(
-    file: &str,
-    module_root_override: Option<&str>,
-    program_args: Vec<String>,
-) {
-    #[cfg(not(feature = "wasm"))]
-    {
-        let _ = (file, module_root_override, program_args);
-        eprintln!("{}", "WASM requires --features wasm".red());
-        process::exit(1);
-    }
-
-    #[cfg(feature = "wasm")]
-    {
-        #[cfg(feature = "terminal")]
-        let _terminal_guard = aver_rt::TerminalGuard::new();
-
-        use aver::codegen;
-
-        let (ctx, _module_root) = build_codegen_context(
-            file,
-            None, // project_name
-            module_root_override,
-            false,
-            &super::cli::CompilePolicyMode::Embed,
-            None,
-            false,
-            true, // apply_traversal_lowering — `aver run --wasm` is runtime
-        );
-
-        // Compile to WASM with aver/* ABI
-        let wasm_bytes = match codegen::wasm::emit_wasm(&ctx) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("{}", format!("WASM compilation error: {}", e).red());
-                process::exit(1);
-            }
-        };
-        if let Ok(path) = std::env::var("AVER_DEBUG_DUMP_WASM") {
-            let _ = std::fs::write(path, &wasm_bytes);
-        }
-
-        // Run with wasmtime host
-        match run_wasm_with_host(&wasm_bytes, &program_args) {
-            Ok(()) => {}
-            Err(e) => {
-                eprintln!("{}", format!("WASM execution error: {}", e).red());
-                process::exit(1);
-            }
-        }
-    }
-}
-
-#[cfg(feature = "wasm")]
-thread_local! {
-    static VARIANT_NAMES: std::cell::RefCell<std::collections::HashMap<u32, String>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-#[cfg(feature = "wasm")]
-fn load_variant_names_from_instance(
-    instance: &wasmtime::Instance,
-    store: &mut wasmtime::Store<()>,
-) {
-    let ptr_global = instance.get_global(&mut *store, "$variant_names_ptr");
-    let len_global = instance.get_global(&mut *store, "$variant_names_len");
-    if let (Some(pg), Some(lg)) = (ptr_global, len_global) {
-        let ptr = pg.get(&mut *store).i32().unwrap_or(0) as usize;
-        let len = lg.get(&mut *store).i32().unwrap_or(0) as usize;
-        if len > 0 {
-            let mem = instance
-                .get_memory(&mut *store, "memory")
-                .expect("memory export");
-            let data = mem.data(&*store);
-            if ptr + len <= data.len() {
-                let text = String::from_utf8_lossy(&data[ptr..ptr + len]).to_string();
-                let mut map = std::collections::HashMap::new();
-                for entry in text.split('|') {
-                    if let Some(colon) = entry.find(':')
-                        && let Ok(tag) = entry[..colon].parse::<u32>()
-                    {
-                        map.insert(tag, entry[colon + 1..].to_string());
-                    }
-                }
-                VARIANT_NAMES.with(|names| *names.borrow_mut() = map);
-            }
-        }
-    }
-}
-
-#[cfg(feature = "wasm")]
-fn variant_name(tag: u64) -> String {
-    VARIANT_NAMES.with(|names| {
-        names
-            .borrow()
-            .get(&(tag as u32))
-            .cloned()
-            .unwrap_or_else(|| format!("Variant#{}", tag))
-    })
-}
-
-#[cfg(feature = "wasm")]
-/// Format a WASM value (i64) by reading heap structures from memory.
-fn format_wasm_value(val: i64, mem: &[u8]) -> String {
-    let ptr = val as u32 as usize;
-    let io_scratch = 128; // IO_SCRATCH_SIZE
-
-    // Check if it looks like a heap pointer
-    if ptr >= io_scratch && ptr + 8 <= mem.len() {
-        let header = u64::from_le_bytes(mem[ptr..ptr + 8].try_into().unwrap_or([0; 8]));
-        let kind = (header >> 56) & 0xFF;
-        let field_count = header & 0xFFFFFFFF;
-
-        if kind > 11 {
-            // Not a valid heap object kind — treat as integer
-            return format!("{}", val);
-        }
-
-        match kind {
-            0 => {
-                // OBJ_STRING — nested strings get quotes (aver_display_inner)
-                let len = field_count as usize;
-                if ptr + 8 + len <= mem.len() {
-                    let bytes = &mem[ptr + 8..ptr + 8 + len];
-                    let s = String::from_utf8_lossy(bytes);
-                    return format!("\"{}\"", s);
-                }
-            }
-            11 => {
-                // OBJ_MAP_ENTRY — format as {"key": value, ...}
-                // Dedup: first occurrence wins (matches Map.get behavior)
-                let mut seen_keys = std::collections::HashSet::new();
-                let mut entries = Vec::new();
-                let mut cur = ptr;
-                while cur != 0 && cur + 24 <= mem.len() {
-                    let h = u64::from_le_bytes(mem[cur..cur + 8].try_into().unwrap_or([0; 8]));
-                    if (h >> 56) & 0xFF != 11 {
-                        break;
-                    }
-                    let head =
-                        u64::from_le_bytes(mem[cur + 8..cur + 16].try_into().unwrap_or([0; 8]));
-                    let tuple_ptr = head as u32 as usize;
-                    if tuple_ptr + 24 <= mem.len() {
-                        let key_i64 = u64::from_le_bytes(
-                            mem[tuple_ptr + 8..tuple_ptr + 16]
-                                .try_into()
-                                .unwrap_or([0; 8]),
-                        );
-                        let val_i64 = u64::from_le_bytes(
-                            mem[tuple_ptr + 16..tuple_ptr + 24]
-                                .try_into()
-                                .unwrap_or([0; 8]),
-                        );
-                        let key_str = format_wasm_value(key_i64 as i64, mem);
-                        if seen_keys.insert(key_str.clone()) {
-                            let val_str = format_wasm_value(val_i64 as i64, mem);
-                            entries.push(format!("{}: {}", key_str, val_str));
-                        }
-                    }
-                    let tail =
-                        u64::from_le_bytes(mem[cur + 16..cur + 24].try_into().unwrap_or([0; 8]));
-                    cur = tail as u32 as usize;
-                }
-                return format!("{{{}}}", entries.join(", "));
-            }
-            4 | 9 => {
-                // OBJ_LIST_CONS / OBJ_LIST_CONS_F64
-                let is_f64 = kind == 9;
-                let mut items = Vec::new();
-                let mut cur = ptr;
-                while cur != 0 && cur + 24 <= mem.len() {
-                    let h = u64::from_le_bytes(mem[cur..cur + 8].try_into().unwrap_or([0; 8]));
-                    if (h >> 56) & 0xFF != kind {
-                        break;
-                    }
-                    let head =
-                        u64::from_le_bytes(mem[cur + 8..cur + 16].try_into().unwrap_or([0; 8]));
-                    if is_f64 {
-                        items.push(format!("{}", f64::from_bits(head)));
-                    } else {
-                        items.push(format_wasm_value(head as i64, mem));
-                    }
-                    let tail =
-                        u64::from_le_bytes(mem[cur + 16..cur + 24].try_into().unwrap_or([0; 8]));
-                    cur = tail as u32 as usize;
-                }
-                return format!("[{}]", items.join(", "));
-            }
-            5 => {
-                // OBJ_TUPLE
-                let count = field_count as usize;
-                let mut items = Vec::new();
-                for i in 0..count {
-                    if ptr + 8 + (i + 1) * 8 <= mem.len() {
-                        let field = u64::from_le_bytes(
-                            mem[ptr + 8 + i * 8..ptr + 8 + (i + 1) * 8]
-                                .try_into()
-                                .unwrap_or([0; 8]),
-                        );
-                        items.push(format_wasm_value(field as i64, mem));
-                    }
-                }
-                return format!("({})", items.join(", "));
-            }
-            3 | 7 | 8 => {
-                // OBJ_WRAPPER / OBJ_WRAPPER_F64 / OBJ_WRAPPER_I32
-                let tag = (header >> 48) & 0xFF;
-                let prefix = match tag {
-                    0 => "Result.Ok",
-                    1 => "Result.Err",
-                    2 => "Option.Some",
-                    _ => "Wrapper",
-                };
-                if ptr + 16 <= mem.len() {
-                    let inner =
-                        u64::from_le_bytes(mem[ptr + 8..ptr + 16].try_into().unwrap_or([0; 8]));
-                    let inner_str = if kind == 7 {
-                        format!("{}", f64::from_bits(inner))
-                    } else if kind == 8 {
-                        let inner_ptr = inner as u32 as usize;
-                        if inner_ptr >= io_scratch {
-                            // format_wasm_value already adds quotes for strings
-                            format_wasm_value(inner as i64, mem)
-                        } else {
-                            format!("{}", inner)
-                        }
-                    } else {
-                        format_wasm_value(inner as i64, mem)
-                    };
-                    return format!("{}({})", prefix, inner_str);
-                }
-            }
-            2 => {
-                // OBJ_VARIANT
-                let tag = (header >> 48) & 0xFF;
-                let count = field_count as usize;
-                let mut fields = Vec::new();
-                for i in 0..count {
-                    if ptr + 8 + (i + 1) * 8 <= mem.len() {
-                        let field = u64::from_le_bytes(
-                            mem[ptr + 8 + i * 8..ptr + 8 + (i + 1) * 8]
-                                .try_into()
-                                .unwrap_or([0; 8]),
-                        );
-                        fields.push(format_wasm_value(field as i64, mem));
-                    }
-                }
-                let name = variant_name(tag);
-                if count == 0 {
-                    return name;
-                }
-                return format!("{}({})", name, fields.join(", "));
-            }
-            1 => {
-                // OBJ_RECORD
-                let count = field_count as usize;
-                let mut fields = Vec::new();
-                for i in 0..count {
-                    if ptr + 8 + (i + 1) * 8 <= mem.len() {
-                        let field = u64::from_le_bytes(
-                            mem[ptr + 8 + i * 8..ptr + 8 + (i + 1) * 8]
-                                .try_into()
-                                .unwrap_or([0; 8]),
-                        );
-                        fields.push(format_wasm_value(field as i64, mem));
-                    }
-                }
-                return format!("Record({})", fields.join(", "));
-            }
-            _ => {}
-        }
-    }
-
-    // Default: print as integer
-    format!("{}", val)
-}
-
-#[cfg(feature = "wasm")]
-/// Format a tagged value to string.
-/// tag: 0=Int, 1=Float(bits), 2=Bool, 3=String(ptr), 4=Heap(ptr), 5=Unit
-fn format_tagged_value(tag: i32, val: i64, mem: &[u8]) -> String {
-    match tag {
-        0 => format!("{}", val),                        // Int
-        1 => format!("{}", f64::from_bits(val as u64)), // Float
-        2 => {
-            if val != 0 {
-                "true".to_string()
-            } else {
-                "false".to_string()
-            }
-        } // Bool
-        3 => {
-            // String pointer
-            let ptr = val as u32 as usize;
-            if ptr + 8 <= mem.len() {
-                let header = u64::from_le_bytes(mem[ptr..ptr + 8].try_into().unwrap_or([0; 8]));
-                let len = (header & 0xFFFFFFFF) as usize;
-                if ptr + 8 + len <= mem.len() {
-                    return String::from_utf8_lossy(&mem[ptr + 8..ptr + 8 + len]).to_string();
-                }
-            }
-            String::new()
-        }
-        4 => {
-            // Heap pointer — check sentinels first
-            if val == 0 {
-                return "[]".to_string();
-            }
-            if val == -1 {
-                return "Option.None".to_string();
-            }
-            format_wasm_value(val, mem)
-        }
-        5 => String::new(), // Unit
-        _ => format!("{}", val),
-    }
-}
-
-#[cfg(feature = "wasm")]
-fn wasm_guest_bytes(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32, len: i32) -> Vec<u8> {
-    if ptr < 0 || len < 0 {
-        return Vec::new();
-    }
-    let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-    let data = mem.data(&*caller);
-    let start = ptr as usize;
-    let end = start.saturating_add(len as usize);
-    if end > data.len() {
-        return Vec::new();
-    }
-    data[start..end].to_vec()
-}
-
-#[cfg(feature = "wasm")]
-fn wasm_guest_string(caller: &mut wasmtime::Caller<'_, ()>, ptr: i32, len: i32) -> String {
-    String::from_utf8_lossy(&wasm_guest_bytes(caller, ptr, len)).to_string()
-}
-
-#[cfg(feature = "wasm")]
-fn wasm_write_guest_bytes(caller: &mut wasmtime::Caller<'_, ()>, bytes: &[u8]) -> (i32, i32) {
-    let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-    // Short strings: IO_SCRATCH tail (bytes 96-127).
-    const SCRATCH_BASE: usize = 96;
-    const SCRATCH_CAP: usize = 32;
-    if bytes.len() <= SCRATCH_CAP {
-        mem.data_mut(caller)[SCRATCH_BASE..SCRATCH_BASE + bytes.len()].copy_from_slice(bytes);
-        return (SCRATCH_BASE as i32, bytes.len() as i32);
-    }
-    // Longer strings: use exported $alloc to avoid heap collision.
-    if let Some(alloc) = caller.get_export("alloc").and_then(|e| e.into_func()) {
-        let mut result = [wasmtime::Val::I32(0)];
-        if alloc
-            .call(
-                &mut *caller,
-                &[wasmtime::Val::I32(bytes.len() as i32)],
-                &mut result,
-            )
-            .is_ok()
-        {
-            let ptr = result[0].i32().unwrap_or(0);
-            let start = ptr as usize;
-            let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-            mem.data_mut(caller)[start..start + bytes.len()].copy_from_slice(bytes);
-            return (ptr, bytes.len() as i32);
-        }
-    }
-    // Fallback: end of memory.
-    let mem_size = mem.data_size(&*caller);
-    let reserve = bytes.len().saturating_add(64);
-    let ptr = mem_size.saturating_sub(reserve) as i32;
-    let start = ptr as usize;
-    let end = start.saturating_add(bytes.len());
-    if end <= mem_size {
-        mem.data_mut(caller)[start..end].copy_from_slice(bytes);
-    }
-    (ptr, bytes.len() as i32)
-}
-
-#[cfg(feature = "wasm")]
-fn wasm_write_guest_string(caller: &mut wasmtime::Caller<'_, ()>, text: &str) -> (i32, i32) {
-    wasm_write_guest_bytes(caller, text.as_bytes())
-}
-
-#[cfg(feature = "wasm")]
-fn run_wasm_with_host(wasm_bytes: &[u8], program_args: &[String]) -> Result<(), String> {
-    use wasmtime::*;
-
-    let engine = Engine::default();
-
-    // Step 1 of the WAT runtime migration: aver_runtime is a separate
-    // wasm module that owns memory + the bump allocator. Instantiate it
-    // first; user.wasm imports memory/heap_ptr/rt_alloc from it.
-    let runtime_bytes = aver::codegen::wasm::build_runtime_wasm()
-        .map_err(|e| format!("Runtime build error: {e}"))?;
-    let runtime_module =
-        Module::new(&engine, &runtime_bytes).map_err(|e| format!("Runtime module error: {e:#}"))?;
-
-    let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("Module error: {e:#}"))?;
-    let mut store = Store::new(&engine, ());
-    let mut linker = Linker::new(&engine);
-
-    let runtime_instance = linker
-        .instantiate(&mut store, &runtime_module)
-        .map_err(|e| format!("Runtime instantiation error: {e:#}"))?;
-    linker
-        .instance(&mut store, "aver_runtime", runtime_instance)
-        .map_err(|e| format!("Runtime link error: {e:#}"))?;
-
-    // Wire aver/* capabilities to native Rust implementations
-
-    // aver/console_print(ptr: i32, len: i32)
-    linker
-        .func_wrap("aver", "args_len", {
-            let program_args = program_args.to_vec();
-            move || -> i32 { program_args.len() as i32 }
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    linker
-        .func_wrap("aver", "args_get", {
-            let program_args = program_args.to_vec();
-            move |mut caller: Caller<'_, ()>, index: i32| -> (i32, i32) {
-                let arg = program_args
-                    .get(index.max(0) as usize)
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                wasm_write_guest_string(&mut caller, arg)
-            }
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    linker
-        .func_wrap(
-            "aver",
-            "console_print",
-            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-                use std::io::Write;
-                let data = wasm_guest_bytes(&mut caller, ptr, len);
-                std::io::stdout().write_all(&data).unwrap();
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/console_error(ptr: i32, len: i32)
-    linker
-        .func_wrap(
-            "aver",
-            "console_error",
-            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-                use std::io::Write;
-                let data = wasm_guest_bytes(&mut caller, ptr, len);
-                std::io::stderr().write_all(&data).unwrap();
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/random_int(min: i64, max: i64) -> i64
-    linker
-        .func_wrap("aver", "random_int", |min: i64, max: i64| -> i64 {
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
-            // Simple random using HashMap hasher (no extra dependency)
-            let s = RandomState::new();
-            let mut h = s.build_hasher();
-            h.write_u64(min as u64 ^ max as u64);
-            let range = (max - min + 1) as u64;
-            if range == 0 {
-                return min;
-            }
-            min + (h.finish() % range) as i64
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/random_float() -> f64 in [0.0, 1.0).
-    // The WASI bridge does this via `random_get`; this `aver run --wasm`
-    // path doesn't go through the bridge yet (TODO 0.15: use
-    // wasmtime-wasi + bridge instead of one func_wrap per effect), so
-    // we duplicate the impl in native Rust.
-    linker
-        .func_wrap("aver", "random_float", || -> f64 {
-            use std::collections::hash_map::RandomState;
-            use std::hash::{BuildHasher, Hasher};
-            let s = RandomState::new();
-            let mut h = s.build_hasher();
-            h.write_u8(0xA5);
-            // Take entropy as 53-bit mantissa, divide by 2^53 → [0.0, 1.0).
-            let bits = h.finish() >> 11;
-            (bits as f64) / ((1u64 << 53) as f64)
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/time_now() -> (i32, i32)  — returns ISO timestamp string in WASM memory
-    linker
-        .func_wrap(
-            "aver",
-            "time_now",
-            |mut caller: Caller<'_, ()>| -> (i32, i32) {
-                use std::time::{SystemTime, UNIX_EPOCH};
-                let millis = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-                let secs = millis / 1000;
-                let ms = millis % 1000;
-                // Simple ISO-8601 formatting from unix timestamp
-                let days = secs / 86400;
-                let time_of_day = secs % 86400;
-                let hours = time_of_day / 3600;
-                let minutes = (time_of_day % 3600) / 60;
-                let seconds = time_of_day % 60;
-                // Days since epoch to Y-M-D (simplified)
-                let mut y = 1970i64;
-                let mut d = days as i64;
-                loop {
-                    let days_in_year = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-                        366
-                    } else {
-                        365
-                    };
-                    if d < days_in_year {
-                        break;
-                    }
-                    d -= days_in_year;
-                    y += 1;
-                }
-                let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-                let month_days = [
-                    31,
-                    if leap { 29 } else { 28 },
-                    31,
-                    30,
-                    31,
-                    30,
-                    31,
-                    31,
-                    30,
-                    31,
-                    30,
-                    31,
-                ];
-                let mut m = 0usize;
-                while m < 12 && d >= month_days[m] {
-                    d -= month_days[m];
-                    m += 1;
-                }
-                let now = format!(
-                    "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-                    y,
-                    m + 1,
-                    d + 1,
-                    hours,
-                    minutes,
-                    seconds,
-                    ms
-                );
-                wasm_write_guest_string(&mut caller, &now)
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/time_unixMs() -> i64
-    linker
-        .func_wrap("aver", "time_unixMs", || -> i64 {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/time_sleep(millis: i64)
-    linker
-        .func_wrap("aver", "time_sleep", |millis: i64| {
-            std::thread::sleep(std::time::Duration::from_millis(millis as u64));
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/print_value(tag: i32, val: i64) — format and print any value
-    // tag: 0=Int, 1=Float(bits), 2=Bool, 3=String(ptr), 4=Heap(ptr), 5=Unit
-    linker
-        .func_wrap(
-            "aver",
-            "print_value",
-            |mut caller: Caller<'_, ()>, tag: i32, val: i64| {
-                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let formatted = format_tagged_value(tag, val, mem.data(&caller));
-                use std::io::Write;
-                std::io::stdout().write_all(formatted.as_bytes()).unwrap();
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/format_value(tag: i32, val: i64) -> (i32, i32) — format to string in memory
-    linker
-        .func_wrap(
-            "aver",
-            "format_value",
-            |mut caller: Caller<'_, ()>, tag: i32, val: i64| -> (i32, i32) {
-                let mem = caller.get_export("memory").unwrap().into_memory().unwrap();
-                let formatted = format_tagged_value(tag, val, mem.data(&caller));
-                wasm_write_guest_string(&mut caller, &formatted)
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // Math (no native WASM ops)
-    linker
-        .func_wrap("aver", "math_sin", |x: f64| -> f64 { x.sin() })
-        .map_err(|e| format!("Link error: {}", e))?;
-    linker
-        .func_wrap("aver", "math_cos", |x: f64| -> f64 { x.cos() })
-        .map_err(|e| format!("Link error: {}", e))?;
-    linker
-        .func_wrap("aver", "math_atan2", |y: f64, x: f64| -> f64 { y.atan2(x) })
-        .map_err(|e| format!("Link error: {}", e))?;
-    linker
-        .func_wrap("aver", "math_pow", |base: f64, exp: f64| -> f64 {
-            base.powf(exp)
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    // aver/console_readLine() -> (i32, i32)
-    // Reads a line from stdin, allocates in WASM memory, returns (ptr, len)
-    linker
-        .func_wrap(
-            "aver",
-            "console_readLine",
-            |mut caller: Caller<'_, ()>| -> (i32, i32) {
-                let mut input = String::new();
-                std::io::stdin().read_line(&mut input).unwrap_or(0);
-                let trimmed = input.trim_end_matches('\n').trim_end_matches('\r');
-                wasm_write_guest_string(&mut caller, trimmed)
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_enableRawMode", || {
-            aver_rt::terminal_enable_raw_mode().unwrap();
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_disableRawMode", || {
-            aver_rt::terminal_disable_raw_mode().unwrap();
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_clear", || {
-            aver_rt::terminal_clear().unwrap();
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_moveTo", |x: i32, y: i32| {
-            aver_rt::terminal_move_to(x as i64, y as i64).unwrap();
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap(
-            "aver",
-            "terminal_print",
-            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-                let text = wasm_guest_string(&mut caller, ptr, len);
-                aver_rt::terminal_print(&text).unwrap();
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap(
-            "aver",
-            "terminal_setColor",
-            |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-                let color = wasm_guest_string(&mut caller, ptr, len);
-                aver_rt::terminal_set_color(&color).unwrap();
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_resetColor", || {
-            aver_rt::terminal_reset_color().unwrap();
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap(
-            "aver",
-            "terminal_readKey",
-            |mut caller: Caller<'_, ()>| -> (i32, i32) {
-                match aver_rt::terminal_read_key() {
-                    Some(key) => wasm_write_guest_string(&mut caller, &key),
-                    None => (-1, 0),
-                }
-            },
-        )
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_size", || -> (i32, i32) {
-            let (width, height) = aver_rt::terminal_size().unwrap();
-            (width as i32, height as i32)
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_hideCursor", || {
-            aver_rt::terminal_hide_cursor().unwrap();
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_showCursor", || {
-            aver_rt::terminal_show_cursor().unwrap();
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    #[cfg(feature = "terminal")]
-    linker
-        .func_wrap("aver", "terminal_flush", || {
-            aver_rt::terminal_flush().unwrap();
-        })
-        .map_err(|e| format!("Link error: {}", e))?;
-
-    let instance = linker
-        .instantiate(&mut store, &module)
-        .map_err(|e| format!("Instantiation error: {e:#}"))?;
-
-    // Load variant name table from globals before execution starts.
-    load_variant_names_from_instance(&instance, &mut store);
-
-    // Try _start — check its actual return type and provide matching results buffer
-    if let Some(start) = instance.get_func(&mut store, "_start") {
-        let ty = start.ty(&store);
-        let num_results = ty.results().len();
-        let mut results: Vec<Val> = (0..num_results).map(|_| Val::I32(0)).collect();
-        start
-            .call(&mut store, &[], &mut results)
-            .map_err(|e| format!("Execution error: {e:#}"))?;
-    }
-
-    Ok(())
-}
-
 pub(super) fn cmd_run_self_hosted(
     file: &str,
     module_root_override: Option<&str>,
@@ -4231,27 +3470,57 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         policy_mode,
         guest_entry,
         with_self_host_support,
-        bridge,
         pack,
         handler,
+        world,
         optimize,
     } = opts;
 
-    // WASM-side targets (wasm / wat / wasm+wat): simplified pipeline,
-    // no replay/policy/guest-entry support yet
-    if target.needs_wasm_pipeline() {
-        cmd_compile_wasm(
+    // `--target wasip2` follows its own pipeline: wasm-gc lowering
+    // gives the core module, then `wit-component` wraps it as a
+    // Component. Lives in `src/codegen/wasip2/` so the wasm-gc path
+    // stays untouched. Phase 1 of 0.18 "Span" — see `docs/wasip2.md`
+    // for the contract.
+    if matches!(target, super::cli::CompileTarget::Wasip2) {
+        cmd_compile_wasip2(
             file,
             output_dir,
             project_name,
             module_root_override,
-            bridge,
-            pack,
-            handler,
+            world,
             optimize,
-            target,
         );
         return;
+    }
+
+    // `--target wasm-gc`: native engine GC + tail calls, no custom
+    // runtime. Replay / policy / guest-entry plumbing not wired here
+    // — Rust target remains the primary host for those concerns.
+    if matches!(target, super::cli::CompileTarget::WasmGc) {
+        #[cfg(feature = "wasm")]
+        {
+            cmd_compile_wasm_gc(
+                file,
+                output_dir,
+                project_name,
+                module_root_override,
+                handler,
+                optimize,
+                pack,
+            );
+            return;
+        }
+        #[cfg(not(feature = "wasm"))]
+        {
+            let _ = (handler, optimize, pack);
+            eprintln!(
+                "{}",
+                "WASM target requires --features wasm (rebuild with: \
+                 cargo build --features wasm)"
+                    .red()
+            );
+            process::exit(1);
+        }
     }
 
     if guest_entry.is_some()
@@ -4309,319 +3578,6 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
     let output = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
     let build_hint = format!("cd {} && cargo build && cargo run", output_dir);
     write_codegen_output(file, output_dir, "Rust", &build_hint, &output);
-}
-
-#[allow(clippy::too_many_arguments)]
-fn cmd_compile_wasm(
-    file: &str,
-    output_dir: &str,
-    project_name: Option<&str>,
-    module_root_override: Option<&str>,
-    bridge: Option<super::cli::WasmBridge>,
-    pack: Option<super::cli::DeployPack>,
-    handler: Option<&str>,
-    optimize: Option<super::cli::WasmOptMode>,
-    target: super::cli::CompileTarget,
-) {
-    #[cfg(not(feature = "wasm"))]
-    {
-        let _ = (
-            file,
-            output_dir,
-            project_name,
-            module_root_override,
-            bridge,
-            pack,
-            handler,
-            optimize,
-            target,
-        );
-        eprintln!(
-            "{}",
-            "WASM target requires --features wasm (rebuild with: cargo build --features wasm)"
-                .red()
-        );
-        process::exit(1);
-    }
-
-    #[cfg(feature = "wasm")]
-    {
-        // 0.16 wasm-gc probe: parallel backend, type-direct lowering,
-        // native tail calls, no custom runtime. Short-circuits before
-        // the legacy adapter dance.
-        if matches!(target, super::cli::CompileTarget::WasmGc) {
-            cmd_compile_wasm_gc(
-                file,
-                output_dir,
-                project_name,
-                module_root_override,
-                handler,
-                optimize,
-                pack,
-            );
-            return;
-        }
-
-        let (ctx, _module_root) = build_codegen_context(
-            file,
-            project_name,
-            module_root_override,
-            false,
-            &super::cli::CompilePolicyMode::Embed,
-            None,
-            false,
-            true, // apply_traversal_lowering — WASM target gets optimized form
-        );
-
-        // user.wasm bytes are identical regardless of bridge — the
-        // adapter swap happens at bundle time. We still pass the
-        // bridge through to emit so it can shape the WASI _start
-        // wrapper and any future deployment-side hints.
-        let wasm_adapter = match bridge {
-            Some(super::cli::WasmBridge::Wasip1) => codegen::wasm::WasmAdapter::Wasi,
-            Some(super::cli::WasmBridge::Fetch) => codegen::wasm::WasmAdapter::Fetch,
-            _ => codegen::wasm::WasmAdapter::Aver,
-        };
-        match codegen::wasm::emit_wasm_with_adapter(&ctx, wasm_adapter, handler) {
-            Ok(wasm_bytes) => {
-                if let Err(err) = validate_wasm_bytes(&wasm_bytes) {
-                    // Dump the (invalid) bytes to /tmp for inspection so
-                    // wasm-tools print can show what the emitter
-                    // produced — validator says where the problem is,
-                    // but we need the body shape to fix it.
-                    let dump_path = "/tmp/aver_invalid_user.wasm";
-                    let _ = std::fs::write(dump_path, &wasm_bytes);
-                    eprintln!(
-                        "{}",
-                        format!(
-                            "WASM emit produced invalid bytecode: {} (dumped to {})",
-                            err, dump_path
-                        )
-                        .red()
-                    );
-                    process::exit(1);
-                }
-                let out_path = Path::new(output_dir);
-                if let Err(e) = std::fs::create_dir_all(out_path) {
-                    eprintln!(
-                        "{}",
-                        format!("Failed to create output directory: {}", e).red()
-                    );
-                    process::exit(1);
-                }
-
-                let wasm_name = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
-                    Path::new(file)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("program")
-                        .to_string()
-                });
-
-                let wasm_file = out_path.join(format!("{}.wasm", wasm_name));
-                if let Err(e) = std::fs::write(&wasm_file, &wasm_bytes) {
-                    eprintln!("{}", format!("Failed to write WASM file: {}", e).red());
-                    process::exit(1);
-                }
-
-                // Two output shapes:
-                //   - EdgeWasm: thin user.wasm with aver_runtime.* + aver/*
-                //     all unresolved. Consumer (CDN-cached runtime, browser
-                //     playground) wires every import at instantiate time.
-                //   - Wasm: bundled artifact via wasm-merge. aver_runtime
-                //     is always merged in. Bridge controls the rest:
-                //       --bridge none  → only aver/* unresolved (host
-                //                         supplies effects)
-                //       --bridge wasip1 → also merge the aver→wasi shim;
-                //                         result is a standalone WASI
-                //                         binary that runs under
-                //                         `wasmtime program.wasm` with
-                //                         only wasi_snapshot_preview1 as
-                //                         the open import.
-                let is_edge = matches!(target, super::cli::CompileTarget::EdgeWasm);
-                let bridge_mode = bridge.unwrap_or(super::cli::WasmBridge::None);
-                let uses_aver_effects = wasm_imports_module(&wasm_bytes, "aver");
-                let uses_wasi = wasm_imports_module(&wasm_bytes, "wasi_snapshot_preview1");
-
-                if is_edge {
-                    let file_display = file.cyan();
-                    // Edge artifacts are thin user.wasm modules — every
-                    // export is hit by an external host (compiler tests,
-                    // browser playground, edge worker), so metadce is
-                    // wrong here too.
-                    let (final_size, compile_suffix) =
-                        finalize_wasm_artifact(&wasm_file, optimize, MetadceMode::HostCallable);
-                    let wasm_display = wasm_file.display().to_string().cyan();
-                    let imports_note = if uses_aver_effects {
-                        ", imports aver_runtime.* + aver/* (effects)"
-                    } else if uses_wasi {
-                        ", imports aver_runtime.* + wasi_snapshot_preview1.*"
-                    } else {
-                        ", imports aver_runtime.*"
-                    };
-                    println!(
-                        "{} {} → {} ({}{}{})",
-                        "Compiled".green().bold(),
-                        file_display,
-                        wasm_display,
-                        format_byte_size(final_size),
-                        compile_suffix,
-                        imports_note
-                    );
-                    // Deployment pack: drop platform-specific bootstrap
-                    // files next to user.wasm so the build is one
-                    // platform-CLI command from running. Pack is
-                    // independent of target/bridge — adds files,
-                    // doesn't change the .wasm.
-                    if let Some(super::cli::DeployPack::Cloudflare) = pack {
-                        emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
-                    }
-                } else {
-                    // Bundle aver_runtime + (optional bridge) + user.
-                    let runtime_bytes = match aver::codegen::wasm::build_runtime_wasm() {
-                        Ok(b) => b,
-                        Err(e) => {
-                            eprintln!("{}", format!("Runtime build error: {}", e).red());
-                            process::exit(1);
-                        }
-                    };
-                    let runtime_file = out_path.join(format!("{}_runtime.wasm", wasm_name));
-                    if let Err(e) = std::fs::write(&runtime_file, &runtime_bytes) {
-                        eprintln!(
-                            "{}",
-                            format!("Failed to write runtime WASM file: {}", e).red()
-                        );
-                        process::exit(1);
-                    }
-
-                    // Optional bridge module (today only `wasi`).
-                    let bridge_file = if matches!(bridge_mode, super::cli::WasmBridge::Wasip1) {
-                        let bytes = match aver::codegen::wasm::build_aver_to_wasi_wasm() {
-                            Ok(b) => b,
-                            Err(e) => {
-                                eprintln!(
-                                    "{}",
-                                    format!("aver_to_wasi bridge build error: {}", e).red()
-                                );
-                                process::exit(1);
-                            }
-                        };
-                        let path = out_path.join(format!("{}_aver_to_wasi.wasm", wasm_name));
-                        if let Err(e) = std::fs::write(&path, &bytes) {
-                            eprintln!(
-                                "{}",
-                                format!("Failed to write aver_to_wasi shim: {}", e).red()
-                            );
-                            process::exit(1);
-                        }
-                        Some(path)
-                    } else {
-                        None
-                    };
-
-                    let merged_file = out_path.join(format!("{}_merged.wasm", wasm_name));
-                    let mut merge = std::process::Command::new("wasm-merge");
-                    merge.arg(&runtime_file).arg("aver_runtime");
-                    if let Some(bridge_path) = &bridge_file {
-                        merge.arg(bridge_path).arg("aver");
-                    }
-                    merge.arg(&wasm_file).arg("program");
-                    merge
-                        .arg("--rename-export-conflicts")
-                        .arg("--enable-bulk-memory")
-                        // Host imports like format_value return (i32, i32);
-                        // emitter uses tail calls in TCO trampolines.
-                        .arg("--enable-multivalue")
-                        .arg("--enable-tail-call")
-                        .arg("-o")
-                        .arg(&merged_file);
-                    let merge_result = merge.output();
-
-                    let _ = std::fs::remove_file(&runtime_file);
-                    if let Some(bridge_path) = &bridge_file {
-                        let _ = std::fs::remove_file(bridge_path);
-                    }
-
-                    match merge_result {
-                        Ok(out) if out.status.success() => {
-                            let _ = std::fs::rename(&merged_file, &wasm_file);
-                            let file_display = file.cyan();
-                            // Bundled-wasm metadce-mode picker: with the
-                            // fetch bridge the JS host has an open call
-                            // surface into the merged runtime (alloc,
-                            // aver_http_handle, rt_map_from_list, …),
-                            // so skip metadce. With wasip1 / none the
-                            // program runs to its `_start` / `main`
-                            // entry and the runtime helpers are pure
-                            // dead weight; let metadce prune them.
-                            let metadce_mode = match bridge_mode {
-                                super::cli::WasmBridge::Fetch => MetadceMode::HostCallable,
-                                super::cli::WasmBridge::Wasip1 | super::cli::WasmBridge::None => {
-                                    MetadceMode::ProgramEntry
-                                }
-                            };
-                            let (final_size, compile_suffix) =
-                                finalize_wasm_artifact(&wasm_file, optimize, metadce_mode);
-                            let wasm_display = wasm_file.display().to_string().cyan();
-                            let imports_note = match bridge_mode {
-                                super::cli::WasmBridge::Wasip1 => {
-                                    ", with runtime + aver→wasi bridge"
-                                }
-                                super::cli::WasmBridge::Fetch => {
-                                    ", with runtime, imports aver/* (JS host)"
-                                }
-                                super::cli::WasmBridge::None => {
-                                    if uses_aver_effects {
-                                        ", with runtime, imports aver/* (effects)"
-                                    } else if uses_wasi {
-                                        ", with runtime, imports wasi_snapshot_preview1.*"
-                                    } else {
-                                        ", with runtime"
-                                    }
-                                }
-                            };
-                            println!(
-                                "{} {} → {} ({}{}{})",
-                                "Compiled".green().bold(),
-                                file_display,
-                                wasm_display,
-                                format_byte_size(final_size),
-                                compile_suffix,
-                                imports_note
-                            );
-                            // Deployment pack — drops platform-specific
-                            // bootstrap files next to the bundled wasm.
-                            // Cloudflare Workers reject runtime-fetched
-                            // wasm bytes, so the only viable shape on
-                            // CF is `--target wasm` (single bundled),
-                            // and the pack lives here too.
-                            if let Some(super::cli::DeployPack::Cloudflare) = pack {
-                                emit_cloudflare_pack(out_path, &wasm_name, &wasm_file);
-                            }
-                        }
-                        Ok(out) => {
-                            let stderr = String::from_utf8_lossy(&out.stderr);
-                            eprintln!("{}", format!("wasm-merge failed: {}", stderr.trim()).red());
-                            let _ = std::fs::remove_file(&merged_file);
-                            process::exit(1);
-                        }
-                        Err(_) => {
-                            eprintln!(
-                                "{}",
-                                "wasm-merge not found. Install binaryen (`brew install binaryen`) or use --target edge-wasm."
-                                    .red()
-                            );
-                            process::exit(1);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("{}", format!("WASM codegen error: {}", e).red());
-                process::exit(1);
-            }
-        }
-    }
 }
 
 /// `aver compile FILE --target=wasm-gc` — 0.16 probe backend.
@@ -4734,14 +3690,8 @@ fn cmd_compile_wasm_gc(
         eprintln!("{}", format!("Failed to write WASM file: {}", e).red());
         process::exit(1);
     }
-    // Optional `--optimize` post-pass: wasm-metadce skipped (factory
-    // exports + `__rt_*` LM transport helpers are host-callable roots,
-    // metadce graph would have to enumerate every conditional export
-    // by hand). `wasm-opt -Oz` keeps the export surface and converges
-    // on a smaller body — that's where the per-instantiation helpers
-    // (Map probes, List ops, eq helpers) shrink when unreachable.
-    let (final_size, opt_suffix) =
-        finalize_wasm_artifact(&wasm_file, optimize, MetadceMode::HostCallable);
+    // Optional `--optimize` post-pass — see `run_optimize_pipeline`.
+    let (final_size, opt_suffix) = finalize_wasm_artifact(&wasm_file, optimize);
     println!(
         "{} wasm-gc → {} ({} bytes{})",
         "•".cyan(),
@@ -4758,23 +3708,223 @@ fn cmd_compile_wasm_gc(
     }
 }
 
-/// True if `bytes` declares any import whose module name is exactly
-/// `module`. Used to detect effect imports without false positives from
-/// data sections that happen to spell `aver_rt`.
-#[cfg(feature = "wasm")]
-fn wasm_imports_module(bytes: &[u8], module: &str) -> bool {
-    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
-        if let Ok(wasmparser::Payload::ImportSection(reader)) = payload {
-            for import in reader {
-                if let Ok(import) = import
-                    && import.module == module
-                {
-                    return true;
-                }
-            }
-        }
+/// `--target wasip2` compile entry — 0.18 "Span".
+///
+/// The wasm-gc backend produces a core module that already imports
+/// canonical-ABI WIT functions (e.g. `wasi:cli/stdout@0.2.4`,
+/// `wasi:filesystem/preopens@0.2.4`, `wasi:io/streams@0.2.4`).
+/// `wit-component` wraps it as a Component bound to the chosen WIT
+/// world — no preview-1 adapter, no shim layer; effects lower
+/// directly. Outputs:
+///
+/// - `out/<name>.component.wasm` — the component bytes
+/// - `out/<name>.wit` — the component contract in WIT, per
+///   `docs/wasip2.md` point 5
+///
+/// Effect surface today: `Console.print/error/warn`,
+/// `Console.readLine`, `Time.unixMs/now/sleep`, `Random.int/float`,
+/// `Args.get`, `Env.get`, all `Disk.*`. Effects that the wasip2
+/// pipeline cannot lower (`Terminal.*`, `Http.*`, `HttpServer.*`,
+/// `Tcp.*`) are rejected at this command's entry — see
+/// `docs/wasip2.md` "Why X is rejected, not stubbed" for the
+/// dynamic-host vs static-target axis.
+fn cmd_compile_wasip2(
+    file: &str,
+    output_dir: &str,
+    project_name: Option<&str>,
+    module_root_override: Option<&str>,
+    world: super::cli::Wasip2World,
+    optimize: Option<super::cli::WasmOptMode>,
+) {
+    #[cfg(not(feature = "wasip2"))]
+    {
+        let _ = (
+            file,
+            output_dir,
+            project_name,
+            module_root_override,
+            world,
+            optimize,
+        );
+        eprintln!(
+            "{}",
+            "--target wasip2 requires --features wasip2 \
+             (rebuild with: cargo build --features wasip2)"
+                .red()
+        );
+        process::exit(1);
     }
-    false
+
+    #[cfg(feature = "wasip2")]
+    {
+        use aver::codegen::{wasip2 as wasip2_codegen, wasm_gc};
+
+        // `--optimize` runs `wasm-opt` against a core module, which
+        // doesn't yet handle wasm-gc + Component Model bytes cleanly
+        // upstream. Rather than silently drop the flag, reject it
+        // with a clear diagnostic — the wasm-gc target accepts it
+        // for the legacy core flow.
+        if optimize.is_some() {
+            eprintln!(
+                "{}",
+                "--optimize is not supported on `--target wasip2`: wasm-opt does not yet \
+                 handle wasm-gc + Component Model output. Use `--target wasm-gc` if you \
+                 need post-pass size/speed optimization."
+                    .red()
+            );
+            process::exit(1);
+        }
+
+        let module_root = resolve_module_root(module_root_override);
+        let source = match read_file(file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+        let mut items = match parse_file(&source) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("{}", e.red());
+                process::exit(1);
+            }
+        };
+
+        use aver::ir::{PipelineConfig, TypecheckMode};
+        let neutral_policy = aver::ir::NeutralAllocPolicy;
+        let result = aver::ir::pipeline::run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full {
+                    base_dir: Some(&module_root),
+                }),
+                alloc_policy: Some(&neutral_policy),
+                run_interp_lower: false,
+                run_buffer_build: false,
+                ..Default::default()
+            },
+        );
+        if let Some(tc) = &result.typecheck
+            && !tc.errors.is_empty()
+        {
+            eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+            process::exit(1);
+        }
+
+        let dep_modules = load_compile_deps(&items, &module_root, false, false);
+        // Bypass the `flatten_multimodule` shim in this file (gated on
+        // the `wasm` feature) and call the wasm-gc library function
+        // directly — `wasip2` enables `wasm-compile` (which exposes
+        // it) but does not pull `wasm`.
+        aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+        aver::ir::pipeline::resolve(&mut items);
+
+        // Phase 1.6 — static effect-set check. Catches every Aver
+        // effect that `--target wasip2` cannot lower today, BEFORE
+        // wasm-gc emits anything. Three categories: permanent (WASI
+        // 0.2 cannot satisfy by design), out-of-release (Phase 2/3
+        // / 0.19+), and pending-phase (planned but not yet wired in
+        // 0.18). All surfaced as `target-effect-unsupported` so the
+        // user sees one consistent error class. See
+        // docs/wasip2.md "Why X is rejected, not stubbed".
+        if let Err(unsupported) = wasip2_codegen::check_supported_effects(&items) {
+            eprintln!(
+                "{}",
+                format!(
+                    "error[target-effect-unsupported]: \
+                     {} effect site(s) cannot be lowered by `--target wasip2`",
+                    unsupported.len()
+                )
+                .red()
+            );
+            eprintln!("{}", wasip2_codegen::render_errors(&unsupported).yellow());
+            eprintln!(
+                "{}",
+                "  See docs/wasip2.md (\"Why X is rejected, not stubbed\") \
+                 for the static-target vs dynamic-host axis."
+                    .yellow()
+            );
+            process::exit(1);
+        }
+
+        // Phase 1.2b1 — wasip2 path goes through its own wasm-gc
+        // entry. At commit 1.2b1.1 this is plumbing only (delegates
+        // to the same `emit_module_with` body as `--target wasm-gc`),
+        // but every later commit in this phase changes the bytes
+        // produced under `TargetMode::Wasip2`.
+        let core_bytes =
+            match wasm_gc::compile_to_wasm_gc_for_wasip2(&items, result.analysis.as_ref()) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("{}", format!("{e}").red());
+                    process::exit(1);
+                }
+            };
+
+        let world_codegen = match world {
+            super::cli::Wasip2World::CliCommand => wasip2_codegen::Wasip2World::CliCommand,
+            super::cli::Wasip2World::HttpProxy => wasip2_codegen::Wasip2World::HttpProxy,
+        };
+
+        let (component_bytes, wit_source) =
+            match wasip2_codegen::compile_to_component(&core_bytes, world_codegen) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{}", format!("{e}").red());
+                    eprintln!(
+                        "{}",
+                        "  hint: Phase 1.6 already rejects every effect that \
+                         `--target wasip2` cannot lower today, so this failure \
+                         points at a wasm-gc emit shape the component model did \
+                         not expect (rare). Report with the program that \
+                         triggered it."
+                            .yellow()
+                    );
+                    process::exit(1);
+                }
+            };
+
+        let out_path = Path::new(output_dir);
+        if let Err(e) = std::fs::create_dir_all(out_path) {
+            eprintln!(
+                "{}",
+                format!("Failed to create output directory: {}", e).red()
+            );
+            process::exit(1);
+        }
+        let stem = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
+            Path::new(file)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("program")
+                .to_string()
+        });
+        let component_file = out_path.join(format!("{}.component.wasm", stem));
+        let wit_file = out_path.join(format!("{}.wit", stem));
+
+        if let Err(e) = std::fs::write(&component_file, &component_bytes) {
+            eprintln!("{}", format!("Failed to write component file: {}", e).red());
+            process::exit(1);
+        }
+        if let Err(e) = std::fs::write(&wit_file, &wit_source) {
+            eprintln!("{}", format!("Failed to write WIT file: {}", e).red());
+            process::exit(1);
+        }
+
+        println!(
+            "{} wasip2 → {} ({} bytes, world {})",
+            "•".cyan(),
+            component_file.display().to_string().cyan(),
+            component_bytes.len(),
+            world_codegen.wit_name(),
+        );
+        println!(
+            "{}        {}",
+            "•".cyan(),
+            wit_file.display().to_string().cyan(),
+        );
+    }
 }
 
 /// `worker.js` template for the Cloudflare Workers pack. Lives as a
@@ -4845,163 +3995,6 @@ fn emit_cloudflare_pack(out_path: &Path, wasm_name: &str, wasm_file: &Path) {
     );
 }
 
-/// Validate WASM bytes structurally before they reach disk or wasmtime.
-/// Catches emit-time bugs like Map<Int,V>'s `expected i32, found i64`
-/// where the type checker accepted the program but codegen produced
-/// invalid bytecode.
-#[cfg(feature = "wasm")]
-fn validate_wasm_bytes(bytes: &[u8]) -> Result<(), String> {
-    let mut validator = wasmparser::Validator::new();
-    validator
-        .validate_all(bytes)
-        .map(|_| ())
-        .map_err(|e| e.to_string())
-}
-
-/// Emit the standalone aver_runtime / aver_to_wasi artifact. Internal
-/// release tooling — used by `tools/release/build_runtime_artifacts.py`
-/// to publish per-version runtime modules to averlang.dev.
-#[cfg(feature = "wasm")]
-pub fn cmd_wasm_runtime(
-    output: &str,
-    artifact: super::cli::WasmRuntimeArtifact,
-    optimize: Option<super::cli::WasmOptMode>,
-    wat: bool,
-) {
-    let bytes = match artifact {
-        super::cli::WasmRuntimeArtifact::Runtime => aver::codegen::wasm::build_runtime_wasm(),
-        super::cli::WasmRuntimeArtifact::WasiBridge => {
-            aver::codegen::wasm::build_aver_to_wasi_wasm()
-        }
-    };
-    let bytes = match bytes {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("{}", format!("Runtime build error: {}", e).red());
-            process::exit(1);
-        }
-    };
-    if let Err(e) = validate_wasm_bytes(&bytes) {
-        eprintln!(
-            "{}",
-            format!("Runtime artifact failed validation: {}", e).red()
-        );
-        process::exit(1);
-    }
-
-    let output_path = Path::new(output);
-    if let Some(parent) = output_path.parent()
-        && !parent.as_os_str().is_empty()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        eprintln!(
-            "{}",
-            format!(
-                "Failed to create output directory {}: {}",
-                parent.display(),
-                e
-            )
-            .red()
-        );
-        process::exit(1);
-    }
-    if let Err(e) = std::fs::write(output_path, &bytes) {
-        eprintln!(
-            "{}",
-            format!("Failed to write {}: {}", output_path.display(), e).red()
-        );
-        process::exit(1);
-    }
-
-    let raw_size = bytes.len() as u64;
-    let final_size = if let Some(mode) = optimize {
-        match run_optimize_pipeline_library(output_path, mode) {
-            Ok(size) => size,
-            Err(e) => {
-                eprintln!("{}", e.red());
-                process::exit(1);
-            }
-        }
-    } else {
-        raw_size
-    };
-
-    let label = match artifact {
-        super::cli::WasmRuntimeArtifact::Runtime => "aver_runtime",
-        super::cli::WasmRuntimeArtifact::WasiBridge => "aver_to_wasi",
-    };
-    let opt_note = match optimize {
-        Some(super::cli::WasmOptMode::Oz) => " (optimized for size)",
-        Some(super::cli::WasmOptMode::O3) => " (optimized for speed)",
-        None => " (raw)",
-    };
-    println!(
-        "{} {} → {} ({}{})",
-        "Built".green().bold(),
-        label,
-        output_path.display().to_string().cyan(),
-        format_byte_size(final_size),
-        opt_note
-    );
-
-    if wat {
-        let wat_path = output_path.with_extension("wat");
-        let result = std::process::Command::new("wasm-tools")
-            .arg("print")
-            .arg(output_path)
-            .output();
-        match result {
-            Ok(out) if out.status.success() => {
-                if let Err(e) = std::fs::write(&wat_path, &out.stdout) {
-                    eprintln!(
-                        "{}",
-                        format!(
-                            "Failed to write WAT companion {}: {}",
-                            wat_path.display(),
-                            e
-                        )
-                        .red()
-                    );
-                    process::exit(1);
-                }
-                println!(
-                    "        WAT companion → {}",
-                    wat_path.display().to_string().cyan()
-                );
-            }
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                eprintln!(
-                    "{}",
-                    format!("wasm-tools print failed: {}", stderr.trim()).red()
-                );
-                process::exit(1);
-            }
-            Err(_) => {
-                eprintln!(
-                    "{}",
-                    "wasm-tools not found on PATH — install wasm-tools or omit --wat.".red()
-                );
-                process::exit(1);
-            }
-        }
-    }
-}
-
-#[cfg(not(feature = "wasm"))]
-pub fn cmd_wasm_runtime(
-    _output: &str,
-    _artifact: super::cli::WasmRuntimeArtifact,
-    _optimize: Option<super::cli::WasmOptMode>,
-    _wat: bool,
-) {
-    eprintln!(
-        "{}",
-        "`aver wasm-runtime` requires building aver with `--features wasm`.".red()
-    );
-    process::exit(1);
-}
-
 /// Run the post-codegen WASM tail: optionally run wasm-opt. Returns
 /// (final_size, suffix) for the existing `Compiled X → Y (size, suffix)`
 /// print line.
@@ -5011,51 +4004,17 @@ pub fn cmd_wasm_runtime(
 /// (`wasm-tools print program.wasm`). For pre-opt builds, names survive;
 /// for post-opt, `wasm-opt -Oz` strips the section by design.
 #[cfg(feature = "wasm")]
-/// How wasm-metadce should treat the artifact when seeding its
-/// reachability graph. The graph decides which exports survive into
-/// `wasm-opt -Oz`'s root set; getting it wrong strips host-callable
-/// exports and breaks the runtime.
-///
-/// - `ProgramEntry`: classic standalone program — `_start` / `main`
-///   / `memory` are the only outside-reachable exports. Everything
-///   the runtime helpers happen to expose during `wasm-merge` gets
-///   pruned. Right shape for `--bridge wasip1` and `--bridge none`
-///   bundled outputs.
-/// - `HostCallable`: the host has an open-ended call surface into
-///   the bundled module — `alloc`, `aver_http_handle`, runtime
-///   helpers like `rt_map_from_list` for header bulk transfer, and
-///   anything else a future binding (KV, D1, …) might reach for.
-///   We can't enumerate the closed set up front, so skip metadce
-///   entirely; `wasm-opt -Oz` then keeps every export the emitter
-///   chose to leave on the module as a root. Right shape for
-///   `--bridge fetch` bundled output.
-/// - `Library`: every export is a published public API consumed by
-///   some external user.wasm; pruning any of them is wrong.
-///   Same skip-metadce path as `HostCallable`. Used by
-///   `aver wasm-runtime --optimize` (the standalone aver_runtime
-///   artifact and the aver→wasi shim).
-#[cfg(feature = "wasm")]
-#[derive(Copy, Clone)]
-enum MetadceMode {
-    ProgramEntry,
-    HostCallable,
-    Library,
-}
-
-#[cfg(feature = "wasm")]
 fn finalize_wasm_artifact(
     wasm_file: &Path,
     optimize: Option<super::cli::WasmOptMode>,
-    metadce_mode: MetadceMode,
 ) -> (u64, String) {
     let mut final_size = std::fs::metadata(wasm_file).map(|m| m.len()).unwrap_or(0);
     let mut compile_suffix = String::new();
     if let Some(mode) = optimize {
-        final_size =
-            run_optimize_pipeline_inner(wasm_file, mode, metadce_mode).unwrap_or_else(|err| {
-                eprintln!("{}", err.red());
-                process::exit(1);
-            });
+        final_size = run_optimize_pipeline(wasm_file, mode).unwrap_or_else(|err| {
+            eprintln!("{}", err.red());
+            process::exit(1);
+        });
         compile_suffix = format!(", optimized for {}", optimize_label(mode));
     }
     (final_size, compile_suffix)
@@ -5069,107 +4028,28 @@ fn optimize_label(mode: super::cli::WasmOptMode) -> &'static str {
     }
 }
 
-/// Library-mode optimize: skip wasm-metadce (every export is a real
-/// public API root, not an artifact of bundling), apply only
-/// `-Oz --converge --strip-*`. Used by `aver wasm-runtime --optimize`.
+/// `--optimize` post-pass for wasm-gc artifacts. Skips wasm-metadce —
+/// factory exports + `__rt_*` LM transport helpers are host-callable
+/// roots and a metadce graph would have to enumerate every conditional
+/// export by hand. `wasm-opt -Oz` keeps the export surface and converges
+/// on a smaller body — that's where the per-instantiation helpers (Map
+/// probes, List ops, eq helpers) shrink when unreachable.
 #[cfg(feature = "wasm")]
-fn run_optimize_pipeline_library(
-    wasm_file: &Path,
-    mode: super::cli::WasmOptMode,
-) -> Result<u64, String> {
-    run_optimize_pipeline_inner(wasm_file, mode, MetadceMode::Library)
-}
-
-#[cfg(feature = "wasm")]
-fn run_optimize_pipeline_inner(
-    wasm_file: &Path,
-    mode: super::cli::WasmOptMode,
-    metadce_mode: MetadceMode,
-) -> Result<u64, String> {
+fn run_optimize_pipeline(wasm_file: &Path, mode: super::cli::WasmOptMode) -> Result<u64, String> {
     let input_size = std::fs::metadata(wasm_file)
         .map(|meta| meta.len())
         .map_err(|e| format!("Failed to stat {}: {}", wasm_file.display(), e))?;
     let stage1_file = wasm_file.with_extension("dce.wasm");
-    let metadce_graph = wasm_file.with_extension("metadce.json");
     let optimized_file = wasm_file.with_extension("opt.wasm");
     let opt_flag = match mode {
         super::cli::WasmOptMode::O3 => "-O3",
         super::cli::WasmOptMode::Oz => "-Oz",
     };
 
-    // Stage 1: meta-DCE on the cross-module reachability graph. After
-    // wasm-merge bundles aver_runtime + (optional bridge) + user, every
-    // runtime function (~70) is still exported — `-Oz` treats exports
-    // as DCE roots, so they survive even though bundled artifacts have
-    // no external caller. wasm-metadce takes a JSON describing what
-    // *outside* the module reaches, marks `_start`/`main` as the only
-    // entry points, and prunes everything else (including exports).
-    // No-op for `--target edge-wasm` artifacts (they already export
-    // only `_start`/`main`). We ship a minimal graph and let metadce
-    // discover the internal call tree.
-    //
-    // Stage 1: meta-DCE on the cross-module reachability graph. Only
-    // run for `ProgramEntry` artifacts — those have a small, closed
-    // set of outside-reachable exports (`_start`/`main`/`memory`),
-    // so pruning everything else is sound. `HostCallable` and
-    // `Library` artifacts skip this step: their export surface is
-    // either open-ended (host bindings reach for arbitrary runtime
-    // helpers) or fully public, so metadce would strip exports a
-    // real consumer needs.
-    match metadce_mode {
-        MetadceMode::Library | MetadceMode::HostCallable => {
-            std::fs::copy(wasm_file, &stage1_file)
-                .map_err(|e| format!("Failed to stage wasm for opt: {}", e))?;
-        }
-        MetadceMode::ProgramEntry => {
-            // The `memory` export is reachable from outside even though
-            // _start / main don't reference it directly: WASI host calls
-            // (fd_write, random_get, clock_time_get, …) read and write
-            // through it. Without this root, metadce strips the export
-            // and wasmtime rejects the module with "missing required
-            // memory export".
-            let graph_json = "[\n  { \"name\": \"outside\", \"root\": true, \"reaches\": [\"main_export\", \"start_export\", \"memory_export\"] },\n  { \"name\": \"main_export\", \"export\": \"main\" },\n  { \"name\": \"start_export\", \"export\": \"_start\" },\n  { \"name\": \"memory_export\", \"export\": \"memory\" }\n]\n";
-            if let Err(e) = std::fs::write(&metadce_graph, graph_json) {
-                return Err(format!(
-                    "Failed to write wasm-metadce graph for {}: {}",
-                    wasm_file.display(),
-                    e
-                ));
-            }
-            let dce_output = std::process::Command::new("wasm-metadce")
-                .arg(format!("--graph-file={}", metadce_graph.display()))
-                .arg("--enable-bulk-memory")
-                .arg("--enable-multivalue")
-                .arg("--enable-tail-call")
-                .arg("--enable-gc")
-                .arg("--enable-reference-types")
-                .arg(wasm_file)
-                .arg("-o")
-                .arg(&stage1_file)
-                .output()
-                .map_err(|e| {
-                    let _ = std::fs::remove_file(&metadce_graph);
-                    format!(
-                        "Failed to run wasm-metadce for {}: {}. Install binaryen or compile without --optimize.",
-                        wasm_file.display(),
-                        e
-                    )
-                })?;
-            let _ = std::fs::remove_file(&metadce_graph);
+    std::fs::copy(wasm_file, &stage1_file)
+        .map_err(|e| format!("Failed to stage wasm for opt: {}", e))?;
 
-            if !dce_output.status.success() {
-                let stderr = String::from_utf8_lossy(&dce_output.stderr);
-                let _ = std::fs::remove_file(&stage1_file);
-                return Err(format!(
-                    "wasm-metadce failed for {}: {}",
-                    wasm_file.display(),
-                    stderr.trim()
-                ));
-            }
-        }
-    }
-
-    // Stage 2: aggressive optimization with --converge (run passes to
+    // Aggressive optimization with --converge (run passes to
     // fixed point) and metadata strip. -Oz already drops the name
     // section; --strip-producers and --strip-target-features remove
     // sections that survive otherwise and bloat merged artifacts.
@@ -5248,9 +4128,9 @@ pub(super) struct CompileOptions<'a> {
     pub(super) policy_mode: &'a super::cli::CompilePolicyMode,
     pub(super) guest_entry: Option<&'a str>,
     pub(super) with_self_host_support: bool,
-    pub(super) bridge: Option<super::cli::WasmBridge>,
     pub(super) pack: Option<super::cli::DeployPack>,
     pub(super) handler: Option<&'a str>,
+    pub(super) world: super::cli::Wasip2World,
     pub(super) optimize: Option<super::cli::WasmOptMode>,
 }
 

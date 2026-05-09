@@ -14,8 +14,8 @@ pub mod lean;
 pub mod recursion;
 #[cfg(feature = "runtime")]
 pub mod rust;
-#[cfg(feature = "wasm-legacy")]
-pub mod wasm;
+#[cfg(feature = "wasip2")]
+pub mod wasip2;
 #[cfg(feature = "wasm-compile")]
 pub mod wasm_gc;
 

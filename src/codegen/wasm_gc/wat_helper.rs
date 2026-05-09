@@ -179,6 +179,12 @@ fn wasmparser_to_encoder_valtype(ty: wasmparser::ValType) -> Result<ValType, Was
                         )));
                     }
                 },
+                wasmparser::HeapType::Exact(idx) => {
+                    return Err(WasmGcError::Validation(format!(
+                        "wat helper local uses exact-typed heap ref `{idx:?}` — not supported \
+                         (wasm-encoder HeapType has no Exact variant; use Concrete)"
+                    )));
+                }
             };
             Ok(ValType::Ref(wasm_encoder::RefType {
                 nullable,

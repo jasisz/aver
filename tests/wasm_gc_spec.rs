@@ -58,6 +58,9 @@ fn run_int(source: &str) -> i64 {
     config.wasm_bulk_memory(true);
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     config.max_wasm_stack(8 * 1024 * 1024);
+    // `component-model-async` (pulled in by the `wasip2` feature)
+    // enforces `max_wasm_stack <= async_stack_size` at Engine::new.
+    config.async_stack_size(12 * 1024 * 1024);
     let engine = wasmtime::Engine::new(&config).expect("wasmtime engine");
     let module = wasmtime::Module::new(&engine, &bytes).unwrap_or_else(|e| {
         panic!("wasmtime rejected wasm-gc bytes: {e}");

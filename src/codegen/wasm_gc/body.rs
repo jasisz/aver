@@ -33,6 +33,7 @@ use crate::ast::{FnBody, FnDef, Stmt};
 use crate::ir::CallLowerCtx;
 
 mod builtins;
+mod builtins_wasip2;
 mod emit;
 pub(super) mod eq_helpers;
 pub(super) mod hash_helpers;
@@ -152,6 +153,7 @@ pub(super) struct FnEntry {
 /// emitting `return_call $self` on `Expr::TailCall` to the same fn.
 /// Mutual-TCO across SCC members goes through a `return_call_indirect`
 /// table; that wiring lives in module.rs.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_fn_body(
     func: &mut Function,
     fd: &FnDef,
@@ -160,6 +162,7 @@ pub(super) fn emit_fn_body(
     registry: &TypeRegistry,
     effect_idx_lookup: &HashMap<String, u32>,
     caller_fn_collector: &std::cell::RefCell<CallerFnCollector>,
+    wasip2_lowering: Option<&Wasip2Lowering>,
 ) -> Result<Vec<ValType>, WasmGcError> {
     let slots = SlotTable::build_for_fn(fd, registry, fn_map)?;
     let FnBody::Block(stmts) = fd.body.as_ref();
@@ -190,6 +193,7 @@ pub(super) fn emit_fn_body(
         binding_names: &binding_names,
         effect_idx_lookup,
         caller_fn_collector,
+        wasip2_lowering,
     };
 
     for (i, stmt) in stmts.iter().enumerate() {
@@ -314,6 +318,145 @@ pub(super) struct EmitCtx<'a> {
     /// are emitted from `names` after every fn body has been
     /// produced.
     pub(super) caller_fn_collector: &'a std::cell::RefCell<CallerFnCollector>,
+    /// `Some(...)` when the wasm-gc emitter was invoked under
+    /// `TargetMode::Wasip2` AND the program registers at least one
+    /// of `Console.print` / `Console.error` / `Console.warn`. Carries
+    /// the fn / global / helper indices the call-site lowering needs
+    /// to emit canonical-ABI imports of `wasi:cli/{stdout,stderr}`
+    /// and `wasi:io/streams.[method]output-stream.blocking-write-and-
+    /// flush`. Phase 1.2b1.5.
+    pub(super) wasip2_lowering: Option<&'a Wasip2Lowering>,
+}
+
+/// Concrete fn / global / helper indices the wasip2 call-site
+/// lowering reads. Built once per module in `module.rs` after the
+/// import section / globals section / bridge fn indices have been
+/// allocated, then handed to every `emit_fn_body` call as a
+/// borrowed reference. Each `Option<...>` field is populated when
+/// at least one effect that needs it is registered.
+pub(super) struct Wasip2Lowering {
+    // ── Phase 1.2b1.5: Console.{print, error, warn} ─────────────
+    /// `wasi:cli/stdout.get-stdout` imported wasm fn idx.
+    pub(super) get_stdout_fn_idx: Option<u32>,
+    /// `wasi:cli/stderr.get-stderr` imported wasm fn idx.
+    pub(super) get_stderr_fn_idx: Option<u32>,
+    /// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
+    /// imported wasm fn idx. `Some(...)` when any `Console.*` is
+    /// registered; `None` otherwise.
+    pub(super) blocking_write_fn_idx: Option<u32>,
+    /// Mutable i32 global caching the stdout `output-stream` resource
+    /// handle. Initial value `-1` ("not yet resolved").
+    pub(super) stdout_handle_global: Option<u32>,
+    /// Same shape for stderr.
+    pub(super) stderr_handle_global: Option<u32>,
+    /// `__rt_string_to_lm` helper wasm fn idx. Reused from the
+    /// existing JS-bridge helper machinery — on wasip2 it stays
+    /// internal (not exported) and copies utf-8 bytes from the
+    /// Aver `(ref null $string)` to LM[0..len]. `Some(...)` when
+    /// any string-marshalling effect (i.e., `Console.*`) is wired.
+    pub(super) str_to_lm_fn_idx: Option<u32>,
+
+    // ── Phase 1.4: Time.unixMs / Random.{int, float} ───────────
+    /// `wasi:clocks/wall-clock.now` imported wasm fn idx.
+    /// `Some(...)` when `Time.unixMs` is registered.
+    pub(super) clocks_now_fn_idx: Option<u32>,
+    /// `wasi:random/random.get-random-u64` imported wasm fn idx.
+    /// `Some(...)` when at least one of `Random.{int, float}` is
+    /// registered (the same import drives both).
+    pub(super) random_u64_fn_idx: Option<u32>,
+
+    // ── Phase 1.3.2: Args.get + shared canonical-ABI decoders ──
+    /// `wasi:cli/environment.get-arguments` imported wasm fn idx.
+    /// `Some(...)` when `Args.get` is registered.
+    pub(super) get_arguments_fn_idx: Option<u32>,
+    /// `cabi_realloc` exported wasm fn idx — the bump-allocator
+    /// helper from Phase 1.3.1. Required by every list-returning
+    /// canonical-ABI import (host calls it to allocate the list
+    /// payload + per-element bytes in guest memory). `Some(...)`
+    /// when any wasip2 import is registered.
+    pub(super) cabi_realloc_fn_idx: Option<u32>,
+    /// `__rt_canonical_decode_list_string(retptr) -> List<String>`
+    /// helper wasm fn idx. Walks the canonical-ABI lowered form
+    /// `(list_ptr i32, list_len i32)` at retptr → Aver
+    /// `List<String>` (cons cells + GC `(array i8)` strings).
+    /// Shared across every list-returning effect: `Args.get`
+    /// today, `Disk.listDir` (Phase 1.5), more later. Emitted
+    /// once per module when any consumer is registered.
+    pub(super) decode_list_string_fn_idx: Option<u32>,
+
+    // ── Phase 1.3.3: Env.get ──────────────────────────────────
+    /// `wasi:cli/environment.get-environment` imported wasm fn idx.
+    /// `Some(...)` when `Env.get` is registered.
+    pub(super) get_environment_fn_idx: Option<u32>,
+    /// `__rt_canonical_env_lookup(retptr, key_ptr, key_len) ->
+    /// String` helper wasm fn idx. Walks the canonical-ABI
+    /// lowered `list<tuple<string, string>>` at retptr,
+    /// linear-searches for an entry whose key matches the
+    /// caller-supplied LM byte range, and materialises the
+    /// matching value as a fresh GC `(array i8)`. Returns an
+    /// empty `(array i8)` when no match — preserves Aver
+    /// `Env.get(name) -> String` semantics (no Option/Result).
+    pub(super) env_get_lookup_fn_idx: Option<u32>,
+    /// Phase 1.4b — `__rt_format_iso8601(secs i64, nanos i32) ->
+    /// ref null $string` helper wasm fn idx. Pure-compute helper
+    /// that turns the datetime returned by
+    /// `wasi:clocks/wall-clock.now` into Aver's RFC3339-like
+    /// `Time.now() -> String` value. Allocated whenever wasip2 +
+    /// the clocks slot are wired (i.e. unconditionally with
+    /// Time.unixMs); `wasm-opt -Oz` strips this when no source
+    /// `Time.now` reaches the helper.
+    pub(super) fmt_iso8601_fn_idx: Option<u32>,
+    /// Phase 1.3.4 — `__rt_console_read_line() -> ref null
+    /// $result_string_string` helper wasm fn idx. Loops 1-byte
+    /// `wasi:io/streams.[method]input-stream.blocking-read` calls
+    /// against the cached `wasi:cli/stdin.get-stdin` handle until
+    /// `\n` or EOF, accumulates into a `cabi_realloc`-owned
+    /// buffer, and returns `Result.Ok(line)` (or `Result.Err("EOF")`
+    /// when the first read produces zero bytes).
+    pub(super) console_read_line_fn_idx: Option<u32>,
+    /// Phase 1.4c — `__rt_time_sleep(ms i64) -> ()` helper wasm
+    /// fn idx. Wraps `wasi:clocks/monotonic-clock.subscribe-
+    /// duration` + `wasi:io/poll.poll` + `[resource-drop]pollable`
+    /// — the pollable is per-call, allocated and dropped inside
+    /// the helper, so it never leaks to source-level Aver.
+    pub(super) time_sleep_fn_idx: Option<u32>,
+    /// Phase 1.5.1 — `__rt_disk_exists(path: ref string) -> i32`
+    /// helper wasm fn idx. Lazy-fetches the first preopen
+    /// descriptor (cached in the disk_preopen_handle global),
+    /// marshals the path through `__rt_string_to_lm`, calls
+    /// `wasi:filesystem/types.[method]descriptor.stat-at` and
+    /// returns the boolean result tag (1 = exists, 0 = not).
+    pub(super) disk_exists_fn_idx: Option<u32>,
+    /// Phase 1.5.2 — `__rt_disk_read_text(path: ref string) ->
+    /// ref null $result_string_string` helper wasm fn idx. Owns
+    /// open-at + read-via-stream + blocking-read loop + per-call
+    /// resource drops. Returns `Result.Ok(content)` on success,
+    /// `Result.Err("…")` on any wasi failure (open / stream /
+    /// read).
+    pub(super) disk_read_text_fn_idx: Option<u32>,
+    /// Phase 1.5.3 — `__rt_disk_write_text(path: ref string,
+    /// content: ref string) -> ref null $result_unit_string`
+    /// helper wasm fn idx. Owns open-at(create+truncate) +
+    /// write-via-stream + blocking-write-and-flush + per-call
+    /// resource drops.
+    pub(super) disk_write_text_fn_idx: Option<u32>,
+    /// Phase 1.5.5 — `__rt_disk_append_text(path, content) ->
+    /// Result<Unit, String>`. Same body emitter as
+    /// `__rt_disk_write_text` flipped to append mode (no
+    /// truncate, append-via-stream instead of write-via-stream).
+    pub(super) disk_append_text_fn_idx: Option<u32>,
+    /// Phase 1.5.4 — single-call wasi ops sharing
+    /// `emit_disk_simple_path_op` (preopen + path marshalling +
+    /// 4-byte retptr + tag check). One fn each per Aver effect
+    /// since the wasi op fn idx + Err message differ.
+    pub(super) disk_delete_fn_idx: Option<u32>,
+    pub(super) disk_delete_dir_fn_idx: Option<u32>,
+    pub(super) disk_make_dir_fn_idx: Option<u32>,
+    /// Phase 1.5.6 — `__rt_disk_list_dir(path: ref string) ->
+    /// ref null $result_list_string_string` helper wasm fn idx.
+    /// Owns open-at(directory) + read-directory + entry-iteration
+    /// loop + drops; cons-builds a `List<String>` of entry names.
+    pub(super) disk_list_dir_fn_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

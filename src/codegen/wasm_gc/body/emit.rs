@@ -30,7 +30,7 @@ pub(super) fn emit_default_value(
             Ok(())
         }
         "Float" => {
-            func.instruction(&Instruction::F64Const(0.0));
+            func.instruction(&Instruction::F64Const(0.0_f64.into()));
             Ok(())
         }
         "Bool" => {
@@ -60,7 +60,7 @@ pub(super) fn emit_default_value(
                     Ok(())
                 }
                 Some(ValType::F64) => {
-                    func.instruction(&Instruction::F64Const(0.0));
+                    func.instruction(&Instruction::F64Const(0.0_f64.into()));
                     Ok(())
                 }
                 Some(ValType::I32) => {
@@ -151,7 +151,7 @@ pub(super) fn emit_expr(
             func.instruction(&Instruction::I64Const(*n));
         }
         Expr::Literal(Literal::Float(f)) => {
-            func.instruction(&Instruction::F64Const(*f));
+            func.instruction(&Instruction::F64Const((*f).into()));
         }
         Expr::Literal(Literal::Bool(b)) => {
             func.instruction(&Instruction::I32Const(if *b { 1 } else { 0 }));

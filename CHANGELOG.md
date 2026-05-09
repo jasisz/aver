@@ -2,6 +2,22 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.18.0 "Span" (2026-05-09)
+
+> _Cross the Component Model boundary the same way Aver crosses the source/wasm one — typed effects in, canonical-ABI imports out._
+
+### Added
+- **`--target wasip2`.** WASI 0.2 / Component Model output. Wraps a wasm-gc core module via `wit-component`, lowers Aver effects directly to canonical-ABI WASI imports (no preview-1 adapter, no `--bridge` shim). Emits `.component.wasm` + sibling `.wit`. Effect surface: `Console.{print,error,warn,readLine}`, `Args.get`, `Env.get`, `Time.{unixMs,now,sleep}`, `Random.{int,float}`, all 7 `Disk.*` methods (`exists`/`readText`/`writeText`/`appendText`/`delete`/`deleteDir`/`makeDir`/`listDir`). `Env.set` and `Terminal.*` reject at compile time as structurally absent from WASI 0.2; `Http.*` / `Tcp.*` / `HttpServer.*` deferred to 0.19+. See [`docs/wasip2.md`](docs/wasip2.md).
+- **`aver run --wasip2`** — embedded wasmtime + `wasmtime-wasi` runner. CWD preopened as `.` for filesystem effects (matches VM target's path resolution semantics).
+- **`tests/wasip2_stress.rs`** — six regression tests covering 100× write+read+delete (resource leak), 50KB write/read roundtrip (chunked-write boundary), 5KB Console.print (chunked-write on stdout side), 200-entry listDir, Random distribution sanity, Time.sleep precision.
+
+### Removed (breaking)
+- **`--target wasm` deleted.** The pre-2024 NaN-boxed wasm32 backend (`src/codegen/wasm/`, ~9.5 kLoC) is gone, plus the `wasm-legacy` Cargo feature, the `--bridge {wasip1,fetch,none}` flag, the `aver wasm-runtime` subcommand, and the legacy bundling code in `src/main/commands.rs`. Modern hosts run `--target wasm-gc`; standalone runtimes use `--target wasip2`. `--target edge-wasm` went too — it depended on the deleted `codegen::wasm::emit_wasm_with_adapter`.
+- **`BenchTarget::WasmLocal` removed** — bench targets are now `vm` / `wasm-gc` / `wasm-gc-v8` / `rust`.
+
+### Internal
+- **`module.rs` / `builtins.rs` / `types.rs` split.** `wasm_gc/module.rs` 5984 → 4197 (extracted `wasip2_helpers.rs`); `body/builtins.rs` 2351 → 1740 (extracted `body/builtins_wasip2.rs`); `wasm_gc/types.rs` 2778 → 1934 (extracted `types_discovery.rs` for `collect_*` AST walkers). Pure code movement, no behaviour change.
+
 ## 0.17.3 (2026-05-08)
 
 ### Fixed

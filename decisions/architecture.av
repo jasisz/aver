@@ -128,6 +128,28 @@ decision ListBranchingStaysInMatch
     rejected = ["FunctionClauses", "ListSpecificFunctionSyntax", "ErlangStyleHeads"]
     impacts = ["Parser", "PatternMatching", "TypeChecker", "Docs", "AllListFunctions"]
 
+decision Wasip2ComponentTarget
+    date = "2026-05-08"
+    author = "Aver core team"
+    reason =
+        "WASI 0.2 with the Component Model is the modern WebAssembly contract for hosts that are not browsers — wasmtime, Spin, NGINX Unit, wasmCloud, and Fermyon Cloud all consume `.component.wasm` natively, and the WIT-typed import surface beats the ad-hoc `aver/*` bridge that legacy wasm exposed."
+        "GC values do not cross component boundaries today (canonical ABI for GC is still pre-proposal), which forces a clean architectural split: per-instantiation Map/List/Vector helpers stay inside the user core module, and the public ABI exposed to other components stays canonical-typed."
+        "Sync handlers behind incoming HTTP are bridged host-side by wasmtime fibers in 0.2 and that path is committed to keep working under 0.3 hosts, so Aver's source-side sync model needs no compromise."
+    chosen = "Wasip2ComponentTarget"
+    rejected = ["KeepLegacyNanBoxedAsStandalonePath", "WaitForWasi03", "ShareRuntimeViaSidecar"]
+    impacts = ["Codegen", "EffectMatrix", "Docs", "CLI", "ReleasePath"]
+
+decision DropLegacyNanBoxedWasm
+    date = "2026-05-08"
+    author = "Aver core team"
+    reason =
+        "After `--target wasip2` covers the standalone-WASI cells in the effect matrix, the legacy `--target wasm` backend has zero unique capability — `--bridge fetch` is replaced by wasm-gc plus `--handler`, `--bridge wasip1` is replaced by the component target, and `--bridge none` was an embedder hook nobody used."
+        "Carrying twelve thousand lines of NaN-boxed runtime, the wasm-merge toolchain dependency, and a four-cell `--bridge` matrix to support a backend with no remaining users is documentation overhead rather than engineering value."
+        "Audit confirms zero hard runtime coupling between wasm-gc and legacy: shared touch points are stale comments, a single feature-cfg gate, and a clap enum that lumps targets together for one UI helper, so the cut is mechanical rather than invasive."
+    chosen = "DropLegacyAfterGreenWasip2Matrix"
+    rejected = ["KeepBoth", "DropLegacyFirst", "FeatureFlagOffByDefault"]
+    impacts = ["Codegen", "Docs", "CLI", "Tests", "ReleaseTrain"]
+
 fn describeDecision(decName: String, pick: String) -> String
     ? "Formats a one-line summary of an architectural decision."
     "Decision: {decName} -> chosen = {pick}"
@@ -135,6 +157,8 @@ fn describeDecision(decName: String, pick: String) -> String
 verify describeDecision
     describeDecision("HostLanguage", "Rust") => "Decision: HostLanguage -> chosen = Rust"
     describeDecision("HybridExecutionModel", "InterpreterPlusVMPlusTranspiler") => "Decision: HybridExecutionModel -> chosen = InterpreterPlusVMPlusTranspiler"
+    describeDecision("Wasip2ComponentTarget", "Wasip2ComponentTarget") => "Decision: Wasip2ComponentTarget -> chosen = Wasip2ComponentTarget"
+    describeDecision("DropLegacyNanBoxedWasm", "DropLegacyAfterGreenWasip2Matrix") => "Decision: DropLegacyNanBoxedWasm -> chosen = DropLegacyAfterGreenWasip2Matrix"
 
 fn main() -> Unit
     ! [Console.print]
@@ -150,5 +174,7 @@ fn main() -> Unit
     Console.print(describeDecision("EffectContractsAreTransparentAcrossModules", "TransparentAcrossModules"))
     Console.print(describeDecision("FunctionBodiesUseIndentationOnly", "IndentedBodiesOnly"))
     Console.print(describeDecision("ListBranchingStaysInMatch", "MatchOwnsListBranching"))
+    Console.print(describeDecision("Wasip2ComponentTarget", "Wasip2ComponentTarget"))
+    Console.print(describeDecision("DropLegacyNanBoxedWasm", "DropLegacyAfterGreenWasip2Matrix"))
     Console.print("")
     Console.print("Run: cargo run -- context decisions/architecture.av --decisions-only")

@@ -43,15 +43,18 @@ runtime = ["dep:aver-rt", "aver-memory/runtime", "aver-rt/random", "dep:clap", "
 runtime-net = ["runtime", "aver-rt/http"]
 terminal = ["aver-rt/terminal"]
 tty-render = ["dep:colored"]
-wasm = ["wasm-compile", "wasm-legacy", "dep:wasmtime"]
+wasm = ["wasm-compile", "dep:wasmtime"]
 wasm-compile = ["dep:wasm-encoder", "dep:wasmprinter", "dep:wasmparser", "dep:wat"]
-# Pre-2024 NaN-boxed wasm32 backend (`--target wasm`,
-# `--bridge {wasip1,fetch}`, standalone `aver_runtime.wasm`). Pulled
-# in by the CLI `wasm` feature so legacy targets keep building, but
-# NOT by `playground` — the browser host only speaks wasm-gc, so
-# `aver_bg.wasm` doesn't need to ship the legacy emitter
-# (~9.4 kLoC of Rust + the embedded runtime blob).
-wasm-legacy = ["wasm-compile"]
+# 0.18 "Span" — `--target wasip2` (WASI 0.2 Component Model output).
+# Direct WIT lowering: the wasm-gc backend emits a core module in
+# canonical-ABI-compatible shapes, we embed a `component-type:<world>`
+# custom section (encoded via `wit-component::metadata`) describing
+# the WIT world, and `wit-component::ComponentEncoder` produces the
+# component without a preview1 adapter. Aver effects map directly
+# to WIT/WASI imports — there is no preview1 ABI to preserve. See
+# docs/wasip2.md for the contract and feedback_aver_no_preview1_adapter
+# for the architectural rationale.
+wasip2 = ["wasm-compile", "dep:wit-component", "dep:wit-parser", "dep:wasmtime", "dep:wasmtime-wasi"]
 playground = ["wasm-compile", "dep:wasm-bindgen", "runtime", "tty-render"]
 
 [dependencies]
@@ -66,11 +69,22 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 wasm-bindgen = { version = "0.2", optional = true }
-wasm-encoder = { version = "0.225", optional = true }
-wasmparser = { version = "0.225", optional = true }
-wasmprinter = { version = "0.225", optional = true }
-wasmtime = { version = "44", optional = true, default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc"] }
+wasm-encoder = { version = "0.248", optional = true }
+wasmparser = { version = "0.248", optional = true }
+wasmprinter = { version = "0.248", optional = true }
+wasmtime = { version = "44", optional = true, default-features = false, features = ["cranelift", "runtime", "gc", "gc-drc", "component-model", "component-model-async"] }
+wasmtime-wasi = { version = "44", optional = true }
 wat = { version = "1", optional = true }
+# wasip2 feature deps — versions paired by upstream wasm-tools 1.248
+# release train. `wasi-preview1-component-adapter-provider` is NOT
+# a dep: Aver effects lower directly to WIT/WASI imports, no
+# preview1 adapter wrap (see feedback_aver_no_preview1_adapter).
+# `wit-encoder` is also NOT a dep — Phase 1.2a emits WIT via inline
+# `format!` in `src/codegen/wasip2/wit.rs`. Add it back when
+# per-effect imports beyond the standard WASI worlds force
+# structured emission (Phase 1.6+ if at all).
+wit-component = { version = "0.248", optional = true }
+wit-parser = { version = "0.248", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

@@ -1,8 +1,7 @@
 #![allow(clippy::approx_constant)]
 //! Benchmark comparing execution modes on the same programs:
-//!   VM (bytecode), codegen (native Rust), WASM (legacy linear-memory),
-//!   WASM-GC (native WebAssembly GC + tail-call), self-hosted
-//!   (`aver run --self-host`).
+//!   VM (bytecode), codegen (native Rust), WASM-GC (native
+//!   WebAssembly GC + tail-call), self-hosted (`aver run --self-host`).
 //!
 //! Codegen runs as an external compiled binary. Self-hosted runs through the real CLI path,
 //! which builds and reuses the cached Aver-in-Aver binary behind `aver run --self-host`.
@@ -21,33 +20,16 @@ use aver::resolver;
 use aver::source::parse_source;
 use aver::tco;
 use aver::vm;
-use wasmtime::{Caller, Config, Engine, FuncType, Linker, Module, Store, Val, ValType};
-
-/// In-process embedded wasmtime harness — pre-built once per program,
-/// reused across every Criterion iteration. Eliminates the
-/// ~5-7 ms `wasmtime` binary cold-start that was floor-ing every WASM
-/// measurement (`fib(15)` 6.28 ms despite the actual fib taking
-/// nanoseconds). The bench programs are pure compute that don't
-/// touch host effects, so the linker only needs to stub
-/// `wasi_snapshot_preview1.fd_write` (the one import the WASI bridge
-/// declares unconditionally).
-struct WasmHarness {
-    engine: Engine,
-    module: Module,
-}
-
-fn build_wasm_harness(wasm_path: &std::path::Path) -> WasmHarness {
-    let bytes = std::fs::read(wasm_path).expect("read pre-compiled wasm");
-    let engine = Engine::default();
-    let module = Module::new(&engine, &bytes).expect("wasmtime compile module");
-    WasmHarness { engine, module }
-}
+use wasmtime::{Config, Engine, FuncType, Linker, Module, Store, Val, ValType};
 
 /// In-process embedded wasmtime harness for the wasm-gc backend —
-/// mirrors `WasmHarness` shape but configures the engine with GC +
-/// tail-call proposals on (matches `aver compile --target=wasm-gc`'s
-/// runtime expectations). Module compiled once, fresh Store +
-/// Instance per Criterion iter.
+/// pre-built once per program, reused across every Criterion
+/// iteration. Engine is configured with GC + tail-call proposals on
+/// (matches `aver compile --target=wasm-gc`'s runtime expectations).
+/// Module compiled once, fresh Store + Instance per Criterion iter.
+/// Eliminates the ~5-7 ms `wasmtime` binary cold-start that would
+/// otherwise floor every measurement (`fib(15)` 6.28 ms despite the
+/// actual fib taking nanoseconds).
 struct WasmGcHarness {
     engine: Engine,
     module: Module,
@@ -81,6 +63,9 @@ fn build_wasm_gc_harness(wasm_path: &std::path::Path) -> WasmGcHarness {
     config.wasm_bulk_memory(true);
     config.cranelift_opt_level(wasmtime::OptLevel::Speed);
     config.max_wasm_stack(8 * 1024 * 1024);
+    // `component-model-async` (pulled in by the `wasip2` feature)
+    // enforces `max_wasm_stack <= async_stack_size` at Engine::new.
+    config.async_stack_size(12 * 1024 * 1024);
     let engine = Engine::new(&config).expect("wasmtime gc engine");
     let module = Module::new(&engine, &bytes).expect("wasmtime gc compile module");
     // Probe `main`'s declared return type once. `_start` always exists
@@ -206,35 +191,6 @@ fn run_wasm_gc_iter(harness: &WasmGcHarness) {
     }
 }
 
-fn run_wasm_iter(harness: &WasmHarness) {
-    let mut store = Store::new(&harness.engine, ());
-    let mut linker = Linker::new(&harness.engine);
-    // The bench programs return Int from main and never print; the
-    // bridge still emits a `(import "wasi_snapshot_preview1" "fd_write"
-    // ...)` declaration unconditionally, so the linker has to satisfy
-    // it before instantiate. A no-op stub returning 0 is enough since
-    // it's never called.
-    linker
-        .func_wrap(
-            "wasi_snapshot_preview1",
-            "fd_write",
-            |_caller: Caller<'_, ()>,
-             _fd: i32,
-             _iovec_ptr: i32,
-             _iovec_count: i32,
-             _nwritten_ptr: i32|
-             -> i32 { 0 },
-        )
-        .expect("stub fd_write");
-    let instance = linker
-        .instantiate(&mut store, &harness.module)
-        .expect("instantiate user.wasm");
-    let start = instance
-        .get_typed_func::<(), ()>(&mut store, "_start")
-        .expect("_start export");
-    start.call(&mut store, ()).expect("wasm _start trap");
-}
-
 // ── Runners ──────────────────────────────────────────────────────────────────
 
 fn run_vm(source: &str) {
@@ -298,47 +254,8 @@ fn compile_to_native(source: &str, name: &str) -> std::path::PathBuf {
     stable
 }
 
-/// Pre-compile an Aver source to a standalone WASI-bundled `.wasm` so
-/// the bench loop can spawn `wasmtime` on a stable file instead of
-/// re-running `aver compile` every iteration. Without this, the WASM
-/// number was dominated by lex/parse/typecheck/emit/wasm-merge cost
-/// per iter (~15 ms baseline) — same shape as how `compile_to_native`
-/// caches the codegen binary.
-fn compile_to_wasm(source: &str, name: &str) -> std::path::PathBuf {
-    let dir = tempfile::tempdir().expect("create wasm bench temp dir");
-    let src_path = dir.path().join("main.av");
-    std::fs::write(&src_path, source).expect("write source");
-
-    let out_dir = dir.path().join("out");
-    let aver_bin = env!("CARGO_BIN_EXE_aver");
-
-    let status = Command::new(aver_bin)
-        .arg("compile")
-        .arg(&src_path)
-        .arg("--target")
-        .arg("wasm")
-        .arg("--bridge")
-        .arg("wasip1")
-        .arg("--optimize")
-        .arg("size")
-        .arg("--name")
-        .arg(name)
-        .arg("-o")
-        .arg(&out_dir)
-        .status()
-        .expect("aver compile --target wasm");
-    assert!(status.success(), "aver compile --target wasm failed");
-
-    let built = out_dir.join(format!("{}.wasm", name));
-    let stable = std::env::temp_dir().join(format!("aver_bench_{}.wasm", name));
-    std::fs::copy(&built, &stable).expect("copy wasm artifact");
-    stable
-}
-
-/// Pre-compile an Aver source through `--target wasm-gc`. Same shape
-/// as `compile_to_wasm` but no `--bridge` (the wasm-gc backend has its
-/// own native ABI; effects come in as `aver/*` imports). Output is a
-/// stable `.wasm` ready for the in-process wasmtime harness.
+/// Pre-compile an Aver source through `--target wasm-gc`. Output is
+/// a stable `.wasm` ready for the in-process wasmtime harness.
 fn compile_to_wasm_gc(source: &str, name: &str) -> std::path::PathBuf {
     let dir = tempfile::tempdir().expect("create wasm-gc bench temp dir");
     let src_path = dir.path().join("main.av");
@@ -399,7 +316,6 @@ const NEWTYPE_VARIANT_SRC: &str = include_str!("../bench/scenarios/newtype_varia
 
 struct BenchArtifacts<'a> {
     native_bin: &'a std::path::Path,
-    wasm_harness: &'a WasmHarness,
     wasm_gc_harness: &'a WasmGcHarness,
     aver_bin: &'a str,
     module_root: &'a std::path::Path,
@@ -415,20 +331,12 @@ fn bench_all_modes(
     group.bench_with_input(BenchmarkId::new("vm", label), source, |b, src| {
         b.iter(|| run_vm(src));
     });
-    group.bench_function(BenchmarkId::new("wasm", label), |b| {
-        // In-process embedded wasmtime — Engine + Module compiled
-        // once in setup, b.iter creates a fresh Store + Instance and
-        // invokes `_start`. Symmetric with how `run_vm` runs the VM
-        // in-process; eliminates spawn cost and aver-compile cost,
-        // measures the actual run.
-        b.iter(|| run_wasm_iter(artifacts.wasm_harness));
-    });
     group.bench_function(BenchmarkId::new("wasm-gc", label), |b| {
-        // Same in-process pattern as `wasm`, but the engine is
-        // configured with the GC + tail-call proposals on and the
-        // harness invokes `main` as a typed function (the wasm-gc
-        // backend exports user fns directly under their Aver name).
-        // Stubs `aver/*` host imports so pure-compute scenarios link.
+        // In-process embedded wasmtime: Engine + Module compiled once
+        // in setup, b.iter creates a fresh Store + Instance and
+        // invokes `main` as a typed function. The engine has GC +
+        // tail-call proposals on; `aver/*` host imports are stubbed
+        // so pure-compute scenarios link.
         b.iter(|| run_wasm_gc_iter(artifacts.wasm_gc_harness));
     });
     group.bench_function(BenchmarkId::new("codegen", label), |b| {
@@ -486,23 +394,10 @@ fn comparison_benches(c: &mut Criterion) {
         })
         .collect();
 
-    // Pre-compile WASM artifacts once + build the embedded wasmtime
-    // harness per program: the Engine and Module are constructed in
-    // setup, only Instance creation + invoke happens per Criterion
-    // iter.
-    let wasm_files: Vec<std::path::PathBuf> = tests
-        .iter()
-        .map(|(label, name, src)| {
-            eprintln!("Compiling {} to WASI-bundled wasm...", label);
-            compile_to_wasm(src, name)
-        })
-        .collect();
-    let wasm_harnesses: Vec<WasmHarness> =
-        wasm_files.iter().map(|p| build_wasm_harness(p)).collect();
-
-    // Same idea for the wasm-gc backend — separate file path + engine
-    // config so the two harnesses live side by side and don't poison
-    // each other's caches.
+    // Pre-compile wasm-gc artifacts once + build the embedded
+    // wasmtime harness per program: the Engine and Module are
+    // constructed in setup, only Instance creation + invoke happens
+    // per Criterion iter.
     let wasm_gc_files: Vec<std::path::PathBuf> = tests
         .iter()
         .map(|(label, name, src)| {
@@ -540,7 +435,6 @@ fn comparison_benches(c: &mut Criterion) {
         let mut group = c.benchmark_group(*label);
         let artifacts = BenchArtifacts {
             native_bin: &natives[i],
-            wasm_harness: &wasm_harnesses[i],
             wasm_gc_harness: &wasm_gc_harnesses[i],
             aver_bin,
             module_root: self_host_root.path(),

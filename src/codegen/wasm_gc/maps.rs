@@ -1812,10 +1812,10 @@ fn emit_default_value_for(f: &mut Function, ty: ValType) {
             f.instruction(&Instruction::I64Const(0));
         }
         ValType::F32 => {
-            f.instruction(&Instruction::F32Const(0.0));
+            f.instruction(&Instruction::F32Const(0.0_f32.into()));
         }
         ValType::F64 => {
-            f.instruction(&Instruction::F64Const(0.0));
+            f.instruction(&Instruction::F64Const(0.0_f64.into()));
         }
         ValType::Ref(rt) => {
             f.instruction(&Instruction::RefNull(rt.heap_type));

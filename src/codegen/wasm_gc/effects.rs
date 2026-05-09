@@ -19,8 +19,13 @@ use super::types::TypeRegistry;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum EffectName {
-    /// `Console.print(String) -> Unit`. Imported as `aver.console_print`
-    /// — the host writes the string to its stdout (or equivalent).
+    /// `Console.print(String) -> Unit`. On `TargetMode::AverBridge`,
+    /// imported as `aver.console_print` (host writes to stdout). On
+    /// `TargetMode::Wasip2` the same source-side effect lowers to
+    /// canonical-ABI `wasi:cli/stdout.get-stdout` (cached) plus
+    /// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`
+    /// in the per-effect glue at the call site — see
+    /// `EffectName::lowers_on_wasip2` and `Wasip2ImportSlot`.
     ConsolePrint,
     ConsoleError,
     ConsoleWarn,
@@ -692,6 +697,43 @@ impl EffectRegistry {
 
     pub(super) fn lookup_wasm_type_idx(&self, name: EffectName) -> Option<u32> {
         self.wasm_type_idx.get(&name).copied()
+    }
+}
+
+impl EffectName {
+    /// True iff this effect is wired on `TargetMode::Wasip2` today.
+    /// Drives the population of `Wasip2ImportRegistry` from the
+    /// effects discovered by the per-fn walker. Stays `false` for
+    /// every effect not yet lowered; those effects are rejected
+    /// upstream by `wasip2::effect_check` before reaching the
+    /// wasm-gc emitter.
+    ///
+    /// Set grows as each phase commit lands: 1.2b1 wired Console.*,
+    /// 1.4 added Time.unixMs + Random.{int,float}, 1.3.2 added
+    /// ArgsGet, 1.3.3 added EnvGet.
+    pub(super) fn lowers_on_wasip2(self) -> bool {
+        matches!(
+            self,
+            EffectName::ConsolePrint
+                | EffectName::ConsoleError
+                | EffectName::ConsoleWarn
+                | EffectName::ConsoleReadLine
+                | EffectName::TimeUnixMs
+                | EffectName::TimeNow
+                | EffectName::TimeSleep
+                | EffectName::RandomInt
+                | EffectName::RandomFloat
+                | EffectName::ArgsGet
+                | EffectName::EnvGet
+                | EffectName::DiskExists
+                | EffectName::DiskReadText
+                | EffectName::DiskWriteText
+                | EffectName::DiskAppendText
+                | EffectName::DiskDelete
+                | EffectName::DiskDeleteDir
+                | EffectName::DiskMakeDir
+                | EffectName::DiskListDir,
+        )
     }
 }
 
