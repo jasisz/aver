@@ -32,6 +32,110 @@
 
 use wasm_encoder::ValType;
 
+/// Phase 1.5.7 — shared chunked-write loop emitter used by
+/// `emit_console_print_wasip2` and `emit_disk_write_text` (and
+/// any future call site that pushes bytes via
+/// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`).
+///
+/// wasmtime-wasi-io enforces a hard `bytes.len() > 4096 ⇒ trap`
+/// in `blocking-write-and-flush`, so callers MUST chunk the
+/// buffer themselves. This helper owns the loop scaffolding and
+/// the `min(remaining, 4096)` math.
+///
+/// Stack contract: each iteration ends up calling
+/// `blocking-write-and-flush` with `(handle, offset, chunk,
+/// retptr)`. `push_handle` and `push_retptr` are caller-supplied
+/// emitters — the first writes the i32 stream/output handle, the
+/// second writes the 12-byte retptr address. Both are called
+/// once per iteration; the loop reads `len_local` each time so
+/// caller-side scratch can stay shared.
+///
+/// `on_chunk_err` runs inside an `If (tag != 0)` block right
+/// after each `blocking-write-and-flush` call. Pass `None` for
+/// fire-and-forget (Console.* / Aver Unit semantics);
+/// `Some(handler)` for sites that must drop resources + return a
+/// `Result.Err` (Disk.writeText etc.). The handler is expected
+/// to leave the operand stack unchanged or to terminate the
+/// function (`Return` is fine — the validator marks the rest of
+/// the loop body as unreachable from that branch).
+pub(super) fn emit_chunked_blocking_write(
+    f: &mut wasm_encoder::Function,
+    len_local: u32,
+    off_local: u32,
+    write_fn: u32,
+    push_handle: &dyn Fn(&mut wasm_encoder::Function),
+    push_retptr: &dyn Fn(&mut wasm_encoder::Function),
+    on_chunk_err: Option<&dyn Fn(&mut wasm_encoder::Function)>,
+) {
+    use wasm_encoder::{BlockType, Instruction, MemArg};
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(off_local));
+
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    // remaining = len - offset; if 0 → exit Block.
+    f.instruction(&Instruction::LocalGet(len_local));
+    f.instruction(&Instruction::LocalGet(off_local));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
+
+    // blocking-write-and-flush(handle, offset, chunk, retptr).
+    push_handle(f);
+    f.instruction(&Instruction::LocalGet(off_local));
+    // chunk = (remaining < 4096) ? remaining : 4096
+    f.instruction(&Instruction::LocalGet(len_local));
+    f.instruction(&Instruction::LocalGet(off_local));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::LocalGet(len_local));
+    f.instruction(&Instruction::LocalGet(off_local));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::Select);
+    push_retptr(f);
+    f.instruction(&Instruction::Call(write_fn));
+
+    // Per-chunk error handler (drop resources / return Err / no-op).
+    if let Some(handler) = on_chunk_err {
+        // Read result tag at retptr+0 (host writes it after the call).
+        push_retptr(f);
+        f.instruction(&Instruction::I32Load8U(mem1));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Ne);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        handler(f);
+        f.instruction(&Instruction::End);
+    }
+
+    // offset += chunk (recompute the same min(remaining, 4096)).
+    f.instruction(&Instruction::LocalGet(off_local));
+    f.instruction(&Instruction::LocalGet(len_local));
+    f.instruction(&Instruction::LocalGet(off_local));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::LocalGet(len_local));
+    f.instruction(&Instruction::LocalGet(off_local));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::Select);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(off_local));
+
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+}
+
 /// Phase 1.3.1 — `cabi_realloc` export indices. Allocated when
 /// the wasip2 path is active so the Component Model canonical-ABI
 /// realloc contract has a real impl. Bump-allocator backing global
@@ -2114,72 +2218,47 @@ pub(super) fn emit_disk_write_text(
 
     // ── chunked write loop ───────────────────────────────────
     // wasmtime-wasi caps each `blocking-write-and-flush` call at
-    // 4096 bytes (caught by the 5KB stress fixture on 2026-05-09);
-    // we walk LM[0..content_len] in 4096-byte slices.
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalSet(l_write_off));
-
-    f.instruction(&Instruction::Block(BlockType::Empty));
-    f.instruction(&Instruction::Loop(BlockType::Empty));
-
-    // remaining = content_len - write_off; if 0 → break.
-    f.instruction(&Instruction::LocalGet(l_content_len));
-    f.instruction(&Instruction::LocalGet(l_write_off));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::BrIf(1));
-
-    // blocking-write-and-flush(stream, write_off,
-    //   chunk = min(remaining, 4096), retptr_write)
-    f.instruction(&Instruction::LocalGet(l_stream));
-    f.instruction(&Instruction::LocalGet(l_write_off));
-    // chunk = (remaining < 4096) ? remaining : 4096
-    f.instruction(&Instruction::LocalGet(l_content_len));
-    f.instruction(&Instruction::LocalGet(l_write_off));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::I32Const(4096));
-    f.instruction(&Instruction::LocalGet(l_content_len));
-    f.instruction(&Instruction::LocalGet(l_write_off));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::I32Const(4096));
-    f.instruction(&Instruction::I32LtU);
-    f.instruction(&Instruction::Select);
-    f.instruction(&Instruction::LocalGet(l_retptr_write));
-    f.instruction(&Instruction::Call(blocking_write_fn));
-
-    // Check tag at retptr+0; on Err drop both, return Err.
-    f.instruction(&Instruction::LocalGet(l_retptr_write));
-    f.instruction(&Instruction::I32Load8U(mem1));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    {
-        f.instruction(&Instruction::LocalGet(l_stream));
-        f.instruction(&Instruction::Call(drop_output_stream_fn));
-        f.instruction(&Instruction::LocalGet(l_fd));
-        f.instruction(&Instruction::Call(drop_descriptor_fn));
-        emit_err(&mut f, b"write failed");
-    }
-    f.instruction(&Instruction::End);
-
-    // write_off += chunk (recompute the same min(remaining, 4096)).
-    f.instruction(&Instruction::LocalGet(l_write_off));
-    f.instruction(&Instruction::LocalGet(l_content_len));
-    f.instruction(&Instruction::LocalGet(l_write_off));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::I32Const(4096));
-    f.instruction(&Instruction::LocalGet(l_content_len));
-    f.instruction(&Instruction::LocalGet(l_write_off));
-    f.instruction(&Instruction::I32Sub);
-    f.instruction(&Instruction::I32Const(4096));
-    f.instruction(&Instruction::I32LtU);
-    f.instruction(&Instruction::Select);
-    f.instruction(&Instruction::I32Add);
-    f.instruction(&Instruction::LocalSet(l_write_off));
-
-    f.instruction(&Instruction::Br(0));
-    f.instruction(&Instruction::End); // loop
-    f.instruction(&Instruction::End); // block
+    // 4096 bytes; the shared helper walks LM[0..content_len] in
+    // 4096-byte slices. On Err we drop the stream + descriptor
+    // before returning `Result.Err("write failed")` — handler
+    // closure terminates via `Return` so the rest of the loop
+    // body becomes unreachable from that branch.
+    emit_chunked_blocking_write(
+        &mut f,
+        l_content_len,
+        l_write_off,
+        blocking_write_fn,
+        &|inner| {
+            inner.instruction(&Instruction::LocalGet(l_stream));
+        },
+        &|inner| {
+            inner.instruction(&Instruction::LocalGet(l_retptr_write));
+        },
+        Some(&|inner| {
+            inner.instruction(&Instruction::LocalGet(l_stream));
+            inner.instruction(&Instruction::Call(drop_output_stream_fn));
+            inner.instruction(&Instruction::LocalGet(l_fd));
+            inner.instruction(&Instruction::Call(drop_descriptor_fn));
+            // Inline the Err result construction (the outer
+            // `emit_err` closure captures `l_arr` which the helper
+            // doesn't see). 11 bytes "write failed".
+            let msg = b"write failed";
+            inner.instruction(&Instruction::I32Const(msg.len() as i32));
+            inner.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+            inner.instruction(&Instruction::LocalSet(l_arr));
+            for (i, b) in msg.iter().enumerate() {
+                inner.instruction(&Instruction::LocalGet(l_arr));
+                inner.instruction(&Instruction::I32Const(i as i32));
+                inner.instruction(&Instruction::I32Const(*b as i32));
+                inner.instruction(&Instruction::ArraySet(string_type_idx));
+            }
+            inner.instruction(&Instruction::I32Const(0));
+            inner.instruction(&Instruction::I32Const(0));
+            inner.instruction(&Instruction::LocalGet(l_arr));
+            inner.instruction(&Instruction::StructNew(result_type_idx));
+            inner.instruction(&Instruction::Return);
+        }),
+    );
 
     // ── drops ───────────────────────────────────────────────
     f.instruction(&Instruction::LocalGet(l_stream));
