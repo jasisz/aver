@@ -47,15 +47,20 @@ pub(super) struct SlotTable {
     /// previous `array.set` in place silently rewrote every alias.
     pub(super) vector_set_scratch: HashMap<String, u32>,
     /// Scratch i32 slot for the wasip2 `Console.{print, error, warn}`
-    /// call-site lowering. Holds the byte length returned from
-    /// `__rt_string_to_lm` so the canonical-ABI retptr can be
-    /// computed as `(len + 15) & -16` at write time. Allocated when
-    /// the body contains at least one `Console.{print, error, warn}`
-    /// call site, regardless of `TargetMode`. On `AverBridge` the
-    /// scratch is allocated but unused — one i32 local has zero
-    /// runtime cost vs branching `SlotTable::build_for_fn` on the
-    /// target. Phase 1.2b1.5.
-    pub(super) console_print_wasip2_scratch: Option<u32>,
+    /// call-site lowering. Holds two i32 slots: `[len, offset]`.
+    /// `len` stores the byte count returned from `__rt_string_to_lm`;
+    /// `offset` is the chunk-loop cursor that walks LM[0..len] in
+    /// 4096-byte slices because wasmtime-wasi caps each call to
+    /// `blocking-write-and-flush` at 4096 bytes (caught by the
+    /// 5KB stress fixture on 2026-05-09 — without chunking, every
+    /// `Console.print` over 4096 bytes traps with "Buffer too
+    /// large for blocking-write-and-flush"). Allocated when the
+    /// body contains at least one `Console.{print, error, warn}`
+    /// call site, regardless of `TargetMode`. On `AverBridge`
+    /// both slots are allocated but unused — two i32 locals are
+    /// cheaper than branching `SlotTable::build_for_fn` on target.
+    /// Phase 1.2b1.5 / chunked in 1.5.7.
+    pub(super) console_print_wasip2_scratch: Option<[u32; 2]>,
     /// Scratch i32 slot holding the canonical-ABI retptr that
     /// `cabi_realloc` returns for the wasip2 `Args.get()` call site
     /// (and any later list-returning effect that hands the retptr
@@ -216,16 +221,18 @@ impl SlotTable {
                 vector_set_scratch.insert(canonical, local_idx);
             }
         }
-        // Phase 1.2b1.5 — i32 scratch for the wasip2 Console.* call-
-        // site glue (caches the byte length returned from
-        // `__rt_string_to_lm` so retptr can be computed as
-        // `(len + 15) & -16` at the canonical-ABI write call). Cheap
-        // to over-allocate on AverBridge (one unused i32 local) so we
-        // skip threading `TargetMode` through the slot builder.
+        // Phase 1.2b1.5 — two i32 scratch slots for the wasip2
+        // Console.* call-site glue: [len, offset]. `len` caches the
+        // byte length returned from `__rt_string_to_lm`; `offset` is
+        // the chunk-loop cursor that walks LM[0..len] in 4096-byte
+        // slices (wasmtime-wasi caps blocking-write-and-flush at
+        // 4096 bytes per call — see slots.rs doc-comment).
         let console_print_wasip2_scratch = if fn_needs_console_print_wasip2_scratch(fd) {
-            let idx = by_slot.len() as u32;
+            let len_idx = by_slot.len() as u32;
             by_slot.push(ValType::I32);
-            Some(idx)
+            let off_idx = by_slot.len() as u32;
+            by_slot.push(ValType::I32);
+            Some([len_idx, off_idx])
         } else {
             None
         };

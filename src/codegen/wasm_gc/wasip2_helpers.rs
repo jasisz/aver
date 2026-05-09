@@ -1915,11 +1915,14 @@ pub(super) fn emit_disk_write_text(
     });
 
     // Locals layout (after 2 ref-s params at idx 0, 1):
-    //   10 i32 locals (idx 2..=11): preopen, path_len, content_len,
+    //   11 i32 locals (idx 2..=12): preopen, path_len, content_len,
     //     retptr_open, retptr_stream, retptr_write, fd, stream,
-    //     list_ptr, list_len.
-    //   1 ref-s local at idx 12: arr (Err string scratch).
-    let mut f = Function::new(vec![(10, ValType::I32), (1, s_ref.clone())]);
+    //     list_ptr, list_len, write_off.
+    //   1 ref-s local at idx 13: arr (Err string scratch).
+    // (write_off added in 1.5.7 for the chunked-write loop —
+    //  wasmtime-wasi caps blocking-write-and-flush at 4096 bytes
+    //  per call.)
+    let mut f = Function::new(vec![(11, ValType::I32), (1, s_ref.clone())]);
     let p_path = 0u32;
     let p_content = 1u32;
     let l_preopen = 2u32;
@@ -1932,7 +1935,8 @@ pub(super) fn emit_disk_write_text(
     let l_stream = 9u32;
     let l_list_ptr = 10u32;
     let l_list_len = 11u32;
-    let l_arr = 12u32;
+    let l_write_off = 12u32;
+    let l_arr = 13u32;
 
     let mem4 = MemArg {
         offset: 0,
@@ -2030,10 +2034,15 @@ pub(super) fn emit_disk_write_text(
     f.instruction(&Instruction::I32Const(1)); // path-flags = symlink-follow
     f.instruction(&Instruction::I32Const(0)); // path_ptr = 0
     f.instruction(&Instruction::LocalGet(l_path_len));
-    // open-flags = CREATE (1) for append, CREATE | TRUNCATE (5)
-    // for plain write. Both make the file if missing; only write
-    // wipes pre-existing content.
-    f.instruction(&Instruction::I32Const(if is_append { 1 } else { 5 }));
+    // open-flags bit positions (WIT declaration order):
+    //   create=bit0=1, directory=bit1=2, exclusive=bit2=4,
+    //   truncate=bit3=8.
+    // appendText: CREATE only (1) — keep existing content.
+    // writeText: CREATE | TRUNCATE (1 | 8 = 9) — wipe and write.
+    // (Earlier this read `5`, which is CREATE | EXCLUSIVE — that
+    // made every second write to an existing path fail; caught by
+    // the 100x roundtrip stress fixture on 2026-05-09.)
+    f.instruction(&Instruction::I32Const(if is_append { 1 } else { 9 }));
     f.instruction(&Instruction::I32Const(2)); // descriptor-flags = WRITE
     f.instruction(&Instruction::LocalGet(l_retptr_open));
     f.instruction(&Instruction::Call(open_at_fn));
@@ -2103,13 +2112,42 @@ pub(super) fn emit_disk_write_text(
     f.instruction(&Instruction::Call(cabi_realloc_fn));
     f.instruction(&Instruction::LocalSet(l_retptr_write));
 
-    // ── blocking-write-and-flush(stream, 0, content_len, retptr) ──
-    f.instruction(&Instruction::LocalGet(l_stream));
-    f.instruction(&Instruction::I32Const(0)); // ptr = 0 (LM[0..len])
+    // ── chunked write loop ───────────────────────────────────
+    // wasmtime-wasi caps each `blocking-write-and-flush` call at
+    // 4096 bytes (caught by the 5KB stress fixture on 2026-05-09);
+    // we walk LM[0..content_len] in 4096-byte slices.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_write_off));
+
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    // remaining = content_len - write_off; if 0 → break.
     f.instruction(&Instruction::LocalGet(l_content_len));
+    f.instruction(&Instruction::LocalGet(l_write_off));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1));
+
+    // blocking-write-and-flush(stream, write_off,
+    //   chunk = min(remaining, 4096), retptr_write)
+    f.instruction(&Instruction::LocalGet(l_stream));
+    f.instruction(&Instruction::LocalGet(l_write_off));
+    // chunk = (remaining < 4096) ? remaining : 4096
+    f.instruction(&Instruction::LocalGet(l_content_len));
+    f.instruction(&Instruction::LocalGet(l_write_off));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::LocalGet(l_content_len));
+    f.instruction(&Instruction::LocalGet(l_write_off));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::Select);
     f.instruction(&Instruction::LocalGet(l_retptr_write));
     f.instruction(&Instruction::Call(blocking_write_fn));
 
+    // Check tag at retptr+0; on Err drop both, return Err.
     f.instruction(&Instruction::LocalGet(l_retptr_write));
     f.instruction(&Instruction::I32Load8U(mem1));
     f.instruction(&Instruction::I32Const(0));
@@ -2123,6 +2161,25 @@ pub(super) fn emit_disk_write_text(
         emit_err(&mut f, b"write failed");
     }
     f.instruction(&Instruction::End);
+
+    // write_off += chunk (recompute the same min(remaining, 4096)).
+    f.instruction(&Instruction::LocalGet(l_write_off));
+    f.instruction(&Instruction::LocalGet(l_content_len));
+    f.instruction(&Instruction::LocalGet(l_write_off));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::LocalGet(l_content_len));
+    f.instruction(&Instruction::LocalGet(l_write_off));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Const(4096));
+    f.instruction(&Instruction::I32LtU);
+    f.instruction(&Instruction::Select);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_write_off));
+
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
 
     // ── drops ───────────────────────────────────────────────
     f.instruction(&Instruction::LocalGet(l_stream));

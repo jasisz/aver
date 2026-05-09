@@ -54,13 +54,15 @@ pub(super) fn emit_console_print_wasip2(
             args.len()
         )));
     }
-    let len_local = slots.console_print_wasip2_scratch.ok_or_else(|| {
+    let scratch = slots.console_print_wasip2_scratch.ok_or_else(|| {
         WasmGcError::Validation(
-            "Console.* on wasip2: i32 scratch slot was not allocated by SlotTable — \
-             `fn_needs_console_print_wasip2_scratch` did not flag this fn"
+            "Console.* on wasip2: [len, offset] scratch slots were not allocated by \
+             SlotTable — `fn_needs_console_print_wasip2_scratch` did not flag this fn"
                 .into(),
         )
     })?;
+    let len_local = scratch[0];
+    let off_local = scratch[1];
 
     // Pick stream: stdout for `print`, stderr for `error` / `warn`.
     // The matching `get_*_fn_idx` and `*_handle_global` must be
@@ -126,23 +128,83 @@ pub(super) fn emit_console_print_wasip2(
     func.instruction(&Instruction::MemoryGrow(0));
     func.instruction(&Instruction::Drop);
 
-    // Step 4: blocking-write-and-flush(handle, ptr=0, len, retptr).
-    func.instruction(&Instruction::GlobalGet(handle_global));
-    func.instruction(&Instruction::I32Const(0));
-    func.instruction(&Instruction::LocalGet(len_local));
-    // retptr = (len + 15) & -16 (16-byte aligned, just past the
-    // string bytes). Computed inline to avoid a second scratch slot.
-    func.instruction(&Instruction::LocalGet(len_local));
-    func.instruction(&Instruction::I32Const(15));
-    func.instruction(&Instruction::I32Add);
-    func.instruction(&Instruction::I32Const(-16));
-    func.instruction(&Instruction::I32And);
     let write_fn = lowering.blocking_write_fn_idx.ok_or_else(|| {
         WasmGcError::Validation(
             "Console.* on wasip2: blocking-write-and-flush fn idx missing".into(),
         )
     })?;
+
+    // Step 4: chunked write loop. wasmtime-wasi caps each
+    // `blocking-write-and-flush` call at 4096 bytes, so we walk
+    // LM[0..len] in 4096-byte slices. retptr is fixed past the
+    // string (`(len + 15) & -16`) and reused across chunks; the
+    // host writes a 12-byte `result<_, stream-error>` tag at
+    // retptr each iteration which we ignore (Console.* is Unit).
+    //
+    //   offset = 0
+    //   loop:
+    //     remaining = len - offset
+    //     if remaining == 0: break
+    //     chunk = if remaining > 4096 then 4096 else remaining
+    //     blocking-write-and-flush(handle, offset, chunk, retptr)
+    //     offset += chunk
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::LocalSet(off_local));
+
+    func.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    func.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+
+    // remaining = len - offset; if 0 → exit.
+    func.instruction(&Instruction::LocalGet(len_local));
+    func.instruction(&Instruction::LocalGet(off_local));
+    func.instruction(&Instruction::I32Sub);
+    func.instruction(&Instruction::I32Eqz);
+    func.instruction(&Instruction::BrIf(1)); // exit Block
+
+    // Push call args: handle, offset, chunk = min(remaining, 4096).
+    func.instruction(&Instruction::GlobalGet(handle_global));
+    func.instruction(&Instruction::LocalGet(off_local));
+    // chunk = min(remaining, 4096) via select:
+    //   (remaining < 4096) ? remaining : 4096
+    func.instruction(&Instruction::LocalGet(len_local));
+    func.instruction(&Instruction::LocalGet(off_local));
+    func.instruction(&Instruction::I32Sub); // remaining (top)
+    func.instruction(&Instruction::I32Const(4096)); // 4096 (top-1 → top now)
+    func.instruction(&Instruction::LocalGet(len_local));
+    func.instruction(&Instruction::LocalGet(off_local));
+    func.instruction(&Instruction::I32Sub); // remaining (cond input)
+    func.instruction(&Instruction::I32Const(4096));
+    func.instruction(&Instruction::I32LtU); // remaining < 4096?
+    func.instruction(&Instruction::Select); // pick remaining if <4096 else 4096
+
+    // retptr = (len + 15) & -16 (constant for the call); 16-byte
+    // aligned, just past the full string buffer.
+    func.instruction(&Instruction::LocalGet(len_local));
+    func.instruction(&Instruction::I32Const(15));
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::I32Const(-16));
+    func.instruction(&Instruction::I32And);
+
     func.instruction(&Instruction::Call(write_fn));
+
+    // offset += chunk. Recompute chunk = min(remaining, 4096):
+    func.instruction(&Instruction::LocalGet(off_local));
+    func.instruction(&Instruction::LocalGet(len_local));
+    func.instruction(&Instruction::LocalGet(off_local));
+    func.instruction(&Instruction::I32Sub);
+    func.instruction(&Instruction::I32Const(4096));
+    func.instruction(&Instruction::LocalGet(len_local));
+    func.instruction(&Instruction::LocalGet(off_local));
+    func.instruction(&Instruction::I32Sub);
+    func.instruction(&Instruction::I32Const(4096));
+    func.instruction(&Instruction::I32LtU);
+    func.instruction(&Instruction::Select);
+    func.instruction(&Instruction::I32Add);
+    func.instruction(&Instruction::LocalSet(off_local));
+
+    func.instruction(&Instruction::Br(0)); // restart loop
+    func.instruction(&Instruction::End); // loop
+    func.instruction(&Instruction::End); // block
     Ok(())
 }
 
