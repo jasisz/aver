@@ -495,6 +495,17 @@ pub(super) enum Wasip2ImportSlot {
     /// fields is a child resource.
     /// Canonical-ABI signature: `(handle: i32) -> ()`.
     HttpTypesResourceDropFields,
+    /// `wasi:http/types.[method]outgoing-request.set-method:
+    ///   func(this: borrow<outgoing-request>, method: method)
+    ///   -> result<_, _>`.
+    /// `method` is a variant `{ GET, HEAD, POST, PUT, DELETE,
+    /// CONNECT, OPTIONS, TRACE, PATCH, other(string) }`. For our
+    /// known methods we pass the discriminant directly with empty
+    /// other-payload (tag, 0, 0). v1 ignores the result tag.
+    /// Canonical-ABI signature:
+    ///   `(this: i32, method_tag: i32, other_str_ptr: i32,
+    ///     other_str_len: i32) -> i32`.
+    HttpTypesOutgoingRequestSetMethod,
 }
 
 impl Wasip2ImportSlot {
@@ -651,6 +662,10 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::HttpTypesResourceDropFields => {
                 ("wasi:http/types@0.2.4", "[resource-drop]fields")
             }
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod => (
+                "wasi:http/types@0.2.4",
+                "[method]outgoing-request.set-method",
+            ),
         }
     }
 
@@ -774,6 +789,17 @@ impl Wasip2ImportSlot {
                 ValType::I32, // scheme str_ptr (used only for `other`)
                 ValType::I32, // scheme str_len
             ],
+            // `set-method(this, method)` where method is the
+            // `{ GET, HEAD, POST, PUT, DELETE, ..., other(string) }`
+            // variant — flat as (tag i32, str_ptr i32, str_len i32).
+            // For known methods (tags 0..=8) str_ptr/str_len are
+            // unused, passed as 0/0.
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod => vec![
+                ValType::I32, // this
+                ValType::I32, // method tag
+                ValType::I32, // other str_ptr
+                ValType::I32, // other str_len
+            ],
             // `set-authority(this, opt<string>)` /
             // `set-path-with-query(this, opt<string>)`.
             Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority
@@ -865,6 +891,7 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme
             | Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority
             | Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod
             | Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe
             | Wasip2ImportSlot::HttpTypesIncomingResponseStatus
             | Wasip2ImportSlot::HttpTypesIncomingResponseHeaders

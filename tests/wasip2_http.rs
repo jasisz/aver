@@ -34,6 +34,39 @@ with socketserver.TCPServer(('127.0.0.1', 0), H) as srv:
     srv.serve_forever()
 "#;
 
+/// Custom server that handles GET, HEAD, DELETE — each tags the
+/// response body / headers with the method name so the Aver test
+/// can verify which path the helper took. HEAD per HTTP spec
+/// returns no body even though the Content-Length header reflects
+/// what GET would return.
+const ALL_METHODS_SCRIPT: &str = r#"
+import http.server, socketserver, sys
+
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a, **k):
+        pass
+    def _respond(self, body):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain')
+        self.send_header('X-Method', self.command)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        if self.command != 'HEAD':
+            self.wfile.write(body)
+    def do_GET(self):
+        self._respond(b'got-it')
+    def do_HEAD(self):
+        self._respond(b'got-it')
+    def do_DELETE(self):
+        self._respond(b'deleted')
+
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(('127.0.0.1', 0), H) as srv:
+    sys.stdout.write(f'PORT:{srv.server_address[1]}\n')
+    sys.stdout.flush()
+    srv.serve_forever()
+"#;
+
 /// Custom server that emits multiple Set-Cookie headers + a
 /// custom X-Order header to exercise the multi-value header path
 /// (Map.get + List.prepend) and the field-name lowercasing.
@@ -286,6 +319,83 @@ fn main() -> Unit
     assert!(
         s.contains("order=alpha,beta"),
         "expected order=alpha,beta (X-Order multi-value order), got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn http_head_and_delete_dispatch_correct_method() {
+    // Custom server tags the response with the request method
+    // via X-Method header. Aver fires GET/HEAD/DELETE in turn
+    // and asserts the server saw each verb. HEAD also asserts
+    // an empty body (server skips wfile.write on HEAD per HTTP).
+    let dir = tempdir("methods");
+    let Some((mut server, port)) = spawn_python_server(&dir, ALL_METHODS_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping HEAD/DELETE test");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn first_or(items: List<String>, dflt: String) -> String
+    match items
+        [] -> dflt
+        [head, ..rest] -> head
+
+fn header(headers: Map<String, List<String>>, name: String) -> String
+    match Map.get(headers, name)
+        Option.Some(values) -> first_or(values, "missing")
+        Option.None -> "absent"
+
+fn dump(label: String, r: HttpResponse) -> Unit
+    ! [Console.print]
+    method: String = header(r.headers, "x-method")
+    Console.print("{{label}} status={{r.status}} method={{method}} body_len={{String.len(r.body)}}")
+
+fn main() -> Unit
+    ! [Http.get, Http.head, Http.delete, Console.print]
+    g = Http.get("http://127.0.0.1:{port}/")
+    h = Http.head("http://127.0.0.1:{port}/")
+    d = Http.delete("http://127.0.0.1:{port}/")
+    match g
+        Result.Ok(r) -> dump("GET", r)
+        Result.Err(e) -> Console.print("GET err: {{e}}")
+    match h
+        Result.Ok(r) -> dump("HEAD", r)
+        Result.Err(e) -> Console.print("HEAD err: {{e}}")
+    match d
+        Result.Ok(r) -> dump("DELETE", r)
+        Result.Err(e) -> Console.print("DELETE err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "methods.av", &src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+
+    let _ = server.kill();
+    let _ = server.wait();
+
+    assert!(
+        out.status.success(),
+        "wasip2_http HEAD/DELETE compile/run failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        s.contains("GET status=200 method=GET body_len=6"),
+        "expected GET line with method=GET and body_len=6 (\"got-it\"), got:\n{s}"
+    );
+    // HEAD: server still sets Content-Length but writes no body —
+    // wasi-http surfaces the empty body as body_len=0.
+    assert!(
+        s.contains("HEAD status=200 method=HEAD body_len=0"),
+        "expected HEAD line with method=HEAD and empty body, got:\n{s}"
+    );
+    assert!(
+        s.contains("DELETE status=200 method=DELETE body_len=7"),
+        "expected DELETE line with method=DELETE and body_len=7 (\"deleted\"), got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

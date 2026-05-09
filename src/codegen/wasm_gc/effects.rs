@@ -733,7 +733,9 @@ impl EffectName {
                 | EffectName::DiskDeleteDir
                 | EffectName::DiskMakeDir
                 | EffectName::DiskListDir
-                | EffectName::HttpGet,
+                | EffectName::HttpGet
+                | EffectName::HttpHead
+                | EffectName::HttpDelete,
         )
     }
 }

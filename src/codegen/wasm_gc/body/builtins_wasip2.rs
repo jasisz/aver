@@ -821,31 +821,63 @@ pub(super) fn emit_disk_list_dir_wasip2(
     Ok(())
 }
 
-/// Phase 2.0 — `Http.get(url) -> Result<HttpResponse, String>` on
-/// `--target wasip2`. Pushes the URL arg and calls
-/// `__rt_http_get`, which owns the wasi:http/outgoing-handler.handle
-/// pipeline (URL parse + fields/request constructors + setters +
-/// handle + poll + future.get + status + consume + body.stream +
-/// drain + per-call resource drops + HttpResponse build).
-pub(super) fn emit_http_get_wasip2(
+/// Phase 2 — `Http.{get, head, delete}(url) -> Result<
+/// HttpResponse, String>` on `--target wasip2`. The shared
+/// `__rt_http_request` helper takes (method_tag i32, url ref
+/// string); per-method dispatchers push the appropriate method
+/// ordinal from wasi:http's `method` variant (0=GET, 1=HEAD,
+/// 4=DELETE; 2=POST, 3=PUT, 8=PATCH land in Step K).
+fn emit_http_method_wasip2(
+    method_name: &str,
+    method_tag: i32,
     func: &mut wasm_encoder::Function,
     args: &[Spanned<Expr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
-        WasmGcError::Validation("Http.get on wasip2: lowering ctx missing".into())
+        WasmGcError::Validation(format!("{method_name} on wasip2: lowering ctx missing"))
     })?;
     if args.len() != 1 {
         return Err(WasmGcError::Validation(format!(
-            "Http.get on `--target wasip2` expects 1 arg (url), got {}",
+            "{method_name} on `--target wasip2` expects 1 arg (url), got {}",
             args.len()
         )));
     }
     let fn_idx = lowering.http_get_fn_idx.ok_or_else(|| {
-        WasmGcError::Validation("Http.get on wasip2: __rt_http_get fn idx missing".into())
+        WasmGcError::Validation(format!(
+            "{method_name} on wasip2: __rt_http_request fn idx missing"
+        ))
     })?;
+    func.instruction(&Instruction::I32Const(method_tag));
     emit_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
+}
+
+pub(super) fn emit_http_get_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    emit_http_method_wasip2("Http.get", 0, func, args, slots, ctx)
+}
+
+pub(super) fn emit_http_head_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    emit_http_method_wasip2("Http.head", 1, func, args, slots, ctx)
+}
+
+pub(super) fn emit_http_delete_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    emit_http_method_wasip2("Http.delete", 4, func, args, slots, ctx)
 }

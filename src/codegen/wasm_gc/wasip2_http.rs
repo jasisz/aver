@@ -145,6 +145,10 @@ pub(super) struct HttpGetHelperFns {
     /// headers (Set-Cookie etc.) accumulate properly via prepend
     /// instead of overwriting.
     pub map_get_fn: u32,
+    /// Step J — `[method]outgoing-request.set-method`. Called
+    /// after the request constructor for any non-GET method.
+    /// GET is the default, so we skip the call for method_tag==0.
+    pub set_method_fn: u32,
 }
 
 /// Same `INITIAL_CAP` as `emit_map_empty` in `maps.rs`. Wastes
@@ -205,9 +209,16 @@ const ERROR_CODE_NAMES: &[&[u8]] = &[
 ];
 
 /// Body emitter. See module-level docstring for the per-step
-/// pipeline. Keep this fn under ~800 LoC; if it grows past that,
+/// pipeline. Keep this fn under ~1000 LoC; if it grows past that,
 /// split URL parsing into its own emitted helper (allocate a fn
 /// idx in `module.rs`, call it from here).
+///
+/// Signature: `(method_tag: i32, url: ref string) -> ref Result<
+/// HttpResponse, String>`. `method_tag` selects the HTTP verb
+/// per wasi:http's `method` variant ordinals (0=GET, 1=HEAD,
+/// 2=POST, 3=PUT, 4=DELETE, 8=PATCH). For GET we skip the
+/// set-method call (default); for others we call set-method
+/// after the request constructor.
 pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> Function {
     use wasm_encoder::{BlockType, HeapType, Instruction, MemArg, RefType};
 
@@ -216,55 +227,60 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         heap_type: HeapType::Concrete(indices.string_type_idx),
     });
 
-    // Locals layout — kept densely packed because wasm doesn't
-    // care about gaps but readers do:
-    //   0  = url (ref string) [param]
-    //   1  = url_len           (i32)  byte length of LM-resident url
-    //   2  = i                 (i32)  scheme search cursor / colon idx
-    //   3  = j                 (i32)  authority/path split cursor
-    //   4  = scheme_tag        (i32)  0 = http, 1 = https
-    //   5  = auth_ptr          (i32)  LM offset of authority
-    //   6  = auth_len          (i32)
-    //   7  = path_ptr          (i32)
-    //   8  = path_len          (i32)
-    //   9  = fields            (i32)  outgoing fields handle
-    //   10 = req               (i32)  outgoing-request handle
-    //   11 = retptr1           (i32)  handle()
-    //   12 = future            (i32)  future-incoming-response handle
-    //   13 = pollable          (i32)
-    //   14 = in_buf            (i32)  4-byte slot holding pollable for poll()
-    //   15 = retptr2           (i32)  poll()
-    //   16 = retptr3           (i32)  future.get()
-    //   17 = response          (i32)  incoming-response handle
-    //   18 = retptr4           (i32)  consume()
-    //   19 = body              (i32)  incoming-body handle
-    //   20 = retptr5           (i32)  body.stream()
-    //   21 = stream            (i32)  input-stream handle
-    //   22 = buf_ptr           (i32)  growing body buffer (cabi_realloc)
-    //   23 = buf_cap           (i32)
-    //   24 = buf_len           (i32)
-    //   25 = data_ptr          (i32)  per-iter blocking-read result ptr
-    //   26 = data_len          (i32)
-    //   27 = retptr_read       (i32)  per-iter blocking-read retptr (12B)
-    //   28 = new_cap           (i32)  scratch for capacity doubling
-    //   29 = k                 (i32)  byte-copy iterator
-    //   30 = trailers          (i32)  future-trailers handle
-    //   31 = h_fields          (i32)  fields handle from incoming-response.headers
-    //   32 = h_retptr          (i32)  retptr for fields.entries (8 bytes)
-    //   33 = h_entries_ptr     (i32)  list base address
-    //   34 = h_entries_len     (i32)  list length (entry count)
-    //   35 = h_idx             (i32)  loop counter
-    //   36 = h_entry_addr      (i32)  entries_ptr + idx*16
-    //   37 = h_name_ptr        (i32)  per-entry: field-key str ptr
-    //   38 = h_name_len        (i32)
-    //   39 = h_val_ptr         (i32)  per-entry: field-value list ptr
-    //   40 = h_val_len         (i32)
-    //   41 = arr (ref string)         body string ref + Err scratch
-    //   42 = h_name_str (ref string)  per-header name lifted from LM
-    //   43 = h_val_str  (ref string)  per-header value lifted from LM
-    //   44 = resp (ref HttpResponse)  built before wrapping in Result.Ok
-    //   45 = h_map (ref map)          accumulated Map<String, List<String>>
-    //   46 = h_opt (ref Option<List<String>>)
+    // Locals layout — params first, then locals densely packed.
+    // Step J added p_method as the new param 0; every existing
+    // local index shifts up by one.
+    //   0  = method (i32)     [param]  HTTP verb tag (wasi:http
+    //                                  method variant ordinal:
+    //                                  0=GET, 1=HEAD, 2=POST,
+    //                                  3=PUT, 4=DELETE, 8=PATCH)
+    //   1  = url    (ref string) [param]
+    //   2  = url_len           (i32)  byte length of LM-resident url
+    //   3  = i                 (i32)  scheme search cursor / colon idx
+    //   4  = j                 (i32)  authority/path split cursor
+    //   5  = scheme_tag        (i32)  0 = http, 1 = https
+    //   6  = auth_ptr          (i32)  LM offset of authority
+    //   7  = auth_len          (i32)
+    //   8  = path_ptr          (i32)
+    //   9  = path_len          (i32)
+    //   10 = fields            (i32)  outgoing fields handle
+    //   11 = req               (i32)  outgoing-request handle
+    //   12 = retptr1           (i32)  handle()
+    //   13 = future            (i32)  future-incoming-response handle
+    //   14 = pollable          (i32)
+    //   15 = in_buf            (i32)  4-byte slot holding pollable for poll()
+    //   16 = retptr2           (i32)  poll()
+    //   17 = retptr3           (i32)  future.get()
+    //   18 = response          (i32)  incoming-response handle
+    //   19 = retptr4           (i32)  consume()
+    //   20 = body              (i32)  incoming-body handle
+    //   21 = retptr5           (i32)  body.stream()
+    //   22 = stream            (i32)  input-stream handle
+    //   23 = buf_ptr           (i32)  growing body buffer (cabi_realloc)
+    //   24 = buf_cap           (i32)
+    //   25 = buf_len           (i32)
+    //   26 = data_ptr          (i32)  per-iter blocking-read result ptr
+    //   27 = data_len          (i32)
+    //   28 = retptr_read       (i32)  per-iter blocking-read retptr (12B)
+    //   29 = new_cap           (i32)  scratch for capacity doubling
+    //   30 = k                 (i32)  byte-copy iterator
+    //   31 = trailers          (i32)  future-trailers handle
+    //   32 = h_fields          (i32)  fields handle from incoming-response.headers
+    //   33 = h_retptr          (i32)  retptr for fields.entries (8 bytes)
+    //   34 = h_entries_ptr     (i32)  list base address
+    //   35 = h_entries_len     (i32)  list length (entry count)
+    //   36 = h_idx             (i32)  loop counter
+    //   37 = h_entry_addr      (i32)  entries_ptr + idx*16
+    //   38 = h_name_ptr        (i32)  per-entry: field-key str ptr
+    //   39 = h_name_len        (i32)
+    //   40 = h_val_ptr         (i32)  per-entry: field-value list ptr
+    //   41 = h_val_len         (i32)
+    //   42 = arr (ref string)         body string ref + Err scratch
+    //   43 = h_name_str (ref string)  per-header name lifted from LM
+    //   44 = h_val_str  (ref string)  per-header value lifted from LM
+    //   45 = resp (ref HttpResponse)  built before wrapping in Result.Ok
+    //   46 = h_map (ref map)          accumulated Map<String, List<String>>
+    //   47 = h_opt (ref Option<List<String>>)
     //                                 result of Map.get probe per entry
     let resp_ref = ValType::Ref(RefType {
         nullable: true,
@@ -290,53 +306,54 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         (1, opt_list_str_ref),
     ]);
 
-    let p_url = 0u32;
-    let l_url_len = 1u32;
-    let l_i = 2u32;
-    let l_j = 3u32;
-    let l_scheme_tag = 4u32;
-    let l_auth_ptr = 5u32;
-    let l_auth_len = 6u32;
-    let l_path_ptr = 7u32;
-    let l_path_len = 8u32;
-    let l_fields = 9u32;
-    let l_req = 10u32;
-    let l_retptr1 = 11u32;
-    let l_future = 12u32;
-    let l_pollable = 13u32;
-    let l_in_buf = 14u32;
-    let l_retptr2 = 15u32;
-    let l_retptr3 = 16u32;
-    let l_response = 17u32;
-    let l_retptr4 = 18u32;
-    let l_body = 19u32;
-    let l_retptr5 = 20u32;
-    let l_stream = 21u32;
-    let l_buf_ptr = 22u32;
-    let l_buf_cap = 23u32;
-    let l_buf_len = 24u32;
-    let l_data_ptr = 25u32;
-    let l_data_len = 26u32;
-    let l_retptr_read = 27u32;
-    let l_new_cap = 28u32;
-    let l_k = 29u32;
-    let l_trailers = 30u32;
-    let l_h_fields = 31u32;
-    let l_h_retptr = 32u32;
-    let l_h_entries_ptr = 33u32;
-    let l_h_entries_len = 34u32;
-    let l_h_idx = 35u32;
-    let l_h_entry_addr = 36u32;
-    let l_h_name_ptr = 37u32;
-    let l_h_name_len = 38u32;
-    let l_h_val_ptr = 39u32;
-    let l_h_val_len = 40u32;
-    let l_arr = 41u32;
-    let l_h_name_str = 42u32;
-    let l_h_val_str = 43u32;
-    let l_resp = 44u32;
-    let l_h_map = 45u32;
-    let l_h_opt = 46u32;
+    let p_method = 0u32;
+    let p_url = 1u32;
+    let l_url_len = 2u32;
+    let l_i = 3u32;
+    let l_j = 4u32;
+    let l_scheme_tag = 5u32;
+    let l_auth_ptr = 6u32;
+    let l_auth_len = 7u32;
+    let l_path_ptr = 8u32;
+    let l_path_len = 9u32;
+    let l_fields = 10u32;
+    let l_req = 11u32;
+    let l_retptr1 = 12u32;
+    let l_future = 13u32;
+    let l_pollable = 14u32;
+    let l_in_buf = 15u32;
+    let l_retptr2 = 16u32;
+    let l_retptr3 = 17u32;
+    let l_response = 18u32;
+    let l_retptr4 = 19u32;
+    let l_body = 20u32;
+    let l_retptr5 = 21u32;
+    let l_stream = 22u32;
+    let l_buf_ptr = 23u32;
+    let l_buf_cap = 24u32;
+    let l_buf_len = 25u32;
+    let l_data_ptr = 26u32;
+    let l_data_len = 27u32;
+    let l_retptr_read = 28u32;
+    let l_new_cap = 29u32;
+    let l_k = 30u32;
+    let l_trailers = 31u32;
+    let l_h_fields = 32u32;
+    let l_h_retptr = 33u32;
+    let l_h_entries_ptr = 34u32;
+    let l_h_entries_len = 35u32;
+    let l_h_idx = 36u32;
+    let l_h_entry_addr = 37u32;
+    let l_h_name_ptr = 38u32;
+    let l_h_name_len = 39u32;
+    let l_h_val_ptr = 40u32;
+    let l_h_val_len = 41u32;
+    let l_arr = 42u32;
+    let l_h_name_str = 43u32;
+    let l_h_val_str = 44u32;
+    let l_resp = 45u32;
+    let l_h_map = 46u32;
+    let l_h_opt = 47u32;
 
     let mem4 = MemArg {
         offset: 0,
@@ -619,6 +636,27 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::LocalGet(l_fields));
     f.instruction(&Instruction::Call(h.outgoing_request_new_fn));
     f.instruction(&Instruction::LocalSet(l_req));
+
+    // ── 4b. set-method(req, p_method) — Step J ─────────────────
+    // Constructor defaults to GET. Skip the host call when
+    // p_method == 0 to keep the GET fast path identical to the
+    // original __rt_http_get. For other tags pass (req, tag, 0, 0)
+    // — the `other_str_*` slots are unused for the named methods
+    // (GET/HEAD/POST/PUT/DELETE/CONNECT/OPTIONS/TRACE/PATCH all
+    // map to discriminants 0..=8). v1 ignores the result tag —
+    // an invalid method surfaces later as `outgoing-handler.handle`
+    // Err.
+    f.instruction(&Instruction::LocalGet(p_method));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        f.instruction(&Instruction::LocalGet(l_req));
+        f.instruction(&Instruction::LocalGet(p_method));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::Call(h.set_method_fn));
+        f.instruction(&Instruction::Drop);
+    }
+    f.instruction(&Instruction::End);
 
     // ── 5. set-scheme(req, Some(scheme_tag)) ───────────────────
     // option<scheme>: opt_tag = 1 (Some), scheme variant tag =

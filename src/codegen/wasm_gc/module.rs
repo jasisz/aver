@@ -395,18 +395,18 @@ pub(super) fn emit_module_with(
                             Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream,
                         );
                     }
-                    EffectName::HttpGet => {
-                        // 12 new + 4 reused: see `wasip2_http.rs` for the
-                        // per-call sequence (Step D). The reuse covers
-                        // `wasi:io/poll.poll` (already used by Time.sleep
-                        // for pollable-wait), `[resource-drop]pollable`
-                        // (same reason), `input-stream.blocking-read`
-                        // (already used by Disk.readText / Console.readLine
-                        // for stream draining), and the input-stream drop
-                        // (Disk.readText drops it after read). Every
-                        // wasi:http resource drop is fresh — outgoing
-                        // connections produce different handle types
-                        // than file descriptors / pollables.
+                    EffectName::HttpGet | EffectName::HttpHead | EffectName::HttpDelete => {
+                        // GET/HEAD/DELETE all share the same wasi:http
+                        // import set — only `set-method` differentiates
+                        // the verb (handled inside `__rt_http_request`
+                        // based on the method_tag i32 param).
+                        //
+                        // 16 new + 4 reused (Step D) + Step F+G's 4 +
+                        // Step J's set-method = 24 new + 4 reused.
+                        // Reused: `wasi:io/poll.poll` (Time.sleep
+                        // pollable-wait), `[resource-drop]pollable`,
+                        // `input-stream.blocking-read` (Disk.readText
+                        // / Console.readLine), input-stream drop.
                         wasip2_imports.register(Wasip2ImportSlot::HttpTypesFieldsNew);
                         wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingRequestNew);
                         wasip2_imports
@@ -447,6 +447,11 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingResponseHeaders);
                         wasip2_imports.register(Wasip2ImportSlot::HttpTypesFieldsEntries);
                         wasip2_imports.register(Wasip2ImportSlot::HttpTypesResourceDropFields);
+                        // Step J: set-method for HEAD/DELETE (GET keeps
+                        // constructor default — set-method call is
+                        // gated by p_method != 0 inside the helper).
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod);
                     }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
@@ -1189,6 +1194,9 @@ pub(super) fn emit_module_with(
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFields)
             .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod)
+            .is_some()
         && let Some(string_idx) = registry.string_array_type_idx
         && let Some(result_idx) = registry.result_type_idx("Result<HttpResponse,String>")
         && let Some(resp_idx) = registry.record_type_idx("HttpResponse")
@@ -1204,7 +1212,9 @@ pub(super) fn emit_module_with(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(string_idx),
         });
-        types.ty().function([s_ref], [r_ref]);
+        // Step J: prepend method_tag i32 param (0=GET, 1=HEAD,
+        // 4=DELETE per wasi:http method variant ordinals).
+        types.ty().function([ValType::I32, s_ref], [r_ref]);
         let fn_type = next_type_idx;
         next_type_idx += 1;
         let fn_idx = next_builtin_fn_idx;
@@ -2670,6 +2680,10 @@ pub(super) fn emit_module_with(
                 .get("Map<String,List<String>>")
                 .expect("http_get emit requires Map<String,List<String>> helpers")
                 .get,
+            set_method_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod,
+                "HttpTypesOutgoingRequestSetMethod",
+            ),
         };
         codes.function(&super::wasip2_http::emit_http_get(hg, &helpers));
     }
