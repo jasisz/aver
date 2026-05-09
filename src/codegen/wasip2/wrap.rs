@@ -87,7 +87,17 @@ pub fn compile_to_component(
     let mut resolve = Resolve::default();
     super::wasi_bundle::push_wasi_packages(&mut resolve)?;
 
-    let wit_source = super::wit::emit_world_wit(world);
+    // Inspect the core module's imports to decide whether the world
+    // needs `import wasi:http/outgoing-handler@0.2.4`. We scan
+    // because the codegen path that registers wasi:http slots
+    // (`module.rs` `EffectName::HttpGet` arm) and the wrap path live
+    // in different modules — having `compile_to_component` derive the
+    // bit from the only ground truth (the actual emitted imports)
+    // keeps the world exactly tracking the core's surface and avoids
+    // a second source of truth that could drift.
+    let needs_http = core_imports_use_wasi_http(core_wasm);
+
+    let wit_source = super::wit::emit_world_wit(world, needs_http);
 
     // Parse our generated WIT into the same `Resolve`. `parse` reads
     // from a string — the path argument is for error messages only,
@@ -122,4 +132,30 @@ pub fn compile_to_component(
         .map_err(|e| Wasip2Error::Wrap(format!("ComponentEncoder::encode failed: {e}")))?;
 
     Ok((component, wit_source))
+}
+
+/// Scan a core wasm module's imports for any module name starting
+/// with `"wasi:http/"`. Used by `compile_to_component` to decide
+/// whether the generated WIT world should additionally
+/// `import wasi:http/outgoing-handler@0.2.4`.
+///
+/// Implemented via `wasmparser` to walk only the import section —
+/// avoids re-decoding the full module the way `Module::new` would,
+/// and treats malformed bytes as "no http imports" (the encoder
+/// later rejects malformed input with a clearer message).
+fn core_imports_use_wasi_http(core_wasm: &[u8]) -> bool {
+    use wasmparser::{Parser, Payload};
+    for payload in Parser::new(0).parse_all(core_wasm).flatten() {
+        if let Payload::ImportSection(reader) = payload {
+            // `into_imports()` flattens the grouped `Imports` enum
+            // (Single / Compact1 / Compact2) into a per-item iterator
+            // of `Import` values, each with its own `module` field.
+            for import in reader.into_imports().flatten() {
+                if import.module.starts_with("wasi:http/") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }

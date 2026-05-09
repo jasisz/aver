@@ -395,6 +395,53 @@ pub(super) fn emit_module_with(
                             Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream,
                         );
                     }
+                    EffectName::HttpGet => {
+                        // 12 new + 4 reused: see `wasip2_http.rs` for the
+                        // per-call sequence (Step D). The reuse covers
+                        // `wasi:io/poll.poll` (already used by Time.sleep
+                        // for pollable-wait), `[resource-drop]pollable`
+                        // (same reason), `input-stream.blocking-read`
+                        // (already used by Disk.readText / Console.readLine
+                        // for stream draining), and the input-stream drop
+                        // (Disk.readText drops it after read). Every
+                        // wasi:http resource drop is fresh — outgoing
+                        // connections produce different handle types
+                        // than file descriptors / pollables.
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesFieldsNew);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingRequestNew);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery,
+                        );
+                        wasip2_imports.register(Wasip2ImportSlot::HttpOutgoingHandlerHandle);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe,
+                        );
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingResponseStatus);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesIncomingResponseConsume);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingBodyStream);
+                        wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingBodyFinish);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse,
+                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers);
+                    }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
             }

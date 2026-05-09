@@ -28,7 +28,7 @@ use super::wrap::Wasip2World;
 /// end-to-end on the empty world (component is a valid WASI 0.2
 /// artifact, just with no public surface). Phase 1.2 turns this
 /// into a meaningful world declaration.
-pub fn emit_world_wit(world: Wasip2World) -> String {
+pub fn emit_world_wit(world: Wasip2World, needs_http: bool) -> String {
     let local_name = world.local_name();
     let (header_note, body) = match world {
         // `wasi:cli/command` is the canonical CLI shape from the
@@ -38,15 +38,31 @@ pub fn emit_world_wit(world: Wasip2World) -> String {
         // The wasm-gc emitter exports `wasi:cli/run@0.2.4#run`
         // (canonical-ABI mangled name) when `target == Wasip2`, so
         // the contract is satisfiable at this commit.
-        Wasip2World::CliCommand => (
-            "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world.",
-            "  include wasi:cli/command@0.2.4;",
-        ),
+        //
+        // `wasi:cli/command` does not transitively include
+        // `wasi:http/*`. When the user program reaches an `Http.*`
+        // effect, the wasm-gc backend emits canonical-ABI imports
+        // of `wasi:http/outgoing-handler@0.2.4` (and types via the
+        // implicit transitive package); the world has to declare
+        // that import explicitly so `wit-component::ComponentEncoder`
+        // matches it against the host. `needs_http` is derived in
+        // `wrap.rs` by scanning the core module's imports — single
+        // source of truth, no risk of drift between codegen and
+        // world declaration.
+        Wasip2World::CliCommand => {
+            let header = "// Phase 1.2b1.3 — wasm-gc emits `wasi:cli/run@0.2.4#run` to satisfy this world.";
+            let body = if needs_http {
+                "  include wasi:cli/command@0.2.4;\n  \n  // Phase 2 / 0.19 — Http.* effects on `--target wasip2` lower\n  // directly to `wasi:http/outgoing-handler.handle` plus the\n  // future-incoming-response / incoming-response choreography.\n  // WASI 0.3 collapses this into native `future<T>` / `stream<u8>`\n  // types and three imports; a `Wasip3World` variant lands when\n  // the spec stabilises.\n  import wasi:http/outgoing-handler@0.2.4;".to_string()
+            } else {
+                "  include wasi:cli/command@0.2.4;".to_string()
+            };
+            (header, body)
+        }
         // Phase 3 / 0.19. Compile-rejected upstream in `wrap.rs`; the
         // body still pretty-prints something honest for the artifact.
         Wasip2World::HttpProxy => (
             "// Phase 3 / 0.19 — compile-rejected.",
-            "  include wasi:http/proxy@0.2.4;",
+            "  include wasi:http/proxy@0.2.4;".to_string(),
         ),
     };
     format!(
