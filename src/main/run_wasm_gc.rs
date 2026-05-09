@@ -314,6 +314,13 @@ fn run_wasm_gc_with_host(
     config.wasm_bulk_memory(true);
     config.cranelift_opt_level(OptLevel::Speed);
     config.max_wasm_stack(8 * 1024 * 1024);
+    // `component-model-async` (pulled in by the `wasip2` feature) enables
+    // the runtime's async path; in that mode wasmtime enforces
+    // `max_wasm_stack <= async_stack_size`. Default async stack is 2 MiB,
+    // so the 8 MiB max above would trip `Engine::new` validation. Pin the
+    // async stack at 12 MiB to keep both paths happy. No-op when async
+    // support is off (unrelated builds).
+    config.async_stack_size(12 * 1024 * 1024);
     let engine = Engine::new(&config).map_err(|e| format!("engine: {e:#}"))?;
     let module = Module::new(&engine, wasm_bytes).map_err(|e| format!("module: {e:#}"))?;
 
