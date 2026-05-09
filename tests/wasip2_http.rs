@@ -34,6 +34,33 @@ with socketserver.TCPServer(('127.0.0.1', 0), H) as srv:
     srv.serve_forever()
 "#;
 
+/// Custom server that emits multiple Set-Cookie headers + a
+/// custom X-Order header to exercise the multi-value header path
+/// (Map.get + List.prepend) and the field-name lowercasing.
+const MULTI_VALUE_SCRIPT: &str = r#"
+import http.server, socketserver, sys
+
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a, **k):
+        pass
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain')
+        self.send_header('Set-Cookie', 'first=1')
+        self.send_header('Set-Cookie', 'second=2')
+        self.send_header('Set-Cookie', 'third=3')
+        self.send_header('X-Order', 'alpha')
+        self.send_header('X-Order', 'beta')
+        self.end_headers()
+        self.wfile.write(b'multi-value-test')
+
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(('127.0.0.1', 0), H) as srv:
+    sys.stdout.write(f'PORT:{srv.server_address[1]}\n')
+    sys.stdout.flush()
+    srv.serve_forever()
+"#;
+
 fn tempdir(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -50,14 +77,14 @@ fn write_fixture(dir: &Path, name: &str, source: &str) -> PathBuf {
     path
 }
 
-/// Spawn `python3 -c SERVER_SCRIPT` in `dir`, wait for the
-/// `PORT:N` line on stdout, return `(child, port)`. Returns
-/// `None` when `python3` is not available — tests skip in that
-/// case rather than fail (CI environments without python should
-/// not block PR merges).
-fn spawn_python_server(dir: &Path) -> Option<(Child, u16)> {
+/// Spawn `python3 -c <script>` in `dir`, wait for the `PORT:N`
+/// line on stdout, return `(child, port)`. Returns `None` when
+/// `python3` is not available — tests skip in that case rather
+/// than fail (CI environments without python should not block
+/// PR merges).
+fn spawn_python_server(dir: &Path, script: &str) -> Option<(Child, u16)> {
     let mut child = match Command::new("python3")
-        .args(["-c", SERVER_SCRIPT])
+        .args(["-c", script])
         .current_dir(dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -108,7 +135,7 @@ fn http_get_returns_status_and_body() {
     )
     .expect("write fixture html");
 
-    let Some((mut server, port)) = spawn_python_server(&dir) else {
+    let Some((mut server, port)) = spawn_python_server(&dir, SERVER_SCRIPT) else {
         eprintln!("python3 unavailable — skipping wasip2_http test");
         return;
     };
@@ -184,6 +211,81 @@ fn main() -> Unit
     assert!(
         s.contains("ct=text/html"),
         "expected ct=text/html (Python http.server default for .html), got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn http_get_preserves_multi_value_header_order() {
+    // Custom Python server emits three Set-Cookie + two X-Order
+    // headers in a specific order. The Aver helper iterates the
+    // wasi-http entries list in REVERSE and prepends each value
+    // onto the existing List<String>, which yields forward order
+    // in the final map (matches RFC 6265's "preserve emit order"
+    // requirement for Set-Cookie).
+    let dir = tempdir("multi");
+    let Some((mut server, port)) = spawn_python_server(&dir, MULTI_VALUE_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping multi-value header test");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn list_join(items: List<String>, sep: String) -> String
+    match items
+        [] -> ""
+        [head, ..rest] -> match rest
+            [] -> head
+            [_, ..__] -> "{{head}}{{sep}}{{list_join(rest, sep)}}"
+
+fn header_join(headers: Map<String, List<String>>, name: String) -> String
+    match Map.get(headers, name)
+        Option.Some(values) -> list_join(values, ",")
+        Option.None -> "absent"
+
+fn dump(r: HttpResponse) -> Unit
+    ! [Console.print]
+    cookies: String = header_join(r.headers, "set-cookie")
+    order: String = header_join(r.headers, "x-order")
+    Console.print("status={{r.status}} cookies={{cookies}} order={{order}}")
+
+fn main() -> Unit
+    ! [Http.get, Console.print]
+    response = Http.get("http://127.0.0.1:{port}/")
+    match response
+        Result.Ok(r) -> dump(r)
+        Result.Err(e) -> Console.print("err: {{e}}")
+"#
+    );
+
+    let fixture = write_fixture(&dir, "multi.av", &src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+
+    let _ = server.kill();
+    let _ = server.wait();
+
+    assert!(
+        out.status.success(),
+        "wasip2_http multi-value compile/run failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(s.contains("status=200"), "expected status=200, got:\n{s}");
+    // Cookies emitted in order first/second/third — the wasm
+    // helper's reverse-iterate-prepend scheme should yield this
+    // exact comma-joined string. Any reorder (e.g. forward-iter
+    // prepend → reversed) or loss (overwrite-on-duplicate) would
+    // fail this assertion.
+    assert!(
+        s.contains("cookies=first=1,second=2,third=3"),
+        "expected cookies=first=1,second=2,third=3 (Set-Cookie multi-value order), got:\n{s}"
+    );
+    assert!(
+        s.contains("order=alpha,beta"),
+        "expected order=alpha,beta (X-Order multi-value order), got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

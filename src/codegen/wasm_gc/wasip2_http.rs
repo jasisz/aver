@@ -72,9 +72,14 @@ pub(super) struct HttpGetIndices {
     pub headers_values_array_type_idx: u32,
     pub headers_map_type_idx: u32,
     /// `List<String>` cons-cell type idx. Each header value lands
-    /// in a singleton `[value]` list (struct.new with head=string,
-    /// tail=null) before being inserted into the headers map.
+    /// either in a singleton `[value]` list or prepended onto the
+    /// existing list when the same field-key reappears (Set-Cookie
+    /// + multi-instance headers).
     pub list_string_type_idx: u32,
+    /// `Option<List<String>>` struct type idx. Returned by
+    /// `Map.get` over the headers map; consumed via `struct.get`
+    /// to extract tag (offset 0) + payload (offset 1).
+    pub option_list_string_type_idx: u32,
 }
 
 /// Bundle of wasm fn indices the body references via `Call(idx)`.
@@ -135,6 +140,11 @@ pub(super) struct HttpGetHelperFns {
     /// instantiation. Sourced from `fn_map.map_helpers["Map<
     /// String,List<String>>"].set` at wiring time.
     pub map_set_fn: u32,
+    /// `Map.get` for the same instantiation. Used to look up the
+    /// existing list of values for a field-key so multi-instance
+    /// headers (Set-Cookie etc.) accumulate properly via prepend
+    /// instead of overwriting.
+    pub map_get_fn: u32,
 }
 
 /// Same `INITIAL_CAP` as `emit_map_empty` in `maps.rs`. Wastes
@@ -199,8 +209,12 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     //   39 = h_val_ptr         (i32)  per-entry: field-value list ptr
     //   40 = h_val_len         (i32)
     //   41 = arr (ref string)         body string ref + Err scratch
-    //   42 = resp (ref HttpResponse)  built before wrapping in Result.Ok
-    //   43 = h_map (ref map)          accumulated Map<String, List<String>>
+    //   42 = h_name_str (ref string)  per-header name lifted from LM
+    //   43 = h_val_str  (ref string)  per-header value lifted from LM
+    //   44 = resp (ref HttpResponse)  built before wrapping in Result.Ok
+    //   45 = h_map (ref map)          accumulated Map<String, List<String>>
+    //   46 = h_opt (ref Option<List<String>>)
+    //                                 result of Map.get probe per entry
     let resp_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(indices.http_response_type_idx),
@@ -209,11 +223,20 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         nullable: true,
         heap_type: HeapType::Concrete(indices.headers_map_type_idx),
     });
+    let list_str_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.list_string_type_idx),
+    });
+    let opt_list_str_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.option_list_string_type_idx),
+    });
     let mut f = Function::new(vec![
         (40, ValType::I32),
-        (1, s_ref),
+        (3, s_ref),
         (1, resp_ref),
         (1, map_ref),
+        (1, opt_list_str_ref),
     ]);
 
     let p_url = 0u32;
@@ -258,8 +281,11 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     let l_h_val_ptr = 39u32;
     let l_h_val_len = 40u32;
     let l_arr = 41u32;
-    let l_resp = 42u32;
-    let l_h_map = 43u32;
+    let l_h_name_str = 42u32;
+    let l_h_val_str = 43u32;
+    let l_resp = 44u32;
+    let l_h_map = 45u32;
+    let l_h_opt = 46u32;
 
     let mem4 = MemArg {
         offset: 0,
@@ -800,16 +826,27 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::I32Load(mem4_o4));
     f.instruction(&Instruction::LocalSet(l_h_entries_len));
 
-    // Loop i = 0..entries_len.
-    f.instruction(&Instruction::I32Const(0));
+    // Reverse iteration: idx = entries_len - 1, decrementing,
+    // exit when idx becomes -1 (signed). Prepending in reverse
+    // order yields forward order in the final list:
+    //   entries: [Set-Cookie: a, Set-Cookie: b]
+    //   reverse: process b first  → map[Set-Cookie] = [b]
+    //            process a second → map[Set-Cookie] = [a, b]
+    // RFC 6265 (Set-Cookie) requires preserving server-emit
+    // order; this scheme does that without needing List.append
+    // (which would be O(n²) over the loop).
+    f.instruction(&Instruction::LocalGet(l_h_entries_len));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
     f.instruction(&Instruction::LocalSet(l_h_idx));
     f.instruction(&Instruction::Block(BlockType::Empty));
     f.instruction(&Instruction::Loop(BlockType::Empty));
     {
-        // exit when idx >= entries_len.
+        // exit when idx < 0 (also covers entries_len == 0 since
+        // 0 - 1 = -1 wraps to a negative i32 under signed compare).
         f.instruction(&Instruction::LocalGet(l_h_idx));
-        f.instruction(&Instruction::LocalGet(l_h_entries_len));
-        f.instruction(&Instruction::I32GeU);
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32LtS);
         f.instruction(&Instruction::BrIf(1));
 
         // entry_addr = entries_ptr + idx * 16.
@@ -840,12 +877,10 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         }));
         f.instruction(&Instruction::LocalSet(l_h_val_len));
 
-        // Build map.set(l_h_map, name_str, [val_str]) →
-        //   stack: [map, name_str, singleton] → call → [new_map]
-        f.instruction(&Instruction::LocalGet(l_h_map));
-
         // name_str: memory.copy name bytes → LM[0..name_len],
-        //           call __rt_string_from_lm(name_len).
+        //           call __rt_string_from_lm(name_len). Stash so
+        //           we can use it for both Map.get (probe existing)
+        //           and Map.set (insert new list).
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::LocalGet(l_h_name_ptr));
         f.instruction(&Instruction::LocalGet(l_h_name_len));
@@ -855,9 +890,10 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         });
         f.instruction(&Instruction::LocalGet(l_h_name_len));
         f.instruction(&Instruction::Call(h.from_lm_fn));
+        f.instruction(&Instruction::LocalSet(l_h_name_str));
 
-        // val_str: same shape (overwrites LM[0..] — fine, name was
-        // already lifted into a fresh GC array by from_lm).
+        // val_str: same shape — name bytes already lifted into a
+        // fresh GC array, LM[0..] is free to overwrite.
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::LocalGet(l_h_val_ptr));
         f.instruction(&Instruction::LocalGet(l_h_val_len));
@@ -867,21 +903,60 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         });
         f.instruction(&Instruction::LocalGet(l_h_val_len));
         f.instruction(&Instruction::Call(h.from_lm_fn));
+        f.instruction(&Instruction::LocalSet(l_h_val_str));
 
-        // singleton = [val_str] = struct.new $list_string (val, null)
-        f.instruction(&Instruction::RefNull(HeapType::Concrete(
-            indices.list_string_type_idx,
-        )));
+        // existing = Map.get(map, name_str) → Option<List<String>>
+        f.instruction(&Instruction::LocalGet(l_h_map));
+        f.instruction(&Instruction::LocalGet(l_h_name_str));
+        f.instruction(&Instruction::Call(h.map_get_fn));
+        f.instruction(&Instruction::LocalSet(l_h_opt));
+
+        // Build new_list = struct.new $list_string (val_str, tail)
+        // where tail = Some(prev) ⇒ prev, None ⇒ ref.null.
+        // Then call Map.set(map, name_str, new_list).
+        //
+        // Stack discipline: push (map, name_str, val_str, tail) then
+        //   struct.new pops 2 → (map, name_str, new_list)
+        //   call map_set pops 3 → (new_map)
+        f.instruction(&Instruction::LocalGet(l_h_map));
+        f.instruction(&Instruction::LocalGet(l_h_name_str));
+        f.instruction(&Instruction::LocalGet(l_h_val_str));
+
+        // tail = if opt.tag == 1 then opt.payload else ref.null
+        f.instruction(&Instruction::LocalGet(l_h_opt));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: indices.option_list_string_type_idx,
+            field_index: 0,
+        });
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Eq);
+        f.instruction(&Instruction::If(BlockType::Result(list_str_ref)));
+        {
+            f.instruction(&Instruction::LocalGet(l_h_opt));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: indices.option_list_string_type_idx,
+                field_index: 1,
+            });
+        }
+        f.instruction(&Instruction::Else);
+        {
+            f.instruction(&Instruction::RefNull(HeapType::Concrete(
+                indices.list_string_type_idx,
+            )));
+        }
+        f.instruction(&Instruction::End);
+
+        // struct.new $list_string pops (val_str, tail), pushes new_list.
         f.instruction(&Instruction::StructNew(indices.list_string_type_idx));
 
-        // Map.set(map, name_str, singleton) → new map ref.
+        // Map.set(map, name_str, new_list) → new map ref.
         f.instruction(&Instruction::Call(h.map_set_fn));
         f.instruction(&Instruction::LocalSet(l_h_map));
 
-        // idx++; continue.
+        // idx--; continue.
         f.instruction(&Instruction::LocalGet(l_h_idx));
         f.instruction(&Instruction::I32Const(1));
-        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::I32Sub);
         f.instruction(&Instruction::LocalSet(l_h_idx));
         f.instruction(&Instruction::Br(0));
     }

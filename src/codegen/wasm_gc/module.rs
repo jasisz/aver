@@ -1194,6 +1194,7 @@ pub(super) fn emit_module_with(
         && let Some(resp_idx) = registry.record_type_idx("HttpResponse")
         && let Some(map_slots) = registry.map_slots("Map<String,List<String>>")
         && let Some(list_string_idx) = registry.list_type_idx("List<String>")
+        && let Some(opt_list_string_idx) = registry.option_type_idx("Option<List<String>>")
     {
         let r_ref = ValType::Ref(wasm_encoder::RefType {
             nullable: true,
@@ -1218,6 +1219,7 @@ pub(super) fn emit_module_with(
             headers_values_array_type_idx: map_slots.values_array,
             headers_map_type_idx: map_slots.map,
             list_string_type_idx: list_string_idx,
+            option_list_string_type_idx: opt_list_string_idx,
         })
     } else {
         None
@@ -2663,6 +2665,11 @@ pub(super) fn emit_module_with(
                 .get("Map<String,List<String>>")
                 .expect("http_get emit requires Map<String,List<String>> helpers")
                 .set,
+            map_get_fn: fn_map
+                .map_helpers
+                .get("Map<String,List<String>>")
+                .expect("http_get emit requires Map<String,List<String>> helpers")
+                .get,
         };
         codes.function(&super::wasip2_http::emit_http_get(hg, &helpers));
     }
