@@ -44,34 +44,12 @@ with socketserver.TCPServer(('127.0.0.1', 0), H) as srv:
 const BODY_ECHO_SCRIPT: &str = r#"
 import http.server, socketserver, sys
 
-def read_chunked(rfile):
-    body = b''
-    while True:
-        line = rfile.readline().strip()
-        if not line:
-            continue
-        size = int(line.split(b';', 1)[0], 16)
-        if size == 0:
-            rfile.readline()
-            break
-        chunk = rfile.read(size)
-        rfile.readline()
-        body += chunk
-    return body
-
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a, **k):
         pass
     def _echo(self):
-        # wasmtime-wasi-http defaults to Transfer-Encoding: chunked
-        # when the guest doesn't set Content-Length explicitly.
-        # BaseHTTPRequestHandler doesn't decode chunked itself, so
-        # the test does it inline.
-        if self.headers.get('Transfer-Encoding', '').lower() == 'chunked':
-            body = read_chunked(self.rfile)
-        else:
-            cl = int(self.headers.get('Content-Length', '0'))
-            body = self.rfile.read(cl)
+        cl = int(self.headers.get('Content-Length', '0'))
+        body = self.rfile.read(cl)
         ct = self.headers.get('Content-Type', '')
         custom = self.headers.get('X-Custom', '')
         self.send_response(200)
@@ -79,7 +57,6 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header('X-Method', self.command)
         self.send_header('X-Echo-Type', ct)
         self.send_header('X-Echo-Custom', custom)
-        self.send_header('X-Echo-Cl', str(len(body)))
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)

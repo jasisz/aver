@@ -487,6 +487,7 @@ pub(super) enum Wasip2ImportSlot {
     /// - +4: field-key str_len i32
     /// - +8: field-value list_ptr i32
     /// - +12: field-value list_len i32
+    ///
     /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
     HttpTypesFieldsEntries,
     /// `wasi:http/types.[resource-drop]fields`. Drops the fields

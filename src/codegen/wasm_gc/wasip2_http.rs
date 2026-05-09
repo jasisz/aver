@@ -355,6 +355,10 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         (1, list_str_ref),
         (1, keys_arr_ref),
         (1, values_arr_ref),
+        // Step K2 — Content-Length scratch: cl_body_len, cl_buf,
+        // cl_pos, cl_n. Appended at the end so existing ref-typed
+        // local indices don't shift.
+        (4, ValType::I32),
     ]);
 
     let p_method = 0u32;
@@ -423,6 +427,10 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     let l_uh_node = 63u32;
     let l_uh_keys = 64u32;
     let l_uh_values = 65u32;
+    let l_cl_body_len = 66u32;
+    let l_cl_buf = 67u32;
+    let l_cl_pos = 68u32;
+    let l_cl_n = 69u32;
 
     let mem4 = MemArg {
         offset: 0,
@@ -786,6 +794,101 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::I32Const(4));
     f.instruction(&Instruction::Call(h.cabi_realloc_fn));
     f.instruction(&Instruction::LocalSet(l_ob_retptr));
+
+    // ── 3a-cl. Step K2 — Content-Length header for body methods.
+    //
+    // wasmtime-wasi-http defaults to Transfer-Encoding: chunked
+    // when no Content-Length is set on the outgoing fields.
+    // Many HTTP servers (including Python's stdlib
+    // BaseHTTPRequestHandler) don't decode chunked bodies, so we
+    // surface an explicit Content-Length here using the body
+    // arg's `(array i8)` length — the byte count is exact and
+    // doesn't require a duplicate `to_lm` pass.
+    //
+    // Inline int→decimal: write digits backwards into a
+    // cabi_realloc'd 16-byte buffer (do-while always emits at
+    // least one digit so body_len=0 surfaces "0"). Then write
+    // the literal "Content-Length" name to LM[0..14] and call
+    // fields.append(fields, 0, 14, digit_ptr, digit_len, retptr).
+    f.instruction(&Instruction::LocalGet(p_method));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::LocalGet(p_method));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // body_len = array.len p_body
+        f.instruction(&Instruction::LocalGet(p_body));
+        f.instruction(&Instruction::ArrayLen);
+        f.instruction(&Instruction::LocalSet(l_cl_body_len));
+
+        // 16-byte scratch in bump heap.
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Const(16));
+        f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_cl_buf));
+
+        // pos = buf + 16; n = body_len
+        f.instruction(&Instruction::LocalGet(l_cl_buf));
+        f.instruction(&Instruction::I32Const(16));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(l_cl_pos));
+        f.instruction(&Instruction::LocalGet(l_cl_body_len));
+        f.instruction(&Instruction::LocalSet(l_cl_n));
+
+        // do-while: pos--, *pos = '0' + n%10, n /= 10, repeat
+        // while n != 0. Even body_len=0 emits exactly one '0'
+        // because the loop body runs once before the test.
+        f.instruction(&Instruction::Loop(BlockType::Empty));
+        {
+            f.instruction(&Instruction::LocalGet(l_cl_pos));
+            f.instruction(&Instruction::I32Const(1));
+            f.instruction(&Instruction::I32Sub);
+            f.instruction(&Instruction::LocalSet(l_cl_pos));
+
+            f.instruction(&Instruction::LocalGet(l_cl_pos));
+            f.instruction(&Instruction::LocalGet(l_cl_n));
+            f.instruction(&Instruction::I32Const(10));
+            f.instruction(&Instruction::I32RemU);
+            f.instruction(&Instruction::I32Const(b'0' as i32));
+            f.instruction(&Instruction::I32Add);
+            f.instruction(&Instruction::I32Store8(mem1));
+
+            f.instruction(&Instruction::LocalGet(l_cl_n));
+            f.instruction(&Instruction::I32Const(10));
+            f.instruction(&Instruction::I32DivU);
+            f.instruction(&Instruction::LocalSet(l_cl_n));
+
+            f.instruction(&Instruction::LocalGet(l_cl_n));
+            f.instruction(&Instruction::BrIf(0));
+        }
+        f.instruction(&Instruction::End);
+
+        // Write "Content-Length" name (14 bytes) to LM[0..14].
+        for (i, b) in b"Content-Length".iter().enumerate() {
+            f.instruction(&Instruction::I32Const(i as i32));
+            f.instruction(&Instruction::I32Const(*b as i32));
+            f.instruction(&Instruction::I32Store8(mem1));
+        }
+
+        // fields.append(fields, name=LM[0..14], value=LM[cl_pos..cl_buf+16], retptr)
+        f.instruction(&Instruction::LocalGet(l_fields));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(14));
+        f.instruction(&Instruction::LocalGet(l_cl_pos));
+        f.instruction(&Instruction::LocalGet(l_cl_buf));
+        f.instruction(&Instruction::I32Const(16));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalGet(l_cl_pos));
+        f.instruction(&Instruction::I32Sub);
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::Call(h.fields_append_fn));
+    }
+    f.instruction(&Instruction::End);
 
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalSet(l_uh_idx));
