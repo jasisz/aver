@@ -15,8 +15,9 @@ use super::builtins_wasip2::{
     emit_disk_append_text_wasip2, emit_disk_delete_dir_wasip2, emit_disk_delete_wasip2,
     emit_disk_exists_wasip2, emit_disk_list_dir_wasip2, emit_disk_make_dir_wasip2,
     emit_disk_read_text_wasip2, emit_disk_write_text_wasip2, emit_env_get_wasip2,
-    emit_http_delete_wasip2, emit_http_get_wasip2, emit_http_head_wasip2, emit_random_float_wasip2,
-    emit_random_int_wasip2, emit_time_now_wasip2, emit_time_sleep_wasip2, emit_time_unix_ms_wasip2,
+    emit_http_delete_wasip2, emit_http_get_wasip2, emit_http_head_wasip2, emit_http_patch_wasip2,
+    emit_http_post_wasip2, emit_http_put_wasip2, emit_random_float_wasip2, emit_random_int_wasip2,
+    emit_time_now_wasip2, emit_time_sleep_wasip2, emit_time_unix_ms_wasip2,
 };
 use super::emit::{emit_default_value, emit_expr};
 use super::infer::aver_type_str_of;
@@ -133,6 +134,15 @@ pub(super) fn emit_dotted_builtin(
         }
         if parent == "Http" && method == "delete" {
             return emit_http_delete_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Http" && method == "post" {
+            return emit_http_post_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Http" && method == "put" {
+            return emit_http_put_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Http" && method == "patch" {
+            return emit_http_patch_wasip2(func, args, slots, ctx);
         }
     }
 

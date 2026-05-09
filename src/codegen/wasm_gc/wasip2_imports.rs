@@ -506,6 +506,53 @@ pub(super) enum Wasip2ImportSlot {
     ///   `(this: i32, method_tag: i32, other_str_ptr: i32,
     ///     other_str_len: i32) -> i32`.
     HttpTypesOutgoingRequestSetMethod,
+    /// `wasi:http/types.[method]outgoing-request.body:
+    ///   func(this: borrow<outgoing-request>) ->
+    ///   result<own<outgoing-body>>`.
+    /// Returns the body resource handle; may be called once.
+    /// Retptr 8 bytes: `tag i8 + outgoing-body handle i32` on Ok.
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesOutgoingRequestBody,
+    /// `wasi:http/types.[method]outgoing-body.write:
+    ///   func(this: borrow<outgoing-body>) ->
+    ///   result<own<output-stream>>`.
+    /// Returns an `output-stream` for writing body bytes; may be
+    /// called once. Retptr 8 bytes: `tag i8 + output-stream
+    /// handle i32` on Ok.
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesOutgoingBodyWrite,
+    /// `wasi:http/types.[static]outgoing-body.finish:
+    ///   func(this: own<outgoing-body>, trailers:
+    ///        option<own<trailers>>) -> result<_, error-code>`.
+    /// Closes the body, taking ownership. v1 always passes
+    /// `None` for trailers. Result via retptr — error-code's
+    /// `option<u64>` payload propagates align=8, so the result
+    /// needs ~40 bytes (8 tag-padded + 32-byte error-code).
+    /// Canonical-ABI signature:
+    ///   `(this: i32, opt_tag: i32, opt_handle: i32, retptr: i32) -> ()`.
+    HttpTypesOutgoingBodyFinish,
+    /// `wasi:http/types.[method]fields.append:
+    ///   func(this: borrow<fields>, name: field-key, value:
+    ///        field-value) -> result<_, header-error>`.
+    /// `field-key` = string, `field-value` = list<u8>; both flat
+    /// as (ptr, len). The result `result<_, header-error>` flattens
+    /// to TWO core wasm values (discrim i32 + header-error variant
+    /// flattened to its own discrim i32), exceeding the
+    /// MAX_FLAT_RESULTS=1 threshold for imports — so canonical-ABI
+    /// returns via a 4-byte retptr (tag at +0, header-error
+    /// discriminant at +1 padded to align(1)). Caller passes a
+    /// pre-allocated retptr as the trailing param; v1 ignores its
+    /// contents.
+    /// Canonical-ABI signature:
+    ///   `(this: i32, name_ptr: i32, name_len: i32,
+    ///     val_ptr: i32, val_len: i32, retptr: i32) -> ()`.
+    HttpTypesFieldsAppend,
+    /// `wasi:http/types.[resource-drop]outgoing-body`. Used on
+    /// the error path after `request.body()` returned a body
+    /// handle but `body.write()` or the body write failed before
+    /// `body.finish()` (which transfers ownership) ran.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropOutgoingBody,
 }
 
 impl Wasip2ImportSlot {
@@ -666,6 +713,21 @@ impl Wasip2ImportSlot {
                 "wasi:http/types@0.2.4",
                 "[method]outgoing-request.set-method",
             ),
+            Wasip2ImportSlot::HttpTypesOutgoingRequestBody => {
+                ("wasi:http/types@0.2.4", "[method]outgoing-request.body")
+            }
+            Wasip2ImportSlot::HttpTypesOutgoingBodyWrite => {
+                ("wasi:http/types@0.2.4", "[method]outgoing-body.write")
+            }
+            Wasip2ImportSlot::HttpTypesOutgoingBodyFinish => {
+                ("wasi:http/types@0.2.4", "[static]outgoing-body.finish")
+            }
+            Wasip2ImportSlot::HttpTypesFieldsAppend => {
+                ("wasi:http/types@0.2.4", "[method]fields.append")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody => {
+                ("wasi:http/types@0.2.4", "[resource-drop]outgoing-body")
+            }
         }
     }
 
@@ -800,6 +862,35 @@ impl Wasip2ImportSlot {
                 ValType::I32, // other str_ptr
                 ValType::I32, // other str_len
             ],
+            // `outgoing-request.body(this) -> result<own<outgoing-body>>`
+            // and `outgoing-body.write(this) -> result<own<output-stream>>`
+            // — both `(this, retptr)`.
+            Wasip2ImportSlot::HttpTypesOutgoingRequestBody
+            | Wasip2ImportSlot::HttpTypesOutgoingBodyWrite => {
+                vec![ValType::I32, ValType::I32]
+            }
+            // `outgoing-body.finish(this, opt<trailers>) -> result<_, error-code>`
+            // takes ownership of body + optional trailers handle.
+            Wasip2ImportSlot::HttpTypesOutgoingBodyFinish => vec![
+                ValType::I32, // this (body handle, transferred)
+                ValType::I32, // option tag (None=0)
+                ValType::I32, // trailers handle (unused when None)
+                ValType::I32, // retptr for result<_, error-code>
+            ],
+            // `fields.append(this, name, value) -> result<_, header-error>`
+            // — name is string, value is list<u8>; both flat
+            // (ptr, len). Result via retptr (4 bytes — tag + tiny
+            // header-error variant disc); see slot doc.
+            Wasip2ImportSlot::HttpTypesFieldsAppend => vec![
+                ValType::I32, // this
+                ValType::I32, // name_ptr
+                ValType::I32, // name_len
+                ValType::I32, // val_ptr
+                ValType::I32, // val_len
+                ValType::I32, // retptr (4 bytes)
+            ],
+            // Resource drop — single i32 handle.
+            Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody => vec![ValType::I32],
             // `set-authority(this, opt<string>)` /
             // `set-path-with-query(this, opt<string>)`.
             Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority
@@ -901,14 +992,19 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet
             | Wasip2ImportSlot::HttpTypesIncomingResponseConsume
             | Wasip2ImportSlot::HttpTypesIncomingBodyStream
-            | Wasip2ImportSlot::HttpTypesFieldsEntries => Vec::new(),
+            | Wasip2ImportSlot::HttpTypesFieldsEntries
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestBody
+            | Wasip2ImportSlot::HttpTypesOutgoingBodyWrite
+            | Wasip2ImportSlot::HttpTypesOutgoingBodyFinish
+            | Wasip2ImportSlot::HttpTypesFieldsAppend => Vec::new(),
             // Resource drops — no return.
             Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest
             | Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse
             | Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse
             | Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers
             | Wasip2ImportSlot::HttpTypesResourceDropIncomingBody
-            | Wasip2ImportSlot::HttpTypesResourceDropFields => Vec::new(),
+            | Wasip2ImportSlot::HttpTypesResourceDropFields
+            | Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody => Vec::new(),
         }
     }
 }

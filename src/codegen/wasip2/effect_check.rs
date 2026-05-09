@@ -137,17 +137,15 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // inside `__rt_time_sleep`. The pollable model is hidden in the
     // helper; source-level Aver still sees `Time.sleep(ms) -> Unit`.
     // ---------- Out of 0.18 release scope ----------
-    // Http.get graduated in Phase 2.0; Http.head + Http.delete in
-    // Phase 2.J (share GET's pipeline + set-method differentiator).
-    // Phase 2.K covers Http.{post, put, patch} once outgoing-body
-    // marshalling lands.
-    if matches!(effect, "Http.get" | "Http.head" | "Http.delete") {
+    // All wasi:http verbs graduated in 0.19: GET in Phase 2.0,
+    // HEAD/DELETE in Phase 2.J (share pipeline via set-method),
+    // POST/PUT/PATCH in Phase 2.K (outgoing-body marshalling +
+    // user headers iteration + Content-Type).
+    if matches!(
+        effect,
+        "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch"
+    ) {
         return None;
-    }
-    if effect.starts_with("Http.") {
-        return Some(UnsupportedReason::OutOfRelease {
-            phase: "Phase 2.K / 0.19",
-        });
     }
     if effect.starts_with("Tcp.") {
         return Some(UnsupportedReason::OutOfRelease {
@@ -224,20 +222,8 @@ mod tests {
 
     #[test]
     fn classifies_out_of_release_rejects() {
-        // Http.get graduated in 2.0; Http.head + Http.delete in
-        // 2.J. Body-bearing verbs (post/put/patch) still reject.
-        assert!(matches!(
-            classify("Http.post"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
-        assert!(matches!(
-            classify("Http.put"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
-        assert!(matches!(
-            classify("Http.patch"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
+        // All Http.* graduated in 0.19; only Tcp / HttpServer
+        // remain rejected as out-of-release.
         assert!(matches!(
             classify("Tcp.connect"),
             Some(UnsupportedReason::OutOfRelease { .. })
@@ -249,12 +235,14 @@ mod tests {
     }
 
     #[test]
-    fn body_less_http_methods_graduate() {
-        // GET/HEAD/DELETE share the wasi:http pipeline; the
-        // helper keys off a method_tag i32 param to differentiate.
+    fn all_http_methods_graduate() {
+        // Phase 2.0 (GET) + 2.J (HEAD/DELETE) + 2.K (POST/PUT/PATCH).
         assert!(classify("Http.get").is_none());
         assert!(classify("Http.head").is_none());
         assert!(classify("Http.delete").is_none());
+        assert!(classify("Http.post").is_none());
+        assert!(classify("Http.put").is_none());
+        assert!(classify("Http.patch").is_none());
     }
 
     #[test]

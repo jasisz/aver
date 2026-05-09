@@ -34,6 +34,66 @@ with socketserver.TCPServer(('127.0.0.1', 0), H) as srv:
     srv.serve_forever()
 "#;
 
+/// Custom server that echoes the POST/PUT/PATCH body verbatim
+/// and surfaces the request's content-type + a chosen
+/// "X-Custom" header back via X-Echo-Type / X-Echo-Custom. Used
+/// by the Step K body-marshalling test to verify (a) the body
+/// bytes round-trip, (b) Content-Type is set from the
+/// `content_type` arg, (c) user-provided headers actually reach
+/// the server.
+const BODY_ECHO_SCRIPT: &str = r#"
+import http.server, socketserver, sys
+
+def read_chunked(rfile):
+    body = b''
+    while True:
+        line = rfile.readline().strip()
+        if not line:
+            continue
+        size = int(line.split(b';', 1)[0], 16)
+        if size == 0:
+            rfile.readline()
+            break
+        chunk = rfile.read(size)
+        rfile.readline()
+        body += chunk
+    return body
+
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a, **k):
+        pass
+    def _echo(self):
+        # wasmtime-wasi-http defaults to Transfer-Encoding: chunked
+        # when the guest doesn't set Content-Length explicitly.
+        # BaseHTTPRequestHandler doesn't decode chunked itself, so
+        # the test does it inline.
+        if self.headers.get('Transfer-Encoding', '').lower() == 'chunked':
+            body = read_chunked(self.rfile)
+        else:
+            cl = int(self.headers.get('Content-Length', '0'))
+            body = self.rfile.read(cl)
+        ct = self.headers.get('Content-Type', '')
+        custom = self.headers.get('X-Custom', '')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain')
+        self.send_header('X-Method', self.command)
+        self.send_header('X-Echo-Type', ct)
+        self.send_header('X-Echo-Custom', custom)
+        self.send_header('X-Echo-Cl', str(len(body)))
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_POST(self): self._echo()
+    def do_PUT(self): self._echo()
+    def do_PATCH(self): self._echo()
+
+socketserver.TCPServer.allow_reuse_address = True
+with socketserver.TCPServer(('127.0.0.1', 0), H) as srv:
+    sys.stdout.write(f'PORT:{srv.server_address[1]}\n')
+    sys.stdout.flush()
+    srv.serve_forever()
+"#;
+
 /// Custom server that handles GET, HEAD, DELETE — each tags the
 /// response body / headers with the method name so the Aver test
 /// can verify which path the helper took. HEAD per HTTP spec
@@ -396,6 +456,86 @@ fn main() -> Unit
     assert!(
         s.contains("DELETE status=200 method=DELETE body_len=7"),
         "expected DELETE line with method=DELETE and body_len=7 (\"deleted\"), got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn http_post_put_patch_round_trip_body_and_headers() {
+    // Body-bearing verbs: server echoes request body back and
+    // surfaces Content-Type + a custom user-provided header in
+    // its own response headers (so Aver can verify both reached
+    // the server). All three methods exercise the same helper
+    // path; method_tag differentiates set-method (2/3/8 for
+    // POST/PUT/PATCH).
+    let dir = tempdir("body");
+    let Some((mut server, port)) = spawn_python_server(&dir, BODY_ECHO_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping POST/PUT/PATCH test");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn first_or(items: List<String>, dflt: String) -> String
+    match items
+        [] -> dflt
+        [head, ..rest] -> head
+
+fn header(headers: Map<String, List<String>>, name: String) -> String
+    match Map.get(headers, name)
+        Option.Some(values) -> first_or(values, "missing")
+        Option.None -> "absent"
+
+fn dump(label: String, r: HttpResponse) -> Unit
+    ! [Console.print]
+    method: String = header(r.headers, "x-method")
+    echo_type: String = header(r.headers, "x-echo-type")
+    echo_custom: String = header(r.headers, "x-echo-custom")
+    Console.print("{{label}} status={{r.status}} method={{method}} body={{r.body}} ct={{echo_type}} custom={{echo_custom}}")
+
+fn main() -> Unit
+    ! [Http.post, Http.put, Http.patch, Console.print]
+    headers: Map<String, List<String>> = {{"X-Custom" => ["alpha"]}}
+    p = Http.post("http://127.0.0.1:{port}/", "application/json", "post-body", headers)
+    u = Http.put("http://127.0.0.1:{port}/", "text/xml", "put-body", headers)
+    a = Http.patch("http://127.0.0.1:{port}/", "text/csv", "patch-body", headers)
+    match p
+        Result.Ok(r) -> dump("POST", r)
+        Result.Err(e) -> Console.print("POST err: {{e}}")
+    match u
+        Result.Ok(r) -> dump("PUT", r)
+        Result.Err(e) -> Console.print("PUT err: {{e}}")
+    match a
+        Result.Ok(r) -> dump("PATCH", r)
+        Result.Err(e) -> Console.print("PATCH err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "body.av", &src);
+    let out = run_wasip2(&dir, &fixture, &[]);
+
+    let _ = server.kill();
+    let _ = server.wait();
+
+    assert!(
+        out.status.success(),
+        "wasip2_http POST/PUT/PATCH compile/run failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        s.contains("POST status=200 method=POST body=post-body ct=application/json custom=alpha"),
+        "POST round-trip failed, got:\n{s}"
+    );
+    assert!(
+        s.contains("PUT status=200 method=PUT body=put-body ct=text/xml custom=alpha"),
+        "PUT round-trip failed, got:\n{s}"
+    );
+    assert!(
+        s.contains("PATCH status=200 method=PATCH body=patch-body ct=text/csv custom=alpha"),
+        "PATCH round-trip failed, got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

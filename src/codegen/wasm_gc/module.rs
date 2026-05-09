@@ -395,7 +395,12 @@ pub(super) fn emit_module_with(
                             Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream,
                         );
                     }
-                    EffectName::HttpGet | EffectName::HttpHead | EffectName::HttpDelete => {
+                    EffectName::HttpGet
+                    | EffectName::HttpHead
+                    | EffectName::HttpDelete
+                    | EffectName::HttpPost
+                    | EffectName::HttpPut
+                    | EffectName::HttpPatch => {
                         // GET/HEAD/DELETE all share the same wasi:http
                         // import set — only `set-method` differentiates
                         // the verb (handled inside `__rt_http_request`
@@ -452,6 +457,23 @@ pub(super) fn emit_module_with(
                         // gated by p_method != 0 inside the helper).
                         wasip2_imports
                             .register(Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod);
+                        // Step K: outgoing-body marshalling for
+                        // POST/PUT/PATCH — request.body, body.write,
+                        // chunked write via existing
+                        // OutputStreamBlockingWriteAndFlush, body.finish,
+                        // and fields.append for headers + Content-Type.
+                        // outgoing-body resource-drop covers the error
+                        // path between request.body() and body.finish().
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingRequestBody);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingBodyWrite);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingBodyFinish);
+                        wasip2_imports.register(Wasip2ImportSlot::HttpTypesFieldsAppend);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                     }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
@@ -1197,6 +1219,27 @@ pub(super) fn emit_module_with(
         && wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod)
             .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestBody)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingBodyWrite)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingBodyFinish)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesFieldsAppend)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream)
+            .is_some()
         && let Some(string_idx) = registry.string_array_type_idx
         && let Some(result_idx) = registry.result_type_idx("Result<HttpResponse,String>")
         && let Some(resp_idx) = registry.record_type_idx("HttpResponse")
@@ -1212,9 +1255,18 @@ pub(super) fn emit_module_with(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(string_idx),
         });
-        // Step J: prepend method_tag i32 param (0=GET, 1=HEAD,
-        // 4=DELETE per wasi:http method variant ordinals).
-        types.ty().function([ValType::I32, s_ref], [r_ref]);
+        // Step J + K: 5 params total — method tag, url, content-
+        // type, body, user headers map. The trailing three are
+        // ignored for body-less methods (GET/HEAD/DELETE); the
+        // dispatcher pushes empty values in those cases.
+        let map_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(map_slots.map),
+        });
+        types.ty().function(
+            [ValType::I32, s_ref, s_ref, s_ref, map_ref],
+            [r_ref],
+        );
         let fn_type = next_type_idx;
         next_type_idx += 1;
         let fn_idx = next_builtin_fn_idx;
@@ -2683,6 +2735,34 @@ pub(super) fn emit_module_with(
             set_method_fn: lookup(
                 super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod,
                 "HttpTypesOutgoingRequestSetMethod",
+            ),
+            outgoing_request_body_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestBody,
+                "HttpTypesOutgoingRequestBody",
+            ),
+            outgoing_body_write_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingBodyWrite,
+                "HttpTypesOutgoingBodyWrite",
+            ),
+            outgoing_body_finish_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingBodyFinish,
+                "HttpTypesOutgoingBodyFinish",
+            ),
+            fields_append_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesFieldsAppend,
+                "HttpTypesFieldsAppend",
+            ),
+            drop_outgoing_body_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody,
+                "HttpTypesResourceDropOutgoingBody",
+            ),
+            blocking_write_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+                "OutputStreamBlockingWriteAndFlush",
+            ),
+            drop_output_stream_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+                "IoStreamsResourceDropOutputStream",
             ),
         };
         codes.function(&super::wasip2_http::emit_http_get(hg, &helpers));

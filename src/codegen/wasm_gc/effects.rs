@@ -735,7 +735,10 @@ impl EffectName {
                 | EffectName::DiskListDir
                 | EffectName::HttpGet
                 | EffectName::HttpHead
-                | EffectName::HttpDelete,
+                | EffectName::HttpDelete
+                | EffectName::HttpPost
+                | EffectName::HttpPut
+                | EffectName::HttpPatch,
         )
     }
 }

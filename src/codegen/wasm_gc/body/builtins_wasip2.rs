@@ -821,13 +821,19 @@ pub(super) fn emit_disk_list_dir_wasip2(
     Ok(())
 }
 
-/// Phase 2 — `Http.{get, head, delete}(url) -> Result<
-/// HttpResponse, String>` on `--target wasip2`. The shared
-/// `__rt_http_request` helper takes (method_tag i32, url ref
-/// string); per-method dispatchers push the appropriate method
-/// ordinal from wasi:http's `method` variant (0=GET, 1=HEAD,
-/// 4=DELETE; 2=POST, 3=PUT, 8=PATCH land in Step K).
-fn emit_http_method_wasip2(
+/// Phase 2 — `Http.*(url[, content_type, body, headers]) ->
+/// Result<HttpResponse, String>` on `--target wasip2`. The shared
+/// `__rt_http_request` helper takes 5 params: method_tag i32,
+/// url ref string, content_type ref string, body ref string,
+/// headers ref map. Per-method dispatchers push the appropriate
+/// method ordinal from wasi:http's `method` variant (0=GET,
+/// 1=HEAD, 2=POST, 3=PUT, 4=DELETE, 8=PATCH).
+///
+/// For body-less methods (GET/HEAD/DELETE) the dispatcher
+/// synthesises empty content_type / body / headers — the helper
+/// gates body marshalling on `method >= 2 && method != 4` and
+/// the headers-iter loop is a cap-bounded no-op on an empty map.
+fn emit_http_simple_method_wasip2(
     method_name: &str,
     method_tag: i32,
     func: &mut wasm_encoder::Function,
@@ -849,8 +855,71 @@ fn emit_http_method_wasip2(
             "{method_name} on wasip2: __rt_http_request fn idx missing"
         ))
     })?;
+    let registry = ctx.registry;
+    let string_idx = registry.string_array_type_idx.ok_or_else(|| {
+        WasmGcError::Validation(format!("{method_name} on wasip2: string type idx missing"))
+    })?;
+    let map_slots = registry
+        .map_slots("Map<String,List<String>>")
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "{method_name} on wasip2: Map<String, List<String>> slots missing"
+            ))
+        })?;
+
     func.instruction(&Instruction::I32Const(method_tag));
     emit_expr(func, &args[0], slots, ctx)?;
+    // Empty content_type
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::ArrayNewDefault(string_idx));
+    // Empty body
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::ArrayNewDefault(string_idx));
+    // Empty headers map (size=0, cap=INITIAL_CAP, default arrays).
+    // INITIAL_CAP must match emit_map_empty in maps.rs (16384).
+    const INITIAL_CAP: i32 = 16384;
+    func.instruction(&Instruction::I32Const(0));
+    func.instruction(&Instruction::I32Const(INITIAL_CAP));
+    func.instruction(&Instruction::I32Const(INITIAL_CAP));
+    func.instruction(&Instruction::ArrayNewDefault(map_slots.keys_array));
+    func.instruction(&Instruction::I32Const(INITIAL_CAP));
+    func.instruction(&Instruction::ArrayNewDefault(map_slots.values_array));
+    func.instruction(&Instruction::StructNew(map_slots.map));
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}
+
+/// Body-bearing dispatch shared by POST/PUT/PATCH. Aver source
+/// signature: `(url: String, content_type: String, body: String,
+/// headers: Map<String, List<String>>) -> Result<HttpResponse,
+/// String>`.
+fn emit_http_body_method_wasip2(
+    method_name: &str,
+    method_tag: i32,
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation(format!("{method_name} on wasip2: lowering ctx missing"))
+    })?;
+    if args.len() != 4 {
+        return Err(WasmGcError::Validation(format!(
+            "{method_name} on `--target wasip2` expects 4 args (url, content_type, body, headers), got {}",
+            args.len()
+        )));
+    }
+    let fn_idx = lowering.http_get_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(format!(
+            "{method_name} on wasip2: __rt_http_request fn idx missing"
+        ))
+    })?;
+    func.instruction(&Instruction::I32Const(method_tag));
+    emit_expr(func, &args[0], slots, ctx)?; // url
+    emit_expr(func, &args[1], slots, ctx)?; // content_type
+    emit_expr(func, &args[2], slots, ctx)?; // body
+    emit_expr(func, &args[3], slots, ctx)?; // headers
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
@@ -861,7 +930,7 @@ pub(super) fn emit_http_get_wasip2(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    emit_http_method_wasip2("Http.get", 0, func, args, slots, ctx)
+    emit_http_simple_method_wasip2("Http.get", 0, func, args, slots, ctx)
 }
 
 pub(super) fn emit_http_head_wasip2(
@@ -870,7 +939,7 @@ pub(super) fn emit_http_head_wasip2(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    emit_http_method_wasip2("Http.head", 1, func, args, slots, ctx)
+    emit_http_simple_method_wasip2("Http.head", 1, func, args, slots, ctx)
 }
 
 pub(super) fn emit_http_delete_wasip2(
@@ -879,5 +948,32 @@ pub(super) fn emit_http_delete_wasip2(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    emit_http_method_wasip2("Http.delete", 4, func, args, slots, ctx)
+    emit_http_simple_method_wasip2("Http.delete", 4, func, args, slots, ctx)
+}
+
+pub(super) fn emit_http_post_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    emit_http_body_method_wasip2("Http.post", 2, func, args, slots, ctx)
+}
+
+pub(super) fn emit_http_put_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    emit_http_body_method_wasip2("Http.put", 3, func, args, slots, ctx)
+}
+
+pub(super) fn emit_http_patch_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    emit_http_body_method_wasip2("Http.patch", 8, func, args, slots, ctx)
 }

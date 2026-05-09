@@ -149,6 +149,33 @@ pub(super) struct HttpGetHelperFns {
     /// after the request constructor for any non-GET method.
     /// GET is the default, so we skip the call for method_tag==0.
     pub set_method_fn: u32,
+    /// Step K — `[method]outgoing-request.body`. Returns
+    /// `result<own<outgoing-body>>` via retptr; called once per
+    /// body-bearing method (POST/PUT/PATCH).
+    pub outgoing_request_body_fn: u32,
+    /// Step K — `[method]outgoing-body.write`. Yields the
+    /// `output-stream` for body bytes; called once.
+    pub outgoing_body_write_fn: u32,
+    /// Step K — `[static]outgoing-body.finish`. Closes the body,
+    /// transferring ownership; result via retptr (~40 bytes).
+    pub outgoing_body_finish_fn: u32,
+    /// Step K — `[method]fields.append`. Used per user header
+    /// (k/v pair) and once for Content-Type on body-bearing
+    /// methods.
+    pub fields_append_fn: u32,
+    /// Step K — `[resource-drop]outgoing-body`. Error-path drop
+    /// for the (rare) case where body() succeeded but write()
+    /// failed before finish() could take ownership.
+    pub drop_outgoing_body_fn: u32,
+    /// Step K — `[method]output-stream.blocking-write-and-flush`.
+    /// Reused from the Console.print path (already wired); pushed
+    /// in 4096-byte chunks via the shared `emit_chunked_blocking_
+    /// write` helper to satisfy wasmtime-wasi's per-call cap.
+    pub blocking_write_fn: u32,
+    /// Step K — `[resource-drop]output-stream`. Drop the body
+    /// stream after the write loop finishes (or on the rare
+    /// error path).
+    pub drop_output_stream_fn: u32,
 }
 
 /// Same `INITIAL_CAP` as `emit_map_empty` in `maps.rs`. Wastes
@@ -227,61 +254,74 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         heap_type: HeapType::Concrete(indices.string_type_idx),
     });
 
-    // Locals layout — params first, then locals densely packed.
-    // Step J added p_method as the new param 0; every existing
-    // local index shifts up by one.
-    //   0  = method (i32)     [param]  HTTP verb tag (wasi:http
-    //                                  method variant ordinal:
-    //                                  0=GET, 1=HEAD, 2=POST,
-    //                                  3=PUT, 4=DELETE, 8=PATCH)
-    //   1  = url    (ref string) [param]
-    //   2  = url_len           (i32)  byte length of LM-resident url
-    //   3  = i                 (i32)  scheme search cursor / colon idx
-    //   4  = j                 (i32)  authority/path split cursor
-    //   5  = scheme_tag        (i32)  0 = http, 1 = https
-    //   6  = auth_ptr          (i32)  LM offset of authority
-    //   7  = auth_len          (i32)
-    //   8  = path_ptr          (i32)
-    //   9  = path_len          (i32)
-    //   10 = fields            (i32)  outgoing fields handle
-    //   11 = req               (i32)  outgoing-request handle
-    //   12 = retptr1           (i32)  handle()
-    //   13 = future            (i32)  future-incoming-response handle
-    //   14 = pollable          (i32)
-    //   15 = in_buf            (i32)  4-byte slot holding pollable for poll()
-    //   16 = retptr2           (i32)  poll()
-    //   17 = retptr3           (i32)  future.get()
-    //   18 = response          (i32)  incoming-response handle
-    //   19 = retptr4           (i32)  consume()
-    //   20 = body              (i32)  incoming-body handle
-    //   21 = retptr5           (i32)  body.stream()
-    //   22 = stream            (i32)  input-stream handle
-    //   23 = buf_ptr           (i32)  growing body buffer (cabi_realloc)
-    //   24 = buf_cap           (i32)
-    //   25 = buf_len           (i32)
-    //   26 = data_ptr          (i32)  per-iter blocking-read result ptr
-    //   27 = data_len          (i32)
-    //   28 = retptr_read       (i32)  per-iter blocking-read retptr (12B)
-    //   29 = new_cap           (i32)  scratch for capacity doubling
-    //   30 = k                 (i32)  byte-copy iterator
-    //   31 = trailers          (i32)  future-trailers handle
-    //   32 = h_fields          (i32)  fields handle from incoming-response.headers
-    //   33 = h_retptr          (i32)  retptr for fields.entries (8 bytes)
-    //   34 = h_entries_ptr     (i32)  list base address
-    //   35 = h_entries_len     (i32)  list length (entry count)
-    //   36 = h_idx             (i32)  loop counter
-    //   37 = h_entry_addr      (i32)  entries_ptr + idx*16
-    //   38 = h_name_ptr        (i32)  per-entry: field-key str ptr
-    //   39 = h_name_len        (i32)
-    //   40 = h_val_ptr         (i32)  per-entry: field-value list ptr
-    //   41 = h_val_len         (i32)
-    //   42 = arr (ref string)         body string ref + Err scratch
-    //   43 = h_name_str (ref string)  per-header name lifted from LM
-    //   44 = h_val_str  (ref string)  per-header value lifted from LM
-    //   45 = resp (ref HttpResponse)  built before wrapping in Result.Ok
-    //   46 = h_map (ref map)          accumulated Map<String, List<String>>
-    //   47 = h_opt (ref Option<List<String>>)
-    //                                 result of Map.get probe per entry
+    // Locals layout — params first (Step K added 3 more), then
+    // locals densely packed.
+    //   0  = method (i32)         [param]  HTTP verb tag
+    //   1  = url    (ref string)  [param]
+    //   2  = content_type (ref string) [param]  unused for body-less
+    //   3  = body   (ref string)  [param]  request body (utf-8 bytes)
+    //   4  = headers (ref map)    [param]  user headers Map<String, List<String>>
+    //   5  = url_len           (i32)
+    //   6  = i                 (i32)  scheme search cursor / colon idx
+    //   7  = j                 (i32)  authority/path split cursor
+    //   8  = scheme_tag        (i32)  0 = http, 1 = https
+    //   9  = auth_ptr          (i32)
+    //   10 = auth_len          (i32)
+    //   11 = path_ptr          (i32)
+    //   12 = path_len          (i32)
+    //   13 = fields            (i32)  outgoing fields handle
+    //   14 = req               (i32)  outgoing-request handle
+    //   15 = retptr1           (i32)  handle()
+    //   16 = future            (i32)
+    //   17 = pollable          (i32)
+    //   18 = in_buf            (i32)  4-byte slot for poll()
+    //   19 = retptr2           (i32)  poll()
+    //   20 = retptr3           (i32)  future.get()
+    //   21 = response          (i32)
+    //   22 = retptr4           (i32)  consume()
+    //   23 = body_handle       (i32)  incoming-body (response side)
+    //   24 = retptr5           (i32)  body.stream()
+    //   25 = stream            (i32)  input-stream handle
+    //   26 = buf_ptr           (i32)  growing body buffer
+    //   27 = buf_cap           (i32)
+    //   28 = buf_len           (i32)
+    //   29 = data_ptr          (i32)  per-iter blocking-read ptr
+    //   30 = data_len          (i32)
+    //   31 = retptr_read       (i32)  per-iter blocking-read retptr (12B)
+    //   32 = new_cap           (i32)
+    //   33 = k                 (i32)  byte-copy iterator
+    //   34 = trailers          (i32)  future-trailers handle
+    //   35 = h_fields          (i32)  fields handle from incoming-response.headers
+    //   36 = h_retptr          (i32)  retptr for fields.entries (8 bytes)
+    //   37 = h_entries_ptr     (i32)
+    //   38 = h_entries_len     (i32)
+    //   39 = h_idx             (i32)  loop counter
+    //   40 = h_entry_addr      (i32)
+    //   41 = h_name_ptr        (i32)
+    //   42 = h_name_len        (i32)
+    //   43 = h_val_ptr         (i32)
+    //   44 = h_val_len         (i32)
+    //   45 = uh_idx            (i32)  user-headers cap-iter counter (Step K)
+    //   46 = uh_cap            (i32)  user-headers map cap
+    //   47 = uh_key_len        (i32)  per-pair key bytelen (after to_lm)
+    //   48 = uh_val_len        (i32)  per-pair val bytelen
+    //   49 = uh_key_buf        (i32)  cabi_realloc'd backing for key bytes
+    //   50 = ob_handle         (i32)  outgoing-body handle (request side)
+    //   51 = ob_stream         (i32)  output-stream from outgoing-body.write
+    //   52 = ob_body_len       (i32)  body content bytelen (after to_lm)
+    //   53 = ob_off            (i32)  chunked-write offset
+    //   54 = ob_retptr         (i32)  retptr for request.body / body.write / finish
+    //   55 = arr (ref string)         body-response string ref + Err scratch
+    //   56 = h_name_str (ref string)  per-response-header name
+    //   57 = h_val_str  (ref string)  per-response-header value
+    //   58 = uh_key (ref string)      per-user-header key (Step K)
+    //   59 = uh_val (ref string)      per-user-header value
+    //   60 = resp (ref HttpResponse)
+    //   61 = h_map (ref map)          accumulated response headers map
+    //   62 = h_opt (ref Option<List<String>>)
+    //   63 = uh_node (ref list_string) inner list iter cursor (Step K)
+    //   64 = uh_keys (ref keys_array)  user-headers keys array
+    //   65 = uh_values (ref values_array) user-headers values array
     let resp_ref = ValType::Ref(RefType {
         nullable: true,
         heap_type: HeapType::Concrete(indices.http_response_type_idx),
@@ -298,62 +338,91 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         nullable: true,
         heap_type: HeapType::Concrete(indices.option_list_string_type_idx),
     });
+    let keys_arr_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.headers_keys_array_type_idx),
+    });
+    let values_arr_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.headers_values_array_type_idx),
+    });
     let mut f = Function::new(vec![
-        (40, ValType::I32),
-        (3, s_ref),
+        (50, ValType::I32),
+        (5, s_ref),
         (1, resp_ref),
         (1, map_ref),
         (1, opt_list_str_ref),
+        (1, list_str_ref),
+        (1, keys_arr_ref),
+        (1, values_arr_ref),
     ]);
 
     let p_method = 0u32;
     let p_url = 1u32;
-    let l_url_len = 2u32;
-    let l_i = 3u32;
-    let l_j = 4u32;
-    let l_scheme_tag = 5u32;
-    let l_auth_ptr = 6u32;
-    let l_auth_len = 7u32;
-    let l_path_ptr = 8u32;
-    let l_path_len = 9u32;
-    let l_fields = 10u32;
-    let l_req = 11u32;
-    let l_retptr1 = 12u32;
-    let l_future = 13u32;
-    let l_pollable = 14u32;
-    let l_in_buf = 15u32;
-    let l_retptr2 = 16u32;
-    let l_retptr3 = 17u32;
-    let l_response = 18u32;
-    let l_retptr4 = 19u32;
-    let l_body = 20u32;
-    let l_retptr5 = 21u32;
-    let l_stream = 22u32;
-    let l_buf_ptr = 23u32;
-    let l_buf_cap = 24u32;
-    let l_buf_len = 25u32;
-    let l_data_ptr = 26u32;
-    let l_data_len = 27u32;
-    let l_retptr_read = 28u32;
-    let l_new_cap = 29u32;
-    let l_k = 30u32;
-    let l_trailers = 31u32;
-    let l_h_fields = 32u32;
-    let l_h_retptr = 33u32;
-    let l_h_entries_ptr = 34u32;
-    let l_h_entries_len = 35u32;
-    let l_h_idx = 36u32;
-    let l_h_entry_addr = 37u32;
-    let l_h_name_ptr = 38u32;
-    let l_h_name_len = 39u32;
-    let l_h_val_ptr = 40u32;
-    let l_h_val_len = 41u32;
-    let l_arr = 42u32;
-    let l_h_name_str = 43u32;
-    let l_h_val_str = 44u32;
-    let l_resp = 45u32;
-    let l_h_map = 46u32;
-    let l_h_opt = 47u32;
+    let p_content_type = 2u32;
+    let p_body = 3u32;
+    let p_headers = 4u32;
+    let l_url_len = 5u32;
+    let l_i = 6u32;
+    let l_j = 7u32;
+    let l_scheme_tag = 8u32;
+    let l_auth_ptr = 9u32;
+    let l_auth_len = 10u32;
+    let l_path_ptr = 11u32;
+    let l_path_len = 12u32;
+    let l_fields = 13u32;
+    let l_req = 14u32;
+    let l_retptr1 = 15u32;
+    let l_future = 16u32;
+    let l_pollable = 17u32;
+    let l_in_buf = 18u32;
+    let l_retptr2 = 19u32;
+    let l_retptr3 = 20u32;
+    let l_response = 21u32;
+    let l_retptr4 = 22u32;
+    let l_body = 23u32;
+    let l_retptr5 = 24u32;
+    let l_stream = 25u32;
+    let l_buf_ptr = 26u32;
+    let l_buf_cap = 27u32;
+    let l_buf_len = 28u32;
+    let l_data_ptr = 29u32;
+    let l_data_len = 30u32;
+    let l_retptr_read = 31u32;
+    let l_new_cap = 32u32;
+    let l_k = 33u32;
+    let l_trailers = 34u32;
+    let l_h_fields = 35u32;
+    let l_h_retptr = 36u32;
+    let l_h_entries_ptr = 37u32;
+    let l_h_entries_len = 38u32;
+    let l_h_idx = 39u32;
+    let l_h_entry_addr = 40u32;
+    let l_h_name_ptr = 41u32;
+    let l_h_name_len = 42u32;
+    let l_h_val_ptr = 43u32;
+    let l_h_val_len = 44u32;
+    let l_uh_idx = 45u32;
+    let l_uh_cap = 46u32;
+    let l_uh_key_len = 47u32;
+    let l_uh_val_len = 48u32;
+    let l_uh_key_buf = 49u32;
+    let l_ob_handle = 50u32;
+    let l_ob_stream = 51u32;
+    let l_ob_body_len = 52u32;
+    let l_ob_off = 53u32;
+    let l_ob_retptr = 54u32;
+    let l_arr = 55u32;
+    let l_h_name_str = 56u32;
+    let l_h_val_str = 57u32;
+    let l_uh_key = 58u32;
+    let l_uh_val = 59u32;
+    let l_resp = 60u32;
+    let l_h_map = 61u32;
+    let l_h_opt = 62u32;
+    let l_uh_node = 63u32;
+    let l_uh_keys = 64u32;
+    let l_uh_values = 65u32;
 
     let mem4 = MemArg {
         offset: 0,
@@ -627,9 +696,265 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     }
     f.instruction(&Instruction::End);
 
+    // ── 2d. Step K — relocate authority + path bytes to the
+    //   cabi_realloc bump heap. The URL parse left them at
+    //   LM[auth_ptr..auth_ptr+auth_len] / LM[path_ptr..path_ptr+
+    //   path_len]; subsequent steps (user-header to_lm calls,
+    //   Content-Type write, body to_lm) all clobber LM[0..],
+    //   which would invalidate set-authority / set-path-with-
+    //   query that read from those addresses much later in the
+    //   pipeline. Copy once now, point auth_ptr/path_ptr at the
+    //   bump heap, never look at LM[0..url_len] again.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_auth_len));
+    f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_uh_key_buf));
+    f.instruction(&Instruction::LocalGet(l_uh_key_buf));
+    f.instruction(&Instruction::LocalGet(l_auth_ptr));
+    f.instruction(&Instruction::LocalGet(l_auth_len));
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
+    f.instruction(&Instruction::LocalGet(l_uh_key_buf));
+    f.instruction(&Instruction::LocalSet(l_auth_ptr));
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_path_len));
+    f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_uh_key_buf));
+    f.instruction(&Instruction::LocalGet(l_uh_key_buf));
+    f.instruction(&Instruction::LocalGet(l_path_ptr));
+    f.instruction(&Instruction::LocalGet(l_path_len));
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
+    f.instruction(&Instruction::LocalGet(l_uh_key_buf));
+    f.instruction(&Instruction::LocalSet(l_path_ptr));
+
     // ── 3. fields = [constructor]fields() ──────────────────────
     f.instruction(&Instruction::Call(h.fields_new_fn));
     f.instruction(&Instruction::LocalSet(l_fields));
+
+    // ── 3b. Step K — populate fields with user headers and
+    //   Content-Type before passing ownership to the constructor.
+    //
+    //   For each non-empty slot in the headers map, walk the
+    //   inner List<String> cons-cells; per (key, value) pair
+    //   marshal both into LM (key into a cabi_realloc'd scratch
+    //   to survive the val's overwriting of LM[0..]) then call
+    //   fields.append. fields.append's flat result tag is dropped
+    //   — invalid header syntax surfaces later as
+    //   `outgoing-handler.handle` Err if the host enforces it.
+    //
+    //   Body-less methods (GET/HEAD/DELETE) still walk this loop
+    //   but the dispatcher passes an empty map, so it's a no-op
+    //   beyond the cap-iter (~16k iterations of "is keys[i] null?
+    //   yes, skip"). Acceptable for v1 PoC.
+    f.instruction(&Instruction::LocalGet(p_headers));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.headers_map_type_idx,
+        field_index: 1, // cap
+    });
+    f.instruction(&Instruction::LocalSet(l_uh_cap));
+    f.instruction(&Instruction::LocalGet(p_headers));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.headers_map_type_idx,
+        field_index: 2, // keys array
+    });
+    f.instruction(&Instruction::LocalSet(l_uh_keys));
+    f.instruction(&Instruction::LocalGet(p_headers));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.headers_map_type_idx,
+        field_index: 3, // values array
+    });
+    f.instruction(&Instruction::LocalSet(l_uh_values));
+
+    // Pre-allocate a 4-byte retptr reused across every
+    // fields.append call (host writes the result tag here; we
+    // ignore it). Sized to canonical-ABI's `result<_,
+    // header-error>` flat encoding (1-byte disc + 1-byte payload
+    // padded to 4-byte align).
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_ob_retptr));
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_uh_idx));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    {
+        // Exit loop when idx >= cap.
+        f.instruction(&Instruction::LocalGet(l_uh_idx));
+        f.instruction(&Instruction::LocalGet(l_uh_cap));
+        f.instruction(&Instruction::I32GeU);
+        f.instruction(&Instruction::BrIf(1));
+
+        // key = keys[idx]; if null, skip to next slot.
+        f.instruction(&Instruction::LocalGet(l_uh_keys));
+        f.instruction(&Instruction::LocalGet(l_uh_idx));
+        f.instruction(&Instruction::ArrayGet(indices.headers_keys_array_type_idx));
+        f.instruction(&Instruction::LocalSet(l_uh_key));
+
+        f.instruction(&Instruction::LocalGet(l_uh_key));
+        f.instruction(&Instruction::RefIsNull);
+        f.instruction(&Instruction::I32Eqz);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            // node = values[idx]
+            f.instruction(&Instruction::LocalGet(l_uh_values));
+            f.instruction(&Instruction::LocalGet(l_uh_idx));
+            f.instruction(&Instruction::ArrayGet(
+                indices.headers_values_array_type_idx,
+            ));
+            f.instruction(&Instruction::LocalSet(l_uh_node));
+
+            // Inner loop: walk the List<String> cons-cells.
+            f.instruction(&Instruction::Block(BlockType::Empty));
+            f.instruction(&Instruction::Loop(BlockType::Empty));
+            {
+                f.instruction(&Instruction::LocalGet(l_uh_node));
+                f.instruction(&Instruction::RefIsNull);
+                f.instruction(&Instruction::BrIf(1));
+
+                // val = node.head
+                f.instruction(&Instruction::LocalGet(l_uh_node));
+                f.instruction(&Instruction::StructGet {
+                    struct_type_index: indices.list_string_type_idx,
+                    field_index: 0,
+                });
+                f.instruction(&Instruction::LocalSet(l_uh_val));
+
+                // Marshal key to a cabi_realloc'd scratch (so the
+                // subsequent to_lm val doesn't clobber the bytes
+                // before fields.append reads them).
+                f.instruction(&Instruction::LocalGet(l_uh_key));
+                f.instruction(&Instruction::Call(h.str_to_lm_fn));
+                f.instruction(&Instruction::LocalSet(l_uh_key_len));
+                f.instruction(&Instruction::I32Const(0));
+                f.instruction(&Instruction::I32Const(0));
+                f.instruction(&Instruction::I32Const(1));
+                f.instruction(&Instruction::LocalGet(l_uh_key_len));
+                f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+                f.instruction(&Instruction::LocalSet(l_uh_key_buf));
+                f.instruction(&Instruction::LocalGet(l_uh_key_buf));
+                f.instruction(&Instruction::I32Const(0));
+                f.instruction(&Instruction::LocalGet(l_uh_key_len));
+                f.instruction(&Instruction::MemoryCopy {
+                    src_mem: 0,
+                    dst_mem: 0,
+                });
+
+                // Marshal val to LM[0..val_len]. (Now key bytes
+                // at LM[0..] are stale — fine, we point at
+                // l_uh_key_buf for the key.)
+                f.instruction(&Instruction::LocalGet(l_uh_val));
+                f.instruction(&Instruction::Call(h.str_to_lm_fn));
+                f.instruction(&Instruction::LocalSet(l_uh_val_len));
+
+                // fields.append(fields, key_buf, key_len, 0, val_len, retptr)
+                f.instruction(&Instruction::LocalGet(l_fields));
+                f.instruction(&Instruction::LocalGet(l_uh_key_buf));
+                f.instruction(&Instruction::LocalGet(l_uh_key_len));
+                f.instruction(&Instruction::I32Const(0));
+                f.instruction(&Instruction::LocalGet(l_uh_val_len));
+                f.instruction(&Instruction::LocalGet(l_ob_retptr));
+                f.instruction(&Instruction::Call(h.fields_append_fn));
+
+                // node = node.tail
+                f.instruction(&Instruction::LocalGet(l_uh_node));
+                f.instruction(&Instruction::StructGet {
+                    struct_type_index: indices.list_string_type_idx,
+                    field_index: 1,
+                });
+                f.instruction(&Instruction::LocalSet(l_uh_node));
+                f.instruction(&Instruction::Br(0));
+            }
+            f.instruction(&Instruction::End); // inner loop
+            f.instruction(&Instruction::End); // inner block
+        }
+        f.instruction(&Instruction::End); // if key non-null
+
+        // idx++
+        f.instruction(&Instruction::LocalGet(l_uh_idx));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(l_uh_idx));
+        f.instruction(&Instruction::Br(0));
+    }
+    f.instruction(&Instruction::End); // outer loop
+    f.instruction(&Instruction::End); // outer block
+
+    // ── 3c. Step K — Content-Type for body-bearing methods.
+    //   POST=2, PUT=3, PATCH=8. Identify via `method >= 2 &&
+    //   method != 4` (GET=0, HEAD=1, DELETE=4 skip; everything
+    //   else with content_type semantics gets the header).
+    //
+    //   Inline-write the literal "Content-Type" name bytes to
+    //   LM[0..12] via i32.store8 so we can pass them as
+    //   (name_ptr=0, name_len=12). content_type ARG bytes go
+    //   into a cabi_realloc'd buffer to survive — same trick as
+    //   the user-header loop above. The LM[0..12] write happens
+    //   AFTER the val marshal so val's to_lm doesn't clobber.
+    f.instruction(&Instruction::LocalGet(p_method));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::LocalGet(p_method));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // Marshal content_type val into LM[0..val_len], then
+        // memcpy to a cabi-realloc buf, then write "Content-Type"
+        // bytes into LM[0..12].
+        f.instruction(&Instruction::LocalGet(p_content_type));
+        f.instruction(&Instruction::Call(h.str_to_lm_fn));
+        f.instruction(&Instruction::LocalSet(l_uh_val_len));
+
+        // Allocate buffer for val bytes (key="Content-Type" goes
+        // at LM[0..12] — written next).
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::LocalGet(l_uh_val_len));
+        f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_uh_key_buf));
+        f.instruction(&Instruction::LocalGet(l_uh_key_buf));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalGet(l_uh_val_len));
+        f.instruction(&Instruction::MemoryCopy {
+            src_mem: 0,
+            dst_mem: 0,
+        });
+
+        // Write "Content-Type" (12 bytes) at LM[0..12]. Pre-byte
+        // i32.store8 sequence — opaque but compact.
+        for (i, b) in b"Content-Type".iter().enumerate() {
+            f.instruction(&Instruction::I32Const(i as i32));
+            f.instruction(&Instruction::I32Const(*b as i32));
+            f.instruction(&Instruction::I32Store8(mem1));
+        }
+
+        // fields.append(fields, name_ptr=0, name_len=12,
+        //                       val_ptr=key_buf, val_len, retptr)
+        f.instruction(&Instruction::LocalGet(l_fields));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(12));
+        f.instruction(&Instruction::LocalGet(l_uh_key_buf));
+        f.instruction(&Instruction::LocalGet(l_uh_val_len));
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::Call(h.fields_append_fn));
+    }
+    f.instruction(&Instruction::End);
 
     // ── 4. req = [constructor]outgoing-request(fields) ─────────
     // fields ownership transfers in; do NOT drop fields after.
@@ -685,6 +1010,153 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     f.instruction(&Instruction::LocalGet(l_path_len));
     f.instruction(&Instruction::Call(h.set_path_with_query_fn));
     f.instruction(&Instruction::Drop);
+
+    // ── 7b. Step K — body marshalling for body-bearing methods.
+    //   Sequence (POST/PUT/PATCH only):
+    //   - request.body(req) → outgoing-body
+    //   - body.write(outgoing-body) → output-stream
+    //   - chunked blocking-write of body bytes
+    //   - drop output-stream
+    //   - body.finish(outgoing-body, None) — transfers ownership
+    //
+    //   Each retptr-bearing call uses l_ob_retptr (8 bytes for
+    //   request.body / body.write; 40 bytes for body.finish's
+    //   result<_, error-code>). The scratch is realloc'd between
+    //   calls — wasteful but simple.
+    //
+    //   Failures collapse to a single Err message per step. The
+    //   resource-drop choreography on early failure paths follows
+    //   the child-before-parent rule.
+    f.instruction(&Instruction::LocalGet(p_method));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32GeS);
+    f.instruction(&Instruction::LocalGet(p_method));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    {
+        // request.body(req, retptr) → result<own<outgoing-body>>
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_ob_retptr));
+
+        f.instruction(&Instruction::LocalGet(l_req));
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::Call(h.outgoing_request_body_fn));
+
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::I32Load8U(mem1));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Ne);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        emit_err(&mut f, b"http: request body unavailable");
+        f.instruction(&Instruction::End);
+
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_ob_handle));
+
+        // outgoing-body.write(body, retptr) → result<own<output-stream>>
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(4));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_ob_retptr));
+
+        f.instruction(&Instruction::LocalGet(l_ob_handle));
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::Call(h.outgoing_body_write_fn));
+
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::I32Load8U(mem1));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Ne);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        {
+            f.instruction(&Instruction::LocalGet(l_ob_handle));
+            f.instruction(&Instruction::Call(h.drop_outgoing_body_fn));
+            emit_err(&mut f, b"http: body write stream unavailable");
+        }
+        f.instruction(&Instruction::End);
+
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::I32Load(mem4_o4));
+        f.instruction(&Instruction::LocalSet(l_ob_stream));
+
+        // Marshal body content into LM[0..body_len], then write
+        // through the output-stream. wasmtime-wasi-http sends the
+        // request with Transfer-Encoding: chunked when no
+        // Content-Length is set on the fields — a custom server
+        // implementation that doesn't decode chunked will see
+        // Content-Length=0 and miss the body. Setting Content-
+        // Length explicitly would require an int-to-decimal-LM
+        // helper, deferred to a follow-up; v1 relies on the
+        // host's chunked encoding which all modern HTTP clients +
+        // servers handle correctly.
+        f.instruction(&Instruction::LocalGet(p_body));
+        f.instruction(&Instruction::Call(h.str_to_lm_fn));
+        f.instruction(&Instruction::LocalSet(l_ob_body_len));
+
+        // Chunked blocking-write-and-flush — wasmtime-wasi caps a
+        // single call to 4096 bytes, so the shared helper walks
+        // LM[0..body_len] in 4096-byte slices. Each iteration
+        // pushes the output-stream handle and a 16-byte-aligned
+        // retptr just past body_len.
+        super::wasip2_helpers::emit_chunked_blocking_write(
+            &mut f,
+            l_ob_body_len,
+            l_ob_off,
+            h.blocking_write_fn,
+            &|f| {
+                f.instruction(&Instruction::LocalGet(l_ob_stream));
+            },
+            &|f| {
+                f.instruction(&Instruction::LocalGet(l_ob_body_len));
+                f.instruction(&Instruction::I32Const(15));
+                f.instruction(&Instruction::I32Add);
+                f.instruction(&Instruction::I32Const(-16));
+                f.instruction(&Instruction::I32And);
+            },
+            None,
+        );
+
+        // Drop output-stream after the write loop.
+        f.instruction(&Instruction::LocalGet(l_ob_stream));
+        f.instruction(&Instruction::Call(h.drop_output_stream_fn));
+
+        // outgoing-body.finish(body, None, retptr) — takes ownership
+        // of body; result<_, error-code> via retptr (~40 bytes,
+        // align 8 due to error-code's option<u64>). v1 ignores
+        // the specific error-code variant on failure — surfaces a
+        // generic "http: body finish failed" so the caller knows
+        // the body upload didn't fully commit.
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(8));
+        f.instruction(&Instruction::I32Const(40));
+        f.instruction(&Instruction::Call(h.cabi_realloc_fn));
+        f.instruction(&Instruction::LocalSet(l_ob_retptr));
+
+        f.instruction(&Instruction::LocalGet(l_ob_handle));
+        f.instruction(&Instruction::I32Const(0)); // option<trailers> tag = None
+        f.instruction(&Instruction::I32Const(0)); // trailers handle (unused)
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::Call(h.outgoing_body_finish_fn));
+
+        f.instruction(&Instruction::LocalGet(l_ob_retptr));
+        f.instruction(&Instruction::I32Load8U(mem1));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Ne);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        emit_err(&mut f, b"http: body finish failed");
+        f.instruction(&Instruction::End);
+    }
+    f.instruction(&Instruction::End);
 
     // ── 8. handle(req, None) → retptr1 ─────────────────────────
     // result<own<future-incoming-response>, error-code>. The
