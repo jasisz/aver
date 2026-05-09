@@ -179,6 +179,7 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
 
     struct Host {
         ctx: WasiCtx,
+        http_ctx: wasmtime_wasi_http::WasiHttpCtx,
         table: ResourceTable,
     }
     impl WasiView for Host {
@@ -189,16 +190,31 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
             }
         }
     }
+    impl wasmtime_wasi_http::p2::WasiHttpView for Host {
+        fn http(&mut self) -> wasmtime_wasi_http::p2::WasiHttpCtxView<'_> {
+            wasmtime_wasi_http::p2::WasiHttpCtxView {
+                ctx: &mut self.http_ctx,
+                table: &mut self.table,
+                hooks: Default::default(),
+            }
+        }
+    }
 
     let mut store = Store::new(
         &engine,
         Host {
             ctx,
+            http_ctx: wasmtime_wasi_http::WasiHttpCtx::new(),
             table: ResourceTable::new(),
         },
     );
     let mut linker = Linker::<Host>::new(&engine);
     wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+    // Phase 2.1.1 — wire wasi:http imports so components that touch
+    // `Http.*` find their canonical-ABI imports satisfied at link
+    // time. Sync variant matches the rest of the runner; for
+    // throughput-critical setups we may switch to async later.
+    wasmtime_wasi_http::p2::add_only_http_to_linker_sync(&mut linker)?;
     let command = Command::instantiate(&mut store, &component, &linker)?;
     // wasi:cli/run.run() -> result<_, _>; Ok(()) on success, Err(())
     // when the guest signalled failure via `i32.const 1`. Aver's
