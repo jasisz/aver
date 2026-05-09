@@ -1098,6 +1098,107 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 2.0 — `__rt_http_get(url: ref string) -> ref Result<
+    // HttpResponse, String>`. Owns the entire wasi:http pipeline
+    // (URL parse + fields/request constructors + setters + handle
+    // + poll + future.get + status + consume + body.stream + drain
+    // + per-call drops + HttpResponse build). All 16 new wasi:http
+    // slots and 4 reused (poll/drop-pollable/blocking-read/drop-
+    // input-stream) must be present, plus String / Result / Http
+    // Response / Map<String, List<String>> type slots.
+    let http_get: Option<super::wasip2_http::HttpGetIndices> = if cabi_realloc.is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesFieldsNew)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestNew)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpOutgoingHandlerHandle)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollPoll)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingResponseStatus)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingResponseConsume)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingBodyStream)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingBodyFinish)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse)
+            .is_some()
+        && wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers)
+            .is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(result_idx) = registry.result_type_idx("Result<HttpResponse,String>")
+        && let Some(resp_idx) = registry.record_type_idx("HttpResponse")
+        && let Some(map_slots) = registry.map_slots("Map<String,List<String>>")
+    {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(super::wasip2_http::HttpGetIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            result_http_response_string_type_idx: result_idx,
+            http_response_type_idx: resp_idx,
+            headers_keys_array_type_idx: map_slots.keys_array,
+            headers_values_array_type_idx: map_slots.values_array,
+            headers_map_type_idx: map_slots.map,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(
@@ -1322,6 +1423,9 @@ pub(super) fn emit_module_with(
     }
     if let Some(d) = &disk_list_dir {
         funcs.function(d.fn_type);
+    }
+    if let Some(h) = &http_get {
+        funcs.function(h.fn_type);
     }
     if let Some(e) = &env_get_lookup {
         funcs.function(e.fn_type);
@@ -1562,6 +1666,7 @@ pub(super) fn emit_module_with(
                 disk_delete_dir_fn_idx: disk_delete_dir.as_ref().map(|d| d.fn_idx),
                 disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
                 disk_list_dir_fn_idx: disk_list_dir.as_ref().map(|d| d.fn_idx),
+                http_get_fn_idx: http_get.as_ref().map(|h| h.fn_idx),
             })
         } else {
             None
@@ -2413,6 +2518,103 @@ pub(super) fn emit_module_with(
             drop_descriptor,
             drop_dir_stream,
         ));
+    }
+    if let Some(hg) = &http_get {
+        let cabi = cabi_realloc
+            .as_ref()
+            .expect("http_get emit requires cabi_realloc fn idx (gate matches)")
+            .fn_idx;
+        let str_to_lm = bridge
+            .as_ref()
+            .expect("http_get emit requires bridge (string marshalling)")
+            .to_lm_fn;
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot, name: &'static str| -> u32 {
+            wasip2_imports
+                .lookup_wasm_fn_idx(slot)
+                .unwrap_or_else(|| panic!("http_get emit requires {name} fn idx"))
+        };
+        let helpers = super::wasip2_http::HttpGetHelperFns {
+            cabi_realloc_fn: cabi,
+            str_to_lm_fn: str_to_lm,
+            fields_new_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesFieldsNew,
+                "HttpTypesFieldsNew",
+            ),
+            outgoing_request_new_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestNew,
+                "HttpTypesOutgoingRequestNew",
+            ),
+            set_scheme_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme,
+                "HttpTypesOutgoingRequestSetScheme",
+            ),
+            set_authority_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority,
+                "HttpTypesOutgoingRequestSetAuthority",
+            ),
+            set_path_with_query_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery,
+                "HttpTypesOutgoingRequestSetPathWithQuery",
+            ),
+            handle_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpOutgoingHandlerHandle,
+                "HttpOutgoingHandlerHandle",
+            ),
+            future_subscribe_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe,
+                "HttpTypesFutureIncomingResponseSubscribe",
+            ),
+            poll_fn: lookup(super::wasip2_imports::Wasip2ImportSlot::IoPollPoll, "IoPollPoll"),
+            drop_pollable_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable,
+                "IoPollResourceDropPollable",
+            ),
+            future_get_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet,
+                "HttpTypesFutureIncomingResponseGet",
+            ),
+            status_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingResponseStatus,
+                "HttpTypesIncomingResponseStatus",
+            ),
+            consume_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingResponseConsume,
+                "HttpTypesIncomingResponseConsume",
+            ),
+            body_stream_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingBodyStream,
+                "HttpTypesIncomingBodyStream",
+            ),
+            blocking_read_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead,
+                "InputStreamBlockingRead",
+            ),
+            body_finish_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesIncomingBodyFinish,
+                "HttpTypesIncomingBodyFinish",
+            ),
+            drop_input_stream_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+                "IoStreamsResourceDropInputStream",
+            ),
+            drop_outgoing_request_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest,
+                "HttpTypesResourceDropOutgoingRequest",
+            ),
+            drop_future_response_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse,
+                "HttpTypesResourceDropFutureIncomingResponse",
+            ),
+            drop_incoming_response_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse,
+                "HttpTypesResourceDropIncomingResponse",
+            ),
+            drop_future_trailers_fn: lookup(
+                super::wasip2_imports::Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers,
+                "HttpTypesResourceDropFutureTrailers",
+            ),
+        };
+        codes.function(&super::wasip2_http::emit_http_get(hg, &helpers));
     }
     if let Some(e) = &env_get_lookup {
         codes.function(&emit_env_get_lookup(

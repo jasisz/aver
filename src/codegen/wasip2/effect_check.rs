@@ -137,9 +137,18 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // inside `__rt_time_sleep`. The pollable model is hidden in the
     // helper; source-level Aver still sees `Time.sleep(ms) -> Unit`.
     // ---------- Out of 0.18 release scope ----------
+    // Http.get graduated in Phase 2.0 (0.19) — the wasip2 codegen
+    // lowers it via `__rt_http_get` (see
+    // `src/codegen/wasm_gc/wasip2_http.rs`). The other Http.*
+    // verbs need request-body marshalling (post/put/patch) or
+    // additional plumbing (head/delete shares most of get's
+    // pipeline) and stay rejected for the next phase.
+    if effect == "Http.get" {
+        return None;
+    }
     if effect.starts_with("Http.") {
         return Some(UnsupportedReason::OutOfRelease {
-            phase: "Phase 2 / 0.19",
+            phase: "Phase 2.1 / 0.19",
         });
     }
     if effect.starts_with("Tcp.") {
@@ -217,8 +226,14 @@ mod tests {
 
     #[test]
     fn classifies_out_of_release_rejects() {
+        // Http.get graduated in Phase 2.0; the rest of Http.*
+        // (head/delete/post/put/patch) still rejects.
         assert!(matches!(
-            classify("Http.get"),
+            classify("Http.head"),
+            Some(UnsupportedReason::OutOfRelease { .. })
+        ));
+        assert!(matches!(
+            classify("Http.post"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
         assert!(matches!(
@@ -229,6 +244,12 @@ mod tests {
             classify("HttpServer.listen"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
+    }
+
+    #[test]
+    fn http_get_graduates_in_phase_2_0() {
+        // `__rt_http_get` lowers `Http.get` directly to wasi:http.
+        assert!(classify("Http.get").is_none());
     }
 
     #[test]

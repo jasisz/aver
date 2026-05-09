@@ -820,3 +820,32 @@ pub(super) fn emit_disk_list_dir_wasip2(
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
+
+/// Phase 2.0 — `Http.get(url) -> Result<HttpResponse, String>` on
+/// `--target wasip2`. Pushes the URL arg and calls
+/// `__rt_http_get`, which owns the wasi:http/outgoing-handler.handle
+/// pipeline (URL parse + fields/request constructors + setters +
+/// handle + poll + future.get + status + consume + body.stream +
+/// drain + per-call resource drops + HttpResponse build).
+pub(super) fn emit_http_get_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Http.get on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Http.get on `--target wasip2` expects 1 arg (url), got {}",
+            args.len()
+        )));
+    }
+    let fn_idx = lowering.http_get_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Http.get on wasip2: __rt_http_get fn idx missing".into())
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(fn_idx));
+    Ok(())
+}
