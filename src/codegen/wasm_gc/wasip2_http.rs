@@ -1156,7 +1156,14 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::I32Ne);
         f.instruction(&Instruction::If(BlockType::Empty));
-        emit_err(&mut f, b"http: request body unavailable");
+        {
+            // request.body Err — outgoing-request still owned by
+            // guest at this point (handle() hasn't run). Drop it
+            // before bail so the host's table doesn't leak.
+            f.instruction(&Instruction::LocalGet(l_req));
+            f.instruction(&Instruction::Call(h.drop_outgoing_request_fn));
+            emit_err(&mut f, b"http: request body unavailable");
+        }
         f.instruction(&Instruction::End);
 
         f.instruction(&Instruction::LocalGet(l_ob_retptr));
@@ -1181,8 +1188,13 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         f.instruction(&Instruction::I32Ne);
         f.instruction(&Instruction::If(BlockType::Empty));
         {
+            // body.write Err — drop body + drop req (request
+            // hasn't been handed to handle() yet, body is still
+            // owned). Child-before-parent order.
             f.instruction(&Instruction::LocalGet(l_ob_handle));
             f.instruction(&Instruction::Call(h.drop_outgoing_body_fn));
+            f.instruction(&Instruction::LocalGet(l_req));
+            f.instruction(&Instruction::Call(h.drop_outgoing_request_fn));
             emit_err(&mut f, b"http: body write stream unavailable");
         }
         f.instruction(&Instruction::End);
@@ -1256,7 +1268,15 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
         f.instruction(&Instruction::I32Const(0));
         f.instruction(&Instruction::I32Ne);
         f.instruction(&Instruction::If(BlockType::Empty));
-        emit_err(&mut f, b"http: body finish failed");
+        {
+            // body.finish Err — body's ownership transferred IN
+            // unconditionally per WIT, so body is already gone.
+            // Request is still alive (handle() runs after this);
+            // drop it before bail.
+            f.instruction(&Instruction::LocalGet(l_req));
+            f.instruction(&Instruction::Call(h.drop_outgoing_request_fn));
+            emit_err(&mut f, b"http: body finish failed");
+        }
         f.instruction(&Instruction::End);
     }
     f.instruction(&Instruction::End);
