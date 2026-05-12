@@ -102,9 +102,9 @@ Aver effects lower directly to WASI 0.2 imports. The mapping is fixed per effect
 | `Time.now` / `unixMs` | `wasi:clocks/wall-clock.now` (Time.now formats RFC3339 guest-side via Howard Hinnant's `civil_from_days`) |
 | `Time.sleep` | `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` + `[resource-drop]pollable` (per-call pollable, real wait — not busy-loop) |
 | `Random.int` / `float` | `wasi:random/random.get-random-u64` + Aver-side range scaling. This is the secure `wasi:random/random` interface (same contract as `get-random-bytes`, just returning 8 cryptographically-secure bytes packed into a u64); we deliberately do NOT use `wasi:random/insecure.get-insecure-random-u64`. If we later need finer byte-level control (e.g. for `Random.bytes(n)`), the switch to `get-random-bytes` is mechanical. |
-| `Http.*` | **Compile-rejected** — out of 0.18 scope (Phase 2 / 0.19) |
-| `HttpServer.listen` / `listenWith` | **Compile-rejected** — out of 0.18 scope (Phase 3 / 0.19) |
-| `Tcp.*` | **Compile-rejected** — out of 0.18 scope (Phase 2 / 0.19) |
+| `Http.{get, head, delete, post, put, patch}` | `wasi:http/outgoing-handler.handle` + the future-incoming-response / incoming-response choreography (Phase 2 / 0.19 shipped). Method tag selects `outgoing-request.set-method`. Body-bearing verbs marshal a request body via `request.body` + `outgoing-body.write` + chunked `blocking-write-and-flush` + `outgoing-body.finish`. Headers (request and response) lower as `Map<String, List<String>>`; multi-valued field names preserve server emit order. `error-code` variant discriminants surface as per-variant `http: <name>` Err messages (39 cases). |
+| `HttpServer.listen` / `listenWith` | **Compile-rejected** — out of 0.19 client scope (Phase 3 / 0.19+); requires the `wasi:http/proxy` world + exported `incoming-handler.handle`. |
+| `Tcp.*` | **Compile-rejected** — out of 0.19 client scope (Phase 2.1 / 0.19+) |
 | `Terminal.*` (12 methods) | **Compile-rejected** — WASI 0.2 has no raw/cooked-mode operations |
 
 ### Why `Terminal.*` / `Env.set` are rejected, not stubbed

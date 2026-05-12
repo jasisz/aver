@@ -2,6 +2,11 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.19.0 (unreleased)
+
+### Added
+- **HTTP client on `--target wasip2`.** All six methods — `Http.get`, `Http.head`, `Http.delete`, `Http.post`, `Http.put`, `Http.patch` — now compile and run as components. Response headers surface as `Map<String, List<String>>`; multi-value headers (e.g. `Set-Cookie`) keep server emit order. Failure messages name the wasi:http error variant (`http: connection-refused`, `http: DNS-timeout`, …) instead of a generic string.
+
 ## 0.18.0 "Span" (2026-05-09)
 
 > _Cross the Component Model boundary the same way Aver crosses the source/wasm one — typed effects in, canonical-ABI imports out._
