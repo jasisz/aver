@@ -3728,6 +3728,87 @@ fn cmd_compile_wasm_gc(
 /// `Tcp.*`) are rejected at this command's entry — see
 /// `docs/wasip2.md` "Why X is rejected, not stubbed" for the
 /// dynamic-host vs static-target axis.
+/// Extract the handler fn name from `main`'s trailing
+/// `HttpServer.listen(port, handler)` call. The Option B design call
+/// (see 0.19-http-listen plan): main MUST end with exactly that shape
+/// — emitter pulls the handler identifier out at compile time and
+/// ignores everything else in main, since the proxy world's
+/// entry-point is the wasi:http/incoming-handler export and main is
+/// never invoked at runtime. Returns a user-facing diagnostic when
+/// the shape doesn't match.
+#[cfg(feature = "wasip2")]
+fn extract_proxy_handler_name(items: &[aver::ast::TopLevel]) -> Result<String, String> {
+    use aver::ast::{Expr, FnBody, Stmt, TopLevel};
+
+    let main_fn = items
+        .iter()
+        .find_map(|it| match it {
+            TopLevel::FnDef(fd) if fd.name == "main" => Some(fd),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            "--world wasi:http/proxy requires a `fn main()` that ends in \
+             `HttpServer.listen(port, handler)`, but no `main` was found"
+                .to_string()
+        })?;
+
+    let FnBody::Block(stmts) = main_fn.body.as_ref();
+    let last = stmts.last().ok_or_else(|| {
+        "--world wasi:http/proxy: `main`'s body is empty; expected a trailing \
+         `HttpServer.listen(port, handler)` call"
+            .to_string()
+    })?;
+    let last_expr = match last {
+        Stmt::Expr(e) => e,
+        Stmt::Binding(_, _, _) => {
+            return Err(
+                "--world wasi:http/proxy: `main`'s last statement must be a \
+                 `HttpServer.listen(port, handler)` call, not a binding"
+                    .to_string(),
+            );
+        }
+    };
+
+    let (callee, args) = match &last_expr.node {
+        Expr::FnCall(callee, args) => (callee, args),
+        _ => {
+            return Err(
+                "--world wasi:http/proxy: `main`'s last expression must be a \
+                 `HttpServer.listen(port, handler)` call"
+                    .to_string(),
+            );
+        }
+    };
+    let is_http_server_listen = matches!(
+        &callee.node,
+        Expr::Attr(ns, method)
+            if matches!(&ns.node, Expr::Ident(name) if name == "HttpServer")
+                && method == "listen"
+    );
+    if !is_http_server_listen {
+        return Err(
+            "--world wasi:http/proxy: `main`'s last expression must call \
+             `HttpServer.listen(port, handler)` exactly (not `listenWith`, \
+             not aliased through a binding)"
+                .to_string(),
+        );
+    }
+    if args.len() != 2 {
+        return Err(format!(
+            "--world wasi:http/proxy: `HttpServer.listen` expects 2 args (port, handler), got {}",
+            args.len()
+        ));
+    }
+    match &args[1].node {
+        Expr::Ident(name) => Ok(name.clone()),
+        _ => Err("--world wasi:http/proxy: the handler argument to \
+             `HttpServer.listen(port, handler)` must be a bare fn-name \
+             identifier — anonymous fn / lambda / record-field forms are \
+             rejected at codegen time"
+            .to_string()),
+    }
+}
+
 fn cmd_compile_wasip2(
     file: &str,
     output_dir: &str,
@@ -3853,14 +3934,42 @@ fn cmd_compile_wasip2(
         // to the same `emit_module_with` body as `--target wasm-gc`),
         // but every later commit in this phase changes the bytes
         // produced under `TargetMode::Wasip2`.
-        let core_bytes =
+        //
+        // `--world wasi:http/proxy` (0.19 Phase 3) splits off here:
+        // we extract the handler fn name from main's
+        // `HttpServer.listen(_, handler)` trailing call (Option B
+        // in the design — main must end exactly with that shape, the
+        // emitter ignores everything else inside it) and route to
+        // the proxy entry. Source-level Aver still types-checks main
+        // as a regular fn returning Unit; the codegen path just
+        // reads the handler reference out of the AST.
+        let core_bytes = if matches!(world, super::cli::Wasip2World::HttpProxy) {
+            match extract_proxy_handler_name(&items) {
+                Ok(handler) => match wasm_gc::compile_to_wasm_gc_for_wasip2_with_handler(
+                    &items,
+                    result.analysis.as_ref(),
+                    &handler,
+                ) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("{}", format!("{e}").red());
+                        process::exit(1);
+                    }
+                },
+                Err(msg) => {
+                    eprintln!("{}", msg.red());
+                    process::exit(1);
+                }
+            }
+        } else {
             match wasm_gc::compile_to_wasm_gc_for_wasip2(&items, result.analysis.as_ref()) {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!("{}", format!("{e}").red());
                     process::exit(1);
                 }
-            };
+            }
+        };
 
         let world_codegen = match world {
             super::cli::Wasip2World::CliCommand => wasip2_codegen::Wasip2World::CliCommand,
