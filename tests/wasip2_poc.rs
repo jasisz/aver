@@ -118,23 +118,20 @@ fn gc_types_inside_core_validate_at_component_boundary() {
 }
 
 #[test]
-fn rejects_http_proxy_world_in_phase_1() {
-    // Phase 3 / 0.19 — `wasi:http/proxy` is rejected up front so
-    // the failure mode is clear (NotImplemented, not Wrap). Tracks
-    // decision in `decisions/architecture.av::Wasip2ComponentTarget`
-    // and the phasing in `docs/wasip2.md`.
-    let core_wasm = wat::parse_str(r#"(module (func))"#).expect("trivial wat parses");
-
-    let err = wasip2::compile_to_component(&core_wasm, wasip2::Wasip2World::HttpProxy)
-        .expect_err("HttpProxy world should be rejected in 0.18 Phase 1");
-
-    let msg = format!("{err}");
+fn accepts_http_proxy_world_wit_shape() {
+    // Phase 3 / 0.19 (0.19-http-server) — `wasi:http/proxy` now lands
+    // a real codegen path: the wasm-gc emitter synthesises a
+    // `wasi:http/incoming-handler.handle` export when given a server-
+    // shaped program. This test stops short of a full handler core
+    // (covered end-to-end in `tests/wasip2_http_server.rs`); it just
+    // pins the WIT emission for the proxy world — the `include
+    // wasi:http/proxy@0.2.4;` body has to round-trip through
+    // `UnresolvedPackageGroup` cleanly so the metadata embed step
+    // never crashes the CLI. A pre-fix regression here is the only
+    // signal that the world wiring drifted.
+    let wit = wasip2::emit_world_wit(wasip2::Wasip2World::HttpProxy, false);
     assert!(
-        msg.contains("not yet implemented"),
-        "rejection mentions Phase 3 status: {msg}"
-    );
-    assert!(
-        msg.contains("wasi:http/proxy"),
-        "error names the offending world: {msg}"
+        wit.contains("include wasi:http/proxy@0.2.4;"),
+        "proxy world body must include the upstream wasi:http/proxy world: {wit}"
     );
 }

@@ -59,10 +59,15 @@ pub fn emit_world_wit(world: Wasip2World, needs_http: bool) -> String {
             };
             (header, body)
         }
-        // Phase 3 / 0.19. Compile-rejected upstream in `wrap.rs`; the
-        // body still pretty-prints something honest for the artifact.
+        // Phase 3 / 0.19 — HttpServer.listen. Component exports
+        // `wasi:http/incoming-handler.handle`, host (e.g.
+        // `wasmtime serve --http=:N`) calls into our handler per
+        // request. `include wasi:http/proxy@0.2.4` brings the export
+        // requirement plus every wasi:http/types / wasi:io/streams /
+        // wasi:clocks import the request/response choreography
+        // consumes — single declaration covers both directions.
         Wasip2World::HttpProxy => (
-            "// Phase 3 / 0.19 — compile-rejected.",
+            "// Phase 3 / 0.19 — HttpServer.listen on `--target wasip2`.",
             "  include wasi:http/proxy@0.2.4;".to_string(),
         ),
     };
