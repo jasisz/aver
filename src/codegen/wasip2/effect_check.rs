@@ -137,10 +137,15 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     // inside `__rt_time_sleep`. The pollable model is hidden in the
     // helper; source-level Aver still sees `Time.sleep(ms) -> Unit`.
     // ---------- Out of 0.18 release scope ----------
-    if effect.starts_with("Http.") {
-        return Some(UnsupportedReason::OutOfRelease {
-            phase: "Phase 2 / 0.19",
-        });
+    // All wasi:http verbs graduated in 0.19: GET in Phase 2.0,
+    // HEAD/DELETE in Phase 2.J (share pipeline via set-method),
+    // POST/PUT/PATCH in Phase 2.K (outgoing-body marshalling +
+    // user headers iteration + Content-Type).
+    if matches!(
+        effect,
+        "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put" | "Http.patch"
+    ) {
+        return None;
     }
     if effect.starts_with("Tcp.") {
         return Some(UnsupportedReason::OutOfRelease {
@@ -217,10 +222,8 @@ mod tests {
 
     #[test]
     fn classifies_out_of_release_rejects() {
-        assert!(matches!(
-            classify("Http.get"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
+        // All Http.* graduated in 0.19; only Tcp / HttpServer
+        // remain rejected as out-of-release.
         assert!(matches!(
             classify("Tcp.connect"),
             Some(UnsupportedReason::OutOfRelease { .. })
@@ -229,6 +232,17 @@ mod tests {
             classify("HttpServer.listen"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
+    }
+
+    #[test]
+    fn all_http_methods_graduate() {
+        // Phase 2.0 (GET) + 2.J (HEAD/DELETE) + 2.K (POST/PUT/PATCH).
+        assert!(classify("Http.get").is_none());
+        assert!(classify("Http.head").is_none());
+        assert!(classify("Http.delete").is_none());
+        assert!(classify("Http.post").is_none());
+        assert!(classify("Http.put").is_none());
+        assert!(classify("Http.patch").is_none());
     }
 
     #[test]

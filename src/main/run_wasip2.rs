@@ -138,6 +138,8 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
     use wasmtime::{Config, Engine, Store};
     use wasmtime_wasi::p2::bindings::sync::Command;
     use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+    use wasmtime_wasi_http::WasiHttpCtx;
+    use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
 
     // Engine config: GC + function-references + Component Model are
     // all needed for the wasm-gc-derived component to validate and
@@ -192,6 +194,7 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
 
     struct Host {
         ctx: WasiCtx,
+        http: WasiHttpCtx,
         table: ResourceTable,
     }
     impl WasiView for Host {
@@ -202,16 +205,36 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
             }
         }
     }
+    impl WasiHttpView for Host {
+        fn http(&mut self) -> WasiHttpCtxView<'_> {
+            WasiHttpCtxView {
+                ctx: &mut self.http,
+                table: &mut self.table,
+                hooks: Default::default(),
+            }
+        }
+    }
 
     let mut store = Store::new(
         &engine,
         Host {
             ctx,
+            http: WasiHttpCtx::new(),
             table: ResourceTable::new(),
         },
     );
     let mut linker = Linker::<Host>::new(&engine);
     wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
+    // Wire `wasi:http/outgoing-handler` (+ types/incoming-handler) into
+    // the same linker. Synchronous variant — matches the rest of the
+    // CLI runner. Components that don't import wasi:http see no change;
+    // components that do can issue blocking outbound HTTP requests.
+    // `add_only_http_to_linker_sync` registers wasi:http/* without
+    // re-adding wasi:io / wasi:cli / wasi:clocks (which `wasmtime_wasi`
+    // already wired above). The full `add_to_linker_sync` would
+    // double-register those and fail with
+    // "map entry `wasi:io/error@0.2.x` defined twice".
+    wasmtime_wasi_http::p2::add_only_http_to_linker_sync(&mut linker)?;
     let command = Command::instantiate(&mut store, &component, &linker)?;
     // wasi:cli/run.run() -> result<_, _>; Ok(()) on success, Err(())
     // when the guest signalled failure via `i32.const 1`. Aver's

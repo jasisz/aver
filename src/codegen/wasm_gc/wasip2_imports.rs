@@ -283,6 +283,277 @@ pub(super) enum Wasip2ImportSlot {
     /// `Disk.listDir` invocation.
     /// Canonical-ABI signature: `(handle: i32) -> ()`.
     FilesystemTypesResourceDropDirectoryEntryStream,
+
+    // ── 0.19 "Phase 2" — wasi:http/* slots for `Http.get`. ─────────
+    //
+    // Every Http.* call in WASI 0.2 has to walk a 7-resource
+    // choreography (fields → outgoing-request → future → poll → get →
+    // incoming-response → incoming-body → input-stream → drop chain),
+    // which is why these 12 slots are needed for ONE source-level
+    // `Http.get` call. WASI 0.3 collapses most of them into native
+    // `future<T>` / `stream<u8>` types — when we add a `Wasip3ImportSlot`
+    // sibling, the equivalent Http surface will need ~3 slots instead.
+    /// `wasi:http/types.[constructor]fields: func() -> fields`.
+    /// Allocates an empty header collection. Phase 2 `Http.get` uses
+    /// this once per request to obtain a `fields` handle to thread
+    /// into `outgoing-request`'s constructor.
+    /// Canonical-ABI signature: `() -> i32`.
+    HttpTypesFieldsNew,
+    /// `wasi:http/types.[constructor]outgoing-request:
+    ///   func(headers: fields) -> outgoing-request`.
+    /// Constructs an outgoing-request with default `method = GET` and
+    /// no scheme / authority / path set. The header fields are
+    /// consumed (ownership transferred), so the guest must NOT drop
+    /// the `fields` handle separately after this call.
+    /// Canonical-ABI signature: `(headers: i32) -> i32`.
+    HttpTypesOutgoingRequestNew,
+    /// `wasi:http/types.[method]outgoing-request.set-scheme:
+    ///   func(this: borrow<outgoing-request>, scheme: option<scheme>)
+    ///   -> result<_, _>`.
+    ///
+    /// `scheme` is a variant `{ HTTP, HTTPS, other(string) }`; in
+    /// canonical ABI it lowers to a tag i32 plus (str_ptr, str_len)
+    /// for the `other` payload. `option<scheme>` adds a leading
+    /// presence tag i32 (0 = None, 1 = Some). For Phase 2 PoC we
+    /// only use HTTP and HTTPS — `(opt: 1, scheme: 0/1, 0, 0)`.
+    /// The result is a 1-byte tag (0 = Ok, 1 = Err) — Phase 2 ignores
+    /// it (the host validates scheme; setting an invalid one fails
+    /// later at `outgoing-handler.handle`).
+    /// Canonical-ABI signature:
+    ///   `(this: i32, opt_tag: i32, scheme_tag: i32,
+    ///     scheme_str_ptr: i32, scheme_str_len: i32) -> i32`.
+    HttpTypesOutgoingRequestSetScheme,
+    /// `wasi:http/types.[method]outgoing-request.set-authority:
+    ///   func(this: borrow<outgoing-request>, authority: option<string>)
+    ///   -> result<_, _>`.
+    ///
+    /// Authority = `host[:port]` (e.g. `example.com:443`).
+    /// `option<string>` lowers to `(opt_tag i32, str_ptr i32,
+    /// str_len i32)`. Phase 2 always passes `Some(_)` — without an
+    /// authority the host cannot dispatch.
+    /// Canonical-ABI signature:
+    ///   `(this: i32, opt_tag: i32, str_ptr: i32, str_len: i32) -> i32`.
+    HttpTypesOutgoingRequestSetAuthority,
+    /// `wasi:http/types.[method]outgoing-request.set-path-with-query:
+    ///   func(this: borrow<outgoing-request>,
+    ///        path-with-query: option<string>) -> result<_, _>`.
+    /// Same shape as set-authority. The string includes the `?query`
+    /// fragment when present (host doesn't reparse).
+    /// Canonical-ABI signature:
+    ///   `(this: i32, opt_tag: i32, str_ptr: i32, str_len: i32) -> i32`.
+    HttpTypesOutgoingRequestSetPathWithQuery,
+    /// `wasi:http/outgoing-handler.handle: func(
+    ///   request: outgoing-request,
+    ///   options: option<request-options>
+    /// ) -> result<future-incoming-response, error-code>`.
+    ///
+    /// Takes ownership of the request (caller must NOT drop it after
+    /// this call) and returns a future that resolves to a response
+    /// (or a transport-level error). Phase 2 always passes
+    /// `options = None` — default timeouts, default DNS — so the
+    /// option lowers to `(opt_tag = 0, handle = 0)`.
+    ///
+    /// The result is a `result<future-incoming-response, error-code>`
+    /// lowered via retptr. Layout (8 bytes):
+    /// - byte 0: tag (0 = Ok, 1 = Err)
+    /// - bytes 4..8: `Ok` → future handle i32; `Err` → error-code u8
+    ///
+    /// Canonical-ABI signature:
+    ///   `(this: i32, opt_tag: i32, opt_handle: i32, retptr: i32) -> ()`.
+    HttpOutgoingHandlerHandle,
+    /// `wasi:http/types.[method]future-incoming-response.subscribe:
+    ///   func(this: borrow<future-incoming-response>) -> pollable`.
+    /// Returns a fresh `pollable` that becomes ready when the
+    /// response head has arrived (or transport failed). Phase 2
+    /// uses this with `wasi:io/poll.poll` exactly the same way
+    /// `Time.sleep` blocks on `subscribe-duration`.
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    HttpTypesFutureIncomingResponseSubscribe,
+    /// `wasi:http/types.[method]future-incoming-response.get:
+    ///   func(this: borrow<future-incoming-response>)
+    ///   -> option<result<result<incoming-response, error-code>, _>>`.
+    ///
+    /// Yes, four levels nested — that's how 0.2 spells "the future
+    /// might not be ready / might be ready with a transport error /
+    /// might be ready with a protocol error / might be ready with a
+    /// response, AND get() may only be called once". Phase 2 calls
+    /// this only AFTER `poll` confirmed readiness, so the outer
+    /// option is always `Some`; the inner `_` (the once-only guard)
+    /// fires only if get() is called twice, which we don't.
+    ///
+    /// Retptr layout (8 bytes — option flat layout dominates):
+    /// - byte 0: outer option tag (0 = None, 1 = Some)
+    /// - byte 4: inner result tag (0 = Ok, 1 = Err)
+    /// - bytes 8..16: payload — `Ok` → result<incoming-response, error-code>
+    ///
+    /// Phase 2 reads the response handle assuming Ok-Some-Ok-Ok and
+    /// surfaces errors only at the outermost layer (`handle()` retptr
+    /// already covers transport, this only adds protocol-level
+    /// errors which Phase 2 collapses into `Result.Err("http error")`).
+    ///
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesFutureIncomingResponseGet,
+    /// `wasi:http/types.[method]incoming-response.status:
+    ///   func(this: borrow<incoming-response>) -> status-code`.
+    /// `status-code` is `u16` (HTTP status: 100-599 valid). Inline
+    /// flat lowering — no retptr.
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    HttpTypesIncomingResponseStatus,
+    /// `wasi:http/types.[method]incoming-response.consume:
+    ///   func(this: borrow<incoming-response>) -> result<incoming-body>`.
+    /// Returns the body resource handle (consume() may only succeed
+    /// once per response — second call is `Err(_)` with no payload).
+    /// Retptr 8 bytes: `tag i8` + `incoming-body handle i32` on Ok.
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesIncomingResponseConsume,
+    /// `wasi:http/types.[method]incoming-body.stream:
+    ///   func(this: borrow<incoming-body>) -> result<input-stream>`.
+    /// Yields a `wasi:io/streams.input-stream` over the body bytes.
+    /// Retptr 8 bytes: `tag i8` + `input-stream handle i32` on Ok.
+    /// Phase 2 reuses `InputStreamBlockingRead` (already wired for
+    /// Disk.readText) to drain the body — same loop, different
+    /// source resource.
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesIncomingBodyStream,
+    /// `wasi:http/types.[static]incoming-body.finish:
+    ///   func(this: incoming-body) -> future-trailers`.
+    /// Takes ownership of the body (caller must NOT drop it
+    /// separately afterwards) and returns a `future-trailers` handle.
+    /// Phase 2 calls this immediately after the body stream drains
+    /// to release host-side resources; the trailers future is then
+    /// dropped without ever being polled (Phase 2 doesn't surface
+    /// trailers to source).
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    HttpTypesIncomingBodyFinish,
+
+    // ── Phase 2 resource-drops. ────────────────────────────────────
+    //
+    // wasi:http resource lifecycles in 0.2 are explicit — every
+    // handle the host produces must be dropped (or transferred via
+    // ownership-taking methods like `outgoing-handler.handle` /
+    // `incoming-body.finish`). These five drops cover every resource
+    // we materialise in `__rt_http_get` that is NOT consumed by an
+    // ownership-transfer method.
+    /// `wasi:http/types.[resource-drop]outgoing-request`. NOTE:
+    /// `outgoing-handler.handle` takes ownership, so this drop is
+    /// only needed for the EARLY-FAILURE path (e.g. set-authority
+    /// returns Err before handle() is called). Phase 2 calls
+    /// handle() unconditionally after constructor + setters, so in
+    /// practice this drop fires only on the never-reached error
+    /// branch — but we must declare the import for the wasm
+    /// validator to accept the function.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropOutgoingRequest,
+    /// `wasi:http/types.[resource-drop]future-incoming-response`.
+    /// Phase 2 calls this once per `Http.get` after `get()` extracts
+    /// the response handle. Even though the future has been consumed
+    /// in spirit, the spec models it as a resource that the guest
+    /// still owns until explicit drop.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropFutureIncomingResponse,
+    /// `wasi:http/types.[resource-drop]incoming-response`. Called
+    /// after `consume()` in Phase 2 — consume() does NOT take
+    /// ownership; the response stays with the guest until drop.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropIncomingResponse,
+    /// `wasi:http/types.[resource-drop]future-trailers`. Phase 2
+    /// produces this handle via `incoming-body.finish` and drops it
+    /// immediately (trailers aren't surfaced to source).
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropFutureTrailers,
+    /// `wasi:http/types.[resource-drop]incoming-body`. Used by the
+    /// error paths between `consume()` and `body.finish()` —
+    /// `body.finish` transfers ownership on the happy path, but
+    /// any failure (body.stream Err, blocking-read Err) leaves
+    /// the body handle live and we must drop it explicitly.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropIncomingBody,
+    /// `wasi:http/types.[method]incoming-response.headers:
+    ///   func(this: borrow<incoming-response>) -> headers`.
+    /// Returns an `own<fields>` resource carrying the response
+    /// headers. The fields resource is a child of incoming-
+    /// response — must be dropped BEFORE the parent (otherwise
+    /// drop_incoming_response panics).
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    HttpTypesIncomingResponseHeaders,
+    /// `wasi:http/types.[method]fields.entries:
+    ///   func(this: borrow<fields>) -> list<tuple<field-key, field-value>>`.
+    /// `field-key` = string, `field-value` = list<u8>. Each
+    /// (name, value) pair is one tuple; multi-valued headers
+    /// surface as multiple entries with the same field-key.
+    /// Retptr writes (entries_ptr i32, entries_len i32) at
+    /// offset 0 / +4. Each entry is 16 bytes:
+    /// - +0: field-key str_ptr i32
+    /// - +4: field-key str_len i32
+    /// - +8: field-value list_ptr i32
+    /// - +12: field-value list_len i32
+    ///
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesFieldsEntries,
+    /// `wasi:http/types.[resource-drop]fields`. Drops the fields
+    /// handle returned by `incoming-response.headers`. Must be
+    /// called BEFORE `[resource-drop]incoming-response` since
+    /// fields is a child resource.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropFields,
+    /// `wasi:http/types.[method]outgoing-request.set-method:
+    ///   func(this: borrow<outgoing-request>, method: method)
+    ///   -> result<_, _>`.
+    /// `method` is a variant `{ GET, HEAD, POST, PUT, DELETE,
+    /// CONNECT, OPTIONS, TRACE, PATCH, other(string) }`. For our
+    /// known methods we pass the discriminant directly with empty
+    /// other-payload (tag, 0, 0). v1 ignores the result tag.
+    /// Canonical-ABI signature:
+    ///   `(this: i32, method_tag: i32, other_str_ptr: i32,
+    ///     other_str_len: i32) -> i32`.
+    HttpTypesOutgoingRequestSetMethod,
+    /// `wasi:http/types.[method]outgoing-request.body:
+    ///   func(this: borrow<outgoing-request>) ->
+    ///   result<own<outgoing-body>>`.
+    /// Returns the body resource handle; may be called once.
+    /// Retptr 8 bytes: `tag i8 + outgoing-body handle i32` on Ok.
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesOutgoingRequestBody,
+    /// `wasi:http/types.[method]outgoing-body.write:
+    ///   func(this: borrow<outgoing-body>) ->
+    ///   result<own<output-stream>>`.
+    /// Returns an `output-stream` for writing body bytes; may be
+    /// called once. Retptr 8 bytes: `tag i8 + output-stream
+    /// handle i32` on Ok.
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    HttpTypesOutgoingBodyWrite,
+    /// `wasi:http/types.[static]outgoing-body.finish:
+    ///   func(this: own<outgoing-body>, trailers:
+    ///        option<own<trailers>>) -> result<_, error-code>`.
+    /// Closes the body, taking ownership. v1 always passes
+    /// `None` for trailers. Result via retptr — error-code's
+    /// `option<u64>` payload propagates align=8, so the result
+    /// needs ~40 bytes (8 tag-padded + 32-byte error-code).
+    /// Canonical-ABI signature:
+    ///   `(this: i32, opt_tag: i32, opt_handle: i32, retptr: i32) -> ()`.
+    HttpTypesOutgoingBodyFinish,
+    /// `wasi:http/types.[method]fields.append:
+    ///   func(this: borrow<fields>, name: field-key, value:
+    ///        field-value) -> result<_, header-error>`.
+    /// `field-key` = string, `field-value` = list<u8>; both flat
+    /// as (ptr, len). The result `result<_, header-error>` flattens
+    /// to TWO core wasm values (discrim i32 + header-error variant
+    /// flattened to its own discrim i32), exceeding the
+    /// MAX_FLAT_RESULTS=1 threshold for imports — so canonical-ABI
+    /// returns via a 4-byte retptr (tag at +0, header-error
+    /// discriminant at +1 padded to align(1)). Caller passes a
+    /// pre-allocated retptr as the trailing param; v1 ignores its
+    /// contents.
+    /// Canonical-ABI signature:
+    ///   `(this: i32, name_ptr: i32, name_len: i32,
+    ///     val_ptr: i32, val_len: i32, retptr: i32) -> ()`.
+    HttpTypesFieldsAppend,
+    /// `wasi:http/types.[resource-drop]outgoing-body`. Used on
+    /// the error path after `request.body()` returned a body
+    /// handle but `body.write()` or the body write failed before
+    /// `body.finish()` (which transfers ownership) ran.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    HttpTypesResourceDropOutgoingBody,
 }
 
 impl Wasip2ImportSlot {
@@ -372,6 +643,92 @@ impl Wasip2ImportSlot {
                 "wasi:filesystem/types@0.2.4",
                 "[resource-drop]directory-entry-stream",
             ),
+            // ── wasi:http/* (Phase 2). ─────────────────────────────
+            Wasip2ImportSlot::HttpTypesFieldsNew => {
+                ("wasi:http/types@0.2.4", "[constructor]fields")
+            }
+            Wasip2ImportSlot::HttpTypesOutgoingRequestNew => {
+                ("wasi:http/types@0.2.4", "[constructor]outgoing-request")
+            }
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme => (
+                "wasi:http/types@0.2.4",
+                "[method]outgoing-request.set-scheme",
+            ),
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority => (
+                "wasi:http/types@0.2.4",
+                "[method]outgoing-request.set-authority",
+            ),
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery => (
+                "wasi:http/types@0.2.4",
+                "[method]outgoing-request.set-path-with-query",
+            ),
+            Wasip2ImportSlot::HttpOutgoingHandlerHandle => {
+                ("wasi:http/outgoing-handler@0.2.4", "handle")
+            }
+            Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe => (
+                "wasi:http/types@0.2.4",
+                "[method]future-incoming-response.subscribe",
+            ),
+            Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet => (
+                "wasi:http/types@0.2.4",
+                "[method]future-incoming-response.get",
+            ),
+            Wasip2ImportSlot::HttpTypesIncomingResponseStatus => {
+                ("wasi:http/types@0.2.4", "[method]incoming-response.status")
+            }
+            Wasip2ImportSlot::HttpTypesIncomingResponseConsume => {
+                ("wasi:http/types@0.2.4", "[method]incoming-response.consume")
+            }
+            Wasip2ImportSlot::HttpTypesIncomingBodyStream => {
+                ("wasi:http/types@0.2.4", "[method]incoming-body.stream")
+            }
+            Wasip2ImportSlot::HttpTypesIncomingBodyFinish => {
+                ("wasi:http/types@0.2.4", "[static]incoming-body.finish")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest => {
+                ("wasi:http/types@0.2.4", "[resource-drop]outgoing-request")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse => (
+                "wasi:http/types@0.2.4",
+                "[resource-drop]future-incoming-response",
+            ),
+            Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse => {
+                ("wasi:http/types@0.2.4", "[resource-drop]incoming-response")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers => {
+                ("wasi:http/types@0.2.4", "[resource-drop]future-trailers")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropIncomingBody => {
+                ("wasi:http/types@0.2.4", "[resource-drop]incoming-body")
+            }
+            Wasip2ImportSlot::HttpTypesIncomingResponseHeaders => {
+                ("wasi:http/types@0.2.4", "[method]incoming-response.headers")
+            }
+            Wasip2ImportSlot::HttpTypesFieldsEntries => {
+                ("wasi:http/types@0.2.4", "[method]fields.entries")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropFields => {
+                ("wasi:http/types@0.2.4", "[resource-drop]fields")
+            }
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod => (
+                "wasi:http/types@0.2.4",
+                "[method]outgoing-request.set-method",
+            ),
+            Wasip2ImportSlot::HttpTypesOutgoingRequestBody => {
+                ("wasi:http/types@0.2.4", "[method]outgoing-request.body")
+            }
+            Wasip2ImportSlot::HttpTypesOutgoingBodyWrite => {
+                ("wasi:http/types@0.2.4", "[method]outgoing-body.write")
+            }
+            Wasip2ImportSlot::HttpTypesOutgoingBodyFinish => {
+                ("wasi:http/types@0.2.4", "[static]outgoing-body.finish")
+            }
+            Wasip2ImportSlot::HttpTypesFieldsAppend => {
+                ("wasi:http/types@0.2.4", "[method]fields.append")
+            }
+            Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody => {
+                ("wasi:http/types@0.2.4", "[resource-drop]outgoing-body")
+            }
         }
     }
 
@@ -482,6 +839,105 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream => {
                 vec![ValType::I32]
             }
+            // ── wasi:http/* (Phase 2). ─────────────────────────────
+            // `[constructor]fields()` — no params.
+            Wasip2ImportSlot::HttpTypesFieldsNew => Vec::new(),
+            // `[constructor]outgoing-request(headers: fields)`.
+            Wasip2ImportSlot::HttpTypesOutgoingRequestNew => vec![ValType::I32],
+            // `set-scheme(this, scheme: option<scheme>)` — see slot doc.
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme => vec![
+                ValType::I32, // this
+                ValType::I32, // option tag
+                ValType::I32, // scheme tag
+                ValType::I32, // scheme str_ptr (used only for `other`)
+                ValType::I32, // scheme str_len
+            ],
+            // `set-method(this, method)` where method is the
+            // `{ GET, HEAD, POST, PUT, DELETE, ..., other(string) }`
+            // variant — flat as (tag i32, str_ptr i32, str_len i32).
+            // For known methods (tags 0..=8) str_ptr/str_len are
+            // unused, passed as 0/0.
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod => vec![
+                ValType::I32, // this
+                ValType::I32, // method tag
+                ValType::I32, // other str_ptr
+                ValType::I32, // other str_len
+            ],
+            // `outgoing-request.body(this) -> result<own<outgoing-body>>`
+            // and `outgoing-body.write(this) -> result<own<output-stream>>`
+            // — both `(this, retptr)`.
+            Wasip2ImportSlot::HttpTypesOutgoingRequestBody
+            | Wasip2ImportSlot::HttpTypesOutgoingBodyWrite => {
+                vec![ValType::I32, ValType::I32]
+            }
+            // `outgoing-body.finish(this, opt<trailers>) -> result<_, error-code>`
+            // takes ownership of body + optional trailers handle.
+            Wasip2ImportSlot::HttpTypesOutgoingBodyFinish => vec![
+                ValType::I32, // this (body handle, transferred)
+                ValType::I32, // option tag (None=0)
+                ValType::I32, // trailers handle (unused when None)
+                ValType::I32, // retptr for result<_, error-code>
+            ],
+            // `fields.append(this, name, value) -> result<_, header-error>`
+            // — name is string, value is list<u8>; both flat
+            // (ptr, len). Result via retptr (4 bytes — tag + tiny
+            // header-error variant disc); see slot doc.
+            Wasip2ImportSlot::HttpTypesFieldsAppend => vec![
+                ValType::I32, // this
+                ValType::I32, // name_ptr
+                ValType::I32, // name_len
+                ValType::I32, // val_ptr
+                ValType::I32, // val_len
+                ValType::I32, // retptr (4 bytes)
+            ],
+            // Resource drop — single i32 handle.
+            Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody => vec![ValType::I32],
+            // `set-authority(this, opt<string>)` /
+            // `set-path-with-query(this, opt<string>)`.
+            Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery => vec![
+                ValType::I32, // this
+                ValType::I32, // option tag
+                ValType::I32, // str_ptr
+                ValType::I32, // str_len
+            ],
+            // `outgoing-handler.handle(req, options: option<request-options>)
+            //  -> result<future-incoming-response, error-code>`.
+            // `option<request-options>` lowers to (opt_tag i32, handle i32);
+            // result via retptr.
+            Wasip2ImportSlot::HttpOutgoingHandlerHandle => vec![
+                ValType::I32, // request handle
+                ValType::I32, // option tag
+                ValType::I32, // request-options handle (0 when None)
+                ValType::I32, // retptr
+            ],
+            // `[method]future-incoming-response.subscribe(this) -> pollable`
+            // and `[method]incoming-response.status(this) -> status-code`
+            // and `[method]incoming-response.headers(this) -> headers`
+            // — all flat: single i32 in, single i32 out.
+            Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe
+            | Wasip2ImportSlot::HttpTypesIncomingResponseStatus
+            | Wasip2ImportSlot::HttpTypesIncomingResponseHeaders => vec![ValType::I32],
+            // `[method]future-incoming-response.get(this) -> opt<...>` /
+            // `incoming-response.consume(this) -> result<incoming-body>` /
+            // `incoming-body.stream(this) -> result<input-stream>` /
+            // `[method]fields.entries(this) -> list<tuple<...>>`
+            // — all `(this, retptr)`.
+            Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet
+            | Wasip2ImportSlot::HttpTypesIncomingResponseConsume
+            | Wasip2ImportSlot::HttpTypesIncomingBodyStream
+            | Wasip2ImportSlot::HttpTypesFieldsEntries => {
+                vec![ValType::I32, ValType::I32]
+            }
+            // `[static]incoming-body.finish(this) -> future-trailers`.
+            Wasip2ImportSlot::HttpTypesIncomingBodyFinish => vec![ValType::I32],
+            // Resource drops — single i32 handle.
+            Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest
+            | Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse
+            | Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse
+            | Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers
+            | Wasip2ImportSlot::HttpTypesResourceDropIncomingBody
+            | Wasip2ImportSlot::HttpTypesResourceDropFields => vec![ValType::I32],
         }
     }
 
@@ -517,6 +973,39 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::FilesystemTypesResourceDropDirectoryEntryStream => Vec::new(),
             // u64 return — fits in flat representation, no retptr.
             Wasip2ImportSlot::RandomGetRandomU64 => vec![ValType::I64],
+            // ── wasi:http/* (Phase 2). ─────────────────────────────
+            // Resource handles or status codes — flat i32 return.
+            // `set-scheme/authority/path-with-query` return result<_, _>
+            // which canonical-ABI lowers to a single i32 tag for `_,_`
+            // discriminants (no payloads on either side).
+            Wasip2ImportSlot::HttpTypesFieldsNew
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestNew
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestSetScheme
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestSetAuthority
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestSetPathWithQuery
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestSetMethod
+            | Wasip2ImportSlot::HttpTypesFutureIncomingResponseSubscribe
+            | Wasip2ImportSlot::HttpTypesIncomingResponseStatus
+            | Wasip2ImportSlot::HttpTypesIncomingResponseHeaders
+            | Wasip2ImportSlot::HttpTypesIncomingBodyFinish => vec![ValType::I32],
+            // Result-via-retptr — no inline return.
+            Wasip2ImportSlot::HttpOutgoingHandlerHandle
+            | Wasip2ImportSlot::HttpTypesFutureIncomingResponseGet
+            | Wasip2ImportSlot::HttpTypesIncomingResponseConsume
+            | Wasip2ImportSlot::HttpTypesIncomingBodyStream
+            | Wasip2ImportSlot::HttpTypesFieldsEntries
+            | Wasip2ImportSlot::HttpTypesOutgoingRequestBody
+            | Wasip2ImportSlot::HttpTypesOutgoingBodyWrite
+            | Wasip2ImportSlot::HttpTypesOutgoingBodyFinish
+            | Wasip2ImportSlot::HttpTypesFieldsAppend => Vec::new(),
+            // Resource drops — no return.
+            Wasip2ImportSlot::HttpTypesResourceDropOutgoingRequest
+            | Wasip2ImportSlot::HttpTypesResourceDropFutureIncomingResponse
+            | Wasip2ImportSlot::HttpTypesResourceDropIncomingResponse
+            | Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers
+            | Wasip2ImportSlot::HttpTypesResourceDropIncomingBody
+            | Wasip2ImportSlot::HttpTypesResourceDropFields
+            | Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody => Vec::new(),
         }
     }
 }
