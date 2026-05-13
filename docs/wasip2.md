@@ -68,7 +68,20 @@ Compiles the source to a `wasi:cli/command` component, instantiates it via embed
 - No build cache. Compile is fast enough that adding a cache layer is not worth the cache-invalidation contract.
 - `--record <dir>` / `--replay <recording.json>` are **not yet wired** for `--wasip2` and the flags are rejected at CLI time. Recording requires a separate plumbing pass against the canonical-ABI WASI imports; until that lands, use `aver run --wasm-gc --record` (recordings are interchangeable across backends). The earlier sentence about effects being recorded "at the Aver call level" describes the cross-backend recording shape, not what `--wasip2` itself accepts.
 
-External hosts: `wasmtime run` for command components is the canonical path; `wasmtime serve` and other server-capable hosts (Spin's `wasi:http/proxy` runtime, NGINX Unit) target the HTTP/proxy world, which is Phase 3 / 0.19+ and out of 0.18 scope.
+External hosts: `wasmtime run` for command components is the canonical path; `wasmtime serve` is the canonical local runner for the HTTP/proxy world.
+
+## Host compatibility matrix for the HTTP/proxy world
+
+The component the wasm-gc backend emits uses the WebAssembly **wasm-gc** + **tail-call** proposals. WASI 0.2 itself is stable and supported across hosts, but those two engine proposals are still opt-in on most runtimes — pick a host that ships them enabled (or enables them via flag).
+
+| Host | Status | Notes |
+|---|---|---|
+| `wasmtime serve` 43.x | ✅ works | Pass `-W gc=y -W tail-call=y`. The address binds via `--addr=ip:port` (e.g. `--addr=127.0.0.1:8080`). Bound port surfaces on stderr as `Serving HTTP on http://...:N/` — useful for `--addr=:0` ephemeral binds in test harnesses. |
+| Embedded wasmtime via wasmtime-wasi-http | ✅ works | Enable `Config::wasm_gc(true)` + `Config::wasm_tail_call(true)` on the engine, plumb a `wasmtime_wasi_http::WasiHttpCtx`. Same engine as `wasmtime serve` under the hood. |
+| Spin 3.5.x | ❌ rejected at load | Bundled wasmtime does not enable the wasm-gc proposal (`rec group usage requires 'gc' proposal to be enabled`). No user-facing flag to override; the runtime-config TOML has no `[wasmtime]` table. Tracks Spin upstream — once their bundled wasmtime turns the proposal on (or exposes a flag), the same `.component.wasm` will run unchanged. |
+| NGINX Unit, wasmCloud, Fermyon Cloud, Fastly Compute | ⚠️ untested | Spec-compatible — they all consume `.component.wasm` against `wasi:http/proxy`. Whether each enables wasm-gc + tail-call depends on the runtime build; verify against your deployment's wasmtime / wasm-runtime version. |
+
+The component itself is portable: the only host requirement is "WASI 0.2 wasi:http/proxy host with wasm-gc + tail-call proposals on". Future Aver work to widen host coverage waits on host updates, not codegen changes.
 
 ## `aver compile --target wasip2 -o out`
 
