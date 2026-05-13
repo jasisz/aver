@@ -59,42 +59,37 @@ impl Wasip2World {
 /// bytes alongside the WIT source emitted next to the artifact (per
 /// the component contract in `docs/wasip2.md` — point 5).
 ///
-/// Phase 1 transitional shape: the world declared in metadata is an
-/// empty `world command {}` — Aver's effect-bearing core imports
-/// arrive in Phase 1.2+, when WASI WIT bundles are wired so the
-/// world can `include wasi:cli/command;`. The wrap pipeline itself
-/// is end-to-end here; only the imported surface grows.
-///
-/// `HttpProxy` is rejected with `Wasip2Error::NotImplemented` —
-/// Phase 3 / 0.19 work, lands when designed deliberately.
+/// Two worlds, two entry-point shapes:
+/// - `CliCommand` — long-lived process exporting `wasi:cli/run.run`.
+///   `wasmtime run` / Spin component-mode / wasmCloud invoke this
+///   shape with the same convention as a POSIX binary.
+/// - `HttpProxy` — request/response shape exporting
+///   `wasi:http/incoming-handler.handle`. `wasmtime serve --http=:N`
+///   is the canonical local runner; production hosts (Spin, NGINX
+///   Unit, Fastly compute) bind the same export to their listener.
 pub fn compile_to_component(
     core_wasm: &[u8],
     world: Wasip2World,
 ) -> Result<(Vec<u8>, String), Wasip2Error> {
-    if matches!(world, Wasip2World::HttpProxy) {
-        return Err(Wasip2Error::NotImplemented(
-            "world `wasi:http/proxy` (Phase 3) is not wired in 0.18 — \
-             use `--world wasi:cli/command` for the long-running process \
-             shape, or wait for the deliberate Phase 3 / 0.19+ design"
-                .to_string(),
-        ));
-    }
-
     // Build a Resolve seeded with the bundled WASI 0.2.4 WIT
     // package set, then push the user package on top. Order matters:
-    // the user world `include`s `wasi:cli/command`, so wasi:* packages
-    // must be available first.
+    // the user world `include`s `wasi:cli/command` or
+    // `wasi:http/proxy`, so wasi:* packages must be available first.
     let mut resolve = Resolve::default();
     super::wasi_bundle::push_wasi_packages(&mut resolve)?;
 
-    // Inspect the core module's imports to decide whether the world
-    // needs `import wasi:http/outgoing-handler@0.2.4`. We scan
-    // because the codegen path that registers wasi:http slots
-    // (`module.rs` `EffectName::HttpGet` arm) and the wrap path live
-    // in different modules — having `compile_to_component` derive the
-    // bit from the only ground truth (the actual emitted imports)
-    // keeps the world exactly tracking the core's surface and avoids
-    // a second source of truth that could drift.
+    // Inspect the core module's imports to decide whether the
+    // `wasi:cli/command` world needs an extra
+    // `import wasi:http/outgoing-handler@0.2.4`. We scan because the
+    // codegen path that registers wasi:http slots (`module.rs`
+    // `EffectName::HttpGet` arm) and the wrap path live in different
+    // modules — having `compile_to_component` derive the bit from the
+    // only ground truth (the actual emitted imports) keeps the world
+    // exactly tracking the core's surface and avoids a second source
+    // of truth that could drift. The `HttpProxy` world already
+    // includes `wasi:http/types` + `outgoing-handler` transitively via
+    // `include wasi:http/proxy@0.2.4`, so the bit only matters for
+    // the CLI command path.
     let needs_http = core_imports_use_wasi_http(core_wasm);
 
     let wit_source = super::wit::emit_world_wit(world, needs_http);

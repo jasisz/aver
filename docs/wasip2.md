@@ -68,7 +68,25 @@ Compiles the source to a `wasi:cli/command` component, instantiates it via embed
 - No build cache. Compile is fast enough that adding a cache layer is not worth the cache-invalidation contract.
 - `--record <dir>` / `--replay <recording.json>` are **not yet wired** for `--wasip2` and the flags are rejected at CLI time. Recording requires a separate plumbing pass against the canonical-ABI WASI imports; until that lands, use `aver run --wasm-gc --record` (recordings are interchangeable across backends). The earlier sentence about effects being recorded "at the Aver call level" describes the cross-backend recording shape, not what `--wasip2` itself accepts.
 
-External hosts: `wasmtime run` for command components is the canonical path; `wasmtime serve` and other server-capable hosts (Spin's `wasi:http/proxy` runtime, NGINX Unit) target the HTTP/proxy world, which is Phase 3 / 0.19+ and out of 0.18 scope.
+External hosts: `wasmtime run` for command components is the canonical path; `wasmtime serve` is the canonical local runner for the HTTP/proxy world.
+
+## Host compatibility matrix for the HTTP/proxy world
+
+The component the wasm-gc backend emits uses the WebAssembly **wasm-gc** + **tail-call** proposals. WASI 0.2 itself is stable and supported across hosts, but those two engine proposals are still opt-in on most runtimes — pick a host that ships them enabled (or enables them via flag). Verified against the eight tests in `tests/wasip2_http_server_stress.rs` (echo / large body / routing / method dispatch / headers / JSON / concurrent / sequential).
+
+| Host | Status | Notes |
+|---|---|---|
+| `wasmtime serve` 43.x | ✅ works | Pass `-W gc=y -W tail-call=y`. The address binds via `--addr=ip:port` (e.g. `--addr=127.0.0.1:8080`). Bound port surfaces on stderr as `Serving HTTP on http://...:N/` — useful for `--addr=:0` ephemeral binds in test harnesses. |
+| Embedded wasmtime via `wasmtime-wasi-http` | ✅ works | Enable `Config::wasm_gc(true)` + `Config::wasm_tail_call(true)` on the engine, plumb a `wasmtime_wasi_http::WasiHttpCtx`. Same engine as `wasmtime serve` under the hood. |
+| `jco serve` (Bytecode Alliance) on Node ≥ 22 | ✅ works | `npx @bytecodealliance/jco serve component.wasm --host 127.0.0.1 --port N`. Transpiles the component to JS + core wasm modules and runs them on V8, which has wasm-gc + tail-call enabled since 22.0. Different engine entirely from wasmtime, so a passing run here confirms the component's portability across engine implementations — not just wasmtime variants. Node 20 rejects with `Unknown type code 0x4e, enable with --experimental-wasm-gc`; the flag can't be set via `NODE_OPTIONS`, so use Node 22+ rather than working around it. |
+| Spin 3.5.x | ❌ rejected at load | Bundled wasmtime does not enable the wasm-gc proposal (`rec group usage requires 'gc' proposal to be enabled`). No user-facing flag to override; the runtime-config TOML has no `[wasmtime]` table. Tracks Spin upstream — once their bundled wasmtime turns the proposal on (or exposes a flag), the same `.component.wasm` will run unchanged. |
+| NGINX Unit 1.34.x (`wasm-wasi-component`) | ❌ rejected at load | Same root cause as Spin — Unit's `wasm_wasi_component.unit.so` module embeds wasmtime with the wasm-gc proposal off; tested via the `unit:wasm` Docker image. Identical error: `rec group usage requires 'gc' proposal to be enabled`. Lands automatically once Unit upgrades its bundled wasmtime build. |
+| WasmEdge 0.16.x | ❌ component model experimental | `--enable-component` exists but the validator is still under construction; rejects our component with `Alias export: Export index 0 exceeds available component instance index 0` before the wasm-gc / tail-call question even comes up. Re-test once their component-model validator stabilises. |
+| Wasmer 7.x | ❌ no component model | `error: ... encoded as a component but the WebAssembly component model feature is not enabled`. Component support is not on Wasmer's near-term roadmap. |
+| wasmCloud `wash` 2.x | ⚠️ different shape | `wash dev` is a mesh-deployment daemon expecting a full wasmCloud project + manifest, not a standalone serve. No quick equivalent of `wasmtime serve component.wasm`. A wasmCloud project around our component would presumably work (their host is wasmtime-based with GC enabled in recent versions), but takes a project scaffold to verify — out of scope for this round. |
+| Fermyon Cloud, Fastly Compute | ⚠️ untested | Cloud-only deployments — would need an account + push. Spec-compatible against `wasi:http/proxy`; whether each enables wasm-gc + tail-call depends on their bundled runtime build. |
+
+The component itself is portable: the only host requirement is "WASI 0.2 wasi:http/proxy host with wasm-gc + tail-call proposals on". Future Aver work to widen host coverage waits on host updates, not codegen changes.
 
 ## `aver compile --target wasip2 -o out`
 
@@ -82,7 +100,7 @@ out/
 
 Flags:
 
-- `--world <world>` — which WIT world the component targets. Default `wasi:cli/command`. Other accepted values in 0.18: `wasi:http/proxy` is reserved for Phase 3 / 0.19 and rejected at compile time. Programs whose effects do not fit the chosen world fail at compile time with `target-effect-unsupported` pointing at the offending call.
+- `--world <world>` — which WIT world the component targets. Two values: `wasi:cli/command` (default — long-running process exporting `wasi:cli/run.run`) and `wasi:http/proxy` (HTTP server, exporting `wasi:http/incoming-handler.handle`; shipped in 0.19). The proxy world pairs with `--handler <fn>` (same flag the wasm-gc + Cloudflare path uses) — names the user fn with signature `Fn(HttpRequest) -> HttpResponse` that becomes the proxy handler. The compile path is purely flag-driven; `main`'s body can stay portable (`HttpServer.listen(port, handler)` runs the same source under `aver run` on the VM, lowers to a no-op when wasip2 proxy codegen takes over). Programs whose effects do not fit the chosen world fail at compile time with `target-effect-unsupported` pointing at the offending call.
 - `--optimize {size,speed}` — **rejected** on `--target wasip2`. Upstream `wasm-opt` does not yet handle wasm-gc + Component Model bytes cleanly, so the flag is refused at the CLI rather than silently dropped. Use `--target wasm-gc` if you need post-pass size/speed optimization; we will wire it for wasip2 once the toolchain catches up.
 
 The compiler does not shell out. WIT emission goes through `wit-encoder`; component-type metadata is encoded via `wit-component::metadata` and embedded as a custom section in the core module; the actual component wrap goes through `wit_component::ComponentEncoder`. Single binary, no toolchain to install on the user's machine.
@@ -103,7 +121,8 @@ Aver effects lower directly to WASI 0.2 imports. The mapping is fixed per effect
 | `Time.sleep` | `wasi:clocks/monotonic-clock.subscribe-duration` + `wasi:io/poll.poll` + `[resource-drop]pollable` (per-call pollable, real wait — not busy-loop) |
 | `Random.int` / `float` | `wasi:random/random.get-random-u64` + Aver-side range scaling. This is the secure `wasi:random/random` interface (same contract as `get-random-bytes`, just returning 8 cryptographically-secure bytes packed into a u64); we deliberately do NOT use `wasi:random/insecure.get-insecure-random-u64`. If we later need finer byte-level control (e.g. for `Random.bytes(n)`), the switch to `get-random-bytes` is mechanical. |
 | `Http.{get, head, delete, post, put, patch}` | `wasi:http/outgoing-handler.handle` + the future-incoming-response / incoming-response choreography (Phase 2 / 0.19 shipped). Method tag selects `outgoing-request.set-method`. Body-bearing verbs marshal a request body via `request.body` + `outgoing-body.write` + chunked `blocking-write-and-flush` + `outgoing-body.finish`. Headers (request and response) lower as `Map<String, List<String>>`; multi-valued field names preserve server emit order. `error-code` variant discriminants surface as per-variant `http: <name>` Err messages (39 cases). |
-| `HttpServer.listen` / `listenWith` | **Compile-rejected** — out of 0.19 client scope (Phase 3 / 0.19+); requires the `wasi:http/proxy` world + exported `incoming-handler.handle`. |
+| `HttpServer.listen` | `wasi:http/incoming-handler.handle` export (Phase 3 / 0.19 shipped). Requires `--world wasi:http/proxy --handler <fn>`. The handler wrapper decodes the host-supplied incoming-request into an Aver `HttpRequest` (method via the 10-case variant, path-with-query split into path/query, headers iteration as `Map<String, List<String>>`, body via `incoming-body.stream` + drained `input-stream.blocking-read`), runs the user's `fn(HttpRequest) -> HttpResponse`, marshals the result into an outgoing-response (`outgoing-response` constructor + `set-status-code` + body via `outgoing-body.write` + chunked `blocking-write-and-flush` + `outgoing-body.finish`), and calls `response-outparam.set`. `Content-Length` is synthesised from the response body byte count. The `port` argument to `HttpServer.listen` in source is honoured by the VM but ignored by wasip2 codegen — the host's listener flag (`wasmtime serve --addr=:N` etc.) binds the socket. |
+| `HttpServer.listenWith` | **Compile-rejected** — deferred one iteration; requires per-instance wasm-global context plumbing. |
 | `Tcp.*` | **Compile-rejected** — out of 0.19 client scope (Phase 2.1 / 0.19+) |
 | `Terminal.*` (12 methods) | **Compile-rejected** — WASI 0.2 has no raw/cooked-mode operations |
 
@@ -115,7 +134,7 @@ In 0.18:
 
 - **`Terminal.*`** — WASI 0.2 has `wasi:cli/terminal-input` and `terminal-output` as TTY signals, but no standardised raw/cooked-mode operations (`set-raw-mode`, `set-echo`, `get-window-size`). The capability is structurally absent.
 - **`Env.set`** — WASI 0.2 environment is read-only. There is no host implementation that could ever satisfy a write. Silent no-op would be a trap: source declares "I set X" and the program runs as if it succeeded while the environment is unchanged.
-- **`Http.*`, `Tcp.*`, `HttpServer.listen`** — out of 0.18 scope by deliberate design (Phase 2 / 3, 0.19+). Same compile-time `target-effect-unsupported` shape so the user sees one consistent error type rather than a mix of stubs and rejects.
+- **`Tcp.*`, `HttpServer.listenWith`** — out of 0.19 scope by deliberate design (Phase 2.1 / `listenWith` deferred one iteration). Same compile-time `target-effect-unsupported` shape so the user sees one consistent error type rather than a mix of stubs and rejects.
 
 (Earlier 0.18 betas grouped `Time.sleep` with the structural rejects on the assumption that the pollable model was out of scope. That was a scoping mistake — pollables can be wrapped *inside* a single helper without leaking to source. Phase 1.4c shipped `__rt_time_sleep` doing exactly that, so `Time.sleep` lowers natively now.)
 

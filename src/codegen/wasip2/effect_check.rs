@@ -152,6 +152,21 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
             phase: "Phase 2 / 0.19",
         });
     }
+    // `HttpServer.listen` graduated in 0.19 Phase 3: the wasm-gc
+    // emit path now synthesises a `wasi:http/incoming-handler.handle`
+    // export when invoked with `--world wasi:http/proxy`, decoding
+    // the host-supplied incoming-request into an Aver `HttpRequest`,
+    // running the user's handler, and writing the response back
+    // through `response-outparam.set`. The `port` argument is
+    // ignored at codegen time — the host's listener flag
+    // (`wasmtime serve --http=:N`) drives socket binding.
+    //
+    // `HttpServer.listenWith` (per-instance context handler) is
+    // deferred — needs a wasm global + initialiser plumbing that
+    // doesn't pull its weight for the v1 shape.
+    if effect == "HttpServer.listen" {
+        return None;
+    }
     if effect.starts_with("HttpServer.") {
         return Some(UnsupportedReason::OutOfRelease {
             phase: "Phase 3 / 0.19+",
@@ -222,16 +237,18 @@ mod tests {
 
     #[test]
     fn classifies_out_of_release_rejects() {
-        // All Http.* graduated in 0.19; only Tcp / HttpServer
-        // remain rejected as out-of-release.
+        // Tcp.* and HttpServer.listenWith remain rejected as
+        // out-of-release. HttpServer.listen graduated in 0.19
+        // Phase 3 — see classify().
         assert!(matches!(
             classify("Tcp.connect"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
         assert!(matches!(
-            classify("HttpServer.listen"),
+            classify("HttpServer.listenWith"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
+        assert!(classify("HttpServer.listen").is_none());
     }
 
     #[test]

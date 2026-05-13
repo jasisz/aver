@@ -193,12 +193,21 @@ pub(super) fn emit_module_with(
     if eq_helpers_registry.needs_string_eq(&registry) {
         builtin_registry.register(BuiltinName::StringEq);
     }
-    // `--handler X` shape — the synthesised `aver_http_handle`
-    // wrapper reads `Request.*` and dispatches `Response.text` /
-    // `Response.setHeader`, so register them up front. The user
-    // handler may also touch `Http.*` / `Env.*`, which discovery
+    // `--handler X` on `--target wasm-gc` (AverBridge) — the
+    // synthesised `aver_http_handle` wrapper reads `Request.*` and
+    // dispatches `Response.text` / `Response.setHeader` via the JS
+    // host's `aver/*` import surface, so register them up front. The
+    // user handler may also touch `Http.*` / `Env.*`, which discovery
     // already picks up through `discover_builtins_in_fn`.
-    if handler_name.is_some() {
+    //
+    // `--target wasip2 --world wasi:http/proxy` uses the same
+    // `handler_name` argument but takes a different codegen path:
+    // the proxy wrapper decodes request fields from the host-
+    // supplied `incoming-request` resource and writes the response
+    // through `response-outparam.set`. No `aver/*` Request/Response
+    // bridge there — pure canonical-ABI wasi:http imports.
+    let proxy_mode = handler_name.is_some() && matches!(target, super::TargetMode::Wasip2);
+    if handler_name.is_some() && matches!(target, super::TargetMode::AverBridge) {
         for eff in [
             EffectName::RequestMethod,
             EffectName::RequestUrl,
@@ -478,6 +487,43 @@ pub(super) fn emit_module_with(
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
             }
+            // Phase 3 — `--world wasi:http/proxy` server slots. The
+            // import set is independent of any effect a user fn
+            // touches: the handler wrapper itself drives every
+            // wasi:http/incoming-handler / response-outparam call.
+            // Reuses six slots from the client path (fields entries,
+            // body stream + finish + drops, input-stream / fields /
+            // outgoing-body drops, blocking-read, blocking-write-and-
+            // flush, output-stream drop) and the fields/outgoing-body
+            // writer chain — so `Http.get` inside the user's handler
+            // doesn't double-register them.
+            if proxy_mode {
+                use super::wasip2_imports::Wasip2ImportSlot;
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingRequestMethod);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingRequestPathWithQuery);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingRequestHeaders);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingRequestConsume);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesResourceDropIncomingRequest);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesFieldsEntries);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesResourceDropFields);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingBodyStream);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesIncomingBodyFinish);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesResourceDropIncomingBody);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesResourceDropFutureTrailers);
+                wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
+                wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesFieldsNew);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesFieldsAppend);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingResponseNew);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingResponseSetStatusCode);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingResponseBody);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingBodyWrite);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesOutgoingBodyFinish);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesResourceDropOutgoingBody);
+                wasip2_imports.register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                wasip2_imports.register(Wasip2ImportSlot::HttpTypesResponseOutparamSet);
+            }
             wasip2_imports.assign_slots(&mut next_type_idx);
             for slot in wasip2_imports.iter() {
                 let p = slot.params();
@@ -487,15 +533,21 @@ pub(super) fn emit_module_with(
         }
     }
 
-    // 3) Entry-point type. AverBridge keeps `_start: () -> ()` —
-    //    the JS host calls `_start` for its side effects and
-    //    discards any value `main` returns. Wasip2 needs the
-    //    canonical-ABI signature for `wasi:cli/run.run`, which is
-    //    `() -> i32` (lowered `result<_, _>`: `0 == Ok`,
-    //    `1 == Err`). The body emit branches in step with this
-    //    type allocation later in the code section.
-    let start_returns_i32 = matches!(target, super::TargetMode::Wasip2);
-    if start_returns_i32 {
+    // 3) Entry-point type. Three shapes drive different exports:
+    //    - AverBridge: `_start: () -> ()` — the JS host calls
+    //      `_start` for its side effects and discards any value
+    //      `main` returns.
+    //    - Wasip2 / CliCommand: `() -> i32` — canonical-ABI
+    //      lowering of `wasi:cli/run.run`'s `result<_, _>` return
+    //      (`0 == Ok`, `1 == Err`).
+    //    - Wasip2 / HttpProxy (proxy_mode): `(req: i32, outparam:
+    //      i32) -> ()` — `wasi:http/incoming-handler.handle`'s
+    //      canonical-ABI signature. The body emit later in the
+    //      code section walks the per-request choreography.
+    let start_returns_i32 = matches!(target, super::TargetMode::Wasip2) && !proxy_mode;
+    if proxy_mode {
+        types.ty().function([ValType::I32, ValType::I32], []);
+    } else if start_returns_i32 {
         types.ty().function([], [ValType::I32]);
     } else {
         types.ty().function([], []);
@@ -573,7 +625,9 @@ pub(super) fn emit_module_with(
     //     and fn idx now; the body lands at the end of the code
     //     section (after every helper) so the wrapper's fn idx is
     //     the highest in the module.
-    let handler_wrapper: Option<HandlerWrapper> = if let Some(name) = handler_name {
+    let handler_wrapper: Option<HandlerWrapper> = if let Some(name) = handler_name
+        && matches!(target, super::TargetMode::AverBridge)
+    {
         let user_idx = fn_defs
             .iter()
             .position(|fd| fd.name == name)
@@ -1870,9 +1924,13 @@ pub(super) fn emit_module_with(
     // `run` export when binding the metadata-declared component
     // surface to the core module.
     let mut exports = ExportSection::new();
-    let start_export_name: &str = match target {
-        super::TargetMode::AverBridge => "_start",
-        super::TargetMode::Wasip2 => "wasi:cli/run@0.2.4#run",
+    let start_export_name: &str = match (target, proxy_mode) {
+        (super::TargetMode::AverBridge, _) => "_start",
+        (super::TargetMode::Wasip2, false) => "wasi:cli/run@0.2.4#run",
+        // `wasi:http/incoming-handler.handle` — the proxy world's
+        // sole required export. `wasmtime serve` / Spin / wasmCloud
+        // route every inbound HTTP request through this.
+        (super::TargetMode::Wasip2, true) => "wasi:http/incoming-handler@0.2.4#handle",
     };
     exports.export(start_export_name, ExportKind::Func, start_wasm_idx);
     for (i, fd) in fn_defs.iter().enumerate() {
@@ -1988,30 +2046,197 @@ pub(super) fn emit_module_with(
     // ── Code section ───────────────────────────────────────────────
     let mut codes = CodeSection::new();
 
-    // Entry-point body. AverBridge `_start: () -> ()` calls main
-    // and drops its return — the JS host doesn't read a value back,
-    // it observes side effects via `aver/*` imports.
+    // Entry-point body. Three shapes, one slot:
     //
-    // Wasip2 `wasi:cli/run.run: () -> i32` calls main, drops a
-    // non-Unit return (Aver's `main: Unit` makes the drop a no-op),
-    // then pushes `i32.const 0` — `Ok` in the canonical-ABI lowering
-    // of `result<_, _>`. Trapping behaviour stays the same: any
-    // host-side trap (e.g. divide-by-zero) propagates up through
-    // wasmtime as a regular trap, not as `Err(1)`.
-    let mut start = Function::new([]);
-    if let Some(idx) = main_idx {
-        let main_idx_wasm = import_count + 1 + (idx as u32);
-        let main_returns_value = !fn_defs[idx].return_type.trim().eq("Unit");
-        start.instruction(&Instruction::Call(main_idx_wasm));
-        if main_returns_value {
-            start.instruction(&Instruction::Drop);
+    // - AverBridge `_start: () -> ()` — call main, drop any return.
+    //   JS host observes side effects via `aver/*` imports.
+    // - Wasip2 / CliCommand `wasi:cli/run.run: () -> i32` — same
+    //   call+drop, then `i32.const 0` (Ok in `result<_, _>`).
+    // - Wasip2 / HttpProxy `wasi:http/incoming-handler.handle:
+    //   (request, outparam) -> ()` — body is the full per-request
+    //   choreography emitted via `emit_aver_http_handle`. `main`
+    //   is never invoked (it's emitted as a normal user fn and
+    //   never called from here); its `HttpServer.listen(_, _)`
+    //   call lowered to a no-op upstream.
+    if proxy_mode {
+        let user_handler_idx = handler_name
+            .and_then(|name| fn_defs.iter().position(|fd| fd.name == name))
+            .ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "proxy handler `{}` doesn't match any fn in this module",
+                    handler_name.unwrap_or("?")
+                ))
+            })?;
+        let user_handler_wasm_idx = import_count + 1 + (user_handler_idx as u32);
+
+        let string_idx = registry
+            .string_array_type_idx
+            .ok_or_else(|| WasmGcError::Validation("proxy mode requires String slot".into()))?;
+        let http_request_idx = registry.record_type_idx("HttpRequest").ok_or_else(|| {
+            WasmGcError::Validation("proxy mode requires HttpRequest record slot".into())
+        })?;
+        let http_response_idx = registry.record_type_idx("HttpResponse").ok_or_else(|| {
+            WasmGcError::Validation("proxy mode requires HttpResponse record slot".into())
+        })?;
+        let map_slots = registry
+            .map_slots("Map<String,List<String>>")
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "proxy mode requires Map<String, List<String>> slots".into(),
+                )
+            })?;
+        let list_string_idx = registry.list_type_idx("List<String>").ok_or_else(|| {
+            WasmGcError::Validation("proxy mode requires List<String> slot".into())
+        })?;
+        let opt_list_string_idx = registry
+            .option_type_idx("Option<List<String>>")
+            .ok_or_else(|| {
+                WasmGcError::Validation("proxy mode requires Option<List<String>> slot".into())
+            })?;
+        let cabi = cabi_realloc
+            .as_ref()
+            .ok_or_else(|| WasmGcError::Validation("proxy mode requires cabi_realloc".into()))?
+            .fn_idx;
+        let bridge_ref = bridge
+            .as_ref()
+            .ok_or_else(|| WasmGcError::Validation("proxy mode requires bridge helpers".into()))?;
+        let map_h = map_helpers
+            .kv_helpers("Map<String,List<String>>")
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "proxy mode requires Map<String, List<String>> kv helpers".into(),
+                )
+            })?;
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot,
+                      name: &'static str|
+         -> Result<u32, WasmGcError> {
+            wasip2_imports.lookup_wasm_fn_idx(slot).ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "proxy mode requires {name} import (slot not allocated)"
+                ))
+            })
+        };
+        use super::wasip2_imports::Wasip2ImportSlot as Slot;
+        let indices = super::wasip2_http_server::ServerHandlerIndices {
+            fn_type: start_type_idx,
+            fn_idx: start_wasm_idx,
+            string_type_idx: string_idx,
+            http_request_type_idx: http_request_idx,
+            http_response_type_idx: http_response_idx,
+            headers_keys_array_type_idx: map_slots.keys_array,
+            headers_values_array_type_idx: map_slots.values_array,
+            headers_map_type_idx: map_slots.map,
+            list_string_type_idx: list_string_idx,
+            option_list_string_type_idx: opt_list_string_idx,
+        };
+        let helpers = super::wasip2_http_server::ServerHandlerHelperFns {
+            cabi_realloc_fn: cabi,
+            str_to_lm_fn: bridge_ref.to_lm_fn,
+            from_lm_fn: bridge_ref.from_lm_fn,
+            incoming_request_method_fn: lookup(
+                Slot::HttpTypesIncomingRequestMethod,
+                "incoming-request.method",
+            )?,
+            incoming_request_path_with_query_fn: lookup(
+                Slot::HttpTypesIncomingRequestPathWithQuery,
+                "incoming-request.path-with-query",
+            )?,
+            incoming_request_headers_fn: lookup(
+                Slot::HttpTypesIncomingRequestHeaders,
+                "incoming-request.headers",
+            )?,
+            incoming_request_consume_fn: lookup(
+                Slot::HttpTypesIncomingRequestConsume,
+                "incoming-request.consume",
+            )?,
+            drop_incoming_request_fn: lookup(
+                Slot::HttpTypesResourceDropIncomingRequest,
+                "[resource-drop]incoming-request",
+            )?,
+            fields_entries_fn: lookup(Slot::HttpTypesFieldsEntries, "fields.entries")?,
+            drop_fields_fn: lookup(Slot::HttpTypesResourceDropFields, "[resource-drop]fields")?,
+            incoming_body_stream_fn: lookup(
+                Slot::HttpTypesIncomingBodyStream,
+                "incoming-body.stream",
+            )?,
+            incoming_body_finish_fn: lookup(
+                Slot::HttpTypesIncomingBodyFinish,
+                "incoming-body.finish",
+            )?,
+            drop_incoming_body_fn: lookup(
+                Slot::HttpTypesResourceDropIncomingBody,
+                "[resource-drop]incoming-body",
+            )?,
+            blocking_read_fn: lookup(Slot::InputStreamBlockingRead, "input-stream.blocking-read")?,
+            drop_input_stream_fn: lookup(
+                Slot::IoStreamsResourceDropInputStream,
+                "[resource-drop]input-stream",
+            )?,
+            drop_future_trailers_fn: lookup(
+                Slot::HttpTypesResourceDropFutureTrailers,
+                "[resource-drop]future-trailers",
+            )?,
+            fields_new_fn: lookup(Slot::HttpTypesFieldsNew, "[constructor]fields")?,
+            fields_append_fn: lookup(Slot::HttpTypesFieldsAppend, "fields.append")?,
+            outgoing_response_new_fn: lookup(
+                Slot::HttpTypesOutgoingResponseNew,
+                "[constructor]outgoing-response",
+            )?,
+            set_status_code_fn: lookup(
+                Slot::HttpTypesOutgoingResponseSetStatusCode,
+                "outgoing-response.set-status-code",
+            )?,
+            outgoing_response_body_fn: lookup(
+                Slot::HttpTypesOutgoingResponseBody,
+                "outgoing-response.body",
+            )?,
+            outgoing_body_write_fn: lookup(
+                Slot::HttpTypesOutgoingBodyWrite,
+                "outgoing-body.write",
+            )?,
+            outgoing_body_finish_fn: lookup(
+                Slot::HttpTypesOutgoingBodyFinish,
+                "outgoing-body.finish",
+            )?,
+            blocking_write_fn: lookup(
+                Slot::OutputStreamBlockingWriteAndFlush,
+                "output-stream.blocking-write-and-flush",
+            )?,
+            drop_output_stream_fn: lookup(
+                Slot::IoStreamsResourceDropOutputStream,
+                "[resource-drop]output-stream",
+            )?,
+            drop_outgoing_body_fn: lookup(
+                Slot::HttpTypesResourceDropOutgoingBody,
+                "[resource-drop]outgoing-body",
+            )?,
+            response_outparam_set_fn: lookup(
+                Slot::HttpTypesResponseOutparamSet,
+                "[static]response-outparam.set",
+            )?,
+            map_set_fn: map_h.set,
+            map_get_fn: map_h.get,
+            user_handler_fn: user_handler_wasm_idx,
+        };
+        codes.function(&super::wasip2_http_server::emit_aver_http_handle(
+            &indices, &helpers,
+        ));
+    } else {
+        let mut start = Function::new([]);
+        if let Some(idx) = main_idx {
+            let main_idx_wasm = import_count + 1 + (idx as u32);
+            let main_returns_value = !fn_defs[idx].return_type.trim().eq("Unit");
+            start.instruction(&Instruction::Call(main_idx_wasm));
+            if main_returns_value {
+                start.instruction(&Instruction::Drop);
+            }
         }
+        if start_returns_i32 {
+            start.instruction(&Instruction::I32Const(0));
+        }
+        start.instruction(&Instruction::End);
+        codes.function(&start);
     }
-    if start_returns_i32 {
-        start.instruction(&Instruction::I32Const(0));
-    }
-    start.instruction(&Instruction::End);
-    codes.function(&start);
 
     for (i, fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);

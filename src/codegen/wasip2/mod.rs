@@ -47,4 +47,5 @@ pub use effect_check::{
     UnsupportedEffect, UnsupportedReason, check_supported_effects, render_errors,
 };
 pub use error::Wasip2Error;
+pub use wit::emit_world_wit;
 pub use wrap::{Wasip2World, compile_to_component};

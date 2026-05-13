@@ -175,6 +175,23 @@ pub(super) fn emit_dotted_builtin(
         return Ok(());
     }
 
+    // `HttpServer.listen(port, handler)` / `.listenWith(port, ctx,
+    // handler)` — entry-point marker, not a real call. On
+    // `--target wasip2 --world wasi:http/proxy` the wasm-gc emitter
+    // synthesises a `wasi:http/incoming-handler.handle` export that
+    // the host (`wasmtime serve` etc.) calls per request, so `main`
+    // itself is never invoked at runtime. Skip argument emission and
+    // emit no instruction: `main: Unit` expects an empty stack and
+    // that's exactly what's produced. The `port` arg is structurally
+    // present in source (typechecker contract) but unused at codegen
+    // time — the host's `--http=:N` flag binds the socket. Other
+    // backends (VM, wasm-gc + AverBridge) keep the call meaningful;
+    // this short-circuit only fires for wasm-gc-based emits which
+    // don't actually call `main`.
+    if parent == "HttpServer" && matches!(method, "listen" | "listenWith") {
+        return Ok(());
+    }
+
     match dotted.as_str() {
         // Float.fromInt(Int) -> Float
         "Float.fromInt" => {

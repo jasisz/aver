@@ -3489,6 +3489,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
             module_root_override,
             world,
             optimize,
+            handler,
         );
         return;
     }
@@ -3735,6 +3736,7 @@ fn cmd_compile_wasip2(
     module_root_override: Option<&str>,
     world: super::cli::Wasip2World,
     optimize: Option<super::cli::WasmOptMode>,
+    handler: Option<&str>,
 ) {
     #[cfg(not(feature = "wasip2"))]
     {
@@ -3745,6 +3747,7 @@ fn cmd_compile_wasip2(
             module_root_override,
             world,
             optimize,
+            handler,
         );
         eprintln!(
             "{}",
@@ -3853,14 +3856,57 @@ fn cmd_compile_wasip2(
         // to the same `emit_module_with` body as `--target wasm-gc`),
         // but every later commit in this phase changes the bytes
         // produced under `TargetMode::Wasip2`.
-        let core_bytes =
+        //
+        // `--world wasi:http/proxy` (0.19 Phase 3) splits off here:
+        // the `--handler X` flag (same flag the wasm-gc + Cloudflare
+        // path uses) names the user fn that becomes the proxy
+        // handler. No magic detection from `main` — the source can
+        // still have `HttpServer.listen(port, handler)` in main for
+        // `aver run` local execution (VM honours it; codegen lowers
+        // it to a no-op on wasip2 proxy), but the codegen path
+        // reads the handler identity from the flag alone.
+        let core_bytes = if matches!(world, super::cli::Wasip2World::HttpProxy) {
+            let handler_name = handler.unwrap_or_else(|| {
+                eprintln!(
+                    "{}",
+                    "--world wasi:http/proxy requires --handler <fn> naming the user fn \
+                     with signature Fn(HttpRequest) -> HttpResponse. Same flag the wasm-gc + \
+                     Cloudflare path uses; pick whatever fn is your request handler."
+                        .red()
+                );
+                process::exit(1);
+            });
+            match wasm_gc::compile_to_wasm_gc_for_wasip2_with_handler(
+                &items,
+                result.analysis.as_ref(),
+                handler_name,
+            ) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("{}", format!("{e}").red());
+                    process::exit(1);
+                }
+            }
+        } else {
+            if handler.is_some() {
+                eprintln!(
+                    "{}",
+                    "--handler is only meaningful with --world wasi:http/proxy on \
+                     `--target wasip2` (the proxy world's `incoming-handler.handle` \
+                     export needs a handler fn name). Drop the flag for the default \
+                     `wasi:cli/command` world."
+                        .red()
+                );
+                process::exit(1);
+            }
             match wasm_gc::compile_to_wasm_gc_for_wasip2(&items, result.analysis.as_ref()) {
                 Ok(b) => b,
                 Err(e) => {
                     eprintln!("{}", format!("{e}").red());
                     process::exit(1);
                 }
-            };
+            }
+        };
 
         let world_codegen = match world {
             super::cli::Wasip2World::CliCommand => wasip2_codegen::Wasip2World::CliCommand,
