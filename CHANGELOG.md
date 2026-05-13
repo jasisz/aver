@@ -2,7 +2,9 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.19.0 (unreleased)
+## 0.19.0 "Echo" (2026-05-13)
+
+> _Aver speaks HTTP both ways now — same source can call out as a client and answer back as a server, the same `.component.wasm` runs on Cranelift and V8._
 
 ### Added
 - **HTTP client on `--target wasip2`.** All six methods — `Http.get`, `Http.head`, `Http.delete`, `Http.post`, `Http.put`, `Http.patch` — now compile and run as components. Response headers surface as `Map<String, List<String>>`; multi-value headers (e.g. `Set-Cookie`) keep server emit order. Failure messages name the wasi:http error variant (`http: connection-refused`, `http: DNS-timeout`, …) instead of a generic string.
