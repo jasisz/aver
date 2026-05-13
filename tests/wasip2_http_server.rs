@@ -50,9 +50,11 @@ fn wasmtime_serve_supported() -> bool {
 }
 
 /// Compile the Aver source at `src_path` into a `.component.wasm`
-/// under `dir`. Returns the absolute path of the produced
-/// component.
-fn compile_proxy(dir: &Path, src_path: &Path, stem: &str) -> PathBuf {
+/// under `dir`. `handler` names the user fn (signature `(HttpRequest)
+/// -> HttpResponse`) the proxy export wraps — passed via the
+/// `--handler` flag, same way the wasm-gc + Cloudflare path takes
+/// its fetch handler.
+fn compile_proxy(dir: &Path, src_path: &Path, stem: &str, handler: &str) -> PathBuf {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let out = Command::new(aver_bin)
         .current_dir(dir)
@@ -62,6 +64,8 @@ fn compile_proxy(dir: &Path, src_path: &Path, stem: &str) -> PathBuf {
         .arg("wasip2")
         .arg("--world")
         .arg("wasi:http/proxy")
+        .arg("--handler")
+        .arg(handler)
         .arg("-o")
         .arg(dir)
         .arg("--name")
@@ -70,7 +74,7 @@ fn compile_proxy(dir: &Path, src_path: &Path, stem: &str) -> PathBuf {
         .expect("aver compile to launch");
     assert!(
         out.status.success(),
-        "aver compile --target wasip2 --world wasi:http/proxy failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
+        "aver compile --target wasip2 --world wasi:http/proxy --handler {handler} failed (exit {:?})\nstdout:\n{}\nstderr:\n{}",
         out.status.code(),
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
@@ -143,16 +147,20 @@ fn http_server_echoes_request_body() {
         return;
     }
     let dir = tempdir("echo");
+    // `main` still wires `HttpServer.listen` so the same source runs
+    // under `aver run` (VM honours the call); the wasip2 codegen
+    // lowers the call to a no-op and reads the handler identity
+    // from `--handler echo_handler` instead.
     let src = r#"
-fn handler(req: HttpRequest) -> HttpResponse
+fn echo_handler(req: HttpRequest) -> HttpResponse
     HttpResponse(status = 200, body = "echo: {req.body}", headers = {})
 
 fn main() -> Unit
     ! [HttpServer.listen]
-    HttpServer.listen(0, handler)
+    HttpServer.listen(0, echo_handler)
 "#;
     let fixture = write_fixture(&dir, "echo.av", src);
-    let component = compile_proxy(&dir, &fixture, "echo");
+    let component = compile_proxy(&dir, &fixture, "echo", "echo_handler");
 
     let Some((mut server, port)) = spawn_wasmtime_serve(&component) else {
         eprintln!("wasmtime serve failed to start — skipping test");
@@ -202,7 +210,7 @@ fn http_server_surfaces_method_path_and_query() {
     // Handler dumps method + path + query into the body so the
     // assertions can compare against the request shape end-to-end.
     let src = r#"
-fn handler(req: HttpRequest) -> HttpResponse
+fn intro_handler(req: HttpRequest) -> HttpResponse
     HttpResponse(
         status = 201,
         body = "m={req.method} p={req.path} q={req.query}",
@@ -211,10 +219,10 @@ fn handler(req: HttpRequest) -> HttpResponse
 
 fn main() -> Unit
     ! [HttpServer.listen]
-    HttpServer.listen(0, handler)
+    HttpServer.listen(0, intro_handler)
 "#;
     let fixture = write_fixture(&dir, "intro.av", src);
-    let component = compile_proxy(&dir, &fixture, "intro");
+    let component = compile_proxy(&dir, &fixture, "intro", "intro_handler");
 
     let Some((mut server, port)) = spawn_wasmtime_serve(&component) else {
         eprintln!("wasmtime serve failed to start — skipping test");
@@ -283,7 +291,7 @@ fn first_or(items: List<String>, dflt: String) -> String
         [] -> dflt
         [head, ..rest] -> head
 
-fn handler(req: HttpRequest) -> HttpResponse
+fn hdr_handler(req: HttpRequest) -> HttpResponse
     foo: String = match Map.get(req.headers, "x-foo")
         Option.Some(values) -> first_or(values, "missing")
         Option.None -> "absent"
@@ -295,10 +303,10 @@ fn handler(req: HttpRequest) -> HttpResponse
 
 fn main() -> Unit
     ! [HttpServer.listen]
-    HttpServer.listen(0, handler)
+    HttpServer.listen(0, hdr_handler)
 "#;
     let fixture = write_fixture(&dir, "hdr.av", src);
-    let component = compile_proxy(&dir, &fixture, "hdr");
+    let component = compile_proxy(&dir, &fixture, "hdr", "hdr_handler");
 
     let Some((mut server, port)) = spawn_wasmtime_serve(&component) else {
         eprintln!("wasmtime serve failed to start — skipping test");
