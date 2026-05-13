@@ -282,6 +282,24 @@ To create a new pure namespace, follow the pattern in `src/types/char.rs` or `sr
 - This is especially AI-friendly: `verify` cases are declarative, reviewable, and reusable across sessions.
 - Limits (still real): `verify` alone does not replace profiling, latency analysis, or debugging nondeterministic external systems.
 
+## Releases: `tools/release.py` is the only path
+
+Run `python3 tools/release.py X.Y.Z` (add `--dry-run` first for a sanity pass). The script is the single source of truth for the full release flow — it covers everything below in the right order, idempotently:
+
+0. Editor grammar sync check (`editors/sync.py --check`)
+1. Cascade-bump `aver-rt` / `aver-memory` / `aver-lang` / `aver-lsp` Cargo.toml + cross-crate dep pins; the cascade logic honours `PUBLISH_BLOCKERS` so `cargo publish` doesn't hit a resolution conflict
+2. Bump the `tools/website/index.html` hero version badge
+3. Regenerate self-host (`self_hosted/main.av` → `src/self_host/`)
+4. Regenerate playground WASM artifacts (`tools/website/rebuild_playground.py`)
+5. Verify (fmt + workspace clippy + aver-lang+wasm clippy + cargo test + bench scenarios + edge `--preset cloudflare` compile + `wasm-tools validate`)
+5.5. Stamp the CHANGELOG header (`## X.Y.Z "Codename" (unreleased)` → `## X.Y.Z "Codename" — YYYY-MM-DD`)
+6. `cargo publish` each changed crate in CRATE_ORDER
+7. Git add + commit + tag + push + `gh release create` with notes from the CHANGELOG section
+
+Flags worth knowing: `--dry-run`, `--skip-publish`, `--skip-playground`, `--skip-self-host`, `--deploy-edge` (the last one rebuilds + deploys `tools/edge` to Cloudflare and curl-smokes `/`, `/api`, `/fractal`).
+
+**Don't bump versions or tag by hand.** The 0.19.0 "Echo" release was attempted manually first, which skipped the cascade bump, website badge, self-host regen, playground regen, the verify gates beyond unit tests, `cargo publish`, and `gh release create`. The lesson: even when individual steps feel obvious in isolation, the script's idempotent design + correct ordering is the only thing that catches the dependency chain at the right place.
+
 ## Agreed direction: file size and splitting policy (2026-02-26)
 
 - Any Rust file above 500 lines must be reviewed for splitting during normal development.
