@@ -1266,15 +1266,15 @@ pub(super) fn emit_aver_http_handle(
     f.instruction(&Instruction::Call(h.outgoing_response_new_fn));
     f.instruction(&Instruction::LocalSet(l_out_response));
 
-    // set-status-code(resp, status u16). Drop the result tag (Aver
-    // already validated the int upstream; an invalid code surfaces
-    // as a host error later).
+    // set-status-code(resp, status u16). Drop the result tag.
     f.instruction(&Instruction::LocalGet(l_out_response));
-    f.instruction(&Instruction::LocalGet(l_ob_off)); // status (i32, from i64 wrap)
+    f.instruction(&Instruction::LocalGet(l_ob_off)); // status i32 (from i64 wrap)
     f.instruction(&Instruction::Call(h.set_status_code_fn));
     f.instruction(&Instruction::Drop);
 
     // ── 13. outgoing-response.body → outgoing-body. retptr 8 bytes.
+    //    The body MUST be obtained BEFORE response-outparam.set
+    //    consumes the response handle.
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(4));
@@ -1297,7 +1297,35 @@ pub(super) fn emit_aver_http_handle(
     f.instruction(&Instruction::I32Load(mem4_o4));
     f.instruction(&Instruction::LocalSet(l_ob_handle));
 
-    // outgoing-body.write → output-stream. retptr 8 bytes.
+    // ── 14. response-outparam.set(outparam, Ok(out_response))
+    //    BEFORE writing body bytes. This tells the host to start
+    //    streaming the response immediately, so subsequent
+    //    blocking-write-and-flush calls drain into the network as
+    //    we write — without this, wasmtime's internal output
+    //    buffer fills at ~4 KB and the second `blocking-write-
+    //    and-flush` call deadlocks waiting for a consumer that
+    //    doesn't exist yet. Outparam + out_response are both
+    //    consumed by `set`; we keep `out_body` and write through
+    //    its output-stream below.
+    //
+    //    9-position canonical-ABI flat lowering — see the slot
+    //    doc. Ok carries the response handle at position 1; the
+    //    other six padding values are zero (their canonical types
+    //    still drive the call signature though, hence the explicit
+    //    `I64Const(0)` at position 3 where the error-code variant's
+    //    option<u64> joined the flat layout).
+    f.instruction(&Instruction::LocalGet(p_outparam));
+    f.instruction(&Instruction::I32Const(0)); // result tag = Ok
+    f.instruction(&Instruction::LocalGet(l_out_response));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::Call(h.response_outparam_set_fn));
+
+    // ── 15. outgoing-body.write → output-stream. retptr 8 bytes.
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(4));
@@ -1324,7 +1352,7 @@ pub(super) fn emit_aver_http_handle(
     f.instruction(&Instruction::I32Load(mem4_o4));
     f.instruction(&Instruction::LocalSet(l_ob_stream));
 
-    // Marshal response body into LM, chunked write.
+    // ── 16. Marshal response body into LM, chunked write.
     f.instruction(&Instruction::LocalGet(l_resp_struct));
     f.instruction(&Instruction::StructGet {
         struct_type_index: resp_idx,
@@ -1336,8 +1364,8 @@ pub(super) fn emit_aver_http_handle(
     super::wasip2_helpers::emit_chunked_blocking_write(
         &mut f,
         l_ob_body_len,
-        l_ob_off, // reused as chunk offset; status int held in this slot
-        // until set-status-code consumed it, free now.
+        l_ob_off, // reused as chunk offset; status int held in this
+        // slot until set-status-code consumed it, free now.
         h.blocking_write_fn,
         &|f| {
             f.instruction(&Instruction::LocalGet(l_ob_stream));
@@ -1352,12 +1380,16 @@ pub(super) fn emit_aver_http_handle(
         None,
     );
 
-    // Drop output-stream.
+    // ── 17. Drop output-stream.
     f.instruction(&Instruction::LocalGet(l_ob_stream));
     f.instruction(&Instruction::Call(h.drop_output_stream_fn));
 
-    // outgoing-body.finish(body, None, retptr) — transfers body
-    // ownership. retptr 40 bytes align 8 (error-code's option<u64>).
+    // ── 18. outgoing-body.finish(body, None, retptr) — transfers
+    //    body ownership. retptr 40 bytes align 8 (error-code's
+    //    option<u64>). Result tag ignored — by this point the
+    //    response head + body are already committed via response-
+    //    outparam.set; there's no way to surface a late finish
+    //    error past that boundary.
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(8));
@@ -1370,27 +1402,8 @@ pub(super) fn emit_aver_http_handle(
     f.instruction(&Instruction::I32Const(0)); // trailers handle (unused)
     f.instruction(&Instruction::LocalGet(l_ob_finish_retptr));
     f.instruction(&Instruction::Call(h.outgoing_body_finish_fn));
-    // Result tag ignored — body bytes are already on the wire, the
-    // host writes any error-code into retptr and we have no way to
-    // surface it past this point (response-outparam.set already
-    // committed to Ok). v1 PoC trade-off.
 
-    // ── 14. response-outparam.set(outparam, Ok(out_response)).
-    //    9-position canonical-ABI lowering — see slot docs. All
-    //    padding positions are zero; only `tag=0` and `pos1=handle`
-    //    carry semantics for Ok.
-    f.instruction(&Instruction::LocalGet(p_outparam));
-    f.instruction(&Instruction::I32Const(0)); // result tag = Ok
-    f.instruction(&Instruction::LocalGet(l_out_response)); // pos 1 = Ok handle
-    f.instruction(&Instruction::I32Const(0)); // pos 2
-    f.instruction(&Instruction::I64Const(0)); // pos 3 (i64)
-    f.instruction(&Instruction::I32Const(0)); // pos 4
-    f.instruction(&Instruction::I32Const(0)); // pos 5
-    f.instruction(&Instruction::I32Const(0)); // pos 6
-    f.instruction(&Instruction::I32Const(0)); // pos 7
-    f.instruction(&Instruction::Call(h.response_outparam_set_fn));
-
-    // ── 15. Drop incoming-request — all child resources released.
+    // ── 19. Drop incoming-request — all child resources released.
     f.instruction(&Instruction::LocalGet(p_req));
     f.instruction(&Instruction::Call(h.drop_incoming_request_fn));
 
