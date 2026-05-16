@@ -1471,19 +1471,26 @@ pub(super) fn emit_module_with(
     };
 
     // Phase 4.2.1 (0.20) — `__rt_tcp_connect(host: ref string, port: i64)
-    // -> ref Result<Tcp.Connection, String>`. Stub body returns the
-    // placeholder error string; real DNS / socket / connect pipeline
-    // lands in Phase 4.2.2+. Gated on the String slot + the
-    // `Result<Tcp.Connection,String>` factory slot — both populated
-    // by `TypeRegistry` whenever the program declares `! [Tcp.connect]`.
+    // -> ref Result<Tcp.Connection, String>`. Body has a lazy
+    // network-handle init prolog (Phase 4.2.2a); the remaining tail
+    // is still the stub Result.Err. Real DNS / socket / connect
+    // pipeline lands in Phase 4.2.2b+. Gated on the String slot +
+    // `Result<Tcp.Connection,String>` factory + the network-handle
+    // global + the `instance-network` import — all populated by the
+    // Phase 4.1a/b wireup whenever the program declares
+    // `! [Tcp.connect]`.
     let tcp_connect: Option<super::wasip2_tcp::TcpConnectIndices> = if let (
         Some(string_idx),
         Some(result_idx),
         Some(stub_seg),
+        Some(_instance_network_fn),
     ) = (
         registry.string_array_type_idx,
         registry.result_type_idx("Result<Tcp.Connection,String>"),
         registry.string_literal_segment(b"tcp: connect not yet implemented"),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+        ),
     ) {
         let r_ref = ValType::Ref(wasm_encoder::RefType {
             nullable: true,
@@ -3247,7 +3254,31 @@ pub(super) fn emit_module_with(
                 )
             })?
             .fn_idx;
-        let helpers = super::wasip2_tcp::TcpConnectHelperFns { result_err_fn };
+        let instance_network_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+            )
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_connect emit requires SocketsInstanceNetworkInstanceNetwork fn idx"
+                        .into(),
+                )
+            })?;
+        let network_handle_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.network_handle)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_connect emit requires network_handle global \
+                     (Phase 4.1b wireup gate)"
+                        .into(),
+                )
+            })?;
+        let helpers = super::wasip2_tcp::TcpConnectHelperFns {
+            result_err_fn,
+            instance_network_fn,
+            network_handle_global,
+        };
         codes.function(&super::wasip2_tcp::emit_tcp_connect_stub(tc, &helpers));
     }
     if let Some(e) = &env_get_lookup {
