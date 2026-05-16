@@ -484,6 +484,113 @@ pub(super) fn emit_module_with(
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                     }
+                    // ── Phase 4 / 0.20 "Pulse" — wasi:sockets/* ──────
+                    //
+                    // The Tcp.* surface shares one connect pipeline,
+                    // one read loop, one write loop, plus the
+                    // timeout-race for ping. Each effect registers
+                    // exactly the slots its lowering needs; the union
+                    // covers the whole choreography. Reuses from the
+                    // HTTP path: input-stream/output-stream blocking
+                    // read/write + drops, io/poll.poll + drop pollable,
+                    // monotonic-clock subscribe-duration (ping only).
+                    EffectName::TcpConnect => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+                        );
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpStartConnect);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpFinishConnect);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpSubscribe);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
+                    }
+                    EffectName::TcpWriteLine => {
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                    }
+                    EffectName::TcpReadLine => {
+                        wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
+                    }
+                    EffectName::TcpClose => {
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
+                        wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                    }
+                    EffectName::TcpSend => {
+                        // Same union as connect + write + read + close,
+                        // since `__rt_tcp_send` inlines the full pipeline.
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+                        );
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpStartConnect);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpFinishConnect);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpSubscribe);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
+                        wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
+                    }
+                    EffectName::TcpPing => {
+                        // Connect-with-timeout — racing the connect
+                        // pollable against `subscribe-duration` via
+                        // a two-element `poll`. Adds the monotonic
+                        // clock slot on top of the connect set.
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress);
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+                        );
+                        wasip2_imports.register(
+                            Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+                        );
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpStartConnect);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpSubscribe);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::ClocksMonotonicSubscribeDuration);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
+                        wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
+                    }
                     _ => {} // unreachable; `lowers_on_wasip2` enumerates the wired set.
                 }
             }
@@ -3205,6 +3312,52 @@ fn emit_user_types(
             idx,
             mk_array(wasm_encoder::FieldType {
                 element_type: wasm_encoder::StorageType::I8,
+                mutable: true,
+            }),
+        ));
+    }
+
+    // Phase 4 (0.20) — TCP connection pool slot type + array type.
+    // `$tcp_slot` carries four mutable i32 handles per connection
+    // (socket / in_stream / out_stream / in_use); `$tcp_pool` is the
+    // `(array (mut $tcp_slot))` that holds 256 of them. The slot
+    // struct is emitted first so the array element type can name it
+    // by index without a forward reference.
+    if let Some(slot_idx) = registry.tcp_slot_type_idx {
+        entries.push((
+            slot_idx,
+            mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
+            ]),
+        ));
+    }
+    if let Some(pool_idx) = registry.tcp_pool_type_idx {
+        let slot_idx = registry
+            .tcp_slot_type_idx
+            .expect("tcp_pool_type_idx allocated without matching tcp_slot_type_idx");
+        let slot_ref = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(slot_idx),
+        });
+        entries.push((
+            pool_idx,
+            mk_array(wasm_encoder::FieldType {
+                element_type: wasm_encoder::StorageType::Val(slot_ref),
                 mutable: true,
             }),
         ));

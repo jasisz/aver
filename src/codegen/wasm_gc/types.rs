@@ -127,6 +127,17 @@ pub(super) struct TypeRegistry {
     /// addressing layout uses `keys[i] == null` as the empty marker,
     /// which only works when keys are emitted as ref values.
     pub(super) non_newtypable_keys: std::collections::HashSet<String>,
+    /// Phase 4 (0.20) — `(struct (mut i32 socket) (mut i32 in_stream)
+    /// (mut i32 out_stream) (mut i32 in_use))` slot type for an entry
+    /// in the TCP connection pool. `None` when no `Tcp.*` effect is
+    /// declared in any fn. The pool itself (`tcp_pool_type_idx`) is
+    /// an `(array (mut $tcp_slot))` containing 256 of these.
+    pub(super) tcp_slot_type_idx: Option<u32>,
+    /// Phase 4 (0.20) — `(array (mut $tcp_slot))` array type carrying
+    /// 256 connection slots. `None` when no `Tcp.*` effect is
+    /// declared. The runtime allocates the array lazily on first
+    /// `Tcp.connect` call via `array.new_default` against this idx.
+    pub(super) tcp_pool_type_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -246,6 +257,28 @@ impl TypeRegistry {
             Some(idx)
         } else {
             None
+        };
+
+        // Phase 4 (0.20) — TCP connection pool type slots. `$tcp_slot`
+        // is a 4-field struct (socket / in_stream / out_stream / in_use
+        // handles, all i32), and `$tcp_pool` is the `(array (mut $tcp_slot))`
+        // that holds 256 of them. Allocated whenever a fn declares any
+        // `Tcp.*` effect; effect-target wiring (whether to actually emit
+        // the connection pipeline) lives in module.rs. Both slots land
+        // adjacent so the array type can reference the slot type without
+        // crossing a rec-group boundary.
+        let needs_tcp = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node.starts_with("Tcp.")),
+            _ => false,
+        });
+        let (tcp_slot_type_idx, tcp_pool_type_idx) = if needs_tcp {
+            let slot_idx = next_idx;
+            next_idx += 1;
+            let pool_idx = next_idx;
+            next_idx += 1;
+            (Some(slot_idx), Some(pool_idx))
+        } else {
+            (None, None)
         };
 
         // Discover monomorphized `Vector<T>` instantiations. Walk fn
@@ -798,6 +831,8 @@ impl TypeRegistry {
             string_literals,
             string_literal_idx,
             non_newtypable_keys,
+            tcp_slot_type_idx,
+            tcp_pool_type_idx,
         }
     }
 

@@ -670,13 +670,6 @@ pub(super) enum Wasip2ImportSlot {
     ///   in a wasm global, mirroring `disk_preopen_handle`.
     /// Canonical-ABI signature: `() -> i32`.
     SocketsInstanceNetworkInstanceNetwork,
-    /// `wasi:sockets/network.[resource-drop]network: func(this: network)
-    ///   -> ()`. Phase 4 never invokes this (network is cached for
-    /// program lifetime), but we declare the import so module
-    /// validation accepts a hypothetical drop helper. Reserved for
-    /// future shutdown plumbing.
-    /// Canonical-ABI signature: `(handle: i32) -> ()`.
-    SocketsNetworkResourceDropNetwork,
     /// `wasi:sockets/ip-name-lookup.resolve-addresses:
     ///   func(network: borrow<network>, name: string)
     ///   -> result<resolve-address-stream, error-code>`.
@@ -975,9 +968,6 @@ impl Wasip2ImportSlot {
                 "wasi:sockets/instance-network@0.2.4",
                 "instance-network",
             ),
-            Wasip2ImportSlot::SocketsNetworkResourceDropNetwork => {
-                ("wasi:sockets/network@0.2.4", "[resource-drop]network")
-            }
             Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses => (
                 "wasi:sockets/ip-name-lookup@0.2.4",
                 "resolve-addresses",
@@ -1262,8 +1252,6 @@ impl Wasip2ImportSlot {
             // ── wasi:sockets/* (Phase 4 / 0.20). ───────────────────
             // `instance-network() -> network` — no params.
             Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork => Vec::new(),
-            // `[resource-drop]network(this)` — single i32 handle.
-            Wasip2ImportSlot::SocketsNetworkResourceDropNetwork => vec![ValType::I32],
             // `resolve-addresses(network, name) -> result<stream, ec>` —
             // network handle + (ptr, len) for the name string + retptr.
             Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses => vec![
@@ -1418,8 +1406,7 @@ impl Wasip2ImportSlot {
             | Wasip2ImportSlot::SocketsTcpFinishConnect
             | Wasip2ImportSlot::SocketsTcpShutdown => Vec::new(),
             // Resource drops — no return.
-            Wasip2ImportSlot::SocketsNetworkResourceDropNetwork
-            | Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream
+            Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream
             | Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket => Vec::new(),
         }
     }
