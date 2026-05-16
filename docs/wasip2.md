@@ -88,6 +88,28 @@ The component the wasm-gc backend emits uses the WebAssembly **wasm-gc** + **tai
 
 The component itself is portable: the only host requirement is "WASI 0.2 wasi:http/proxy host with wasm-gc + tail-call proposals on". Future Aver work to widen host coverage waits on host updates, not codegen changes.
 
+## Running `Tcp.*` programs (Phase 4.2.x in flight, 0.20)
+
+`Tcp.*` programs compile to the same `wasi:cli/command` world as the other CLI effects, but the runtime additionally needs wasi-sockets imports enabled. With `wasmtime run`:
+
+```
+wasmtime run \
+    -W gc=y -W tail-call=y \
+    -S inherit-network=y \
+    -S allow-ip-name-lookup=y \
+    -S tcp=y \
+    component.wasm
+```
+
+| Flag | Why |
+|---|---|
+| `-W gc=y -W tail-call=y` | Engine proposals — same requirement as the HTTP/proxy world. |
+| `-S inherit-network=y` | Grants the guest access to the host's network stack (otherwise every wasi-sockets call returns the default-deny error). |
+| `-S allow-ip-name-lookup=y` | Enables `wasi:sockets/ip-name-lookup`. Required even for IP-literal hosts like `"127.0.0.1"` — without it `resolve-addresses` rejects every input. |
+| `-S tcp=y` | Enables `wasi:sockets/tcp`. Without it `create-tcp-socket` traps before the connect can start. |
+
+`-S udp=y` is intentionally not needed: Aver's `Tcp.*` does not touch wasi:sockets/udp. Embedded wasmtime hosts get the same capability via `WasiCtxBuilder::inherit_network()` + `allow_ip_name_lookup(true)` + `socket_addr_check(...)`.
+
 ## `aver compile --target wasip2 -o out`
 
 Produces:
@@ -123,7 +145,8 @@ Aver effects lower directly to WASI 0.2 imports. The mapping is fixed per effect
 | `Http.{get, head, delete, post, put, patch}` | `wasi:http/outgoing-handler.handle` + the future-incoming-response / incoming-response choreography (Phase 2 / 0.19 shipped). Method tag selects `outgoing-request.set-method`. Body-bearing verbs marshal a request body via `request.body` + `outgoing-body.write` + chunked `blocking-write-and-flush` + `outgoing-body.finish`. Headers (request and response) lower as `Map<String, List<String>>`; multi-valued field names preserve server emit order. `error-code` variant discriminants surface as per-variant `http: <name>` Err messages (39 cases). |
 | `HttpServer.listen` | `wasi:http/incoming-handler.handle` export (Phase 3 / 0.19 shipped). Requires `--world wasi:http/proxy --handler <fn>`. The handler wrapper decodes the host-supplied incoming-request into an Aver `HttpRequest` (method via the 10-case variant, path-with-query split into path/query, headers iteration as `Map<String, List<String>>`, body via `incoming-body.stream` + drained `input-stream.blocking-read`), runs the user's `fn(HttpRequest) -> HttpResponse`, marshals the result into an outgoing-response (`outgoing-response` constructor + `set-status-code` + body via `outgoing-body.write` + chunked `blocking-write-and-flush` + `outgoing-body.finish`), and calls `response-outparam.set`. `Content-Length` is synthesised from the response body byte count. The `port` argument to `HttpServer.listen` in source is honoured by the VM but ignored by wasip2 codegen — the host's listener flag (`wasmtime serve --addr=:N` etc.) binds the socket. |
 | `HttpServer.listenWith` | **Compile-rejected** — deferred one iteration; requires per-instance wasm-global context plumbing. |
-| `Tcp.*` | **Compile-rejected** — out of 0.19 client scope (Phase 2.1 / 0.19+) |
+| `Tcp.connect` | Partial (Phase 4.2 / 0.20 in flight) — `__rt_tcp_connect` lazy-fetches the network handle from `wasi:sockets/instance-network.instance-network`, marshals the host name into LM, calls `wasi:sockets/ip-name-lookup.resolve-addresses`, and on resolver-Err surfaces `Result.Err("tcp: dns resolve failed")`. The Ok arm drops the resolved-address stream and falls through to a placeholder `Result.Err("tcp: connect not yet implemented")` until the resolve loop + `start/finish-connect` pipeline lands. |
+| `Tcp.{writeLine, readLine, send, close, ping}` | **Compile-rejected** — graduating with their helpers in Phase 4.3 (close), 4.4 (writeLine / readLine), 4.5 (send / ping). |
 | `Terminal.*` (12 methods) | **Compile-rejected** — WASI 0.2 has no raw/cooked-mode operations |
 
 ### Why `Terminal.*` / `Env.set` are rejected, not stubbed
@@ -134,7 +157,8 @@ In 0.18:
 
 - **`Terminal.*`** — WASI 0.2 has `wasi:cli/terminal-input` and `terminal-output` as TTY signals, but no standardised raw/cooked-mode operations (`set-raw-mode`, `set-echo`, `get-window-size`). The capability is structurally absent.
 - **`Env.set`** — WASI 0.2 environment is read-only. There is no host implementation that could ever satisfy a write. Silent no-op would be a trap: source declares "I set X" and the program runs as if it succeeded while the environment is unchanged.
-- **`Tcp.*`, `HttpServer.listenWith`** — out of 0.19 scope by deliberate design (Phase 2.1 / `listenWith` deferred one iteration). Same compile-time `target-effect-unsupported` shape so the user sees one consistent error type rather than a mix of stubs and rejects.
+- **`Tcp.{writeLine, readLine, send, close, ping}`** — out of 0.20-Phase-4.2.x scope; graduate alongside their helpers in Phase 4.3+. `Tcp.connect` itself graduated in Phase 4.2.1 (stub Err body) and gains real DNS/connect logic incrementally through Phase 4.2.x. Same compile-time `target-effect-unsupported` shape for the still-pending five so the user sees one consistent error type rather than a mix of stubs and rejects.
+- **`HttpServer.listenWith`** — deferred one iteration; requires per-instance wasm-global context plumbing.
 
 (Earlier 0.18 betas grouped `Time.sleep` with the structural rejects on the assumption that the pollable model was out of scope. That was a scoping mistake — pollables can be wrapped *inside* a single helper without leaking to source. Phase 1.4c shipped `__rt_time_sleep` doing exactly that, so `Time.sleep` lowers natively now.)
 
