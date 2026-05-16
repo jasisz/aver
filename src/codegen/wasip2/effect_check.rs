@@ -149,7 +149,7 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     }
     if effect.starts_with("Tcp.") {
         return Some(UnsupportedReason::OutOfRelease {
-            phase: "Phase 2 / 0.19",
+            phase: "Phase 4 / 0.20",
         });
     }
     // `HttpServer.listen` graduated in 0.19 Phase 3: the wasm-gc
@@ -239,7 +239,9 @@ mod tests {
     fn classifies_out_of_release_rejects() {
         // Tcp.* and HttpServer.listenWith remain rejected as
         // out-of-release. HttpServer.listen graduated in 0.19
-        // Phase 3 — see classify().
+        // Phase 3 — see classify(). Tcp.* graduation lands in 0.20
+        // Phase 4 (foundation slots in Wasip2ImportSlot already
+        // wired; helper bodies + call-site lowering still pending).
         assert!(matches!(
             classify("Tcp.connect"),
             Some(UnsupportedReason::OutOfRelease { .. })
