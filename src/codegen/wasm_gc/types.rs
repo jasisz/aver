@@ -788,6 +788,20 @@ impl TypeRegistry {
             });
         }
 
+        // Phase 4.2.1 (0.20) — register the placeholder error
+        // message the `__rt_tcp_connect` stub returns until the real
+        // DNS/connect/finish pipeline lands. Gated on `needs_tcp`
+        // (any fn declares a Tcp.* effect) so non-TCP programs don't
+        // carry the literal.
+        if needs_tcp {
+            let bytes = b"tcp: connect not yet implemented".to_vec();
+            string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
+                let idx = string_literals.len() as u32;
+                string_literals.push(bytes);
+                idx
+            });
+        }
+
         // Mark every record/variant used as a `Map<K, *>` key as
         // non-newtypable so it stays a struct ref in the type
         // section — the open-addressing layout's `keys[i] == null`

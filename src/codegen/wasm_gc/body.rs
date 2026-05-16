@@ -466,6 +466,15 @@ pub(super) struct Wasip2Lowering {
     /// when `Http.get` is registered.
     pub(super) http_get_fn_idx: Option<u32>,
 
+    /// Phase 4.2.1 (0.20) — `__rt_tcp_connect(host: ref string,
+    /// port: i64) -> ref Result<Tcp.Connection, String>` helper
+    /// wasm fn idx. `Some(...)` when `Tcp.connect` is registered.
+    /// Phase 4.2.1 ships a stub body that returns
+    /// `Result.Err("tcp: connect not yet implemented")`; the real
+    /// DNS resolve + socket creation + start/finish-connect +
+    /// pool-slot allocation pipeline lands in 4.2.2 → 4.2.5.
+    pub(super) tcp_connect_fn_idx: Option<u32>,
+
     // ── Phase 4 (0.20) — TCP pool globals + GC type slots. ─────
     //
     // All five fields are write-only on Phase 4.1b; the connect /

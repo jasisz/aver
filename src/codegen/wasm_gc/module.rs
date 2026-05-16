@@ -1470,6 +1470,45 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 4.2.1 (0.20) — `__rt_tcp_connect(host: ref string, port: i64)
+    // -> ref Result<Tcp.Connection, String>`. Stub body returns the
+    // placeholder error string; real DNS / socket / connect pipeline
+    // lands in Phase 4.2.2+. Gated on the String slot + the
+    // `Result<Tcp.Connection,String>` factory slot — both populated
+    // by `TypeRegistry` whenever the program declares `! [Tcp.connect]`.
+    let tcp_connect: Option<super::wasip2_tcp::TcpConnectIndices> = if let (
+        Some(string_idx),
+        Some(result_idx),
+        Some(stub_seg),
+    ) = (
+        registry.string_array_type_idx,
+        registry.result_type_idx("Result<Tcp.Connection,String>"),
+        registry.string_literal_segment(b"tcp: connect not yet implemented"),
+    ) {
+        let r_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(result_idx),
+        });
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        types.ty().function([s_ref, ValType::I64], [r_ref]);
+        let fn_type = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(super::wasip2_tcp::TcpConnectIndices {
+            fn_type,
+            fn_idx,
+            string_type_idx: string_idx,
+            stub_err_segment_idx: stub_seg,
+            stub_err_len: b"tcp: connect not yet implemented".len() as u32,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(
@@ -1697,6 +1736,9 @@ pub(super) fn emit_module_with(
     }
     if let Some(h) = &http_get {
         funcs.function(h.fn_type);
+    }
+    if let Some(t) = &tcp_connect {
+        funcs.function(t.fn_type);
     }
     if let Some(e) = &env_get_lookup {
         funcs.function(e.fn_type);
@@ -2000,6 +2042,7 @@ pub(super) fn emit_module_with(
                 disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
                 disk_list_dir_fn_idx: disk_list_dir.as_ref().map(|d| d.fn_idx),
                 http_get_fn_idx: http_get.as_ref().map(|h| h.fn_idx),
+                tcp_connect_fn_idx: tcp_connect.as_ref().map(|t| t.fn_idx),
                 network_handle_global: wasip2_globals.as_ref().and_then(|g| g.network_handle),
                 tcp_pool_global: wasip2_globals.as_ref().and_then(|g| g.tcp_pool),
                 tcp_next_id_global: wasip2_globals.as_ref().and_then(|g| g.tcp_next_id),
@@ -3187,6 +3230,25 @@ pub(super) fn emit_module_with(
             ),
         };
         codes.function(&super::wasip2_http::emit_http_get(hg, &helpers));
+    }
+    // Phase 4.2.1 (0.20) — stub `__rt_tcp_connect` body. Reads the
+    // pre-registered "tcp: connect not yet implemented" data segment,
+    // wraps it via `__rt_result_tcp_connection_string_err`, returns.
+    // No wasi:sockets calls happen here yet; the real DNS / socket /
+    // connect pipeline replaces this body in Phase 4.2.2+.
+    if let Some(tc) = &tcp_connect {
+        let result_err_fn = factory_exports
+            .result_tcp_connection_string_err
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_connect emit requires \
+                     __rt_result_tcp_connection_string_err factory slot"
+                        .into(),
+                )
+            })?
+            .fn_idx;
+        let helpers = super::wasip2_tcp::TcpConnectHelperFns { result_err_fn };
+        codes.function(&super::wasip2_tcp::emit_tcp_connect_stub(tc, &helpers));
     }
     if let Some(e) = &env_get_lookup {
         codes.function(&emit_env_get_lookup(

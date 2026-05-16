@@ -147,6 +147,15 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     ) {
         return None;
     }
+    // Phase 4.2.1 (0.20) graduated `Tcp.connect`. The body is a stub
+    // returning `Result.Err("tcp: connect not yet implemented")`; the
+    // wiring (slot registration, factory hookup, call-site dispatch)
+    // is end-to-end so the real DNS / socket / connect pipeline lands
+    // as a pure body swap in Phase 4.2.2+. The other five Tcp.*
+    // methods stay rejected until their helpers graduate in 4.3+.
+    if effect == "Tcp.connect" {
+        return None;
+    }
     if effect.starts_with("Tcp.") {
         return Some(UnsupportedReason::OutOfRelease {
             phase: "Phase 4 / 0.20",
@@ -237,13 +246,30 @@ mod tests {
 
     #[test]
     fn classifies_out_of_release_rejects() {
-        // Tcp.* and HttpServer.listenWith remain rejected as
-        // out-of-release. HttpServer.listen graduated in 0.19
-        // Phase 3 — see classify(). Tcp.* graduation lands in 0.20
-        // Phase 4 (foundation slots in Wasip2ImportSlot already
-        // wired; helper bodies + call-site lowering still pending).
+        // 0.20 Phase 4.2.1 graduated `Tcp.connect` (stub Err body).
+        // The other five Tcp.* methods stay rejected until their
+        // helpers graduate in Phase 4.3+ (close), 4.4 (writeLine /
+        // readLine), 4.5 (send / ping). `HttpServer.listenWith`
+        // remains the only HTTP-side out-of-release reject.
+        assert!(classify("Tcp.connect").is_none());
         assert!(matches!(
-            classify("Tcp.connect"),
+            classify("Tcp.writeLine"),
+            Some(UnsupportedReason::OutOfRelease { .. })
+        ));
+        assert!(matches!(
+            classify("Tcp.readLine"),
+            Some(UnsupportedReason::OutOfRelease { .. })
+        ));
+        assert!(matches!(
+            classify("Tcp.close"),
+            Some(UnsupportedReason::OutOfRelease { .. })
+        ));
+        assert!(matches!(
+            classify("Tcp.send"),
+            Some(UnsupportedReason::OutOfRelease { .. })
+        ));
+        assert!(matches!(
+            classify("Tcp.ping"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
         assert!(matches!(

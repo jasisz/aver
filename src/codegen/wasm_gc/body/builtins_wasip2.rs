@@ -527,6 +527,41 @@ pub(super) fn emit_disk_exists_wasip2(
 /// expression onto the stack and calls `__rt_disk_read_text`,
 /// which owns the open-at + read-via-stream + blocking-read loop
 /// + per-call resource drops.
+/// Phase 4.2.1 (0.20) — `Tcp.connect(host: String, port: Int) ->
+/// Result<Tcp.Connection, String>` on `--target wasip2`. Pushes
+/// both args onto the stack and calls the `__rt_tcp_connect`
+/// helper, whose stub body currently returns Result.Err. Real
+/// DNS / socket / connect pipeline replaces the helper body in
+/// Phase 4.2.2+ — this dispatcher stays put.
+pub(super) fn emit_tcp_connect_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.connect on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.connect on `--target wasip2` expects 2 args (host: String, port: Int), got {}",
+            args.len()
+        )));
+    }
+    let connect_fn = lowering.tcp_connect_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.connect on wasip2: __rt_tcp_connect fn idx missing — \
+             helper not allocated (check Result<Tcp.Connection,String> + \
+             String slot + stub-error literal registration)"
+                .into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?; // host: ref string
+    emit_expr(func, &args[1], slots, ctx)?; // port: i64
+    func.instruction(&Instruction::Call(connect_fn));
+    Ok(())
+}
+
 pub(super) fn emit_disk_read_text_wasip2(
     func: &mut wasm_encoder::Function,
     args: &[Spanned<Expr>],
