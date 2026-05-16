@@ -110,6 +110,26 @@ pub(super) struct TcpConnectHelperFns {
 /// The host / port args reach the locals (`local 0`, `local 1`) but
 /// the body never reads them yet — that lands in 4.2.2b when the DNS
 /// resolve loop replaces the stub tail.
+/// Single shared retptr / pollable-input scratch block allocated
+/// once per `Tcp.connect` call via `cabi_realloc(0, 0, 4, 64)`.
+/// Cuts the per-call allocator traffic from 3-4 small bumps down
+/// to a single 64-byte chunk and gives later phases stable offsets
+/// to load from. Layout (every entry 16-aligned to leave slack):
+///
+/// | offset | size (B) | purpose                                |
+/// |--------|----------|----------------------------------------|
+/// | +0     | 8        | retptr — `resolve-addresses` result    |
+/// | +16    | 24       | retptr — `resolve-next-address` result |
+/// | +48    | 8        | retptr — `wasi:io/poll.poll` (out list) |
+/// | +56    | 4        | input  — pollable handle for `poll`     |
+///
+/// Phases 4.2.2b1 only touches +0; b2 adds +16, +48, +56. The
+/// block stays live for the entire helper invocation (Aver
+/// `Tcp.connect` is one synchronous call), so no per-step
+/// reallocation.
+const SCRATCH_BLOCK_SIZE: i32 = 64;
+const SCRATCH_OFFSET_RESOLVE: u32 = 0;
+
 pub(super) fn emit_tcp_connect_stub(
     indices: &TcpConnectIndices,
     helpers: &TcpConnectHelperFns,
@@ -117,25 +137,25 @@ pub(super) fn emit_tcp_connect_stub(
     use wasm_encoder::{BlockType, MemArg};
     // Locals beyond the two params (0=host: ref string, 1=port: i64):
     //   local 2 = host_len (i32)         — bytes written by str_to_lm
-    //   local 3 = retptr_resolve (i32)   — 8-byte retptr from cabi_realloc
+    //   local 3 = scratch (i32)          — base of the 64-byte retptr block
     //   local 4 = resolve_stream (i32)   — handle from resolve-addresses Ok
     let mut f = Function::new(vec![(3u32, ValType::I32)]);
     let l_host_len: u32 = 2;
-    let l_retptr_resolve: u32 = 3;
+    let l_scratch: u32 = 3;
     let l_resolve_stream: u32 = 4;
 
-    let mem4 = MemArg {
-        offset: 0,
+    let mem4_resolve = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_RESOLVE),
         align: 2,
         memory_index: 0,
     };
-    let mem4_off4 = MemArg {
-        offset: 4,
+    let mem4_resolve_off4 = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_RESOLVE + 4),
         align: 2,
         memory_index: 0,
     };
-    let mem1 = MemArg {
-        offset: 0,
+    let mem1_resolve = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_RESOLVE),
         align: 0,
         memory_index: 0,
     };
@@ -153,33 +173,36 @@ pub(super) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::GlobalSet(helpers.network_handle_global));
     f.instruction(&Instruction::End);
 
-    // ── Phase 4.2.2b — DNS resolve, Err-path only. ─────────────
+    // ── Phase 4.2.2b — shared scratch block + DNS resolve. ─────
     // Step 1 — marshal host into LM[0..host_len].
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::Call(helpers.str_to_lm_fn));
     f.instruction(&Instruction::LocalSet(l_host_len));
 
-    // Step 2 — allocate an 8-byte retptr block via cabi_realloc.
-    // `cabi_realloc(old=0, old_size=0, align=4, new_size=8) -> ptr`.
+    // Step 2 — allocate the shared 64-byte scratch block via
+    // cabi_realloc (one bump per `Tcp.connect`, reused by every
+    // retptr / pollable-input slot the body needs). Layout
+    // documented next to `SCRATCH_BLOCK_SIZE` above.
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(4));
-    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::I32Const(SCRATCH_BLOCK_SIZE));
     f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
-    f.instruction(&Instruction::LocalSet(l_retptr_resolve));
+    f.instruction(&Instruction::LocalSet(l_scratch));
 
     // Step 3 — resolve-addresses(network, host_ptr=0, host_len, retptr).
+    // retptr lands at scratch[+0..+8].
     f.instruction(&Instruction::GlobalGet(helpers.network_handle_global));
     f.instruction(&Instruction::I32Const(0)); // host_ptr (LM start)
     f.instruction(&Instruction::LocalGet(l_host_len));
-    f.instruction(&Instruction::LocalGet(l_retptr_resolve));
+    f.instruction(&Instruction::LocalGet(l_scratch));
     f.instruction(&Instruction::Call(helpers.resolve_addresses_fn));
 
-    // Step 4 — read the Result tag at retptr+0. On Err, materialise
-    // "tcp: dns resolve failed" and return early; on Ok, fall through
-    // to the (still-stubbed) tail.
-    f.instruction(&Instruction::LocalGet(l_retptr_resolve));
-    f.instruction(&Instruction::I32Load8U(mem1));
+    // Step 4 — read the Result tag at scratch[+0]. On Err,
+    // materialise "tcp: dns resolve failed" and return early; on
+    // Ok, fall through to the (still-stubbed) tail.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_resolve));
     f.instruction(&Instruction::If(BlockType::Empty));
     // Err path: build the dns-error string + Result.Err + early return.
     f.instruction(&Instruction::I32Const(0));
@@ -192,15 +215,15 @@ pub(super) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // Step 5 — Ok branch: pull the stream handle out and drop it.
-    // Phase 4.2.2b2 will keep the handle live and loop
+    // Step 5 — Ok branch: pull the stream handle out of scratch[+4]
+    // and drop it. Phase 4.2.2b2 will keep the handle live and loop
     // `resolve-next-address`; today we have nothing to do with it.
-    f.instruction(&Instruction::LocalGet(l_retptr_resolve));
-    f.instruction(&Instruction::I32Load(mem4_off4));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load(mem4_resolve_off4));
     f.instruction(&Instruction::LocalSet(l_resolve_stream));
     f.instruction(&Instruction::LocalGet(l_resolve_stream));
     f.instruction(&Instruction::Call(helpers.drop_resolve_stream_fn));
-    let _ = mem4; // reserved for the future option / ipv4 octet loads
+    let _ = mem4_resolve; // reserved for the future option / ipv4 octet loads
 
     // ── Stub tail (Phase 4.2.1) — replace in 4.2.2b2. ──────────
     // Push placeholder bytes onto the stack as a fresh Aver String:
