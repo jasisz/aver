@@ -794,12 +794,17 @@ impl TypeRegistry {
         // (any fn declares a Tcp.* effect) so non-TCP programs don't
         // carry the literal.
         if needs_tcp {
-            let bytes = b"tcp: connect not yet implemented".to_vec();
-            string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
-                let idx = string_literals.len() as u32;
-                string_literals.push(bytes);
-                idx
-            });
+            for msg in [
+                b"tcp: connect not yet implemented".as_ref(),
+                b"tcp: dns resolve failed".as_ref(),
+            ] {
+                let bytes = msg.to_vec();
+                string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
+                    let idx = string_literals.len() as u32;
+                    string_literals.push(bytes);
+                    idx
+                });
+            }
         }
 
         // Mark every record/variant used as a `Map<K, *>` key as

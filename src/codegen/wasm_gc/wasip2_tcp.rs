@@ -49,6 +49,13 @@ pub(super) struct TcpConnectIndices {
     pub stub_err_segment_idx: u32,
     /// Length of the placeholder error bytes.
     pub stub_err_len: u32,
+    /// Phase 4.2.2b — passive data segment + length for the bytes
+    /// `"tcp: dns resolve failed"`. Returned via Result.Err when
+    /// `resolve-addresses` itself fails (host syntactically invalid,
+    /// resolver permanent failure). Per-error-code dispatch lands
+    /// in a follow-up — the v1 generic message keeps the body small.
+    pub dns_err_segment_idx: u32,
+    pub dns_err_len: u32,
 }
 
 /// Helper fn idxs + global idxs the body calls. Phase 4.2.2a adds
@@ -70,6 +77,26 @@ pub(super) struct TcpConnectHelperFns {
     /// lifetime. Phase 4.2.2b onwards reads it back to thread into
     /// `resolve-addresses` / `start-connect`.
     pub network_handle_global: u32,
+    /// Phase 4.2.2b — `cabi_realloc(old, old_sz, align, new_sz)`
+    /// exported allocator. Used to grab the small retptr block for
+    /// the `resolve-addresses` result.
+    pub cabi_realloc_fn: u32,
+    /// Phase 4.2.2b — `__rt_string_to_lm(s: ref string) -> i32`
+    /// (length). Marshals the Aver String's bytes into LM[0..len];
+    /// `resolve-addresses` reads the host name from that range.
+    pub str_to_lm_fn: u32,
+    /// Phase 4.2.2b — `wasi:sockets/ip-name-lookup.resolve-addresses:
+    /// func(network: borrow<network>, name: string) -> result<
+    ///   resolve-address-stream, error-code>`. Canonical-ABI
+    /// signature: `(network, name_ptr, name_len, retptr) -> ()`;
+    /// retptr is 8 bytes (tag@0, stream_handle/err_code@4).
+    pub resolve_addresses_fn: u32,
+    /// Phase 4.2.2b — `[resource-drop]resolve-address-stream`.
+    /// Phase 4.2.2b1 drops the stream immediately on the happy
+    /// path; Phase 4.2.2b2 keeps it live while looping
+    /// `resolve-next-address` and drops once the first IPv4 has
+    /// been pulled.
+    pub drop_resolve_stream_fn: u32,
 }
 
 /// Emit the body for `__rt_tcp_connect`. Phase 4.2.2a layout:
@@ -87,9 +114,31 @@ pub(super) fn emit_tcp_connect_stub(
     indices: &TcpConnectIndices,
     helpers: &TcpConnectHelperFns,
 ) -> Function {
-    // No locals beyond the two params. Params: 0 = host (ref string),
-    // 1 = port (i64). Both unused today — wired in 4.2.2b+.
-    let mut f = Function::new::<Vec<(u32, ValType)>>(Vec::new());
+    use wasm_encoder::{BlockType, MemArg};
+    // Locals beyond the two params (0=host: ref string, 1=port: i64):
+    //   local 2 = host_len (i32)         — bytes written by str_to_lm
+    //   local 3 = retptr_resolve (i32)   — 8-byte retptr from cabi_realloc
+    //   local 4 = resolve_stream (i32)   — handle from resolve-addresses Ok
+    let mut f = Function::new(vec![(3u32, ValType::I32)]);
+    let l_host_len: u32 = 2;
+    let l_retptr_resolve: u32 = 3;
+    let l_resolve_stream: u32 = 4;
+
+    let mem4 = MemArg {
+        offset: 0,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_off4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
 
     // ── Phase 4.2.2a — lazy network handle init. ───────────────
     // Pattern mirrors Console.print's stdout cache: if the global
@@ -99,12 +148,61 @@ pub(super) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::GlobalGet(helpers.network_handle_global));
     f.instruction(&Instruction::I32Const(-1));
     f.instruction(&Instruction::I32Eq);
-    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::Call(helpers.instance_network_fn));
     f.instruction(&Instruction::GlobalSet(helpers.network_handle_global));
     f.instruction(&Instruction::End);
 
-    // ── Stub tail (Phase 4.2.1) — replace in 4.2.2b. ───────────
+    // ── Phase 4.2.2b — DNS resolve, Err-path only. ─────────────
+    // Step 1 — marshal host into LM[0..host_len].
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(helpers.str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_host_len));
+
+    // Step 2 — allocate an 8-byte retptr block via cabi_realloc.
+    // `cabi_realloc(old=0, old_size=0, align=4, new_size=8) -> ptr`.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(8));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr_resolve));
+
+    // Step 3 — resolve-addresses(network, host_ptr=0, host_len, retptr).
+    f.instruction(&Instruction::GlobalGet(helpers.network_handle_global));
+    f.instruction(&Instruction::I32Const(0)); // host_ptr (LM start)
+    f.instruction(&Instruction::LocalGet(l_host_len));
+    f.instruction(&Instruction::LocalGet(l_retptr_resolve));
+    f.instruction(&Instruction::Call(helpers.resolve_addresses_fn));
+
+    // Step 4 — read the Result tag at retptr+0. On Err, materialise
+    // "tcp: dns resolve failed" and return early; on Ok, fall through
+    // to the (still-stubbed) tail.
+    f.instruction(&Instruction::LocalGet(l_retptr_resolve));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // Err path: build the dns-error string + Result.Err + early return.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.dns_err_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.dns_err_segment_idx,
+    });
+    f.instruction(&Instruction::Call(helpers.result_err_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Step 5 — Ok branch: pull the stream handle out and drop it.
+    // Phase 4.2.2b2 will keep the handle live and loop
+    // `resolve-next-address`; today we have nothing to do with it.
+    f.instruction(&Instruction::LocalGet(l_retptr_resolve));
+    f.instruction(&Instruction::I32Load(mem4_off4));
+    f.instruction(&Instruction::LocalSet(l_resolve_stream));
+    f.instruction(&Instruction::LocalGet(l_resolve_stream));
+    f.instruction(&Instruction::Call(helpers.drop_resolve_stream_fn));
+    let _ = mem4; // reserved for the future option / ipv4 octet loads
+
+    // ── Stub tail (Phase 4.2.1) — replace in 4.2.2b2. ──────────
     // Push placeholder bytes onto the stack as a fresh Aver String:
     //   i32.const 0                 ; offset into the data segment
     //   i32.const stub_err_len      ; size in bytes
@@ -138,11 +236,17 @@ mod tests {
             string_type_idx: 1,
             stub_err_segment_idx: 0,
             stub_err_len: b"tcp: connect not yet implemented".len() as u32,
+            dns_err_segment_idx: 1,
+            dns_err_len: b"tcp: dns resolve failed".len() as u32,
         };
         let helpers = TcpConnectHelperFns {
             result_err_fn: 2,
             instance_network_fn: 3,
             network_handle_global: 0,
+            cabi_realloc_fn: 4,
+            str_to_lm_fn: 5,
+            resolve_addresses_fn: 6,
+            drop_resolve_stream_fn: 7,
         };
         let _f = emit_tcp_connect_stub(&indices, &helpers);
     }

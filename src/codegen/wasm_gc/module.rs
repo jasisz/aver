@@ -1483,13 +1483,23 @@ pub(super) fn emit_module_with(
         Some(string_idx),
         Some(result_idx),
         Some(stub_seg),
+        Some(dns_seg),
         Some(_instance_network_fn),
+        Some(_resolve_addresses_fn),
+        Some(_drop_resolve_stream_fn),
     ) = (
         registry.string_array_type_idx,
         registry.result_type_idx("Result<Tcp.Connection,String>"),
         registry.string_literal_segment(b"tcp: connect not yet implemented"),
+        registry.string_literal_segment(b"tcp: dns resolve failed"),
         wasip2_imports.lookup_wasm_fn_idx(
             super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
         ),
     ) {
         let r_ref = ValType::Ref(wasm_encoder::RefType {
@@ -1511,6 +1521,8 @@ pub(super) fn emit_module_with(
             string_type_idx: string_idx,
             stub_err_segment_idx: stub_seg,
             stub_err_len: b"tcp: connect not yet implemented".len() as u32,
+            dns_err_segment_idx: dns_seg,
+            dns_err_len: b"tcp: dns resolve failed".len() as u32,
         })
     } else {
         None
@@ -3254,16 +3266,23 @@ pub(super) fn emit_module_with(
                 )
             })?
             .fn_idx;
-        let instance_network_fn = wasip2_imports
-            .lookup_wasm_fn_idx(
-                super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
-            )
-            .ok_or_else(|| {
-                WasmGcError::Validation(
-                    "tcp_connect emit requires SocketsInstanceNetworkInstanceNetwork fn idx"
-                        .into(),
-                )
-            })?;
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot, name: &'static str| -> Result<u32, WasmGcError> {
+            wasip2_imports.lookup_wasm_fn_idx(slot).ok_or_else(|| {
+                WasmGcError::Validation(format!("tcp_connect emit requires {name} fn idx"))
+            })
+        };
+        let instance_network_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+            "SocketsInstanceNetworkInstanceNetwork",
+        )?;
+        let resolve_addresses_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+            "SocketsIpNameLookupResolveAddresses",
+        )?;
+        let drop_resolve_stream_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+            "SocketsIpNameLookupResourceDropResolveAddressStream",
+        )?;
         let network_handle_global = wasip2_globals
             .as_ref()
             .and_then(|g| g.network_handle)
@@ -3274,10 +3293,28 @@ pub(super) fn emit_module_with(
                         .into(),
                 )
             })?;
+        let cabi_realloc_fn = cabi_realloc
+            .as_ref()
+            .map(|c| c.fn_idx)
+            .ok_or_else(|| {
+                WasmGcError::Validation("tcp_connect emit requires cabi_realloc fn idx".into())
+            })?;
+        let str_to_lm_fn = bridge
+            .as_ref()
+            .map(|b| b.to_lm_fn)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_connect emit requires bridge (__rt_string_to_lm fn idx)".into(),
+                )
+            })?;
         let helpers = super::wasip2_tcp::TcpConnectHelperFns {
             result_err_fn,
             instance_network_fn,
             network_handle_global,
+            cabi_realloc_fn,
+            str_to_lm_fn,
+            resolve_addresses_fn,
+            drop_resolve_stream_fn,
         };
         codes.function(&super::wasip2_tcp::emit_tcp_connect_stub(tc, &helpers));
     }
