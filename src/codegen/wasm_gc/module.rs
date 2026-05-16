@@ -54,6 +54,28 @@ struct Wasip2Globals {
     /// any `Disk.*` is registered. -1 sentinel = "not yet
     /// fetched" or "no preopens"; helpers retry fetch on -1.
     disk_preopen_handle: Option<u32>,
+    /// Phase 4 (0.20) — caches the `wasi:sockets/instance-network.
+    /// instance-network` handle for the program's lifetime. -1
+    /// sentinel = "not yet fetched". Populated when any Tcp.*
+    /// effect that needs a network capability is registered
+    /// (`Tcp.connect`, `Tcp.send`, `Tcp.ping`). Never dropped —
+    /// wasmtime releases at component exit.
+    network_handle: Option<u32>,
+    /// Phase 4 (0.20) — connection-pool array reference. Initialised
+    /// to `ref.null $tcp_pool` and lazy-allocated to
+    /// `array.new_default $tcp_pool 256` on the first call into the
+    /// connect/send pipeline. Holds `(ref null $tcp_slot)` entries
+    /// indexed by integer parsed out of `Tcp.Connection.id`
+    /// (`"tcp-N"`). Populated whenever the TCP pool slot type
+    /// (`tcp_pool_type_idx`) is allocated by `TypeRegistry`.
+    tcp_pool: Option<u32>,
+    /// Phase 4 (0.20) — monotonic counter for the next pool slot
+    /// allocation. Starts at `0`, bumps after each `Tcp.connect`
+    /// success. Wraps modulo 256 (pool capacity); a `Tcp.connect`
+    /// past 256 live connections will reuse a stale slot today —
+    /// good enough for v1, exhaustion handling lands as a follow-up
+    /// once the pipeline is real.
+    tcp_next_id: Option<u32>,
 }
 use super::body::hash_helpers::{HashHelperRegistry, HashKind};
 use super::body::{FnEntry, FnMap, emit_fn_body};
@@ -1854,6 +1876,65 @@ pub(super) fn emit_module_with(
             } else {
                 None
             };
+            // Phase 4 (0.20) — wasi:sockets network handle cache,
+            // tcp_pool array, and tcp_next_id counter. All gated on
+            // the matching slot/type registrations so non-TCP programs
+            // pay nothing.
+            let network_handle = if wasip2_imports
+                .lookup_wasm_type_idx(
+                    super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+                )
+                .is_some()
+            {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::I32,
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::i32_const(-1),
+                );
+                let idx = next_global_idx;
+                next_global_idx += 1;
+                Some(idx)
+            } else {
+                None
+            };
+            let tcp_pool = if let Some(pool_type_idx) = registry.tcp_pool_type_idx {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::Ref(wasm_encoder::RefType {
+                            nullable: true,
+                            heap_type: wasm_encoder::HeapType::Concrete(pool_type_idx),
+                        }),
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Concrete(
+                        pool_type_idx,
+                    )),
+                );
+                let idx = next_global_idx;
+                next_global_idx += 1;
+                Some(idx)
+            } else {
+                None
+            };
+            let tcp_next_id = if registry.tcp_pool_type_idx.is_some() {
+                globals.global(
+                    wasm_encoder::GlobalType {
+                        val_type: ValType::I32,
+                        mutable: true,
+                        shared: false,
+                    },
+                    &wasm_encoder::ConstExpr::i32_const(0),
+                );
+                let idx = next_global_idx;
+                next_global_idx += 1;
+                Some(idx)
+            } else {
+                None
+            };
             let _ = next_global_idx;
             module.section(&globals);
             Some(Wasip2Globals {
@@ -1862,6 +1943,9 @@ pub(super) fn emit_module_with(
                 stderr_handle,
                 stdin_handle,
                 disk_preopen_handle,
+                network_handle,
+                tcp_pool,
+                tcp_next_id,
             })
         } else {
             None
@@ -1916,6 +2000,11 @@ pub(super) fn emit_module_with(
                 disk_make_dir_fn_idx: disk_make_dir.as_ref().map(|d| d.fn_idx),
                 disk_list_dir_fn_idx: disk_list_dir.as_ref().map(|d| d.fn_idx),
                 http_get_fn_idx: http_get.as_ref().map(|h| h.fn_idx),
+                network_handle_global: wasip2_globals.as_ref().and_then(|g| g.network_handle),
+                tcp_pool_global: wasip2_globals.as_ref().and_then(|g| g.tcp_pool),
+                tcp_next_id_global: wasip2_globals.as_ref().and_then(|g| g.tcp_next_id),
+                tcp_slot_type_idx: registry.tcp_slot_type_idx,
+                tcp_pool_type_idx: registry.tcp_pool_type_idx,
             })
         } else {
             None
