@@ -334,3 +334,75 @@ fn main() -> Unit
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn pool_wraparound_recovers_stale_slot() {
+    // 260 sequential connect+close pairs. The pool is 256 slots
+    // deep, so the 257th connect lands on `tcp_next_id & 255 == 0`
+    // — the slot Phase 4.2.2d wrote on the very first connect.
+    // Phase 4.2.2e's recovery branch fires here: even though the
+    // first connection was already closed (in_use = 0), Aver's
+    // probe walks the slot ref + `in_use` field; the `in_use == 0`
+    // short-circuit means we don't redundantly drop wasi handles
+    // we already released. Either way the test passes if no trap
+    // fires — without the recovery code, an in_use == 1 leftover
+    // from a never-closed slot would re-bind streams over a live
+    // socket and break wasmtime's resource bookkeeping.
+    //
+    // We pick 260 rather than 257 so the wrapping is well past
+    // the boundary and verify the id of the last connection lands
+    // at `tcp-{(260 - 1) & 255}` = `tcp-3` (slot indices 0..255
+    // cycle from index 0 on connect #1).
+    let dir = tempdir("wraparound");
+    let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping wraparound stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn doOnce(c: Tcp.Connection) -> String
+    ! [Tcp.close]
+    closeRes = Tcp.close(c)
+    c.id
+
+fn doConnect() -> String
+    ! [Tcp.connect, Tcp.close]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(c) -> doOnce(c)
+        Result.Err(e) -> "err"
+
+fn loopN(n: Int, last: String) -> String
+    ! [Tcp.connect, Tcp.close]
+    match n
+        0 -> last
+        _ -> loopN(n - 1, doConnect())
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.close, Console.print]
+    final = loopN(260, "none")
+    Console.print("final id: {{final}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "wrap.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "wraparound stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // tcp_next_id starts at 0 and bumps after each successful
+    // connect; the 260th connect bumps it to 260, but the slot
+    // index of that connect was `259 & 255` = 3. So the id
+    // returned should be `tcp-3`.
+    assert!(
+        s.contains("final id: tcp-3"),
+        "expected `final id: tcp-3` after 260 connects (slot index = 259 & 255 = 3), got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
