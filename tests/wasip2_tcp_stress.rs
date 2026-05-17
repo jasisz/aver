@@ -30,6 +30,42 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Server that reads a single line (newline-terminated), no matter
+/// how long, and echoes back `LEN:<bytes-before-newline>\n`. Used
+/// by `chunked_write_loops_past_4kb` to verify that the
+/// `emit_chunked_blocking_write` loop in `__rt_tcp_write_line`
+/// iterates correctly past the wasmtime-wasi 4096-byte per-call
+/// cap on `blocking-write-and-flush`.
+const LEN_REPLY_SCRIPT: &str = r#"
+import socket, sys, threading
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(16)
+sys.stdout.write(f"PORT:{s.getsockname()[1]}\n")
+sys.stdout.flush()
+
+def serve():
+    while True:
+        try:
+            c, _ = s.accept()
+            buf = b""
+            while b"\n" not in buf:
+                chunk = c.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+            payload = buf.split(b"\n", 1)[0] if b"\n" in buf else buf
+            c.sendall(f"LEN:{len(payload)}\n".encode())
+            c.close()
+        except OSError:
+            break
+
+threading.Thread(target=serve, daemon=True).start()
+import time
+time.sleep(60)
+"#;
+
 /// Server that does three read-a-line / echo-it-back cycles on the
 /// same connection before closing. Used by the multi-stage stress
 /// to verify that the slot's input + output streams stay usable
@@ -374,6 +410,65 @@ fn main() -> Unit
     assert!(
         s.contains(" second-ok"),
         "expected second close to be a no-op Ok (slot.in_use == 0 guard), got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn chunked_write_loops_past_4kb() {
+    // wasmtime-wasi caps single `blocking-write-and-flush` calls
+    // at 4096 bytes. `emit_chunked_blocking_write` iterates as
+    // many times as needed; this test pushes a 5000-byte payload
+    // (≥ two iterations of the loop) through `Tcp.writeLine` and
+    // verifies that all bytes traversed the boundary. The server
+    // replies with `LEN:<count>\n` so we can sanity-check the
+    // byte count Aver-side via `Tcp.readLine`.
+    let dir = tempdir("chunked-write");
+    let Some((mut server, port)) = spawn_python_server(&dir, LEN_REPLY_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping chunked-write stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    // 5000 x ASCII 'x' — far past the 4 KB chunk boundary, no
+    // embedded newlines so the server reads it all as one line.
+    let big = "x".repeat(5000);
+
+    let src = format!(
+        r#"
+fn doRead(c: Tcp.Connection) -> Unit
+    ! [Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.readLine(c)
+        Result.Ok(reply) -> Console.print("server: {{reply}}")
+        Result.Err(e) -> Console.print("read err: {{e}}")
+
+fn doWrite(c: Tcp.Connection) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.writeLine(c, "{big}")
+        Result.Ok(_) -> doRead(c)
+        Result.Err(e) -> Console.print("write err: {{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(c) -> doWrite(c)
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "chunked.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "chunked-write stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("server: LEN:5000"),
+        "expected `server: LEN:5000` (full payload received), got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
