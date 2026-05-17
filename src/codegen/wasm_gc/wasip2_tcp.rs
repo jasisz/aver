@@ -803,6 +803,213 @@ pub(super) fn emit_tcp_format_id(string_type_idx: u32, from_lm_fn: u32) -> Funct
     f
 }
 
+/// Phase 4.3 helper — `__rt_tcp_parse_id(id: ref string) -> i32`.
+/// Reverse of `__rt_tcp_format_id`. Strips the leading 4 ASCII
+/// bytes (`"tcp-"`) and reads the remaining `(array i8)` content
+/// as a base-10 integer.
+///
+/// Trust contract: `id` came out of `Tcp.connect` on this same
+/// build, so the `"tcp-"` prefix is structurally guaranteed. The
+/// helper never validates — callers that hand-craft a `Tcp.Connection`
+/// today aren't a supported shape (record is `exposes` but not
+/// `exposes opaque`, follow-up could tighten this).
+pub(super) fn emit_tcp_parse_id(string_type_idx: u32) -> Function {
+    // Locals beyond param 0 = id (ref string):
+    //   1 = acc (i32) — running decimal accumulator
+    //   2 = i   (i32) — byte cursor (starts at 4, the post-"tcp-" offset)
+    //   3 = len (i32) — total byte length of the id string
+    let mut f = Function::new(vec![(3u32, ValType::I32)]);
+    let l_acc: u32 = 1;
+    let l_i: u32 = 2;
+    let l_len: u32 = 3;
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_acc));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::LocalSet(l_i));
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(l_len));
+
+    f.instruction(&Instruction::Block(wasm_encoder::BlockType::Empty));
+    f.instruction(&Instruction::Loop(wasm_encoder::BlockType::Empty));
+    // Exit condition: i >= len.
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+
+    // acc = acc * 10 + (id[i] - '0')
+    f.instruction(&Instruction::LocalGet(l_acc));
+    f.instruction(&Instruction::I32Const(10));
+    f.instruction(&Instruction::I32Mul);
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::ArrayGetU(string_type_idx));
+    f.instruction(&Instruction::I32Const(0x30));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_acc));
+
+    // i += 1
+    f.instruction(&Instruction::LocalGet(l_i));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_i));
+
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+
+    f.instruction(&Instruction::LocalGet(l_acc));
+    f.instruction(&Instruction::End);
+    f
+}
+
+/// Phase 4.3 — `__rt_tcp_close(conn: ref Tcp.Connection) ->
+/// ref Result<Unit, String>` slot bundle.
+pub(super) struct TcpCloseIndices {
+    pub fn_type: u32,
+    pub fn_idx: u32,
+    pub tcp_connection_type_idx: u32,
+    pub tcp_slot_type_idx: u32,
+    pub tcp_pool_type_idx: u32,
+}
+
+pub(super) struct TcpCloseHelperFns {
+    /// `__rt_tcp_parse_id(id: ref string) -> i32` — extracts the
+    /// pool slot index from the `"tcp-N"` id stored in the
+    /// `Tcp.Connection` record.
+    pub parse_id_fn: u32,
+    /// `cabi_realloc(0, 0, 1, 2) -> ptr` — 2-byte retptr for the
+    /// shutdown call. Result is ignored (best-effort close).
+    pub cabi_realloc_fn: u32,
+    /// `wasi:sockets/tcp.[method]tcp-socket.shutdown(this,
+    ///   shutdown-type, retptr) -> ()`. Phase 4.3 always passes
+    /// `both = 2` to flush both directions before dropping.
+    pub shutdown_fn: u32,
+    /// `[resource-drop]input-stream` / `output-stream` / `tcp-socket`.
+    pub drop_input_stream_fn: u32,
+    pub drop_output_stream_fn: u32,
+    pub drop_tcp_socket_fn: u32,
+    /// `__rt_result_unit_string_ok()` factory. `Tcp.close` is
+    /// idempotent — even a stale slot returns `Ok(())`.
+    pub result_ok_fn: u32,
+    /// `tcp_pool: ref null $tcp_pool` global.
+    pub tcp_pool_global: u32,
+}
+
+/// Phase 4.3 emit — `__rt_tcp_close` body. Trust contract:
+/// `conn` came out of a successful `Tcp.connect` on this run, so
+/// the pool slot at `parse_id(conn.id)` is guaranteed to be a
+/// non-null `$tcp_slot` ref (Phase 4.2.2d stored it via array.set).
+/// Slots marked `in_use = 0` (already-closed) make `close` a
+/// no-op so the call stays idempotent.
+pub(super) fn emit_tcp_close(
+    indices: &TcpCloseIndices,
+    helpers: &TcpCloseHelperFns,
+) -> Function {
+    use wasm_encoder::BlockType;
+    // Locals beyond param 0 = conn (ref Tcp.Connection):
+    //   1 = slot_idx (i32)        — `parse_id(conn.id)`
+    //   2 = slot     (ref $tcp_slot)
+    //   3 = retptr   (i32)
+    let slot_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(indices.tcp_slot_type_idx),
+    });
+    let mut f = Function::new(vec![
+        (1u32, ValType::I32),
+        (1u32, slot_ref),
+        (1u32, ValType::I32),
+    ]);
+    let l_slot_idx: u32 = 1;
+    let l_slot: u32 = 2;
+    let l_retptr: u32 = 3;
+
+    // slot_idx = parse_id(conn.id)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_connection_type_idx,
+        field_index: 0, // id
+    });
+    f.instruction(&Instruction::Call(helpers.parse_id_fn));
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+
+    // slot = tcp_pool[slot_idx]
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
+    f.instruction(&Instruction::LocalSet(l_slot));
+
+    // Idempotence guard: if slot.in_use == 0, return Ok(()).
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 3, // in_use
+    });
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Drop input-stream.
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 1, // in_stream
+    });
+    f.instruction(&Instruction::Call(helpers.drop_input_stream_fn));
+
+    // Drop output-stream.
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 2, // out_stream
+    });
+    f.instruction(&Instruction::Call(helpers.drop_output_stream_fn));
+
+    // shutdown(socket, both=2, retptr=cabi_realloc(2)). Result is
+    // ignored — the socket is about to be dropped anyway, and the
+    // POSIX semantics treat shutdown failure on an already-closed
+    // peer as a no-op.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 0, // socket
+    });
+    f.instruction(&Instruction::I32Const(2)); // shutdown-type.both
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::Call(helpers.shutdown_fn));
+
+    // Drop socket.
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Call(helpers.drop_tcp_socket_fn));
+
+    // Mark slot in_use = 0 — subsequent close() calls become no-ops.
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::StructSet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 3,
+    });
+
+    f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    f.instruction(&Instruction::End);
+    f
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -853,5 +1060,32 @@ mod tests {
             tcp_pool_type_idx: 4,
         };
         let _f = emit_tcp_connect_stub(&indices, &helpers);
+    }
+
+    #[test]
+    fn close_emit_compiles() {
+        let indices = TcpCloseIndices {
+            fn_type: 0,
+            fn_idx: 0,
+            tcp_connection_type_idx: 1,
+            tcp_slot_type_idx: 2,
+            tcp_pool_type_idx: 3,
+        };
+        let helpers = TcpCloseHelperFns {
+            parse_id_fn: 4,
+            cabi_realloc_fn: 5,
+            shutdown_fn: 6,
+            drop_input_stream_fn: 7,
+            drop_output_stream_fn: 8,
+            drop_tcp_socket_fn: 9,
+            result_ok_fn: 10,
+            tcp_pool_global: 0,
+        };
+        let _f = emit_tcp_close(&indices, &helpers);
+    }
+
+    #[test]
+    fn parse_id_emit_compiles() {
+        let _f = emit_tcp_parse_id(1);
     }
 }

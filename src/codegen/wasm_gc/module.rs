@@ -1604,6 +1604,87 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 4.3 — `__rt_tcp_parse_id(id: ref string) -> i32`.
+    // Reverse of `__rt_tcp_format_id`; used by every Tcp.* method
+    // that consumes a `Tcp.Connection` to extract its pool slot.
+    // Allocated alongside the close helper so 4.4 / 4.5 (write /
+    // read / send / ping) can share it without re-emitting.
+    let tcp_parse_id_fn_type_idx: Option<(u32, u32)> = if tcp_connect.is_some() {
+        let s_idx = registry.string_array_type_idx.expect(
+            "tcp_parse_id allocation gated on tcp_connect which requires the string slot",
+        );
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(s_idx),
+        });
+        types.ty().function([s_ref], [ValType::I32]);
+        let ty = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some((ty, fn_idx))
+    } else {
+        None
+    };
+
+    // Phase 4.3 — `__rt_tcp_close(conn: ref Tcp.Connection) ->
+    // ref Result<Unit, String>`. Drops the per-slot streams +
+    // shuts down + drops the socket + marks the slot as free.
+    // Idempotent: closing an already-closed slot returns Ok(())
+    // without touching wasi resources.
+    let tcp_close: Option<super::wasip2_tcp::TcpCloseIndices> = if let (
+        Some(rec_idx),
+        Some(slot_idx),
+        Some(pool_idx),
+        Some(_result_idx),
+        Some(_shutdown_fn),
+        Some(_drop_input_stream_fn),
+        Some(_drop_output_stream_fn),
+        Some(_drop_tcp_socket_fn),
+        Some(_parse_id),
+    ) = (
+        registry.record_type_idx("Tcp.Connection"),
+        registry.tcp_slot_type_idx,
+        registry.tcp_pool_type_idx,
+        registry.result_type_idx("Result<Unit,String>"),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+        ),
+        tcp_parse_id_fn_type_idx,
+    ) {
+        let conn_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(rec_idx),
+        });
+        let res_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(_result_idx),
+        });
+        types.ty().function([conn_ref], [res_ref]);
+        let ty = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(super::wasip2_tcp::TcpCloseIndices {
+            fn_type: ty,
+            fn_idx,
+            tcp_connection_type_idx: rec_idx,
+            tcp_slot_type_idx: slot_idx,
+            tcp_pool_type_idx: pool_idx,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(
@@ -1837,6 +1918,12 @@ pub(super) fn emit_module_with(
     }
     if let Some((ty, _)) = tcp_format_id_fn_type_idx {
         funcs.function(ty);
+    }
+    if let Some((ty, _)) = tcp_parse_id_fn_type_idx {
+        funcs.function(ty);
+    }
+    if let Some(t) = &tcp_close {
+        funcs.function(t.fn_type);
     }
     if let Some(e) = &env_get_lookup {
         funcs.function(e.fn_type);
@@ -2141,6 +2228,7 @@ pub(super) fn emit_module_with(
                 disk_list_dir_fn_idx: disk_list_dir.as_ref().map(|d| d.fn_idx),
                 http_get_fn_idx: http_get.as_ref().map(|h| h.fn_idx),
                 tcp_connect_fn_idx: tcp_connect.as_ref().map(|t| t.fn_idx),
+                tcp_close_fn_idx: tcp_close.as_ref().map(|t| t.fn_idx),
                 network_handle_global: wasip2_globals.as_ref().and_then(|g| g.network_handle),
                 tcp_pool_global: wasip2_globals.as_ref().and_then(|g| g.tcp_pool),
                 tcp_next_id_global: wasip2_globals.as_ref().and_then(|g| g.tcp_next_id),
@@ -3505,6 +3593,62 @@ pub(super) fn emit_module_with(
             string_type_idx,
             from_lm_fn,
         ));
+        codes.function(&super::wasip2_tcp::emit_tcp_parse_id(string_type_idx));
+    }
+    if let Some(tc) = &tcp_close {
+        let (_, parse_id_fn) = tcp_parse_id_fn_type_idx
+            .expect("tcp_close gated on tcp_parse_id allocation");
+        let shutdown_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown)
+            .expect("tcp_close gate requires shutdown slot");
+        let drop_input_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("tcp_close gate requires drop-input-stream slot");
+        let drop_output_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("tcp_close gate requires drop-output-stream slot");
+        let drop_tcp_socket_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            )
+            .expect("tcp_close gate requires drop-tcp-socket slot");
+        let cabi_realloc_fn = cabi_realloc
+            .as_ref()
+            .map(|c| c.fn_idx)
+            .ok_or_else(|| {
+                WasmGcError::Validation("tcp_close emit requires cabi_realloc fn idx".into())
+            })?;
+        let result_ok_fn = factory_exports
+            .result_unit_string_ok
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_close emit requires __rt_result_unit_string_ok factory slot".into(),
+                )
+            })?
+            .fn_idx;
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_close emit requires tcp_pool global (Phase 4.1b gate)".into(),
+                )
+            })?;
+        let helpers = super::wasip2_tcp::TcpCloseHelperFns {
+            parse_id_fn,
+            cabi_realloc_fn,
+            shutdown_fn,
+            drop_input_stream_fn,
+            drop_output_stream_fn,
+            drop_tcp_socket_fn,
+            result_ok_fn,
+            tcp_pool_global,
+        };
+        codes.function(&super::wasip2_tcp::emit_tcp_close(tc, &helpers));
     }
     if let Some(e) = &env_get_lookup {
         codes.function(&emit_env_get_lookup(

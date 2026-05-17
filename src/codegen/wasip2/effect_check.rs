@@ -147,13 +147,12 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     ) {
         return None;
     }
-    // Phase 4.2.1 (0.20) graduated `Tcp.connect`. The body is a stub
-    // returning `Result.Err("tcp: connect not yet implemented")`; the
-    // wiring (slot registration, factory hookup, call-site dispatch)
-    // is end-to-end so the real DNS / socket / connect pipeline lands
-    // as a pure body swap in Phase 4.2.2+. The other five Tcp.*
-    // methods stay rejected until their helpers graduate in 4.3+.
-    if effect == "Tcp.connect" {
+    // 0.20 Phase 4 — graduates `Tcp.*` incrementally:
+    //   4.2.x — Tcp.connect (real DNS resolve + connect pipeline)
+    //   4.3   — Tcp.close   (drop streams + shutdown + free slot)
+    // The remaining four graduate in 4.4 (writeLine / readLine) and
+    // 4.5 (send / ping).
+    if matches!(effect, "Tcp.connect" | "Tcp.close") {
         return None;
     }
     if effect.starts_with("Tcp.") {
@@ -252,16 +251,13 @@ mod tests {
         // readLine), 4.5 (send / ping). `HttpServer.listenWith`
         // remains the only HTTP-side out-of-release reject.
         assert!(classify("Tcp.connect").is_none());
+        assert!(classify("Tcp.close").is_none());
         assert!(matches!(
             classify("Tcp.writeLine"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
         assert!(matches!(
             classify("Tcp.readLine"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
-        assert!(matches!(
-            classify("Tcp.close"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
         assert!(matches!(

@@ -527,6 +527,34 @@ pub(super) fn emit_disk_exists_wasip2(
 /// expression onto the stack and calls `__rt_disk_read_text`,
 /// which owns the open-at + read-via-stream + blocking-read loop
 /// + per-call resource drops.
+/// Phase 4.3 (0.20) — `Tcp.close(conn: Tcp.Connection) ->
+/// Result<Unit, String>` on `--target wasip2`. Pushes the conn
+/// ref onto the stack and calls the `__rt_tcp_close` helper.
+pub(super) fn emit_tcp_close_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.close on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.close on `--target wasip2` expects 1 arg (conn: Tcp.Connection), got {}",
+            args.len()
+        )));
+    }
+    let close_fn = lowering.tcp_close_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.close on wasip2: __rt_tcp_close fn idx missing — helper not allocated".into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(close_fn));
+    Ok(())
+}
+
 /// Phase 4.2.1 (0.20) — `Tcp.connect(host: String, port: Int) ->
 /// Result<Tcp.Connection, String>` on `--target wasip2`. Pushes
 /// both args onto the stack and calls the `__rt_tcp_connect`
