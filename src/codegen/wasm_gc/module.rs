@@ -3585,21 +3585,45 @@ pub(super) fn emit_module_with(
             .as_ref()
             .map(|t| t.fn_idx)
             .expect("tcp.send gated on tcp.connect allocation");
-        let write_line_fn = tcp
-            .write_line
-            .as_ref()
-            .map(|t| t.fn_idx)
-            .expect("tcp.send gated on tcp.write_line allocation");
-        let read_line_fn = tcp
-            .read_line
-            .as_ref()
-            .map(|t| t.fn_idx)
-            .expect("tcp.send gated on tcp.read_line allocation");
         let close_fn = tcp
             .close
             .as_ref()
             .map(|t| t.fn_idx)
             .expect("tcp.send gated on tcp.close allocation");
+        let (_, parse_id_fn) = tcp
+            .parse_id
+            .expect("tcp.send gated on tcp.parse_id allocation");
+        let str_to_lm_fn = bridge.as_ref().map(|b| b.to_lm_fn).ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp.send emit requires bridge (__rt_string_to_lm fn idx)".into(),
+            )
+        })?;
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp.send emit requires cabi_realloc fn idx".into())
+        })?;
+        let blocking_write_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            )
+            .expect("tcp.send gate requires blocking-write slot");
+        let blocking_read_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
+            .expect("tcp.send gate requires blocking-read slot");
+        let shutdown_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown)
+            .expect("tcp.send gate requires shutdown slot");
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.send emit requires tcp_pool global (Phase 4.1b gate)".into(),
+                )
+            })?;
+        let bump_alloc_ptr_global = wasip2_globals
+            .as_ref()
+            .map(|g| g.bump_alloc_ptr)
+            .expect("tcp.send emit requires bump_alloc_ptr global");
         let result_string_string_err_fn = factory_exports
             .result_string_string_err
             .ok_or_else(|| {
@@ -3610,9 +3634,15 @@ pub(super) fn emit_module_with(
             .fn_idx;
         let helpers = super::wasip2_tcp::TcpSendHelperFns {
             tcp_connect_fn: connect_fn,
-            tcp_write_line_fn: write_line_fn,
-            tcp_read_line_fn: read_line_fn,
             tcp_close_fn: close_fn,
+            parse_id_fn,
+            str_to_lm_fn,
+            cabi_realloc_fn,
+            blocking_write_fn,
+            blocking_read_fn,
+            shutdown_fn,
+            tcp_pool_global,
+            bump_alloc_ptr_global,
             result_string_string_err_fn,
         };
         codes.function(&super::wasip2_tcp::emit_tcp_send(ts, &helpers));

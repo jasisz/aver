@@ -868,3 +868,78 @@ fn main() -> Unit
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn send_reads_multi_line_response_to_eof() {
+    // Regression for Phase 4.7+ fix #9 — `Tcp.send` no longer
+    // chains `Tcp.writeLine` + `Tcp.readLine` (which appended
+    // `\r\n` to the payload and stopped reading at the first
+    // newline). It now matches `aver-rt::tcp::send`: raw bytes
+    // out, shutdown(send), read everything until the peer closes.
+    //
+    // The probe asks a server for a 3-line response. The old
+    // semantics would surface only the first line ("line-1\n");
+    // the rewrite must return the full payload, all three lines
+    // plus the trailing terminator.
+    const MULTI_LINE_SCRIPT: &str = r#"
+import socket, sys, threading
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(8)
+sys.stdout.write(f"PORT:{s.getsockname()[1]}\n")
+sys.stdout.flush()
+
+def serve():
+    while True:
+        try:
+            c, _ = s.accept()
+            # Drain the client's request — half-close arrives
+            # when our side stops receiving, which signals end of
+            # request. recv until 0.
+            while True:
+                chunk = c.recv(4096)
+                if not chunk:
+                    break
+            c.sendall(b"line-1\nline-2\nline-3\n")
+            c.close()
+        except OSError:
+            break
+
+threading.Thread(target=serve, daemon=True).start()
+import time
+time.sleep(60)
+"#;
+    let dir = tempdir("send-multiline");
+    let Some((mut server, port)) = spawn_python_server(&dir, MULTI_LINE_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping send-multiline stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn main() -> Unit
+    ! [Tcp.send, Console.print]
+    match Tcp.send("127.0.0.1", {port}, "ping")
+        Result.Ok(r) -> Console.print("reply<<<{{r}}>>>")
+        Result.Err(e) -> Console.print("send-err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "multi.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "send-multiline stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("reply<<<line-1\nline-2\nline-3\n>>>"),
+        "expected full 3-line response read to EOF, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -106,10 +106,10 @@ pub(in crate::codegen::wasm_gc) fn allocate(
     );
     let send = allocate_send(
         registry,
+        wasip2_imports,
         &connect,
-        &write_line,
-        &read_line,
         &close,
+        parse_id,
         types,
         next_type_idx,
         next_builtin_fn_idx,
@@ -426,22 +426,31 @@ fn allocate_close(
 #[allow(clippy::too_many_arguments)]
 fn allocate_send(
     registry: &TypeRegistry,
+    wasip2_imports: &Wasip2ImportRegistry,
     connect: &Option<TcpConnectIndices>,
-    write_line: &Option<TcpWriteLineIndices>,
-    read_line: &Option<TcpReadLineIndices>,
     close: &Option<TcpCloseIndices>,
+    parse_id: Option<(u32, u32)>,
     types: &mut TypeSection,
     next_type_idx: &mut u32,
     next_builtin_fn_idx: &mut u32,
 ) -> Option<TcpSendIndices> {
+    // Phase 4.7+ fix #9 — send no longer chains writeLine + readLine;
+    // it talks to wasi:io/streams directly. We still gate on connect
+    // + close because those wrap the lifecycle, but the
+    // {write,read}_line helpers aren't on the dependency edge anymore.
     connect.as_ref()?;
-    write_line.as_ref()?;
-    read_line.as_ref()?;
     close.as_ref()?;
+    parse_id?;
     let string_idx = registry.string_array_type_idx?;
+    let rec_idx = registry.record_type_idx("Tcp.Connection")?;
+    let slot_idx = registry.tcp_slot_type_idx?;
+    let pool_idx = registry.tcp_pool_type_idx?;
     let res_conn_idx = registry.result_type_idx("Result<Tcp.Connection,String>")?;
-    let res_unit_idx = registry.result_type_idx("Result<Unit,String>")?;
     let res_string_idx = registry.result_type_idx("Result<String,String>")?;
+    let write_err_seg = registry.string_literal_segment(b"tcp: write failed")?;
+    wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush)?;
+    wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::InputStreamBlockingRead)?;
+    wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::SocketsTcpShutdown)?;
 
     let s_ref = ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -461,7 +470,12 @@ fn allocate_send(
         fn_idx,
         string_type_idx: string_idx,
         result_tcp_conn_string_type_idx: res_conn_idx,
-        result_unit_string_type_idx: res_unit_idx,
+        result_string_string_type_idx: res_string_idx,
+        tcp_connection_type_idx: rec_idx,
+        tcp_slot_type_idx: slot_idx,
+        tcp_pool_type_idx: pool_idx,
+        write_err_segment_idx: write_err_seg,
+        write_err_len: b"tcp: write failed".len() as u32,
     })
 }
 
