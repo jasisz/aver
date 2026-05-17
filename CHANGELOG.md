@@ -2,6 +2,13 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.20.0 "Pulse" (unreleased)
+
+> _The same Aver source that opened HTTP both ways in 0.19 now opens raw TCP — connect, send, receive, ping. One pool, one handle shape, every backend the same._
+
+### Added
+- **TCP client on `--target wasip2`.** All six methods — `Tcp.connect`, `Tcp.writeLine`, `Tcp.readLine`, `Tcp.send`, `Tcp.close`, `Tcp.ping` — compile and run as components against `wasi:sockets/{instance-network, ip-name-lookup, tcp-create-socket, tcp}`. Connections live in a 256-slot wasm-gc pool keyed by a `"tcp-N"` id (same shape every backend already used on VM, so cross-backend code stays portable). `Tcp.connect` walks lazy-network init → DNS resolve (first-IPv4 wins) → socket create → start/finish-connect; `Tcp.send` orchestrates the full one-shot pipeline (connect + writeLine + readLine + close); `Tcp.ping` is the light reachability wrapper. Run with `wasmtime run -W gc=y -W tail-call=y -S inherit-network=y -S allow-ip-name-lookup=y -S tcp=y`, or via `aver run --wasip2` (embedded wasmtime wires the same capabilities). See [`docs/wasip2.md`](docs/wasip2.md) for the per-method status table.
+
 ## 0.19.0 "Echo" (2026-05-13)
 
 > _Aver speaks HTTP both ways now — same source can call out as a client and answer back as a server, the same `.component.wasm` runs on Cranelift and V8._
