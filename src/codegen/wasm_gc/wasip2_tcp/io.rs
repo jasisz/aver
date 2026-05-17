@@ -114,7 +114,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
     f.instruction(&Instruction::LocalSet(l_saved_alloc));
 
-    // parsed_id = parse_id(conn.id); slot_idx = parsed_id & 255.
+    // parsed_id = parse_id(conn.id) — full monotonic counter.
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_connection_type_idx,
@@ -122,53 +122,59 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     });
     f.instruction(&Instruction::Call(helpers.parse_id_fn));
     f.instruction(&Instruction::LocalSet(l_parsed_id));
-    f.instruction(&Instruction::LocalGet(l_parsed_id));
-    f.instruction(&Instruction::I32Const(255));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::LocalSet(l_slot_idx));
 
-    // tcp_pool / slot / generation / in_use guards — each surfaces
-    // as `Result.Err("tcp: write failed")` because there is no real
-    // out-stream to write to. The null-pool branch matches Phase
-    // 4.7+ fix #8: a hand-crafted `Tcp.Connection` reaches
-    // `Tcp.writeLine` before any `Tcp.connect` runs.
+    // Null-pool guard (Phase 4.7+ fix #8).
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::If(BlockType::Empty));
     emit_stale_err(&mut f);
     f.instruction(&Instruction::End);
 
+    // Phase 4.7+ fix #14 — id_value scan. The pool's slot index
+    // is no longer `parsed_id & 255`; `Tcp.connect` picks the
+    // first non-busy slot in pool order, so writeLine has to walk
+    // the pool looking for a slot whose id_value matches and is
+    // still `in_use == 1`.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_stale_err(&mut f);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::LocalGet(l_slot_idx));
     f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
     f.instruction(&Instruction::LocalSet(l_slot));
-
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_err(&mut f);
-    f.instruction(&Instruction::End);
-
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_slot_type_idx,
         field_index: 4, // id_value
     });
     f.instruction(&Instruction::LocalGet(l_parsed_id));
-    f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_err(&mut f);
-    f.instruction(&Instruction::End);
-
+    f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_slot_type_idx,
         field_index: 3, // in_use
     });
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_err(&mut f);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::BrIf(2)); // matching live slot → break
     f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block — l_slot holds match
 
     // Marshal line → LM[0..len] via the shared bridge helper.
     // `__rt_string_to_lm` writes the payload at LM[0..len] and grows
@@ -425,10 +431,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
     f.instruction(&Instruction::LocalSet(l_saved_alloc));
 
-    // parsed_id = parse_id(conn.id); slot_idx = parsed_id & 255;
-    // slot = tcp_pool[slot_idx]; then null / id_value / in_use
-    // guards.  Stale references surface as `Result.Err("tcp: eof")`
-    // because the underlying input-stream isn't ours to read from.
+    // parsed_id = parse_id(conn.id) — full monotonic counter.
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_connection_type_idx,
@@ -436,10 +439,6 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     });
     f.instruction(&Instruction::Call(helpers.parse_id_fn));
     f.instruction(&Instruction::LocalSet(l_parsed_id));
-    f.instruction(&Instruction::LocalGet(l_parsed_id));
-    f.instruction(&Instruction::I32Const(255));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::LocalSet(l_slot_idx));
 
     let result_type_idx = indices.result_type_idx;
     let string_type_idx = indices.string_type_idx;
@@ -460,47 +459,54 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
         f.instruction(&Instruction::Return);
     };
 
-    // Null-pool guard (Phase 4.7+ fix #8) — a hand-crafted
-    // `Tcp.Connection` can reach `Tcp.readLine` before any
-    // `Tcp.connect` has lazy-initialised the pool global. Surface
-    // the same `Err("tcp: eof")` as every other stale-conn path.
+    // Null-pool guard (Phase 4.7+ fix #8).
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::If(BlockType::Empty));
     emit_stale_eof(&mut f);
     f.instruction(&Instruction::End);
 
+    // Phase 4.7+ fix #14 — id_value scan in pool order.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_stale_eof(&mut f);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::LocalGet(l_slot_idx));
     f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
     f.instruction(&Instruction::LocalSet(l_slot));
-
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_eof(&mut f);
-    f.instruction(&Instruction::End);
-
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_slot_type_idx,
         field_index: 4, // id_value
     });
     f.instruction(&Instruction::LocalGet(l_parsed_id));
-    f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_eof(&mut f);
-    f.instruction(&Instruction::End);
-
+    f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_slot_type_idx,
         field_index: 3, // in_use
     });
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_eof(&mut f);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::BrIf(2));
     f.instruction(&Instruction::End);
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
 
     // in_handle = slot.in_stream — cached so the inner loop just
     // does a local.get instead of struct.get every iteration.

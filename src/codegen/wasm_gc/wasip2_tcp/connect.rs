@@ -280,7 +280,16 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     // local 14 = saved_alloc (i32) — see Phase 4.2.2f bump-heap
     // rewind below. Lives next to the typed locals so every exit
     // point can restore the cursor.
-    let mut f = Function::new(vec![(12u32, ValType::I32), (1u32, stale_slot_ref)]);
+    let mut f = Function::new(vec![
+        (12u32, ValType::I32),
+        (1u32, stale_slot_ref),
+        // Phase 4.7+ fix #14 — `l_scan_idx`: pool-scan counter
+        // for the live-count limit check. Distinct from
+        // `tcp_next_id` (the monotonic id counter) because the
+        // assigned slot index is no longer `tcp_next_id & 255` —
+        // we walk the pool for the first non-busy slot.
+        (1u32, ValType::I32),
+    ]);
     let l_host_len: u32 = 2;
     let l_scratch: u32 = 3;
     let l_resolve_stream: u32 = 4;
@@ -294,6 +303,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     let l_out_stream: u32 = 12;
     let l_saved_alloc: u32 = 13;
     let l_stale_slot: u32 = 14;
+    let l_scan_idx: u32 = 15;
 
     let mem4_resolve = MemArg {
         offset: u64::from(SCRATCH_OFFSET_RESOLVE),
@@ -587,24 +597,26 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::GlobalSet(helpers.pool.tcp_pool_global));
     f.instruction(&Instruction::End);
 
-    // slot = tcp_pool[tcp_next_id & 255]; if non-null && in_use ==
-    // 1 → Err. Both checks use the typed `stale_slot` local so the
-    // null + struct.get path stays trap-safe.
-    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_pool_global));
-    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_next_id_global));
-    f.instruction(&Instruction::I32Const(255));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::ArrayGet(helpers.pool.tcp_pool_type_idx));
-    f.instruction(&Instruction::LocalTee(l_stale_slot));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::I32Eqz);
+    // Phase 4.7+ fix #14 — find the first non-busy pool slot.
+    // `aver-rt::tcp::connect` rejects only when total live count
+    // hits 256; modulo-of-counter would falsely reject a fresh
+    // connect whenever the wraparound slot happened to be in use,
+    // even with free slots elsewhere in the pool.
+    //
+    // Scan slots 0..256. Slot is reusable if null (never claimed)
+    // or in_use == 0 (closed). First match → break out of $found
+    // block carrying the slot index in `l_scan_idx`. If we walk
+    // off the end with no match, the loop falls through to the
+    // limit Err.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_scan_idx));
+    f.instruction(&Instruction::Block(BlockType::Empty)); // $found
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_scan_idx));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_stale_slot));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: helpers.pool.tcp_slot_type_idx,
-        field_index: 3, // in_use
-    });
-    f.instruction(&Instruction::If(BlockType::Empty));
+    // No free slot — emit limit Err.
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(indices.limit_err_len as i32));
     f.instruction(&Instruction::ArrayNewData {
@@ -614,8 +626,27 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::Call(helpers.materialize.result_err_fn));
     restore_bump(&mut f, l_saved_alloc, helpers.pool.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
-    f.instruction(&Instruction::End); // in_use == 1
-    f.instruction(&Instruction::End); // slot is non-null
+    f.instruction(&Instruction::End); // i >= 256 if
+    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_pool_global));
+    f.instruction(&Instruction::LocalGet(l_scan_idx));
+    f.instruction(&Instruction::ArrayGet(helpers.pool.tcp_pool_type_idx));
+    f.instruction(&Instruction::LocalTee(l_stale_slot));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::BrIf(1)); // null slot → break $found
+    f.instruction(&Instruction::LocalGet(l_stale_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: helpers.pool.tcp_slot_type_idx,
+        field_index: 3, // in_use
+    });
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(1)); // closed slot → break $found
+    f.instruction(&Instruction::LocalGet(l_scan_idx));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_scan_idx));
+    f.instruction(&Instruction::Br(0)); // continue loop
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // $found block — l_scan_idx is the slot
 
     // ── Phase 4.2.2c — create-tcp-socket + start/finish-connect. ─
     // Scratch offset +0..+8 is now free (DNS exit); reuse for the
@@ -773,16 +804,14 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     // `array.set` overwrite the entry safely.
     let _ = l_stale_slot; // local kept for ABI stability; no body usage
 
-    // Step 11 — `tcp_pool[tcp_next_id & 255] = struct.new $tcp_slot
+    // Step 11 — `tcp_pool[l_scan_idx] = struct.new $tcp_slot
     // (socket, in_stream, out_stream, in_use=1, id_value=tcp_next_id)`.
-    // `id_value` is the full counter snapshot (not masked) — Phase
-    // 4.7 fix #2 uses it as the cross-call freshness check so a
-    // stale `Tcp.Connection` carrying the same modulo-256 slot id
-    // can't operate on whatever happens to live there now.
+    // `l_scan_idx` is the slot the Phase 4.7+ fix #14 scan picked
+    // (first free index in pool order); `id_value` stays the
+    // monotonic counter so close/write/read can match a specific
+    // generation rather than just an array index.
     f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_pool_global));
-    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_next_id_global));
-    f.instruction(&Instruction::I32Const(255));
-    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::LocalGet(l_scan_idx));
     f.instruction(&Instruction::LocalGet(l_socket));
     f.instruction(&Instruction::LocalGet(l_in_stream));
     f.instruction(&Instruction::LocalGet(l_out_stream));

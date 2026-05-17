@@ -265,20 +265,78 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_send(
     });
     f.instruction(&Instruction::LocalSet(l_conn));
 
+    // Phase 4.7+ fix #14 — id_value scan in pool order. Connect
+    // just returned an Ok conn so the slot is guaranteed live,
+    // but its index isn't `parsed_id & 255` anymore (connect picks
+    // the first non-busy slot, which may be anywhere in 0..256).
     f.instruction(&Instruction::LocalGet(l_conn));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_connection_type_idx,
         field_index: 0, // id
     });
     f.instruction(&Instruction::Call(helpers.parse_id_fn));
-    f.instruction(&Instruction::I32Const(255));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::LocalSet(l_slot_idx)); // reuse: parsed_id
 
-    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
-    f.instruction(&Instruction::LocalGet(l_slot_idx));
-    f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
-    f.instruction(&Instruction::LocalSet(l_slot));
+    {
+        // Scan body lifted into its own block so we can reuse the
+        // l_slot_idx local first as the parsed-id holder and then
+        // (after reset) as the iteration cursor. The `parsed_id`
+        // value lives in `l_slot_idx` until we copy it into a
+        // shorter-lived local-equivalent via I32Eq comparisons
+        // inside the loop.
+        let l_parsed = l_slot_idx;
+        // Iteration counter overwrites l_slot_idx after we capture
+        // parsed into the byte stream — load parsed_id onto stack
+        // for each match comparison.
+        let parsed_copy = l_buf_cap; // unused this early; safe scratch
+        f.instruction(&Instruction::LocalGet(l_parsed));
+        f.instruction(&Instruction::LocalSet(parsed_copy));
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalSet(l_slot_idx));
+        f.instruction(&Instruction::Block(BlockType::Empty));
+        f.instruction(&Instruction::Loop(BlockType::Empty));
+        f.instruction(&Instruction::LocalGet(l_slot_idx));
+        f.instruction(&Instruction::I32Const(256));
+        f.instruction(&Instruction::I32GeU);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        emit_write_err(&mut f);
+        f.instruction(&Instruction::End);
+        f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+        f.instruction(&Instruction::LocalGet(l_slot_idx));
+        f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
+        f.instruction(&Instruction::LocalSet(l_slot));
+        f.instruction(&Instruction::LocalGet(l_slot));
+        f.instruction(&Instruction::RefIsNull);
+        f.instruction(&Instruction::I32Eqz);
+        f.instruction(&Instruction::If(BlockType::Empty));
+        f.instruction(&Instruction::LocalGet(l_slot));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: indices.tcp_slot_type_idx,
+            field_index: 4, // id_value
+        });
+        f.instruction(&Instruction::LocalGet(parsed_copy));
+        f.instruction(&Instruction::I32Eq);
+        f.instruction(&Instruction::LocalGet(l_slot));
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: indices.tcp_slot_type_idx,
+            field_index: 3, // in_use
+        });
+        f.instruction(&Instruction::I32And);
+        f.instruction(&Instruction::BrIf(2));
+        f.instruction(&Instruction::End);
+        f.instruction(&Instruction::LocalGet(l_slot_idx));
+        f.instruction(&Instruction::I32Const(1));
+        f.instruction(&Instruction::I32Add);
+        f.instruction(&Instruction::LocalSet(l_slot_idx));
+        f.instruction(&Instruction::Br(0));
+        f.instruction(&Instruction::End); // loop
+        f.instruction(&Instruction::End); // block
+        // Reset parsed_copy (l_buf_cap) — Step 7 overwrites it
+        // with the real buffer capacity moments from now, but
+        // belt-and-braces zero so later branches don't see stale.
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::LocalSet(parsed_copy));
+    }
 
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::StructGet {
@@ -646,9 +704,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_close(
     };
 
     // parsed_id = parse_id(conn.id) — full monotonic counter value
-    // baked into the id string at connect time. The pool slot index
-    // is the low 8 bits; the upper bits are the freshness tag we
-    // cross-check against `slot.id_value` below.
+    // baked into the id string at connect time.
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_connection_type_idx,
@@ -657,60 +713,64 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_close(
     f.instruction(&Instruction::Call(helpers.parse_id_fn));
     f.instruction(&Instruction::LocalSet(l_parsed_id));
 
-    // slot_idx = parsed_id & 255
-    f.instruction(&Instruction::LocalGet(l_parsed_id));
-    f.instruction(&Instruction::I32Const(255));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::LocalSet(l_slot_idx));
-
-    // Null-pool guard (Phase 4.7+ fix #8). The `Tcp.Connection`
-    // record is non-opaque, so a program can hand-craft one and
-    // pass it to `Tcp.close` before any `Tcp.connect`. In that
-    // case `tcp_pool` is still null (lazy-init in connect) and
-    // `array.get` would trap. Surface the same Err message as the
-    // other stale-conn paths.
+    // Null-pool guard (Phase 4.7+ fix #8): `tcp_pool` stays null
+    // until the first real `Tcp.connect` lazy-inits it; if a
+    // user-crafted (or pre-connect) `Tcp.Connection` reaches close,
+    // surface the same Err as every other stale-conn path rather
+    // than trap on `array.get null`.
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::If(BlockType::Empty));
     emit_unknown_err(&mut f);
     f.instruction(&Instruction::End);
 
-    // slot = tcp_pool[slot_idx]
+    // Phase 4.7+ fix #14 — id_value scan. The slot index is no
+    // longer `parsed_id & 255`; connect's pool allocator picks the
+    // first non-busy slot in pool order, so close has to walk the
+    // pool looking for the slot whose `id_value == parsed_id` and
+    // `in_use == 1`. Walking off the end without a match means the
+    // handle is stale (closed and re-claimed, or never live).
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::Block(BlockType::Empty)); // $found
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_unknown_err(&mut f);
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::LocalGet(l_slot_idx));
     f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
     f.instruction(&Instruction::LocalSet(l_slot));
-
-    // Stale-conn guards, each returning Err to match aver-rt:
-    //   1. slot is null (slot index never claimed)
-    //   2. slot.id_value != parsed_id (pool wrapped; stale ref)
-    //   3. slot.in_use == 0 (already closed)
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
-    emit_unknown_err(&mut f);
-    f.instruction(&Instruction::End);
-
+    // Non-null slot: check id_value match + in_use.
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_slot_type_idx,
         field_index: 4, // id_value
     });
     f.instruction(&Instruction::LocalGet(l_parsed_id));
-    f.instruction(&Instruction::I32Ne);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    emit_unknown_err(&mut f);
-    f.instruction(&Instruction::End);
-
+    f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_slot_type_idx,
         field_index: 3, // in_use
     });
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    emit_unknown_err(&mut f);
-    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::BrIf(2)); // matching live slot → break $found
+    f.instruction(&Instruction::End); // non-null check
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::Br(0)); // continue scan
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // $found block — l_slot is the match
 
     // Drop input-stream.
     f.instruction(&Instruction::LocalGet(l_slot));

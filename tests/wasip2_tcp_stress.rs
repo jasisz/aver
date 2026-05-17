@@ -943,3 +943,88 @@ fn main() -> Unit
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn pool_accepts_replacement_when_slot_freed() {
+    // Regression for Phase 4.7+ fix #14 — pool-limit semantics by
+    // live count, not by slot-wraparound. The third peer-review
+    // round flagged that wasip2 used to refuse a fresh connect
+    // whenever the modulo slot was busy, even with free slots
+    // elsewhere. `aver-rt::tcp::connect` rejects only on total
+    // live count >= 256.
+    //
+    // Sequence:
+    //   1. Connect 256 times without closing — pool fills.
+    //   2. Close the first connection — frees one slot.
+    //   3. Connect again — should succeed (one slot free).
+    //
+    // Before fix #14 the third step would surface
+    // `Err("tcp: connection limit reached")` because slot
+    // `tcp_next_id & 255` (after 256 monotonic bumps) was still
+    // in_use=1.
+    //
+    // This test relies on building up 256 live conns at once, so
+    // we'll record the first id via a Console.print before we
+    // leak the rest (we never close them — the test process
+    // exits and wasmtime tears down). Recursive collection of
+    // conn refs gets unwieldy past the type boundary, so we just
+    // assert the post-free connect prints "freed-ok".
+    let dir = tempdir("pool-replace");
+    let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping pool-replace stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn closeKeepingRest(saved: Tcp.Connection) -> Int
+    ! [Tcp.close]
+    match Tcp.close(saved)
+        Result.Ok(_) -> 1
+        Result.Err(_) -> 0
+
+fn fillRest(n: Int) -> Int
+    ! [Tcp.connect]
+    match n
+        0 -> 1
+        _ -> match Tcp.connect("127.0.0.1", {port})
+            Result.Ok(_) -> fillRest(n - 1)
+            Result.Err(_) -> 0
+
+fn afterFree(closed: Int) -> Unit
+    ! [Tcp.connect, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(_) -> Console.print("freed-ok")
+        Result.Err(e) -> Console.print("freed-err: {{e}}")
+
+fn handle(first: Tcp.Connection) -> Unit
+    ! [Tcp.connect, Tcp.close, Console.print]
+    filled = fillRest(255)
+    closed = closeKeepingRest(first)
+    afterFree(closed)
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(first) -> handle(first)
+        Result.Err(e) -> Console.print("setup-err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "replace.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "pool-replace stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("freed-ok"),
+        "expected fresh connect to succeed after freeing one slot, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
