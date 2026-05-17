@@ -55,19 +55,28 @@ classified effect set, stub signatures, Oracle law syntax, and trace assertions.
 `verify ... law ...` always emits expanded sample theorems from `given` domains:
 - `theorem ..._sample_n := by native_decide`
 
-When Aver can auto-prove the universal law shape, it also emits:
-- `theorem <fn>_law_<name> : ∀ ..., lhs = rhs := by ...`
+The universal law theorem is always emitted as
+`theorem <fn>_law_<name> : ∀ ..., lhs = rhs := by ...`. The body is:
+- a real auto-proof when the law shape matches one of the supported strategies (see `Conservative auto-proofs currently cover:` below), or
+- `sorry` with an inline comment (`-- verify law is sampled; universal proof must be provided manually`) when no strategy matches
 
-`when` clauses translate to extra theorem premises in Lean. Generic auto-proof
-strategies still run on those guarded laws, but unmatched shapes fall back to
-domain-guarded theorems over the explicit `given` cases. Parser/render
-roundtrip laws such as `parse(render(x)) = x` currently live in that fallback
-bucket unless some other generic shape discharges them first.
+The per-sample and `_checked_domain` conjunction theorems always emit
+alongside as kernel-checked `native_decide` evidence, so the proof
+obligation is real and visible even when the universal body is `sorry`.
+
+`when` clauses translate to extra theorem premises in Lean — both the
+sampled-disjunction (`x = sample₁ ∨ x = sample₂ ∨ ...`) and the
+`when_expr = true` clause itself. Generic auto-proof strategies still
+run on those guarded laws, but unmatched shapes fall back to the
+`sorry` universal theorem plus per-sample theorems described above.
+Parser/render roundtrip laws such as `parse(render(x)) = x` currently
+live in that fallback bucket unless some other generic shape
+discharges them first.
 
 When `law <ident>` names an existing pure function and the law body compares `foo(args)` against `fooSpec(args)`, Aver treats that as a canonical spec reference:
 - the generated theorem/comment uses the canonical `<fn>_eq_<spec>` naming
 - `aver context` also records `fibSpec` as a spec for `fib`
-- in `--verify-mode auto`, Aver emits the universal theorem only when the law shape is supported by a generic auto-proof strategy; otherwise it omits that theorem and leaves a comment instead
+- in `--verify-mode auto`, the universal theorem body is auto-proven when the law shape matches a strategy; otherwise it lands with `sorry` and a comment for the user to fill in
 
 Example:
 
@@ -101,7 +110,7 @@ In short:
 - the proof backend should absorb invariants where it can
 - dropping to explicit invariant reasoning should be the exception, not the default workflow
 
-If Aver cannot auto-prove the universal law shape in `--verify-mode auto`, it omits that theorem and leaves a comment instead of emitting a fake `sorry` proof.
+If Aver cannot auto-prove the universal law shape in `--verify-mode auto`, the universal theorem body lands as `sorry` with an explanatory inline comment, and the per-sample + `_checked_domain` theorems still emit alongside as kernel-checked evidence. The proof obligation stays visible (and Lean will reject `lake build` until the user replaces the `sorry`), but the file compiles, so the case-level evidence remains useful even before someone closes the universal.
 
 Conservative auto-proofs currently cover:
 - reflexive law shape (`lhs` and `rhs` syntactically identical) → `rfl`
@@ -130,8 +139,7 @@ aver proof my_module.av --verify-mode auto -o out/
 That combination means:
 - regular `verify` cases become executable Lean checks via `native_decide`
 - supported `verify law` shapes get real universal proofs
-- unsupported `verify law` shapes stay as sample theorems and checked-domain
-  theorems, with the universal theorem omitted
+- unsupported `verify law` shapes emit the universal theorem with a `sorry` body and an inline comment, plus the per-sample + `_checked_domain` theorems as kernel-checked evidence
 - recursive pure code inside the supported proof subset is emitted as total Lean defs
 - unsupported recursive pure functions are called out explicitly and emitted with `partial` fallback
 
@@ -165,4 +173,4 @@ Lean codegen does not silently mask unresolved compiler internals:
 
 - `Expr::Resolved` in codegen input is a hard codegen error
 - `Type::Invalid` in codegen input is a hard codegen error
-- `sorry` can be emitted only when explicitly requested with `--verify-mode sorry`
+- `sorry` is emitted in two situations: explicit `--verify-mode sorry`, and `--verify-mode auto` universal-law theorems whose shape no auto-proof strategy covers (always paired with an inline comment + kernel-checked per-sample theorems alongside, so the obligation stays visible)
