@@ -592,10 +592,11 @@ pub(super) fn emit_module_with(
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                     }
                     EffectName::TcpPing => {
-                        // Connect-with-timeout — racing the connect
-                        // pollable against `subscribe-duration` via
-                        // a two-element `poll`. Adds the monotonic
-                        // clock slot on top of the connect set.
+                        // Phase 4.5b ships a light connect+close
+                        // wrapper, so the slot union mirrors connect
+                        // + close (no monotonic-clock timeout race
+                        // yet — `subscribe-duration` lands when a
+                        // real source-level timeout knob shows up).
                         wasip2_imports
                             .register(Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork);
                         wasip2_imports
@@ -611,11 +612,14 @@ pub(super) fn emit_module_with(
                         wasip2_imports
                             .register(Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpStartConnect);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpFinishConnect);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpSubscribe);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
                         wasip2_imports
                             .register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                        wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
                         wasip2_imports
-                            .register(Wasip2ImportSlot::ClocksMonotonicSubscribeDuration);
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                     }
@@ -1840,6 +1844,37 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 4.5b — `__rt_tcp_ping(host, port) -> ref Result<Unit, String>`.
+    // Light wrapper around connect + close. Gated on connect +
+    // close already allocated (Tcp.ping reuses both).
+    let tcp_ping: Option<super::wasip2_tcp::TcpPingIndices> = if tcp_connect.is_some()
+        && tcp_close.is_some()
+        && let Some(string_idx) = registry.string_array_type_idx
+        && let Some(res_conn_idx) = registry.result_type_idx("Result<Tcp.Connection,String>")
+        && let Some(res_unit_idx) = registry.result_type_idx("Result<Unit,String>")
+    {
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(string_idx),
+        });
+        let res_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(res_unit_idx),
+        });
+        types.ty().function([s_ref, ValType::I64], [res_ref]);
+        let ty = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some(super::wasip2_tcp::TcpPingIndices {
+            fn_type: ty,
+            fn_idx,
+            result_tcp_conn_string_type_idx: res_conn_idx,
+        })
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(
@@ -2094,6 +2129,9 @@ pub(super) fn emit_module_with(
         funcs.function(t.fn_type);
     }
     if let Some(t) = &tcp_send {
+        funcs.function(t.fn_type);
+    }
+    if let Some(t) = &tcp_ping {
         funcs.function(t.fn_type);
     }
     if let Some(e) = &env_get_lookup {
@@ -2403,6 +2441,7 @@ pub(super) fn emit_module_with(
                 tcp_write_line_fn_idx: tcp_write_line.as_ref().map(|t| t.fn_idx),
                 tcp_read_line_fn_idx: tcp_read_line.as_ref().map(|t| t.fn_idx),
                 tcp_send_fn_idx: tcp_send.as_ref().map(|t| t.fn_idx),
+                tcp_ping_fn_idx: tcp_ping.as_ref().map(|t| t.fn_idx),
                 network_handle_global: wasip2_globals.as_ref().and_then(|g| g.network_handle),
                 tcp_pool_global: wasip2_globals.as_ref().and_then(|g| g.tcp_pool),
                 tcp_next_id_global: wasip2_globals.as_ref().and_then(|g| g.tcp_next_id),
@@ -3948,6 +3987,39 @@ pub(super) fn emit_module_with(
         };
         codes.function(&super::wasip2_tcp::emit_tcp_send(ts, &helpers));
     }
+    if let Some(tp) = &tcp_ping {
+        let tcp_connect_fn = tcp_connect
+            .as_ref()
+            .map(|t| t.fn_idx)
+            .expect("tcp_ping gated on tcp_connect allocation");
+        let tcp_close_fn = tcp_close
+            .as_ref()
+            .map(|t| t.fn_idx)
+            .expect("tcp_ping gated on tcp_close allocation");
+        let result_unit_string_ok_fn = factory_exports
+            .result_unit_string_ok
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_ping emit requires __rt_result_unit_string_ok factory slot".into(),
+                )
+            })?
+            .fn_idx;
+        let result_unit_string_err_fn = factory_exports
+            .result_unit_string_err
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_ping emit requires __rt_result_unit_string_err factory slot".into(),
+                )
+            })?
+            .fn_idx;
+        let helpers = super::wasip2_tcp::TcpPingHelperFns {
+            tcp_connect_fn,
+            tcp_close_fn,
+            result_unit_string_ok_fn,
+            result_unit_string_err_fn,
+        };
+        codes.function(&super::wasip2_tcp::emit_tcp_ping(tp, &helpers));
+    }
     if let Some(e) = &env_get_lookup {
         codes.function(&emit_env_get_lookup(
             e.string_type_idx,
@@ -5127,10 +5199,12 @@ fn allocate_factory_exports(
                 | EffectName::TcpWriteLine
                 | EffectName::TcpReadLine
                 | EffectName::TcpClose
-                // Tcp.send orchestrates connect internally, so it
-                // also needs the record + Result<Tcp.Connection,...>
-                // slots even though source never sees the conn.
+                // Tcp.send and Tcp.ping both orchestrate connect
+                // internally, so they need the record +
+                // Result<Tcp.Connection,...> slots even though
+                // source never sees the conn.
                 | EffectName::TcpSend
+                | EffectName::TcpPing
         )
     });
     if needs_tcp_connection {
@@ -5165,7 +5239,7 @@ fn allocate_factory_exports(
     }
     if effect_registry
         .iter()
-        .any(|e| matches!(e, EffectName::TcpConnect | EffectName::TcpSend))
+        .any(|e| matches!(e, EffectName::TcpConnect | EffectName::TcpSend | EffectName::TcpPing))
     {
         let res_idx = registry
             .result_type_idx("Result<Tcp.Connection,String>")

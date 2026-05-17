@@ -527,6 +527,33 @@ pub(super) fn emit_disk_exists_wasip2(
 /// expression onto the stack and calls `__rt_disk_read_text`,
 /// which owns the open-at + read-via-stream + blocking-read loop
 /// + per-call resource drops.
+/// Phase 4.5b (0.20) — `Tcp.ping(host, port) -> Result<Unit, String>`
+/// on `--target wasip2`. Pushes (host, port) and calls the
+/// light `__rt_tcp_ping` wrapper.
+pub(super) fn emit_tcp_ping_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.ping on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.ping on `--target wasip2` expects 2 args (host, port), got {}",
+            args.len()
+        )));
+    }
+    let ping_fn = lowering.tcp_ping_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.ping on wasip2: __rt_tcp_ping fn idx missing".into())
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    emit_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(ping_fn));
+    Ok(())
+}
+
 /// Phase 4.5a (0.20) — `Tcp.send(host, port, data) -> Result<String, String>`
 /// on `--target wasip2`. One-shot pipeline: connect + writeLine
 /// + readLine + close. Pushes (host, port, data) and calls the

@@ -1488,6 +1488,81 @@ pub(super) fn emit_tcp_send(
     f
 }
 
+/// Phase 4.5b — `__rt_tcp_ping(host, port) -> ref Result<Unit, String>`
+/// slot bundle. Light wrapper around connect + close:
+///
+///   1. connect_result = __rt_tcp_connect(host, port)
+///   2. tag == 0 (Err) → re-wrap as Result<Unit, String>.Err
+///   3. Ok → drop conn (best-effort close) → Result.Ok(())
+///
+/// v1 has no 1-second connect timeout — wasi-sockets `start-connect`
+/// is best-effort and may block longer than expected. A timeout-race
+/// variant lands as a follow-up once we surface
+/// `subscribe-duration` + multi-pollable `poll` to source as a
+/// general capability.
+pub(super) struct TcpPingIndices {
+    pub fn_type: u32,
+    pub fn_idx: u32,
+    pub result_tcp_conn_string_type_idx: u32,
+}
+
+pub(super) struct TcpPingHelperFns {
+    pub tcp_connect_fn: u32,
+    pub tcp_close_fn: u32,
+    pub result_unit_string_ok_fn: u32,
+    pub result_unit_string_err_fn: u32,
+}
+
+pub(super) fn emit_tcp_ping(
+    indices: &TcpPingIndices,
+    helpers: &TcpPingHelperFns,
+) -> Function {
+    use wasm_encoder::{BlockType, HeapType, RefType};
+
+    let result_tcp_conn_string_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.result_tcp_conn_string_type_idx),
+    });
+    let mut f = Function::new(vec![(1u32, result_tcp_conn_string_ref)]);
+    let l_connect_result: u32 = 2;
+
+    // connect_result = __rt_tcp_connect(host, port)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(helpers.tcp_connect_fn));
+    f.instruction(&Instruction::LocalSet(l_connect_result));
+
+    // tag == 0 (Err) → re-wrap err as Result<Unit, String>.Err.
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::Call(helpers.result_unit_string_err_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Ok — close conn (best-effort, drop result) + return Ok(()).
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::Call(helpers.tcp_close_fn));
+    f.instruction(&Instruction::Drop);
+
+    f.instruction(&Instruction::Call(helpers.result_unit_string_ok_fn));
+    f.instruction(&Instruction::End);
+    f
+}
+
 /// Phase 4.3 emit — `__rt_tcp_close` body. Trust contract:
 /// `conn` came out of a successful `Tcp.connect` on this run, so
 /// the pool slot at `parse_id(conn.id)` is guaranteed to be a

@@ -147,23 +147,15 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     ) {
         return None;
     }
-    // 0.20 Phase 4 — graduates `Tcp.*` incrementally:
-    //   4.2.x — Tcp.connect (real DNS resolve + connect pipeline)
+    // 0.20 Phase 4 — every `Tcp.*` effect graduates on `--target wasip2`:
+    //   4.2.x — Tcp.connect (DNS resolve + connect pipeline)
     //   4.3   — Tcp.close   (drop streams + shutdown + free slot)
     //   4.4a  — Tcp.writeLine (line + '\n' through out-stream)
     //   4.4b  — Tcp.readLine  (1-byte blocking-read loop until '\n')
     //   4.5a  — Tcp.send      (connect + writeLine + readLine + close)
-    // The last graduates in 4.5b (ping).
-    if matches!(
-        effect,
-        "Tcp.connect" | "Tcp.close" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.send"
-    ) {
-        return None;
-    }
+    //   4.5b  — Tcp.ping      (light connect + close, Result<Unit, String>)
     if effect.starts_with("Tcp.") {
-        return Some(UnsupportedReason::OutOfRelease {
-            phase: "Phase 4 / 0.20",
-        });
+        return None;
     }
     // `HttpServer.listen` graduated in 0.19 Phase 3: the wasm-gc
     // emit path now synthesises a `wasi:http/incoming-handler.handle`
@@ -250,25 +242,33 @@ mod tests {
 
     #[test]
     fn classifies_out_of_release_rejects() {
-        // 0.20 Phase 4.2.1 graduated `Tcp.connect` (stub Err body).
-        // The other five Tcp.* methods stay rejected until their
-        // helpers graduate in Phase 4.3+ (close), 4.4 (writeLine /
-        // readLine), 4.5 (send / ping). `HttpServer.listenWith`
-        // remains the only HTTP-side out-of-release reject.
-        assert!(classify("Tcp.connect").is_none());
-        assert!(classify("Tcp.close").is_none());
-        assert!(classify("Tcp.writeLine").is_none());
-        assert!(classify("Tcp.readLine").is_none());
-        assert!(classify("Tcp.send").is_none());
-        assert!(matches!(
-            classify("Tcp.ping"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
+        // 0.20 Phase 4 graduated every `Tcp.*` method.
+        // `HttpServer.listenWith` is the only remaining HTTP-side
+        // out-of-release reject (per-instance context handler — needs
+        // wasm-global context plumbing that didn't make 0.19).
         assert!(matches!(
             classify("HttpServer.listenWith"),
             Some(UnsupportedReason::OutOfRelease { .. })
         ));
         assert!(classify("HttpServer.listen").is_none());
+    }
+
+    #[test]
+    fn all_tcp_methods_graduate() {
+        // Phase 4 graduated every Tcp.* method on `--target wasip2`.
+        // Sub-phase mapping:
+        //   4.2.x — Tcp.connect (DNS + create-socket + start/finish)
+        //   4.3   — Tcp.close   (drop streams + shutdown + free slot)
+        //   4.4a  — Tcp.writeLine
+        //   4.4b  — Tcp.readLine
+        //   4.5a  — Tcp.send    (connect + writeLine + readLine + close)
+        //   4.5b  — Tcp.ping    (connect + close)
+        assert!(classify("Tcp.connect").is_none());
+        assert!(classify("Tcp.close").is_none());
+        assert!(classify("Tcp.writeLine").is_none());
+        assert!(classify("Tcp.readLine").is_none());
+        assert!(classify("Tcp.send").is_none());
+        assert!(classify("Tcp.ping").is_none());
     }
 
     #[test]
