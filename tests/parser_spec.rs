@@ -1388,8 +1388,12 @@ fn parse_fails_on_any_type_annotation() {
 }
 
 #[test]
-fn parse_tcp_connection_as_record_constructor() {
-    // Tcp.Connection is no longer opaque — dotted record construction is allowed.
+fn parse_tcp_connection_record_constructor_is_syntactic() {
+    // Phase 4.7+ fix #11 — `Tcp.Connection` is opaque from the
+    // typechecker's side, but the *parser* still recognises the
+    // dotted record-constructor shape so the typecheck diagnostic
+    // can point at the offending call site. The reject lives in
+    // `typechecker_spec::error_tcp_connection_manual_construction_is_opaque`.
     let src = "c = Tcp.Connection(id = \"x\", host = \"127.0.0.1\", port = 6379)\n";
     let items = parse(src);
     assert!(!items.is_empty());

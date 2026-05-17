@@ -56,6 +56,11 @@ def serve():
                     break
                 buf += chunk
             payload = buf.split(b"\n", 1)[0] if b"\n" in buf else buf
+            # Aver's `Tcp.writeLine` sends `\r\n`; strip the trailing
+            # `\r` so the reported length matches the original
+            # payload (not payload + CR).
+            if payload.endswith(b"\r"):
+                payload = payload[:-1]
             c.sendall(f"LEN:{len(payload)}\n".encode())
             c.close()
         except OSError:
@@ -231,15 +236,14 @@ fn pool_slot_ids_increment_across_connects() {
         r#"
 fn doClose(c: Tcp.Connection) -> Unit
     ! [Tcp.close, Console.print]
-    _ = Console.print(c.id)
     closed = Tcp.close(c)
-    Console.print(" ")
+    Console.print("close-ok ")
 
 fn doConnect() -> Unit
     ! [Tcp.connect, Tcp.close, Console.print]
     match Tcp.connect("127.0.0.1", {port})
         Result.Ok(c) -> doClose(c)
-        Result.Err(e) -> Console.print("err")
+        Result.Err(e) -> Console.print("err ")
 
 fn doSecondAndThird() -> Unit
     ! [Tcp.connect, Tcp.close, Console.print]
@@ -263,9 +267,15 @@ fn main() -> Unit
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(s.contains("tcp-0"), "expected tcp-0, got:\n{s}");
-    assert!(s.contains("tcp-1"), "expected tcp-1, got:\n{s}");
-    assert!(s.contains("tcp-2"), "expected tcp-2, got:\n{s}");
+    // `Tcp.Connection` is opaque (Phase 4.7+ fix #11), so the
+    // test asserts on the visible close outcomes rather than the
+    // internal id strings. Three round-trip cycles all close Ok
+    // — that's the wraparound + slot reuse story end-to-end.
+    let oks = s.matches("close-ok ").count();
+    assert_eq!(
+        oks, 3,
+        "expected three close-ok markers from three sequential connect/close cycles, got {oks} in:\n{s}",
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -337,7 +347,7 @@ fn dns_resolve_failure_surfaces_err() {
 fn main() -> Unit
     ! [Tcp.connect, Console.print]
     match Tcp.connect("aver-wasip2-stress.invalid", 80)
-        Result.Ok(c) -> Console.print("unexpected ok: {c.id}")
+        Result.Ok(_) -> Console.print("unexpected ok")
         Result.Err(e) -> Console.print("dns-err: {e}")
 "#;
     let fixture = write_fixture(&dir, "dns.av", src);
@@ -590,11 +600,11 @@ fn pool_wraparound_recovers_stale_slot() {
     // from a never-closed slot would re-bind streams over a live
     // socket and break wasmtime's resource bookkeeping.
     //
-    // We pick 260 rather than 257 so the wrapping is well past
-    // the boundary and verify the id of the 260th connection is
-    // `tcp-259` (Phase 4.7 fix #2: ids are monotonic counter
-    // values, not pool slot indices — `tcp_next_id - 1` after
-    // 260 successful connects).
+    // 260 connect + close cycles — well past the 256-slot pool
+    // boundary. `Tcp.Connection` is opaque (Phase 4.7+ fix #11),
+    // so the test asserts on the running count of Ok closes
+    // rather than introspecting the id strings. Any trap, hung
+    // wraparound, or close failure trips the count.
     let dir = tempdir("wraparound");
     let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
         eprintln!("python3 unavailable — skipping wraparound stress");
@@ -604,27 +614,28 @@ fn pool_wraparound_recovers_stale_slot() {
 
     let src = format!(
         r#"
-fn doOnce(c: Tcp.Connection) -> String
+fn doOnce(c: Tcp.Connection) -> Int
     ! [Tcp.close]
-    closeRes = Tcp.close(c)
-    c.id
+    match Tcp.close(c)
+        Result.Ok(_) -> 1
+        Result.Err(_) -> 0
 
-fn doConnect() -> String
+fn doConnect() -> Int
     ! [Tcp.connect, Tcp.close]
     match Tcp.connect("127.0.0.1", {port})
         Result.Ok(c) -> doOnce(c)
-        Result.Err(e) -> "err"
+        Result.Err(_) -> 0
 
-fn loopN(n: Int, last: String) -> String
+fn loopN(n: Int, acc: Int) -> Int
     ! [Tcp.connect, Tcp.close]
     match n
-        0 -> last
-        _ -> loopN(n - 1, doConnect())
+        0 -> acc
+        _ -> loopN(n - 1, acc + doConnect())
 
 fn main() -> Unit
     ! [Tcp.connect, Tcp.close, Console.print]
-    final = loopN(260, "none")
-    Console.print("final id: {{final}}")
+    ok = loopN(260, 0)
+    Console.print("ok-closes: {{ok}}")
 "#
     );
     let fixture = write_fixture(&dir, "wrap.av", &src);
@@ -638,97 +649,67 @@ fn main() -> Unit
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    // After 260 successful connects `tcp_next_id` reads 260 and
-    // the id baked into the last `Tcp.Connection` is the snapshot
-    // taken before the bump — i.e. 259. Phase 4.7 fix #2 uses the
-    // full counter (no `& 255` masking) so the program-visible id
-    // is `tcp-259`, not the slot index `tcp-3`.
     assert!(
-        s.contains("final id: tcp-259"),
-        "expected `final id: tcp-259` after 260 monotonic connects, got:\n{s}"
+        s.contains("ok-closes: 260"),
+        "expected 260 successful close cycles past the 256-slot pool boundary, got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn stale_close_after_wraparound_surfaces_err() {
-    // Regression for Phase 4.7 fix #2 — ID aliasing.
+fn pool_limit_refuses_257th_simultaneous_connect() {
+    // Regression for Phase 4.7+ fix #10 — connection-limit parity
+    // with `aver-rt::tcp::connect`, which refuses the 257th live
+    // connect with `Err("Tcp.connect: connection limit reached
+    // (256 max)")`. Wasip2 used to silently evict the existing
+    // live occupant of slot `tcp_next_id & 255`, which let a
+    // misbehaving program shut down another part of itself.
     //
-    // Before the monotonic-id + slot-generation fix, `Tcp.Connection`
-    // baked `tcp-{slot_idx & 255}` into its id, so after 256+ connects
-    // an old `Tcp.Connection { id = "tcp-0" }` value pointed back at
-    // the live slot 0, which by then belonged to a fresh connection.
-    // `Tcp.close(old)` would happily shut down whatever was sitting
-    // there. The fix flips ids to the monotonic counter and stamps
-    // `slot.id_value` on every claim so consumers can detect stale
-    // references.
-    //
-    // The test connects once (saving the first connection), then
-    // closes 256 fresh connections so slot 0 gets reused, then closes
-    // the saved one. Result: `Err("tcp: unknown connection")` —
-    // matching `aver-rt::tcp::close` on VM / self-host / wasm-gc.
-    // What we're proving is that close NEVER reaches the live slot
-    // 0 occupant; the Err vs. Ok distinction is just the
-    // cross-backend semantics chosen in Phase 4.7+ fix #5.
-    let dir = tempdir("stale-close");
+    // The probe opens up to 260 simultaneous connects (no closes)
+    // and stops at the first Err. Slots 0..255 fill in order; the
+    // 257th call falls on slot 0 (already `in_use == 1`) and must
+    // surface the limit message.
+    let dir = tempdir("conn-limit");
     let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
-        eprintln!("python3 unavailable — skipping stale-close stress");
+        eprintln!("python3 unavailable — skipping conn-limit stress");
         return;
     };
     std::thread::sleep(Duration::from_millis(100));
 
     let src = format!(
         r#"
-fn doClose(c: Tcp.Connection) -> String
-    ! [Tcp.close]
-    closeRes = Tcp.close(c)
-    c.id
-
-fn handleFresh(c: Tcp.Connection, remaining: Int) -> String
-    ! [Tcp.connect, Tcp.close]
-    lastId = doClose(c)
-    fillSlot(remaining)
-
-fn fillSlot(n: Int) -> String
-    ! [Tcp.connect, Tcp.close]
+fn fill(n: Int) -> Int
+    ! [Tcp.connect]
     match n
-        0 -> "done"
+        0 -> 0
         _ -> match Tcp.connect("127.0.0.1", {port})
-            Result.Ok(c) -> handleFresh(c, n - 1)
-            Result.Err(_) -> fillSlot(n - 1)
-
-fn closeStale(first: Tcp.Connection) -> Unit
-    ! [Tcp.connect, Tcp.close, Console.print]
-    filled = fillSlot(256)
-    match Tcp.close(first)
-        Result.Ok(_) -> Console.print("stale-close: ok ({{first.id}})")
-        Result.Err(e) -> Console.print("stale-close: err ({{first.id}}) {{e}}")
+            Result.Ok(_) -> fill(n - 1)
+            Result.Err(_) -> n
 
 fn main() -> Unit
-    ! [Tcp.connect, Tcp.close, Console.print]
-    match Tcp.connect("127.0.0.1", {port})
-        Result.Ok(first) -> closeStale(first)
-        Result.Err(e) -> Console.print("setup: err: {{e}}")
+    ! [Tcp.connect, Console.print]
+    remaining = fill(260)
+    Console.print("remaining: {{remaining}}")
 "#
     );
-    let fixture = write_fixture(&dir, "stale.av", &src);
+    let fixture = write_fixture(&dir, "limit.av", &src);
     let out = run_wasip2(&dir, &fixture);
     let _ = server.kill();
     let _ = server.wait();
     let s = String::from_utf8_lossy(&out.stdout).into_owned();
     assert!(
         out.status.success(),
-        "stale-close stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        "conn-limit stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    // The first connection has id = tcp-0 (counter snapshot before
-    // bump). After 256 more connects, slot 0 holds a fresh
-    // `id_value = 256` — close(first) must surface Err, not Ok,
-    // and never touch the live occupant.
+    // 260 attempts; 256 succeed, then the 257th call (n = 4) hits
+    // slot 0 which is still `in_use == 1` and bails out. The
+    // recursive helper returns the n at which it gave up, so we
+    // expect `remaining: 4`.
     assert!(
-        s.contains("stale-close: err (tcp-0) tcp: unknown connection"),
-        "expected stale-conn Err on `tcp-0` after wraparound, got:\n{s}"
+        s.contains("remaining: 4"),
+        "expected pool to refuse the 257th simultaneous connect, got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -858,18 +839,14 @@ fn main() -> Unit
 }
 
 #[test]
-fn close_on_handcrafted_connection_returns_err() {
-    // Regression for Phase 4.7+ fix #8 — null-pool guard.
-    //
-    // `Tcp.Connection` is non-opaque (see
-    // `src/types/checker/infer/records.rs:16`), so users can build
-    // one without ever calling `Tcp.connect`. The pool global stays
-    // null until the first real connect lazy-inits it; `array.get
-    // null_pool[idx]` would trap. The guards in `emit_tcp_close` /
-    // `emit_tcp_write_line` / `emit_tcp_read_line` surface
-    // `Err("tcp: unknown connection")` / `Err("tcp: write failed")`
-    // / `Err("tcp: eof")` instead.
-    let dir = tempdir("handcrafted");
+fn handcrafted_tcp_connection_is_compile_error() {
+    // Phase 4.7+ fix #11 — `Tcp.Connection` is opaque. The
+    // typechecker rejects construction up-front, so a forged-id
+    // attack never even reaches the runtime guards. The null-pool
+    // / generation / in_use checks (Phase 4.7+ fix #8 + #2) stay
+    // as defence-in-depth for emitter bugs, but the surface API
+    // contract is already enforced at compile time.
+    let dir = tempdir("handcrafted-opaque");
     let src = r#"
 fn main() -> Unit
     ! [Tcp.close, Console.print]
@@ -880,16 +857,14 @@ fn main() -> Unit
 "#;
     let fixture = write_fixture(&dir, "hand.av", src);
     let out = run_wasip2(&dir, &fixture);
-    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(
-        out.status.success(),
-        "handcrafted-close exited non-zero (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr)
+        !out.status.success(),
+        "expected compile-time rejection of `Tcp.Connection(...)`, got success.\nstderr:\n{stderr}"
     );
     assert!(
-        s.contains("hand: tcp: unknown connection"),
-        "expected null-pool close to surface `tcp: unknown connection`, got:\n{s}"
+        stderr.contains("opaque type 'Tcp.Connection'"),
+        "expected opaque-type diagnostic, got:\n{stderr}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

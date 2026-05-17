@@ -206,17 +206,29 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     f.instruction(&Instruction::GlobalSet(helpers.bump_alloc_ptr_global));
     f.instruction(&Instruction::End);
 
-    // nl_ptr = cabi_realloc(0, 0, 1, 1); LM[nl_ptr] = '\n'.
+    // nl_ptr = cabi_realloc(0, 0, 1, 2); LM[nl_ptr..nl_ptr+2] =
+    // "\r\n". Phase 4.7+ fix #12 — `aver-rt::tcp::write_line`
+    // sends `\r\n` (POSIX line terminator). Wasip2 used to emit
+    // only `\n`, which broke line-oriented servers that depend on
+    // the carriage return (redis, http/1.1, smtp, etc.). Now both
+    // backends share the same wire format.
     // Now safely past `len` thanks to the bump advance above.
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(2));
     f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
     f.instruction(&Instruction::LocalSet(l_nl_ptr));
     f.instruction(&Instruction::LocalGet(l_nl_ptr));
-    f.instruction(&Instruction::I32Const(0x0a));
+    f.instruction(&Instruction::I32Const(0x0d));
     f.instruction(&Instruction::I32Store8(mem1_zero));
+    f.instruction(&Instruction::LocalGet(l_nl_ptr));
+    f.instruction(&Instruction::I32Const(0x0a));
+    f.instruction(&Instruction::I32Store8(MemArg {
+        offset: 1,
+        align: 0,
+        memory_index: 0,
+    }));
 
     // Allocate a 12-byte retptr for the per-chunk write result —
     // reused both by the line-bytes chunk loop and the newline tail.
@@ -281,7 +293,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
         field_index: 2, // out_stream
     });
     f.instruction(&Instruction::LocalGet(l_nl_ptr));
-    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(2)); // "\r\n"
     f.instruction(&Instruction::LocalGet(l_retptr));
     f.instruction(&Instruction::Call(helpers.blocking_write_fn));
 
@@ -573,20 +585,18 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::I32Load8U(mem1));
     f.instruction(&Instruction::LocalSet(l_byte));
 
-    // '\n' ends the line.
+    // '\n' ends the line. Phase 4.7+ fix #12 — drop the
+    // mid-payload '\r' skip; `aver-rt::tcp::read_line` only strips
+    // the *trailing* '\r' that immediately precedes the '\n'
+    // (POSIX line ending). Skipping every '\r' here would lose
+    // intra-payload carriage returns that real protocols send
+    // (e.g. an HTTP header value containing %0D). The trailing
+    // strip lands once after the loop terminates.
     f.instruction(&Instruction::LocalGet(l_byte));
     f.instruction(&Instruction::I32Const(10));
     f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::Br(2));
-    f.instruction(&Instruction::End);
-
-    // '\r' silently skipped (Windows-style newline tolerance).
-    f.instruction(&Instruction::LocalGet(l_byte));
-    f.instruction(&Instruction::I32Const(13));
-    f.instruction(&Instruction::I32Eq);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::Br(1));
     f.instruction(&Instruction::End);
 
     // Grow buffer if full.
@@ -641,6 +651,33 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::StructNew(indices.result_type_idx));
     restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Phase 4.7+ fix #12 — trailing '\r' strip. Matches
+    // `aver-rt::tcp::read_line` which pops a single trailing
+    // '\r' if the loop just consumed '\n'. We can't tell
+    // structurally whether the line terminated by '\n' or by
+    // EOF/error here (they all land at `should_err == 0`), so
+    // condition the pop on `buf_len > 0 && LM[buf_ptr + buf_len -
+    // 1] == 0x0d`.
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(13));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(l_buf_len));
+    f.instruction(&Instruction::End);
     f.instruction(&Instruction::End);
 
     // Ok arm — copy LM[buf_ptr..buf_ptr+buf_len] into a fresh GC array.

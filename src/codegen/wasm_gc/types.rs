@@ -827,6 +827,11 @@ impl TypeRegistry {
                 // canned message instead because the Err string is
                 // built from a static data segment, not concat.
                 b"tcp: port out of range".as_ref(),
+                // Phase 4.7+ fix #10 — pool-limit alignment with
+                // `aver-rt::tcp::connect`. Pool is 256 slots; the
+                // 257th live connect must refuse rather than evict
+                // the slot's existing live occupant.
+                b"tcp: connection limit reached (256 max)".as_ref(),
             ] {
                 let bytes = msg.to_vec();
                 string_literal_idx.entry(bytes.clone()).or_insert_with(|| {

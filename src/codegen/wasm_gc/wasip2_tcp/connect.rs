@@ -61,6 +61,13 @@ pub(in crate::codegen::wasm_gc) struct TcpConnectIndices {
     /// from a data segment, not runtime formatting.
     pub port_err_segment_idx: u32,
     pub port_err_len: u32,
+    /// Phase 4.7+ fix #10 — `"tcp: connection limit reached (256
+    /// max)"`. Pool wraparound used to silently evict the live
+    /// occupant of slot `tcp_next_id & 255`; `aver-rt::tcp::connect`
+    /// refuses with this exact message. Refuses to fresh-connect
+    /// before any socket / connect resources are claimed.
+    pub limit_err_segment_idx: u32,
+    pub limit_err_len: u32,
 }
 
 /// Pool storage + bump-heap rewind. Grouped because every
@@ -167,17 +174,6 @@ pub(in crate::codegen::wasm_gc) struct TcpConnectSocket {
     /// on every error path. Phase 4.2.2d keeps it live on the
     /// happy path and stashes it in the pool slot.
     pub drop_tcp_socket_fn: u32,
-    /// Phase 4.2.2e — `wasi:sockets/tcp.[method]tcp-socket.shutdown`.
-    /// Used when pool slot N's `in_use` bit is still set on a new
-    /// connect (i.e. `tcp_next_id` wrapped past 256 while old
-    /// connections were still live) — shuts the stale socket down
-    /// before the new struct.new overwrites the entry.
-    pub shutdown_fn: u32,
-    /// Phase 4.2.2e — stream drops for the same stale-slot recovery
-    /// path. Matches the four helpers `__rt_tcp_close` uses
-    /// internally.
-    pub stale_drop_in_stream_fn: u32,
-    pub stale_drop_out_stream_fn: u32,
 }
 
 /// String marshaling + record / result wrapping — the "build the
@@ -571,6 +567,56 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::LocalGet(l_resolve_stream));
     f.instruction(&Instruction::Call(helpers.dns.drop_resolve_stream_fn));
 
+    // ── Phase 4.7+ fix #10 — pool slot reservation. ─────────────
+    //
+    // Lazy-init `tcp_pool` on the first connect, then refuse if
+    // the target slot already holds a live (`in_use == 1`)
+    // occupant. Previously this branch ran AFTER finish-connect
+    // and force-dropped the live slot to make room; aver-rt::tcp
+    // (VM / self-host / wasm-gc-bridge) refuses with `Err("Tcp.
+    // connect: connection limit reached (256 max)")`. Match that
+    // here, refusing BEFORE we burn a fresh socket + connect on
+    // an address we'd have to immediately unwind.
+    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_pool_global));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::ArrayNewDefault(
+        helpers.pool.tcp_pool_type_idx,
+    ));
+    f.instruction(&Instruction::GlobalSet(helpers.pool.tcp_pool_global));
+    f.instruction(&Instruction::End);
+
+    // slot = tcp_pool[tcp_next_id & 255]; if non-null && in_use ==
+    // 1 → Err. Both checks use the typed `stale_slot` local so the
+    // null + struct.get path stays trap-safe.
+    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_pool_global));
+    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_next_id_global));
+    f.instruction(&Instruction::I32Const(255));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::ArrayGet(helpers.pool.tcp_pool_type_idx));
+    f.instruction(&Instruction::LocalTee(l_stale_slot));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_stale_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: helpers.pool.tcp_slot_type_idx,
+        field_index: 3, // in_use
+    });
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.limit_err_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.limit_err_segment_idx,
+    });
+    f.instruction(&Instruction::Call(helpers.materialize.result_err_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.pool.bump_alloc_ptr_global);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End); // in_use == 1
+    f.instruction(&Instruction::End); // slot is non-null
+
     // ── Phase 4.2.2c — create-tcp-socket + start/finish-connect. ─
     // Scratch offset +0..+8 is now free (DNS exit); reuse for the
     // socket-side retptrs:
@@ -716,76 +762,16 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     let _ = (l_ipv4_a, l_ipv4_b, l_ipv4_c, l_ipv4_d);
 
     // ── Phase 4.2.2d — pool slot + Tcp.Connection materialise. ─
-
-    // Step 10 — lazy-init `tcp_pool`. The ConstExpr init is
-    // `ref.null $tcp_pool`, so on the first invocation the global
-    // is null and we allocate a fresh `(array (mut $tcp_slot))` of
-    // capacity 256. Subsequent calls reuse the existing array.
-    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_pool_global));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::I32Const(256));
-    f.instruction(&Instruction::ArrayNewDefault(
-        helpers.pool.tcp_pool_type_idx,
-    ));
-    f.instruction(&Instruction::GlobalSet(helpers.pool.tcp_pool_global));
-    f.instruction(&Instruction::End);
-
-    // Step 10b — stale-slot recovery. After 256+ connects without
-    // matching closes, `tcp_next_id & 255` wraps onto a slot that
-    // may still hold a live `in_use == 1` struct. Drop the old
-    // streams + socket before the new `struct.new` overwrites
-    // the entry. The `scratch+0..+2` retptr was last touched by
-    // finish-connect's tag check and is safe to reuse for the
-    // shutdown call.
-    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_pool_global));
-    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_next_id_global));
-    f.instruction(&Instruction::I32Const(255));
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::ArrayGet(helpers.pool.tcp_pool_type_idx));
-    f.instruction(&Instruction::LocalTee(l_stale_slot));
-    f.instruction(&Instruction::RefIsNull);
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_stale_slot));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: helpers.pool.tcp_slot_type_idx,
-        field_index: 3, // in_use
-    });
-    f.instruction(&Instruction::If(BlockType::Empty));
-    // Drop in_stream.
-    f.instruction(&Instruction::LocalGet(l_stale_slot));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: helpers.pool.tcp_slot_type_idx,
-        field_index: 1,
-    });
-    f.instruction(&Instruction::Call(helpers.socket.stale_drop_in_stream_fn));
-    // Drop out_stream.
-    f.instruction(&Instruction::LocalGet(l_stale_slot));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: helpers.pool.tcp_slot_type_idx,
-        field_index: 2,
-    });
-    f.instruction(&Instruction::Call(helpers.socket.stale_drop_out_stream_fn));
-    // shutdown(stale_socket, both, scratch+0). Result discarded —
-    // we're tearing down anyway.
-    f.instruction(&Instruction::LocalGet(l_stale_slot));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: helpers.pool.tcp_slot_type_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::I32Const(2)); // shutdown.both
-    f.instruction(&Instruction::LocalGet(l_scratch));
-    f.instruction(&Instruction::Call(helpers.socket.shutdown_fn));
-    // Drop stale socket.
-    f.instruction(&Instruction::LocalGet(l_stale_slot));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: helpers.pool.tcp_slot_type_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::Call(helpers.socket.drop_tcp_socket_fn));
-    f.instruction(&Instruction::End); // in_use == 1
-    f.instruction(&Instruction::End); // slot is non-null
+    //
+    // Pool limit + lazy-init was moved up-front (right after the
+    // DNS resolve drop, before create-tcp-socket) by Phase 4.7+
+    // fix #10 so the 257th live connect refuses with
+    // `Err("tcp: connection limit reached (256 max)")` instead of
+    // silently evicting the existing live occupant of slot
+    // `tcp_next_id & 255`. By the time we reach Step 11 the slot
+    // is guaranteed null or `in_use == 0`, so `struct.new` +
+    // `array.set` overwrite the entry safely.
+    let _ = l_stale_slot; // local kept for ABI stability; no body usage
 
     // Step 11 — `tcp_pool[tcp_next_id & 255] = struct.new $tcp_slot
     // (socket, in_stream, out_stream, in_use=1, id_value=tcp_next_id)`.
@@ -870,6 +856,8 @@ mod tests {
             conn_err_len: b"tcp: connect failed".len() as u32,
             port_err_segment_idx: 5,
             port_err_len: b"tcp: port out of range".len() as u32,
+            limit_err_segment_idx: 6,
+            limit_err_len: b"tcp: connection limit reached (256 max)".len() as u32,
         };
         let helpers = TcpConnectHelperFns {
             pool: TcpConnectPool {
@@ -895,9 +883,6 @@ mod tests {
                 finish_connect_fn: 15,
                 socket_subscribe_fn: 14,
                 drop_tcp_socket_fn: 16,
-                shutdown_fn: 20,
-                stale_drop_in_stream_fn: 21,
-                stale_drop_out_stream_fn: 22,
             },
             materialize: TcpConnectMaterialize {
                 cabi_realloc_fn: 4,

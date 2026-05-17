@@ -226,12 +226,13 @@ fn str_arg(val: &Value, msg: &str) -> Result<String, RuntimeError> {
 }
 
 fn int_arg(val: &Value, msg: &str) -> Result<i64, RuntimeError> {
+    // Phase 4.7+ fix #13 — type check only; the port-range check
+    // moved into `aver-rt::tcp::{connect, send, ping}` so every
+    // backend surfaces the same catchable Aver-side
+    // `Result.Err("Tcp: port N is out of range")` instead of the
+    // VM-only `RuntimeError` trap.
     match val {
-        Value::Int(n) if (0..=65535).contains(n) => Ok(*n),
-        Value::Int(n) => Err(RuntimeError::Error(format!(
-            "Tcp: port {} is out of range (0–65535)",
-            n
-        ))),
+        Value::Int(n) => Ok(*n),
         _ => Err(RuntimeError::Error(msg.to_string())),
     }
 }

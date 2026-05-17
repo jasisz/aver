@@ -18,7 +18,22 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
+/// Phase 4.7+ fix #13 — cross-backend port validation.
+/// Returns the port as `u16` when it fits, otherwise an Aver-side
+/// error string. Lifts what used to be a VM `RuntimeError` panic
+/// into a `Result.Err` so every backend (VM via `services::tcp`,
+/// self-host via this fn, wasm-gc-bridge via this fn, wasip2 via
+/// its own up-front check) surfaces the same catchable shape.
+fn validate_port(port: i64) -> Result<u16, String> {
+    if (0..=65535).contains(&port) {
+        Ok(port as u16)
+    } else {
+        Err(format!("Tcp: port {port} is out of range (0\u{2013}65535)"))
+    }
+}
+
 pub fn connect(host: &str, port: i64) -> Result<TcpConnection, String> {
+    validate_port(port)?;
     let count = CONNECTIONS.with(|map| map.borrow().len());
     if count >= MAX_CONNECTIONS {
         return Err(format!(
@@ -93,6 +108,7 @@ pub fn close(conn: &TcpConnection) -> Result<(), String> {
 }
 
 pub fn send(host: &str, port: i64, message: &str) -> Result<String, String> {
+    validate_port(port)?;
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
     let mut stream =
         TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
@@ -115,6 +131,7 @@ pub fn send(host: &str, port: i64, message: &str) -> Result<String, String> {
 }
 
 pub fn ping(host: &str, port: i64) -> Result<(), String> {
+    validate_port(port)?;
     let socket_addr = resolve(&format!("{}:{}", host, port))?;
     TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT).map_err(|e| e.to_string())?;
     Ok(())

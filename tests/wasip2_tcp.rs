@@ -174,7 +174,7 @@ fn tcp_connect_close_round_trip() {
         r#"
 fn doClose(c: Tcp.Connection) -> Unit
     ! [Tcp.close, Console.print]
-    _ = Console.print("id={{c.id}} host={{c.host}} port={{c.port}}")
+    _ = Console.print("connect-ok")
     match Tcp.close(c)
         Result.Ok(_) -> Console.print(" closed-ok")
         Result.Err(e) -> Console.print(" closed-err: {{e}}")
@@ -197,15 +197,10 @@ fn main() -> Unit
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(s.contains("id=tcp-0"), "expected id=tcp-0, got:\n{s}");
-    assert!(
-        s.contains("host=127.0.0.1"),
-        "expected host=127.0.0.1, got:\n{s}"
-    );
-    assert!(
-        s.contains(&format!("port={port}")),
-        "expected port={port}, got:\n{s}"
-    );
+    // `Tcp.Connection` is opaque (Phase 4.7+ fix #11), so the
+    // test doesn't try to inspect the handle's bytes; it just
+    // checks that connect + close both came back Ok.
+    assert!(s.contains("connect-ok"), "expected connect-ok, got:\n{s}");
     assert!(s.contains(" closed-ok"), "expected closed-ok, got:\n{s}");
     let _ = std::fs::remove_dir_all(&dir);
 }

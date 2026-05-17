@@ -182,6 +182,8 @@ fn allocate_connect(
     let sock_err_seg = registry.string_literal_segment(b"tcp: socket create failed")?;
     let conn_err_seg = registry.string_literal_segment(b"tcp: connect failed")?;
     let port_err_seg = registry.string_literal_segment(b"tcp: port out of range")?;
+    let limit_err_seg =
+        registry.string_literal_segment(b"tcp: connection limit reached (256 max)")?;
     // Every wasi-sockets import the body calls must already be
     // present in the lookup table. We don't carry the fn idxs here
     // (emit_bodies re-resolves them) — the gate proves they exist.
@@ -232,6 +234,8 @@ fn allocate_connect(
         conn_err_len: b"tcp: connect failed".len() as u32,
         port_err_segment_idx: port_err_seg,
         port_err_len: b"tcp: port out of range".len() as u32,
+        limit_err_segment_idx: limit_err_seg,
+        limit_err_len: b"tcp: connection limit reached (256 max)".len() as u32,
     })
 }
 

@@ -3355,23 +3355,10 @@ pub(super) fn emit_module_with(
             .tcp_pool_type_idx
             .expect("tcp_pool type slot allocated alongside tcp_slot when needs_tcp");
         // Phase 4.2.2e — stale-slot recovery needs `shutdown` +
-        // the input/output stream drops at connect-time too (the
-        // close helper already pulls them; we re-lookup here so
-        // the wraparound branch can fire without depending on the
-        // close helper being allocated).
-        let shutdown_fn = wasip2_imports
-            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown)
-            .expect("tcp.connect emit requires shutdown slot for wraparound recovery");
-        let stale_drop_in_stream_fn = wasip2_imports
-            .lookup_wasm_fn_idx(
-                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
-            )
-            .expect("tcp.connect emit requires drop-input-stream slot");
-        let stale_drop_out_stream_fn = wasip2_imports
-            .lookup_wasm_fn_idx(
-                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
-            )
-            .expect("tcp.connect emit requires drop-output-stream slot");
+        // Phase 4.7+ fix #10 — pool wraparound now refuses with Err
+        // instead of force-dropping the live occupant, so the
+        // stale-recovery shutdown/drop trio is gone. close + helper
+        // emit still pulls those slots from `wasip2_imports`.
         let bump_alloc_ptr_global = wasip2_globals
             .as_ref()
             .map(|g| g.bump_alloc_ptr)
@@ -3400,9 +3387,6 @@ pub(super) fn emit_module_with(
                 finish_connect_fn,
                 socket_subscribe_fn,
                 drop_tcp_socket_fn,
-                shutdown_fn,
-                stale_drop_in_stream_fn,
-                stale_drop_out_stream_fn,
             },
             materialize: super::wasip2_tcp::TcpConnectMaterialize {
                 cabi_realloc_fn,
