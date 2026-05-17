@@ -28,6 +28,16 @@
 
 use wasm_encoder::{Function, Instruction, ValType};
 
+/// Phase 4.2.2f — restore the `bump_alloc_ptr` global to the
+/// cursor saved on helper entry. Inlined at every exit so the
+/// helper's `cabi_realloc` calls reclaim their scratch on return.
+/// Cheaper than a real fn (two i32 instructions), keeps the
+/// rewind pattern visible at every callsite.
+fn restore_bump(f: &mut Function, l_saved_alloc: u32, bump_alloc_ptr_global: u32) {
+    f.instruction(&Instruction::LocalGet(l_saved_alloc));
+    f.instruction(&Instruction::GlobalSet(bump_alloc_ptr_global));
+}
+
 /// Slot bundle for `__rt_tcp_connect`. Mirrors `HttpGetIndices`'s
 /// shape — type idxs + helper fn idxs the body needs to resolve.
 /// Phase 4.2.2a adds the network-handle global so the prolog can
@@ -208,6 +218,11 @@ pub(super) struct TcpConnectHelperFns {
     /// uses internally.
     pub stale_drop_in_stream_fn: u32,
     pub stale_drop_out_stream_fn: u32,
+    /// Phase 4.2.2f — `bump_alloc_ptr` global. Saved on entry,
+    /// restored on every exit so the helper's `cabi_realloc` calls
+    /// reclaim their scratch as soon as the call returns. Without
+    /// this Tcp.connect leaks ~64 bytes of bump heap per call.
+    pub bump_alloc_ptr_global: u32,
 }
 
 /// Emit the body for `__rt_tcp_connect`. Phase 4.2.2a layout:
@@ -267,7 +282,10 @@ pub(super) fn emit_tcp_connect_stub(
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(helpers.tcp_slot_type_idx),
     });
-    let mut f = Function::new(vec![(11u32, ValType::I32), (1u32, stale_slot_ref)]);
+    // local 14 = saved_alloc (i32) — see Phase 4.2.2f bump-heap
+    // rewind below. Lives next to the typed locals so every exit
+    // point can restore the cursor.
+    let mut f = Function::new(vec![(12u32, ValType::I32), (1u32, stale_slot_ref)]);
     let l_host_len: u32 = 2;
     let l_scratch: u32 = 3;
     let l_resolve_stream: u32 = 4;
@@ -279,7 +297,8 @@ pub(super) fn emit_tcp_connect_stub(
     let l_socket: u32 = 10;
     let l_in_stream: u32 = 11;
     let l_out_stream: u32 = 12;
-    let l_stale_slot: u32 = 13;
+    let l_saved_alloc: u32 = 13;
+    let l_stale_slot: u32 = 14;
 
     let mem4_resolve = MemArg {
         offset: u64::from(SCRATCH_OFFSET_RESOLVE),
@@ -339,6 +358,14 @@ pub(super) fn emit_tcp_connect_stub(
         memory_index: 0,
     };
 
+    // ── Phase 4.2.2f — bump-heap rewind prolog. ────────────────
+    // Save the cabi_realloc cursor on entry; every exit path
+    // (early Returns + the trailing fall-through) restores it
+    // before leaving so the helper's transient scratch is
+    // reclaimed. Without this Tcp.connect leaks ~64 bytes per call.
+    f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::LocalSet(l_saved_alloc));
+
     // ── Phase 4.2.2a — lazy network handle init. ───────────────
     // Pattern mirrors Console.print's stdout cache: if the global
     // is still the -1 sentinel, fetch the host network resource
@@ -391,6 +418,7 @@ pub(super) fn emit_tcp_connect_stub(
         array_data_index: indices.dns_err_segment_idx,
     });
     f.instruction(&Instruction::Call(helpers.result_err_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
@@ -459,6 +487,7 @@ pub(super) fn emit_tcp_connect_stub(
         array_data_index: indices.no_addr_segment_idx,
     });
     f.instruction(&Instruction::Call(helpers.result_err_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
@@ -524,6 +553,7 @@ pub(super) fn emit_tcp_connect_stub(
         array_data_index: indices.sock_err_segment_idx,
     });
     f.instruction(&Instruction::Call(helpers.result_err_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
@@ -572,6 +602,7 @@ pub(super) fn emit_tcp_connect_stub(
         array_data_index: indices.conn_err_segment_idx,
     });
     f.instruction(&Instruction::Call(helpers.result_err_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
@@ -614,6 +645,7 @@ pub(super) fn emit_tcp_connect_stub(
         array_data_index: indices.conn_err_segment_idx,
     });
     f.instruction(&Instruction::Call(helpers.result_err_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
@@ -749,8 +781,11 @@ pub(super) fn emit_tcp_connect_stub(
 
     // Step 15 — wrap in `Result.Ok(conn)` and let the function
     // return naturally. The stub-err tail is gone — every exit out
-    // of the helper now goes through a typed factory.
+    // of the helper now goes through a typed factory. Restore the
+    // bump-heap cursor first so the per-call scratch / retptrs we
+    // allocated through `cabi_realloc` are reclaimed.
     f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     let _ = indices.stub_err_segment_idx;
     let _ = indices.stub_err_len;
     f.instruction(&Instruction::End);
@@ -971,6 +1006,8 @@ pub(super) struct TcpCloseHelperFns {
     pub result_ok_fn: u32,
     /// `tcp_pool: ref null $tcp_pool` global.
     pub tcp_pool_global: u32,
+    /// Phase 4.2.2f — see `TcpConnectHelperFns::bump_alloc_ptr_global`.
+    pub bump_alloc_ptr_global: u32,
 }
 
 /// Phase 4.4a — `__rt_tcp_write_line(conn, line) -> ref Result<Unit, String>`
@@ -1012,6 +1049,8 @@ pub(super) struct TcpWriteLineHelperFns {
     pub result_err_fn: u32,
     /// `tcp_pool: ref null $tcp_pool` global.
     pub tcp_pool_global: u32,
+    /// Phase 4.2.2f — see `TcpConnectHelperFns::bump_alloc_ptr_global`.
+    pub bump_alloc_ptr_global: u32,
 }
 
 /// Phase 4.4a emit — `__rt_tcp_write_line` body. Trust contract
@@ -1035,22 +1074,28 @@ pub(super) fn emit_tcp_write_line(
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(indices.tcp_slot_type_idx),
     });
+    // local 7 = saved_alloc (Phase 4.2.2f bump-heap rewind).
     let mut f = Function::new(vec![
         (1u32, ValType::I32),
         (1u32, slot_ref),
-        (3u32, ValType::I32),
+        (4u32, ValType::I32),
     ]);
     let l_slot_idx: u32 = 2;
     let l_slot: u32 = 3;
     let l_len: u32 = 4;
     let l_off: u32 = 5;
     let l_retptr: u32 = 6;
+    let l_saved_alloc: u32 = 7;
 
     let mem1_zero = MemArg {
         offset: 0,
         align: 0,
         memory_index: 0,
     };
+
+    // Save bump_alloc_ptr — restored on every exit.
+    f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::LocalSet(l_saved_alloc));
 
     // slot_idx = parse_id(conn.id)
     f.instruction(&Instruction::LocalGet(0));
@@ -1098,6 +1143,7 @@ pub(super) fn emit_tcp_write_line(
     let result_err_fn = helpers.result_err_fn;
     let tcp_slot_type_idx = indices.tcp_slot_type_idx;
     let blocking_write_fn = helpers.blocking_write_fn;
+    let bump_alloc_ptr_global = helpers.bump_alloc_ptr_global;
     super::wasip2_helpers::emit_chunked_blocking_write(
         &mut f,
         l_len,
@@ -1121,12 +1167,14 @@ pub(super) fn emit_tcp_write_line(
                 array_data_index: write_err_segment_idx,
             });
             f.instruction(&Instruction::Call(result_err_fn));
+            restore_bump(f, l_saved_alloc, bump_alloc_ptr_global);
             f.instruction(&Instruction::Return);
         }),
     );
 
     // Loop finished without errors → Ok(()).
     f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::End);
     f
 }
@@ -1158,6 +1206,8 @@ pub(super) struct TcpReadLineHelperFns {
     /// `wasi:io/streams.[method]input-stream.blocking-read`.
     pub blocking_read_fn: u32,
     pub tcp_pool_global: u32,
+    /// Phase 4.2.2f — see `TcpConnectHelperFns::bump_alloc_ptr_global`.
+    pub bump_alloc_ptr_global: u32,
 }
 
 pub(super) fn emit_tcp_read_line(
@@ -1189,11 +1239,12 @@ pub(super) fn emit_tcp_read_line(
     //   11 = data_len     (i32)
     //   12 = should_err   (i32)
     //   13 = new_cap      (i32)
-    //   14 = arr          (ref string)
+    //   14 = saved_alloc  (i32) — Phase 4.2.2f bump-heap rewind
+    //   15 = arr          (ref string)
     let mut f = Function::new(vec![
         (1u32, ValType::I32),
         (1u32, slot_ref),
-        (11u32, ValType::I32),
+        (12u32, ValType::I32),
         (1u32, s_ref),
     ]);
     let l_slot_idx: u32 = 1;
@@ -1209,7 +1260,8 @@ pub(super) fn emit_tcp_read_line(
     let l_data_len: u32 = 11;
     let l_should_err: u32 = 12;
     let l_new_cap: u32 = 13;
-    let l_arr: u32 = 14;
+    let l_saved_alloc: u32 = 14;
+    let l_arr: u32 = 15;
 
     let mem4_o4 = MemArg {
         offset: 4,
@@ -1226,6 +1278,11 @@ pub(super) fn emit_tcp_read_line(
         align: 0,
         memory_index: 0,
     };
+
+    // Save bump_alloc_ptr — restored on every exit (EOF Err Return +
+    // final Ok End).
+    f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::LocalSet(l_saved_alloc));
 
     // slot_idx = parse_id(conn.id); slot = tcp_pool[slot_idx].
     f.instruction(&Instruction::LocalGet(0));
@@ -1388,6 +1445,7 @@ pub(super) fn emit_tcp_read_line(
         array_data_index: indices.eof_segment_idx,
     });
     f.instruction(&Instruction::StructNew(indices.result_type_idx));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
@@ -1425,6 +1483,7 @@ pub(super) fn emit_tcp_read_line(
         indices.string_type_idx,
     )));
     f.instruction(&Instruction::StructNew(indices.result_type_idx));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::End);
     f
 }
@@ -1651,14 +1710,21 @@ pub(super) fn emit_tcp_close(indices: &TcpCloseIndices, helpers: &TcpCloseHelper
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(indices.tcp_slot_type_idx),
     });
+    // local 4 = saved_alloc (Phase 4.2.2f bump-heap rewind).
     let mut f = Function::new(vec![
         (1u32, ValType::I32),
         (1u32, slot_ref),
-        (1u32, ValType::I32),
+        (2u32, ValType::I32),
     ]);
     let l_slot_idx: u32 = 1;
     let l_slot: u32 = 2;
     let l_retptr: u32 = 3;
+    let l_saved_alloc: u32 = 4;
+
+    // Save bump_alloc_ptr — restored on every exit (idempotence
+    // guard Return + final End).
+    f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::LocalSet(l_saved_alloc));
 
     // slot_idx = parse_id(conn.id)
     f.instruction(&Instruction::LocalGet(0));
@@ -1684,6 +1750,7 @@ pub(super) fn emit_tcp_close(indices: &TcpCloseIndices, helpers: &TcpCloseHelper
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
@@ -1739,6 +1806,7 @@ pub(super) fn emit_tcp_close(indices: &TcpCloseIndices, helpers: &TcpCloseHelper
     });
 
     f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::End);
     f
 }
@@ -1794,6 +1862,7 @@ mod tests {
             shutdown_fn: 20,
             stale_drop_in_stream_fn: 21,
             stale_drop_out_stream_fn: 22,
+            bump_alloc_ptr_global: 5,
         };
         let _f = emit_tcp_connect_stub(&indices, &helpers);
     }
@@ -1816,6 +1885,7 @@ mod tests {
             drop_tcp_socket_fn: 9,
             result_ok_fn: 10,
             tcp_pool_global: 0,
+            bump_alloc_ptr_global: 1,
         };
         let _f = emit_tcp_close(&indices, &helpers);
     }
@@ -1843,6 +1913,7 @@ mod tests {
             cabi_realloc_fn: 8,
             blocking_read_fn: 9,
             tcp_pool_global: 0,
+            bump_alloc_ptr_global: 1,
         };
         let _f = emit_tcp_read_line(&indices, &helpers);
     }
@@ -1867,6 +1938,7 @@ mod tests {
             result_ok_fn: 10,
             result_err_fn: 11,
             tcp_pool_global: 0,
+            bump_alloc_ptr_global: 1,
         };
         let _f = emit_tcp_write_line(&indices, &helpers);
     }

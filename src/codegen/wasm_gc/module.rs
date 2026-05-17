@@ -3805,6 +3805,10 @@ pub(super) fn emit_module_with(
             shutdown_fn,
             stale_drop_in_stream_fn,
             stale_drop_out_stream_fn,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp_connect emit requires bump_alloc_ptr global (Phase 4.2.2f rewind)"),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_connect_stub(tc, &helpers));
         let string_type_idx = registry
@@ -3874,6 +3878,10 @@ pub(super) fn emit_module_with(
             result_ok_fn,
             result_err_fn,
             tcp_pool_global,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp_write_line emit requires bump_alloc_ptr global"),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_write_line(tw, &helpers));
     }
@@ -3899,6 +3907,10 @@ pub(super) fn emit_module_with(
             cabi_realloc_fn,
             blocking_read_fn,
             tcp_pool_global,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp_read_line emit requires bump_alloc_ptr global"),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_read_line(tr, &helpers));
     }
@@ -3951,6 +3963,10 @@ pub(super) fn emit_module_with(
             drop_tcp_socket_fn,
             result_ok_fn,
             tcp_pool_global,
+            bump_alloc_ptr_global: wasip2_globals
+                .as_ref()
+                .map(|g| g.bump_alloc_ptr)
+                .expect("tcp_close emit requires bump_alloc_ptr global"),
         };
         codes.function(&super::wasip2_tcp::emit_tcp_close(tc, &helpers));
     }
