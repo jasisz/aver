@@ -1057,6 +1057,300 @@ pub(super) fn emit_tcp_write_line(
     f
 }
 
+/// Phase 4.4b — `__rt_tcp_read_line(conn) -> ref Result<String, String>`
+/// slot bundle. Body loops 1-byte `blocking-read` on the slot's
+/// input-stream, accumulating bytes into a growable cabi_realloc'd
+/// buffer until `\n`, host EOF, or stream-error. Mirrors
+/// `__rt_console_read_line` (Phase 1.3.4) — the only structural
+/// difference is the source handle: stdin global there, slot's
+/// `in_stream` field here.
+pub(super) struct TcpReadLineIndices {
+    pub fn_type: u32,
+    pub fn_idx: u32,
+    pub string_type_idx: u32,
+    pub result_type_idx: u32,
+    pub tcp_connection_type_idx: u32,
+    pub tcp_slot_type_idx: u32,
+    pub tcp_pool_type_idx: u32,
+    /// `"tcp: eof"` data segment + length. Materialised when the
+    /// host returns Err or empty Ok and no bytes were collected.
+    pub eof_segment_idx: u32,
+    pub eof_len: u32,
+}
+
+pub(super) struct TcpReadLineHelperFns {
+    pub parse_id_fn: u32,
+    pub cabi_realloc_fn: u32,
+    /// `wasi:io/streams.[method]input-stream.blocking-read`.
+    pub blocking_read_fn: u32,
+    pub tcp_pool_global: u32,
+}
+
+pub(super) fn emit_tcp_read_line(
+    indices: &TcpReadLineIndices,
+    helpers: &TcpReadLineHelperFns,
+) -> Function {
+    use wasm_encoder::{BlockType, HeapType, MemArg, RefType};
+
+    let s_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.string_type_idx),
+    });
+    let slot_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.tcp_slot_type_idx),
+    });
+
+    // Locals beyond param 0 = conn (ref Tcp.Connection):
+    //   1  = slot_idx     (i32)
+    //   2  = slot         (ref $tcp_slot)
+    //   3  = in_handle    (i32) — cached struct.get of slot.in_stream
+    //   4  = buf_ptr      (i32)
+    //   5  = buf_cap      (i32)
+    //   6  = buf_len      (i32)
+    //   7  = retptr       (i32)
+    //   8  = byte         (i32)
+    //   9  = j            (i32)
+    //   10 = data_ptr     (i32)
+    //   11 = data_len     (i32)
+    //   12 = should_err   (i32)
+    //   13 = new_cap      (i32)
+    //   14 = arr          (ref string)
+    let mut f = Function::new(vec![
+        (1u32, ValType::I32),
+        (1u32, slot_ref),
+        (11u32, ValType::I32),
+        (1u32, s_ref),
+    ]);
+    let l_slot_idx: u32 = 1;
+    let l_slot: u32 = 2;
+    let l_in_handle: u32 = 3;
+    let l_buf_ptr: u32 = 4;
+    let l_buf_cap: u32 = 5;
+    let l_buf_len: u32 = 6;
+    let l_retptr: u32 = 7;
+    let l_byte: u32 = 8;
+    let l_j: u32 = 9;
+    let l_data_ptr: u32 = 10;
+    let l_data_len: u32 = 11;
+    let l_should_err: u32 = 12;
+    let l_new_cap: u32 = 13;
+    let l_arr: u32 = 14;
+
+    let mem4_o4 = MemArg {
+        offset: 4,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_o8 = MemArg {
+        offset: 8,
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1 = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    // slot_idx = parse_id(conn.id); slot = tcp_pool[slot_idx].
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_connection_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Call(helpers.parse_id_fn));
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
+    f.instruction(&Instruction::LocalSet(l_slot));
+    // in_handle = slot.in_stream — cached so the inner loop just
+    // does a local.get instead of struct.get every iteration.
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalSet(l_in_handle));
+
+    // Alloc initial 256-byte buffer.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_buf_ptr));
+    f.instruction(&Instruction::I32Const(256));
+    f.instruction(&Instruction::LocalSet(l_buf_cap));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_buf_len));
+
+    // Alloc 12-byte retptr.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(12));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_should_err));
+
+    // Outer block + inner loop.
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    // blocking-read(in_handle, 1, retptr).
+    f.instruction(&Instruction::LocalGet(l_in_handle));
+    f.instruction(&Instruction::I64Const(1));
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::Call(helpers.blocking_read_fn));
+
+    // Result tag at retptr+0.
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(l_should_err));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::Br(2));
+    f.instruction(&Instruction::End);
+
+    // Ok branch — (data_ptr, data_len) at +4 / +8.
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load(mem4_o4));
+    f.instruction(&Instruction::LocalSet(l_data_ptr));
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load(mem4_o8));
+    f.instruction(&Instruction::LocalSet(l_data_len));
+
+    // Empty Ok = EOF.
+    f.instruction(&Instruction::LocalGet(l_data_len));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalSet(l_should_err));
+    f.instruction(&Instruction::End);
+    f.instruction(&Instruction::Br(2));
+    f.instruction(&Instruction::End);
+
+    // byte = LM[data_ptr].
+    f.instruction(&Instruction::LocalGet(l_data_ptr));
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::LocalSet(l_byte));
+
+    // '\n' ends the line.
+    f.instruction(&Instruction::LocalGet(l_byte));
+    f.instruction(&Instruction::I32Const(10));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::Br(2));
+    f.instruction(&Instruction::End);
+
+    // '\r' silently skipped (Windows-style newline tolerance).
+    f.instruction(&Instruction::LocalGet(l_byte));
+    f.instruction(&Instruction::I32Const(13));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End);
+
+    // Grow buffer if full.
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::LocalGet(l_buf_cap));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_buf_cap));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Shl);
+    f.instruction(&Instruction::LocalSet(l_new_cap));
+    f.instruction(&Instruction::LocalGet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_buf_cap));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_new_cap));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_new_cap));
+    f.instruction(&Instruction::LocalSet(l_buf_cap));
+    f.instruction(&Instruction::End);
+
+    // LM[buf_ptr + buf_len] = byte; buf_len += 1.
+    f.instruction(&Instruction::LocalGet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalGet(l_byte));
+    f.instruction(&Instruction::I32Store8(mem1));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_buf_len));
+
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // outer block
+
+    // Result building. Err path materialises "tcp: eof" from the
+    // pre-registered data segment, Ok copies LM[buf_ptr..buf_ptr+buf_len]
+    // into a fresh `(array i8)`.
+    f.instruction(&Instruction::LocalGet(l_should_err));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0)); // result tag = 0 (Err)
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(indices.string_type_idx)));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.eof_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.eof_segment_idx,
+    });
+    f.instruction(&Instruction::StructNew(indices.result_type_idx));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Ok arm — copy LM[buf_ptr..buf_ptr+buf_len] into a fresh GC array.
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::ArrayNewDefault(indices.string_type_idx));
+    f.instruction(&Instruction::LocalSet(l_arr));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_buf_len));
+    f.instruction(&Instruction::I32GeU);
+    f.instruction(&Instruction::BrIf(1));
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::LocalGet(l_buf_ptr));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Load8U(mem1));
+    f.instruction(&Instruction::ArraySet(indices.string_type_idx));
+    f.instruction(&Instruction::LocalGet(l_j));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_j));
+    f.instruction(&Instruction::Br(0));
+    f.instruction(&Instruction::End); // copy loop
+    f.instruction(&Instruction::End); // copy block
+
+    // Stack: tag=1, ok=arr, err=null
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_arr));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(indices.string_type_idx)));
+    f.instruction(&Instruction::StructNew(indices.result_type_idx));
+    f.instruction(&Instruction::End);
+    f
+}
+
 /// Phase 4.3 emit — `__rt_tcp_close` body. Trust contract:
 /// `conn` came out of a successful `Tcp.connect` on this run, so
 /// the pool slot at `parse_id(conn.id)` is guaranteed to be a
@@ -1245,6 +1539,28 @@ mod tests {
     #[test]
     fn parse_id_emit_compiles() {
         let _f = emit_tcp_parse_id(1);
+    }
+
+    #[test]
+    fn read_line_emit_compiles() {
+        let indices = TcpReadLineIndices {
+            fn_type: 0,
+            fn_idx: 0,
+            string_type_idx: 1,
+            result_type_idx: 2,
+            tcp_connection_type_idx: 3,
+            tcp_slot_type_idx: 4,
+            tcp_pool_type_idx: 5,
+            eof_segment_idx: 6,
+            eof_len: b"tcp: eof".len() as u32,
+        };
+        let helpers = TcpReadLineHelperFns {
+            parse_id_fn: 7,
+            cabi_realloc_fn: 8,
+            blocking_read_fn: 9,
+            tcp_pool_global: 0,
+        };
+        let _f = emit_tcp_read_line(&indices, &helpers);
     }
 
     #[test]

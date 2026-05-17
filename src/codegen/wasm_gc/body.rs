@@ -483,6 +483,11 @@ pub(super) struct Wasip2Lowering {
     /// `line + "\n"` into LM and chunked-writes through the
     /// slot's out-stream.
     pub(super) tcp_write_line_fn_idx: Option<u32>,
+    /// Phase 4.4b (0.20) — `__rt_tcp_read_line(conn) -> ref
+    /// Result<String, String>` helper wasm fn idx. Loops 1-byte
+    /// blocking-read against slot.in_stream, terminates on '\n',
+    /// EOF, or stream-error.
+    pub(super) tcp_read_line_fn_idx: Option<u32>,
 
     // ── Phase 4 (0.20) — TCP pool globals + GC type slots. ─────
     //

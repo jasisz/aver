@@ -801,6 +801,7 @@ impl TypeRegistry {
                 b"tcp: socket create failed".as_ref(),
                 b"tcp: connect failed".as_ref(),
                 b"tcp: write failed".as_ref(),
+                b"tcp: eof".as_ref(),
             ] {
                 let bytes = msg.to_vec();
                 string_literal_idx.entry(bytes.clone()).or_insert_with(|| {

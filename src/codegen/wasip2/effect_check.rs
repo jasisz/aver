@@ -151,9 +151,12 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     //   4.2.x — Tcp.connect (real DNS resolve + connect pipeline)
     //   4.3   — Tcp.close   (drop streams + shutdown + free slot)
     //   4.4a  — Tcp.writeLine (line + '\n' through out-stream)
-    // The remaining three graduate in 4.4b (readLine) and
-    // 4.5 (send / ping).
-    if matches!(effect, "Tcp.connect" | "Tcp.close" | "Tcp.writeLine") {
+    //   4.4b  — Tcp.readLine  (1-byte blocking-read loop until '\n')
+    // The remaining two graduate in 4.5 (send / ping).
+    if matches!(
+        effect,
+        "Tcp.connect" | "Tcp.close" | "Tcp.writeLine" | "Tcp.readLine"
+    ) {
         return None;
     }
     if effect.starts_with("Tcp.") {
@@ -254,10 +257,7 @@ mod tests {
         assert!(classify("Tcp.connect").is_none());
         assert!(classify("Tcp.close").is_none());
         assert!(classify("Tcp.writeLine").is_none());
-        assert!(matches!(
-            classify("Tcp.readLine"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
+        assert!(classify("Tcp.readLine").is_none());
         assert!(matches!(
             classify("Tcp.send"),
             Some(UnsupportedReason::OutOfRelease { .. })
