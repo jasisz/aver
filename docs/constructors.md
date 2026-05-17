@@ -85,13 +85,15 @@ There is no third kind of constructor. The parser sees `=` after the first argum
 
 ### 8. Dotted record constructors
 
-Dotted record constructors like `Tcp.Connection(id = ..., host = ..., port = ...)` are supported. Any `Namespace.Type(...)` form where the final segment is UpperCamel follows the same constructor rules as bare record types (rule 4: named arguments with `=`).
+Dotted record constructors like `MyNs.Point(x = 1, y = 2)` are supported. Any `Namespace.Type(...)` form where the final segment is UpperCamel follows the same constructor rules as bare record types (rule 4: named arguments with `=`).
 
 ```aver
-conn = Tcp.Connection(id = "tcp-1", host = "localhost", port = 8080)
+p = Geom.Point(x = 0, y = 0)
 ```
 
 User-defined types can be made opaque via `exposes opaque [TypeName]` in the module declaration. From outside the defining module, opaque types cannot be constructed, have fields accessed, or be pattern-matched. See [language.md](language.md#opaque-types).
+
+Some standard-library types are opaque from the surface as well — `Tcp.Connection` for example is a stateful handle whose construction is reserved to `Tcp.connect`. Field reads and pattern matches are also rejected at the type-checker layer.
 
 ## Parser decision tree
 

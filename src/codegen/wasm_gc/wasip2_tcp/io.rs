@@ -556,7 +556,21 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_buf_len));
+    // Phase 4.7+ pass-4 fix #17/#19 — distinguish the two
+    // stream-error variants:
+    //   variant tag 0 (last-operation-failed): real I/O error,
+    //     surface Err regardless of how much we've buffered.
+    //   variant tag 1 (closed): clean half-close = EOF, treat
+    //     identically to an empty Ok payload (no err flag set).
+    //     `aver-rt::tcp::read_line` returns `Ok("")` on a
+    //     pre-byte clean EOF; the same fall-through gives us
+    //     that for free because should_err stays 0.
+    f.instruction(&Instruction::LocalGet(l_retptr));
+    f.instruction(&Instruction::I32Load8U(MemArg {
+        offset: 4,
+        align: 0,
+        memory_index: 0,
+    }));
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::I32Const(1));
@@ -573,16 +587,13 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::I32Load(mem4_o8));
     f.instruction(&Instruction::LocalSet(l_data_len));
 
-    // Empty Ok = EOF.
+    // Empty Ok = EOF. Phase 4.7+ pass-4 fix #19 — don't flip the
+    // err flag on pre-byte EOF anymore; `aver-rt::tcp::read_line`
+    // returns `Ok("")` rather than `Err("tcp: eof")` when the
+    // stream closes before any byte arrives.
     f.instruction(&Instruction::LocalGet(l_data_len));
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_buf_len));
-    f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalSet(l_should_err));
-    f.instruction(&Instruction::End);
     f.instruction(&Instruction::Br(2));
     f.instruction(&Instruction::End);
 
@@ -597,11 +608,17 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     // (POSIX line ending). Skipping every '\r' here would lose
     // intra-payload carriage returns that real protocols send
     // (e.g. an HTTP header value containing %0D). The trailing
-    // strip lands once after the loop terminates.
+    // strip lands once after the loop terminates — Phase 4.7+
+    // pass-4 fix #19 gates it on the `saw_lf` sentinel
+    // (`should_err == 2`) so EOF-terminated lines with a trailing
+    // CR keep their CR (matches `aver-rt::tcp::read_line` which
+    // only pops a CR when the prior char was the terminator LF).
     f.instruction(&Instruction::LocalGet(l_byte));
     f.instruction(&Instruction::I32Const(10));
     f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::LocalSet(l_should_err)); // 2 = saw_lf sentinel
     f.instruction(&Instruction::Br(2));
     f.instruction(&Instruction::End);
 
@@ -639,10 +656,17 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::End); // loop
     f.instruction(&Instruction::End); // outer block
 
-    // Result building. Err path materialises "tcp: eof" from the
-    // pre-registered data segment, Ok copies LM[buf_ptr..buf_ptr+buf_len]
-    // into a fresh `(array i8)`.
+    // Result building. `l_should_err` is a 3-way sentinel set by
+    // the loop:
+    //   0 — clean EOF (Ok / closed) reached *before* an LF; the
+    //       buffer's contents (possibly empty) become Ok(buf).
+    //   1 — stream-error.last-operation-failed; the half-built
+    //       buffer is discarded and we surface Err("tcp: eof").
+    //   2 — loop terminated by an LF (Phase 4.7+ pass-4 fix #19);
+    //       the trailing '\r' strip below fires only on this case.
     f.instruction(&Instruction::LocalGet(l_should_err));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::I32Const(0)); // result tag = 0 (Err)
     f.instruction(&Instruction::RefNull(HeapType::Concrete(
@@ -659,16 +683,18 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // Phase 4.7+ fix #12 — trailing '\r' strip. Matches
-    // `aver-rt::tcp::read_line` which pops a single trailing
-    // '\r' if the loop just consumed '\n'. We can't tell
-    // structurally whether the line terminated by '\n' or by
-    // EOF/error here (they all land at `should_err == 0`), so
-    // condition the pop on `buf_len > 0 && LM[buf_ptr + buf_len -
-    // 1] == 0x0d`.
+    // Phase 4.7+ pass-4 fix #19 — trailing '\r' strip only when
+    // the loop saw an LF terminator (`l_should_err == 2`). The
+    // VM `aver-rt::tcp::read_line` keeps a literal trailing CR
+    // intact on EOF-terminated payloads; only the canonical
+    // `\r\n` suffix gets popped.
+    f.instruction(&Instruction::LocalGet(l_should_err));
+    f.instruction(&Instruction::I32Const(2));
+    f.instruction(&Instruction::I32Eq);
     f.instruction(&Instruction::LocalGet(l_buf_len));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::LocalGet(l_buf_ptr));
     f.instruction(&Instruction::LocalGet(l_buf_len));

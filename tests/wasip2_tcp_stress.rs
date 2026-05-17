@@ -1028,3 +1028,98 @@ fn main() -> Unit
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn send_is_ephemeral_under_pool_pressure() {
+    // Phase 4.7+ pass-4 fix #16 — `Tcp.send` is now ephemeral
+    // (inline DNS + socket + connect + write + shutdown + read +
+    // drop, no pool slot). Before the rewrite, send went through
+    // `__rt_tcp_connect`, which alocated a pool slot; a program
+    // holding 256 live `Tcp.connect` handles would then see
+    // `Tcp.send` fail with "connection limit reached" even though
+    // VM's `aver-rt::tcp::send` makes a fresh, pool-free socket.
+    //
+    // The probe fills the pool with 100 unclosed `Tcp.connect`
+    // handles, then calls Tcp.send to the same Python server. With
+    // the ephemeral rewrite, send should succeed (its socket lives
+    // outside the pool). 100 conns (not 256) keeps us well below
+    // host fd limits — the goal is to prove send doesn't share the
+    // pool's slot table, not to hammer the kernel.
+    let dir = tempdir("send-ephemeral");
+    let Some((mut server, port)) = spawn_python_server(&dir, MULTI_REPLY_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping send-ephemeral stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn fillPool(n: Int) -> Int
+    ! [Tcp.connect]
+    match n
+        0 -> 1
+        _ -> match Tcp.connect("127.0.0.1", {port})
+            Result.Ok(_) -> fillPool(n - 1)
+            Result.Err(_) -> 0
+
+fn after(filled: Int) -> Unit
+    ! [Tcp.send, Console.print]
+    match Tcp.send("127.0.0.1", {port}, "ping")
+        Result.Ok(r) -> Console.print("ephemeral-ok<<<{{r}}>>>")
+        Result.Err(e) -> Console.print("ephemeral-err: {{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.send, Console.print]
+    filled = fillPool(100)
+    after(filled)
+"#
+    );
+    let fixture = write_fixture(&dir, "ephemeral.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "send-ephemeral stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("ephemeral-ok<<<"),
+        "expected ephemeral send to succeed with full pool, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+const MULTI_REPLY_SCRIPT: &str = r#"
+import socket, sys, threading
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(512)
+sys.stdout.write(f"PORT:{s.getsockname()[1]}\n")
+sys.stdout.flush()
+
+def handle(c):
+    try:
+        while True:
+            chunk = c.recv(4096)
+            if not chunk:
+                break
+        c.sendall(b"ok\n")
+    finally:
+        c.close()
+
+def accept_loop():
+    while True:
+        try:
+            c, _ = s.accept()
+            threading.Thread(target=handle, args=(c,), daemon=True).start()
+        except OSError:
+            break
+
+threading.Thread(target=accept_loop, daemon=True).start()
+import time
+time.sleep(60)
+"#;

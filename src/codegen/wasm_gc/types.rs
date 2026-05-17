@@ -832,6 +832,16 @@ impl TypeRegistry {
                 // 257th live connect must refuse rather than evict
                 // the slot's existing live occupant.
                 b"tcp: connection limit reached (256 max)".as_ref(),
+                // Phase 4.7+ fix #17 — `Tcp.send` `stream-error.
+                // last-operation-failed`. The wasi:io read variant
+                // distinguishes I/O errors from a clean half-close;
+                // wasip2 used to fold both into a partial-Ok return,
+                // mismatching `aver-rt::tcp::send`'s explicit Err.
+                b"tcp: stream error".as_ref(),
+                // Phase 4.7+ fix #18 — `Tcp.send` response cap.
+                // `aver-rt::tcp::send` caps at 10 MiB; wasip2 used
+                // to grow the buffer unbounded.
+                b"tcp: response exceeds 10 MiB limit".as_ref(),
             ] {
                 let bytes = msg.to_vec();
                 string_literal_idx.entry(bytes.clone()).or_insert_with(|| {

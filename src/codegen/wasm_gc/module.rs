@@ -3580,19 +3580,73 @@ pub(super) fn emit_module_with(
         codes.function(&super::wasip2_tcp::emit_tcp_close(tc, &helpers));
     }
     if let Some(ts) = &tcp.send {
-        let connect_fn = tcp
-            .connect
-            .as_ref()
-            .map(|t| t.fn_idx)
-            .expect("tcp.send gated on tcp.connect allocation");
-        let close_fn = tcp
-            .close
-            .as_ref()
-            .map(|t| t.fn_idx)
-            .expect("tcp.send gated on tcp.close allocation");
-        let (_, parse_id_fn) = tcp
-            .parse_id
-            .expect("tcp.send gated on tcp.parse_id allocation");
+        // Phase 4.7+ pass 4 — send no longer goes through
+        // `__rt_tcp_connect`. The dialing pipeline lives inline in
+        // `emit_tcp_send`, so we re-lookup every wasi-sockets
+        // import the body uses directly.
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot,
+                      name: &'static str|
+         -> Result<u32, WasmGcError> {
+            wasip2_imports.lookup_wasm_fn_idx(slot).ok_or_else(|| {
+                WasmGcError::Validation(format!("tcp.send emit requires {name} fn idx"))
+            })
+        };
+        let instance_network_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+            "SocketsInstanceNetworkInstanceNetwork",
+        )?;
+        let resolve_addresses_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+            "SocketsIpNameLookupResolveAddresses",
+        )?;
+        let drop_resolve_stream_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+            "SocketsIpNameLookupResourceDropResolveAddressStream",
+        )?;
+        let stream_subscribe_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+            "SocketsIpNameLookupResolveAddressStreamSubscribe",
+        )?;
+        let poll_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoPollPoll,
+            "IoPollPoll",
+        )?;
+        let drop_pollable_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable,
+            "IoPollResourceDropPollable",
+        )?;
+        let resolve_next_address_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+            "SocketsIpNameLookupResolveNextAddress",
+        )?;
+        let create_tcp_socket_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+            "SocketsTcpCreateSocketCreateTcpSocket",
+        )?;
+        let start_connect_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpStartConnect,
+            "SocketsTcpStartConnect",
+        )?;
+        let socket_subscribe_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpSubscribe,
+            "SocketsTcpSubscribe",
+        )?;
+        let finish_connect_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpFinishConnect,
+            "SocketsTcpFinishConnect",
+        )?;
+        let drop_tcp_socket_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            "SocketsTcpResourceDropTcpSocket",
+        )?;
+        let drop_input_stream_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            "IoStreamsResourceDropInputStream",
+        )?;
+        let drop_output_stream_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            "IoStreamsResourceDropOutputStream",
+        )?;
         let str_to_lm_fn = bridge.as_ref().map(|b| b.to_lm_fn).ok_or_else(|| {
             WasmGcError::Validation(
                 "tcp.send emit requires bridge (__rt_string_to_lm fn idx)".into(),
@@ -3601,23 +3655,24 @@ pub(super) fn emit_module_with(
         let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
             WasmGcError::Validation("tcp.send emit requires cabi_realloc fn idx".into())
         })?;
-        let blocking_write_fn = wasip2_imports
-            .lookup_wasm_fn_idx(
-                super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
-            )
-            .expect("tcp.send gate requires blocking-write slot");
-        let blocking_read_fn = wasip2_imports
-            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
-            .expect("tcp.send gate requires blocking-read slot");
-        let shutdown_fn = wasip2_imports
-            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown)
-            .expect("tcp.send gate requires shutdown slot");
-        let tcp_pool_global = wasip2_globals
+        let blocking_write_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
+            "OutputStreamBlockingWriteAndFlush",
+        )?;
+        let blocking_read_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead,
+            "InputStreamBlockingRead",
+        )?;
+        let shutdown_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown,
+            "SocketsTcpShutdown",
+        )?;
+        let network_handle_global = wasip2_globals
             .as_ref()
-            .and_then(|g| g.tcp_pool)
+            .and_then(|g| g.network_handle)
             .ok_or_else(|| {
                 WasmGcError::Validation(
-                    "tcp.send emit requires tcp_pool global (Phase 4.1b gate)".into(),
+                    "tcp.send emit requires network_handle global (Phase 4.1b wireup gate)".into(),
                 )
             })?;
         let bump_alloc_ptr_global = wasip2_globals
@@ -3633,15 +3688,26 @@ pub(super) fn emit_module_with(
             })?
             .fn_idx;
         let helpers = super::wasip2_tcp::TcpSendHelperFns {
-            tcp_connect_fn: connect_fn,
-            tcp_close_fn: close_fn,
-            parse_id_fn,
+            instance_network_fn,
+            network_handle_global,
+            resolve_addresses_fn,
+            resolve_next_address_fn,
+            drop_resolve_stream_fn,
+            stream_subscribe_fn,
+            poll_fn,
+            drop_pollable_fn,
+            create_tcp_socket_fn,
+            start_connect_fn,
+            finish_connect_fn,
+            socket_subscribe_fn,
+            drop_tcp_socket_fn,
+            drop_input_stream_fn,
+            drop_output_stream_fn,
             str_to_lm_fn,
             cabi_realloc_fn,
             blocking_write_fn,
             blocking_read_fn,
             shutdown_fn,
-            tcp_pool_global,
             bump_alloc_ptr_global,
             result_string_string_err_fn,
         };
