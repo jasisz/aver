@@ -1582,6 +1582,28 @@ pub(super) fn emit_module_with(
         None
     };
 
+    // Phase 4.2.2d — `__rt_tcp_format_id(slot_idx: i32) ->
+    // ref null $string`. Allocates next to `tcp_connect` so emit
+    // order stays parallel. Gated on tcp_connect being allocated
+    // (i.e. all of Phase 4.2.2c's requirements satisfied).
+    let tcp_format_id_fn_type_idx: Option<(u32, u32)> = if tcp_connect.is_some() {
+        let s_idx = registry.string_array_type_idx.expect(
+            "tcp_format_id allocation gated on tcp_connect which requires the string slot",
+        );
+        let s_ref = ValType::Ref(wasm_encoder::RefType {
+            nullable: true,
+            heap_type: wasm_encoder::HeapType::Concrete(s_idx),
+        });
+        types.ty().function([ValType::I32], [s_ref]);
+        let ty = next_type_idx;
+        next_type_idx += 1;
+        let fn_idx = next_builtin_fn_idx;
+        next_builtin_fn_idx += 1;
+        Some((ty, fn_idx))
+    } else {
+        None
+    };
+
     let env_get_lookup: Option<EnvGetLookupIndices> = if cabi_realloc.is_some()
         && wasip2_imports
             .lookup_wasm_fn_idx(
@@ -1812,6 +1834,9 @@ pub(super) fn emit_module_with(
     }
     if let Some(t) = &tcp_connect {
         funcs.function(t.fn_type);
+    }
+    if let Some((ty, _)) = tcp_format_id_fn_type_idx {
+        funcs.function(ty);
     }
     if let Some(e) = &env_get_lookup {
         funcs.function(e.fn_type);
@@ -3397,6 +3422,48 @@ pub(super) fn emit_module_with(
                     "tcp_connect emit requires bridge (__rt_string_to_lm fn idx)".into(),
                 )
             })?;
+        let (_format_id_ty, format_id_fn) = tcp_format_id_fn_type_idx
+            .expect("tcp_format_id allocated when tcp_connect is allocated");
+        let record_make_fn = factory_exports
+            .tcp_connection_make
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_connect emit requires __rt_record_tcp_connection_make factory slot"
+                        .into(),
+                )
+            })?
+            .fn_idx;
+        let result_ok_fn = factory_exports
+            .result_tcp_connection_string_ok
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_connect emit requires __rt_result_tcp_connection_string_ok factory slot"
+                        .into(),
+                )
+            })?
+            .fn_idx;
+        let tcp_next_id_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_next_id)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_connect emit requires tcp_next_id global (Phase 4.1b gate)".into(),
+                )
+            })?;
+        let tcp_pool_global = wasip2_globals
+            .as_ref()
+            .and_then(|g| g.tcp_pool)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_connect emit requires tcp_pool global (Phase 4.1b gate)".into(),
+                )
+            })?;
+        let tcp_slot_type_idx = registry
+            .tcp_slot_type_idx
+            .expect("tcp_slot type slot allocated alongside tcp_pool when needs_tcp");
+        let tcp_pool_type_idx = registry
+            .tcp_pool_type_idx
+            .expect("tcp_pool type slot allocated alongside tcp_slot when needs_tcp");
         let helpers = super::wasip2_tcp::TcpConnectHelperFns {
             result_err_fn,
             instance_network_fn,
@@ -3414,8 +3481,30 @@ pub(super) fn emit_module_with(
             socket_subscribe_fn,
             finish_connect_fn,
             drop_tcp_socket_fn,
+            format_id_fn,
+            record_make_fn,
+            result_ok_fn,
+            tcp_next_id_global,
+            tcp_pool_global,
+            tcp_slot_type_idx,
+            tcp_pool_type_idx,
         };
         codes.function(&super::wasip2_tcp::emit_tcp_connect_stub(tc, &helpers));
+        let string_type_idx = registry
+            .string_array_type_idx
+            .expect("tcp_format_id requires string slot");
+        let from_lm_fn = bridge
+            .as_ref()
+            .map(|b| b.from_lm_fn)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp_format_id requires bridge (__rt_string_from_lm fn idx)".into(),
+                )
+            })?;
+        codes.function(&super::wasip2_tcp::emit_tcp_format_id(
+            string_type_idx,
+            from_lm_fn,
+        ));
     }
     if let Some(e) = &env_get_lookup {
         codes.function(&emit_env_get_lookup(
