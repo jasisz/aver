@@ -522,11 +522,6 @@ pub(super) fn emit_disk_exists_wasip2(
     Ok(())
 }
 
-/// Phase 1.5.2 — `Disk.readText(path: String) ->
-/// Result<String, String>` on `--target wasip2`. Pushes the path
-/// expression onto the stack and calls `__rt_disk_read_text`,
-/// which owns the open-at + read-via-stream + blocking-read loop
-/// + per-call resource drops.
 /// Phase 4.5b (0.20) — `Tcp.ping(host, port) -> Result<Unit, String>`
 /// on `--target wasip2`. Pushes (host, port) and calls the
 /// light `__rt_tcp_ping` wrapper.
@@ -554,10 +549,11 @@ pub(super) fn emit_tcp_ping_wasip2(
     Ok(())
 }
 
-/// Phase 4.5a (0.20) — `Tcp.send(host, port, data) -> Result<String, String>`
-/// on `--target wasip2`. One-shot pipeline: connect + writeLine
-/// + readLine + close. Pushes (host, port, data) and calls the
-/// `__rt_tcp_send` orchestrator helper.
+/// Phase 4.5a (0.20) — `Tcp.send(host, port, data) ->
+/// Result<String, String>` on `--target wasip2`. One-shot
+/// pipeline: connect + writeLine + readLine + close. Pushes
+/// (host, port, data) and calls the `__rt_tcp_send` orchestrator
+/// helper.
 pub(super) fn emit_tcp_send_wasip2(
     func: &mut wasm_encoder::Function,
     args: &[Spanned<Expr>],
@@ -601,9 +597,7 @@ pub(super) fn emit_tcp_read_line_wasip2(
         )));
     }
     let read_line_fn = lowering.tcp_read_line_fn_idx.ok_or_else(|| {
-        WasmGcError::Validation(
-            "Tcp.readLine on wasip2: __rt_tcp_read_line fn idx missing".into(),
-        )
+        WasmGcError::Validation("Tcp.readLine on wasip2: __rt_tcp_read_line fn idx missing".into())
     })?;
     emit_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(read_line_fn));

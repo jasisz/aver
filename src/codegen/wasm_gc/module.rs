@@ -540,6 +540,14 @@ pub(super) fn emit_module_with(
                         // Phase 4.2.2d will keep it live and store in
                         // the pool slot.
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                        // Phase 4.2.2e — stale-slot recovery (pool
+                        // wraparound after 256+ connects) shuts the
+                        // old socket down and drops its streams
+                        // before reusing the slot.
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
+                        wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                        wasip2_imports
+                            .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                     }
@@ -555,8 +563,7 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
-                        wasip2_imports
-                            .register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                     }
                     EffectName::TcpSend => {
                         // Same union as connect + write + read + close,
@@ -579,15 +586,13 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpFinishConnect);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpSubscribe);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
-                        wasip2_imports
-                            .register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                         wasip2_imports
                             .register(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush);
                         wasip2_imports.register(Wasip2ImportSlot::InputStreamBlockingRead);
-                        wasip2_imports
-                            .register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
+                        wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                     }
@@ -615,8 +620,7 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpFinishConnect);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpSubscribe);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
-                        wasip2_imports
-                            .register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                         wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
                         wasip2_imports
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
@@ -1591,9 +1595,9 @@ pub(super) fn emit_module_with(
     // order stays parallel. Gated on tcp_connect being allocated
     // (i.e. all of Phase 4.2.2c's requirements satisfied).
     let tcp_format_id_fn_type_idx: Option<(u32, u32)> = if tcp_connect.is_some() {
-        let s_idx = registry.string_array_type_idx.expect(
-            "tcp_format_id allocation gated on tcp_connect which requires the string slot",
-        );
+        let s_idx = registry
+            .string_array_type_idx
+            .expect("tcp_format_id allocation gated on tcp_connect which requires the string slot");
         let s_ref = ValType::Ref(wasm_encoder::RefType {
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(s_idx),
@@ -1614,9 +1618,9 @@ pub(super) fn emit_module_with(
     // Allocated alongside the close helper so 4.4 / 4.5 (write /
     // read / send / ping) can share it without re-emitting.
     let tcp_parse_id_fn_type_idx: Option<(u32, u32)> = if tcp_connect.is_some() {
-        let s_idx = registry.string_array_type_idx.expect(
-            "tcp_parse_id allocation gated on tcp_connect which requires the string slot",
-        );
+        let s_idx = registry
+            .string_array_type_idx
+            .expect("tcp_parse_id allocation gated on tcp_connect which requires the string slot");
         let s_ref = ValType::Ref(wasm_encoder::RefType {
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(s_idx),
@@ -1767,9 +1771,8 @@ pub(super) fn emit_module_with(
         registry.tcp_slot_type_idx,
         registry.tcp_pool_type_idx,
         registry.result_type_idx("Result<Unit,String>"),
-        wasip2_imports.lookup_wasm_fn_idx(
-            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown,
-        ),
+        wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown),
         wasip2_imports.lookup_wasm_fn_idx(
             super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
         ),
@@ -1826,9 +1829,7 @@ pub(super) fn emit_module_with(
             nullable: true,
             heap_type: wasm_encoder::HeapType::Concrete(res_string_idx),
         });
-        types
-            .ty()
-            .function([s_ref, ValType::I64, s_ref], [res_ref]);
+        types.ty().function([s_ref, ValType::I64, s_ref], [res_ref]);
         let ty = next_type_idx;
         next_type_idx += 1;
         let fn_idx = next_builtin_fn_idx;
@@ -2203,189 +2204,188 @@ pub(super) fn emit_module_with(
     // implies at least one of `CliGetStdout` / `CliGetStderr` does
     // too). Empty Aver programs hit neither and skip the section
     // entirely — no semantic change vs. Phase 1.2b1.3.
-    let wasip2_globals: Option<Wasip2Globals> =
-        if matches!(target, super::TargetMode::Wasip2) && wasip2_imports.import_count() > 0 {
-            let mut globals = wasm_encoder::GlobalSection::new();
-            let mut next_global_idx: u32 = 0;
-            // Global 0 — bump-alloc cursor for `cabi_realloc`. Initial
-            // value `65536` (= page 2 base). Page 1 stays reserved for
-            // the `__rt_string_to_lm` transient buffer that
-            // `Console.*` writes use; persistent `cabi_realloc` heap
-            // grows upward from page 2 with `memory.grow` on overflow.
-            // Allocated unconditionally on the wasip2 path so the
-            // cabi_realloc helper has a stable global idx to read /
-            // write — Phase 1.3.1 onwards consumes it; earlier phases
-            // tolerate the unused global (12 bytes of section overhead).
+    let wasip2_globals: Option<Wasip2Globals> = if matches!(target, super::TargetMode::Wasip2)
+        && wasip2_imports.import_count() > 0
+    {
+        let mut globals = wasm_encoder::GlobalSection::new();
+        let mut next_global_idx: u32 = 0;
+        // Global 0 — bump-alloc cursor for `cabi_realloc`. Initial
+        // value `65536` (= page 2 base). Page 1 stays reserved for
+        // the `__rt_string_to_lm` transient buffer that
+        // `Console.*` writes use; persistent `cabi_realloc` heap
+        // grows upward from page 2 with `memory.grow` on overflow.
+        // Allocated unconditionally on the wasip2 path so the
+        // cabi_realloc helper has a stable global idx to read /
+        // write — Phase 1.3.1 onwards consumes it; earlier phases
+        // tolerate the unused global (12 bytes of section overhead).
+        globals.global(
+            wasm_encoder::GlobalType {
+                val_type: ValType::I32,
+                mutable: true,
+                shared: false,
+            },
+            &wasm_encoder::ConstExpr::i32_const(65536),
+        );
+        let bump_alloc_ptr = next_global_idx;
+        next_global_idx += 1;
+        let stdout_handle = if wasip2_imports
+            .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStdout)
+            .is_some()
+        {
             globals.global(
                 wasm_encoder::GlobalType {
                     val_type: ValType::I32,
                     mutable: true,
                     shared: false,
                 },
-                &wasm_encoder::ConstExpr::i32_const(65536),
+                &wasm_encoder::ConstExpr::i32_const(-1),
             );
-            let bump_alloc_ptr = next_global_idx;
+            let idx = next_global_idx;
             next_global_idx += 1;
-            let stdout_handle = if wasip2_imports
-                .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStdout)
-                .is_some()
-            {
-                globals.global(
-                    wasm_encoder::GlobalType {
-                        val_type: ValType::I32,
-                        mutable: true,
-                        shared: false,
-                    },
-                    &wasm_encoder::ConstExpr::i32_const(-1),
-                );
-                let idx = next_global_idx;
-                next_global_idx += 1;
-                Some(idx)
-            } else {
-                None
-            };
-            let stderr_handle = if wasip2_imports
-                .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStderr)
-                .is_some()
-            {
-                globals.global(
-                    wasm_encoder::GlobalType {
-                        val_type: ValType::I32,
-                        mutable: true,
-                        shared: false,
-                    },
-                    &wasm_encoder::ConstExpr::i32_const(-1),
-                );
-                let idx = next_global_idx;
-                next_global_idx += 1;
-                Some(idx)
-            } else {
-                None
-            };
-            // Phase 1.3.4 — stdin handle cache global. Same lazy-init
-            // pattern as stdout/stderr: starts as -1 sentinel, every
-            // `Console.readLine` call site checks the global and runs
-            // `wasi:cli/stdin.get-stdin` once on first read. The
-            // resource is program-lifetime (wasmtime cleans up at
-            // component exit) so we never emit `[resource-drop]`.
-            let stdin_handle = if wasip2_imports
-                .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliStdinGetStdin)
-                .is_some()
-            {
-                globals.global(
-                    wasm_encoder::GlobalType {
-                        val_type: ValType::I32,
-                        mutable: true,
-                        shared: false,
-                    },
-                    &wasm_encoder::ConstExpr::i32_const(-1),
-                );
-                let idx = next_global_idx;
-                next_global_idx += 1;
-                Some(idx)
-            } else {
-                None
-            };
-            // Phase 1.5.1 — disk preopen descriptor cache. -1 sentinel
-            // for "not yet fetched". On first `Disk.*` call the helper
-            // calls `wasi:filesystem/preopens.get-directories`, takes
-            // the first entry's descriptor handle, and caches it here.
-            // Program-lifetime — no `[resource-drop]descriptor` for
-            // the preopen, wasmtime cleans up at component exit.
-            let disk_preopen_handle = if wasip2_imports
-                .lookup_wasm_type_idx(
-                    super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
-                )
-                .is_some()
-            {
-                globals.global(
-                    wasm_encoder::GlobalType {
-                        val_type: ValType::I32,
-                        mutable: true,
-                        shared: false,
-                    },
-                    &wasm_encoder::ConstExpr::i32_const(-1),
-                );
-                let idx = next_global_idx;
-                next_global_idx += 1;
-                Some(idx)
-            } else {
-                None
-            };
-            // Phase 4 (0.20) — wasi:sockets network handle cache,
-            // tcp_pool array, and tcp_next_id counter. All gated on
-            // the matching slot/type registrations so non-TCP programs
-            // pay nothing.
-            let network_handle = if wasip2_imports
-                .lookup_wasm_type_idx(
-                    super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
-                )
-                .is_some()
-            {
-                globals.global(
-                    wasm_encoder::GlobalType {
-                        val_type: ValType::I32,
-                        mutable: true,
-                        shared: false,
-                    },
-                    &wasm_encoder::ConstExpr::i32_const(-1),
-                );
-                let idx = next_global_idx;
-                next_global_idx += 1;
-                Some(idx)
-            } else {
-                None
-            };
-            let tcp_pool = if let Some(pool_type_idx) = registry.tcp_pool_type_idx {
-                globals.global(
-                    wasm_encoder::GlobalType {
-                        val_type: ValType::Ref(wasm_encoder::RefType {
-                            nullable: true,
-                            heap_type: wasm_encoder::HeapType::Concrete(pool_type_idx),
-                        }),
-                        mutable: true,
-                        shared: false,
-                    },
-                    &wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Concrete(
-                        pool_type_idx,
-                    )),
-                );
-                let idx = next_global_idx;
-                next_global_idx += 1;
-                Some(idx)
-            } else {
-                None
-            };
-            let tcp_next_id = if registry.tcp_pool_type_idx.is_some() {
-                globals.global(
-                    wasm_encoder::GlobalType {
-                        val_type: ValType::I32,
-                        mutable: true,
-                        shared: false,
-                    },
-                    &wasm_encoder::ConstExpr::i32_const(0),
-                );
-                let idx = next_global_idx;
-                next_global_idx += 1;
-                Some(idx)
-            } else {
-                None
-            };
-            let _ = next_global_idx;
-            module.section(&globals);
-            Some(Wasip2Globals {
-                bump_alloc_ptr,
-                stdout_handle,
-                stderr_handle,
-                stdin_handle,
-                disk_preopen_handle,
-                network_handle,
-                tcp_pool,
-                tcp_next_id,
-            })
+            Some(idx)
         } else {
             None
         };
+        let stderr_handle = if wasip2_imports
+            .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliGetStderr)
+            .is_some()
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        // Phase 1.3.4 — stdin handle cache global. Same lazy-init
+        // pattern as stdout/stderr: starts as -1 sentinel, every
+        // `Console.readLine` call site checks the global and runs
+        // `wasi:cli/stdin.get-stdin` once on first read. The
+        // resource is program-lifetime (wasmtime cleans up at
+        // component exit) so we never emit `[resource-drop]`.
+        let stdin_handle = if wasip2_imports
+            .lookup_wasm_type_idx(super::wasip2_imports::Wasip2ImportSlot::CliStdinGetStdin)
+            .is_some()
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        // Phase 1.5.1 — disk preopen descriptor cache. -1 sentinel
+        // for "not yet fetched". On first `Disk.*` call the helper
+        // calls `wasi:filesystem/preopens.get-directories`, takes
+        // the first entry's descriptor handle, and caches it here.
+        // Program-lifetime — no `[resource-drop]descriptor` for
+        // the preopen, wasmtime cleans up at component exit.
+        let disk_preopen_handle = if wasip2_imports
+            .lookup_wasm_type_idx(
+                super::wasip2_imports::Wasip2ImportSlot::FilesystemPreopensGetDirectories,
+            )
+            .is_some()
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        // Phase 4 (0.20) — wasi:sockets network handle cache,
+        // tcp_pool array, and tcp_next_id counter. All gated on
+        // the matching slot/type registrations so non-TCP programs
+        // pay nothing.
+        let network_handle = if wasip2_imports
+            .lookup_wasm_type_idx(
+                super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+            )
+            .is_some()
+        {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(-1),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        let tcp_pool = if let Some(pool_type_idx) = registry.tcp_pool_type_idx {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::Ref(wasm_encoder::RefType {
+                        nullable: true,
+                        heap_type: wasm_encoder::HeapType::Concrete(pool_type_idx),
+                    }),
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::ref_null(wasm_encoder::HeapType::Concrete(pool_type_idx)),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        let tcp_next_id = if registry.tcp_pool_type_idx.is_some() {
+            globals.global(
+                wasm_encoder::GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
+                &wasm_encoder::ConstExpr::i32_const(0),
+            );
+            let idx = next_global_idx;
+            next_global_idx += 1;
+            Some(idx)
+        } else {
+            None
+        };
+        let _ = next_global_idx;
+        module.section(&globals);
+        Some(Wasip2Globals {
+            bump_alloc_ptr,
+            stdout_handle,
+            stderr_handle,
+            stdin_handle,
+            disk_preopen_handle,
+            network_handle,
+            tcp_pool,
+            tcp_next_id,
+        })
+    } else {
+        None
+    };
 
     // Phase 1.2b1.5 — `Wasip2Lowering` collects every fn / global /
     // helper idx the call-site lowering for `Console.print` /
@@ -3646,7 +3646,9 @@ pub(super) fn emit_module_with(
                 )
             })?
             .fn_idx;
-        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot, name: &'static str| -> Result<u32, WasmGcError> {
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot,
+                      name: &'static str|
+         -> Result<u32, WasmGcError> {
             wasip2_imports.lookup_wasm_fn_idx(slot).ok_or_else(|| {
                 WasmGcError::Validation(format!("tcp_connect emit requires {name} fn idx"))
             })
@@ -3709,28 +3711,21 @@ pub(super) fn emit_module_with(
                         .into(),
                 )
             })?;
-        let cabi_realloc_fn = cabi_realloc
-            .as_ref()
-            .map(|c| c.fn_idx)
-            .ok_or_else(|| {
-                WasmGcError::Validation("tcp_connect emit requires cabi_realloc fn idx".into())
-            })?;
-        let str_to_lm_fn = bridge
-            .as_ref()
-            .map(|b| b.to_lm_fn)
-            .ok_or_else(|| {
-                WasmGcError::Validation(
-                    "tcp_connect emit requires bridge (__rt_string_to_lm fn idx)".into(),
-                )
-            })?;
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp_connect emit requires cabi_realloc fn idx".into())
+        })?;
+        let str_to_lm_fn = bridge.as_ref().map(|b| b.to_lm_fn).ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp_connect emit requires bridge (__rt_string_to_lm fn idx)".into(),
+            )
+        })?;
         let (_format_id_ty, format_id_fn) = tcp_format_id_fn_type_idx
             .expect("tcp_format_id allocated when tcp_connect is allocated");
         let record_make_fn = factory_exports
             .tcp_connection_make
             .ok_or_else(|| {
                 WasmGcError::Validation(
-                    "tcp_connect emit requires __rt_record_tcp_connection_make factory slot"
-                        .into(),
+                    "tcp_connect emit requires __rt_record_tcp_connection_make factory slot".into(),
                 )
             })?
             .fn_idx;
@@ -3765,6 +3760,24 @@ pub(super) fn emit_module_with(
         let tcp_pool_type_idx = registry
             .tcp_pool_type_idx
             .expect("tcp_pool type slot allocated alongside tcp_slot when needs_tcp");
+        // Phase 4.2.2e — stale-slot recovery needs `shutdown` +
+        // the input/output stream drops at connect-time too (the
+        // close helper already pulls them; we re-lookup here so
+        // the wraparound branch can fire without depending on the
+        // close helper being allocated).
+        let shutdown_fn = wasip2_imports
+            .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown)
+            .expect("tcp_connect emit requires shutdown slot for wraparound recovery");
+        let stale_drop_in_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            )
+            .expect("tcp_connect emit requires drop-input-stream slot");
+        let stale_drop_out_stream_fn = wasip2_imports
+            .lookup_wasm_fn_idx(
+                super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            )
+            .expect("tcp_connect emit requires drop-output-stream slot");
         let helpers = super::wasip2_tcp::TcpConnectHelperFns {
             result_err_fn,
             instance_network_fn,
@@ -3789,19 +3802,19 @@ pub(super) fn emit_module_with(
             tcp_pool_global,
             tcp_slot_type_idx,
             tcp_pool_type_idx,
+            shutdown_fn,
+            stale_drop_in_stream_fn,
+            stale_drop_out_stream_fn,
         };
         codes.function(&super::wasip2_tcp::emit_tcp_connect_stub(tc, &helpers));
         let string_type_idx = registry
             .string_array_type_idx
             .expect("tcp_format_id requires string slot");
-        let from_lm_fn = bridge
-            .as_ref()
-            .map(|b| b.from_lm_fn)
-            .ok_or_else(|| {
-                WasmGcError::Validation(
-                    "tcp_format_id requires bridge (__rt_string_from_lm fn idx)".into(),
-                )
-            })?;
+        let from_lm_fn = bridge.as_ref().map(|b| b.from_lm_fn).ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp_format_id requires bridge (__rt_string_from_lm fn idx)".into(),
+            )
+        })?;
         codes.function(&super::wasip2_tcp::emit_tcp_format_id(
             string_type_idx,
             from_lm_fn,
@@ -3814,22 +3827,16 @@ pub(super) fn emit_module_with(
     // shifts every Call(idx) and surfaces as wasm validator
     // type-mismatch errors at cryptic offsets.
     if let Some(tw) = &tcp_write_line {
-        let (_, parse_id_fn) = tcp_parse_id_fn_type_idx
-            .expect("tcp_write_line gated on tcp_parse_id allocation");
-        let str_to_lm_fn = bridge
-            .as_ref()
-            .map(|b| b.to_lm_fn)
-            .ok_or_else(|| {
-                WasmGcError::Validation(
-                    "tcp_write_line emit requires bridge (__rt_string_to_lm fn idx)".into(),
-                )
-            })?;
-        let cabi_realloc_fn = cabi_realloc
-            .as_ref()
-            .map(|c| c.fn_idx)
-            .ok_or_else(|| {
-                WasmGcError::Validation("tcp_write_line emit requires cabi_realloc fn idx".into())
-            })?;
+        let (_, parse_id_fn) =
+            tcp_parse_id_fn_type_idx.expect("tcp_write_line gated on tcp_parse_id allocation");
+        let str_to_lm_fn = bridge.as_ref().map(|b| b.to_lm_fn).ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp_write_line emit requires bridge (__rt_string_to_lm fn idx)".into(),
+            )
+        })?;
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp_write_line emit requires cabi_realloc fn idx".into())
+        })?;
         let blocking_write_fn = wasip2_imports
             .lookup_wasm_fn_idx(
                 super::wasip2_imports::Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush,
@@ -3871,14 +3878,11 @@ pub(super) fn emit_module_with(
         codes.function(&super::wasip2_tcp::emit_tcp_write_line(tw, &helpers));
     }
     if let Some(tr) = &tcp_read_line {
-        let (_, parse_id_fn) = tcp_parse_id_fn_type_idx
-            .expect("tcp_read_line gated on tcp_parse_id allocation");
-        let cabi_realloc_fn = cabi_realloc
-            .as_ref()
-            .map(|c| c.fn_idx)
-            .ok_or_else(|| {
-                WasmGcError::Validation("tcp_read_line emit requires cabi_realloc fn idx".into())
-            })?;
+        let (_, parse_id_fn) =
+            tcp_parse_id_fn_type_idx.expect("tcp_read_line gated on tcp_parse_id allocation");
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp_read_line emit requires cabi_realloc fn idx".into())
+        })?;
         let blocking_read_fn = wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::InputStreamBlockingRead)
             .expect("tcp_read_line gate requires blocking-read slot");
@@ -3899,8 +3903,8 @@ pub(super) fn emit_module_with(
         codes.function(&super::wasip2_tcp::emit_tcp_read_line(tr, &helpers));
     }
     if let Some(tc) = &tcp_close {
-        let (_, parse_id_fn) = tcp_parse_id_fn_type_idx
-            .expect("tcp_close gated on tcp_parse_id allocation");
+        let (_, parse_id_fn) =
+            tcp_parse_id_fn_type_idx.expect("tcp_close gated on tcp_parse_id allocation");
         let shutdown_fn = wasip2_imports
             .lookup_wasm_fn_idx(super::wasip2_imports::Wasip2ImportSlot::SocketsTcpShutdown)
             .expect("tcp_close gate requires shutdown slot");
@@ -3919,12 +3923,9 @@ pub(super) fn emit_module_with(
                 super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
             )
             .expect("tcp_close gate requires drop-tcp-socket slot");
-        let cabi_realloc_fn = cabi_realloc
-            .as_ref()
-            .map(|c| c.fn_idx)
-            .ok_or_else(|| {
-                WasmGcError::Validation("tcp_close emit requires cabi_realloc fn idx".into())
-            })?;
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp_close emit requires cabi_realloc fn idx".into())
+        })?;
         let result_ok_fn = factory_exports
             .result_unit_string_ok
             .ok_or_else(|| {
@@ -5237,10 +5238,12 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
     }
-    if effect_registry
-        .iter()
-        .any(|e| matches!(e, EffectName::TcpConnect | EffectName::TcpSend | EffectName::TcpPing))
-    {
+    if effect_registry.iter().any(|e| {
+        matches!(
+            e,
+            EffectName::TcpConnect | EffectName::TcpSend | EffectName::TcpPing
+        )
+    }) {
         let res_idx = registry
             .result_type_idx("Result<Tcp.Connection,String>")
             .ok_or(WasmGcError::Validation(

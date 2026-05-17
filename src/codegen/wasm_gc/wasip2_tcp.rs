@@ -197,6 +197,17 @@ pub(super) struct TcpConnectHelperFns {
     /// Phase 4.2.2d — `$tcp_pool` wasm-gc type idx. Used by the
     /// `array.new_default` lazy-alloc + `array.set` slot writes.
     pub tcp_pool_type_idx: u32,
+    /// Phase 4.2.2e — `wasi:sockets/tcp.[method]tcp-socket.shutdown`
+    /// import fn idx. Used when pool slot N's `in_use` bit is still
+    /// set on a new connect (i.e. `tcp_next_id` wrapped past 256
+    /// while old connections were still live) — shuts the stale
+    /// socket down before the new struct.new overwrites the entry.
+    pub shutdown_fn: u32,
+    /// Phase 4.2.2e — stream / socket drops for the same stale-slot
+    /// recovery path. Matches the four helpers `__rt_tcp_close`
+    /// uses internally.
+    pub stale_drop_in_stream_fn: u32,
+    pub stale_drop_out_stream_fn: u32,
 }
 
 /// Emit the body for `__rt_tcp_connect`. Phase 4.2.2a layout:
@@ -250,7 +261,13 @@ pub(super) fn emit_tcp_connect_stub(
     //   local 10 = socket (i32)           — tcp-socket handle from create-tcp-socket
     //   local 11 = in_stream (i32)        ┐
     //   local 12 = out_stream (i32)       ┘ unpacked from finish-connect Ok
-    let mut f = Function::new(vec![(11u32, ValType::I32)]);
+    //   local 13 = stale_slot             — `ref null $tcp_slot` carrier used by the
+    //                                       Phase 4.2.2e wraparound-drop branch.
+    let stale_slot_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(helpers.tcp_slot_type_idx),
+    });
+    let mut f = Function::new(vec![(11u32, ValType::I32), (1u32, stale_slot_ref)]);
     let l_host_len: u32 = 2;
     let l_scratch: u32 = 3;
     let l_resolve_stream: u32 = 4;
@@ -262,6 +279,7 @@ pub(super) fn emit_tcp_connect_stub(
     let l_socket: u32 = 10;
     let l_in_stream: u32 = 11;
     let l_out_stream: u32 = 12;
+    let l_stale_slot: u32 = 13;
 
     let mem4_resolve = MemArg {
         offset: u64::from(SCRATCH_OFFSET_RESOLVE),
@@ -635,6 +653,62 @@ pub(super) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::ArrayNewDefault(helpers.tcp_pool_type_idx));
     f.instruction(&Instruction::GlobalSet(helpers.tcp_pool_global));
     f.instruction(&Instruction::End);
+
+    // Step 10b — stale-slot recovery. After 256+ connects without
+    // matching closes, `tcp_next_id & 255` wraps onto a slot that
+    // may still hold a live `in_use == 1` struct. Drop the old
+    // streams + socket before the new `struct.new` overwrites
+    // the entry. The `scratch+0..+2` retptr was last touched by
+    // finish-connect's tag check and is safe to reuse for the
+    // shutdown call.
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_next_id_global));
+    f.instruction(&Instruction::I32Const(255));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::ArrayGet(helpers.tcp_pool_type_idx));
+    f.instruction(&Instruction::LocalTee(l_stale_slot));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_stale_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: helpers.tcp_slot_type_idx,
+        field_index: 3, // in_use
+    });
+    f.instruction(&Instruction::If(BlockType::Empty));
+    // Drop in_stream.
+    f.instruction(&Instruction::LocalGet(l_stale_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: helpers.tcp_slot_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::Call(helpers.stale_drop_in_stream_fn));
+    // Drop out_stream.
+    f.instruction(&Instruction::LocalGet(l_stale_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: helpers.tcp_slot_type_idx,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::Call(helpers.stale_drop_out_stream_fn));
+    // shutdown(stale_socket, both, scratch+0). Result discarded —
+    // we're tearing down anyway.
+    f.instruction(&Instruction::LocalGet(l_stale_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: helpers.tcp_slot_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Const(2)); // shutdown.both
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::Call(helpers.shutdown_fn));
+    // Drop stale socket.
+    f.instruction(&Instruction::LocalGet(l_stale_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: helpers.tcp_slot_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Call(helpers.drop_tcp_socket_fn));
+    f.instruction(&Instruction::End); // in_use == 1
+    f.instruction(&Instruction::End); // slot is non-null
 
     // Step 11 — `tcp_pool[tcp_next_id & 255] = struct.new $tcp_slot
     // (socket, in_stream, out_stream, 1)`. slot_idx computed twice
@@ -1304,7 +1378,9 @@ pub(super) fn emit_tcp_read_line(
     f.instruction(&Instruction::LocalGet(l_should_err));
     f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::I32Const(0)); // result tag = 0 (Err)
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(indices.string_type_idx)));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(
+        indices.string_type_idx,
+    )));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(indices.eof_len as i32));
     f.instruction(&Instruction::ArrayNewData {
@@ -1345,7 +1421,9 @@ pub(super) fn emit_tcp_read_line(
     // Stack: tag=1, ok=arr, err=null
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::LocalGet(l_arr));
-    f.instruction(&Instruction::RefNull(HeapType::Concrete(indices.string_type_idx)));
+    f.instruction(&Instruction::RefNull(HeapType::Concrete(
+        indices.string_type_idx,
+    )));
     f.instruction(&Instruction::StructNew(indices.result_type_idx));
     f.instruction(&Instruction::End);
     f
@@ -1380,10 +1458,7 @@ pub(super) struct TcpSendHelperFns {
     pub result_string_string_err_fn: u32,
 }
 
-pub(super) fn emit_tcp_send(
-    indices: &TcpSendIndices,
-    helpers: &TcpSendHelperFns,
-) -> Function {
+pub(super) fn emit_tcp_send(indices: &TcpSendIndices, helpers: &TcpSendHelperFns) -> Function {
     use wasm_encoder::{BlockType, HeapType, RefType};
 
     // Carrier strategy: stash the connect helper's
@@ -1513,10 +1588,7 @@ pub(super) struct TcpPingHelperFns {
     pub result_unit_string_err_fn: u32,
 }
 
-pub(super) fn emit_tcp_ping(
-    indices: &TcpPingIndices,
-    helpers: &TcpPingHelperFns,
-) -> Function {
+pub(super) fn emit_tcp_ping(indices: &TcpPingIndices, helpers: &TcpPingHelperFns) -> Function {
     use wasm_encoder::{BlockType, HeapType, RefType};
 
     let result_tcp_conn_string_ref = ValType::Ref(RefType {
@@ -1569,10 +1641,7 @@ pub(super) fn emit_tcp_ping(
 /// non-null `$tcp_slot` ref (Phase 4.2.2d stored it via array.set).
 /// Slots marked `in_use = 0` (already-closed) make `close` a
 /// no-op so the call stays idempotent.
-pub(super) fn emit_tcp_close(
-    indices: &TcpCloseIndices,
-    helpers: &TcpCloseHelperFns,
-) -> Function {
+pub(super) fn emit_tcp_close(indices: &TcpCloseIndices, helpers: &TcpCloseHelperFns) -> Function {
     use wasm_encoder::BlockType;
     // Locals beyond param 0 = conn (ref Tcp.Connection):
     //   1 = slot_idx (i32)        — `parse_id(conn.id)`
@@ -1722,6 +1791,9 @@ mod tests {
             tcp_pool_global: 2,
             tcp_slot_type_idx: 3,
             tcp_pool_type_idx: 4,
+            shutdown_fn: 20,
+            stale_drop_in_stream_fn: 21,
+            stale_drop_out_stream_fn: 22,
         };
         let _f = emit_tcp_connect_stub(&indices, &helpers);
     }

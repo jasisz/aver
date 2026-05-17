@@ -223,9 +223,7 @@ impl TypeRegistry {
                 && (record.aver_name == "HttpRequest" || record.aver_name == "HttpResponse");
             let force_tcp = record.aver_name == "Tcp.Connection"
                 && items.iter().any(|item| match item {
-                    TopLevel::FnDef(fd) => {
-                        fd.effects.iter().any(|e| e.node.starts_with("Tcp."))
-                    }
+                    TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node.starts_with("Tcp.")),
                     _ => false,
                 });
             let force = force_handler || force_tcp;

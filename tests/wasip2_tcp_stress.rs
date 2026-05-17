@@ -241,7 +241,10 @@ fn main() -> Unit
         s.contains("len=500"),
         "expected len=500 (server sends a 500-byte payload), got:\n{s}"
     );
-    assert!(s.contains(" done"), "expected close confirmation, got:\n{s}");
+    assert!(
+        s.contains(" done"),
+        "expected close confirmation, got:\n{s}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

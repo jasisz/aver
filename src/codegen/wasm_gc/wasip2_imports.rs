@@ -689,6 +689,7 @@ pub(super) enum Wasip2ImportSlot {
     /// - byte 4:  ip-address variant tag (0 = ipv4, 1 = ipv6) — only on Some
     /// - bytes 6..10  (ipv4): 4× u8 octets
     /// - bytes 6..22 (ipv6): 8× u16 hextets
+    ///
     /// Phase 4 only consumes ipv4 (first-IPv4-wins policy).
     /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
     SocketsIpNameLookupResolveNextAddress,
@@ -724,6 +725,7 @@ pub(super) enum Wasip2ImportSlot {
     /// - pos 1: port (u16 zero-extended)
     /// - pos 2..6: ipv4 octets (a, b, c, d as i32) | ipv6 flow-info + first 4 hextets
     /// - pos 6..12: ipv6 trailing hextets + scope-id (unused for ipv4)
+    ///
     /// Result via retptr (2 bytes: `tag@0` + error-code @1).
     /// Canonical-ABI signature (14 i32 args + retptr):
     ///   `(this: i32, network: i32, addr_tag: i32, p1..p11: i32 × 11,
@@ -964,14 +966,12 @@ impl Wasip2ImportSlot {
                 ("wasi:http/types@0.2.4", "[static]response-outparam.set")
             }
             // ── wasi:sockets/* (Phase 4 / 0.20). ───────────────────
-            Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork => (
-                "wasi:sockets/instance-network@0.2.4",
-                "instance-network",
-            ),
-            Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses => (
-                "wasi:sockets/ip-name-lookup@0.2.4",
-                "resolve-addresses",
-            ),
+            Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork => {
+                ("wasi:sockets/instance-network@0.2.4", "instance-network")
+            }
+            Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses => {
+                ("wasi:sockets/ip-name-lookup@0.2.4", "resolve-addresses")
+            }
             Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress => (
                 "wasi:sockets/ip-name-lookup@0.2.4",
                 "[method]resolve-address-stream.resolve-next-address",
@@ -984,10 +984,9 @@ impl Wasip2ImportSlot {
                 "wasi:sockets/ip-name-lookup@0.2.4",
                 "[resource-drop]resolve-address-stream",
             ),
-            Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket => (
-                "wasi:sockets/tcp-create-socket@0.2.4",
-                "create-tcp-socket",
-            ),
+            Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket => {
+                ("wasi:sockets/tcp-create-socket@0.2.4", "create-tcp-socket")
+            }
             Wasip2ImportSlot::SocketsTcpStartConnect => {
                 ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.start-connect")
             }
