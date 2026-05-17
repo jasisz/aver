@@ -814,6 +814,19 @@ impl TypeRegistry {
                 b"tcp: connect failed".as_ref(),
                 b"tcp: write failed".as_ref(),
                 b"tcp: eof".as_ref(),
+                // Phase 4.7+ — aver-rt cross-backend alignment.
+                // VM / self-host / wasm-gc all return `Err("Tcp.X:
+                // unknown connection 'tcp-N'")` on stale handles;
+                // wasip2 matches the prefix shape (we drop the
+                // method name since one segment serves close /
+                // writeLine / readLine).
+                b"tcp: unknown connection".as_ref(),
+                // Phase 4.7+ — port validation. VM message verbatim
+                // (`Tcp: port N is out of range (0\u{2013}65535)`)
+                // is parameterised on the port value; we ship a
+                // canned message instead because the Err string is
+                // built from a static data segment, not concat.
+                b"tcp: port out of range".as_ref(),
             ] {
                 let bytes = msg.to_vec();
                 string_literal_idx.entry(bytes.clone()).or_insert_with(|| {

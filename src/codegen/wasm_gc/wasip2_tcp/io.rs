@@ -127,9 +127,17 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(l_slot_idx));
 
-    // slot = tcp_pool[slot_idx]; null / generation / in_use guards
-    // each surface as `Result.Err("tcp: write failed")` because
-    // there is no real out-stream to write to.
+    // tcp_pool / slot / generation / in_use guards — each surfaces
+    // as `Result.Err("tcp: write failed")` because there is no real
+    // out-stream to write to. The null-pool branch matches Phase
+    // 4.7+ fix #8: a hand-crafted `Tcp.Connection` reaches
+    // `Tcp.writeLine` before any `Tcp.connect` runs.
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_stale_err(&mut f);
+    f.instruction(&Instruction::End);
+
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::LocalGet(l_slot_idx));
     f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
@@ -163,18 +171,43 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     f.instruction(&Instruction::End);
 
     // Marshal line → LM[0..len] via the shared bridge helper.
-    // `__rt_string_to_lm` grows memory by `ceil(len/65536)` pages —
-    // exactly enough for the line bytes themselves. Writing the
-    // trailing newline at `LM[len]` would trap whenever `len` falls
-    // on a page boundary (len == 64K, 128K, …), so we stash the
-    // '\n' in a fresh 1-byte buffer the bump allocator hands back
-    // and write it via a second, single-byte blocking_write_and_flush
-    // call below.
+    // `__rt_string_to_lm` writes the payload at LM[0..len] and grows
+    // memory by `ceil(len/65536)` pages — exactly enough for the
+    // line bytes themselves.
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::Call(helpers.str_to_lm_fn));
     f.instruction(&Instruction::LocalSet(l_len));
 
+    // Phase 4.7+ fix #6 — protect the payload from the bump
+    // allocator. `bump_alloc_ptr` starts at 65536 (page 2); any
+    // payload longer than 64KiB spills into page 2+, which is
+    // exactly the region cabi_realloc hands out. Without this
+    // adjustment the trailing newline buffer + retptr below would
+    // overwrite payload bytes past offset 65536, silently corrupting
+    // anything we just wrote.
+    //
+    // Strategy: advance the cursor to `max(current, align_up(len,
+    // 16))` so subsequent cabi_realloc calls land strictly past the
+    // payload. The 16-byte alignment matches the rest of the
+    // wasip2 allocator's contract.
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::I32Const(15));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(-16));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::I32GtU);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::I32Const(15));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(-16));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::GlobalSet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::End);
+
     // nl_ptr = cabi_realloc(0, 0, 1, 1); LM[nl_ptr] = '\n'.
+    // Now safely past `len` thanks to the bump advance above.
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32Const(1));
@@ -395,10 +428,6 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::I32Const(255));
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(l_slot_idx));
-    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
-    f.instruction(&Instruction::LocalGet(l_slot_idx));
-    f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
-    f.instruction(&Instruction::LocalSet(l_slot));
 
     let result_type_idx = indices.result_type_idx;
     let string_type_idx = indices.string_type_idx;
@@ -418,6 +447,21 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
         restore_bump(f, l_saved_alloc, bump_alloc_ptr_global);
         f.instruction(&Instruction::Return);
     };
+
+    // Null-pool guard (Phase 4.7+ fix #8) — a hand-crafted
+    // `Tcp.Connection` can reach `Tcp.readLine` before any
+    // `Tcp.connect` has lazy-initialised the pool global. Surface
+    // the same `Err("tcp: eof")` as every other stale-conn path.
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_stale_eof(&mut f);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
+    f.instruction(&Instruction::LocalSet(l_slot));
 
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::RefIsNull);

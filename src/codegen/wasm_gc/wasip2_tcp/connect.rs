@@ -54,6 +54,13 @@ pub(in crate::codegen::wasm_gc) struct TcpConnectIndices {
     /// keeps the body small.
     pub conn_err_segment_idx: u32,
     pub conn_err_len: u32,
+    /// Phase 4.7+ fix #7 — `"tcp: port out of range"`. Surfaces
+    /// when the caller hands a port outside `0..=65535`. VM ships
+    /// `Tcp: port {N} is out of range (0\u{2013}65535)`; we use a
+    /// canned static string because the wasip2 Err is materialised
+    /// from a data segment, not runtime formatting.
+    pub port_err_segment_idx: u32,
+    pub port_err_len: u32,
 }
 
 /// Pool storage + bump-heap rewind. Grouped because every
@@ -357,6 +364,32 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     // reclaimed. Without this Tcp.connect leaks ~64 bytes per call.
     f.instruction(&Instruction::GlobalGet(helpers.pool.bump_alloc_ptr_global));
     f.instruction(&Instruction::LocalSet(l_saved_alloc));
+
+    // ── Phase 4.7+ fix #7 — port validation. ───────────────────
+    // VM rejects `port < 0 || port > 65535` with a Tcp-prefixed Err
+    // before any DNS or socket work happens. Wasip2 used to silently
+    // I32WrapI64 and pass the truncated value into start-connect,
+    // surfacing the failure as the generic `Result.Err("tcp: connect
+    // failed")` (or worse, a successful connect to the wrong port).
+    // Surface the same shape as VM up-front instead.
+    f.instruction(&Instruction::LocalGet(1)); // port (i64)
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64LtS);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(65535));
+    f.instruction(&Instruction::I64GtS);
+    f.instruction(&Instruction::I32Or);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.port_err_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.port_err_segment_idx,
+    });
+    f.instruction(&Instruction::Call(helpers.materialize.result_err_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.pool.bump_alloc_ptr_global);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
 
     // ── Phase 4.2.2a — lazy network handle init. ───────────────
     // Pattern mirrors Console.print's stdout cache: if the global
@@ -835,6 +868,8 @@ mod tests {
             sock_err_len: b"tcp: socket create failed".len() as u32,
             conn_err_segment_idx: 4,
             conn_err_len: b"tcp: connect failed".len() as u32,
+            port_err_segment_idx: 5,
+            port_err_len: b"tcp: port out of range".len() as u32,
         };
         let helpers = TcpConnectHelperFns {
             pool: TcpConnectPool {

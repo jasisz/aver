@@ -3560,6 +3560,16 @@ pub(super) fn emit_module_with(
                 )
             })?
             .fn_idx;
+        let result_err_fn = factory_exports
+            .result_unit_string_err
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.close emit requires __rt_result_unit_string_err factory slot \
+                     (Phase 4.7+ cross-backend alignment surfaces stale-conn as Err)"
+                        .into(),
+                )
+            })?
+            .fn_idx;
         let tcp_pool_global = wasip2_globals
             .as_ref()
             .and_then(|g| g.tcp_pool)
@@ -3576,6 +3586,7 @@ pub(super) fn emit_module_with(
             drop_output_stream_fn,
             drop_tcp_socket_fn,
             result_ok_fn,
+            result_err_fn,
             tcp_pool_global,
             bump_alloc_ptr_global: wasip2_globals
                 .as_ref()

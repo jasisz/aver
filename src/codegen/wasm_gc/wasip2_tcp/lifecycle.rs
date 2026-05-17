@@ -16,6 +16,18 @@ pub(in crate::codegen::wasm_gc) struct TcpCloseIndices {
     pub tcp_connection_type_idx: u32,
     pub tcp_slot_type_idx: u32,
     pub tcp_pool_type_idx: u32,
+    /// String slot type idx — needed by the stale-conn `Err`
+    /// payload (`"tcp: unknown connection"` materialised from
+    /// `unknown_segment_idx`).
+    pub string_type_idx: u32,
+    /// Phase 4.7+ — `"tcp: unknown connection"` data segment.
+    /// Aligns wasip2 close with `aver-rt::tcp::close` which returns
+    /// `Err("Tcp.close: unknown connection 'tcp-N'")` on stale ids
+    /// (VM / self-host / wasm-gc AverBridge). Wasip2 drops the
+    /// method-name + connection-id substring because the message
+    /// is built from a static segment, not a runtime format.
+    pub unknown_segment_idx: u32,
+    pub unknown_len: u32,
 }
 
 pub(in crate::codegen::wasm_gc) struct TcpCloseHelperFns {
@@ -34,9 +46,12 @@ pub(in crate::codegen::wasm_gc) struct TcpCloseHelperFns {
     pub drop_input_stream_fn: u32,
     pub drop_output_stream_fn: u32,
     pub drop_tcp_socket_fn: u32,
-    /// `__rt_result_unit_string_ok()` factory. `Tcp.close` is
-    /// idempotent — even a stale slot returns `Ok(())`.
+    /// `__rt_result_unit_string_ok()` factory.
     pub result_ok_fn: u32,
+    /// `__rt_result_unit_string_err(message)` factory — used by the
+    /// Phase 4.7+ stale / null-pool / already-closed guards to match
+    /// `aver-rt::tcp::close` semantics across backends.
+    pub result_err_fn: u32,
     /// `tcp_pool: ref null $tcp_pool` global.
     pub tcp_pool_global: u32,
     /// Phase 4.2.2f — see `TcpConnectHelperFns::bump_alloc_ptr_global`.
@@ -291,10 +306,31 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_close(
     f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
     f.instruction(&Instruction::LocalSet(l_saved_alloc));
 
+    // Shared `Err("tcp: unknown connection")` emitter used by every
+    // stale-conn guard. Matches `aver-rt::tcp::close` semantics —
+    // stale ids surface as `Err`, not silent `Ok` no-ops (Phase
+    // 4.7+ cross-backend alignment).
+    let unknown_segment_idx = indices.unknown_segment_idx;
+    let unknown_len = indices.unknown_len;
+    let string_type_idx = indices.string_type_idx;
+    let result_err_fn = helpers.result_err_fn;
+    let bump_alloc_ptr_global = helpers.bump_alloc_ptr_global;
+    let emit_unknown_err = |f: &mut Function| {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(unknown_len as i32));
+        f.instruction(&Instruction::ArrayNewData {
+            array_type_index: string_type_idx,
+            array_data_index: unknown_segment_idx,
+        });
+        f.instruction(&Instruction::Call(result_err_fn));
+        restore_bump(f, l_saved_alloc, bump_alloc_ptr_global);
+        f.instruction(&Instruction::Return);
+    };
+
     // parsed_id = parse_id(conn.id) — full monotonic counter value
     // baked into the id string at connect time. The pool slot index
     // is the low 8 bits; the upper bits are the freshness tag we
-    // cross-check against `slot.id_value` below (Phase 4.7 fix #2).
+    // cross-check against `slot.id_value` below.
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_connection_type_idx,
@@ -309,24 +345,32 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_close(
     f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(l_slot_idx));
 
+    // Null-pool guard (Phase 4.7+ fix #8). The `Tcp.Connection`
+    // record is non-opaque, so a program can hand-craft one and
+    // pass it to `Tcp.close` before any `Tcp.connect`. In that
+    // case `tcp_pool` is still null (lazy-init in connect) and
+    // `array.get` would trap. Surface the same Err message as the
+    // other stale-conn paths.
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_unknown_err(&mut f);
+    f.instruction(&Instruction::End);
+
     // slot = tcp_pool[slot_idx]
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::LocalGet(l_slot_idx));
     f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
     f.instruction(&Instruction::LocalSet(l_slot));
 
-    // Idempotence / stale-id guard. Three early-return paths, all
-    // returning Ok(()) so Tcp.close stays a safe no-op:
-    //   1. slot is null (this slot index has never been claimed)
-    //   2. slot.id_value != parsed_id (pool wrapped; we're holding
-    //      a `Tcp.Connection` from a previous generation)
+    // Stale-conn guards, each returning Err to match aver-rt:
+    //   1. slot is null (slot index never claimed)
+    //   2. slot.id_value != parsed_id (pool wrapped; stale ref)
     //   3. slot.in_use == 0 (already closed)
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::Call(helpers.result_ok_fn));
-    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
-    f.instruction(&Instruction::Return);
+    emit_unknown_err(&mut f);
     f.instruction(&Instruction::End);
 
     f.instruction(&Instruction::LocalGet(l_slot));
@@ -337,9 +381,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_close(
     f.instruction(&Instruction::LocalGet(l_parsed_id));
     f.instruction(&Instruction::I32Ne);
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::Call(helpers.result_ok_fn));
-    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
-    f.instruction(&Instruction::Return);
+    emit_unknown_err(&mut f);
     f.instruction(&Instruction::End);
 
     f.instruction(&Instruction::LocalGet(l_slot));
@@ -349,9 +391,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_close(
     });
     f.instruction(&Instruction::I32Eqz);
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::Call(helpers.result_ok_fn));
-    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
-    f.instruction(&Instruction::Return);
+    emit_unknown_err(&mut f);
     f.instruction(&Instruction::End);
 
     // Drop input-stream.
@@ -423,6 +463,9 @@ mod tests {
             tcp_connection_type_idx: 1,
             tcp_slot_type_idx: 2,
             tcp_pool_type_idx: 3,
+            string_type_idx: 4,
+            unknown_segment_idx: 0,
+            unknown_len: b"tcp: unknown connection".len() as u32,
         };
         let helpers = TcpCloseHelperFns {
             parse_id_fn: 4,
@@ -432,6 +475,7 @@ mod tests {
             drop_output_stream_fn: 8,
             drop_tcp_socket_fn: 9,
             result_ok_fn: 10,
+            result_err_fn: 11,
             tcp_pool_global: 0,
             bump_alloc_ptr_global: 1,
         };

@@ -181,6 +181,7 @@ fn allocate_connect(
     let no_addr_seg = registry.string_literal_segment(b"tcp: dns no addresses")?;
     let sock_err_seg = registry.string_literal_segment(b"tcp: socket create failed")?;
     let conn_err_seg = registry.string_literal_segment(b"tcp: connect failed")?;
+    let port_err_seg = registry.string_literal_segment(b"tcp: port out of range")?;
     // Every wasi-sockets import the body calls must already be
     // present in the lookup table. We don't carry the fn idxs here
     // (emit_bodies re-resolves them) — the gate proves they exist.
@@ -229,6 +230,8 @@ fn allocate_connect(
         sock_err_len: b"tcp: socket create failed".len() as u32,
         conn_err_segment_idx: conn_err_seg,
         conn_err_len: b"tcp: connect failed".len() as u32,
+        port_err_segment_idx: port_err_seg,
+        port_err_len: b"tcp: port out of range".len() as u32,
     })
 }
 
@@ -383,6 +386,8 @@ fn allocate_close(
     let slot_idx = registry.tcp_slot_type_idx?;
     let pool_idx = registry.tcp_pool_type_idx?;
     let result_idx = registry.result_type_idx("Result<Unit,String>")?;
+    let string_idx = registry.string_array_type_idx?;
+    let unknown_seg = registry.string_literal_segment(b"tcp: unknown connection")?;
     wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::SocketsTcpShutdown)?;
     wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::IoStreamsResourceDropInputStream)?;
     wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::IoStreamsResourceDropOutputStream)?;
@@ -408,6 +413,9 @@ fn allocate_close(
         tcp_connection_type_idx: rec_idx,
         tcp_slot_type_idx: slot_idx,
         tcp_pool_type_idx: pool_idx,
+        string_type_idx: string_idx,
+        unknown_segment_idx: unknown_seg,
+        unknown_len: b"tcp: unknown connection".len() as u32,
     })
 }
 

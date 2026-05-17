@@ -16,9 +16,9 @@
 //!   `Result.Err("tcp: dns resolve failed")` from
 //!   `wasi:sockets/ip-name-lookup.resolve-addresses`.
 //! - `close_is_idempotent` — closing the same connection twice
-//!   keeps both calls `Result.Ok(())`; the helper's
-//!   `slot.in_use == 0` short-circuit gates the second call away
-//!   from wasi-side drops.
+//!   surfaces `Result.Ok(())` then `Result.Err("tcp: unknown
+//!   connection")`, matching `aver-rt::tcp::close` semantics on
+//!   the VM / self-host / wasm-gc backends (Phase 4.7+).
 //!
 //! All four share the Python skip pattern — runs nothing rather
 //! than failing when `python3` is absent.
@@ -407,9 +407,12 @@ fn main() -> Unit
         s.contains(" first-ok"),
         "expected first close to succeed, got:\n{s}"
     );
+    // Phase 4.7+ — second close on the same `in_use == 0` slot
+    // returns `Err("tcp: unknown connection")` so wasip2 matches
+    // `aver-rt::tcp::close` (used by VM / self-host / wasm-gc).
     assert!(
-        s.contains(" second-ok"),
-        "expected second close to be a no-op Ok (slot.in_use == 0 guard), got:\n{s}"
+        s.contains(" second-err: tcp: unknown connection"),
+        "expected second close to surface stale-conn Err, got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -648,7 +651,7 @@ fn main() -> Unit
 }
 
 #[test]
-fn stale_close_after_wraparound_is_noop() {
+fn stale_close_after_wraparound_surfaces_err() {
     // Regression for Phase 4.7 fix #2 — ID aliasing.
     //
     // Before the monotonic-id + slot-generation fix, `Tcp.Connection`
@@ -662,8 +665,11 @@ fn stale_close_after_wraparound_is_noop() {
     //
     // The test connects once (saving the first connection), then
     // closes 256 fresh connections so slot 0 gets reused, then closes
-    // the saved one. Result: stable Ok(()) — no trap, no second
-    // shutdown of the live slot.
+    // the saved one. Result: `Err("tcp: unknown connection")` —
+    // matching `aver-rt::tcp::close` on VM / self-host / wasm-gc.
+    // What we're proving is that close NEVER reaches the live slot
+    // 0 occupant; the Err vs. Ok distinction is just the
+    // cross-backend semantics chosen in Phase 4.7+ fix #5.
     let dir = tempdir("stale-close");
     let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
         eprintln!("python3 unavailable — skipping stale-close stress");
@@ -696,7 +702,7 @@ fn closeStale(first: Tcp.Connection) -> Unit
     filled = fillSlot(256)
     match Tcp.close(first)
         Result.Ok(_) -> Console.print("stale-close: ok ({{first.id}})")
-        Result.Err(e) -> Console.print("stale-close: err: {{e}}")
+        Result.Err(e) -> Console.print("stale-close: err ({{first.id}}) {{e}}")
 
 fn main() -> Unit
     ! [Tcp.connect, Tcp.close, Console.print]
@@ -718,10 +724,172 @@ fn main() -> Unit
     );
     // The first connection has id = tcp-0 (counter snapshot before
     // bump). After 256 more connects, slot 0 holds a fresh
-    // `id_value = 256` — close(first) must not match.
+    // `id_value = 256` — close(first) must surface Err, not Ok,
+    // and never touch the live occupant.
     assert!(
-        s.contains("stale-close: ok (tcp-0)"),
-        "expected idempotent Ok on stale `tcp-0`, got:\n{s}"
+        s.contains("stale-close: err (tcp-0) tcp: unknown connection"),
+        "expected stale-conn Err on `tcp-0` after wraparound, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn write_line_past_64kib_keeps_payload_intact() {
+    // Regression for Phase 4.7+ fix #6 — bump-allocator collision.
+    //
+    // Before the bump-cursor advance in `emit_tcp_write_line`,
+    // `__rt_string_to_lm` wrote the payload at LM[0..len] and grew
+    // memory to fit; `cabi_realloc` then handed out a buffer
+    // starting at offset 65536 — strictly inside the payload — to
+    // hold the trailing '\n' and per-call retptr. Lines longer
+    // than 64KiB silently lost bytes 65536..+12.
+    //
+    // We push a 70_000-byte line through `Tcp.writeLine` and ask the
+    // echo server to report its length. The Aver-side assertion
+    // checks `LEN:70000`; corruption would shrink the count or trip
+    // the read.
+    let dir = tempdir("write-past-64kib");
+    let Some((mut server, port)) = spawn_python_server(&dir, LEN_REPLY_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping >64KiB stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    // Build the 70_000-byte payload Rust-side and inline it as an
+    // Aver string literal — recursive concat would be O(n²) on
+    // immutable strings and hang the test for minutes.
+    let big = "a".repeat(70_000);
+    let src = format!(
+        r#"
+fn readReply(c: Tcp.Connection) -> String
+    ! [Tcp.readLine]
+    match Tcp.readLine(c)
+        Result.Ok(r) -> r
+        Result.Err(e) -> "read-err"
+
+fn run(c: Tcp.Connection, line: String) -> String
+    ! [Tcp.writeLine, Tcp.readLine]
+    match Tcp.writeLine(c, line)
+        Result.Ok(_) -> readReply(c)
+        Result.Err(e) -> "write-err"
+
+fn closeAndPrint(c: Tcp.Connection, reply: String) -> Unit
+    ! [Tcp.close, Console.print]
+    closed = Tcp.close(c)
+    Console.print("reply: {{reply}}")
+
+fn runAndReport(c: Tcp.Connection, line: String) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    reply = run(c, line)
+    closeAndPrint(c, reply)
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(c) -> runAndReport(c, "{big}")
+        Result.Err(e) -> Console.print("connect-err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "big.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        ">64KiB write stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("reply: LEN:70000"),
+        "expected `LEN:70000` from server (payload preserved past 64KiB bump-allocator boundary), got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn port_out_of_range_is_rejected_upfront() {
+    // Regression for Phase 4.7+ fix #7 — port validation parity
+    // with `aver-rt::services::tcp::port_arg`. Negative + >65535
+    // both surface `Result.Err("tcp: port out of range")` before
+    // any DNS or socket work; previously wasip2 quietly truncated
+    // the i64 via `i32.wrap_i64` and returned a generic connect
+    // failure (or, worse, hit a real port).
+    let dir = tempdir("port-range");
+    let src = r#"
+fn tryPort(p: Int) -> String
+    ! [Tcp.connect]
+    match Tcp.connect("127.0.0.1", p)
+        Result.Ok(c) -> "ok"
+        Result.Err(e) -> e
+
+fn main() -> Unit
+    ! [Tcp.connect, Console.print]
+    Console.print("neg: {tryPort(-1)}")
+    Console.print("hi: {tryPort(65536)}")
+    Console.print("low: {tryPort(0)}")
+"#;
+    let fixture = write_fixture(&dir, "port.av", src);
+    let out = run_wasip2(&dir, &fixture);
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "port-range probe exited non-zero (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("neg: tcp: port out of range"),
+        "expected port -1 rejected with `tcp: port out of range`, got:\n{s}"
+    );
+    assert!(
+        s.contains("hi: tcp: port out of range"),
+        "expected port 65536 rejected with `tcp: port out of range`, got:\n{s}"
+    );
+    // Port 0 is in range — the connect failure here is whatever
+    // wasi-sockets reports for a closed loopback port; we just
+    // check the message ISN'T the port-validation Err.
+    assert!(
+        !s.contains("low: tcp: port out of range"),
+        "port 0 should be in-range; got port-out-of-range error:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn close_on_handcrafted_connection_returns_err() {
+    // Regression for Phase 4.7+ fix #8 — null-pool guard.
+    //
+    // `Tcp.Connection` is non-opaque (see
+    // `src/types/checker/infer/records.rs:16`), so users can build
+    // one without ever calling `Tcp.connect`. The pool global stays
+    // null until the first real connect lazy-inits it; `array.get
+    // null_pool[idx]` would trap. The guards in `emit_tcp_close` /
+    // `emit_tcp_write_line` / `emit_tcp_read_line` surface
+    // `Err("tcp: unknown connection")` / `Err("tcp: write failed")`
+    // / `Err("tcp: eof")` instead.
+    let dir = tempdir("handcrafted");
+    let src = r#"
+fn main() -> Unit
+    ! [Tcp.close, Console.print]
+    fake = Tcp.Connection(id = "tcp-42", host = "nowhere", port = 80)
+    match Tcp.close(fake)
+        Result.Ok(_) -> Console.print("unexpected: ok")
+        Result.Err(e) -> Console.print("hand: {e}")
+"#;
+    let fixture = write_fixture(&dir, "hand.av", src);
+    let out = run_wasip2(&dir, &fixture);
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "handcrafted-close exited non-zero (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("hand: tcp: unknown connection"),
+        "expected null-pool close to surface `tcp: unknown connection`, got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
