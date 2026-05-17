@@ -266,36 +266,47 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_close(
 ) -> Function {
     use wasm_encoder::BlockType;
     // Locals beyond param 0 = conn (ref Tcp.Connection):
-    //   1 = slot_idx (i32)        — `parse_id(conn.id)`
-    //   2 = slot     (ref $tcp_slot)
-    //   3 = retptr   (i32)
+    //   1 = parsed_id (i32)        — full counter value
+    //   2 = slot_idx  (i32)        — parsed_id & 255
+    //   3 = slot      (ref $tcp_slot)
+    //   4 = retptr    (i32)
     let slot_ref = ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(indices.tcp_slot_type_idx),
     });
-    // local 4 = saved_alloc (Phase 4.2.2f bump-heap rewind).
+    // local 5 = saved_alloc (Phase 4.2.2f bump-heap rewind).
     let mut f = Function::new(vec![
-        (1u32, ValType::I32),
+        (2u32, ValType::I32),
         (1u32, slot_ref),
         (2u32, ValType::I32),
     ]);
-    let l_slot_idx: u32 = 1;
-    let l_slot: u32 = 2;
-    let l_retptr: u32 = 3;
-    let l_saved_alloc: u32 = 4;
+    let l_parsed_id: u32 = 1;
+    let l_slot_idx: u32 = 2;
+    let l_slot: u32 = 3;
+    let l_retptr: u32 = 4;
+    let l_saved_alloc: u32 = 5;
 
     // Save bump_alloc_ptr — restored on every exit (idempotence
     // guard Return + final End).
     f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
     f.instruction(&Instruction::LocalSet(l_saved_alloc));
 
-    // slot_idx = parse_id(conn.id)
+    // parsed_id = parse_id(conn.id) — full monotonic counter value
+    // baked into the id string at connect time. The pool slot index
+    // is the low 8 bits; the upper bits are the freshness tag we
+    // cross-check against `slot.id_value` below (Phase 4.7 fix #2).
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_connection_type_idx,
         field_index: 0, // id
     });
     f.instruction(&Instruction::Call(helpers.parse_id_fn));
+    f.instruction(&Instruction::LocalSet(l_parsed_id));
+
+    // slot_idx = parsed_id & 255
+    f.instruction(&Instruction::LocalGet(l_parsed_id));
+    f.instruction(&Instruction::I32Const(255));
+    f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::LocalSet(l_slot_idx));
 
     // slot = tcp_pool[slot_idx]
@@ -304,7 +315,33 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_close(
     f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
     f.instruction(&Instruction::LocalSet(l_slot));
 
-    // Idempotence guard: if slot.in_use == 0, return Ok(()).
+    // Idempotence / stale-id guard. Three early-return paths, all
+    // returning Ok(()) so Tcp.close stays a safe no-op:
+    //   1. slot is null (this slot index has never been claimed)
+    //   2. slot.id_value != parsed_id (pool wrapped; we're holding
+    //      a `Tcp.Connection` from a previous generation)
+    //   3. slot.in_use == 0 (already closed)
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::RefIsNull);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_slot));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_slot_type_idx,
+        field_index: 4, // id_value
+    });
+    f.instruction(&Instruction::LocalGet(l_parsed_id));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
     f.instruction(&Instruction::LocalGet(l_slot));
     f.instruction(&Instruction::StructGet {
         struct_type_index: indices.tcp_slot_type_idx,

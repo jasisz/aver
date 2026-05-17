@@ -588,9 +588,10 @@ fn pool_wraparound_recovers_stale_slot() {
     // socket and break wasmtime's resource bookkeeping.
     //
     // We pick 260 rather than 257 so the wrapping is well past
-    // the boundary and verify the id of the last connection lands
-    // at `tcp-{(260 - 1) & 255}` = `tcp-3` (slot indices 0..255
-    // cycle from index 0 on connect #1).
+    // the boundary and verify the id of the 260th connection is
+    // `tcp-259` (Phase 4.7 fix #2: ids are monotonic counter
+    // values, not pool slot indices — `tcp_next_id - 1` after
+    // 260 successful connects).
     let dir = tempdir("wraparound");
     let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
         eprintln!("python3 unavailable — skipping wraparound stress");
@@ -634,13 +635,93 @@ fn main() -> Unit
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
     );
-    // tcp_next_id starts at 0 and bumps after each successful
-    // connect; the 260th connect bumps it to 260, but the slot
-    // index of that connect was `259 & 255` = 3. So the id
-    // returned should be `tcp-3`.
+    // After 260 successful connects `tcp_next_id` reads 260 and
+    // the id baked into the last `Tcp.Connection` is the snapshot
+    // taken before the bump — i.e. 259. Phase 4.7 fix #2 uses the
+    // full counter (no `& 255` masking) so the program-visible id
+    // is `tcp-259`, not the slot index `tcp-3`.
     assert!(
-        s.contains("final id: tcp-3"),
-        "expected `final id: tcp-3` after 260 connects (slot index = 259 & 255 = 3), got:\n{s}"
+        s.contains("final id: tcp-259"),
+        "expected `final id: tcp-259` after 260 monotonic connects, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn stale_close_after_wraparound_is_noop() {
+    // Regression for Phase 4.7 fix #2 — ID aliasing.
+    //
+    // Before the monotonic-id + slot-generation fix, `Tcp.Connection`
+    // baked `tcp-{slot_idx & 255}` into its id, so after 256+ connects
+    // an old `Tcp.Connection { id = "tcp-0" }` value pointed back at
+    // the live slot 0, which by then belonged to a fresh connection.
+    // `Tcp.close(old)` would happily shut down whatever was sitting
+    // there. The fix flips ids to the monotonic counter and stamps
+    // `slot.id_value` on every claim so consumers can detect stale
+    // references.
+    //
+    // The test connects once (saving the first connection), then
+    // closes 256 fresh connections so slot 0 gets reused, then closes
+    // the saved one. Result: stable Ok(()) — no trap, no second
+    // shutdown of the live slot.
+    let dir = tempdir("stale-close");
+    let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping stale-close stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn doClose(c: Tcp.Connection) -> String
+    ! [Tcp.close]
+    closeRes = Tcp.close(c)
+    c.id
+
+fn handleFresh(c: Tcp.Connection, remaining: Int) -> String
+    ! [Tcp.connect, Tcp.close]
+    lastId = doClose(c)
+    fillSlot(remaining)
+
+fn fillSlot(n: Int) -> String
+    ! [Tcp.connect, Tcp.close]
+    match n
+        0 -> "done"
+        _ -> match Tcp.connect("127.0.0.1", {port})
+            Result.Ok(c) -> handleFresh(c, n - 1)
+            Result.Err(_) -> fillSlot(n - 1)
+
+fn closeStale(first: Tcp.Connection) -> Unit
+    ! [Tcp.connect, Tcp.close, Console.print]
+    filled = fillSlot(256)
+    match Tcp.close(first)
+        Result.Ok(_) -> Console.print("stale-close: ok ({{first.id}})")
+        Result.Err(e) -> Console.print("stale-close: err: {{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(first) -> closeStale(first)
+        Result.Err(e) -> Console.print("setup: err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "stale.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "stale-close stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The first connection has id = tcp-0 (counter snapshot before
+    // bump). After 256 more connects, slot 0 holds a fresh
+    // `id_value = 256` — close(first) must not match.
+    assert!(
+        s.contains("stale-close: ok (tcp-0)"),
+        "expected idempotent Ok on stale `tcp-0`, got:\n{s}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

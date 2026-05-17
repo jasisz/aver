@@ -79,13 +79,7 @@ pub(in crate::codegen::wasm_gc) fn allocate(
         next_type_idx,
         next_builtin_fn_idx,
     );
-    let parse_id = allocate_parse_id(
-        registry,
-        &connect,
-        types,
-        next_type_idx,
-        next_builtin_fn_idx,
-    );
+    let parse_id = allocate_parse_id(registry, types, next_type_idx, next_builtin_fn_idx);
     let write_line = allocate_write_line(
         registry,
         wasip2_imports,
@@ -263,15 +257,19 @@ fn allocate_format_id(
 
 fn allocate_parse_id(
     registry: &TypeRegistry,
-    connect: &Option<TcpConnectIndices>,
     types: &mut TypeSection,
     next_type_idx: &mut u32,
     next_builtin_fn_idx: &mut u32,
 ) -> Option<(u32, u32)> {
-    connect.as_ref()?;
-    let s_idx = registry
-        .string_array_type_idx
-        .expect("tcp_parse_id allocation gated on tcp_connect which requires the string slot");
+    // Gate on `needs_tcp` (via the slot type idx) rather than the
+    // connect helper specifically. close / write_line / read_line
+    // each need parse_id; a program that only consumes a
+    // `Tcp.Connection` parameter (e.g. `fn handle(c: Tcp.Connection)
+    // ! [Tcp.close]`) graduates close in `effect_check` without ever
+    // declaring `Tcp.connect`, and would otherwise hit an `expect`
+    // at emit time.
+    registry.tcp_slot_type_idx?;
+    let s_idx = registry.string_array_type_idx?;
     let s_ref = ValType::Ref(wasm_encoder::RefType {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(s_idx),

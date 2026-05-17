@@ -483,11 +483,29 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // option tag — None means "not yet, poll again"; loop back.
+    // option tag — None means the resolver has exhausted the stream
+    // (WASI spec: would-block surfaces as `Err(error-code::would-block)`
+    // on the outer arm, not as `Ok(None)`). For an IPv6-only host
+    // we'd already have looped past every Some(ipv6) below; reaching
+    // Ok(None) means no IPv4 will ever come, so we drop the stream
+    // and surface `tcp: dns no addresses`. Treating None as "poll
+    // again" (the previous behaviour) spins forever on those hosts.
     f.instruction(&Instruction::LocalGet(l_scratch));
     f.instruction(&Instruction::I32Load8U(mem1_next_option));
     f.instruction(&Instruction::I32Eqz);
-    f.instruction(&Instruction::BrIf(0));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_resolve_stream));
+    f.instruction(&Instruction::Call(helpers.dns.drop_resolve_stream_fn));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.no_addr_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.no_addr_segment_idx,
+    });
+    f.instruction(&Instruction::Call(helpers.materialize.result_err_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.pool.bump_alloc_ptr_global);
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
 
     // ip-address variant tag — IPv6 (tag != 0) skipped today, loop
     // to look for the next yield. IPv4 falls through.
@@ -737,9 +755,11 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::End); // slot is non-null
 
     // Step 11 — `tcp_pool[tcp_next_id & 255] = struct.new $tcp_slot
-    // (socket, in_stream, out_stream, 1)`. slot_idx computed twice
-    // (once for `array.set`, once for the format helper below) to
-    // avoid spilling into another local; wasm-opt -Oz CSE-folds it.
+    // (socket, in_stream, out_stream, in_use=1, id_value=tcp_next_id)`.
+    // `id_value` is the full counter snapshot (not masked) — Phase
+    // 4.7 fix #2 uses it as the cross-call freshness check so a
+    // stale `Tcp.Connection` carrying the same modulo-256 slot id
+    // can't operate on whatever happens to live there now.
     f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_pool_global));
     f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_next_id_global));
     f.instruction(&Instruction::I32Const(255));
@@ -748,18 +768,24 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::LocalGet(l_in_stream));
     f.instruction(&Instruction::LocalGet(l_out_stream));
     f.instruction(&Instruction::I32Const(1)); // in_use = 1
+    f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_next_id_global));
     f.instruction(&Instruction::StructNew(helpers.pool.tcp_slot_type_idx));
     f.instruction(&Instruction::ArraySet(helpers.pool.tcp_pool_type_idx));
 
-    // Step 12 — `id = __rt_tcp_format_id(tcp_next_id & 255)`.
-    // Leaves a `ref string` on the stack at TOS.
+    // Step 12 — `id = __rt_tcp_format_id(tcp_next_id)`. Full counter
+    // value, not masked — the id string is the program-level handle
+    // and must be unique across the lifetime of the process. Parse
+    // recovers the same i32 via `__rt_tcp_parse_id`; consumers then
+    // compare it against the stored `slot.id_value` to detect stale
+    // references after pool wraparound.
     f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_next_id_global));
-    f.instruction(&Instruction::I32Const(255));
-    f.instruction(&Instruction::I32And);
     f.instruction(&Instruction::Call(helpers.materialize.format_id_fn));
 
-    // Step 13 — bump `tcp_next_id`. Wrapping i32 add is fine; we
-    // mask back to 0..255 every read.
+    // Step 13 — bump `tcp_next_id`. Wrapping i32 add at counter
+    // level is fine: the slot picker masks back to 0..255, and the
+    // id_value freshness check tolerates wrap because two slots
+    // 2^32 connects apart can't both have live references in any
+    // realistic program.
     f.instruction(&Instruction::GlobalGet(helpers.pool.tcp_next_id_global));
     f.instruction(&Instruction::I32Const(1));
     f.instruction(&Instruction::I32Add);

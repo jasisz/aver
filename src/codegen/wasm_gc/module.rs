@@ -3426,6 +3426,14 @@ pub(super) fn emit_module_with(
             string_type_idx,
             from_lm_fn,
         ));
+    }
+    // parse_id is emitted independently of connect — close / write /
+    // read can be the only consumers (e.g. a fn that takes a
+    // `Tcp.Connection` as input without ever calling `Tcp.connect`).
+    if tcp.parse_id.is_some() {
+        let string_type_idx = registry
+            .string_array_type_idx
+            .expect("tcp_parse_id allocated when registry has the string slot");
         codes.function(&super::wasip2_tcp::emit_tcp_parse_id(string_type_idx));
     }
     // Code-section order MUST match allocation order in
@@ -3868,15 +3876,24 @@ fn emit_user_types(
     }
 
     // Phase 4 (0.20) — TCP connection pool slot type + array type.
-    // `$tcp_slot` carries four mutable i32 handles per connection
-    // (socket / in_stream / out_stream / in_use); `$tcp_pool` is the
-    // `(array (mut $tcp_slot))` that holds 256 of them. The slot
-    // struct is emitted first so the array element type can name it
-    // by index without a forward reference.
+    // `$tcp_slot` carries five mutable i32 fields per connection:
+    //   0  socket
+    //   1  in_stream
+    //   2  out_stream
+    //   3  in_use         (1 while live, 0 after Tcp.close)
+    //   4  id_value       (the full `tcp_next_id` snapshot when the
+    //                      slot was claimed — see Phase 4.7 fix #2)
+    // `$tcp_pool` is the `(array (mut $tcp_slot))` that holds 256 of
+    // them. The slot struct is emitted first so the array element
+    // type can name it by index without a forward reference.
     if let Some(slot_idx) = registry.tcp_slot_type_idx {
         entries.push((
             slot_idx,
             mk_struct(vec![
+                wasm_encoder::FieldType {
+                    element_type: wasm_encoder::StorageType::Val(ValType::I32),
+                    mutable: true,
+                },
                 wasm_encoder::FieldType {
                     element_type: wasm_encoder::StorageType::Val(ValType::I32),
                     mutable: true,
