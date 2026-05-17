@@ -1484,14 +1484,20 @@ pub(super) fn emit_module_with(
         Some(result_idx),
         Some(stub_seg),
         Some(dns_seg),
+        Some(no_addr_seg),
         Some(_instance_network_fn),
         Some(_resolve_addresses_fn),
         Some(_drop_resolve_stream_fn),
+        Some(_stream_subscribe_fn),
+        Some(_poll_fn),
+        Some(_drop_pollable_fn),
+        Some(_resolve_next_address_fn),
     ) = (
         registry.string_array_type_idx,
         registry.result_type_idx("Result<Tcp.Connection,String>"),
         registry.string_literal_segment(b"tcp: connect not yet implemented"),
         registry.string_literal_segment(b"tcp: dns resolve failed"),
+        registry.string_literal_segment(b"tcp: dns no addresses"),
         wasip2_imports.lookup_wasm_fn_idx(
             super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
         ),
@@ -1500,6 +1506,18 @@ pub(super) fn emit_module_with(
         ),
         wasip2_imports.lookup_wasm_fn_idx(
             super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::IoPollPoll,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
         ),
     ) {
         let r_ref = ValType::Ref(wasm_encoder::RefType {
@@ -1523,6 +1541,8 @@ pub(super) fn emit_module_with(
             stub_err_len: b"tcp: connect not yet implemented".len() as u32,
             dns_err_segment_idx: dns_seg,
             dns_err_len: b"tcp: dns resolve failed".len() as u32,
+            no_addr_segment_idx: no_addr_seg,
+            no_addr_len: b"tcp: dns no addresses".len() as u32,
         })
     } else {
         None
@@ -3283,6 +3303,22 @@ pub(super) fn emit_module_with(
             super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
             "SocketsIpNameLookupResourceDropResolveAddressStream",
         )?;
+        let stream_subscribe_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+            "SocketsIpNameLookupResolveAddressStreamSubscribe",
+        )?;
+        let poll_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoPollPoll,
+            "IoPollPoll",
+        )?;
+        let drop_pollable_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable,
+            "IoPollResourceDropPollable",
+        )?;
+        let resolve_next_address_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+            "SocketsIpNameLookupResolveNextAddress",
+        )?;
         let network_handle_global = wasip2_globals
             .as_ref()
             .and_then(|g| g.network_handle)
@@ -3315,6 +3351,10 @@ pub(super) fn emit_module_with(
             str_to_lm_fn,
             resolve_addresses_fn,
             drop_resolve_stream_fn,
+            stream_subscribe_fn,
+            poll_fn,
+            drop_pollable_fn,
+            resolve_next_address_fn,
         };
         codes.function(&super::wasip2_tcp::emit_tcp_connect_stub(tc, &helpers));
     }

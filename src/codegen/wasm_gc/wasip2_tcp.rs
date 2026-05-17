@@ -56,6 +56,14 @@ pub(super) struct TcpConnectIndices {
     /// in a follow-up — the v1 generic message keeps the body small.
     pub dns_err_segment_idx: u32,
     pub dns_err_len: u32,
+    /// Phase 4.2.2b2 — `"tcp: dns no addresses"`. Returned when the
+    /// resolver finished without yielding any IPv4 address: either
+    /// `resolve-next-address` Err mid-stream, or the stream
+    /// exhausted (`None`) before an IPv4 surfaced. IPv6-only hosts
+    /// fall into this bucket today — IPv6 support waits on the
+    /// full ip-socket-address lowering (out of 0.20 scope).
+    pub no_addr_segment_idx: u32,
+    pub no_addr_len: u32,
 }
 
 /// Helper fn idxs + global idxs the body calls. Phase 4.2.2a adds
@@ -97,6 +105,29 @@ pub(super) struct TcpConnectHelperFns {
     /// `resolve-next-address` and drops once the first IPv4 has
     /// been pulled.
     pub drop_resolve_stream_fn: u32,
+    /// Phase 4.2.2b2 — `[method]resolve-address-stream.subscribe:
+    /// (this) -> pollable`. Returns a fresh pollable each loop
+    /// iteration that becomes ready when the next address (or EOL)
+    /// is available.
+    pub stream_subscribe_fn: u32,
+    /// Phase 4.2.2b2 — `wasi:io/poll.poll: (in_ptr, in_len, retptr)
+    /// -> ()`. Single-entry pollable input lives at scratch[+56],
+    /// the indices-of-ready retptr at scratch[+48]. Ignores the
+    /// returned indices — single-pollable poll already implies
+    /// "the only one is ready".
+    pub poll_fn: u32,
+    /// Phase 4.2.2b2 — `[resource-drop]pollable`. Each
+    /// `stream.subscribe` allocates a single-use pollable that
+    /// gets dropped right after `poll` returns.
+    pub drop_pollable_fn: u32,
+    /// Phase 4.2.2b2 — `[method]resolve-address-stream.
+    ///   resolve-next-address: (this, retptr) -> ()`. Retptr layout:
+    ///   +0: result tag (0=Ok, 1=Err)
+    ///   +2: on Ok→option tag (0=None, 1=Some); on Err→error-code u8
+    ///   +4: on Ok+Some→ip-address variant tag (0=ipv4, 1=ipv6)
+    ///   +6..+10 (ipv4): 4× u8 octets
+    ///   +6..+22 (ipv6): 8× u16 hextets
+    pub resolve_next_address_fn: u32,
 }
 
 /// Emit the body for `__rt_tcp_connect`. Phase 4.2.2a layout:
@@ -129,6 +160,9 @@ pub(super) struct TcpConnectHelperFns {
 /// reallocation.
 const SCRATCH_BLOCK_SIZE: i32 = 64;
 const SCRATCH_OFFSET_RESOLVE: u32 = 0;
+const SCRATCH_OFFSET_NEXT: u32 = 16;
+const SCRATCH_OFFSET_POLL: u32 = 48;
+const SCRATCH_OFFSET_POLLABLE_IN: u32 = 56;
 
 pub(super) fn emit_tcp_connect_stub(
     indices: &TcpConnectIndices,
@@ -139,10 +173,20 @@ pub(super) fn emit_tcp_connect_stub(
     //   local 2 = host_len (i32)         — bytes written by str_to_lm
     //   local 3 = scratch (i32)          — base of the 64-byte retptr block
     //   local 4 = resolve_stream (i32)   — handle from resolve-addresses Ok
-    let mut f = Function::new(vec![(3u32, ValType::I32)]);
+    //   local 5 = pollable (i32)         — per-iteration stream subscribe handle
+    //   local 6 = ipv4_a (i32)           ┐
+    //   local 7 = ipv4_b (i32)           ├ first-IPv4 octets latched from
+    //   local 8 = ipv4_c (i32)           │ resolve-next-address Ok+Some+ipv4
+    //   local 9 = ipv4_d (i32)           ┘ (Phase 4.2.2c reads these)
+    let mut f = Function::new(vec![(8u32, ValType::I32)]);
     let l_host_len: u32 = 2;
     let l_scratch: u32 = 3;
     let l_resolve_stream: u32 = 4;
+    let l_pollable: u32 = 5;
+    let l_ipv4_a: u32 = 6;
+    let l_ipv4_b: u32 = 7;
+    let l_ipv4_c: u32 = 8;
+    let l_ipv4_d: u32 = 9;
 
     let mem4_resolve = MemArg {
         offset: u64::from(SCRATCH_OFFSET_RESOLVE),
@@ -157,6 +201,48 @@ pub(super) fn emit_tcp_connect_stub(
     let mem1_resolve = MemArg {
         offset: u64::from(SCRATCH_OFFSET_RESOLVE),
         align: 0,
+        memory_index: 0,
+    };
+    // resolve-next-address retptr loads — all byte-granular (option,
+    // variant, and ipv4 octet payloads sit at +2 / +4 / +6..+10).
+    let mem1_next_outer = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_option = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 2),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_variant = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 4),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_octet_a = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 6),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_octet_b = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 7),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_octet_c = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 8),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_octet_d = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 9),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem4_pollable_in = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_POLLABLE_IN),
+        align: 2,
         memory_index: 0,
     };
 
@@ -215,15 +301,114 @@ pub(super) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::Return);
     f.instruction(&Instruction::End);
 
-    // Step 5 — Ok branch: pull the stream handle out of scratch[+4]
-    // and drop it. Phase 4.2.2b2 will keep the handle live and loop
-    // `resolve-next-address`; today we have nothing to do with it.
+    // Step 5 — Ok branch: pull the stream handle out of scratch[+4].
+    // Keep it live; the loop below pulls the first IPv4 address out
+    // of it via subscribe/poll/resolve-next-address, then drops the
+    // stream when the address is in our locals (or when the resolver
+    // gave up before yielding one).
     f.instruction(&Instruction::LocalGet(l_scratch));
     f.instruction(&Instruction::I32Load(mem4_resolve_off4));
     f.instruction(&Instruction::LocalSet(l_resolve_stream));
+    let _ = mem4_resolve; // reserved for the future option / ipv4 octet loads
+
+    // ── Phase 4.2.2b2 — DNS resolve loop, first-IPv4 wins. ─────
+    // Block 1 — break target. Loop 0 — continue target. On a
+    // successful IPv4 latch we `br 1` out with octets in locals;
+    // on a None / IPv6 yield we `br 0` to keep polling; on a
+    // resolver Err mid-stream we drop the stream and return Err.
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    // subscribe → pollable
+    f.instruction(&Instruction::LocalGet(l_resolve_stream));
+    f.instruction(&Instruction::Call(helpers.stream_subscribe_fn));
+    f.instruction(&Instruction::LocalSet(l_pollable));
+
+    // Store pollable handle at scratch[+56] for the single-entry
+    // `poll(in_ptr=scratch+56, in_len=1, retptr=scratch+48)` call.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::I32Store(mem4_pollable_in));
+
+    // poll([pollable], 1, retptr). Result list is allocated by the
+    // host into scratch[+48..+56]; we don't care which index fired
+    // (the only pollable is ours).
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_POLLABLE_IN as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_POLL as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::Call(helpers.poll_fn));
+
+    // drop pollable — single-use per iteration.
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::Call(helpers.drop_pollable_fn));
+
+    // resolve-next-address(stream, retptr=scratch+16).
+    f.instruction(&Instruction::LocalGet(l_resolve_stream));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_NEXT as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::Call(helpers.resolve_next_address_fn));
+
+    // outer tag — on Err, drop stream + return dns-no-addr Err.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_outer));
+    f.instruction(&Instruction::If(BlockType::Empty));
     f.instruction(&Instruction::LocalGet(l_resolve_stream));
     f.instruction(&Instruction::Call(helpers.drop_resolve_stream_fn));
-    let _ = mem4_resolve; // reserved for the future option / ipv4 octet loads
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.no_addr_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.no_addr_segment_idx,
+    });
+    f.instruction(&Instruction::Call(helpers.result_err_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // option tag — None means "not yet, poll again"; loop back.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_option));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::BrIf(0));
+
+    // ip-address variant tag — IPv6 (tag != 0) skipped today, loop
+    // to look for the next yield. IPv4 falls through.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_variant));
+    f.instruction(&Instruction::BrIf(0));
+
+    // IPv4 latch — read 4 octets out of scratch[+22..+26] and stash.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_octet_a));
+    f.instruction(&Instruction::LocalSet(l_ipv4_a));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_octet_b));
+    f.instruction(&Instruction::LocalSet(l_ipv4_b));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_octet_c));
+    f.instruction(&Instruction::LocalSet(l_ipv4_c));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_octet_d));
+    f.instruction(&Instruction::LocalSet(l_ipv4_d));
+
+    // Break out of the loop — first IPv4 wins.
+    f.instruction(&Instruction::Br(1));
+
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+
+    // Stream's job is done — drop it. Phase 4.2.2c will use the
+    // octets in locals to start the actual TCP connect.
+    f.instruction(&Instruction::LocalGet(l_resolve_stream));
+    f.instruction(&Instruction::Call(helpers.drop_resolve_stream_fn));
+
+    // Mark octet locals as "live but unused this phase" so a future
+    // stub-tail removal doesn't accidentally drop them.
+    let _ = (l_ipv4_a, l_ipv4_b, l_ipv4_c, l_ipv4_d);
 
     // ── Stub tail (Phase 4.2.1) — replace in 4.2.2b2. ──────────
     // Push placeholder bytes onto the stack as a fresh Aver String:
@@ -261,6 +446,8 @@ mod tests {
             stub_err_len: b"tcp: connect not yet implemented".len() as u32,
             dns_err_segment_idx: 1,
             dns_err_len: b"tcp: dns resolve failed".len() as u32,
+            no_addr_segment_idx: 2,
+            no_addr_len: b"tcp: dns no addresses".len() as u32,
         };
         let helpers = TcpConnectHelperFns {
             result_err_fn: 2,
@@ -270,6 +457,10 @@ mod tests {
             str_to_lm_fn: 5,
             resolve_addresses_fn: 6,
             drop_resolve_stream_fn: 7,
+            stream_subscribe_fn: 8,
+            poll_fn: 9,
+            drop_pollable_fn: 10,
+            resolve_next_address_fn: 11,
         };
         let _f = emit_tcp_connect_stub(&indices, &helpers);
     }

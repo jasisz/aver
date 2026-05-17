@@ -797,6 +797,7 @@ impl TypeRegistry {
             for msg in [
                 b"tcp: connect not yet implemented".as_ref(),
                 b"tcp: dns resolve failed".as_ref(),
+                b"tcp: dns no addresses".as_ref(),
             ] {
                 let bytes = msg.to_vec();
                 string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
