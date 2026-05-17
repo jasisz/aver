@@ -527,6 +527,35 @@ pub(super) fn emit_disk_exists_wasip2(
 /// expression onto the stack and calls `__rt_disk_read_text`,
 /// which owns the open-at + read-via-stream + blocking-read loop
 /// + per-call resource drops.
+/// Phase 4.4a (0.20) — `Tcp.writeLine(conn, line) -> Result<Unit, String>`
+/// on `--target wasip2`. Pushes (conn, line) and calls the
+/// `__rt_tcp_write_line` helper.
+pub(super) fn emit_tcp_write_line_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.writeLine on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.writeLine on `--target wasip2` expects 2 args (conn, line), got {}",
+            args.len()
+        )));
+    }
+    let write_line_fn = lowering.tcp_write_line_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.writeLine on wasip2: __rt_tcp_write_line fn idx missing".into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    emit_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(write_line_fn));
+    Ok(())
+}
+
 /// Phase 4.3 (0.20) — `Tcp.close(conn: Tcp.Connection) ->
 /// Result<Unit, String>` on `--target wasip2`. Pushes the conn
 /// ref onto the stack and calls the `__rt_tcp_close` helper.

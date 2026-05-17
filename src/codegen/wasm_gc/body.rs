@@ -478,6 +478,11 @@ pub(super) struct Wasip2Lowering {
     /// per-slot streams + shuts down + drops the socket + marks
     /// the slot free. Idempotent on already-closed slots.
     pub(super) tcp_close_fn_idx: Option<u32>,
+    /// Phase 4.4a (0.20) — `__rt_tcp_write_line(conn, line) ->
+    /// ref Result<Unit, String>` helper wasm fn idx. Marshals
+    /// `line + "\n"` into LM and chunked-writes through the
+    /// slot's out-stream.
+    pub(super) tcp_write_line_fn_idx: Option<u32>,
 
     // ── Phase 4 (0.20) — TCP pool globals + GC type slots. ─────
     //

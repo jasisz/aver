@@ -899,6 +899,164 @@ pub(super) struct TcpCloseHelperFns {
     pub tcp_pool_global: u32,
 }
 
+/// Phase 4.4a — `__rt_tcp_write_line(conn, line) -> ref Result<Unit, String>`
+/// slot bundle. Reuses the close-side `parse_id` plus the
+/// connection-pool globals/types; adds the output-stream side
+/// helpers + a per-chunk write error message.
+pub(super) struct TcpWriteLineIndices {
+    pub fn_type: u32,
+    pub fn_idx: u32,
+    pub string_type_idx: u32,
+    pub tcp_connection_type_idx: u32,
+    pub tcp_slot_type_idx: u32,
+    pub tcp_pool_type_idx: u32,
+    /// `"tcp: write failed"` data segment + length. Materialised
+    /// when any blocking-write-and-flush chunk returns a non-zero
+    /// retptr tag.
+    pub write_err_segment_idx: u32,
+    pub write_err_len: u32,
+}
+
+pub(super) struct TcpWriteLineHelperFns {
+    /// `__rt_tcp_parse_id` — shared with Tcp.close.
+    pub parse_id_fn: u32,
+    /// `__rt_string_to_lm(s: ref string) -> i32` — copies the
+    /// Aver String's bytes into LM[0..len] and returns len.
+    pub str_to_lm_fn: u32,
+    /// `cabi_realloc(0, 0, 4, 12) -> ptr` — 12-byte retptr block
+    /// for `blocking-write-and-flush` (host writes `result<_,
+    /// stream-error>` with tag@0 + 12-byte stream-error payload).
+    pub cabi_realloc_fn: u32,
+    /// `wasi:io/streams.[method]output-stream.blocking-write-and-flush`.
+    /// Per-chunk error sets the Err return; the helper closes the
+    /// loop early via `Return` from inside the shared chunked
+    /// emitter.
+    pub blocking_write_fn: u32,
+    /// `__rt_result_unit_string_ok()` / `_err(s)` factories — the
+    /// happy-path / write-failed-path completions.
+    pub result_ok_fn: u32,
+    pub result_err_fn: u32,
+    /// `tcp_pool: ref null $tcp_pool` global.
+    pub tcp_pool_global: u32,
+}
+
+/// Phase 4.4a emit — `__rt_tcp_write_line` body. Trust contract
+/// matches `Tcp.close`: `conn` came out of `Tcp.connect`, so the
+/// pool slot is live. v1 ignores the `in_use == 0` case and
+/// writes regardless; `Tcp.writeLine` after `Tcp.close` is a
+/// program bug that surfaces as a wasi `last-operation-failed`
+/// stream error and becomes `Result.Err("tcp: write failed")`.
+pub(super) fn emit_tcp_write_line(
+    indices: &TcpWriteLineIndices,
+    helpers: &TcpWriteLineHelperFns,
+) -> Function {
+    use wasm_encoder::MemArg;
+    // Locals beyond params (0=conn, 1=line):
+    //   2 = slot_idx (i32)
+    //   3 = slot     (ref $tcp_slot)
+    //   4 = len      (i32) — bytes written to LM (line + '\n')
+    //   5 = off      (i32) — chunked write cursor
+    //   6 = retptr   (i32) — 12-byte blocking-write retptr
+    let slot_ref = ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(indices.tcp_slot_type_idx),
+    });
+    let mut f = Function::new(vec![
+        (1u32, ValType::I32),
+        (1u32, slot_ref),
+        (3u32, ValType::I32),
+    ]);
+    let l_slot_idx: u32 = 2;
+    let l_slot: u32 = 3;
+    let l_len: u32 = 4;
+    let l_off: u32 = 5;
+    let l_retptr: u32 = 6;
+
+    let mem1_zero = MemArg {
+        offset: 0,
+        align: 0,
+        memory_index: 0,
+    };
+
+    // slot_idx = parse_id(conn.id)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.tcp_connection_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::Call(helpers.parse_id_fn));
+    f.instruction(&Instruction::LocalSet(l_slot_idx));
+
+    // slot = tcp_pool[slot_idx]
+    f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
+    f.instruction(&Instruction::LocalGet(l_slot_idx));
+    f.instruction(&Instruction::ArrayGet(indices.tcp_pool_type_idx));
+    f.instruction(&Instruction::LocalSet(l_slot));
+
+    // Marshal line → LM[0..len] via the shared bridge helper.
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(helpers.str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_len));
+
+    // Append '\n' at LM[len]; bump len.
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::I32Const(0x0a));
+    f.instruction(&Instruction::I32Store8(mem1_zero));
+    f.instruction(&Instruction::LocalGet(l_len));
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::LocalSet(l_len));
+
+    // Allocate a 12-byte retptr for the per-chunk write result.
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(12));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_retptr));
+
+    // Chunked write loop. `on_chunk_err` builds the "tcp: write
+    // failed" Err and returns immediately — leaves a Result ref
+    // on the stack and bails out of the function.
+    let string_type_idx = indices.string_type_idx;
+    let write_err_segment_idx = indices.write_err_segment_idx;
+    let write_err_len = indices.write_err_len;
+    let result_err_fn = helpers.result_err_fn;
+    let tcp_slot_type_idx = indices.tcp_slot_type_idx;
+    let blocking_write_fn = helpers.blocking_write_fn;
+    super::wasip2_helpers::emit_chunked_blocking_write(
+        &mut f,
+        l_len,
+        l_off,
+        blocking_write_fn,
+        &|f| {
+            f.instruction(&Instruction::LocalGet(l_slot));
+            f.instruction(&Instruction::StructGet {
+                struct_type_index: tcp_slot_type_idx,
+                field_index: 2, // out_stream
+            });
+        },
+        &|f| {
+            f.instruction(&Instruction::LocalGet(l_retptr));
+        },
+        Some(&|f| {
+            f.instruction(&Instruction::I32Const(0));
+            f.instruction(&Instruction::I32Const(write_err_len as i32));
+            f.instruction(&Instruction::ArrayNewData {
+                array_type_index: string_type_idx,
+                array_data_index: write_err_segment_idx,
+            });
+            f.instruction(&Instruction::Call(result_err_fn));
+            f.instruction(&Instruction::Return);
+        }),
+    );
+
+    // Loop finished without errors → Ok(()).
+    f.instruction(&Instruction::Call(helpers.result_ok_fn));
+    f.instruction(&Instruction::End);
+    f
+}
+
 /// Phase 4.3 emit — `__rt_tcp_close` body. Trust contract:
 /// `conn` came out of a successful `Tcp.connect` on this run, so
 /// the pool slot at `parse_id(conn.id)` is guaranteed to be a
@@ -1087,5 +1245,29 @@ mod tests {
     #[test]
     fn parse_id_emit_compiles() {
         let _f = emit_tcp_parse_id(1);
+    }
+
+    #[test]
+    fn write_line_emit_compiles() {
+        let indices = TcpWriteLineIndices {
+            fn_type: 0,
+            fn_idx: 0,
+            string_type_idx: 1,
+            tcp_connection_type_idx: 2,
+            tcp_slot_type_idx: 3,
+            tcp_pool_type_idx: 4,
+            write_err_segment_idx: 5,
+            write_err_len: b"tcp: write failed".len() as u32,
+        };
+        let helpers = TcpWriteLineHelperFns {
+            parse_id_fn: 6,
+            str_to_lm_fn: 7,
+            cabi_realloc_fn: 8,
+            blocking_write_fn: 9,
+            result_ok_fn: 10,
+            result_err_fn: 11,
+            tcp_pool_global: 0,
+        };
+        let _f = emit_tcp_write_line(&indices, &helpers);
     }
 }
