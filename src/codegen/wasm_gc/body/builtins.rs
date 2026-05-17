@@ -18,8 +18,8 @@ use super::builtins_wasip2::{
     emit_http_delete_wasip2, emit_http_get_wasip2, emit_http_head_wasip2, emit_http_patch_wasip2,
     emit_http_post_wasip2, emit_http_put_wasip2, emit_random_float_wasip2, emit_random_int_wasip2,
     emit_tcp_close_wasip2, emit_tcp_connect_wasip2, emit_tcp_read_line_wasip2,
-    emit_tcp_write_line_wasip2, emit_time_now_wasip2, emit_time_sleep_wasip2,
-    emit_time_unix_ms_wasip2,
+    emit_tcp_send_wasip2, emit_tcp_write_line_wasip2, emit_time_now_wasip2,
+    emit_time_sleep_wasip2, emit_time_unix_ms_wasip2,
 };
 use super::emit::{emit_default_value, emit_expr};
 use super::infer::aver_type_str_of;
@@ -160,6 +160,9 @@ pub(super) fn emit_dotted_builtin(
         }
         if parent == "Tcp" && method == "readLine" {
             return emit_tcp_read_line_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Tcp" && method == "send" {
+            return emit_tcp_send_wasip2(func, args, slots, ctx);
         }
     }
 

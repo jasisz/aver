@@ -488,6 +488,10 @@ pub(super) struct Wasip2Lowering {
     /// blocking-read against slot.in_stream, terminates on '\n',
     /// EOF, or stream-error.
     pub(super) tcp_read_line_fn_idx: Option<u32>,
+    /// Phase 4.5a (0.20) — `__rt_tcp_send(host, port, data) ->
+    /// ref Result<String, String>` helper wasm fn idx. One-shot
+    /// orchestrator: connect + writeLine + readLine + close.
+    pub(super) tcp_send_fn_idx: Option<u32>,
 
     // ── Phase 4 (0.20) — TCP pool globals + GC type slots. ─────
     //

@@ -152,10 +152,11 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
     //   4.3   — Tcp.close   (drop streams + shutdown + free slot)
     //   4.4a  — Tcp.writeLine (line + '\n' through out-stream)
     //   4.4b  — Tcp.readLine  (1-byte blocking-read loop until '\n')
-    // The remaining two graduate in 4.5 (send / ping).
+    //   4.5a  — Tcp.send      (connect + writeLine + readLine + close)
+    // The last graduates in 4.5b (ping).
     if matches!(
         effect,
-        "Tcp.connect" | "Tcp.close" | "Tcp.writeLine" | "Tcp.readLine"
+        "Tcp.connect" | "Tcp.close" | "Tcp.writeLine" | "Tcp.readLine" | "Tcp.send"
     ) {
         return None;
     }
@@ -258,10 +259,7 @@ mod tests {
         assert!(classify("Tcp.close").is_none());
         assert!(classify("Tcp.writeLine").is_none());
         assert!(classify("Tcp.readLine").is_none());
-        assert!(matches!(
-            classify("Tcp.send"),
-            Some(UnsupportedReason::OutOfRelease { .. })
-        ));
+        assert!(classify("Tcp.send").is_none());
         assert!(matches!(
             classify("Tcp.ping"),
             Some(UnsupportedReason::OutOfRelease { .. })

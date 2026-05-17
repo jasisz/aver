@@ -118,8 +118,20 @@ pub(super) fn collect_results_from_builtin_uses(
                         | "Disk.makeDir" => intern("Result<Unit,String>"),
                         "Disk.listDir" => intern("Result<List<String>,String>"),
                         "Tcp.connect" => intern("Result<Tcp.Connection,String>"),
-                        "Tcp.readLine" | "Tcp.send" => intern("Result<String,String>"),
+                        "Tcp.readLine" => intern("Result<String,String>"),
                         "Tcp.writeLine" | "Tcp.close" | "Tcp.ping" => intern("Result<Unit,String>"),
+                        // `Tcp.send`'s source-level return type is
+                        // Result<String, String>, but its emit-time
+                        // orchestrator threads through every internal
+                        // helper's Result shape too — so register all
+                        // three eagerly when `Tcp.send` is used. Same
+                        // logic guards the matching factory + record
+                        // slots in module.rs.
+                        "Tcp.send" => {
+                            intern("Result<String,String>");
+                            intern("Result<Tcp.Connection,String>");
+                            intern("Result<Unit,String>");
+                        }
                         "Http.get" | "Http.head" | "Http.delete" | "Http.post" | "Http.put"
                         | "Http.patch" => intern("Result<HttpResponse,String>"),
                         _ => {}

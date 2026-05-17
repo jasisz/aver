@@ -213,8 +213,22 @@ impl TypeRegistry {
             // synthesised `aver_http_handle` wrapper builds an
             // HttpRequest from host effects and reads HttpResponse
             // back, both of which are codegen-only references.
-            let force = handler_active
+            //
+            // Phase 4.5a similarly forces `Tcp.Connection` whenever
+            // any `Tcp.*` effect is declared: even programs that only
+            // call `Tcp.send` (and never name the record in source)
+            // need its slot allocated because the orchestrator helper
+            // threads a `Tcp.Connection` through internally.
+            let force_handler = handler_active
                 && (record.aver_name == "HttpRequest" || record.aver_name == "HttpResponse");
+            let force_tcp = record.aver_name == "Tcp.Connection"
+                && items.iter().any(|item| match item {
+                    TopLevel::FnDef(fd) => {
+                        fd.effects.iter().any(|e| e.node.starts_with("Tcp."))
+                    }
+                    _ => false,
+                });
+            let force = force_handler || force_tcp;
             if !force && !items_reference_name(items, record.aver_name) {
                 continue;
             }

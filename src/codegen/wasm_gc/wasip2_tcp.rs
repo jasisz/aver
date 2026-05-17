@@ -1351,6 +1351,143 @@ pub(super) fn emit_tcp_read_line(
     f
 }
 
+/// Phase 4.5a — `__rt_tcp_send(host, port, data) ->
+/// ref Result<String, String>` slot bundle. Orchestrates the
+/// full one-shot pipeline (connect + writeLine + readLine + close)
+/// by calling the per-method helpers and threading their Result
+/// values through manual tag inspection.
+pub(super) struct TcpSendIndices {
+    pub fn_type: u32,
+    pub fn_idx: u32,
+    pub string_type_idx: u32,
+    /// `Result<Tcp.Connection, String>` struct type idx — `connect`
+    /// returns it; the orchestrator reads its tag + extracts the
+    /// `ok` (conn) and `err` (string) fields.
+    pub result_tcp_conn_string_type_idx: u32,
+    /// `Result<Unit, String>` — `writeLine`'s return shape.
+    pub result_unit_string_type_idx: u32,
+}
+
+pub(super) struct TcpSendHelperFns {
+    pub tcp_connect_fn: u32,
+    pub tcp_write_line_fn: u32,
+    pub tcp_read_line_fn: u32,
+    pub tcp_close_fn: u32,
+    /// `__rt_result_string_string_err(message) ->
+    ///   ref Result<String, String>`. Used when an earlier stage's
+    /// Err needs to be re-wrapped under the send-side result type
+    /// (e.g. connect failed → send returns Result<String, String>::Err).
+    pub result_string_string_err_fn: u32,
+}
+
+pub(super) fn emit_tcp_send(
+    indices: &TcpSendIndices,
+    helpers: &TcpSendHelperFns,
+) -> Function {
+    use wasm_encoder::{BlockType, HeapType, RefType};
+
+    // Carrier strategy: stash the connect helper's
+    // `ref Result<Tcp.Connection, String>` and the write helper's
+    // `ref Result<Unit, String>` in their own typed locals, then
+    // re-extract the `Tcp.Connection` field whenever a downstream
+    // call needs it. Result types are unrelated heap shapes — wasm
+    // doesn't have subtyping between two struct types here, so
+    // every locally-typed value has to live in a local that matches
+    // the producer's return type exactly.
+    let result_tcp_conn_string_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.result_tcp_conn_string_type_idx),
+    });
+    let result_unit_string_ref = ValType::Ref(RefType {
+        nullable: true,
+        heap_type: HeapType::Concrete(indices.result_unit_string_type_idx),
+    });
+    let mut f = Function::new(vec![
+        (1u32, result_tcp_conn_string_ref),
+        (1u32, result_unit_string_ref),
+    ]);
+    let l_connect_result: u32 = 3;
+    let l_write_result: u32 = 4;
+
+    // connect_result = __rt_tcp_connect(host, port)
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::Call(helpers.tcp_connect_fn));
+    f.instruction(&Instruction::LocalSet(l_connect_result));
+
+    // tag == 0 (Err) → re-wrap connect_result.err as
+    // Result<String, String>.Err and return.
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::Call(helpers.result_string_string_err_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Ok arm — push (conn, data) and call write_line.
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::Call(helpers.tcp_write_line_fn));
+    f.instruction(&Instruction::LocalSet(l_write_result));
+
+    // tag == 0 (Err) → close (best-effort) + re-wrap write_result.err.
+    f.instruction(&Instruction::LocalGet(l_write_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_unit_string_type_idx,
+        field_index: 0,
+    });
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::Call(helpers.tcp_close_fn));
+    f.instruction(&Instruction::Drop);
+    f.instruction(&Instruction::LocalGet(l_write_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_unit_string_type_idx,
+        field_index: 2,
+    });
+    f.instruction(&Instruction::Call(helpers.result_string_string_err_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // read_result = __rt_tcp_read_line(conn) — already
+    // Result<String, String>; bubbles up as the function's own
+    // return value, with a best-effort close in between.
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::Call(helpers.tcp_read_line_fn));
+    f.instruction(&Instruction::LocalGet(l_connect_result));
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: indices.result_tcp_conn_string_type_idx,
+        field_index: 1,
+    });
+    f.instruction(&Instruction::Call(helpers.tcp_close_fn));
+    f.instruction(&Instruction::Drop);
+    let _ = indices.string_type_idx;
+    f.instruction(&Instruction::End);
+    f
+}
+
 /// Phase 4.3 emit — `__rt_tcp_close` body. Trust contract:
 /// `conn` came out of a successful `Tcp.connect` on this run, so
 /// the pool slot at `parse_id(conn.id)` is guaranteed to be a
