@@ -30,6 +30,49 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Server that does three read-a-line / echo-it-back cycles on the
+/// same connection before closing. Used by the multi-stage stress
+/// to verify that the slot's input + output streams stay usable
+/// across multiple `Tcp.writeLine` / `Tcp.readLine` calls (Phase
+/// 4.2.2d allocates them once at finish-connect; nothing should
+/// invalidate them until `Tcp.close`).
+const THREE_ECHO_SCRIPT: &str = r#"
+import socket, sys, threading
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen(16)
+sys.stdout.write(f"PORT:{s.getsockname()[1]}\n")
+sys.stdout.flush()
+
+def serve():
+    while True:
+        try:
+            c, _ = s.accept()
+            buf = b""
+            for _ in range(3):
+                # Read until next '\n', echo the whole line back
+                # (including the terminator).
+                while b"\n" not in buf:
+                    chunk = c.recv(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+                if b"\n" not in buf:
+                    break
+                idx = buf.index(b"\n")
+                line = buf[:idx + 1]
+                buf = buf[idx + 1:]
+                c.sendall(line)
+            c.close()
+        except OSError:
+            break
+
+threading.Thread(target=serve, daemon=True).start()
+import time
+time.sleep(60)
+"#;
+
 const ACCEPT_AND_CLOSE_SCRIPT: &str = r#"
 import socket, sys, threading
 
@@ -332,6 +375,106 @@ fn main() -> Unit
         s.contains(" second-ok"),
         "expected second close to be a no-op Ok (slot.in_use == 0 guard), got:\n{s}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn multi_stage_write_read_on_same_connection() {
+    // Same connection: write "a" → read echo, write "b" → read
+    // echo, write "c" → read echo, close. Exercises slot stream
+    // reuse — Phase 4.2.2d's `in_stream` / `out_stream` are
+    // latched once at finish-connect; every subsequent writeLine /
+    // readLine pulls them out of the pool slot by id, so this test
+    // catches anything that would invalidate the streams after a
+    // single call (e.g. an accidental drop in `tcp_close`'s path
+    // firing for the wrong slot).
+    let dir = tempdir("multi-stage");
+    let Some((mut server, port)) = spawn_python_server(&dir, THREE_ECHO_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping multi-stage stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn afterC(c: Tcp.Connection, note: String) -> Unit
+    ! [Tcp.close, Console.print]
+    _ = Console.print(note)
+    closed = Tcp.close(c)
+    Console.print(" closed")
+
+fn doReadC(c: Tcp.Connection, prefix: String) -> Unit
+    ! [Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.readLine(c)
+        Result.Ok(line) -> afterC(c, "{{prefix}}|{{line}}")
+        Result.Err(e) -> afterC(c, "{{prefix}}|read-err")
+
+fn doWriteC(c: Tcp.Connection, prefix: String) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.writeLine(c, "c-line")
+        Result.Ok(_) -> doReadC(c, prefix)
+        Result.Err(e) -> afterC(c, "{{prefix}}|wc-err")
+
+fn doReadB(c: Tcp.Connection, prefix: String) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.readLine(c)
+        Result.Ok(line) -> doWriteC(c, "{{prefix}}|{{line}}")
+        Result.Err(e) -> afterC(c, "{{prefix}}|rb-err")
+
+fn doWriteB(c: Tcp.Connection) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.writeLine(c, "b-line")
+        Result.Ok(_) -> doReadB(c, "stage-b")
+        Result.Err(e) -> afterC(c, "stage-b|wb-err")
+
+fn afterReadA(c: Tcp.Connection, line: String) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    _ = Console.print("stage-a|{{line}}|")
+    doWriteB(c)
+
+fn doReadA(c: Tcp.Connection) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.readLine(c)
+        Result.Ok(line) -> afterReadA(c, line)
+        Result.Err(e) -> afterC(c, "stage-a|ra-err")
+
+fn doWriteA(c: Tcp.Connection) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.writeLine(c, "a-line")
+        Result.Ok(_) -> doReadA(c)
+        Result.Err(e) -> afterC(c, "stage-a|wa-err")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.writeLine, Tcp.readLine, Tcp.close, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(c) -> doWriteA(c)
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "multi.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "multi-stage stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains("stage-a|a-line"),
+        "expected first echo `stage-a|a-line`, got:\n{s}"
+    );
+    assert!(
+        s.contains("stage-b|b-line"),
+        "expected second echo `stage-b|b-line`, got:\n{s}"
+    );
+    assert!(
+        s.contains("|c-line"),
+        "expected third echo `c-line` substring, got:\n{s}"
+    );
+    assert!(s.contains(" closed"), "expected close note, got:\n{s}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
