@@ -534,6 +534,12 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpStartConnect);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpFinishConnect);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpSubscribe);
+                        // Drop socket on every error path inside the
+                        // connect helper (Phase 4.2.2c: start-connect
+                        // Err, finish-connect Err). On the happy path
+                        // Phase 4.2.2d will keep it live and store in
+                        // the pool slot.
+                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollPoll);
                         wasip2_imports.register(Wasip2ImportSlot::IoPollResourceDropPollable);
                     }
@@ -1485,6 +1491,8 @@ pub(super) fn emit_module_with(
         Some(stub_seg),
         Some(dns_seg),
         Some(no_addr_seg),
+        Some(sock_err_seg),
+        Some(conn_err_seg),
         Some(_instance_network_fn),
         Some(_resolve_addresses_fn),
         Some(_drop_resolve_stream_fn),
@@ -1492,12 +1500,19 @@ pub(super) fn emit_module_with(
         Some(_poll_fn),
         Some(_drop_pollable_fn),
         Some(_resolve_next_address_fn),
+        Some(_create_tcp_socket_fn),
+        Some(_start_connect_fn),
+        Some(_socket_subscribe_fn),
+        Some(_finish_connect_fn),
+        Some(_drop_tcp_socket_fn),
     ) = (
         registry.string_array_type_idx,
         registry.result_type_idx("Result<Tcp.Connection,String>"),
         registry.string_literal_segment(b"tcp: connect not yet implemented"),
         registry.string_literal_segment(b"tcp: dns resolve failed"),
         registry.string_literal_segment(b"tcp: dns no addresses"),
+        registry.string_literal_segment(b"tcp: socket create failed"),
+        registry.string_literal_segment(b"tcp: connect failed"),
         wasip2_imports.lookup_wasm_fn_idx(
             super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
         ),
@@ -1518,6 +1533,21 @@ pub(super) fn emit_module_with(
         ),
         wasip2_imports.lookup_wasm_fn_idx(
             super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpStartConnect,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpSubscribe,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpFinishConnect,
+        ),
+        wasip2_imports.lookup_wasm_fn_idx(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
         ),
     ) {
         let r_ref = ValType::Ref(wasm_encoder::RefType {
@@ -1543,6 +1573,10 @@ pub(super) fn emit_module_with(
             dns_err_len: b"tcp: dns resolve failed".len() as u32,
             no_addr_segment_idx: no_addr_seg,
             no_addr_len: b"tcp: dns no addresses".len() as u32,
+            sock_err_segment_idx: sock_err_seg,
+            sock_err_len: b"tcp: socket create failed".len() as u32,
+            conn_err_segment_idx: conn_err_seg,
+            conn_err_len: b"tcp: connect failed".len() as u32,
         })
     } else {
         None
@@ -3319,6 +3353,26 @@ pub(super) fn emit_module_with(
             super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
             "SocketsIpNameLookupResolveNextAddress",
         )?;
+        let create_tcp_socket_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+            "SocketsTcpCreateSocketCreateTcpSocket",
+        )?;
+        let start_connect_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpStartConnect,
+            "SocketsTcpStartConnect",
+        )?;
+        let socket_subscribe_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpSubscribe,
+            "SocketsTcpSubscribe",
+        )?;
+        let finish_connect_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpFinishConnect,
+            "SocketsTcpFinishConnect",
+        )?;
+        let drop_tcp_socket_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            "SocketsTcpResourceDropTcpSocket",
+        )?;
         let network_handle_global = wasip2_globals
             .as_ref()
             .and_then(|g| g.network_handle)
@@ -3355,6 +3409,11 @@ pub(super) fn emit_module_with(
             poll_fn,
             drop_pollable_fn,
             resolve_next_address_fn,
+            create_tcp_socket_fn,
+            start_connect_fn,
+            socket_subscribe_fn,
+            finish_connect_fn,
+            drop_tcp_socket_fn,
         };
         codes.function(&super::wasip2_tcp::emit_tcp_connect_stub(tc, &helpers));
     }

@@ -64,6 +64,17 @@ pub(super) struct TcpConnectIndices {
     /// full ip-socket-address lowering (out of 0.20 scope).
     pub no_addr_segment_idx: u32,
     pub no_addr_len: u32,
+    /// Phase 4.2.2c — `"tcp: socket create failed"`. `create-tcp-
+    /// socket(ipv4)` Err (system limit, AF unsupported on host).
+    pub sock_err_segment_idx: u32,
+    pub sock_err_len: u32,
+    /// Phase 4.2.2c — `"tcp: connect failed"`. Covers both
+    /// `start-connect` Err (invalid address) and `finish-connect`
+    /// Err (connection-refused, timeout, host-unreachable, etc.).
+    /// Per-error-code dispatch is a follow-up — generic message
+    /// keeps the body small.
+    pub conn_err_segment_idx: u32,
+    pub conn_err_len: u32,
 }
 
 /// Helper fn idxs + global idxs the body calls. Phase 4.2.2a adds
@@ -128,6 +139,32 @@ pub(super) struct TcpConnectHelperFns {
     ///   +6..+10 (ipv4): 4× u8 octets
     ///   +6..+22 (ipv6): 8× u16 hextets
     pub resolve_next_address_fn: u32,
+    /// Phase 4.2.2c — `wasi:sockets/tcp-create-socket.create-tcp-
+    ///   socket: func(family) -> result<tcp-socket, error-code>`.
+    /// Family is the `ip-address-family` enum (0=ipv4, 1=ipv6); we
+    /// always pass 0. Result via retptr (8 bytes: tag@0 + handle/
+    /// err@4).
+    pub create_tcp_socket_fn: u32,
+    /// Phase 4.2.2c — `[method]tcp-socket.start-connect: (this,
+    ///   network, remote-address) -> result<_, error-code>`.
+    /// 14 i32 args + retptr. `remote-address` is the
+    /// `ip-socket-address` variant flat-lowered to 12 i32 positions
+    /// (variant tag + max(ipv4 5, ipv6 11) = 12); for ipv4 the
+    /// trailing 6 positions are zero.
+    pub start_connect_fn: u32,
+    /// Phase 4.2.2c — `[method]tcp-socket.subscribe: (this) ->
+    ///   pollable`. Same pattern as resolve-address-stream's
+    /// subscribe — block until `finish-connect` is ready.
+    pub socket_subscribe_fn: u32,
+    /// Phase 4.2.2c — `[method]tcp-socket.finish-connect: (this,
+    ///   retptr) -> ()`. Retptr 12 bytes: tag@0 + (in_stream@4,
+    /// out_stream@8) on Ok / error-code@4 on Err.
+    pub finish_connect_fn: u32,
+    /// Phase 4.2.2c — `[resource-drop]tcp-socket`. Phase 4.2.2c
+    /// drops the socket on every error path so the per-call
+    /// resource hygiene stays clean. Phase 4.2.2d will keep it
+    /// live and stash it in the pool slot on the happy path.
+    pub drop_tcp_socket_fn: u32,
 }
 
 /// Emit the body for `__rt_tcp_connect`. Phase 4.2.2a layout:
@@ -170,15 +207,18 @@ pub(super) fn emit_tcp_connect_stub(
 ) -> Function {
     use wasm_encoder::{BlockType, MemArg};
     // Locals beyond the two params (0=host: ref string, 1=port: i64):
-    //   local 2 = host_len (i32)         — bytes written by str_to_lm
-    //   local 3 = scratch (i32)          — base of the 64-byte retptr block
-    //   local 4 = resolve_stream (i32)   — handle from resolve-addresses Ok
-    //   local 5 = pollable (i32)         — per-iteration stream subscribe handle
-    //   local 6 = ipv4_a (i32)           ┐
-    //   local 7 = ipv4_b (i32)           ├ first-IPv4 octets latched from
-    //   local 8 = ipv4_c (i32)           │ resolve-next-address Ok+Some+ipv4
-    //   local 9 = ipv4_d (i32)           ┘ (Phase 4.2.2c reads these)
-    let mut f = Function::new(vec![(8u32, ValType::I32)]);
+    //   local 2  = host_len (i32)         — bytes written by str_to_lm
+    //   local 3  = scratch (i32)          — base of the 64-byte retptr block
+    //   local 4  = resolve_stream (i32)   — handle from resolve-addresses Ok
+    //   local 5  = pollable (i32)         — per-call subscribe handle
+    //   local 6  = ipv4_a (i32)           ┐
+    //   local 7  = ipv4_b (i32)           ├ first-IPv4 octets latched from
+    //   local 8  = ipv4_c (i32)           │ resolve-next-address Ok+Some+ipv4
+    //   local 9  = ipv4_d (i32)           ┘
+    //   local 10 = socket (i32)           — tcp-socket handle from create-tcp-socket
+    //   local 11 = in_stream (i32)        ┐
+    //   local 12 = out_stream (i32)       ┘ unpacked from finish-connect Ok
+    let mut f = Function::new(vec![(11u32, ValType::I32)]);
     let l_host_len: u32 = 2;
     let l_scratch: u32 = 3;
     let l_resolve_stream: u32 = 4;
@@ -187,6 +227,9 @@ pub(super) fn emit_tcp_connect_stub(
     let l_ipv4_b: u32 = 7;
     let l_ipv4_c: u32 = 8;
     let l_ipv4_d: u32 = 9;
+    let l_socket: u32 = 10;
+    let l_in_stream: u32 = 11;
+    let l_out_stream: u32 = 12;
 
     let mem4_resolve = MemArg {
         offset: u64::from(SCRATCH_OFFSET_RESOLVE),
@@ -401,14 +444,152 @@ pub(super) fn emit_tcp_connect_stub(
     f.instruction(&Instruction::End); // loop
     f.instruction(&Instruction::End); // block
 
-    // Stream's job is done — drop it. Phase 4.2.2c will use the
-    // octets in locals to start the actual TCP connect.
+    // Stream's job is done — drop it. The octets in l_ipv4_* feed
+    // start-connect below.
     f.instruction(&Instruction::LocalGet(l_resolve_stream));
     f.instruction(&Instruction::Call(helpers.drop_resolve_stream_fn));
 
-    // Mark octet locals as "live but unused this phase" so a future
-    // stub-tail removal doesn't accidentally drop them.
+    // ── Phase 4.2.2c — create-tcp-socket + start/finish-connect. ─
+    // Scratch offset +0..+8 is now free (DNS exit); reuse for the
+    // socket-side retptrs:
+    //   +0..+8 (create-tcp-socket result: tag@0 + handle/err@4)
+    //   +0..+2 (start-connect result:     tag@0 + err@1)
+    //   +0..+12 (finish-connect result:   tag@0 + (in@4, out@8) | err@4)
+    // All three calls run sequentially and each fully consumes the
+    // previous retptr's data before issuing the next.
+
+    // Step 6 — create-tcp-socket(family=0=ipv4, retptr=scratch+0).
+    f.instruction(&Instruction::I32Const(0)); // ip-address-family.ipv4
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::Call(helpers.create_tcp_socket_fn));
+
+    // tag@scratch+0; Err ⇒ socket-create Err.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_resolve));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.sock_err_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.sock_err_segment_idx,
+    });
+    f.instruction(&Instruction::Call(helpers.result_err_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Latch socket handle at scratch+4.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load(mem4_resolve_off4));
+    f.instruction(&Instruction::LocalSet(l_socket));
+
+    // Step 7 — start-connect(socket, network, ipv4_socket_address,
+    //                        retptr). 14 i32 args + retptr (15 total).
+    // ip-socket-address flat:
+    //   pos 0:  variant tag    (0 = ipv4)
+    //   pos 1:  port           (u16 → i32, narrowing from Aver Int)
+    //   pos 2:  octet a        (u8 → i32)
+    //   pos 3:  octet b
+    //   pos 4:  octet c
+    //   pos 5:  octet d
+    //   pos 6..11: 0×6         (ipv6 padding — unused for ipv4)
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::GlobalGet(helpers.network_handle_global));
+    f.instruction(&Instruction::I32Const(0)); // addr variant: ipv4
+    f.instruction(&Instruction::LocalGet(1)); // port (i64 param)
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalGet(l_ipv4_a));
+    f.instruction(&Instruction::LocalGet(l_ipv4_b));
+    f.instruction(&Instruction::LocalGet(l_ipv4_c));
+    f.instruction(&Instruction::LocalGet(l_ipv4_d));
+    // 6× zero pads for the ipv6 join positions.
+    for _ in 0..6 {
+        f.instruction(&Instruction::I32Const(0));
+    }
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::Call(helpers.start_connect_fn));
+
+    // start-connect retptr is 2 bytes: tag@0 + err@1. Err ⇒ drop
+    // socket and surface conn-failed.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_resolve));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::Call(helpers.drop_tcp_socket_fn));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.conn_err_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.conn_err_segment_idx,
+    });
+    f.instruction(&Instruction::Call(helpers.result_err_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Step 8 — socket.subscribe + poll([pollable], 1, retptr=scratch+48).
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::Call(helpers.socket_subscribe_fn));
+    f.instruction(&Instruction::LocalSet(l_pollable));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::I32Store(mem4_pollable_in));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_POLLABLE_IN as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_POLL as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::Call(helpers.poll_fn));
+
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::Call(helpers.drop_pollable_fn));
+
+    // Step 9 — finish-connect(socket, retptr=scratch+0). Retptr 12B:
+    //   +0: tag, +4: on Ok in_stream / on Err error-code, +8: out_stream.
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::Call(helpers.finish_connect_fn));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_resolve));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::Call(helpers.drop_tcp_socket_fn));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(indices.conn_err_len as i32));
+    f.instruction(&Instruction::ArrayNewData {
+        array_type_index: indices.string_type_idx,
+        array_data_index: indices.conn_err_segment_idx,
+    });
+    f.instruction(&Instruction::Call(helpers.result_err_fn));
+    f.instruction(&Instruction::Return);
+    f.instruction(&Instruction::End);
+
+    // Unpack the (input-stream, output-stream) tuple from
+    // scratch+4 and scratch+8. These plus l_socket are the three
+    // i32 handles Phase 4.2.2d will stash into the pool slot.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load(mem4_resolve_off4));
+    f.instruction(&Instruction::LocalSet(l_in_stream));
+    // out_stream lives at scratch+8 — same align-2 i32 load as +4
+    // with a +4-offset variant of mem4_resolve_off4.
+    {
+        let mem4_resolve_off8 = MemArg {
+            offset: u64::from(SCRATCH_OFFSET_RESOLVE + 8),
+            align: 2,
+            memory_index: 0,
+        };
+        f.instruction(&Instruction::LocalGet(l_scratch));
+        f.instruction(&Instruction::I32Load(mem4_resolve_off8));
+        f.instruction(&Instruction::LocalSet(l_out_stream));
+    }
+
+    // Mark every latched handle as "live but unused this phase".
+    // Phase 4.2.2d threads them into the pool slot + Tcp.Connection.
     let _ = (l_ipv4_a, l_ipv4_b, l_ipv4_c, l_ipv4_d);
+    let _ = (l_socket, l_in_stream, l_out_stream);
 
     // ── Stub tail (Phase 4.2.1) — replace in 4.2.2b2. ──────────
     // Push placeholder bytes onto the stack as a fresh Aver String:
@@ -448,6 +629,10 @@ mod tests {
             dns_err_len: b"tcp: dns resolve failed".len() as u32,
             no_addr_segment_idx: 2,
             no_addr_len: b"tcp: dns no addresses".len() as u32,
+            sock_err_segment_idx: 3,
+            sock_err_len: b"tcp: socket create failed".len() as u32,
+            conn_err_segment_idx: 4,
+            conn_err_len: b"tcp: connect failed".len() as u32,
         };
         let helpers = TcpConnectHelperFns {
             result_err_fn: 2,
@@ -461,6 +646,11 @@ mod tests {
             poll_fn: 9,
             drop_pollable_fn: 10,
             resolve_next_address_fn: 11,
+            create_tcp_socket_fn: 12,
+            start_connect_fn: 13,
+            socket_subscribe_fn: 14,
+            finish_connect_fn: 15,
+            drop_tcp_socket_fn: 16,
         };
         let _f = emit_tcp_connect_stub(&indices, &helpers);
     }
