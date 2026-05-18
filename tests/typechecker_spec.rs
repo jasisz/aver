@@ -2477,3 +2477,51 @@ fn monomorphic_recursion_at_same_type_param_is_fine() {
     );
     assert_no_errors(src);
 }
+
+// ---------------------------------------------------------------------------
+// Duplicate function names (Iron — A2)
+// ---------------------------------------------------------------------------
+
+/// Pre-Iron, defining the same fn name twice silently dropped the first
+/// definition (AGENTS.md "Known issues" §`No check for duplicate
+/// function names`). The user got no signal — their program ran the
+/// second definition and the first was dead code they didn't know was
+/// dead. Now the second definition surfaces a real type error.
+#[test]
+fn duplicate_function_name_is_rejected() {
+    let src = concat!(
+        "fn double(x: Int) -> Int\n",
+        "    x * 2\n",
+        "fn double(x: Int) -> Int\n",
+        "    x + x\n",
+    );
+    assert_error_containing(src, "Function 'double' is already defined");
+}
+
+/// Same fn name with different signatures (parameter count / type /
+/// return) is still a duplicate — Aver does not have function
+/// overloading, the second def is the bug shape regardless of how it
+/// differs from the first.
+#[test]
+fn duplicate_function_name_rejected_even_with_different_signature() {
+    let src = concat!(
+        "fn handler() -> Unit\n",
+        "    handler()\n",
+        "fn handler(x: Int) -> Int\n",
+        "    x\n",
+    );
+    assert_error_containing(src, "Function 'handler' is already defined");
+}
+
+/// Sanity: distinct fn names compile cleanly. Locks the check at
+/// "duplicate" rather than "any second registration in fn_sigs".
+#[test]
+fn distinct_function_names_compile_cleanly() {
+    let src = concat!(
+        "fn double(x: Int) -> Int\n",
+        "    x * 2\n",
+        "fn triple(x: Int) -> Int\n",
+        "    x * 3\n",
+    );
+    assert_no_errors(src);
+}
