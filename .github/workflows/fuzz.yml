@@ -88,9 +88,12 @@ jobs:
         working-directory: fuzz
         # `-V 180` is fuzz time, not wall time — total job runtime
         # includes build above + this run + post-step coverage minimise.
+        # `mkdir -p out` first: AFL's `-o` flag wants the parent
+        # directory to exist; on a fresh runner there is no `out/`.
         # Exits cleanly when the budget elapses; we then inspect
         # `out/parser/default/crashes/` ourselves.
         run: |
+          mkdir -p out
           cargo afl fuzz \
             -V 180 \
             -i corpus/parser \
@@ -155,6 +158,7 @@ jobs:
       - name: Fuzz (30 min)
         working-directory: fuzz
         run: |
+          mkdir -p out
           cargo afl fuzz \
             -V 1800 \
             -i corpus/parser \
