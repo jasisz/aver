@@ -33,7 +33,7 @@ Tagline draft: *Iron in the frame — the type checker stops lying to itself abo
 | C1  | Parser + lexer crash-resistance via `proptest` (bytes-in)  | todo   | ~80 LOC   | low      | —   |
 | C2  | `proptest` matcher invariants + Type AST generators        | done   | ~150 LOC  | low      | #28 |
 | C3  | Cross-backend differential property tests                  | todo   | ~200 LOC  | medium   | —   |
-| C4  | Proof export CI gate (`lake build`, `dafny verify`)        | todo   | CI yaml   | low      | —   |
+| C4  | Proof export CI gate (`lake build` via elan)               | done   | CI yaml   | low      | stage 2 |
 
 Note: `cargo-fuzz` revisited and rejected for now. The crate requires nightly Rust (libfuzzer-sys uses `-Z` flags); Aver's CI is stable-Rust throughout (`dtolnay/rust-toolchain@stable`). Adding a nightly toolchain to CI just for fuzz targets is a real cost. `proptest` covers the same surface for structured inputs (matcher invariants, cross-backend differential) and reaches into crash-resistance via `prop::collection::vec(any::<u8>(), 0..N)` strategies — bytes-in, lexer/parser must not panic. If we later need true coverage-guided fuzzing (corpus evolution, mutation-based), the right path is a separate fuzz workflow on a dedicated nightly job, not pulling nightly into the main CI gate.
 
