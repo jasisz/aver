@@ -90,6 +90,12 @@ wit-parser = { version = "0.248", optional = true }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 insta = "1"
+# Iron (0.21) — property-based testing for type-checker matcher
+# invariants + Type AST generation. Defaults to 256 cases per
+# `proptest!` block; the CI gate bumps that to 10_000 via the
+# `PROPTEST_CASES` env var, and developers can shrink locally for
+# fast iteration.
+proptest = "1"
 tempfile = "3"
 
 [[bench]]

@@ -1,5 +1,12 @@
 /target
 .idea
+# proptest saved-failure seeds. Convention recommends check-in (helps
+# every contributor replay the exact input that broke). For Iron we
+# keep them out of git so the matcher invariants don't accumulate a
+# tail of stale seeds across iterations — CI regenerates on each run,
+# and any real long-lived regression migrates into a hand-written unit
+# test in `src/types/checker/tests.rs` rather than a proptest seed.
+proptest-regressions/
 
 out/
 .claude/settings.local.json
