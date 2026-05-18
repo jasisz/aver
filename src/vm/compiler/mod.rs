@@ -79,13 +79,13 @@ fn compile_program_inner(
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     let mut compiler = ProgramCompiler::new();
     compiler.source_file = source_file.to_string();
-    compiler.sync_record_field_symbols(arena);
+    compiler.sync_record_field_symbols(arena)?;
     // Oracle v1: `BranchPath.Root` is a nullary value constructor
     // (like `Option.None`). The VM symbol table needs it as a
     // constant pointing at a pre-allocated arena record; this
     // happens here because bootstrap_core_symbols runs before the
     // arena is available.
-    compiler.install_branch_path_root_constant(arena);
+    compiler.install_branch_path_root_constant(arena)?;
 
     match module_source {
         ModuleSource::Disk(Some(module_root)) => {
@@ -136,7 +136,7 @@ fn compile_program_inner(
                         .iter()
                         .map(|e| e.node.clone())
                         .collect::<Vec<_>>(),
-                );
+                )?;
                 let global_idx = compiler.global_names[&fndef.name];
                 compiler.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
             }
@@ -155,13 +155,13 @@ fn compile_program_inner(
                     }
                 }
                 // VM-specific: register type symbols
-                compiler.register_type_in_symbols(td, arena);
+                compiler.register_type_in_symbols(td, arena)?;
             }
             _ => {}
         }
     }
 
-    compiler.register_current_module_namespace(items);
+    compiler.register_current_module_namespace(items)?;
 
     for item in items {
         if let TopLevel::FnDef(fndef) = item {
@@ -249,6 +249,18 @@ impl std::fmt::Display for CompileError {
     }
 }
 
+/// Iron — B2: lift `SymbolError` into the compiler's diagnostic
+/// channel. `VmSymbolTable` used to `panic!` on every kind clash;
+/// the conversion lets the compile path surface the same condition
+/// as a regular `CompileError` instead of aborting the process.
+impl From<crate::vm::symbol::SymbolError> for CompileError {
+    fn from(err: crate::vm::symbol::SymbolError) -> Self {
+        CompileError {
+            msg: err.to_string(),
+        }
+    }
+}
+
 struct ProgramCompiler {
     code: CodeStore,
     symbols: VmSymbolTable,
@@ -267,14 +279,20 @@ impl ProgramCompiler {
             global_names: HashMap::new(),
             source_file: String::new(),
         };
-        compiler.bootstrap_core_symbols();
+        // bootstrap into a fresh `VmSymbolTable` populates well-known
+        // builtins / wrappers / namespaces; nothing it inserts can
+        // clash with prior state, so a `SymbolError` here would be a
+        // bug in the bootstrap data, not a user-input failure.
+        compiler
+            .bootstrap_core_symbols()
+            .expect("bootstrap_core_symbols on empty VmSymbolTable cannot fail");
         compiler
     }
 
-    fn sync_record_field_symbols(&mut self, arena: &Arena) {
+    fn sync_record_field_symbols(&mut self, arena: &Arena) -> Result<(), CompileError> {
         for type_id in 0..arena.type_count() {
             let type_name = arena.get_type_name(type_id);
-            self.symbols.intern_namespace_path(type_name);
+            self.symbols.intern_namespace_path(type_name)?;
             let field_names = arena.get_field_names(type_id);
             if field_names.is_empty() {
                 continue;
@@ -285,6 +303,7 @@ impl ProgramCompiler {
                 .collect();
             self.code.register_record_fields(type_id, &field_symbol_ids);
         }
+        Ok(())
     }
 
     /// Load all modules from `depends [...]` declarations using the shared loader,
@@ -349,7 +368,7 @@ impl ProgramCompiler {
         }
         for item in &mod_items {
             if let TopLevel::TypeDef(td) = item {
-                self.register_type_in_symbols(td, arena);
+                self.register_type_in_symbols(td, arena)?;
             }
         }
 
@@ -385,7 +404,7 @@ impl ProgramCompiler {
                         .iter()
                         .map(|e| e.node.clone())
                         .collect::<Vec<_>>(),
-                );
+                )?;
                 module_fn_ids.push((fndef.name.clone(), fn_id));
             }
         }
@@ -414,7 +433,7 @@ impl ProgramCompiler {
             self.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
         }
 
-        let module_symbol_id = self.symbols.intern_namespace_path(dep_name);
+        let module_symbol_id = self.symbols.intern_namespace_path(dep_name)?;
         for et in &exports.types {
             let type_name = match et.def {
                 TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
@@ -425,7 +444,7 @@ impl ProgramCompiler {
                     module_symbol_id,
                     member_symbol_id,
                     VmSymbolTable::symbol_ref(type_symbol_id),
-                );
+                )?;
             }
         }
         for fd in &exports.functions {
@@ -436,7 +455,7 @@ impl ProgramCompiler {
                     module_symbol_id,
                     member_symbol_id,
                     VmSymbolTable::symbol_ref(fn_symbol_id),
-                );
+                )?;
             }
         }
 
@@ -449,22 +468,27 @@ impl ProgramCompiler {
     /// referencing it. Follows the same pattern as `Option.None`
     /// which is installed as an immediate constant in
     /// `bootstrap_core_symbols`.
-    fn install_branch_path_root_constant(&mut self, arena: &mut Arena) {
+    fn install_branch_path_root_constant(&mut self, arena: &mut Arena) -> Result<(), CompileError> {
         // Guard: micro-benchmarks and unit tests often build a VM
         // without calling `register_service_types` first. When the
         // BranchPath arena type is absent, there's nothing Oracle-
         // related in the program and skipping the install is safe.
         let Some(type_id) = arena.find_type_id(crate::types::branch_path::TYPE_NAME) else {
-            return;
+            return Ok(());
         };
         let dewey = crate::nan_value::NanValue::new_string_value("", arena);
         let record_idx = arena.push_record(type_id, vec![dewey]);
         let root_value = crate::nan_value::NanValue::new_record(record_idx);
-        self.symbols.intern_constant("BranchPath.Root", root_value);
-        let namespace_symbol_id = self.symbols.intern_namespace_path("BranchPath");
-        let member_symbol_id = self.symbols.intern_name("Root");
         self.symbols
-            .add_namespace_member_by_id(namespace_symbol_id, member_symbol_id, root_value);
+            .intern_constant("BranchPath.Root", root_value)?;
+        let namespace_symbol_id = self.symbols.intern_namespace_path("BranchPath")?;
+        let member_symbol_id = self.symbols.intern_name("Root");
+        self.symbols.add_namespace_member_by_id(
+            namespace_symbol_id,
+            member_symbol_id,
+            root_value,
+        )?;
+        Ok(())
     }
 
     fn ensure_global(&mut self, name: &str) -> u16 {
@@ -479,10 +503,14 @@ impl ProgramCompiler {
 
     /// Register type symbols in VmSymbolTable for namespace resolution.
     /// Arena registration is handled separately via shared `collect_module_types`.
-    fn register_type_in_symbols(&mut self, td: &TypeDef, arena: &Arena) {
+    fn register_type_in_symbols(
+        &mut self,
+        td: &TypeDef,
+        arena: &Arena,
+    ) -> Result<(), CompileError> {
         match td {
             TypeDef::Product { name, fields, .. } => {
-                self.symbols.intern_namespace_path(name);
+                self.symbols.intern_namespace_path(name)?;
                 let type_id = arena
                     .find_type_id(name)
                     .expect("type already registered in Arena");
@@ -493,7 +521,7 @@ impl ProgramCompiler {
                 self.code.register_record_fields(type_id, &field_symbol_ids);
             }
             TypeDef::Sum { name, variants, .. } => {
-                let type_symbol_id = self.symbols.intern_namespace_path(name);
+                let type_symbol_id = self.symbols.intern_namespace_path(name)?;
                 let type_id = arena
                     .find_type_id(name)
                     .expect("type already registered in Arena");
@@ -510,47 +538,48 @@ impl ProgramCompiler {
                             ctor_id,
                             field_count: variant.fields.len() as u8,
                         },
-                    );
+                    )?;
                     let member_symbol_id = self.symbols.intern_name(&variant.name);
                     self.symbols.add_namespace_member_by_id(
                         type_symbol_id,
                         member_symbol_id,
                         VmSymbolTable::symbol_ref(ctor_symbol_id),
-                    );
+                    )?;
                 }
             }
         }
+        Ok(())
     }
 
-    fn bootstrap_core_symbols(&mut self) {
+    fn bootstrap_core_symbols(&mut self) -> Result<(), CompileError> {
         for builtin in VmBuiltin::ALL.iter().copied() {
-            let builtin_symbol_id = self.symbols.intern_builtin(builtin);
+            let builtin_symbol_id = self.symbols.intern_builtin(builtin)?;
             if let Some((namespace, member)) = builtin.name().split_once('.') {
-                let namespace_symbol_id = self.symbols.intern_namespace_path(namespace);
+                let namespace_symbol_id = self.symbols.intern_namespace_path(namespace)?;
                 let member_symbol_id = self.symbols.intern_name(member);
                 self.symbols.add_namespace_member_by_id(
                     namespace_symbol_id,
                     member_symbol_id,
                     VmSymbolTable::symbol_ref(builtin_symbol_id),
-                );
+                )?;
             }
         }
 
-        let result_symbol_id = self.symbols.intern_namespace_path("Result");
-        let ok_symbol_id = self.symbols.intern_wrapper("Result.Ok", 0);
-        let err_symbol_id = self.symbols.intern_wrapper("Result.Err", 1);
+        let result_symbol_id = self.symbols.intern_namespace_path("Result")?;
+        let ok_symbol_id = self.symbols.intern_wrapper("Result.Ok", 0)?;
+        let err_symbol_id = self.symbols.intern_wrapper("Result.Err", 1)?;
         let ok_member_symbol_id = self.symbols.intern_name("Ok");
         self.symbols.add_namespace_member_by_id(
             result_symbol_id,
             ok_member_symbol_id,
             VmSymbolTable::symbol_ref(ok_symbol_id),
-        );
+        )?;
         let err_member_symbol_id = self.symbols.intern_name("Err");
         self.symbols.add_namespace_member_by_id(
             result_symbol_id,
             err_member_symbol_id,
             VmSymbolTable::symbol_ref(err_symbol_id),
-        );
+        )?;
         for (member, builtin_name) in result::extra_members() {
             if let Some(symbol_id) = self.symbols.find(&builtin_name) {
                 let member_symbol_id = self.symbols.intern_name(member);
@@ -558,25 +587,26 @@ impl ProgramCompiler {
                     result_symbol_id,
                     member_symbol_id,
                     VmSymbolTable::symbol_ref(symbol_id),
-                );
+                )?;
             }
         }
 
-        let option_symbol_id = self.symbols.intern_namespace_path("Option");
-        let some_symbol_id = self.symbols.intern_wrapper("Option.Some", 2);
-        self.symbols.intern_constant("Option.None", NanValue::NONE);
+        let option_symbol_id = self.symbols.intern_namespace_path("Option")?;
+        let some_symbol_id = self.symbols.intern_wrapper("Option.Some", 2)?;
+        self.symbols
+            .intern_constant("Option.None", NanValue::NONE)?;
         let some_member_symbol_id = self.symbols.intern_name("Some");
         self.symbols.add_namespace_member_by_id(
             option_symbol_id,
             some_member_symbol_id,
             VmSymbolTable::symbol_ref(some_symbol_id),
-        );
+        )?;
         let none_member_symbol_id = self.symbols.intern_name("None");
         self.symbols.add_namespace_member_by_id(
             option_symbol_id,
             none_member_symbol_id,
             NanValue::NONE,
-        );
+        )?;
         for (member, builtin_name) in option::extra_members() {
             if let Some(symbol_id) = self.symbols.find(&builtin_name) {
                 let member_symbol_id = self.symbols.intern_name(member);
@@ -584,9 +614,10 @@ impl ProgramCompiler {
                     option_symbol_id,
                     member_symbol_id,
                     VmSymbolTable::symbol_ref(symbol_id),
-                );
+                )?;
             }
         }
+        Ok(())
     }
 
     fn compile_fn(&mut self, fndef: &FnDef, arena: &mut Arena) -> Result<FnChunk, CompileError> {
@@ -697,7 +728,10 @@ impl ProgramCompiler {
         Ok(())
     }
 
-    fn register_current_module_namespace(&mut self, items: &[TopLevel]) {
+    fn register_current_module_namespace(
+        &mut self,
+        items: &[TopLevel],
+    ) -> Result<(), CompileError> {
         let Some(module) = items.iter().find_map(|item| {
             if let TopLevel::Module(module) = item {
                 Some(module)
@@ -705,10 +739,10 @@ impl ProgramCompiler {
                 None
             }
         }) else {
-            return;
+            return Ok(());
         };
 
-        let module_symbol_id = self.symbols.intern_namespace_path(&module.name);
+        let module_symbol_id = self.symbols.intern_namespace_path(&module.name)?;
         let exposes_ref = if module.exposes.is_empty() {
             None
         } else {
@@ -726,7 +760,7 @@ impl ProgramCompiler {
                             module_symbol_id,
                             member_symbol_id,
                             VmSymbolTable::symbol_ref(symbol_id),
-                        );
+                        )?;
                     }
                 }
                 TopLevel::TypeDef(TypeDef::Product { name, .. } | TypeDef::Sum { name, .. }) => {
@@ -738,12 +772,13 @@ impl ProgramCompiler {
                             module_symbol_id,
                             member_symbol_id,
                             VmSymbolTable::symbol_ref(symbol_id),
-                        );
+                        )?;
                     }
                 }
                 _ => {}
             }
         }
+        Ok(())
     }
 }
 

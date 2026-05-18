@@ -272,7 +272,9 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u16(variant_id);
                 self.emit_u8(argc as u8);
             }
-            CallTarget::Builtin(builtin) => self.emit_builtin_after_args(builtin, argc, owned_mask),
+            CallTarget::Builtin(builtin) => {
+                self.emit_builtin_after_args(builtin, argc, owned_mask)?;
+            }
             CallTarget::UnknownQualified(qualified) => {
                 return Err(CompileError {
                     msg: format!("unknown builtin or namespace member: {}", qualified),
@@ -418,7 +420,7 @@ impl<'a> FnCompiler<'a> {
             LeafOp::MapGet { map, key } => {
                 self.compile_expr(map)?;
                 self.compile_expr(key)?;
-                self.emit_builtin_after_args(VmBuiltin::MapGet, 2, 0);
+                self.emit_builtin_after_args(VmBuiltin::MapGet, 2, 0)?;
                 Ok(())
             }
             LeafOp::MapSet { map, key, value } => {
@@ -426,13 +428,13 @@ impl<'a> FnCompiler<'a> {
                 self.compile_expr(map)?;
                 self.compile_expr(key)?;
                 self.compile_expr(value)?;
-                self.emit_builtin_after_args(VmBuiltin::MapSet, 3, owned_mask);
+                self.emit_builtin_after_args(VmBuiltin::MapSet, 3, owned_mask)?;
                 Ok(())
             }
             LeafOp::VectorNew { size, fill } => {
                 self.compile_expr(size)?;
                 self.compile_expr(fill)?;
-                self.emit_builtin_after_args(VmBuiltin::VectorNew, 2, 0);
+                self.emit_builtin_after_args(VmBuiltin::VectorNew, 2, 0)?;
                 Ok(())
             }
             LeafOp::VectorGetOrDefaultLiteral {
@@ -481,7 +483,7 @@ impl<'a> FnCompiler<'a> {
             LeafOp::ListIndexGet { list, index } => {
                 // Decompose: Vector.fromList(list) then Vector.get(_, index)
                 self.compile_expr(list)?;
-                self.emit_builtin_after_args(VmBuiltin::VectorFromList, 1, 0);
+                self.emit_builtin_after_args(VmBuiltin::VectorFromList, 1, 0)?;
                 self.compile_expr(index)?;
                 self.emit_op(VECTOR_GET);
                 Ok(())
@@ -493,7 +495,7 @@ impl<'a> FnCompiler<'a> {
             } => {
                 self.compile_expr(a)?;
                 self.compile_expr(b)?;
-                self.emit_builtin_after_args(VmBuiltin::IntMod, 2, 0);
+                self.emit_builtin_after_args(VmBuiltin::IntMod, 2, 0)?;
                 let default_value = self.nan_literal(default_literal);
                 let const_idx = self.add_constant(default_value);
                 self.emit_op(LOAD_CONST);
@@ -551,14 +553,19 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
-    fn emit_builtin_after_args(&mut self, builtin: VmBuiltin, argc: usize, owned_mask: u8) {
+    fn emit_builtin_after_args(
+        &mut self,
+        builtin: VmBuiltin,
+        argc: usize,
+        owned_mask: u8,
+    ) -> Result<(), CompileError> {
         match builtin {
             VmBuiltin::ListLen => self.emit_op(LIST_LEN),
             VmBuiltin::ListPrepend => self.emit_op(LIST_PREPEND),
             VmBuiltin::VectorGet => self.emit_op(VECTOR_GET),
             VmBuiltin::VectorSet if owned_mask != 0 => {
                 // Owned path: go through CALL_BUILTIN_OWNED for take optimization
-                let symbol_id = self.symbols.intern_builtin(builtin);
+                let symbol_id = self.symbols.intern_builtin(builtin)?;
                 self.emit_op(CALL_BUILTIN_OWNED);
                 self.emit_u32(symbol_id);
                 self.emit_u8(argc as u8);
@@ -568,7 +575,7 @@ impl<'a> FnCompiler<'a> {
             VmBuiltin::OptionWithDefault => self.emit_op(UNWRAP_OR),
             VmBuiltin::ResultWithDefault => self.emit_op(UNWRAP_RESULT_OR),
             _ => {
-                let symbol_id = self.symbols.intern_builtin(builtin);
+                let symbol_id = self.symbols.intern_builtin(builtin)?;
                 if owned_mask != 0 {
                     self.emit_op(CALL_BUILTIN_OWNED);
                     self.emit_u32(symbol_id);
@@ -581,6 +588,7 @@ impl<'a> FnCompiler<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Compute owned bitmask for builtin args by checking if any arg
