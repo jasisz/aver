@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::ast_rewrite::rewrite_idents_scoped;
 use crate::codegen::CodegenContext;
 

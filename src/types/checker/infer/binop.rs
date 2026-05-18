@@ -1,27 +1,6 @@
 use super::*;
 
 impl TypeChecker {
-    pub(in super::super) fn check_binop_expr(
-        &mut self,
-        op: &BinOp,
-        left: &Spanned<Expr>,
-        _right: &Spanned<Expr>,
-        lt: &Type,
-        rt: &Type,
-        line: usize,
-    ) {
-        // Unary minus: `- float_expr` is parsed as `BinOp(Sub, Literal(Int(0)), expr)`.
-        // Allow Int(0) - Float to produce Float without requiring explicit conversion.
-        if matches!(op, BinOp::Sub)
-            && matches!(lt, Type::Int)
-            && matches!(rt, Type::Float)
-            && matches!(left.node, Expr::Literal(Literal::Int(0)))
-        {
-            return; // Unary minus on Float — OK
-        }
-        self.check_binop(op, lt, rt, line);
-    }
-
     pub(in super::super) fn check_binop(&mut self, op: &BinOp, lt: &Type, rt: &Type, line: usize) {
         if matches!(lt, Type::Invalid) || matches!(rt, Type::Invalid) {
             return; // gradual — skip

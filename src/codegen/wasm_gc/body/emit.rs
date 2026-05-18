@@ -306,12 +306,10 @@ pub(super) fn emit_expr(
                     func.instruction(&Instruction::I32Eqz);
                 }
             } else {
-                // Operand kind: Aver may type-check `Int op Float` as
-                // Float (e.g. unary `-273.15` parses to `0 - 273.15`
-                // where the `0` is `Literal::Int(0)`). Pick `F64` if
-                // either side wants it; emit `f64.convert_i64_s` after
-                // any I64-typed operand to promote into the chosen
-                // numeric kind. Mirror of `src/codegen/wasm/expr/emit.rs`.
+                // Operand kind: Aver type-checks `Int op Float` as
+                // Float. Pick `F64` if either side wants it; emit
+                // `f64.convert_i64_s` after any I64-typed operand to
+                // promote into the chosen numeric kind.
                 let l_ty = wasm_type_of(l, ctx.registry)?;
                 let r_ty = wasm_type_of(r, ctx.registry)?;
                 let operand = if l_ty == Some(ValType::F64) || r_ty == Some(ValType::F64) {

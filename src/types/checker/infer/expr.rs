@@ -652,7 +652,7 @@ impl TypeChecker {
                 } else {
                     self.current_fn_line.unwrap_or(1)
                 };
-                self.check_binop_expr(op, left, right, &lt, &rt, line);
+                self.check_binop(op, &lt, &rt, line);
                 match op {
                     BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
                         Type::Bool
