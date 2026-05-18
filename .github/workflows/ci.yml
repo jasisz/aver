@@ -99,3 +99,45 @@ jobs:
           name: bench-results
           path: bench-results.ndjson
           retention-days: 30
+
+  proof:
+    # Iron — C4: proof-export CI gate. `tests/proof_spec.rs` already
+    # carries 7 Lake-build smoke tests that emit Lean from real Aver
+    # examples and run `lake build` on the output. Locally they skip
+    # cleanly when `lake` isn't on PATH; on CI we install Lean (via
+    # elan, the Lean toolchain manager) so the tests exercise the
+    # real proof build pipeline and a regression in proof codegen
+    # surfaces as a red CI gate instead of silent green.
+    name: Proof Export
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Lean (via elan)
+        # Elan with a real default toolchain — `--default-toolchain none`
+        # leaves `lake` as a wrapper that errors on every call because
+        # it has no toolchain to delegate to (works for a project dir
+        # with its own `lean-toolchain` file, broken for the upfront
+        # `lake --version` sanity check). Pinning `stable` makes the
+        # bare-PATH lake binary executable; emitted proof projects with
+        # a different `lean-toolchain` still trigger elan to fetch the
+        # matching version on first `lake build`.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Verify `lake` reachable
+        run: lake --version
+
+      - name: Run proof-export smoke tests
+        # Restricting to the proof_spec target keeps this job short
+        # (no overlap with the lib / wasm / bench jobs). The tests
+        # invoke `aver proof <example> --target lean`, then `lake
+        # build` against the emitted directory; a Lean-side compile
+        # error in any of the 7 fixtures fails the job.
+        run: cargo test -p aver-lang --test proof_spec
