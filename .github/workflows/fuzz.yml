@@ -45,6 +45,14 @@ env:
   AFL_NO_UI: '1'
   AFL_FAST_CAL: '1'
   AFL_CMPLOG_ONLY_NEW: '1'
+  # Ubuntu's `/proc/sys/kernel/core_pattern` points at the apport pipe
+  # (`|/usr/share/apport/...`), which AFL refuses to run against — it
+  # would mis-classify crashes as timeouts. We don't have passwordless
+  # sudo to rewrite `core_pattern`, and our harness catches panics via
+  # `panic::catch_unwind` rather than SIGSEGVs, so the trade-off AFL
+  # documents (some real signal-crashes might surface as hangs) does
+  # not apply here.
+  AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES: '1'
 
 jobs:
   pr-smoke:
