@@ -29,6 +29,21 @@ jobs:
         run: cargo clippy --workspace --all-targets --exclude aver-lang -- -D warnings && cargo clippy -p aver-lang --lib --bin aver -- -D warnings
 
       - name: Test
+        # Iron — Stage 4: CI exercises proptest sweeps at 2 000 cases
+        # per property instead of the 256-case default. The matcher
+        # invariants (`types::checker::tests`) and replay-codec
+        # round-trip (`tests/replay_proptest.rs`) each surfaced real
+        # bugs inside 256 cases; bumping the budget here lets CI sweep
+        # ~8× deeper input space than a developer's local cycle does,
+        # surfacing shapes that only fire at low probability. Local
+        # `cargo test` keeps the 256 default for fast iteration. 2 000
+        # is conservative — 10 000 was the first instinct but risked
+        # tipping the Check & Test runtime past the rest of the gates;
+        # the per-test runtime gap of 256 vs 2 000 is in the seconds,
+        # 2 000 vs 10 000 is in the minutes for the heavier codec
+        # roundtrip tests. Bump again if a class of bug slips at 2 000.
+        env:
+          PROPTEST_CASES: '2000'
         run: cargo test --workspace
 
   wasm:
@@ -58,6 +73,11 @@ jobs:
         run: cargo clippy -p aver-lang --lib --bin aver --features wasm -- -D warnings
 
       - name: Test (wasm)
+        # Same proptest budget as the Check & Test job — applies to
+        # any wasm-feature-gated proptest fixtures the feature flag
+        # pulls in. No-op for non-proptest tests.
+        env:
+          PROPTEST_CASES: '2000'
         run: cargo test -p aver-lang --features wasm
 
       - name: Build (wasm release)
