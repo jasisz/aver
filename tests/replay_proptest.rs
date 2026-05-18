@@ -160,18 +160,37 @@ fn arb_replay_safe_value() -> impl Strategy<Value = Value> {
                 .boxed(),
             // Record — type_name + field list. Field names are
             // identifier-shaped, field values recurse.
+            //
+            // Field names must be UNIQUE within a record: Aver records
+            // are field=value pairs where field names are unique by
+            // construction. A naive `vec(("[a-z]{1,4}", inner), 1..3)`
+            // can collide on the same generated name twice (low-
+            // probability shape, fires at higher case counts), which
+            // the BTreeMap-backed encoder silently dedupes — the
+            // roundtrip then sees one field instead of two. Dedup at
+            // generator time keeps the property test aligned with
+            // valid-Record semantics (proptest found this at
+            // PROPTEST_CASES=2000; pre-Iron 256 default missed it).
             (
                 "[A-Z][a-z]{0,4}",
                 prop::collection::vec(("[a-z]{1,4}", inner.clone()), 1..3),
             )
-                .prop_map(|(type_name, fields)| Value::Record {
-                    type_name: type_name.to_string(),
-                    fields: Rc::from(
-                        fields
-                            .into_iter()
-                            .map(|(n, v)| (n.to_string(), v))
-                            .collect::<Vec<_>>(),
-                    ),
+                .prop_map(|(type_name, fields)| {
+                    let mut seen = std::collections::HashSet::new();
+                    let unique: Vec<(String, Value)> = fields
+                        .into_iter()
+                        .filter_map(|(n, v)| {
+                            if seen.insert(n.to_string()) {
+                                Some((n.to_string(), v))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    Value::Record {
+                        type_name: type_name.to_string(),
+                        fields: Rc::from(unique),
+                    }
                 })
                 .boxed(),
             // Variant — fully-qualified constructor + positional
