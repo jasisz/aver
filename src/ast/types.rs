@@ -20,7 +20,7 @@ pub enum Type {
     Vector(Box<Type>),
     Fn(Vec<Type>, Box<Type>, Vec<String>),
     Var(String), // named type variable in polymorphic builtin signatures (instantiated at call site)
-    Invalid,     // checker recovery after an earlier error; matches anything in `.compatible` to suppress cascading diagnostics
+    Invalid, // checker recovery after an earlier error; matches anything in `.compatible` to suppress cascading diagnostics
     Named(String), // user-defined type: Shape, User, etc.
 }
 
