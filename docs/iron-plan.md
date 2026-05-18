@@ -34,8 +34,52 @@ Tagline draft: *Iron in the frame — the type checker stops lying to itself abo
 | C2  | `proptest` matcher invariants + Type AST generators        | done   | ~150 LOC  | low      | #28 |
 | C3  | Cross-backend differential property tests                  | todo   | ~200 LOC  | medium   | —   |
 | C4  | Proof export CI gate (`lake build` via elan)               | done   | CI yaml   | low      | #29 |
+| C5  | AFL++ via `afl.rs` — coverage-guided parser fuzz           | todo   | fuzz crate + CI | medium | — |
 
-Note: `cargo-fuzz` revisited and rejected for now. The crate requires nightly Rust (libfuzzer-sys uses `-Z` flags); Aver's CI is stable-Rust throughout (`dtolnay/rust-toolchain@stable`). Adding a nightly toolchain to CI just for fuzz targets is a real cost. `proptest` covers the same surface for structured inputs (matcher invariants, cross-backend differential) and reaches into crash-resistance via `prop::collection::vec(any::<u8>(), 0..N)` strategies — bytes-in, lexer/parser must not panic. If we later need true coverage-guided fuzzing (corpus evolution, mutation-based), the right path is a separate fuzz workflow on a dedicated nightly job, not pulling nightly into the main CI gate.
+### Fuzzers considered
+
+`proptest` alone gives us structured-input fuzzing for matcher invariants
+and the replay-codec round-trip, plus a shallow byte-in attack on the
+lexer via `prop::collection::vec(any::<u8>(), 0..N)`. What it does *not*
+give us is **coverage-guided mutation**: when proptest happens to
+generate a byte sequence that hits a new edge, it forgets and rolls
+fresh. For a language parser that gates everything behind valid UTF-8
+→ valid tokens → valid indentation, coverage feedback is the difference
+between "rediscovering lexer rejection 10⁶ times" and "reaching deep
+parser paths". C5 fills that gap.
+
+| candidate         | stable Rust? | coverage-guided? | shipping cost                     | verdict for Iron |
+|-------------------|--------------|------------------|-----------------------------------|------------------|
+| `cargo-fuzz`      | no           | yes              | nightly toolchain in CI           | rejected         |
+| AFL++ via `afl.rs`| yes          | yes              | fuzz crate + Linux CI job         | **chosen (C5)**  |
+| `honggfuzz-rs`    | yes          | yes              | similar setup, less doc'd         | deferred         |
+| `bolero`          | yes          | yes (via libFuzzer/AFL/honggfuzz) | overlaps proptest         | deferred         |
+| `LibAFL`          | yes          | yes (custom)     | framework, not drop-in tool       | deferred         |
+| `radamsa` / `zzuf`| yes          | no               | no feedback loop                  | rejected         |
+
+`cargo-fuzz` is the default Rust fuzzer but its libFuzzer-sys backend
+requires nightly `-Z` flags; pulling nightly into the main CI gate is
+a real cost (toolchain churn, longer cache invalidation, divergence
+from the rest of `dtolnay/rust-toolchain@stable`). AFL++ via `afl.rs`
+runs on stable, has the best-documented corpus/dictionary/minimisation
+tooling for parser frontends, and lets the harness live in a separate
+workspace-excluded crate that doesn't affect regular `cargo build` /
+`cargo test`. `honggfuzz-rs` is a credible secondary engine for an
+overnight run on a follow-up release; for Iron, one fuzz engine is
+enough and AFL++ has the sharper documentation for our use case
+(parser dictionaries, `afl-tmin` crash reduction, `afl-cmin` corpus
+minimisation). `bolero` would be the right answer if we wanted a
+single abstraction layer over both property and byte fuzzing — but
+proptest already owns the property side, and adding bolero just for
+byte fuzzing buys nothing AFL++ doesn't give us. `LibAFL` is a
+*framework* for building custom fuzzers, not a drop-in tool; the
+right time to reach for it is when we want grammar-aware Aver-specific
+mutators, which is post-Iron.
+
+Sanitizers (`-Z sanitizer=address`) are nightly territory regardless
+of which fuzzer we pick, so C5 ships without ASAN. Crashes that need
+sanitizer-level diagnosis get triaged manually with a nightly toolchain
+locally; CI stays stable.
 
 ---
 

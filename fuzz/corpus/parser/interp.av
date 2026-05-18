@@ -1,0 +1,8 @@
+fn greet(name: String) -> String
+    "hello, {name}"
+
+fn nested() -> String
+    "outer {inner("x")} done"
+
+fn inner(s: String) -> String
+    "[{s}]"

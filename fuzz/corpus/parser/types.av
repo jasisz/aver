@@ -1,0 +1,14 @@
+type Shape
+    Circle(Float)
+    Rect(Float, Float)
+    Point
+
+record User
+    name: String
+    age: Int
+
+fn area(s: Shape) -> Float
+    match s
+        Shape.Circle(r) -> r * r
+        Shape.Rect(w, h) -> w * h
+        Shape.Point -> 0.0

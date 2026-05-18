@@ -1,0 +1,4 @@
+// top-level line comment
+fn id(x: Int) -> Int
+    // inside-body comment
+    x

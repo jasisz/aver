@@ -1,0 +1,5 @@
+decision FullNamespaceEverywhere
+    date 2026-01-15
+    reason "Flat builtins blur ownership; namespaced helpers keep modules cohesive."
+    chosen "Vector.set / Map.get under owning namespaces"
+    rejected "Top-level set, get, push without namespace"

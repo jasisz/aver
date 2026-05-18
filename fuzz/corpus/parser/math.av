@@ -1,0 +1,14 @@
+fn double(x: Int) -> Int
+    x * 2
+
+fn negate(x: Float) -> Float
+    -x
+
+fn abs(x: Int) -> Int
+    match x < 0
+        true -> -x
+        false -> x
+
+verify double
+    double(0) => 0
+    double(7) => 14

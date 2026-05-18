@@ -1,0 +1,11 @@
+module Effects
+    effects [Console.print, Time.now, Disk.readText]
+
+fn stamp() -> Int ! [Time.now]
+    Time.now()
+
+fn dump(path: String) -> Result<String, String> ! [Disk.readText]
+    Disk.readText(path)
+
+fn say(msg: String) -> Unit ! [Console.print]
+    Console.print(msg)

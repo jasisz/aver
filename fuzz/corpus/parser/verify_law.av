@@ -1,0 +1,11 @@
+fn add(a: Int, b: Int) -> Int
+    a + b
+
+fn addSpec(a: Int, b: Int) -> Int
+    b + a
+
+verify add law addSpec
+    name commutative
+    given a: Int = 1..50
+    given b: Int = 1..50
+    add(a, b) => add(b, a)

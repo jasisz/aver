@@ -1,0 +1,7 @@
+module Hello
+    intent =
+        "Smallest non-trivial Aver program."
+    effects [Console.print]
+
+fn main() -> Unit ! [Console.print]
+    Console.print("hello, world")

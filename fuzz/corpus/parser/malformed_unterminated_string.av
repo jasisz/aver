@@ -1,0 +1,2 @@
+fn broken() -> String
+    "this never closes
