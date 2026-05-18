@@ -1063,7 +1063,7 @@ impl TypeChecker {
                 }
                 match obj_ty {
                     Type::Named(ref type_name) => {
-                        if self.opaque_types.contains(type_name) {
+                        if !self.self_host_mode && self.opaque_types.contains(type_name) {
                             self.error(format!(
                                 "Cannot access field '{}' of opaque type '{}'",
                                 field, type_name

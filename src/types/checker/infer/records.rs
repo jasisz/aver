@@ -6,7 +6,7 @@ impl TypeChecker {
         type_name: &str,
         fields: &[(String, Spanned<Expr>)],
     ) -> Type {
-        if self.opaque_types.contains(type_name) {
+        if !self.self_host_mode && self.opaque_types.contains(type_name) {
             self.error(format!(
                 "Cannot construct opaque type '{}' — use its module's constructor function",
                 type_name
@@ -84,7 +84,7 @@ impl TypeChecker {
         base: &Spanned<Expr>,
         updates: &[(String, Spanned<Expr>)],
     ) -> Type {
-        if self.opaque_types.contains(type_name) {
+        if !self.self_host_mode && self.opaque_types.contains(type_name) {
             self.error(format!(
                 "Cannot update opaque type '{}' — use its module's API",
                 type_name

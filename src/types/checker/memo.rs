@@ -63,6 +63,12 @@ impl TypeChecker {
     fn check_loaded_module_bodies(&mut self, modules: &[crate::source::LoadedModule]) {
         for (idx, module) in modules.iter().enumerate() {
             let mut sub = TypeChecker::new();
+            // Propagate self-host opaque bypass into the dep module sub-
+            // checker. `domain/builtins.av` round-trips `Tcp.Connection`
+            // through the replay `Val` shape; without this, the sub-checker
+            // re-enforces opacity even when the parent compile was kicked
+            // off with `--with-self-host-support`.
+            sub.self_host_mode = self.self_host_mode;
             sub.build_signatures(&module.items);
             // Pull in the OTHER modules' canonical (qualified) signatures —
             // skip self so the module sees its own types as transparent

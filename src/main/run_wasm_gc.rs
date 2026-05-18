@@ -153,7 +153,7 @@ pub(super) fn try_run_wasm_gc(
         {
             return Err(shared::format_type_errors(&tc.errors));
         }
-        let dep_modules = load_compile_deps(&items, &module_root, false, false);
+        let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
         flatten_multimodule(&mut items, &dep_modules);
         // Re-run resolver after multi-module flatten so the freshly
         // appended dep fns get a `FnResolution` (slot map + slot_types).

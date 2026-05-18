@@ -26,7 +26,10 @@ use crate::ir::buffer_build::BufferBuildPassReport;
 use crate::ir::pass_diag::{self, CountsByFn};
 use crate::ir::{AllocPolicy, AnalysisResult, CallLowerCtx};
 use crate::source::LoadedModule;
-use crate::types::checker::{TypeCheckResult, run_type_check_full, run_type_check_with_loaded};
+use crate::types::checker::{
+    TypeCheckResult, run_type_check_full, run_type_check_full_self_host,
+    run_type_check_with_loaded, run_type_check_with_loaded_self_host,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PipelineStage {
@@ -66,6 +69,14 @@ pub enum TypecheckMode<'a> {
     /// `run_type_check_with_loaded(items, loaded)` for in-memory module trees
     /// (playground virtual fs, multi-file ad-hoc compiles).
     WithLoaded(&'a [LoadedModule]),
+    /// Self-host variant of [`Full`] — bypasses opaque-type checks
+    /// (construct, field access, pattern match). Used exclusively by
+    /// `aver compile --with-self-host-support` so `domain/builtins.av`
+    /// can round-trip opaque host types through the replay JSON
+    /// contract. See [`run_type_check_full_self_host`](crate::types::checker::run_type_check_full_self_host).
+    FullSelfHost { base_dir: Option<&'a str> },
+    /// Self-host variant of [`WithLoaded`].
+    WithLoadedSelfHost(&'a [LoadedModule]),
 }
 
 pub struct PipelineConfig<'a> {
@@ -264,6 +275,12 @@ pub fn typecheck(items: &[TopLevel], mode: &TypecheckMode<'_>) -> TypeCheckResul
     match mode {
         TypecheckMode::Full { base_dir } => run_type_check_full(items, *base_dir),
         TypecheckMode::WithLoaded(loaded) => run_type_check_with_loaded(items, loaded),
+        TypecheckMode::FullSelfHost { base_dir } => {
+            run_type_check_full_self_host(items, *base_dir)
+        }
+        TypecheckMode::WithLoadedSelfHost(loaded) => {
+            run_type_check_with_loaded_self_host(items, loaded)
+        }
     }
 }
 

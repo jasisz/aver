@@ -108,7 +108,7 @@ impl TypeChecker {
             Pattern::Constructor(name, bindings) => {
                 // Check if this pattern matches on an opaque type's representation.
                 let type_prefix = name.split('.').next().unwrap_or(name);
-                if self.opaque_types.contains(type_prefix) {
+                if !self.self_host_mode && self.opaque_types.contains(type_prefix) {
                     self.error(format!(
                         "Cannot pattern match on opaque type '{}'",
                         type_prefix

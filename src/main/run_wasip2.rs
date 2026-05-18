@@ -106,7 +106,7 @@ fn build_component_bytes(
         return Err(super::shared::format_type_errors(&tc.errors));
     }
 
-    let dep_modules = super::commands::load_compile_deps(&items, &module_root, false, false);
+    let dep_modules = super::commands::load_compile_deps(&items, &module_root, false, false, false);
     aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
     aver::ir::pipeline::resolve(&mut items);
 

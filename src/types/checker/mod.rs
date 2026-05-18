@@ -90,6 +90,35 @@ pub fn run_type_check_with_loaded(
     finalize_check_result(checker, items)
 }
 
+/// Self-host variant of [`run_type_check_full`]: bypasses the
+/// opaque-type checks (construction, field access, pattern match).
+/// Used exclusively by `aver compile --with-self-host-support` so
+/// `self_hosted/domain/builtins.av` can round-trip opaque host
+/// types (e.g. `Tcp.Connection`) through the replay JSON contract.
+/// User code outside the self-host always goes through the regular
+/// [`run_type_check_full`] and stays bound by the opaque rules.
+pub fn run_type_check_full_self_host(
+    items: &[TopLevel],
+    base_dir: Option<&str>,
+) -> TypeCheckResult {
+    let mut checker = TypeChecker::new();
+    checker.self_host_mode = true;
+    checker.check(items, base_dir);
+    finalize_check_result(checker, items)
+}
+
+/// Self-host variant of [`run_type_check_with_loaded`]. See
+/// [`run_type_check_full_self_host`] for the opaque-bypass rationale.
+pub fn run_type_check_with_loaded_self_host(
+    items: &[TopLevel],
+    loaded: &[crate::source::LoadedModule],
+) -> TypeCheckResult {
+    let mut checker = TypeChecker::new();
+    checker.self_host_mode = true;
+    checker.check_with_loaded(items, loaded);
+    finalize_check_result(checker, items)
+}
+
 fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCheckResult {
     let fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = checker
         .fn_sigs
@@ -206,6 +235,20 @@ struct TypeChecker {
     current_fn_line: Option<usize>,
     /// Type names that are opaque in this module's context (imported via `exposes opaque`).
     opaque_types: HashSet<String>,
+    /// When `true`, opaque-type construction + field-access + pattern-match
+    /// checks are bypassed. Used only by the self-host compile path
+    /// (`aver compile --with-self-host-support`) where
+    /// `self_hosted/domain/builtins.av` round-trips opaque host types
+    /// (e.g. `Tcp.Connection`) through the replay `Val` representation:
+    /// it serialises by reading `.id` / `.host` / `.port`, and
+    /// reconstructs by `Tcp.Connection(id = …, host = …, port = …)` on
+    /// replay deserialise. Both operations are forbidden in user code by
+    /// design (Phase 4.7+ fix #11), but the self-host has to read +
+    /// write the underlying record shape because that's the contract
+    /// with the replay JSON format. The flag is set by
+    /// [`run_type_check_full_self_host`] / [`run_type_check_with_loaded_self_host`]
+    /// and never user-toggleable from source.
+    self_host_mode: bool,
     /// Names referenced during type checking of current function body (for unused detection).
     used_names: HashSet<String>,
     /// Bindings defined in the current function body: (name, line).
@@ -245,6 +288,7 @@ impl TypeChecker {
             current_fn_ret: None,
             current_fn_line: None,
             opaque_types: HashSet::new(),
+            self_host_mode: false,
             used_names: HashSet::new(),
             fn_bindings: Vec::new(),
             unused_warnings: Vec::new(),

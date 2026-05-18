@@ -2440,12 +2440,26 @@ fn build_codegen_context(
     // exporters want source-level IR (interp_lower + buffer_build off),
     // runtime backends (VM/WASM/Rust) want the deforested form. See
     // `aver::ir::pipeline` for the canonical stage order and invariants.
+    //
+    // `with_self_host_support` flips the typecheck variant to
+    // `FullSelfHost`, which bypasses opaque-type checks so
+    // `domain/builtins.av` can round-trip `Tcp.Connection` (and any
+    // future opaque host type) through the replay `Val` shape. User
+    // code outside the self-host always goes through the regular
+    // `Full` variant.
+    let typecheck_mode = if with_self_host_support {
+        aver::ir::TypecheckMode::FullSelfHost {
+            base_dir: Some(&module_root),
+        }
+    } else {
+        aver::ir::TypecheckMode::Full {
+            base_dir: Some(&module_root),
+        }
+    };
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
-            typecheck: Some(aver::ir::TypecheckMode::Full {
-                base_dir: Some(&module_root),
-            }),
+            typecheck: Some(typecheck_mode),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
             ..Default::default()
@@ -2483,6 +2497,7 @@ fn build_codegen_context(
         &module_root,
         apply_traversal_lowering, // run_interp_lower
         apply_traversal_lowering, // run_buffer_build
+        with_self_host_support,   // self_host_mode → bypass opaque in dep modules
     );
 
     let use_runtime_policy = matches!(policy_mode, super::cli::CompilePolicyMode::Runtime);
@@ -3655,6 +3670,7 @@ fn cmd_compile_wasm_gc(
         &module_root,
         false, /* run_interp_lower */
         false, /* run_buffer_build */
+        false, /* self_host_mode — wasm-gc compile path doesn't use self-host */
     );
     flatten_multimodule(&mut items, &dep_modules);
     // Re-run resolver after flatten so dep fns get a FnResolution
@@ -3815,7 +3831,7 @@ fn cmd_compile_wasip2(
             process::exit(1);
         }
 
-        let dep_modules = load_compile_deps(&items, &module_root, false, false);
+        let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
         // Bypass the `flatten_multimodule` shim in this file (gated on
         // the `wasm` feature) and call the wasm-gc library function
         // directly — `wasip2` enables `wasm-compile` (which exposes
@@ -4324,6 +4340,7 @@ pub(super) fn load_compile_deps(
     module_root: &str,
     run_interp_lower: bool,
     run_buffer_build: bool,
+    self_host_mode: bool,
 ) -> Vec<ModuleInfo> {
     let module = items.iter().find_map(|i| {
         if let TopLevel::Module(m) = i {
@@ -4345,6 +4362,7 @@ pub(super) fn load_compile_deps(
             module_root,
             run_interp_lower,
             run_buffer_build,
+            self_host_mode,
             &mut result,
             &mut loaded,
         );
@@ -4358,6 +4376,7 @@ fn load_module_recursive(
     module_root: &str,
     run_interp_lower: bool,
     run_buffer_build: bool,
+    self_host_mode: bool,
     result: &mut Vec<ModuleInfo>,
     loaded: &mut std::collections::HashSet<String>,
 ) {
@@ -4411,12 +4430,19 @@ fn load_module_recursive(
     // surfaced as fatal — a dep module that fails to typecheck means
     // the program is incoherent and codegen would emit broken output.
     let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let dep_typecheck_mode = if self_host_mode {
+        aver::ir::TypecheckMode::FullSelfHost {
+            base_dir: Some(module_root),
+        }
+    } else {
+        aver::ir::TypecheckMode::Full {
+            base_dir: Some(module_root),
+        }
+    };
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
-            typecheck: Some(aver::ir::TypecheckMode::Full {
-                base_dir: Some(module_root),
-            }),
+            typecheck: Some(dep_typecheck_mode),
             run_interp_lower,
             run_buffer_build,
             alloc_policy: Some(&neutral_policy),
@@ -4467,6 +4493,7 @@ fn load_module_recursive(
                 module_root,
                 run_interp_lower,
                 run_buffer_build,
+                self_host_mode,
                 result,
                 loaded,
             );
