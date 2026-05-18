@@ -2431,3 +2431,49 @@ fn terminal_read_key_returns_option_string() {
     );
     assert_no_errors(src);
 }
+
+// ---------------------------------------------------------------------------
+// Polymorphic recursion (0.20.1 — occurs check regression)
+// ---------------------------------------------------------------------------
+
+/// Polymorphic recursion that would need `A := List<A>` must surface as
+/// a normal type-incompatibility error — not silently typecheck, not
+/// loop, not panic. The matcher's occurs check is what guarantees this:
+/// `bind_expected_var` refuses the circular bind, the caller emits the
+/// standard "expected A, got List<A>" diagnostic.
+///
+/// Phase 4.7+ pass 6 — closes the theoretical gap a reviewer of Zero
+/// (peer language at the time) flagged: "polymorphic recursion can make
+/// type-check non-terminate". Aver never looped (the matcher terminated
+/// structurally regardless), but it could populate the substitution map
+/// with a circular `A → List<A>` entry. Belt + suspenders fix.
+#[test]
+fn polymorphic_recursion_with_t_into_list_t_is_type_error() {
+    let src = concat!(
+        "fn nest(v: A) -> Unit\n",
+        "    nest([v])\n",
+    );
+    let errs = errors(src);
+    assert!(
+        !errs.is_empty(),
+        "expected at least one type error for `A := List<A>` recursive call shape, got none"
+    );
+    // The exact wording is "expected A, got List<A>" or similar; the
+    // diagnostic shape isn't pinned to a specific phrasing here so a
+    // future error-message polish doesn't break the regression test.
+    // What we lock in is *some* error surfaces — the matcher refuses
+    // the bind, the caller emits a real diagnostic.
+}
+
+/// Sanity that a similar recursive shape WITHOUT the type expansion
+/// (just `A` consumed at the same level) still typechecks cleanly. Makes
+/// sure the occurs check isn't over-rejecting legitimate recursive
+/// generic calls.
+#[test]
+fn monomorphic_recursion_at_same_type_param_is_fine() {
+    let src = concat!(
+        "fn identityChain(v: A) -> Unit\n",
+        "    identityChain(v)\n",
+    );
+    assert_no_errors(src);
+}

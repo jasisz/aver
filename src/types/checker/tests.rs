@@ -1,5 +1,6 @@
 use super::{TypeChecker, run_type_check};
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel};
+use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel, Type};
+use std::collections::HashMap;
 
 fn errors(items: Vec<TopLevel>) -> Vec<String> {
     run_type_check(&items)
@@ -373,4 +374,143 @@ type Val
         errs.is_empty(),
         "expected no errors for opaque self-host handler, got: {errs:?}"
     );
+}
+
+// ── Constraint-substitution edge cases ─────────────────────────────────
+//
+// Exercising `match_expected_type` / `bind_expected_var` directly so the
+// matcher's contract — directional binding (expected.Var consumes
+// actual; actual.Var stays opaque), occurs-check refusal, and
+// per-binding consistency — is locked in. None of these tests reach
+// through the full `run_type_check` driver; they live one layer below
+// at the unification primitive itself.
+
+#[test]
+fn match_binds_expected_var_to_concrete_actual() {
+    // `T` in expected, `Int` in actual → bind T := Int.
+    let mut subst = HashMap::new();
+    let ok =
+        TypeChecker::match_expected_type(&Type::Int, &Type::Var("T".to_string()), &mut subst);
+    assert!(ok, "expected match to succeed");
+    assert_eq!(subst.get("T"), Some(&Type::Int));
+}
+
+#[test]
+fn match_rejects_var_in_actual_against_concrete_expected() {
+    // Asymmetric matching contract: `Var("T")` in the actual position
+    // never satisfies a concrete expected type.
+    let mut subst = HashMap::new();
+    let ok =
+        TypeChecker::match_expected_type(&Type::Var("T".to_string()), &Type::Int, &mut subst);
+    assert!(
+        !ok,
+        "actual-side Var must not match a concrete expected; matcher returned true"
+    );
+}
+
+#[test]
+fn match_var_to_self_is_noop_true() {
+    // `T` in expected, `T` in actual → trivially satisfied, no binding.
+    let mut subst = HashMap::new();
+    let ok = TypeChecker::match_expected_type(
+        &Type::Var("T".to_string()),
+        &Type::Var("T".to_string()),
+        &mut subst,
+    );
+    assert!(ok, "expected `T == T` to match");
+    assert!(subst.is_empty(), "self-bind should not populate subst");
+}
+
+#[test]
+fn second_bind_must_match_first() {
+    // Caller binds `T := Int` then asks for `T := Str` — second bind
+    // surfaces as incompatible.
+    let mut subst = HashMap::new();
+    assert!(TypeChecker::match_expected_type(
+        &Type::Int,
+        &Type::Var("T".to_string()),
+        &mut subst,
+    ));
+    let ok =
+        TypeChecker::match_expected_type(&Type::Str, &Type::Var("T".to_string()), &mut subst);
+    assert!(
+        !ok,
+        "second bind with conflicting type must fail; got success with subst={subst:?}"
+    );
+    assert_eq!(subst.get("T"), Some(&Type::Int));
+}
+
+#[test]
+fn occurs_check_rejects_t_bound_to_list_of_t() {
+    // Phase 4.7+ pass 6 (0.20.1) — bind `T := List<T>` is refused at
+    // the source of the substitution map. The matcher signals failure
+    // via the boolean result; callers translate that into a normal
+    // "expected T, got List<T>" error in user-visible diagnostics.
+    let mut subst = HashMap::new();
+    let actual = Type::List(Box::new(Type::Var("T".to_string())));
+    let ok =
+        TypeChecker::match_expected_type(&actual, &Type::Var("T".to_string()), &mut subst);
+    assert!(
+        !ok,
+        "occurs-check failure expected; matcher accepted `T := List<T>` and subst={subst:?}"
+    );
+    assert!(
+        subst.is_empty(),
+        "rejected bind must not pollute subst, got {subst:?}"
+    );
+}
+
+#[test]
+fn occurs_check_walks_nested_structures() {
+    // The check has to recurse through every Type variant. Exercise
+    // each compound shape so a future refactor that forgets a branch
+    // (Map / Tuple / Fn / Result / Option / Vector) gets caught.
+    for actual in [
+        Type::Option(Box::new(Type::Var("T".to_string()))),
+        Type::Vector(Box::new(Type::Var("T".to_string()))),
+        Type::Result(Box::new(Type::Var("T".to_string())), Box::new(Type::Str)),
+        Type::Result(Box::new(Type::Int), Box::new(Type::Var("T".to_string()))),
+        Type::Map(Box::new(Type::Var("T".to_string())), Box::new(Type::Int)),
+        Type::Map(Box::new(Type::Int), Box::new(Type::Var("T".to_string()))),
+        Type::Tuple(vec![Type::Int, Type::Var("T".to_string()), Type::Str]),
+        Type::Fn(
+            vec![Type::Var("T".to_string())],
+            Box::new(Type::Unit),
+            vec![],
+        ),
+        Type::Fn(
+            vec![Type::Int],
+            Box::new(Type::Var("T".to_string())),
+            vec![],
+        ),
+        // Nested two-deep — the rarer real-world shape.
+        Type::List(Box::new(Type::List(Box::new(Type::Var("T".to_string()))))),
+    ] {
+        let mut subst = HashMap::new();
+        let ok = TypeChecker::match_expected_type(
+            &actual,
+            &Type::Var("T".to_string()),
+            &mut subst,
+        );
+        assert!(
+            !ok,
+            "occurs check missed `T` inside {actual:?}; matcher returned true with subst={subst:?}"
+        );
+    }
+}
+
+#[test]
+fn unrelated_var_binds_normally_even_when_actual_mentions_other_var() {
+    // Binding `U := List<T>` is fine — only `T := …T…` is the
+    // occurs-failure shape. Makes sure the check is name-scoped, not
+    // "reject any actual containing any Var".
+    let mut subst = HashMap::new();
+    let actual = Type::List(Box::new(Type::Var("T".to_string())));
+    let ok =
+        TypeChecker::match_expected_type(&actual, &Type::Var("U".to_string()), &mut subst);
+    assert!(
+        ok,
+        "binding U to List<T> should succeed (no occurs of U), got false; subst={subst:?}"
+    );
+    assert_eq!(subst.get("U"), Some(&actual));
 }
