@@ -11,6 +11,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Fixed
 - **Replay can load `Vector` values.** `aver run --record` emitted a `$vector` marker for `Value::Vector`, but `aver replay` had no matching decode arm — any recording with a Vector value failed to load with `unknown replay marker '$vector'`.
 - **Replay can load `Map`s with a single string key.** A 1-entry string-keyed `Map` encoded as `{"key": value}` collided with the marker-wrap shape; replay tried to interpret `key` as an unknown marker. The decoder now only treats `$`-prefixed keys as markers, so plain string keys flow through as map entries.
+- **`-0.0` keeps its sign bit.** Writing `-0.0` (or `-x` for any `Float`) used to lose the IEEE 754 sign bit because the parser desugared unary minus into `0 - x` — and `0.0 - 0.0 = +0.0`. Float negation now flips the sign bit at the float level on every backend, so `-0.0` round-trips and `Float`-typed `-x` no longer goes through a mixed `Int`/`Float` subtraction that some backends (Lean, Dafny) had to recognise with a pattern-match hack.
 
 ## 0.20.0 "Pulse" — 2026-05-18
 

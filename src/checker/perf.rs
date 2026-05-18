@@ -172,6 +172,7 @@ fn walk_expr_inner<F: FnMut(&Spanned<Expr>)>(expr: &Expr, f: &mut F) {
             walk_expr(left, f);
             walk_expr(right, f);
         }
+        Expr::Neg(inner) => walk_expr(inner, f),
         Expr::FnCall(callee, args) => {
             walk_expr(callee, f);
             for arg in args {
@@ -397,6 +398,7 @@ fn collect_tailcall_args_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Vec<Spanned<
             collect_tailcall_args_expr(&left.node, out);
             collect_tailcall_args_expr(&right.node, out);
         }
+        Expr::Neg(inner) => collect_tailcall_args_expr(&inner.node, out),
         Expr::FnCall(callee, args) => {
             collect_tailcall_args_expr(&callee.node, out);
             for arg in args {

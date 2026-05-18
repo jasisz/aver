@@ -53,6 +53,7 @@ fn simplify_identity_expr(expr: &Spanned<Expr>) -> Spanned<Expr> {
                 _ => Expr::BinOp(*op, Box::new(left), Box::new(right)),
             }
         }
+        Expr::Neg(inner) => Expr::Neg(Box::new(simplify_identity_expr(inner))),
         Expr::Attr(base, field) => {
             Expr::Attr(Box::new(simplify_identity_expr(base)), field.clone())
         }

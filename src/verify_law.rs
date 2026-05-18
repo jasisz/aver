@@ -385,6 +385,7 @@ fn collect_direct_pure_user_calls(
             collect_direct_pure_user_calls(left, fn_defs, fn_sigs, out);
             collect_direct_pure_user_calls(right, fn_defs, fn_sigs, out);
         }
+        Expr::Neg(inner) => collect_direct_pure_user_calls(inner, fn_defs, fn_sigs, out),
         Expr::Match { subject, arms } => {
             collect_direct_pure_user_calls(subject, fn_defs, fn_sigs, out);
             for arm in arms {
@@ -586,6 +587,7 @@ fn collect_roundtrip_serializer_calls<'a>(
             collect_roundtrip_serializer_calls(left, given_name, out);
             collect_roundtrip_serializer_calls(right, given_name, out);
         }
+        Expr::Neg(inner) => collect_roundtrip_serializer_calls(inner, given_name, out),
         Expr::Match { subject, arms } => {
             collect_roundtrip_serializer_calls(subject, given_name, out);
             for arm in arms {
@@ -651,6 +653,7 @@ fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
         Expr::BinOp(_, left, right) => {
             expr_mentions_ident(left, name) || expr_mentions_ident(right, name)
         }
+        Expr::Neg(inner) => expr_mentions_ident(inner, name),
         Expr::Match { subject, arms } => {
             expr_mentions_ident(subject, name)
                 || arms.iter().any(|arm| expr_mentions_ident(&arm.body, name))
@@ -694,6 +697,7 @@ fn expr_calls_function(expr: &Spanned<Expr>, fn_name: &str) -> bool {
         Expr::BinOp(_, left, right) => {
             expr_calls_function(left, fn_name) || expr_calls_function(right, fn_name)
         }
+        Expr::Neg(inner) => expr_calls_function(inner, fn_name),
         Expr::Match { subject, arms } => {
             expr_calls_function(subject, fn_name)
                 || arms

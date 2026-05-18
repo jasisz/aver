@@ -124,6 +124,7 @@ pub(crate) fn collect_calls_from_expr<'a>(
             collect_calls_from_expr(left, out);
             collect_calls_from_expr(right, out);
         }
+        Expr::Neg(inner) => collect_calls_from_expr(inner, out),
         Expr::Match { subject, arms, .. } => {
             collect_calls_from_expr(subject, out);
             for arm in arms {
@@ -217,6 +218,7 @@ pub(crate) fn collect_list_tail_binders_from_expr(
             collect_list_tail_binders_from_expr(left, list_param_name, tails);
             collect_list_tail_binders_from_expr(right, list_param_name, tails);
         }
+        Expr::Neg(inner) => collect_list_tail_binders_from_expr(inner, list_param_name, tails),
         Expr::Constructor(_, inner) => {
             if let Some(inner) = inner {
                 collect_list_tail_binders_from_expr(inner, list_param_name, tails);
@@ -328,6 +330,7 @@ pub(crate) fn grow_recursive_subterm_binders_from_expr(
             grow_recursive_subterm_binders_from_expr(left, tracked, td, out);
             grow_recursive_subterm_binders_from_expr(right, tracked, td, out);
         }
+        Expr::Neg(inner) => grow_recursive_subterm_binders_from_expr(inner, tracked, td, out),
         Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
             grow_recursive_subterm_binders_from_expr(inner, tracked, td, out)
         }

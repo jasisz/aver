@@ -24,6 +24,7 @@ pub enum Expr {
     ExprSub(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
     ExprMul(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
     ExprDiv(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
+    ExprNeg(std::sync::Arc<Expr>),
     ExprEq(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
     ExprNeq(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
     ExprLt(std::sync::Arc<Expr>, std::sync::Arc<Expr>),
@@ -132,6 +133,7 @@ impl aver_rt::AverDisplay for Expr {
                 "ExprDiv({})",
                 vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
             ),
+            Expr::ExprNeg(f0) => format!("ExprNeg({})", f0.aver_display_inner()),
             Expr::ExprEq(f0, f1) => format!(
                 "ExprEq({})",
                 vec![f0.aver_display_inner(), f1.aver_display_inner()].join(", ")
@@ -431,6 +433,17 @@ impl aver_replay::ReplayValue for Expr {
                         ReplayValue::to_replay_json(f0),
                         ReplayValue::to_replay_json(f1),
                     ]),
+                );
+                aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
+            }
+            Expr::ExprNeg(f0) => {
+                payload.insert(
+                    "name".to_string(),
+                    serde_json::Value::String("ExprNeg".to_string()),
+                );
+                payload.insert(
+                    "fields".to_string(),
+                    serde_json::Value::Array(vec![ReplayValue::to_replay_json(f0)]),
                 );
                 aver_replay::wrap_marker("$variant", serde_json::Value::Object(payload))
             }
@@ -893,6 +906,13 @@ impl aver_replay::ReplayValue for Expr {
                     fields
                         .get(1)
                         .ok_or_else(|| format!("$variant ExprDiv missing field #{}", 1))?,
+                )?,
+            )),
+            "ExprNeg" => Ok(Expr::ExprNeg(
+                <std::sync::Arc<Expr> as ReplayValue>::from_replay_json(
+                    fields
+                        .get(0)
+                        .ok_or_else(|| format!("$variant ExprNeg missing field #{}", 0))?,
                 )?,
             )),
             "ExprEq" => Ok(Expr::ExprEq(

@@ -85,6 +85,7 @@ fn type_is_fully_concrete(ty: &Type) -> bool {
 fn const_int_expr(expr: &Spanned<Expr>) -> Option<i64> {
     match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(i)) => Some(*i),
+        Expr::Neg(inner) => const_int_expr(inner).and_then(|v| v.checked_neg()),
         Expr::BinOp(op, left, right) => {
             let l = const_int_expr(left)?;
             let r = const_int_expr(right)?;
@@ -670,6 +671,31 @@ impl TypeChecker {
                         } else {
                             Type::Invalid
                         }
+                    }
+                }
+            }
+
+            Expr::Neg(operand) => {
+                let inner = self.infer_type(operand);
+                match inner {
+                    Type::Int => Type::Int,
+                    Type::Float => Type::Float,
+                    Type::Invalid => Type::Invalid,
+                    Type::Var(_) => inner,
+                    other => {
+                        let line = if expr.line > 0 {
+                            expr.line
+                        } else {
+                            self.current_fn_line.unwrap_or(1)
+                        };
+                        self.error_at_line(
+                            line,
+                            format!(
+                                "Unary '-' expects Int or Float operand, got {}",
+                                other.display()
+                            ),
+                        );
+                        Type::Invalid
                     }
                 }
             }

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 92026321332290f06f6bfcd2bbaaa061335de749b6e984bb41fcab62235ae455 # shrinks to value = Some(Record { type_name: "A", fields: [("x", Int(0)), ("x", Int(0))] })

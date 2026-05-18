@@ -321,6 +321,7 @@ fn expr_reaches_args_get_no_args(expr: &Expr) -> bool {
         Expr::BinOp(_, l, r) => {
             expr_reaches_args_get_no_args(&l.node) || expr_reaches_args_get_no_args(&r.node)
         }
+        Expr::Neg(inner) => expr_reaches_args_get_no_args(&inner.node),
         Expr::Match { subject, arms } => {
             expr_reaches_args_get_no_args(&subject.node)
                 || arms
@@ -393,6 +394,7 @@ fn expr_reaches_console_print(expr: &Expr) -> bool {
         Expr::BinOp(_, l, r) => {
             expr_reaches_console_print(&l.node) || expr_reaches_console_print(&r.node)
         }
+        Expr::Neg(inner) => expr_reaches_console_print(&inner.node),
         Expr::Match { subject, arms } => {
             expr_reaches_console_print(&subject.node)
                 || arms
@@ -460,6 +462,7 @@ fn expr_reaches_env_get(expr: &Expr) -> bool {
             expr_reaches_env_get(&callee.node) || args.iter().any(|a| expr_reaches_env_get(&a.node))
         }
         Expr::BinOp(_, l, r) => expr_reaches_env_get(&l.node) || expr_reaches_env_get(&r.node),
+        Expr::Neg(inner) => expr_reaches_env_get(&inner.node),
         Expr::Match { subject, arms } => {
             expr_reaches_env_get(&subject.node)
                 || arms.iter().any(|a| expr_reaches_env_get(&a.body.node))
@@ -524,6 +527,7 @@ fn expr_reaches_random_int(expr: &Expr) -> bool {
         Expr::BinOp(_, l, r) => {
             expr_reaches_random_int(&l.node) || expr_reaches_random_int(&r.node)
         }
+        Expr::Neg(inner) => expr_reaches_random_int(&inner.node),
         Expr::Match { subject, arms } => {
             expr_reaches_random_int(&subject.node)
                 || arms.iter().any(|a| expr_reaches_random_int(&a.body.node))
@@ -631,6 +635,7 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
         Expr::BinOp(_, l, r) => {
             expr_needs_scratch(&l.node, registry) || expr_needs_scratch(&r.node, registry)
         }
+        Expr::Neg(inner) => expr_needs_scratch(&inner.node, registry),
         Expr::FnCall(callee, args) => {
             // `Option.withDefault(opt, default)` falls back to the
             // boxed path when the inner shape isn't a fused
@@ -737,6 +742,7 @@ fn walk_expr_for_vector_set(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
             walk_expr_for_vector_set(l, out);
             walk_expr_for_vector_set(r, out);
         }
+        Expr::Neg(inner) => walk_expr_for_vector_set(inner, out),
         Expr::Match { subject, arms } => {
             walk_expr_for_vector_set(subject, out);
             for arm in arms {

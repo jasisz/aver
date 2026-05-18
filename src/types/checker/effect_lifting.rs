@@ -531,6 +531,8 @@ fn lift_expr(
             Box::new(lift_expr(r, cfg, path_expr, counter)?),
         ),
 
+        Expr::Neg(inner) => Expr::Neg(Box::new(lift_expr(inner, cfg, path_expr, counter)?)),
+
         Expr::Match { subject, arms } => {
             let new_subject = lift_expr(subject, cfg, path_expr, counter)?;
             let mut new_arms = Vec::with_capacity(arms.len());
@@ -903,6 +905,7 @@ fn expr_contains_question_bang(expr: &Spanned<Expr>) -> bool {
         Expr::BinOp(_, left, right) => {
             expr_contains_question_bang(left) || expr_contains_question_bang(right)
         }
+        Expr::Neg(inner) => expr_contains_question_bang(inner),
         Expr::Match { subject, arms } => {
             expr_contains_question_bang(subject)
                 || arms

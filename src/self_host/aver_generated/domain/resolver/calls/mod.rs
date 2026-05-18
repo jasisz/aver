@@ -186,6 +186,10 @@ pub fn resolveCallsInExprInternal(expr: &Expr, fnMap: &aver_rt::AverMap<AverStr,
                 std::sync::Arc::new(resolveCallsInExpr(&b, fnMap)),
             )
         }
+        Expr::ExprNeg(inner) => {
+            let inner = (*inner).clone();
+            Expr::ExprNeg(std::sync::Arc::new(resolveCallsInExpr(&inner, fnMap)))
+        }
         _ => resolveCallsInExprTail(expr, fnMap),
     }
 }

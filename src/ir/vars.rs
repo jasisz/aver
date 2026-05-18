@@ -34,6 +34,7 @@ fn collect_vars_inner(expr: &Expr, vars: &mut HashSet<String>) {
             collect_vars_inner(&left.node, vars);
             collect_vars_inner(&right.node, vars);
         }
+        Expr::Neg(inner) => collect_vars_inner(&inner.node, vars),
         Expr::Match { subject, arms, .. } => {
             collect_vars_inner(&subject.node, vars);
             for arm in arms {

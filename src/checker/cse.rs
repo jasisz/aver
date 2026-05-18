@@ -343,6 +343,7 @@ fn spanned_contains_subtree(haystack: &Spanned<Expr>, needle: &Expr) -> bool {
         Expr::BinOp(_, left, right) => {
             spanned_contains_subtree(left, needle) || spanned_contains_subtree(right, needle)
         }
+        Expr::Neg(inner) => spanned_contains_subtree(inner, needle),
         Expr::FnCall(callee, args) => {
             spanned_contains_subtree(callee, needle)
                 || args.iter().any(|a| spanned_contains_subtree(a, needle))

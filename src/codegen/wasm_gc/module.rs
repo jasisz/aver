@@ -4596,6 +4596,9 @@ fn discover_builtins_in_expr(
             discover_builtins_in_expr(&l.node, builtins, effects, eq_helpers, type_registry);
             discover_builtins_in_expr(&r.node, builtins, effects, eq_helpers, type_registry);
         }
+        Expr::Neg(inner) => {
+            discover_builtins_in_expr(&inner.node, builtins, effects, eq_helpers, type_registry);
+        }
         Expr::Match { subject, arms } => {
             discover_builtins_in_expr(&subject.node, builtins, effects, eq_helpers, type_registry);
             // String-subject match (`match path { "/" -> ... }`)
@@ -4729,6 +4732,7 @@ fn items_use_string_split_join(items: &[TopLevel]) -> bool {
                 walk(&callee.node) || args.iter().any(|a| walk(&a.node))
             }
             Expr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            Expr::Neg(inner) => walk(&inner.node),
             Expr::Match { subject, arms } => {
                 walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
             }

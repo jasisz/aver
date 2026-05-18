@@ -71,6 +71,9 @@ fn collect_independence_warnings_in_expr(
             collect_independence_warnings_in_expr(left, fd, fn_sigs, warnings);
             collect_independence_warnings_in_expr(right, fd, fn_sigs, warnings);
         }
+        Expr::Neg(inner) => {
+            collect_independence_warnings_in_expr(inner, fd, fn_sigs, warnings);
+        }
         Expr::Match { subject, arms, .. } => {
             collect_independence_warnings_in_expr(subject, fd, fn_sigs, warnings);
             for arm in arms {
@@ -251,6 +254,7 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
             collect_used_effects_expr(left, fn_sigs, out);
             collect_used_effects_expr(right, fn_sigs, out);
         }
+        Expr::Neg(inner) => collect_used_effects_expr(inner, fn_sigs, out),
         Expr::Match { subject, arms, .. } => {
             collect_used_effects_expr(subject, fn_sigs, out);
             for arm in arms {

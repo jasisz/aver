@@ -109,6 +109,7 @@ fn expr_allocates<P: AllocPolicy>(
             expr_allocates(&l.node, user_allocates, policy)
                 || expr_allocates(&r.node, user_allocates, policy)
         }
+        Expr::Neg(inner) => expr_allocates(&inner.node, user_allocates, policy),
         Expr::Match { subject, arms } => {
             expr_allocates(&subject.node, user_allocates, policy)
                 || arms
@@ -241,6 +242,7 @@ fn count_expr_alloc_sites<P: AllocPolicy>(expr: &Expr, policy: &P, acc: &mut usi
             count_expr_alloc_sites(&l.node, policy, acc);
             count_expr_alloc_sites(&r.node, policy, acc);
         }
+        Expr::Neg(inner) => count_expr_alloc_sites(&inner.node, policy, acc),
         Expr::Match { subject, arms } => {
             count_expr_alloc_sites(&subject.node, policy, acc);
             for arm in arms {

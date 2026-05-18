@@ -256,6 +256,7 @@ impl<'a> ResolverState<'a> {
                 self.walk_expr(l);
                 self.walk_expr(r);
             }
+            Expr::Neg(inner) => self.walk_expr(inner),
             Expr::Attr(obj, _) => self.walk_expr(obj),
             Expr::ErrorProp(inner) => self.walk_expr(inner),
             Expr::Constructor(_, Some(inner)) => self.walk_expr(inner),

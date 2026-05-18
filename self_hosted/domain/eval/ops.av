@@ -3,7 +3,7 @@ module Ops
     intent =
         "Pure value-level operations used by the self-hosted evaluator."
         "Keeps arithmetic, comparison, and Vector.get/set default helpers outside the main eval loop."
-    exposes [evalBinopVals, evalCmpVals, evalVectorGetOrIntVals, evalIntModOrIntVals, evalVectorSetMaybeDefault, evalVectorGetMaybeDefault]
+    exposes [evalBinopVals, evalNegVals, evalCmpVals, evalVectorGetOrIntVals, evalIntModOrIntVals, evalVectorSetMaybeDefault, evalVectorGetMaybeDefault]
     effects []
 
 fn applyBinop(x: Int, y: Int, op: BinOp) -> Result<Val, String>
@@ -96,6 +96,18 @@ verify evalBinopVals
     evalBinopVals(Val.ValFloat(3.0), Val.ValInt(2), BinOp.OpMul) => Result.Ok(Val.ValFloat(6.0))
     evalBinopVals(Val.ValStr("a"), Val.ValStr("b"), BinOp.OpAdd) => Result.Ok(Val.ValStr("ab"))
     evalBinopVals(Val.ValBool(true), Val.ValInt(1), BinOp.OpAdd) => Result.Err("binop type mismatch")
+
+fn evalNegVals(v: Val) -> Result<Val, String>
+    ? "Apply unary minus to an evaluated value. Numeric only."
+    match v
+        Val.ValInt(n) -> Result.Ok(Val.ValInt(0 - n))
+        Val.ValFloat(f) -> Result.Ok(Val.ValFloat(0.0 - f))
+        _ -> Result.Err("unary '-' requires Int or Float")
+
+verify evalNegVals
+    evalNegVals(Val.ValInt(5)) => Result.Ok(Val.ValInt(0 - 5))
+    evalNegVals(Val.ValFloat(1.5)) => Result.Ok(Val.ValFloat(0.0 - 1.5))
+    evalNegVals(Val.ValStr("a")) => Result.Err("unary '-' requires Int or Float")
 
 fn evalCmpVals(va: Val, vb: Val, op: CmpOp) -> Result<Val, String>
     ? "Apply comparison to two evaluated values (Int, Float, or String)."

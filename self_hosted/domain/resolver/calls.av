@@ -77,6 +77,7 @@ fn resolveCallsInExprInternal(expr: Expr, fnMap: Map<String, Int>) -> Expr
         Expr.ExprSub(a, b) -> Expr.ExprSub(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
         Expr.ExprMul(a, b) -> Expr.ExprMul(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
         Expr.ExprDiv(a, b) -> Expr.ExprDiv(resolveCallsInExpr(a, fnMap), resolveCallsInExpr(b, fnMap))
+        Expr.ExprNeg(inner) -> Expr.ExprNeg(resolveCallsInExpr(inner, fnMap))
         _ -> resolveCallsInExprTail(expr, fnMap)
 
 fn resolveCallsInExprTail(expr: Expr, fnMap: Map<String, Int>) -> Expr

@@ -355,6 +355,22 @@ pub(super) fn emit_expr(
                 func.instruction(&inst);
             }
         }
+        Expr::Neg(inner) => {
+            // Numeric unary minus. Float uses `f64.neg` which preserves
+            // the IEEE sign bit (so `-0.0` survives the round trip);
+            // Int has no dedicated instruction and lowers to
+            // `i64.const 0; <operand>; i64.sub`, matching the original
+            // desugar in two's-complement arithmetic.
+            let inner_ty = wasm_type_of(inner, ctx.registry)?;
+            if inner_ty == Some(ValType::F64) {
+                emit_expr(func, inner, slots, ctx)?;
+                func.instruction(&Instruction::F64Neg);
+            } else {
+                func.instruction(&Instruction::I64Const(0));
+                emit_expr(func, inner, slots, ctx)?;
+                func.instruction(&Instruction::I64Sub);
+            }
+        }
         Expr::FnCall(callee, args) => {
             // `Type.Variant(args)` parses as `FnCall(Attr(_, name),
             // args)` — route to struct.new when `name` is a known

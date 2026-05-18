@@ -48,6 +48,7 @@ fn expr_has_branching_or_binop(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::Match { .. } => true,
         Expr::BinOp(_, _, _) => true,
+        Expr::Neg(_) => true,
         Expr::FnCall(callee, args) => {
             expr_has_branching_or_binop(callee) || args.iter().any(expr_has_branching_or_binop)
         }
@@ -134,6 +135,7 @@ fn collect_used_effects_expr(expr: &Spanned<Expr>, fn_sigs: &FnSigMap, out: &mut
             collect_used_effects_expr(left, fn_sigs, out);
             collect_used_effects_expr(right, fn_sigs, out);
         }
+        Expr::Neg(inner) => collect_used_effects_expr(inner, fn_sigs, out),
         Expr::Match { subject, arms, .. } => {
             collect_used_effects_expr(subject, fn_sigs, out);
             for arm in arms {

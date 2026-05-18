@@ -50,6 +50,7 @@ fn evalExprInternal(expr: Expr, env: Map<String, Val>, fns: FnStore) -> Result<V
         Expr.ExprSub(a, b) -> evalBinop(a, b, env, fns, BinOp.OpSub)
         Expr.ExprMul(a, b) -> evalBinop(a, b, env, fns, BinOp.OpMul)
         Expr.ExprDiv(a, b) -> evalBinop(a, b, env, fns, BinOp.OpDiv)
+        Expr.ExprNeg(inner) -> evalNeg(inner, env, fns)
         Expr.ExprEq(a, b) -> evalCmp(a, b, env, fns, CmpOp.CmpEq)
         Expr.ExprNeq(a, b) -> evalCmp(a, b, env, fns, CmpOp.CmpNeq)
         _ -> evalExprAggregate(expr, env, fns)
@@ -230,6 +231,13 @@ fn evalBinop(a: Expr, b: Expr, env: Map<String, Val>, fns: FnStore, op: BinOp) -
     match evalExpr(a, env, fns)
         Result.Err(e) -> Result.Err(e)
         Result.Ok(va) -> evalBinopRight(va, b, env, fns, op)
+
+fn evalNeg(inner: Expr, env: Map<String, Val>, fns: FnStore) -> Result<Val, String>
+    ? "Evaluate unary minus on the named-env path."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    match evalExpr(inner, env, fns)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(v) -> Domain.Eval.Ops.evalNegVals(v)
 
 fn evalCmpRight(va: Val, b: Expr, env: Map<String, Val>, fns: FnStore, op: CmpOp) -> Result<Val, String>
     ? "Evaluate right side of comparison and apply."
@@ -778,6 +786,7 @@ fn evalExprSlotInternal(expr: Expr, env: Vector<Val>, slotMap: Map<String, Int>,
         Expr.ExprSub(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpSub)
         Expr.ExprMul(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpMul)
         Expr.ExprDiv(a, b) -> evalBinopSlot(a, b, env, slotMap, fns, BinOp.OpDiv)
+        Expr.ExprNeg(inner) -> evalNegSlot(inner, env, slotMap, fns)
         Expr.ExprEq(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, CmpOp.CmpEq)
         Expr.ExprNeq(a, b) -> evalCmpSlot(a, b, env, slotMap, fns, CmpOp.CmpNeq)
         _ -> evalExprSlotAggregate(expr, env, slotMap, fns)
@@ -894,6 +903,12 @@ fn evalBinopSlot(a: Expr, b: Expr, env: Vector<Val>, slotMap: Map<String, Int>, 
     va = evalExprSlot(a, env, slotMap, fns)?
     vb = evalExprSlot(b, env, slotMap, fns)?
     Domain.Eval.Ops.evalBinopVals(va, vb, op)
+
+fn evalNegSlot(inner: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore) -> Result<Val, String>
+    ? "Unary minus in slot path."
+    ! [Args, Console, Disk, Env, Http, HttpServer, Random, Tcp, Terminal, Time]
+    v = evalExprSlot(inner, env, slotMap, fns)?
+    Domain.Eval.Ops.evalNegVals(v)
 
 fn evalCmpSlot(a: Expr, b: Expr, env: Vector<Val>, slotMap: Map<String, Int>, fns: FnStore, op: CmpOp) -> Result<Val, String>
     ? "Comparison in slot path."

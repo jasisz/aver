@@ -989,6 +989,7 @@ fn expr_is_loop_invariant(
             expr_is_loop_invariant(&left.node, stable_names, ctx, ectx)
                 && expr_is_loop_invariant(&right.node, stable_names, ctx, ectx)
         }
+        Expr::Neg(inner) => expr_is_loop_invariant(&inner.node, stable_names, ctx, ectx),
         Expr::Match { subject, arms, .. } => {
             expr_is_loop_invariant(&subject.node, stable_names, ctx, ectx)
                 && arms
@@ -1136,6 +1137,15 @@ fn collect_hoistable_invariant_subexprs<'a>(
                 next_idx,
             );
         }
+        Expr::Neg(inner) => collect_hoistable_invariant_subexprs(
+            inner,
+            stable_names,
+            ctx,
+            ectx,
+            hoists,
+            seen,
+            next_idx,
+        ),
         Expr::Match { subject, arms, .. } => {
             collect_hoistable_invariant_subexprs(
                 subject,
@@ -1383,6 +1393,16 @@ fn collect_self_tailcall_hoists_in_expr<'a>(
                 next_idx,
             );
         }
+        Expr::Neg(inner) => collect_self_tailcall_hoists_in_expr(
+            inner,
+            self_name,
+            stable_names,
+            ctx,
+            ectx,
+            hoists,
+            seen,
+            next_idx,
+        ),
         Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
             collect_self_tailcall_hoists_in_expr(
                 inner,
@@ -1563,6 +1583,7 @@ fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>)
             Box::new(rewrite_spanned(left, hoisted_exprs)),
             Box::new(rewrite_spanned(right, hoisted_exprs)),
         ),
+        Expr::Neg(inner) => Expr::Neg(Box::new(rewrite_spanned(inner, hoisted_exprs))),
         Expr::Match { subject, arms } => Expr::Match {
             subject: Box::new(rewrite_spanned(subject, hoisted_exprs)),
             arms: arms

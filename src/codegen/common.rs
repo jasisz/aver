@@ -792,6 +792,7 @@ fn collect_called_idents(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
             collect_called_idents(l, out);
             collect_called_idents(r, out);
         }
+        Expr::Neg(inner) => collect_called_idents(inner, out),
         Expr::Match { subject, arms, .. } => {
             collect_called_idents(subject, out);
             for arm in arms {

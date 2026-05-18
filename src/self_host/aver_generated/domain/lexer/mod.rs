@@ -1043,7 +1043,10 @@ pub fn tokenizeNewline(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
         let (indent, newPos) = r;
         aver_rt::AverList::prepend(
             Token::TkNewline.clone(),
-            &aver_rt::AverList::prepend(Token::TkInt(((-indent) - 1i64)), &tokenize(src, newPos)),
+            &aver_rt::AverList::prepend(
+                Token::TkInt(((0i64 - indent) - 1i64)),
+                &tokenize(src, newPos),
+            ),
         )
     }
 }
@@ -1103,7 +1106,7 @@ pub fn processAfterNewlineToken(
     match t.clone() {
         Token::TkInt(n) => {
             if (n < 0i64) {
-                emitIndentChange(((-n) - 1i64), rest, stack)
+                emitIndentChange(((0i64 - n) - 1i64), rest, stack)
             } else {
                 aver_rt::AverList::prepend(
                     Token::TkNewline.clone(),

@@ -408,6 +408,7 @@ fn expr_uses_self_host_runtime(expr: &Spanned<Expr>) -> bool {
         Expr::BinOp(_, left, right) => {
             expr_uses_self_host_runtime(left) || expr_uses_self_host_runtime(right)
         }
+        Expr::Neg(inner) => expr_uses_self_host_runtime(inner),
         Expr::Match { subject, arms, .. } => {
             expr_uses_self_host_runtime(subject)
                 || arms
@@ -605,6 +606,9 @@ fn walk_expr_for_exposes(
         Expr::BinOp(_, left, right) => {
             walk_expr_for_exposes(left, dep_targets, unique_type_owner, used_by_target);
             walk_expr_for_exposes(right, dep_targets, unique_type_owner, used_by_target);
+        }
+        Expr::Neg(inner) => {
+            walk_expr_for_exposes(inner, dep_targets, unique_type_owner, used_by_target);
         }
         Expr::Match { subject, arms, .. } => {
             walk_expr_for_exposes(subject, dep_targets, unique_type_owner, used_by_target);

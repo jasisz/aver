@@ -67,6 +67,10 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> i64 {
                         let b = (*b).clone();
                         __MutualTco1::MaxSlotInExprPair(a, b, acc)
                     }
+                    Expr::ExprNeg(inner) => {
+                        let inner = (*inner).clone();
+                        __MutualTco1::MaxSlotInExpr(inner, acc)
+                    }
                     Expr::ExprEq(a, b) => {
                         let a = (*a).clone();
                         let b = (*b).clone();
@@ -658,6 +662,13 @@ pub fn resolveExprAfterLeaf(
             let b = (*b).clone();
             resolveBinExpr(&a, &b, slots, AverStr::from("div"))
         }
+        Expr::ExprNeg(inner) => {
+            let inner = (*inner).clone();
+            (
+                Expr::ExprNeg(std::sync::Arc::new(resolveExprSimple(&inner, slots))),
+                slots.clone(),
+            )
+        }
         Expr::ExprEq(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
@@ -1194,7 +1205,7 @@ pub fn addPatternSlots(
 pub fn mapMaxVal(m: &aver_rt::AverMap<AverStr, i64>) -> i64 {
     crate::cancel_checkpoint();
     let vals = aver_rt::AverList::from_vec(m.values().cloned().collect::<Vec<_>>());
-    maxInList(vals, (-1i64))
+    maxInList(vals, (0i64 - 1i64))
 }
 
 /// Find maximum value in a list.

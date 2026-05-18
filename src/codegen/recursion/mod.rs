@@ -125,6 +125,9 @@ pub fn rewrite_recursive_calls_expr(
             Box::new(rewrite_recursive_calls_expr(left, targets, fuel_var)),
             Box::new(rewrite_recursive_calls_expr(right, targets, fuel_var)),
         ),
+        Expr::Neg(inner) => Expr::Neg(Box::new(rewrite_recursive_calls_expr(
+            inner, targets, fuel_var,
+        ))),
         Expr::Match { subject, arms } => Expr::Match {
             subject: Box::new(rewrite_recursive_calls_expr(subject, targets, fuel_var)),
             arms: arms
