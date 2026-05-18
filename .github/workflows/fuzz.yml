@@ -74,11 +74,32 @@ jobs:
             fuzz
 
       - name: Install cargo-afl
+        # Three things have to line up before `cargo afl build` works:
+        #   1. The `cargo-afl` subcommand binary on PATH.
+        #   2. The AFLplusplus source tree extracted under
+        #      `~/.cargo/registry/src/.../cargo-afl-common-*/AFLplusplus`,
+        #      which `cargo afl config --build` consumes.
+        #   3. The Rust-toolchain-specific AFL LLVM runtime libraries,
+        #      built by `cargo afl config --build`.
+        # `Swatinem/rust-cache` happily restores (1) from cache while
+        # silently dropping (2) — registry source dirs are not in its
+        # default cache set. Result: install step appears to "succeed",
+        # then the next step errors out with either "AFL LLVM runtime
+        # was not built" or "cannot stat .../AFLplusplus".
+        # Fix: install only if binary is missing, then *try*
+        # `cargo afl config --build --force`; if it fails (source
+        # dir gone), force-reinstall to repopulate the registry and
+        # rebuild the runtime.
         run: |
           if ! command -v cargo-afl >/dev/null; then
             cargo install cargo-afl --locked
           fi
           cargo afl --version
+          if ! cargo afl config --build --force; then
+            echo "cargo-afl source missing — force-reinstalling"
+            cargo install cargo-afl --locked --force
+            cargo afl config --build --force
+          fi
 
       - name: Build fuzz target
         working-directory: fuzz
@@ -145,11 +166,32 @@ jobs:
             fuzz
 
       - name: Install cargo-afl
+        # Three things have to line up before `cargo afl build` works:
+        #   1. The `cargo-afl` subcommand binary on PATH.
+        #   2. The AFLplusplus source tree extracted under
+        #      `~/.cargo/registry/src/.../cargo-afl-common-*/AFLplusplus`,
+        #      which `cargo afl config --build` consumes.
+        #   3. The Rust-toolchain-specific AFL LLVM runtime libraries,
+        #      built by `cargo afl config --build`.
+        # `Swatinem/rust-cache` happily restores (1) from cache while
+        # silently dropping (2) — registry source dirs are not in its
+        # default cache set. Result: install step appears to "succeed",
+        # then the next step errors out with either "AFL LLVM runtime
+        # was not built" or "cannot stat .../AFLplusplus".
+        # Fix: install only if binary is missing, then *try*
+        # `cargo afl config --build --force`; if it fails (source
+        # dir gone), force-reinstall to repopulate the registry and
+        # rebuild the runtime.
         run: |
           if ! command -v cargo-afl >/dev/null; then
             cargo install cargo-afl --locked
           fi
           cargo afl --version
+          if ! cargo afl config --build --force; then
+            echo "cargo-afl source missing — force-reinstalling"
+            cargo install cargo-afl --locked --force
+            cargo afl config --build --force
+          fi
 
       - name: Build fuzz target
         working-directory: fuzz

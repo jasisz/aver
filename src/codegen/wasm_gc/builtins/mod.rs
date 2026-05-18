@@ -1688,6 +1688,28 @@ fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcErr
                     local.get $n i32.const 1 i32.add local.set $n
                     local.get $pow f64.const 10 f64.mul local.set $pow
 
+                    ;; Overflow guard: `i64.trunc_f64_s` traps when the
+                    ;; argument is ≥ 2^63 or ≤ -2^63. For a Float like
+                    ;; `(((-0.5772) * (-61.8024)) * (-877.8128))` ≈
+                    ;; -31313.64 the loop converges late enough that
+                    ;; `abs_val * 10^N` crosses 2^63 (~9.22e18) before
+                    ;; N hits the 15-digit cap below, and the next
+                    ;; `trunc_f64_s` traps with "wasm trap: integer
+                    ;; overflow". Bail out of the loop with the
+                    ;; current $scaled / $pow / $n when the next
+                    ;; product would trap; we keep whatever precision
+                    ;; the previous iteration captured.
+                    local.get $abs_val
+                    local.get $pow
+                    f64.mul
+                    f64.const 9.2233720368547758e18
+                    f64.ge
+                    (if
+                      (then
+                        local.get $n i32.const 1 i32.sub local.set $n
+                        local.get $pow f64.const 10 f64.div local.set $pow
+                        br $ndone))
+
                     local.get $abs_val
                     local.get $pow
                     f64.mul
