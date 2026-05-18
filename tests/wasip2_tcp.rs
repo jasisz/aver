@@ -128,6 +128,10 @@ fn write_fixture(dir: &Path, name: &str, source: &str) -> PathBuf {
 }
 
 fn spawn_python_server(dir: &Path, script: &str) -> Option<(Child, u16)> {
+    // `None` ⇒ skip the test; reserved for `python3` literally not
+    // being on PATH. Any other spawn failure or a server that exits
+    // before printing `PORT:<n>` panics with stderr — see the matching
+    // helper in `wasip2_tcp_stress.rs` for the rationale.
     let mut child = match Command::new("python3")
         .args(["-c", script])
         .current_dir(dir)
@@ -136,22 +140,57 @@ fn spawn_python_server(dir: &Path, script: &str) -> Option<(Child, u16)> {
         .spawn()
     {
         Ok(c) => c,
-        Err(_) => return None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => panic!("python3 spawn failed (not NotFound): {e}"),
     };
     let stdout = child.stdout.take().expect("stdout pipe");
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
-    let read = reader.read_line(&mut line).ok()?;
+    let read = match reader.read_line(&mut line) {
+        Ok(n) => n,
+        Err(e) => {
+            drop(reader);
+            let _ = child.kill();
+            panic!(
+                "failed to read PORT: line from python: {e}\nstderr:\n{}",
+                drain_child_stderr(&mut child)
+            );
+        }
+    };
     if read == 0 {
+        drop(reader);
         let _ = child.kill();
-        return None;
+        panic!(
+            "python server exited before printing PORT: line\nstderr:\n{}",
+            drain_child_stderr(&mut child)
+        );
     }
-    let port: u16 = line
+    let port: u16 = match line
         .trim()
         .strip_prefix("PORT:")
-        .and_then(|s| s.parse().ok())?;
+        .and_then(|s| s.parse().ok())
+    {
+        Some(p) => p,
+        None => {
+            drop(reader);
+            let _ = child.kill();
+            panic!(
+                "expected `PORT:<num>` from python, got {line:?}\nstderr:\n{}",
+                drain_child_stderr(&mut child)
+            );
+        }
+    };
     drop(reader);
     Some((child, port))
+}
+
+fn drain_child_stderr(child: &mut Child) -> String {
+    use std::io::Read;
+    let mut buf = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_string(&mut buf);
+    }
+    buf
 }
 
 fn run_wasip2(dir: &Path, fixture: &Path) -> std::process::Output {

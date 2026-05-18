@@ -5,13 +5,18 @@
 //! `Err("tcp: unknown connection")` on stale / null / already-closed
 //! handles (cross-backend parity with `aver-rt::tcp::close`).
 //!
-//! `send` is a full one-shot pipeline: connect → raw chunked write
-//! → shutdown(send) → read-to-EOF → close. Matches
-//! `aver-rt::tcp::send`'s line-agnostic semantics (Phase 4.7+
-//! fix #9): no trailing `\r\n` on the request, the full response
-//! collected until the peer closes.
+//! `send` is a full one-shot ephemeral pipeline (Phase 4.7+ fix #16):
+//! inline DNS + create-tcp-socket + start/finish-connect → raw
+//! chunked write → shutdown(send) → read-to-EOF (capped at 10 MiB)
+//! → drop streams + socket. No pool slot involved; matches
+//! `aver-rt::tcp::send`'s line-agnostic semantics (no trailing `\r\n`
+//! on the request, full response collected until the peer closes).
 //!
-//! `ping` stays a thin connect + close wrapper.
+//! `ping` reuses the same dial prologue (Phase 4.7+ fix #21) — DNS +
+//! create-tcp-socket + start/finish-connect → drop streams + socket
+//! → `Result.Ok(())`. Ephemeral, no pool slot, so a program holding
+//! 256 live `Tcp.connect` handles can still ping freely. Matches
+//! `aver-rt::tcp::ping`'s pool-free dial-and-drop shape.
 
 use wasm_encoder::{Function, Instruction, ValType};
 
@@ -813,27 +818,62 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_send(
     f
 }
 
-/// Phase 4.5b — `__rt_tcp_ping(host, port) -> ref Result<Unit, String>`
-/// slot bundle. Light wrapper around connect + close:
+/// Phase 4.7+ pass 5 fix #21 — `__rt_tcp_ping(host, port) ->
+/// ref Result<Unit, String>` slot bundle. Pre-pass-5 ping routed
+/// through `__rt_tcp_connect` (pool-allocating) then
+/// `__rt_tcp_close`; a program holding 256 live `Tcp.connect`
+/// handles would then see `Tcp.ping` fail with `"tcp: connection
+/// limit reached (256 max)"` even though `aver-rt::tcp::ping`
+/// makes a fresh, pool-free socket and drops it. Pass 5 inlines
+/// the same DNS + create + connect prologue `Tcp.send` uses, then
+/// drops streams + socket and returns `Result.Ok(())` — no pool
+/// involvement, mirroring VM/self-host semantics.
 ///
-///   1. connect_result = __rt_tcp_connect(host, port)
-///   2. tag == 0 (Err) → re-wrap as Result<Unit, String>.Err
-///   3. Ok → drop conn (best-effort close) → Result.Ok(())
-///
-/// v1 has no 1-second connect timeout — wasi-sockets `start-connect`
-/// is best-effort and may block longer than expected. A timeout-race
-/// variant lands as a follow-up once we surface
-/// `subscribe-duration` + multi-pollable `poll` to source as a
+/// v1 still has no 1-second connect timeout — wasi-sockets
+/// `start-connect` is best-effort and may block longer than
+/// expected. A timeout-race variant lands as a follow-up once we
+/// surface `subscribe-duration` + multi-pollable `poll` as a
 /// general capability.
 pub(in crate::codegen::wasm_gc) struct TcpPingIndices {
     pub fn_type: u32,
     pub fn_idx: u32,
-    pub result_tcp_conn_string_type_idx: u32,
+    pub string_type_idx: u32,
+    /// `"tcp: dns resolve failed"` data segment + length.
+    pub dns_err_segment_idx: u32,
+    pub dns_err_len: u32,
+    /// `"tcp: dns no addresses"` data segment + length.
+    pub no_addr_segment_idx: u32,
+    pub no_addr_len: u32,
+    /// `"tcp: socket create failed"` data segment + length.
+    pub sock_err_segment_idx: u32,
+    pub sock_err_len: u32,
+    /// `"tcp: connect failed"` data segment + length.
+    pub conn_err_segment_idx: u32,
+    pub conn_err_len: u32,
+    /// `"tcp: port out of range"` data segment + length.
+    pub port_err_segment_idx: u32,
+    pub port_err_len: u32,
 }
 
 pub(in crate::codegen::wasm_gc) struct TcpPingHelperFns {
-    pub tcp_connect_fn: u32,
-    pub tcp_close_fn: u32,
+    pub instance_network_fn: u32,
+    pub network_handle_global: u32,
+    pub resolve_addresses_fn: u32,
+    pub resolve_next_address_fn: u32,
+    pub drop_resolve_stream_fn: u32,
+    pub stream_subscribe_fn: u32,
+    pub poll_fn: u32,
+    pub drop_pollable_fn: u32,
+    pub create_tcp_socket_fn: u32,
+    pub start_connect_fn: u32,
+    pub finish_connect_fn: u32,
+    pub socket_subscribe_fn: u32,
+    pub drop_tcp_socket_fn: u32,
+    pub drop_input_stream_fn: u32,
+    pub drop_output_stream_fn: u32,
+    pub str_to_lm_fn: u32,
+    pub cabi_realloc_fn: u32,
+    pub bump_alloc_ptr_global: u32,
     pub result_unit_string_ok_fn: u32,
     pub result_unit_string_err_fn: u32,
 }
@@ -842,48 +882,315 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_ping(
     indices: &TcpPingIndices,
     helpers: &TcpPingHelperFns,
 ) -> Function {
-    use wasm_encoder::{BlockType, HeapType, RefType};
+    use wasm_encoder::{BlockType, MemArg};
 
-    let result_tcp_conn_string_ref = ValType::Ref(RefType {
-        nullable: true,
-        heap_type: HeapType::Concrete(indices.result_tcp_conn_string_type_idx),
-    });
-    let mut f = Function::new(vec![(1u32, result_tcp_conn_string_ref)]);
-    let l_connect_result: u32 = 2;
+    // Locals beyond the two params (0=host: ref string, 1=port: i64):
+    //   2  = saved_alloc   (i32) — bump-rewind cursor
+    //   3  = host_len      (i32)
+    //   4  = scratch       (i32) — 64-byte retptr block
+    //   5  = resolve_strm  (i32)
+    //   6  = pollable      (i32)
+    //   7..=10 = ipv4 octets (i32)
+    //   11 = socket        (i32)
+    let mut f = Function::new(vec![(10u32, ValType::I32)]);
+    let l_saved_alloc: u32 = 2;
+    let l_host_len: u32 = 3;
+    let l_scratch: u32 = 4;
+    let l_resolve_strm: u32 = 5;
+    let l_pollable: u32 = 6;
+    let l_ipv4_a: u32 = 7;
+    let l_ipv4_b: u32 = 8;
+    let l_ipv4_c: u32 = 9;
+    let l_ipv4_d: u32 = 10;
+    let l_socket: u32 = 11;
 
-    // connect_result = __rt_tcp_connect(host, port)
-    f.instruction(&Instruction::LocalGet(0));
+    // Scratch layout — same as send / connect.
+    const SCRATCH_BLOCK_SIZE: i32 = 64;
+    const SCRATCH_OFFSET_RESOLVE: u32 = 0;
+    const SCRATCH_OFFSET_NEXT: u32 = 16;
+    const SCRATCH_OFFSET_POLL: u32 = 48;
+    const SCRATCH_OFFSET_POLLABLE_IN: u32 = 56;
+
+    let mem4_resolve_off4 = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_RESOLVE + 4),
+        align: 2,
+        memory_index: 0,
+    };
+    let mem4_resolve_off8 = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_RESOLVE + 8),
+        align: 2,
+        memory_index: 0,
+    };
+    let mem1_resolve = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_RESOLVE),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_outer = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_option = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 2),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_variant = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 4),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_octet_a = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 6),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_octet_b = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 7),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_octet_c = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 8),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem1_next_octet_d = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_NEXT + 9),
+        align: 0,
+        memory_index: 0,
+    };
+    let mem4_pollable_in = MemArg {
+        offset: u64::from(SCRATCH_OFFSET_POLLABLE_IN),
+        align: 2,
+        memory_index: 0,
+    };
+
+    let string_type_idx = indices.string_type_idx;
+    let result_err_fn = helpers.result_unit_string_err_fn;
+    let bump_alloc_ptr_global = helpers.bump_alloc_ptr_global;
+    let emit_err_with_segment = |f: &mut Function, seg: u32, len: u32| {
+        f.instruction(&Instruction::I32Const(0));
+        f.instruction(&Instruction::I32Const(len as i32));
+        f.instruction(&Instruction::ArrayNewData {
+            array_type_index: string_type_idx,
+            array_data_index: seg,
+        });
+        f.instruction(&Instruction::Call(result_err_fn));
+        restore_bump(f, l_saved_alloc, bump_alloc_ptr_global);
+        f.instruction(&Instruction::Return);
+    };
+
+    // ── Prolog. ────────────────────────────────────────────────
+    f.instruction(&Instruction::GlobalGet(helpers.bump_alloc_ptr_global));
+    f.instruction(&Instruction::LocalSet(l_saved_alloc));
+
+    // Port validation.
     f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::Call(helpers.tcp_connect_fn));
-    f.instruction(&Instruction::LocalSet(l_connect_result));
-
-    // tag == 0 (Err) → re-wrap err as Result<Unit, String>.Err.
-    f.instruction(&Instruction::LocalGet(l_connect_result));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: indices.result_tcp_conn_string_type_idx,
-        field_index: 0,
-    });
-    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::I64Const(0));
+    f.instruction(&Instruction::I64LtS);
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I64Const(65535));
+    f.instruction(&Instruction::I64GtS);
+    f.instruction(&Instruction::I32Or);
     f.instruction(&Instruction::If(BlockType::Empty));
-    f.instruction(&Instruction::LocalGet(l_connect_result));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: indices.result_tcp_conn_string_type_idx,
-        field_index: 2,
-    });
-    f.instruction(&Instruction::Call(helpers.result_unit_string_err_fn));
-    f.instruction(&Instruction::Return);
+    emit_err_with_segment(&mut f, indices.port_err_segment_idx, indices.port_err_len);
     f.instruction(&Instruction::End);
 
-    // Ok — close conn (best-effort, drop result) + return Ok(()).
-    f.instruction(&Instruction::LocalGet(l_connect_result));
-    f.instruction(&Instruction::StructGet {
-        struct_type_index: indices.result_tcp_conn_string_type_idx,
-        field_index: 1,
-    });
-    f.instruction(&Instruction::Call(helpers.tcp_close_fn));
-    f.instruction(&Instruction::Drop);
+    // Lazy `network` handle.
+    f.instruction(&Instruction::GlobalGet(helpers.network_handle_global));
+    f.instruction(&Instruction::I32Const(-1));
+    f.instruction(&Instruction::I32Eq);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::Call(helpers.instance_network_fn));
+    f.instruction(&Instruction::GlobalSet(helpers.network_handle_global));
+    f.instruction(&Instruction::End);
+
+    // ── DNS resolve. ───────────────────────────────────────────
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::Call(helpers.str_to_lm_fn));
+    f.instruction(&Instruction::LocalSet(l_host_len));
+
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::I32Const(4));
+    f.instruction(&Instruction::I32Const(SCRATCH_BLOCK_SIZE));
+    f.instruction(&Instruction::Call(helpers.cabi_realloc_fn));
+    f.instruction(&Instruction::LocalSet(l_scratch));
+
+    f.instruction(&Instruction::GlobalGet(helpers.network_handle_global));
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(l_host_len));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::Call(helpers.resolve_addresses_fn));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_resolve));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_err_with_segment(&mut f, indices.dns_err_segment_idx, indices.dns_err_len);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load(mem4_resolve_off4));
+    f.instruction(&Instruction::LocalSet(l_resolve_strm));
+
+    // resolve-next-address loop, first IPv4 wins.
+    f.instruction(&Instruction::Block(BlockType::Empty));
+    f.instruction(&Instruction::Loop(BlockType::Empty));
+
+    f.instruction(&Instruction::LocalGet(l_resolve_strm));
+    f.instruction(&Instruction::Call(helpers.stream_subscribe_fn));
+    f.instruction(&Instruction::LocalSet(l_pollable));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::I32Store(mem4_pollable_in));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_POLLABLE_IN as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_POLL as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::Call(helpers.poll_fn));
+
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::Call(helpers.drop_pollable_fn));
+
+    f.instruction(&Instruction::LocalGet(l_resolve_strm));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_NEXT as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::Call(helpers.resolve_next_address_fn));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_outer));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_resolve_strm));
+    f.instruction(&Instruction::Call(helpers.drop_resolve_stream_fn));
+    emit_err_with_segment(&mut f, indices.no_addr_segment_idx, indices.no_addr_len);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_option));
+    f.instruction(&Instruction::I32Eqz);
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_resolve_strm));
+    f.instruction(&Instruction::Call(helpers.drop_resolve_stream_fn));
+    emit_err_with_segment(&mut f, indices.no_addr_segment_idx, indices.no_addr_len);
+    f.instruction(&Instruction::End);
+
+    // ip-address variant tag — IPv6 (tag != 0) skipped, IPv4 latches.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_variant));
+    f.instruction(&Instruction::BrIf(0));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_octet_a));
+    f.instruction(&Instruction::LocalSet(l_ipv4_a));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_octet_b));
+    f.instruction(&Instruction::LocalSet(l_ipv4_b));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_octet_c));
+    f.instruction(&Instruction::LocalSet(l_ipv4_c));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_next_octet_d));
+    f.instruction(&Instruction::LocalSet(l_ipv4_d));
+
+    f.instruction(&Instruction::Br(1));
+    f.instruction(&Instruction::End); // loop
+    f.instruction(&Instruction::End); // block
+
+    f.instruction(&Instruction::LocalGet(l_resolve_strm));
+    f.instruction(&Instruction::Call(helpers.drop_resolve_stream_fn));
+
+    // ── create-tcp-socket + start/finish-connect. ─────────────
+    f.instruction(&Instruction::I32Const(0));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::Call(helpers.create_tcp_socket_fn));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_resolve));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    emit_err_with_segment(&mut f, indices.sock_err_segment_idx, indices.sock_err_len);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load(mem4_resolve_off4));
+    f.instruction(&Instruction::LocalSet(l_socket));
+
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::GlobalGet(helpers.network_handle_global));
+    f.instruction(&Instruction::I32Const(0)); // ip-socket-address.ipv4
+    f.instruction(&Instruction::LocalGet(1));
+    f.instruction(&Instruction::I32WrapI64);
+    f.instruction(&Instruction::LocalGet(l_ipv4_a));
+    f.instruction(&Instruction::LocalGet(l_ipv4_b));
+    f.instruction(&Instruction::LocalGet(l_ipv4_c));
+    f.instruction(&Instruction::LocalGet(l_ipv4_d));
+    for _ in 0..6 {
+        f.instruction(&Instruction::I32Const(0));
+    }
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::Call(helpers.start_connect_fn));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_resolve));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::Call(helpers.drop_tcp_socket_fn));
+    emit_err_with_segment(&mut f, indices.conn_err_segment_idx, indices.conn_err_len);
+    f.instruction(&Instruction::End);
+
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::Call(helpers.socket_subscribe_fn));
+    f.instruction(&Instruction::LocalSet(l_pollable));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::I32Store(mem4_pollable_in));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_POLLABLE_IN as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::I32Const(1));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Const(SCRATCH_OFFSET_POLL as i32));
+    f.instruction(&Instruction::I32Add);
+    f.instruction(&Instruction::Call(helpers.poll_fn));
+
+    f.instruction(&Instruction::LocalGet(l_pollable));
+    f.instruction(&Instruction::Call(helpers.drop_pollable_fn));
+
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::Call(helpers.finish_connect_fn));
+
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load8U(mem1_resolve));
+    f.instruction(&Instruction::If(BlockType::Empty));
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::Call(helpers.drop_tcp_socket_fn));
+    emit_err_with_segment(&mut f, indices.conn_err_segment_idx, indices.conn_err_len);
+    f.instruction(&Instruction::End);
+
+    // Connect succeeded. Drop the streams + socket and return Ok(()).
+    // No pool slot was ever claimed, so a 256-conn-full pool can
+    // still issue any number of pings.
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load(mem4_resolve_off4));
+    f.instruction(&Instruction::Call(helpers.drop_input_stream_fn));
+    f.instruction(&Instruction::LocalGet(l_scratch));
+    f.instruction(&Instruction::I32Load(mem4_resolve_off8));
+    f.instruction(&Instruction::Call(helpers.drop_output_stream_fn));
+    f.instruction(&Instruction::LocalGet(l_socket));
+    f.instruction(&Instruction::Call(helpers.drop_tcp_socket_fn));
 
     f.instruction(&Instruction::Call(helpers.result_unit_string_ok_fn));
+    restore_bump(&mut f, l_saved_alloc, helpers.bump_alloc_ptr_global);
     f.instruction(&Instruction::End);
     f
 }

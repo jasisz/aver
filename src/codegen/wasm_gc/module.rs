@@ -566,8 +566,12 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                     }
                     EffectName::TcpSend => {
-                        // Same union as connect + write + read + close,
-                        // since `__rt_tcp_send` inlines the full pipeline.
+                        // Phase 4.7+ pass 4 — `__rt_tcp_send` is ephemeral
+                        // (inline dial + raw bytes + shutdown(send) +
+                        // read-to-EOF, no pool slot). Slot union is the
+                        // wasi:sockets/* dial set plus the wasi:io stream
+                        // pair used by the write + read loops; no overlap
+                        // with `Tcp.connect`'s pool path.
                         wasip2_imports
                             .register(Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork);
                         wasip2_imports
@@ -597,11 +601,15 @@ pub(super) fn emit_module_with(
                             .register(Wasip2ImportSlot::IoStreamsResourceDropOutputStream);
                     }
                     EffectName::TcpPing => {
-                        // Phase 4.5b ships a light connect+close
-                        // wrapper, so the slot union mirrors connect
-                        // + close (no monotonic-clock timeout race
-                        // yet — `subscribe-duration` lands when a
-                        // real source-level timeout knob shows up).
+                        // Phase 4.7+ pass 5 — `__rt_tcp_ping` is ephemeral
+                        // (inline dial + drop streams + drop socket, no
+                        // pool slot, no shutdown). Slot union is the
+                        // wasi:sockets/* dial set plus the stream-drop
+                        // pair used to release the never-read streams
+                        // after a successful finish-connect. No
+                        // monotonic-clock timeout race yet —
+                        // `subscribe-duration` lands when a real
+                        // source-level timeout knob shows up.
                         wasip2_imports
                             .register(Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork);
                         wasip2_imports
@@ -619,7 +627,6 @@ pub(super) fn emit_module_with(
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpStartConnect);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpFinishConnect);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpSubscribe);
-                        wasip2_imports.register(Wasip2ImportSlot::SocketsTcpShutdown);
                         wasip2_imports.register(Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket);
                         wasip2_imports.register(Wasip2ImportSlot::IoStreamsResourceDropInputStream);
                         wasip2_imports
@@ -3714,16 +3721,94 @@ pub(super) fn emit_module_with(
         codes.function(&super::wasip2_tcp::emit_tcp_send(ts, &helpers));
     }
     if let Some(tp) = &tcp.ping {
-        let tcp_connect_fn = tcp
-            .connect
+        // Phase 4.7+ pass 5 fix #21 — ping is ephemeral (inline DNS
+        // + socket + connect, no pool). Same dial pipeline as
+        // `Tcp.send`, with a Result.Ok(()) tail instead of write +
+        // read. Re-resolves every wasi-sockets import the body uses
+        // directly, mirroring the send block above.
+        let lookup = |slot: super::wasip2_imports::Wasip2ImportSlot,
+                      name: &'static str|
+         -> Result<u32, WasmGcError> {
+            wasip2_imports.lookup_wasm_fn_idx(slot).ok_or_else(|| {
+                WasmGcError::Validation(format!("tcp.ping emit requires {name} fn idx"))
+            })
+        };
+        let instance_network_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+            "SocketsInstanceNetworkInstanceNetwork",
+        )?;
+        let resolve_addresses_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+            "SocketsIpNameLookupResolveAddresses",
+        )?;
+        let drop_resolve_stream_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+            "SocketsIpNameLookupResourceDropResolveAddressStream",
+        )?;
+        let stream_subscribe_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+            "SocketsIpNameLookupResolveAddressStreamSubscribe",
+        )?;
+        let poll_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoPollPoll,
+            "IoPollPoll",
+        )?;
+        let drop_pollable_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoPollResourceDropPollable,
+            "IoPollResourceDropPollable",
+        )?;
+        let resolve_next_address_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+            "SocketsIpNameLookupResolveNextAddress",
+        )?;
+        let create_tcp_socket_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+            "SocketsTcpCreateSocketCreateTcpSocket",
+        )?;
+        let start_connect_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpStartConnect,
+            "SocketsTcpStartConnect",
+        )?;
+        let socket_subscribe_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpSubscribe,
+            "SocketsTcpSubscribe",
+        )?;
+        let finish_connect_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpFinishConnect,
+            "SocketsTcpFinishConnect",
+        )?;
+        let drop_tcp_socket_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+            "SocketsTcpResourceDropTcpSocket",
+        )?;
+        let drop_input_stream_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+            "IoStreamsResourceDropInputStream",
+        )?;
+        let drop_output_stream_fn = lookup(
+            super::wasip2_imports::Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+            "IoStreamsResourceDropOutputStream",
+        )?;
+        let str_to_lm_fn = bridge.as_ref().map(|b| b.to_lm_fn).ok_or_else(|| {
+            WasmGcError::Validation(
+                "tcp.ping emit requires bridge (__rt_string_to_lm fn idx)".into(),
+            )
+        })?;
+        let cabi_realloc_fn = cabi_realloc.as_ref().map(|c| c.fn_idx).ok_or_else(|| {
+            WasmGcError::Validation("tcp.ping emit requires cabi_realloc fn idx".into())
+        })?;
+        let network_handle_global = wasip2_globals
             .as_ref()
-            .map(|t| t.fn_idx)
-            .expect("tcp.ping gated on tcp.connect allocation");
-        let tcp_close_fn = tcp
-            .close
+            .and_then(|g| g.network_handle)
+            .ok_or_else(|| {
+                WasmGcError::Validation(
+                    "tcp.ping emit requires network_handle global (Phase 4.1b wireup gate)".into(),
+                )
+            })?;
+        let bump_alloc_ptr_global = wasip2_globals
             .as_ref()
-            .map(|t| t.fn_idx)
-            .expect("tcp.ping gated on tcp.close allocation");
+            .map(|g| g.bump_alloc_ptr)
+            .expect("tcp.ping emit requires bump_alloc_ptr global");
         let result_unit_string_ok_fn = factory_exports
             .result_unit_string_ok
             .ok_or_else(|| {
@@ -3741,8 +3826,24 @@ pub(super) fn emit_module_with(
             })?
             .fn_idx;
         let helpers = super::wasip2_tcp::TcpPingHelperFns {
-            tcp_connect_fn,
-            tcp_close_fn,
+            instance_network_fn,
+            network_handle_global,
+            resolve_addresses_fn,
+            resolve_next_address_fn,
+            drop_resolve_stream_fn,
+            stream_subscribe_fn,
+            poll_fn,
+            drop_pollable_fn,
+            create_tcp_socket_fn,
+            start_connect_fn,
+            finish_connect_fn,
+            socket_subscribe_fn,
+            drop_tcp_socket_fn,
+            drop_input_stream_fn,
+            drop_output_stream_fn,
+            str_to_lm_fn,
+            cabi_realloc_fn,
+            bump_alloc_ptr_global,
             result_unit_string_ok_fn,
             result_unit_string_err_fn,
         };
@@ -4877,6 +4978,9 @@ fn allocate_factory_exports(
     // Result<Unit, String> factories — Disk.{writeText, appendText,
     // delete, deleteDir, makeDir} all yield this shape; same for the
     // shape-equivalent Tcp.{writeLine, close, ping} effects.
+    // Tcp.send is ephemeral (Phase 4.7+ pass 4) — its body returns
+    // Result<String,String> directly and never materialises a
+    // Result<Unit,String>, so it's not in the union.
     let needs_result_unit_string = effect_registry.iter().any(|e| {
         matches!(
             e,
@@ -4888,11 +4992,6 @@ fn allocate_factory_exports(
                 | EffectName::TcpWriteLine
                 | EffectName::TcpClose
                 | EffectName::TcpPing
-                // Tcp.send's orchestrator threads through writeLine
-                // and close → consumes the same Result<Unit,String>
-                // shape internally even though its own return type
-                // is Result<String,String>.
-                | EffectName::TcpSend
         )
     });
     if needs_result_unit_string {
@@ -4928,7 +5027,11 @@ fn allocate_factory_exports(
     }
 
     // Tcp.Connection record + Result<Tcp.Connection, String> — driven
-    // by any Tcp.* effect (connect returns one; the rest consume one).
+    // by the pool-side Tcp.* effects (connect returns one; writeLine /
+    // readLine / close consume one). Tcp.send and Tcp.ping are
+    // ephemeral (Phase 4.7+ pass 4 + pass 5): neither materialises a
+    // `Tcp.Connection` nor calls `__rt_tcp_connect`, so they don't
+    // need the record/result slots.
     let needs_tcp_connection = effect_registry.iter().any(|e| {
         matches!(
             e,
@@ -4936,12 +5039,6 @@ fn allocate_factory_exports(
                 | EffectName::TcpWriteLine
                 | EffectName::TcpReadLine
                 | EffectName::TcpClose
-                // Tcp.send and Tcp.ping both orchestrate connect
-                // internally, so they need the record +
-                // Result<Tcp.Connection,...> slots even though
-                // source never sees the conn.
-                | EffectName::TcpSend
-                | EffectName::TcpPing
         )
     });
     if needs_tcp_connection {
@@ -4974,12 +5071,14 @@ fn allocate_factory_exports(
         *next_type_idx += 1;
         *next_fn_idx += 1;
     }
-    if effect_registry.iter().any(|e| {
-        matches!(
-            e,
-            EffectName::TcpConnect | EffectName::TcpSend | EffectName::TcpPing
-        )
-    }) {
+    // `Result<Tcp.Connection, String>` factories — only Tcp.connect's
+    // emit body materialises this shape (the pool-allocate Ok arm + the
+    // dial-failure Err arms). Tcp.send / Tcp.ping went ephemeral in
+    // Phase 4.7+ (passes 4 / 5) and no longer route through it.
+    if effect_registry
+        .iter()
+        .any(|e| matches!(e, EffectName::TcpConnect))
+    {
         let res_idx = registry
             .result_type_idx("Result<Tcp.Connection,String>")
             .ok_or(WasmGcError::Validation(

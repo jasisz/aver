@@ -190,6 +190,13 @@ fn write_fixture(dir: &Path, name: &str, source: &str) -> PathBuf {
 }
 
 fn spawn_python_server(dir: &Path, script: &str) -> Option<(Child, u16)> {
+    // `None` ⇒ skip the test; reserved for `python3` literally not
+    // being on PATH. Any other spawn failure (PermissionError, EAGAIN,
+    // a server that exits before printing `PORT:<n>`, a server that
+    // prints something unexpected) is a real failure we want surfaced
+    // — the previous `Err(_) => return None` shape masked broken hosts
+    // as silent skips, which let TCP tests report green while no
+    // socket was ever opened.
     let mut child = match Command::new("python3")
         .args(["-c", script])
         .current_dir(dir)
@@ -198,22 +205,57 @@ fn spawn_python_server(dir: &Path, script: &str) -> Option<(Child, u16)> {
         .spawn()
     {
         Ok(c) => c,
-        Err(_) => return None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => panic!("python3 spawn failed (not NotFound): {e}"),
     };
     let stdout = child.stdout.take().expect("stdout pipe");
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
-    let read = reader.read_line(&mut line).ok()?;
+    let read = match reader.read_line(&mut line) {
+        Ok(n) => n,
+        Err(e) => {
+            drop(reader);
+            let _ = child.kill();
+            panic!(
+                "failed to read PORT: line from python: {e}\nstderr:\n{}",
+                drain_child_stderr(&mut child)
+            );
+        }
+    };
     if read == 0 {
+        drop(reader);
         let _ = child.kill();
-        return None;
+        panic!(
+            "python server exited before printing PORT: line\nstderr:\n{}",
+            drain_child_stderr(&mut child)
+        );
     }
-    let port: u16 = line
+    let port: u16 = match line
         .trim()
         .strip_prefix("PORT:")
-        .and_then(|s| s.parse().ok())?;
+        .and_then(|s| s.parse().ok())
+    {
+        Some(p) => p,
+        None => {
+            drop(reader);
+            let _ = child.kill();
+            panic!(
+                "expected `PORT:<num>` from python, got {line:?}\nstderr:\n{}",
+                drain_child_stderr(&mut child)
+            );
+        }
+    };
     drop(reader);
     Some((child, port))
+}
+
+fn drain_child_stderr(child: &mut Child) -> String {
+    use std::io::Read;
+    let mut buf = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.read_to_string(&mut buf);
+    }
+    buf
 }
 
 fn run_wasip2(dir: &Path, fixture: &Path) -> std::process::Output {
@@ -1034,17 +1076,16 @@ fn send_is_ephemeral_under_pool_pressure() {
     // Phase 4.7+ pass-4 fix #16 — `Tcp.send` is now ephemeral
     // (inline DNS + socket + connect + write + shutdown + read +
     // drop, no pool slot). Before the rewrite, send went through
-    // `__rt_tcp_connect`, which alocated a pool slot; a program
+    // `__rt_tcp_connect`, which allocated a pool slot; a program
     // holding 256 live `Tcp.connect` handles would then see
     // `Tcp.send` fail with "connection limit reached" even though
     // VM's `aver-rt::tcp::send` makes a fresh, pool-free socket.
     //
-    // The probe fills the pool with 100 unclosed `Tcp.connect`
-    // handles, then calls Tcp.send to the same Python server. With
-    // the ephemeral rewrite, send should succeed (its socket lives
-    // outside the pool). 100 conns (not 256) keeps us well below
-    // host fd limits — the goal is to prove send doesn't share the
-    // pool's slot table, not to hammer the kernel.
+    // Phase 4.7+ pass-5 review — the probe now fills the pool to
+    // its actual 256-slot cap (the bug-triggering point). Earlier
+    // versions filled to 100, which let the old pool-allocating
+    // variant still find slot 100/256 and silently pass. Catching
+    // a real regression requires hitting the limit.
     let dir = tempdir("send-ephemeral");
     let Some((mut server, port)) = spawn_python_server(&dir, MULTI_REPLY_SCRIPT) else {
         eprintln!("python3 unavailable — skipping send-ephemeral stress");
@@ -1064,13 +1105,15 @@ fn fillPool(n: Int) -> Int
 
 fn after(filled: Int) -> Unit
     ! [Tcp.send, Console.print]
-    match Tcp.send("127.0.0.1", {port}, "ping")
-        Result.Ok(r) -> Console.print("ephemeral-ok<<<{{r}}>>>")
-        Result.Err(e) -> Console.print("ephemeral-err: {{e}}")
+    match filled
+        1 -> match Tcp.send("127.0.0.1", {port}, "ping")
+                Result.Ok(r) -> Console.print("ephemeral-ok<<<{{r}}>>>")
+                Result.Err(e) -> Console.print("ephemeral-err: {{e}}")
+        _ -> Console.print("FILL-FAILED")
 
 fn main() -> Unit
     ! [Tcp.connect, Tcp.send, Console.print]
-    filled = fillPool(100)
+    filled = fillPool(256)
     after(filled)
 "#
     );
@@ -1084,6 +1127,10 @@ fn main() -> Unit
         "send-ephemeral stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
         out.status.code(),
         String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !s.contains("FILL-FAILED"),
+        "expected fillPool(256) to saturate the pool before testing ephemeral send, got:\n{s}"
     );
     assert!(
         s.contains("ephemeral-ok<<<"),
@@ -1123,3 +1170,137 @@ threading.Thread(target=accept_loop, daemon=True).start()
 import time
 time.sleep(60)
 "#;
+
+#[test]
+fn ping_is_ephemeral_under_pool_pressure() {
+    // Phase 4.7+ pass 5 fix #21 — `Tcp.ping` is now ephemeral
+    // (inline DNS + socket + connect + drop, no pool slot). Before
+    // the rewrite, ping went through `__rt_tcp_connect`, which
+    // allocated a pool slot; a program holding 256 live
+    // `Tcp.connect` handles would then see `Tcp.ping` fail with
+    // `"tcp: connection limit reached (256 max)"` even though VM
+    // `aver-rt::tcp::ping` makes a fresh, pool-free socket and
+    // drops it. Mirrors `send_is_ephemeral_under_pool_pressure`.
+    //
+    // The probe fills the pool to its actual 256-slot cap — the
+    // exact point at which the old pool-allocating variant would
+    // refuse — then calls Tcp.ping. The ephemeral path bypasses
+    // the pool entirely and must still succeed.
+    let dir = tempdir("ping-ephemeral");
+    let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping ping-ephemeral stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn fillPool(n: Int) -> Int
+    ! [Tcp.connect]
+    match n
+        0 -> 1
+        _ -> match Tcp.connect("127.0.0.1", {port})
+            Result.Ok(_) -> fillPool(n - 1)
+            Result.Err(_) -> 0
+
+fn after(filled: Int) -> Unit
+    ! [Tcp.ping, Console.print]
+    match filled
+        1 -> match Tcp.ping("127.0.0.1", {port})
+                Result.Ok(_) -> Console.print("ping-ephemeral-ok")
+                Result.Err(e) -> Console.print("ping-ephemeral-err: {{e}}")
+        _ -> Console.print("FILL-FAILED")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.ping, Console.print]
+    filled = fillPool(256)
+    after(filled)
+"#
+    );
+    let fixture = write_fixture(&dir, "ping-ephemeral.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "ping-ephemeral stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !s.contains("FILL-FAILED"),
+        "expected fillPool(256) to saturate the pool before testing ephemeral ping, got:\n{s}"
+    );
+    assert!(
+        s.contains("ping-ephemeral-ok"),
+        "expected ephemeral ping to succeed with full pool, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn write_and_read_line_on_closed_conn_surface_unknown_connection() {
+    // Phase 4.7+ pass 5 fix #22 — writeLine / readLine on a closed
+    // handle return `Err("tcp: unknown connection")` so the caller
+    // can distinguish a stale handle from a real wasi-side write
+    // failure / peer EOF. Pre-fix wasip2 emitted `"tcp: write
+    // failed"` for writeLine and `"tcp: eof"` for readLine on the
+    // same handle class, hiding the bug-shape and breaking parity
+    // with `aver-rt::tcp::{write_line, read_line}`.
+    let dir = tempdir("unknown-conn");
+    let Some((mut server, port)) = spawn_python_server(&dir, ACCEPT_AND_CLOSE_SCRIPT) else {
+        eprintln!("python3 unavailable — skipping unknown-conn stress");
+        return;
+    };
+    std::thread::sleep(Duration::from_millis(100));
+
+    let src = format!(
+        r#"
+fn afterRead(c: Tcp.Connection, w: String) -> Unit
+    ! [Tcp.readLine, Console.print]
+    _ = Console.print(w)
+    match Tcp.readLine(c)
+        Result.Ok(line) -> Console.print(" read-ok<<<{{line}}>>>")
+        Result.Err(e) -> Console.print(" read-err: {{e}}")
+
+fn afterClose(c: Tcp.Connection) -> Unit
+    ! [Tcp.writeLine, Tcp.readLine, Console.print]
+    match Tcp.writeLine(c, "hello")
+        Result.Ok(_) -> afterRead(c, " write-ok")
+        Result.Err(e) -> afterRead(c, " write-err: {{e}}")
+
+fn doClose(c: Tcp.Connection) -> Unit
+    ! [Tcp.close, Tcp.writeLine, Tcp.readLine, Console.print]
+    match Tcp.close(c)
+        Result.Ok(_) -> afterClose(c)
+        Result.Err(e) -> Console.print("close err: {{e}}")
+
+fn main() -> Unit
+    ! [Tcp.connect, Tcp.close, Tcp.writeLine, Tcp.readLine, Console.print]
+    match Tcp.connect("127.0.0.1", {port})
+        Result.Ok(c) -> doClose(c)
+        Result.Err(e) -> Console.print("connect err: {{e}}")
+"#
+    );
+    let fixture = write_fixture(&dir, "unknown.av", &src);
+    let out = run_wasip2(&dir, &fixture);
+    let _ = server.kill();
+    let _ = server.wait();
+    let s = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "unknown-conn stress failed (exit {:?})\nstdout:\n{s}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        s.contains(" write-err: tcp: unknown connection"),
+        "expected writeLine on closed conn to surface unknown-conn Err, got:\n{s}"
+    );
+    assert!(
+        s.contains(" read-err: tcp: unknown connection"),
+        "expected readLine on closed conn to surface unknown-conn Err, got:\n{s}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

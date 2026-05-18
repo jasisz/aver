@@ -113,8 +113,7 @@ pub(in crate::codegen::wasm_gc) fn allocate(
     );
     let ping = allocate_ping(
         registry,
-        &connect,
-        &close,
+        wasip2_imports,
         types,
         next_type_idx,
         next_builtin_fn_idx,
@@ -300,6 +299,7 @@ fn allocate_write_line(
     let pool_idx = registry.tcp_pool_type_idx?;
     let result_idx = registry.result_type_idx("Result<Unit,String>")?;
     let write_err_seg = registry.string_literal_segment(b"tcp: write failed")?;
+    let unknown_seg = registry.string_literal_segment(b"tcp: unknown connection")?;
     wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::OutputStreamBlockingWriteAndFlush)?;
     parse_id?;
 
@@ -329,6 +329,8 @@ fn allocate_write_line(
         tcp_pool_type_idx: pool_idx,
         write_err_segment_idx: write_err_seg,
         write_err_len: b"tcp: write failed".len() as u32,
+        unknown_segment_idx: unknown_seg,
+        unknown_len: b"tcp: unknown connection".len() as u32,
     })
 }
 
@@ -346,6 +348,7 @@ fn allocate_read_line(
     let pool_idx = registry.tcp_pool_type_idx?;
     let result_idx = registry.result_type_idx("Result<String,String>")?;
     let eof_seg = registry.string_literal_segment(b"tcp: eof")?;
+    let unknown_seg = registry.string_literal_segment(b"tcp: unknown connection")?;
     wasip2_imports.lookup_wasm_fn_idx(Wasip2ImportSlot::InputStreamBlockingRead)?;
     parse_id?;
 
@@ -372,6 +375,8 @@ fn allocate_read_line(
         tcp_pool_type_idx: pool_idx,
         eof_segment_idx: eof_seg,
         eof_len: b"tcp: eof".len() as u32,
+        unknown_segment_idx: unknown_seg,
+        unknown_len: b"tcp: unknown connection".len() as u32,
     })
 }
 
@@ -503,17 +508,41 @@ fn allocate_send(
 
 fn allocate_ping(
     registry: &TypeRegistry,
-    connect: &Option<TcpConnectIndices>,
-    close: &Option<TcpCloseIndices>,
+    wasip2_imports: &Wasip2ImportRegistry,
     types: &mut TypeSection,
     next_type_idx: &mut u32,
     next_builtin_fn_idx: &mut u32,
 ) -> Option<TcpPingIndices> {
-    connect.as_ref()?;
-    close.as_ref()?;
+    // Phase 4.7+ pass 5 fix #21 — ping is now ephemeral (inline DNS
+    // + socket + connect, no pool slot, no `__rt_tcp_connect` call).
+    // Gates on the same wasi-sockets imports `Tcp.connect` / `Tcp.send`
+    // need, independently of whether `connect` / `close` allocated.
     let string_idx = registry.string_array_type_idx?;
-    let res_conn_idx = registry.result_type_idx("Result<Tcp.Connection,String>")?;
     let res_unit_idx = registry.result_type_idx("Result<Unit,String>")?;
+    let dns_err_seg = registry.string_literal_segment(b"tcp: dns resolve failed")?;
+    let no_addr_seg = registry.string_literal_segment(b"tcp: dns no addresses")?;
+    let sock_err_seg = registry.string_literal_segment(b"tcp: socket create failed")?;
+    let conn_err_seg = registry.string_literal_segment(b"tcp: connect failed")?;
+    let port_err_seg = registry.string_literal_segment(b"tcp: port out of range")?;
+    let gates: &[Wasip2ImportSlot] = &[
+        Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork,
+        Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses,
+        Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream,
+        Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe,
+        Wasip2ImportSlot::IoPollPoll,
+        Wasip2ImportSlot::IoPollResourceDropPollable,
+        Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress,
+        Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket,
+        Wasip2ImportSlot::SocketsTcpStartConnect,
+        Wasip2ImportSlot::SocketsTcpSubscribe,
+        Wasip2ImportSlot::SocketsTcpFinishConnect,
+        Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket,
+        Wasip2ImportSlot::IoStreamsResourceDropInputStream,
+        Wasip2ImportSlot::IoStreamsResourceDropOutputStream,
+    ];
+    for slot in gates {
+        wasip2_imports.lookup_wasm_fn_idx(*slot)?;
+    }
 
     let s_ref = ValType::Ref(wasm_encoder::RefType {
         nullable: true,
@@ -531,6 +560,16 @@ fn allocate_ping(
     Some(TcpPingIndices {
         fn_type: ty,
         fn_idx,
-        result_tcp_conn_string_type_idx: res_conn_idx,
+        string_type_idx: string_idx,
+        dns_err_segment_idx: dns_err_seg,
+        dns_err_len: b"tcp: dns resolve failed".len() as u32,
+        no_addr_segment_idx: no_addr_seg,
+        no_addr_len: b"tcp: dns no addresses".len() as u32,
+        sock_err_segment_idx: sock_err_seg,
+        sock_err_len: b"tcp: socket create failed".len() as u32,
+        conn_err_segment_idx: conn_err_seg,
+        conn_err_len: b"tcp: connect failed".len() as u32,
+        port_err_segment_idx: port_err_seg,
+        port_err_len: b"tcp: port out of range".len() as u32,
     })
 }

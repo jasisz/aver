@@ -148,12 +148,16 @@ fn classify(effect: &str) -> Option<UnsupportedReason> {
         return None;
     }
     // 0.20 Phase 4 — every `Tcp.*` effect graduates on `--target wasip2`:
-    //   4.2.x — Tcp.connect (DNS resolve + connect pipeline)
-    //   4.3   — Tcp.close   (drop streams + shutdown + free slot)
-    //   4.4a  — Tcp.writeLine (line + '\n' through out-stream)
-    //   4.4b  — Tcp.readLine  (1-byte blocking-read loop until '\n')
-    //   4.5a  — Tcp.send      (connect + writeLine + readLine + close)
-    //   4.5b  — Tcp.ping      (light connect + close, Result<Unit, String>)
+    //   4.2.x — Tcp.connect   (DNS resolve + connect pipeline + pool slot)
+    //   4.3   — Tcp.close     (drop streams + shutdown + free slot)
+    //   4.4a  — Tcp.writeLine (writeLine bytes through the pool slot's
+    //                          out-stream, `\r\n` terminator appended)
+    //   4.4b  — Tcp.readLine  (1-byte blocking-read loop until `\n`)
+    //   4.5a / 4.7+ pass 4 — Tcp.send (ephemeral: inline dial + raw bytes
+    //                                  + shutdown(send) + read-to-EOF, no
+    //                                  pool slot)
+    //   4.5b / 4.7+ pass 5 — Tcp.ping (ephemeral: inline dial + drop, no
+    //                                  pool slot; Result<Unit, String>)
     if effect.starts_with("Tcp.") {
         return None;
     }

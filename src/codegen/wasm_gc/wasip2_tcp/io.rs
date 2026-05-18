@@ -20,9 +20,20 @@ pub(in crate::codegen::wasm_gc) struct TcpWriteLineIndices {
     pub tcp_pool_type_idx: u32,
     /// `"tcp: write failed"` data segment + length. Materialised
     /// when any blocking-write-and-flush chunk returns a non-zero
-    /// retptr tag.
+    /// retptr tag (i.e. a real wasi-side I/O error).
     pub write_err_segment_idx: u32,
     pub write_err_len: u32,
+    /// Phase 4.7+ pass 5 fix #22 — `"tcp: unknown connection"` data
+    /// segment + length. Surfaces when the pool is null (never
+    /// allocated on this run) or the slot-scan walks the entire
+    /// pool without finding a live (`in_use == 1`) entry matching
+    /// the conn's `id_value`. Cross-backend parity with
+    /// `aver-rt::tcp::write_line`, which returns `Err("Tcp.writeLine:
+    /// unknown connection 'tcp-N'")` for the same handle class.
+    /// Keeping it distinct from `write_err_segment_idx` lets callers
+    /// disambiguate a stale handle from a wasi-side write failure.
+    pub unknown_segment_idx: u32,
+    pub unknown_len: u32,
 }
 
 pub(in crate::codegen::wasm_gc) struct TcpWriteLineHelperFns {
@@ -94,16 +105,20 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
         memory_index: 0,
     };
 
-    // Materialise + return a `Result.Err("tcp: write failed")` —
-    // used by every stale-slot / null-slot guard below. Avoids
-    // duplicating the segment-load + factory-call + bump-rewind
-    // dance at each early exit.
-    let emit_stale_err = |f: &mut Function| {
+    // Materialise + return a `Result.Err("tcp: unknown connection")`
+    // for the null-pool guard + scan-miss path. Phase 4.7+ pass 5
+    // fix #22 — previously these branches reused the
+    // `"tcp: write failed"` segment, which conflated a stale handle
+    // with a real wasi-side write failure. `aver-rt::tcp::write_line`
+    // surfaces `Err("Tcp.writeLine: unknown connection 'tcp-N'")`
+    // for the same handle class; the dedicated segment restores the
+    // distinction on wasip2 too.
+    let emit_unknown_err = |f: &mut Function| {
         f.instruction(&Instruction::I32Const(0));
-        f.instruction(&Instruction::I32Const(indices.write_err_len as i32));
+        f.instruction(&Instruction::I32Const(indices.unknown_len as i32));
         f.instruction(&Instruction::ArrayNewData {
             array_type_index: indices.string_type_idx,
-            array_data_index: indices.write_err_segment_idx,
+            array_data_index: indices.unknown_segment_idx,
         });
         f.instruction(&Instruction::Call(helpers.result_err_fn));
         restore_bump(f, l_saved_alloc, helpers.bump_alloc_ptr_global);
@@ -127,7 +142,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_err(&mut f);
+    emit_unknown_err(&mut f);
     f.instruction(&Instruction::End);
 
     // Phase 4.7+ fix #14 — id_value scan. The pool's slot index
@@ -143,7 +158,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_write_line(
     f.instruction(&Instruction::I32Const(256));
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_err(&mut f);
+    emit_unknown_err(&mut f);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::LocalGet(l_slot_idx));
@@ -339,10 +354,20 @@ pub(in crate::codegen::wasm_gc) struct TcpReadLineIndices {
     pub tcp_connection_type_idx: u32,
     pub tcp_slot_type_idx: u32,
     pub tcp_pool_type_idx: u32,
-    /// `"tcp: eof"` data segment + length. Materialised when the
-    /// host returns Err or empty Ok and no bytes were collected.
+    /// `"tcp: eof"` data segment + length. Surfaces when the host
+    /// returns a real `stream-error.last-operation-failed` mid-read
+    /// (genuine I/O error against an otherwise live connection).
     pub eof_segment_idx: u32,
     pub eof_len: u32,
+    /// Phase 4.7+ pass 5 fix #22 — `"tcp: unknown connection"` data
+    /// segment + length. Used by the null-pool guard + scan-miss
+    /// path so a stale / null / already-closed handle is
+    /// distinguishable from a real peer EOF. Cross-backend parity
+    /// with `aver-rt::tcp::read_line`, which returns
+    /// `Err("Tcp.readLine: unknown connection 'tcp-N'")` for the
+    /// same handle class.
+    pub unknown_segment_idx: u32,
+    pub unknown_len: u32,
 }
 
 pub(in crate::codegen::wasm_gc) struct TcpReadLineHelperFns {
@@ -442,17 +467,21 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
 
     let result_type_idx = indices.result_type_idx;
     let string_type_idx = indices.string_type_idx;
-    let eof_segment_idx = indices.eof_segment_idx;
-    let eof_len = indices.eof_len;
+    let unknown_segment_idx = indices.unknown_segment_idx;
+    let unknown_len = indices.unknown_len;
     let bump_alloc_ptr_global = helpers.bump_alloc_ptr_global;
-    let emit_stale_eof = |f: &mut Function| {
+    // Phase 4.7+ pass 5 fix #22 — null-pool + scan-miss now surface
+    // `Err("tcp: unknown connection")` instead of `Err("tcp: eof")`
+    // so a stale handle is distinguishable from a real peer EOF.
+    // Cross-backend parity with `aver-rt::tcp::read_line`.
+    let emit_unknown_err = |f: &mut Function| {
         f.instruction(&Instruction::I32Const(0)); // tag = 0 (Err)
         f.instruction(&Instruction::RefNull(HeapType::Concrete(string_type_idx)));
         f.instruction(&Instruction::I32Const(0));
-        f.instruction(&Instruction::I32Const(eof_len as i32));
+        f.instruction(&Instruction::I32Const(unknown_len as i32));
         f.instruction(&Instruction::ArrayNewData {
             array_type_index: string_type_idx,
-            array_data_index: eof_segment_idx,
+            array_data_index: unknown_segment_idx,
         });
         f.instruction(&Instruction::StructNew(result_type_idx));
         restore_bump(f, l_saved_alloc, bump_alloc_ptr_global);
@@ -463,7 +492,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::RefIsNull);
     f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_eof(&mut f);
+    emit_unknown_err(&mut f);
     f.instruction(&Instruction::End);
 
     // Phase 4.7+ fix #14 — id_value scan in pool order.
@@ -475,7 +504,7 @@ pub(in crate::codegen::wasm_gc) fn emit_tcp_read_line(
     f.instruction(&Instruction::I32Const(256));
     f.instruction(&Instruction::I32GeU);
     f.instruction(&Instruction::If(BlockType::Empty));
-    emit_stale_eof(&mut f);
+    emit_unknown_err(&mut f);
     f.instruction(&Instruction::End);
     f.instruction(&Instruction::GlobalGet(helpers.tcp_pool_global));
     f.instruction(&Instruction::LocalGet(l_slot_idx));
@@ -767,6 +796,8 @@ mod tests {
             tcp_pool_type_idx: 5,
             eof_segment_idx: 6,
             eof_len: b"tcp: eof".len() as u32,
+            unknown_segment_idx: 7,
+            unknown_len: b"tcp: unknown connection".len() as u32,
         };
         let helpers = TcpReadLineHelperFns {
             parse_id_fn: 7,
@@ -789,6 +820,8 @@ mod tests {
             tcp_pool_type_idx: 4,
             write_err_segment_idx: 5,
             write_err_len: b"tcp: write failed".len() as u32,
+            unknown_segment_idx: 6,
+            unknown_len: b"tcp: unknown connection".len() as u32,
         };
         let helpers = TcpWriteLineHelperFns {
             parse_id_fn: 6,
