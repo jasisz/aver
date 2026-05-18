@@ -118,15 +118,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Lean (via elan)
-        # `--default-toolchain none` skips the auto-install of a
-        # Lean release; each Aver-emitted proof project carries its
-        # own `lean-toolchain` file, so elan fetches the matching
-        # version the first time `lake build` runs in a project dir.
-        # Quieter + faster than pre-installing a fixed Lean version
-        # that may drift from what the emitted lean-toolchain pins.
+        # Elan with a real default toolchain — `--default-toolchain none`
+        # leaves `lake` as a wrapper that errors on every call because
+        # it has no toolchain to delegate to (works for a project dir
+        # with its own `lean-toolchain` file, broken for the upfront
+        # `lake --version` sanity check). Pinning `stable` makes the
+        # bare-PATH lake binary executable; emitted proof projects with
+        # a different `lean-toolchain` still trigger elan to fetch the
+        # matching version on first `lake build`.
         run: |
           curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
+            | sh -s -- -y --default-toolchain stable
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Verify `lake` reachable
