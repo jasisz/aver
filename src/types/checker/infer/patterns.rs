@@ -107,8 +107,16 @@ impl TypeChecker {
             }
             Pattern::Constructor(name, bindings) => {
                 // Check if this pattern matches on an opaque type's representation.
+                // Iron — A3: resolve the bare type prefix through
+                // `sig_aliases` because `opaque_types` is keyed by the
+                // canonical `Module.Type` form.
                 let type_prefix = name.split('.').next().unwrap_or(name);
-                if !self.self_host_mode && self.opaque_types.contains(type_prefix) {
+                let canon_prefix = self
+                    .sig_aliases
+                    .get(type_prefix)
+                    .map(String::as_str)
+                    .unwrap_or(type_prefix);
+                if !self.self_host_mode && self.opaque_types.contains(canon_prefix) {
                     self.error(format!(
                         "Cannot pattern match on opaque type '{}'",
                         type_prefix

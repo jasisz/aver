@@ -104,7 +104,14 @@ impl TypeChecker {
         base: &Spanned<Expr>,
         updates: &[(String, Spanned<Expr>)],
     ) -> Type {
-        if !self.self_host_mode && self.opaque_types.contains(type_name) {
+        // Iron — A3: same canonical resolution as construction so the
+        // bare-named reference to an imported opaque type is caught.
+        let canon = self
+            .sig_aliases
+            .get(type_name)
+            .map(String::as_str)
+            .unwrap_or(type_name);
+        if !self.self_host_mode && self.opaque_types.contains(canon) {
             self.error(format!(
                 "Cannot update opaque type '{}' — use its module's API",
                 type_name

@@ -1090,7 +1090,15 @@ impl TypeChecker {
                 }
                 match obj_ty {
                     Type::Named(ref type_name) => {
-                        if !self.self_host_mode && self.opaque_types.contains(type_name) {
+                        // Iron — A3: `opaque_types` keys are canonical
+                        // "Module.Type"; resolve the bare reference
+                        // through `sig_aliases` before checking.
+                        let canon = self
+                            .sig_aliases
+                            .get(type_name)
+                            .map(String::as_str)
+                            .unwrap_or(type_name);
+                        if !self.self_host_mode && self.opaque_types.contains(canon) {
                             self.error(format!(
                                 "Cannot access field '{}' of opaque type '{}'",
                                 field, type_name
