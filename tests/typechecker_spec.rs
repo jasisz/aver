@@ -872,11 +872,15 @@ fn named_types_are_incompatible_with_different_names() {
 }
 
 #[test]
-fn named_type_is_not_compatible_with_invalid_recovery() {
+fn named_type_is_compatible_with_invalid_recovery() {
+    // Iron — A4: `Type::Invalid` is the "already-errored" sentinel;
+    // it matches anything so a single source error doesn't fan out
+    // into a cascade of `expected X, got Invalid` diagnostics. Pre-A4
+    // this test asserted the opposite direction.
     use aver::types::Type;
     let named = Type::Named("Shape".to_string());
-    assert!(!named.compatible(&Type::Invalid));
-    assert!(!Type::Invalid.compatible(&named));
+    assert!(named.compatible(&Type::Invalid));
+    assert!(Type::Invalid.compatible(&named));
 }
 
 #[test]
@@ -2632,4 +2636,40 @@ fn pick() -> Int
     );
 
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Iron — A4: a single source error (here: an unknown function
+/// call) must not fan out through downstream `compatible` checks
+/// and produce a cascade of "expected X, got Invalid" diagnostics.
+/// The matcher now treats `Type::Invalid` as a wildcard ("already
+/// reported"), so the surface count stays at the originating error.
+#[test]
+fn type_invalid_does_not_cascade_through_arg_checks() {
+    let src = r#"module Cascade
+    intent = "Iron — A4: unknown-fn must not cascade through add() arg checks."
+
+fn add(a: Int, b: Int) -> Int
+    a + b
+
+fn main() -> Unit
+    ! [Console.print]
+    x = unknownFn(1, 2)
+    y = unknownFn(3, 4)
+    z = add(x, y)
+    Console.print("{z}")
+"#;
+    let errs = errors(src);
+    let unknown_fn_count = errs
+        .iter()
+        .filter(|m| m.contains("Call to unknown function 'unknownFn'"))
+        .count();
+    let invalid_cascade_count = errs.iter().filter(|m| m.contains("got Invalid")).count();
+    assert_eq!(
+        unknown_fn_count, 2,
+        "expected two unknown-fn errors, got errors: {errs:?}"
+    );
+    assert_eq!(
+        invalid_cascade_count, 0,
+        "expected no cascading 'got Invalid' errors after Iron — A4, got: {errs:?}"
+    );
 }

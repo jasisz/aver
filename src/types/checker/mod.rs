@@ -6,7 +6,8 @@
 ///              argument types, return type, BinOp compatibility, and effects.
 ///
 /// The checker resolves named generic variables at call sites. Error recovery
-/// uses `Type::Invalid`, which never satisfies a concrete expected type.
+/// uses `Type::Invalid`, which matches anything to suppress cascading diagnostics
+/// (Iron — A4).
 use std::collections::{HashMap, HashSet};
 
 use super::{Type, parse_type_str_strict};
@@ -441,9 +442,22 @@ impl TypeChecker {
         subst: &mut HashMap<String, Type>,
         aliases: &HashMap<String, String>,
     ) -> bool {
+        // Iron — A4: `Type::Invalid` is the checker's "we already
+        // reported an error here, don't compound it" sentinel.
+        // Returning `false` for it turned every downstream use site
+        // into a fresh `expected X, got Invalid` diagnostic — a single
+        // unknown-fn call could fan out to N + 1 errors (the unknown
+        // fn plus one per downstream consumer). Treat Invalid as a
+        // wildcard on either side so the original error stands alone.
+        // Per-callsite guards like `!matches!(ty, Type::Invalid)`
+        // around `self.compatible(...)` are now redundant but harmless;
+        // sweeping them is deliberately out of scope here.
+        if matches!(actual, Type::Invalid) || matches!(expected, Type::Invalid) {
+            return true;
+        }
         match expected {
             Type::Var(name) => Self::bind_expected_var(name, actual, subst),
-            Type::Invalid => false,
+            Type::Invalid => unreachable!("Type::Invalid handled by the early guard above"),
             Type::Int => matches!(actual, Type::Int),
             Type::Float => matches!(actual, Type::Float),
             Type::Str => matches!(actual, Type::Str),
@@ -550,7 +564,10 @@ impl TypeChecker {
     fn bind_expected_var(name: &str, actual: &Type, subst: &mut HashMap<String, Type>) -> bool {
         match actual {
             Type::Var(actual_name) => return actual_name == name,
-            Type::Invalid => return false,
+            // Iron — A4: matches the wildcard in `match_expected_type_inner`.
+            // An already-errored actual binds vacuously instead of
+            // refusing the unification and triggering a cascade.
+            Type::Invalid => return true,
             _ => {}
         }
         if let Some(bound) = subst.get(name).cloned() {
