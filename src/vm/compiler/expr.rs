@@ -418,7 +418,7 @@ impl<'a> FnCompiler<'a> {
         for (key, value) in entries {
             self.compile_expr(key)?;
             self.compile_expr(value)?;
-            let symbol_id = self.symbols.intern_builtin(VmBuiltin::MapSet);
+            let symbol_id = self.symbols.intern_builtin(VmBuiltin::MapSet)?;
             self.emit_op(CALL_BUILTIN);
             self.emit_u32(symbol_id);
             self.emit_u8(3);

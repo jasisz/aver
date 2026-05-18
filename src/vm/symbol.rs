@@ -4,6 +4,49 @@ use crate::nan_value::NanValue;
 
 use super::builtin::VmBuiltin;
 
+/// Iron — B2: errors `VmSymbolTable` raises when the program tries
+/// to register two different kinds of meaning under the same name.
+/// Pre-Iron these were unconditional `panic!`s — a malformed compile
+/// input crashed the whole process. They now surface as `Result`
+/// rejections that `ProgramCompiler` lifts into a normal
+/// `CompileError`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SymbolError {
+    /// `name` was already registered with a *different* `VmSymbolKind`
+    /// — e.g. interned as a `Function` then re-interned as a
+    /// `Namespace`, or two `intern_constant` calls with different
+    /// payloads.
+    KindConflict { name: String, existing: String },
+    /// `add_namespace_member_by_id` was called on a symbol whose
+    /// kind is anything other than `Namespace` (including `None` —
+    /// the slot was interned but never typed).
+    NotANamespace { name: String, existing: String },
+    /// `intern_namespace_path` was handed a path that produced no
+    /// segments (empty string / "." / "..").
+    EmptyNamespacePath,
+}
+
+impl std::fmt::Display for SymbolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SymbolError::KindConflict { name, existing } => {
+                write!(f, "VM symbol '{name}' already exists as {existing}")
+            }
+            SymbolError::NotANamespace { name, existing } => {
+                write!(
+                    f,
+                    "VM symbol '{name}' is not registered as namespace (got {existing})"
+                )
+            }
+            SymbolError::EmptyNamespacePath => {
+                write!(f, "intern_namespace_path requires a non-empty path")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SymbolError {}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VmVariantCtor {
     pub(crate) type_id: u32,
@@ -57,18 +100,23 @@ impl VmSymbolTable {
         symbol_id
     }
 
-    pub(crate) fn intern_namespace(&mut self, name: &str) -> u32 {
+    pub(crate) fn intern_namespace(&mut self, name: &str) -> Result<u32, SymbolError> {
         let symbol_id = self.intern_name(name);
         let info = &mut self.symbols[symbol_id as usize];
         match info.kind {
             Some(VmSymbolKind::Namespace) => {}
             None => info.kind = Some(VmSymbolKind::Namespace),
-            Some(other) => panic!("VM symbol '{}' already exists as {:?}", name, other),
+            Some(other) => {
+                return Err(SymbolError::KindConflict {
+                    name: name.to_string(),
+                    existing: format!("{:?}", other),
+                });
+            }
         }
-        symbol_id
+        Ok(symbol_id)
     }
 
-    pub(crate) fn intern_namespace_path(&mut self, path: &str) -> u32 {
+    pub(crate) fn intern_namespace_path(&mut self, path: &str) -> Result<u32, SymbolError> {
         let mut current_id = None;
         let mut current_path = String::new();
 
@@ -81,22 +129,27 @@ impl VmSymbolTable {
             }
             current_path.push_str(segment);
 
-            let child_id = self.intern_namespace(&current_path);
+            let child_id = self.intern_namespace(&current_path)?;
             if let Some(parent_id) = current_id {
                 let member_symbol_id = self.intern_name(segment);
                 self.add_namespace_member_by_id(
                     parent_id,
                     member_symbol_id,
                     Self::symbol_ref(child_id),
-                );
+                )?;
             }
             current_id = Some(child_id);
         }
 
-        current_id.expect("intern_namespace_path() requires a non-empty path")
+        current_id.ok_or(SymbolError::EmptyNamespacePath)
     }
 
-    pub(crate) fn intern_function(&mut self, name: &str, fn_id: u32, effects: &[String]) -> u32 {
+    pub(crate) fn intern_function(
+        &mut self,
+        name: &str,
+        fn_id: u32,
+        effects: &[String],
+    ) -> Result<u32, SymbolError> {
         let symbol_id = self.intern_name(name);
         let required_effects = self.intern_effects(effects.iter().map(String::as_str));
         let info = &mut self.symbols[symbol_id as usize];
@@ -107,13 +160,18 @@ impl VmSymbolTable {
             None => {
                 info.kind = Some(VmSymbolKind::Function(fn_id));
             }
-            Some(other) => panic!("VM symbol '{}' already exists as {:?}", name, other),
+            Some(other) => {
+                return Err(SymbolError::KindConflict {
+                    name: name.to_string(),
+                    existing: format!("{:?}", other),
+                });
+            }
         }
         info.required_effects = required_effects;
-        symbol_id
+        Ok(symbol_id)
     }
 
-    pub(crate) fn intern_builtin(&mut self, builtin: VmBuiltin) -> u32 {
+    pub(crate) fn intern_builtin(&mut self, builtin: VmBuiltin) -> Result<u32, SymbolError> {
         let symbol_id = self.intern_name(builtin.name());
         let required_effects = self.intern_effects(builtin.effects().iter().copied());
         let info = &mut self.symbols[symbol_id as usize];
@@ -124,17 +182,22 @@ impl VmSymbolTable {
             None => {
                 info.kind = Some(VmSymbolKind::Builtin(builtin));
             }
-            Some(other) => panic!(
-                "VM symbol '{}' already exists as {:?}",
-                builtin.name(),
-                other
-            ),
+            Some(other) => {
+                return Err(SymbolError::KindConflict {
+                    name: builtin.name().to_string(),
+                    existing: format!("{:?}", other),
+                });
+            }
         }
         info.required_effects = required_effects;
-        symbol_id
+        Ok(symbol_id)
     }
 
-    pub(crate) fn intern_variant_ctor(&mut self, name: &str, ctor: VmVariantCtor) -> u32 {
+    pub(crate) fn intern_variant_ctor(
+        &mut self,
+        name: &str,
+        ctor: VmVariantCtor,
+    ) -> Result<u32, SymbolError> {
         let symbol_id = self.intern_name(name);
         let info = &mut self.symbols[symbol_id as usize];
         match info.kind {
@@ -142,12 +205,17 @@ impl VmSymbolTable {
                 debug_assert_eq!(existing, ctor);
             }
             None => info.kind = Some(VmSymbolKind::VariantCtor(ctor)),
-            Some(other) => panic!("VM symbol '{}' already exists as {:?}", name, other),
+            Some(other) => {
+                return Err(SymbolError::KindConflict {
+                    name: name.to_string(),
+                    existing: format!("{:?}", other),
+                });
+            }
         }
-        symbol_id
+        Ok(symbol_id)
     }
 
-    pub(crate) fn intern_wrapper(&mut self, name: &str, wrap_kind: u8) -> u32 {
+    pub(crate) fn intern_wrapper(&mut self, name: &str, wrap_kind: u8) -> Result<u32, SymbolError> {
         let symbol_id = self.intern_name(name);
         let info = &mut self.symbols[symbol_id as usize];
         match info.kind {
@@ -155,12 +223,21 @@ impl VmSymbolTable {
                 debug_assert_eq!(existing, wrap_kind);
             }
             None => info.kind = Some(VmSymbolKind::Wrapper(wrap_kind)),
-            Some(other) => panic!("VM symbol '{}' already exists as {:?}", name, other),
+            Some(other) => {
+                return Err(SymbolError::KindConflict {
+                    name: name.to_string(),
+                    existing: format!("{:?}", other),
+                });
+            }
         }
-        symbol_id
+        Ok(symbol_id)
     }
 
-    pub(crate) fn intern_constant(&mut self, name: &str, value: NanValue) -> u32 {
+    pub(crate) fn intern_constant(
+        &mut self,
+        name: &str,
+        value: NanValue,
+    ) -> Result<u32, SymbolError> {
         let symbol_id = self.intern_name(name);
         let info = &mut self.symbols[symbol_id as usize];
         match info.kind {
@@ -168,9 +245,14 @@ impl VmSymbolTable {
                 debug_assert_eq!(existing.bits(), value.bits());
             }
             None => info.kind = Some(VmSymbolKind::Constant(value)),
-            Some(other) => panic!("VM symbol '{}' already exists as {:?}", name, other),
+            Some(other) => {
+                return Err(SymbolError::KindConflict {
+                    name: name.to_string(),
+                    existing: format!("{:?}", other),
+                });
+            }
         }
-        symbol_id
+        Ok(symbol_id)
     }
 
     #[cfg(test)]
@@ -179,11 +261,11 @@ impl VmSymbolTable {
         namespace: &str,
         member: &str,
         value: NanValue,
-    ) -> u32 {
-        let namespace_id = self.intern_namespace(namespace);
+    ) -> Result<u32, SymbolError> {
+        let namespace_id = self.intern_namespace(namespace)?;
         let member_symbol_id = self.intern_name(member);
-        self.add_namespace_member_by_id(namespace_id, member_symbol_id, value);
-        member_symbol_id
+        self.add_namespace_member_by_id(namespace_id, member_symbol_id, value)?;
+        Ok(member_symbol_id)
     }
 
     pub(crate) fn add_namespace_member_by_id(
@@ -191,14 +273,21 @@ impl VmSymbolTable {
         namespace_symbol_id: u32,
         member_symbol_id: u32,
         value: NanValue,
-    ) {
+    ) -> Result<(), SymbolError> {
         let info = &mut self.symbols[namespace_symbol_id as usize];
         match info.kind {
             Some(VmSymbolKind::Namespace) => {
                 info.members.insert(member_symbol_id, value);
+                Ok(())
             }
-            None => panic!("VM symbol '{}' is not registered as namespace", info.name),
-            Some(other) => panic!("VM symbol '{}' is {:?}", info.name, other),
+            None => Err(SymbolError::NotANamespace {
+                name: info.name.clone(),
+                existing: "uninitialised".to_string(),
+            }),
+            Some(other) => Err(SymbolError::NotANamespace {
+                name: info.name.clone(),
+                existing: format!("{:?}", other),
+            }),
         }
     }
 
@@ -318,8 +407,10 @@ mod tests {
     #[test]
     fn symbol_table_interns_functions_and_builtins() {
         let mut table = VmSymbolTable::default();
-        let fn_sym = table.intern_function("main", 7, &[]);
-        let builtin_sym = table.intern_builtin(VmBuiltin::StringReplace);
+        let fn_sym = table.intern_function("main", 7, &[]).expect("intern main");
+        let builtin_sym = table
+            .intern_builtin(VmBuiltin::StringReplace)
+            .expect("intern String.replace");
 
         assert_eq!(table.find("main"), Some(fn_sym));
         assert_eq!(table.find("String.replace"), Some(builtin_sym));
@@ -339,7 +430,9 @@ mod tests {
     fn symbol_table_reuses_builtin_name_for_effect() {
         let mut table = VmSymbolTable::default();
         let effect_sym = table.intern_name("Console.print");
-        let builtin_sym = table.intern_builtin(VmBuiltin::ConsolePrint);
+        let builtin_sym = table
+            .intern_builtin(VmBuiltin::ConsolePrint)
+            .expect("intern Console.print");
 
         assert_eq!(effect_sym, builtin_sym);
         assert_eq!(
@@ -351,8 +444,10 @@ mod tests {
     #[test]
     fn namespace_members_can_point_at_symbols_and_constants() {
         let mut table = VmSymbolTable::default();
-        let ns = table.intern_namespace("Option");
-        let some = table.intern_wrapper("Option.Some", 2);
+        let ns = table.intern_namespace("Option").expect("intern Option ns");
+        let some = table
+            .intern_wrapper("Option.Some", 2)
+            .expect("intern Option.Some");
         table.add_namespace_member("Option", "Some", VmSymbolTable::symbol_ref(some));
         table.add_namespace_member("Option", "None", NanValue::NONE);
 
@@ -378,7 +473,9 @@ mod tests {
             ctor_id: 9,
             field_count: 0,
         };
-        let symbol_id = table.intern_variant_ctor("Status.Done", ctor);
+        let symbol_id = table
+            .intern_variant_ctor("Status.Done", ctor)
+            .expect("intern Status.Done");
 
         assert_eq!(table.resolve_variant_ctor(symbol_id), Some(ctor));
     }
@@ -386,7 +483,9 @@ mod tests {
     #[test]
     fn symbol_table_builds_and_resolves_nested_namespace_paths() {
         let mut table = VmSymbolTable::default();
-        let path = table.intern_namespace_path("Domain.Types");
+        let path = table
+            .intern_namespace_path("Domain.Types")
+            .expect("intern Domain.Types");
 
         assert_eq!(table.find("Domain.Types"), Some(path));
 
