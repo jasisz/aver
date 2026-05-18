@@ -98,6 +98,22 @@ locally; CI stays stable.
   porting a real shortest-roundtrip algorithm to WAT is the proper
   fix and is out of Iron scope.
 
+- **C3 #2 — wasm-gc `String.fromFloat` trapped on finite floats near
+  `1e4`–`1e18` (FIXED in stage 7).** While re-running the same
+  property at the CI's `PROPTEST_CASES=2000`, the shrinker landed on
+  `String.fromFloat(((-0.5772) * (-61.8024)) * (-877.8128))`
+  (≈ `-31313.64`). VM printed `-31313.641292803586`; wasm-gc trapped
+  with `wasm trap: integer overflow`. Root cause: the WAT printer's
+  shortest-roundtrip search loop incremented `N` up to a 15-digit
+  cap and on each iteration ran
+  `i64.trunc_f64_s(floor(abs_val * 10^N))`. For
+  `abs_val ≈ 31313` and `N = 15` the product hits `3.13e19`, past
+  `2^63 ≈ 9.22e18`, and `i64.trunc_f64_s` traps. Fix: an explicit
+  overflow guard in the WAT loop bails out one iteration before the
+  product would exceed `2^63`, accepting fewer fractional digits at
+  very large magnitudes instead of a runtime crash. Shipped in the
+  same C3 PR; CHANGELOG carries the user-facing entry.
+
 ---
 
 ## Unary minus (A1) — detailed plan
