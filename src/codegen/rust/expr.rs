@@ -215,14 +215,8 @@ fn emit_expr_with_options(
                 allow_callsite_inlining,
             )
         }
+        Expr::Neg(inner) => format!("(-{})", emit_expr(&inner.node, ctx, ectx)),
         Expr::BinOp(op, left, right) => {
-            // Unary minus: `- expr` is parsed as `BinOp(Sub, Literal(Int(0)), expr)`.
-            // Emit as `-expr` instead of `(0i64 - expr)` to avoid type mismatch
-            // when the operand is Float.
-            if matches!(op, BinOp::Sub) && matches!(&left.node, Expr::Literal(Literal::Int(0))) {
-                let r = emit_expr(&right.node, ctx, ectx);
-                return format!("(-{})", r);
-            }
             // BinOp: left and right use parent ectx (last_use on Resolved handles liveness)
             let l = emit_expr(&left.node, ctx, ectx);
             let r = emit_expr(&right.node, ctx, ectx);

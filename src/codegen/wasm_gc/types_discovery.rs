@@ -144,6 +144,7 @@ pub(super) fn collect_results_from_builtin_uses(
                 walk(&l.node, out, order, next_idx);
                 walk(&r.node, out, order, next_idx);
             }
+            Expr::Neg(inner) => walk(&inner.node, out, order, next_idx),
             Expr::Match { subject, arms } => {
                 walk(&subject.node, out, order, next_idx);
                 for arm in arms {
@@ -362,6 +363,7 @@ pub(super) fn collect_tuples_from_expr(
             collect_tuples_from_expr(l, out, order, next_idx);
             collect_tuples_from_expr(r, out, order, next_idx);
         }
+        Expr::Neg(inner) => collect_tuples_from_expr(inner, out, order, next_idx),
         Expr::Match { subject, arms } => {
             collect_tuples_from_expr(subject, out, order, next_idx);
             for arm in arms {
@@ -614,6 +616,7 @@ pub(super) fn collect_options_from_expr(
             collect_options_from_expr(&l.node, out, order, next_idx);
             collect_options_from_expr(&r.node, out, order, next_idx);
         }
+        Expr::Neg(inner) => collect_options_from_expr(&inner.node, out, order, next_idx),
         Expr::Match { subject, arms } => {
             collect_options_from_expr(&subject.node, out, order, next_idx);
             for arm in arms {
@@ -723,6 +726,7 @@ pub(super) fn collect_vectors_from_expr(
             collect_vectors_from_expr(&l.node, out, order, next_idx);
             collect_vectors_from_expr(&r.node, out, order, next_idx);
         }
+        Expr::Neg(inner) => collect_vectors_from_expr(&inner.node, out, order, next_idx),
         Expr::Match { subject, arms } => {
             collect_vectors_from_expr(&subject.node, out, order, next_idx);
             for arm in arms {
@@ -870,6 +874,7 @@ pub(super) fn collect_maps_from_expr(
             collect_maps_from_expr(l, out);
             collect_maps_from_expr(r, out);
         }
+        Expr::Neg(inner) => collect_maps_from_expr(inner, out),
         Expr::Attr(e, _) | Expr::ErrorProp(e) => collect_maps_from_expr(e, out),
         Expr::TailCall(tc) => {
             for a in &tc.args {

@@ -306,12 +306,10 @@ pub(super) fn emit_expr(
                     func.instruction(&Instruction::I32Eqz);
                 }
             } else {
-                // Operand kind: Aver may type-check `Int op Float` as
-                // Float (e.g. unary `-273.15` parses to `0 - 273.15`
-                // where the `0` is `Literal::Int(0)`). Pick `F64` if
-                // either side wants it; emit `f64.convert_i64_s` after
-                // any I64-typed operand to promote into the chosen
-                // numeric kind. Mirror of `src/codegen/wasm/expr/emit.rs`.
+                // Operand kind: Aver type-checks `Int op Float` as
+                // Float. Pick `F64` if either side wants it; emit
+                // `f64.convert_i64_s` after any I64-typed operand to
+                // promote into the chosen numeric kind.
                 let l_ty = wasm_type_of(l, ctx.registry)?;
                 let r_ty = wasm_type_of(r, ctx.registry)?;
                 let operand = if l_ty == Some(ValType::F64) || r_ty == Some(ValType::F64) {
@@ -353,6 +351,22 @@ pub(super) fn emit_expr(
                     (_, BinOp::Gte) => Instruction::I64GeS,
                 };
                 func.instruction(&inst);
+            }
+        }
+        Expr::Neg(inner) => {
+            // Numeric unary minus. Float uses `f64.neg` which preserves
+            // the IEEE sign bit (so `-0.0` survives the round trip);
+            // Int has no dedicated instruction and lowers to
+            // `i64.const 0; <operand>; i64.sub`, matching the original
+            // desugar in two's-complement arithmetic.
+            let inner_ty = wasm_type_of(inner, ctx.registry)?;
+            if inner_ty == Some(ValType::F64) {
+                emit_expr(func, inner, slots, ctx)?;
+                func.instruction(&Instruction::F64Neg);
+            } else {
+                func.instruction(&Instruction::I64Const(0));
+                emit_expr(func, inner, slots, ctx)?;
+                func.instruction(&Instruction::I64Sub);
             }
         }
         Expr::FnCall(callee, args) => {

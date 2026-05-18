@@ -1101,6 +1101,7 @@ fn expr_uses_error_prop(expr: &Spanned<Expr>) -> bool {
         }
         Expr::Attr(obj, _) => expr_uses_error_prop(obj),
         Expr::BinOp(_, left, right) => expr_uses_error_prop(left) || expr_uses_error_prop(right),
+        Expr::Neg(inner) => expr_uses_error_prop(inner),
         Expr::Match { subject, arms, .. } => {
             expr_uses_error_prop(subject) || arms.iter().any(|arm| expr_uses_error_prop(&arm.body))
         }

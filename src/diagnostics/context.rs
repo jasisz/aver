@@ -784,6 +784,7 @@ fn expr_has_tail_call(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
         Expr::Attr(obj, _) => expr_has_tail_call(obj),
         Expr::FnCall(f, args) => expr_has_tail_call(f) || args.iter().any(expr_has_tail_call),
         Expr::BinOp(_, l, r) => expr_has_tail_call(l) || expr_has_tail_call(r),
+        Expr::Neg(inner) => expr_has_tail_call(inner),
         Expr::Match { subject, arms, .. } => {
             expr_has_tail_call(subject) || arms.iter().any(|arm| expr_has_tail_call(&arm.body))
         }

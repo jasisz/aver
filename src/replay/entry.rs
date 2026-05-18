@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::ast::{BinOp, Expr, Literal, Spanned};
+use crate::ast::{Expr, Literal, Spanned};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::replay::{JsonValue, value_to_json};
@@ -65,17 +65,14 @@ pub fn parse_entry_call(src: &str) -> Result<(String, Vec<Value>), String> {
 fn expr_to_value(expr: &Expr) -> Result<Value, String> {
     match expr {
         Expr::Literal(lit) => Ok(literal_to_value(lit)),
-        // Aver parses `-N` as `BinOp(Sub, 0, N)`. Collapse that shape back
-        // into a negated literal so users can type `-300.0` in an --expr arg.
-        Expr::BinOp(BinOp::Sub, lhs, rhs) if matches!(lhs.node, Expr::Literal(Literal::Int(0))) => {
-            match &rhs.node {
-                Expr::Literal(Literal::Int(n)) => Ok(Value::Int(-*n)),
-                Expr::Literal(Literal::Float(f)) => Ok(Value::Float(-*f)),
-                _ => {
-                    Err("unary '-' must be applied to a numeric literal in entry args".to_string())
-                }
-            }
-        }
+        // Unary minus on a numeric literal: support `-300.0` in --expr args.
+        // Anything other than a literal operand is rejected — entry-arg
+        // expressions must be round-trippable through the JSON schema.
+        Expr::Neg(inner) => match &inner.node {
+            Expr::Literal(Literal::Int(n)) => Ok(Value::Int(-*n)),
+            Expr::Literal(Literal::Float(f)) => Ok(Value::Float(-*f)),
+            _ => Err("unary '-' must be applied to a numeric literal in entry args".to_string()),
+        },
         Expr::Ident(name) if is_upper_camel(name) => constructor_value(name, &[]),
         Expr::Attr(_, _) if dotted_upper_path(expr).is_some() => {
             let path = dotted_upper_path(expr).unwrap();

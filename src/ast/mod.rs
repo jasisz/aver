@@ -214,6 +214,12 @@ pub enum Expr {
     Attr(Box<Spanned<Expr>>, String),
     FnCall(Box<Spanned<Expr>>, Vec<Spanned<Expr>>),
     BinOp(BinOp, Box<Spanned<Expr>>, Box<Spanned<Expr>>),
+    /// Unary numeric negation: `-x`. Operand must be numeric (`Int` or
+    /// `Float`); result is the same type. Used to be desugared in the
+    /// parser to `BinOp(Sub, Literal(Int(0)), x)`, which loses the IEEE
+    /// `-0.0` sign bit on `Float` operands and produces an `Int`/`Float`
+    /// mixed `BinOp` that backends had to recognise with pattern hacks.
+    Neg(Box<Spanned<Expr>>),
     Match {
         subject: Box<Spanned<Expr>>,
         arms: Vec<MatchArm>,

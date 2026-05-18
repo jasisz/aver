@@ -219,13 +219,13 @@ verify parseMapEntryTail
     parseMapEntryTail([Token.TkEof], 0, []) => Result.Err("Expected ',' or '}' in map literal")
 
 fn parseNegAtom(tokens: List<Token>, pos: Int) -> Result<Tuple<Expr, Int>, String>
-    ? "Parse unary minus: -expr -> 0 - expr."
+    ? "Parse unary minus into the first-class Expr.ExprNeg node."
     r = parseAtom(tokens, pos)?
     match r
-        (expr, pos2) -> Result.Ok((Expr.ExprSub(Expr.ExprInt(0), expr), pos2))
+        (expr, pos2) -> Result.Ok((Expr.ExprNeg(expr), pos2))
 
 verify parseNegAtom
-    parseNegAtom([Token.TkInt(5), Token.TkEof], 0) => Result.Ok((Expr.ExprSub(Expr.ExprInt(0), Expr.ExprInt(5)), 1))
+    parseNegAtom([Token.TkInt(5), Token.TkEof], 0) => Result.Ok((Expr.ExprNeg(Expr.ExprInt(5)), 1))
     parseNegAtom([Token.TkEof], 0) => Result.Err("Expected expression, got tokenRepr(TkEof)")
 
 fn parseStringOrInterp(tokens: List<Token>, pos: Int, prefix: String) -> Result<Tuple<Expr, Int>, String>

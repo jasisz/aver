@@ -81,6 +81,16 @@ pub fn evalBinopVals(va: &Val, vb: &Val, op: &BinOp) -> Result<Val, AverStr> {
     }
 }
 
+/// Apply unary minus to an evaluated value. Numeric only.
+pub fn evalNegVals(v: &Val) -> Result<Val, AverStr> {
+    crate::cancel_checkpoint();
+    match v.clone() {
+        Val::ValInt(n) => Ok(Val::ValInt((0i64 - n))),
+        Val::ValFloat(f) => Ok(Val::ValFloat((0.0f64 - f))),
+        _ => Err(AverStr::from("unary '-' requires Int or Float")),
+    }
+}
+
 /// Apply comparison to two evaluated values (Int, Float, or String).
 pub fn evalCmpVals(va: &Val, vb: &Val, op: &CmpOp) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();

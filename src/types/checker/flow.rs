@@ -59,6 +59,7 @@ impl TypeChecker {
                 Self::verify_case_calls_target(left_expr, fn_name)
                     || Self::verify_case_calls_target(right_expr, fn_name)
             }
+            Expr::Neg(inner) => Self::verify_case_calls_target(inner, fn_name),
             Expr::Match { subject, arms, .. } => {
                 Self::verify_case_calls_target(subject, fn_name)
                     || arms
@@ -688,6 +689,7 @@ impl TypeChecker {
                 self.check_effects_in_expr(left, caller_name, caller_effects);
                 self.check_effects_in_expr(right, caller_name, caller_effects);
             }
+            Expr::Neg(inner) => self.check_effects_in_expr(inner, caller_name, caller_effects),
             Expr::Match { subject, arms, .. } => {
                 self.check_effects_in_expr(subject, caller_name, caller_effects);
                 for arm in arms {

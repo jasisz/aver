@@ -242,6 +242,7 @@ fn visit_subexprs(
             recurse(l);
             recurse(r);
         }
+        Expr::Neg(inner) => recurse(inner),
         Expr::Match { subject, arms } => {
             recurse(subject);
             for arm in arms.iter() {

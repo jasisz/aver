@@ -141,6 +141,10 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
                 &rewriteInternalExpr(&b),
             )
         }
+        Expr::ExprNeg(inner) => {
+            let inner = (*inner).clone();
+            Expr::ExprNeg(std::sync::Arc::new(rewriteInternalExpr(&inner)))
+        }
         Expr::ExprEq(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();

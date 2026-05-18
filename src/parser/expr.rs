@@ -92,15 +92,8 @@ impl Parser {
         if self.check_exact(&TokenKind::Minus) {
             let line = self.current().line;
             self.advance();
-            let operand = self.parse_postfix()?;
-            return Ok(self.spanned(
-                Expr::BinOp(
-                    BinOp::Sub,
-                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
-                    Box::new(operand),
-                ),
-                line,
-            ));
+            let operand = self.parse_unary()?;
+            return Ok(self.spanned(Expr::Neg(Box::new(operand)), line));
         }
         self.parse_postfix()
     }

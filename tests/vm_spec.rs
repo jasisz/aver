@@ -161,6 +161,52 @@ fn vm_int_neg() {
 }
 
 #[test]
+fn vm_unary_minus_int_literal() {
+    // Iron A1: `-N` parses to `Expr::Neg(N)` and lowers to OP_NEG.
+    let result = vm_run("fn main() -> Int\n    -42\n");
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), -42);
+}
+
+#[test]
+fn vm_unary_minus_float_literal() {
+    let result = vm_run("fn main() -> Float\n    -1.5\n");
+    assert!(result.is_float());
+    assert_eq!(result.as_float(), -1.5);
+}
+
+#[test]
+fn vm_unary_minus_preserves_float_negative_zero_sign_bit() {
+    // The old `Sub(Int(0), Float(0.0))` desugar produced `+0.0` because
+    // IEEE 754 forces `0.0 - 0.0 = +0.0`. With `Expr::Neg` + the VM's
+    // OP_NEG instruction we negate at the float level, so `-0.0`
+    // round-trips with its sign bit intact.
+    let result = vm_run("fn main() -> Float\n    -0.0\n");
+    assert!(result.is_float());
+    let v = result.as_float();
+    assert_eq!(v, 0.0);
+    assert!(v.is_sign_negative(), "expected -0.0, got {} ({:?})", v, v);
+}
+
+#[test]
+fn vm_unary_minus_non_literal_operand() {
+    let result = vm_run("fn negate(x: Int) -> Int\n    -x\nfn main() -> Int\n    negate(7)\n");
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), -7);
+}
+
+#[test]
+fn vm_nested_unary_minus_cancels() {
+    // `-(-5)` should round-trip back to `5`.
+    let result = vm_run("fn main() -> Int\n    -(-5)\n");
+    assert!(result.is_int());
+    let arena = Arena::new();
+    assert_eq!(result.as_int(&arena), 5);
+}
+
+#[test]
 fn vm_complex_arith() {
     let result = vm_run("fn main() -> Int\n    (2 + 3) * (10 - 4)\n");
     assert!(result.is_int());

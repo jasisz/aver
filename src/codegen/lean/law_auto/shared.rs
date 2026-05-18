@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::ast_rewrite::rewrite_idents_scoped;
 use crate::codegen::CodegenContext;
 
@@ -102,6 +102,7 @@ fn collect_user_fn_simp_names(
             collect_user_fn_simp_names(l, ctx, skip_fn, out);
             collect_user_fn_simp_names(r, ctx, skip_fn, out);
         }
+        Expr::Neg(inner) => collect_user_fn_simp_names(inner, ctx, skip_fn, out),
         Expr::Match { subject, arms, .. } => {
             collect_user_fn_simp_names(subject, ctx, skip_fn, out);
             for arm in arms {
@@ -335,9 +336,7 @@ pub(super) fn matches_neg_binary_call(
     b: &str,
 ) -> bool {
     match &expr.node {
-        Expr::BinOp(BinOp::Sub, left, right) => {
-            matches_int_lit(left, 0) && matches_binary_call(right, fn_name, a, b)
-        }
+        Expr::Neg(inner) => matches_binary_call(inner, fn_name, a, b),
         _ => false,
     }
 }

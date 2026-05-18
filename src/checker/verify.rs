@@ -24,6 +24,7 @@ pub(super) fn collect_target_call_args<'a>(
             collect_target_call_args(left, fn_name, arg_index, out);
             collect_target_call_args(right, fn_name, arg_index, out);
         }
+        Expr::Neg(inner) => collect_target_call_args(inner, fn_name, arg_index, out),
         Expr::Match { subject, arms, .. } => {
             collect_target_call_args(subject, fn_name, arg_index, out);
             for arm in arms {
@@ -88,6 +89,7 @@ pub(super) fn verify_case_calls_target(left: &Spanned<Expr>, fn_name: &str) -> b
             verify_case_calls_target(left_expr, fn_name)
                 || verify_case_calls_target(right_expr, fn_name)
         }
+        Expr::Neg(inner) => verify_case_calls_target(inner, fn_name),
         Expr::Match { subject, arms, .. } => {
             verify_case_calls_target(subject, fn_name)
                 || arms
@@ -197,6 +199,7 @@ pub fn expr_to_str(expr: &Spanned<Expr>) -> String {
             };
             format!("{} {} {}", expr_to_str(left), op_str, expr_to_str(right))
         }
+        Expr::Neg(inner) => format!("-{}", expr_to_str(inner)),
         Expr::InterpolatedStr(parts) => {
             use crate::ast::StrPart;
             let mut inner = String::new();

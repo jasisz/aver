@@ -99,6 +99,7 @@ fn find_slot_for_name(expr: &Expr, target_name: &str) -> Option<u16> {
         }
         Expr::BinOp(_, left, right) => find_slot_for_name(&left.node, target_name)
             .or_else(|| find_slot_for_name(&right.node, target_name)),
+        Expr::Neg(inner) => find_slot_for_name(&inner.node, target_name),
         Expr::Match { subject, arms } => {
             find_slot_for_name(&subject.node, target_name).or_else(|| {
                 arms.iter()
@@ -160,6 +161,7 @@ fn collect_slots_inner(expr: &Expr, slots: &mut HashSet<u16>) {
             collect_slots_inner(&left.node, slots);
             collect_slots_inner(&right.node, slots);
         }
+        Expr::Neg(inner) => collect_slots_inner(&inner.node, slots),
         Expr::Match { subject, arms } => {
             collect_slots_inner(&subject.node, slots);
             for arm in arms {
@@ -250,6 +252,7 @@ fn annotate_expr(expr: &mut Expr, live_after: &HashSet<u16>) {
             annotate_expr(&mut left.node, &left_live);
             annotate_expr(&mut right.node, live_after);
         }
+        Expr::Neg(inner) => annotate_expr(&mut inner.node, live_after),
         Expr::Match { subject, arms } => {
             // Subject is evaluated before any arm — all arm slots are "after" subject.
             let mut subject_live = live_after.clone();

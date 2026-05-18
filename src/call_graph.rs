@@ -215,6 +215,7 @@ fn walk_expr(expr: &Spanned<Expr>, visit: &mut impl FnMut(&Expr)) {
             walk_expr(l, visit);
             walk_expr(r, visit);
         }
+        Expr::Neg(inner) => walk_expr(inner, visit),
         Expr::Match { subject, arms, .. } => {
             walk_expr(subject, visit);
             for arm in arms {
@@ -384,6 +385,7 @@ fn count_recursive_calls_expr(expr: &Spanned<Expr>, recursive: &HashSet<String>,
             count_recursive_calls_expr(l, recursive, out);
             count_recursive_calls_expr(r, recursive, out);
         }
+        Expr::Neg(inner) => count_recursive_calls_expr(inner, recursive, out),
         Expr::Match {
             subject: scrutinee,
             arms,

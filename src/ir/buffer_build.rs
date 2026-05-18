@@ -195,6 +195,9 @@ fn visit_subexprs(
             walk_expr_for_fusion_sites(&l.node, line_of(l), enclosing_fn, sinks, out);
             walk_expr_for_fusion_sites(&r.node, line_of(r), enclosing_fn, sinks, out);
         }
+        Expr::Neg(inner) => {
+            walk_expr_for_fusion_sites(&inner.node, line_of(inner), enclosing_fn, sinks, out);
+        }
         Expr::Match { subject, arms } => {
             walk_expr_for_fusion_sites(&subject.node, line_of(subject), enclosing_fn, sinks, out);
             for arm in arms {
@@ -809,6 +812,7 @@ fn descend_into_subexprs(expr: &mut Spanned<Expr>, sinks: &HashMap<String, Buffe
             rewrite_expr_in_place(l, sinks);
             rewrite_expr_in_place(r, sinks);
         }
+        Expr::Neg(inner) => rewrite_expr_in_place(inner, sinks),
         Expr::Match { subject, arms } => {
             rewrite_expr_in_place(subject, sinks);
             for arm in arms.iter_mut() {

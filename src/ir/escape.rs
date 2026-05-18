@@ -244,6 +244,7 @@ fn walk_expr_with_context(expr: &Expr, in_attr_obj: bool, visit: &mut dyn FnMut(
             walk_expr_with_context(&l.node, false, visit);
             walk_expr_with_context(&r.node, false, visit);
         }
+        Expr::Neg(inner) => walk_expr_with_context(&inner.node, false, visit),
         Expr::FnCall(callee, args) => {
             walk_expr_with_context(&callee.node, false, visit);
             for a in args {
@@ -426,6 +427,7 @@ fn substitute_resolved_slots(body: &mut Expr, binding_map: &HashMap<u16, Spanned
             substitute_resolved_slots(&mut l.node, binding_map);
             substitute_resolved_slots(&mut r.node, binding_map);
         }
+        Expr::Neg(inner) => substitute_resolved_slots(&mut inner.node, binding_map),
         Expr::FnCall(callee, args) => {
             substitute_resolved_slots(&mut callee.node, binding_map);
             for a in args {
@@ -494,6 +496,9 @@ fn rewrite_children(
         Expr::BinOp(_, l, r) => {
             rewrites += rewrite_in_expr(&mut l.node, candidates, self_fn);
             rewrites += rewrite_in_expr(&mut r.node, candidates, self_fn);
+        }
+        Expr::Neg(inner) => {
+            rewrites += rewrite_in_expr(&mut inner.node, candidates, self_fn);
         }
         Expr::FnCall(callee, args) => {
             rewrites += rewrite_in_expr(&mut callee.node, candidates, self_fn);
@@ -577,6 +582,7 @@ fn substitute_param_attr(
             substitute_param_attr(&mut l.node, param_slot, field_map);
             substitute_param_attr(&mut r.node, param_slot, field_map);
         }
+        Expr::Neg(inner) => substitute_param_attr(&mut inner.node, param_slot, field_map),
         Expr::FnCall(callee, args) => {
             substitute_param_attr(&mut callee.node, param_slot, field_map);
             for a in args {

@@ -136,6 +136,7 @@ fn contains_alias_source_call(expr: &Expr) -> bool {
         Expr::BinOp(_, lhs, rhs) => {
             contains_alias_source_call(&lhs.node) || contains_alias_source_call(&rhs.node)
         }
+        Expr::Neg(inner) => contains_alias_source_call(&inner.node),
         Expr::Match { subject, arms } => {
             contains_alias_source_call(&subject.node)
                 || arms

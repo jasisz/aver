@@ -55,12 +55,8 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             }
         }
         Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx),
+        Expr::Neg(inner) => format!("(-{})", emit_expr(inner, ctx)),
         Expr::BinOp(op, left, right) => {
-            // Unary minus
-            if matches!(op, BinOp::Sub) && matches!(&left.node, Expr::Literal(Literal::Int(0))) {
-                let r = emit_expr(right, ctx);
-                return format!("(-{})", r);
-            }
             let l = emit_expr(left, ctx);
             let r = emit_expr(right, ctx);
             let op_str = match op {

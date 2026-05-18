@@ -23,6 +23,7 @@ type Expr
     ExprSub(Expr, Expr)
     ExprMul(Expr, Expr)
     ExprDiv(Expr, Expr)
+    ExprNeg(Expr)
     ExprEq(Expr, Expr)
     ExprNeq(Expr, Expr)
     ExprLt(Expr, Expr)

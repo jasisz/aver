@@ -1510,6 +1510,95 @@ fn module_exposes_opaque_multiple() {
 }
 
 // ---------------------------------------------------------------------------
+// Unary minus → Expr::Neg (Iron — A1)
+// ---------------------------------------------------------------------------
+//
+// The parser used to desugar `-x` into `BinOp(Sub, Literal(Int(0)), x)`,
+// producing an `Int`/`Float` mixed binop and clobbering the IEEE sign
+// bit on `-0.0`. The Iron rework gives unary minus a first-class
+// `Expr::Neg` node. These specs lock the new shape down.
+
+#[test]
+fn unary_minus_int_literal_emits_neg() {
+    let items = parse("x = -5");
+    assert_eq!(
+        items,
+        vec![TopLevel::Stmt(Stmt::Binding(
+            "x".to_string(),
+            None,
+            Spanned::bare(Expr::Neg(Box::new(Spanned::bare(Expr::Literal(
+                Literal::Int(5)
+            )))))
+        ))]
+    );
+}
+
+#[test]
+fn unary_minus_float_literal_emits_neg() {
+    let items = parse("y = -1.5");
+    assert_eq!(
+        items,
+        vec![TopLevel::Stmt(Stmt::Binding(
+            "y".to_string(),
+            None,
+            Spanned::bare(Expr::Neg(Box::new(Spanned::bare(Expr::Literal(
+                Literal::Float(1.5)
+            )))))
+        ))]
+    );
+}
+
+#[test]
+fn unary_minus_ident_emits_neg() {
+    let items = parse("fn negate(x: Int) -> Int\n    -x");
+    let fd = match &items[0] {
+        TopLevel::FnDef(fd) => fd,
+        other => panic!("expected FnDef, got {:?}", other),
+    };
+    match single_expr_body(fd) {
+        Expr::Neg(inner) => match &inner.node {
+            Expr::Ident(name) => assert_eq!(name, "x"),
+            other => panic!("expected Ident, got {:?}", other),
+        },
+        other => panic!("expected Neg, got {:?}", other),
+    }
+}
+
+#[test]
+fn nested_unary_minus_emits_nested_neg() {
+    let items = parse("z = -(-1.0)");
+    assert_eq!(
+        items,
+        vec![TopLevel::Stmt(Stmt::Binding(
+            "z".to_string(),
+            None,
+            Spanned::bare(Expr::Neg(Box::new(Spanned::bare(Expr::Neg(Box::new(
+                Spanned::bare(Expr::Literal(Literal::Float(1.0)))
+            ))))))
+        ))]
+    );
+}
+
+#[test]
+fn explicit_zero_minus_stays_binop_sub() {
+    // `0 - x` is an explicit subtraction, not a unary-minus desugar,
+    // and must keep its `BinOp(Sub, 0, x)` shape so the typechecker /
+    // backends route it through the binary numeric path.
+    let items = parse("fn f(x: Int) -> Int\n    0 - x");
+    let fd = match &items[0] {
+        TopLevel::FnDef(fd) => fd,
+        other => panic!("expected FnDef, got {:?}", other),
+    };
+    match single_expr_body(fd) {
+        Expr::BinOp(BinOp::Sub, left, right) => {
+            assert!(matches!(&left.node, Expr::Literal(Literal::Int(0))));
+            assert!(matches!(&right.node, Expr::Ident(name) if name == "x"));
+        }
+        other => panic!("expected BinOp(Sub, 0, x), got {:?}", other),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Crash-resistance (Iron — C1)
 // ---------------------------------------------------------------------------
 //

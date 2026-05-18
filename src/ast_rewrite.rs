@@ -114,6 +114,10 @@ where
             ),
             line,
         ),
+        Expr::Neg(inner) => Spanned::new(
+            Expr::Neg(Box::new(rewrite_inner(inner, scope, rewrite))),
+            line,
+        ),
         Expr::Match { subject, arms } => {
             let new_subject = Box::new(rewrite_inner(subject, scope, rewrite));
             let new_arms = arms

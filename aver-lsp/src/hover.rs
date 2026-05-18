@@ -319,6 +319,7 @@ fn expr_has_tail_call(expr: &aver::ast::Spanned<Expr>) -> bool {
             expr_has_tail_call(callee) || args.iter().any(expr_has_tail_call)
         }
         Expr::BinOp(_, left, right) => expr_has_tail_call(left) || expr_has_tail_call(right),
+        Expr::Neg(inner) => expr_has_tail_call(inner),
         Expr::Match { subject, arms, .. } => {
             expr_has_tail_call(subject) || arms.iter().any(|arm| expr_has_tail_call(&arm.body))
         }

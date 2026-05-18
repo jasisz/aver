@@ -2359,17 +2359,13 @@ verify square law squareSpec
                         sb(Expr::Literal(Literal::Int(1))),
                     ],
                 )),
-                sb(Expr::BinOp(
-                    BinOp::Sub,
-                    sbb(Expr::Literal(Literal::Int(0))),
-                    sbb(Expr::FnCall(
-                        sbb(Expr::Ident("sub".to_string())),
-                        vec![
-                            sb(Expr::Literal(Literal::Int(1))),
-                            sb(Expr::Literal(Literal::Int(2))),
-                        ],
-                    )),
-                )),
+                sb(Expr::Neg(sbb(Expr::FnCall(
+                    sbb(Expr::Ident("sub".to_string())),
+                    vec![
+                        sb(Expr::Literal(Literal::Int(1))),
+                        sb(Expr::Literal(Literal::Int(2))),
+                    ],
+                )))),
             )],
             case_spans: vec![],
             case_givens: vec![],
@@ -2401,17 +2397,13 @@ verify square law squareSpec
                         sb(Expr::Ident("b".to_string())),
                     ],
                 )),
-                rhs: sb(Expr::BinOp(
-                    BinOp::Sub,
-                    sbb(Expr::Literal(Literal::Int(0))),
-                    sbb(Expr::FnCall(
-                        sbb(Expr::Ident("sub".to_string())),
-                        vec![
-                            sb(Expr::Ident("b".to_string())),
-                            sb(Expr::Ident("a".to_string())),
-                        ],
-                    )),
-                )),
+                rhs: sb(Expr::Neg(sbb(Expr::FnCall(
+                    sbb(Expr::Ident("sub".to_string())),
+                    vec![
+                        sb(Expr::Ident("b".to_string())),
+                        sb(Expr::Ident("a".to_string())),
+                    ],
+                )))),
                 sample_guards: vec![],
             })),
             trace: false,

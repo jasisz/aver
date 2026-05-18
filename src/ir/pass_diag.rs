@@ -120,6 +120,7 @@ fn count_expr(e: &Spanned<Expr>, acc: &mut ExprCounts) {
             count_expr(l, acc);
             count_expr(r, acc);
         }
+        Expr::Neg(inner) => count_expr(inner, acc),
         Expr::Match { subject, arms } => {
             count_expr(subject, acc);
             for arm in arms {

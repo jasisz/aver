@@ -1317,6 +1317,7 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
             expr_uses_string(&callee.node) || args.iter().any(|a| expr_uses_string(&a.node))
         }
         Expr::BinOp(_, l, r) => expr_uses_string(&l.node) || expr_uses_string(&r.node),
+        Expr::Neg(inner) => expr_uses_string(&inner.node),
         Expr::Match { subject, arms } => {
             expr_uses_string(&subject.node) || arms.iter().any(|a| expr_uses_string(&a.body.node))
         }
@@ -1357,6 +1358,7 @@ fn fn_body_calls_int_mod(fd: &crate::ast::FnDef) -> bool {
                 walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
             }
             Expr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            Expr::Neg(inner) => walk(&inner.node),
             Expr::Attr(o, _) => walk(&o.node),
             Expr::ErrorProp(i) => walk(&i.node),
             Expr::TailCall(b) => b.args.iter().any(|a| walk(&a.node)),
@@ -1428,6 +1430,7 @@ fn collect_string_literals_in_expr(
             collect_string_literals_in_expr(&l.node, out, idx);
             collect_string_literals_in_expr(&r.node, out, idx);
         }
+        Expr::Neg(inner) => collect_string_literals_in_expr(&inner.node, out, idx),
         Expr::Match { subject, arms } => {
             collect_string_literals_in_expr(&subject.node, out, idx);
             for a in arms {
@@ -1896,6 +1899,7 @@ fn collect_lists_from_expr(
             collect_lists_from_expr(&l.node, out, order, next_idx);
             collect_lists_from_expr(&r.node, out, order, next_idx);
         }
+        Expr::Neg(inner) => collect_lists_from_expr(&inner.node, out, order, next_idx),
         Expr::Match { subject, arms } => {
             collect_lists_from_expr(&subject.node, out, order, next_idx);
             for arm in arms {

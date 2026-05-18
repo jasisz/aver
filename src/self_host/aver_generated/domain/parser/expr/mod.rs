@@ -1575,19 +1575,13 @@ pub fn parseMapLiteral(
     }
 }
 
-/// Parse unary minus: -expr -> 0 - expr.
+/// Parse unary minus into the first-class Expr.ExprNeg node.
 pub fn parseNegAtom(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(Expr, i64), AverStr> {
     crate::cancel_checkpoint();
     let r = parseAtom(tokens, pos)?;
     {
         let (expr, pos2) = r;
-        Ok((
-            Expr::ExprSub(
-                std::sync::Arc::new(Expr::ExprInt(0i64)),
-                std::sync::Arc::new(expr),
-            ),
-            pos2,
-        ))
+        Ok((Expr::ExprNeg(std::sync::Arc::new(expr)), pos2))
     }
 }
 

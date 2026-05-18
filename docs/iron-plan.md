@@ -11,8 +11,8 @@ Tagline draft: *Iron in the frame — the type checker stops lying to itself abo
 | ID  | item                                                       | status | nakład   | risk     | PR  |
 |-----|------------------------------------------------------------|--------|----------|----------|-----|
 | A0  | Occurs check in `bind_expected_var`                        | done   | 5 LOC    | low      | #28 |
-| A1  | Unary minus → `Expr::Neg` (cross-backend + self-host)      | todo   | ~150 LOC | medium   | —   |
-| A2  | Duplicate fn name detection (currently silent shadow)      | todo   | ~20 LOC  | low      | —   |
+| A1  | Unary minus → `Expr::Neg` (cross-backend + self-host)      | done   | ~530 LOC | medium   | stage 5 |
+| A2  | Duplicate fn name detection (currently silent shadow)      | done   | ~20 LOC  | low      | #28 |
 | A3  | `Type::Named` matching via `SymbolRegistry` canonical name | todo   | ~80 LOC  | high     | —   |
 | A4  | `Type::Invalid` cascade rigor — audit + document           | todo   | ~30 LOC  | low      | —   |
 | A5  | `record_field_types` string keys → struct                  | todo   | ~200 LOC | medium   | —   |
@@ -23,17 +23,17 @@ Tagline draft: *Iron in the frame — the type checker stops lying to itself abo
 |-----|------------------------------------------------------------|--------|-----------|----------|-----|
 | B1  | VM typed opcodes (OpAddInt etc.) — perf 2-5× on numerics   | todo   | ~300 LOC  | medium   | —   |
 | B2  | VM symbol conflict panics → `Result<_, SymbolError>`       | todo   | ~50 LOC   | low      | —   |
-| B3  | Replay determinism contract docs + invariant tests         | todo   | ~100 LOC  | low      | —   |
+| B3  | Replay determinism contract docs + invariant tests         | done   | ~200 LOC  | low      | #30 |
 | B4  | Lexer edge cases (depend on fuzzer findings)               | todo   | TBD       | TBD      | —   |
 
 ### Layer 3 — test infrastructure
 
 | ID  | item                                                       | status | nakład    | risk     | PR  |
 |-----|------------------------------------------------------------|--------|-----------|----------|-----|
-| C1  | Parser + lexer crash-resistance via `proptest` (bytes-in)  | todo   | ~80 LOC   | low      | —   |
+| C1  | Parser + lexer crash-resistance via `proptest` (bytes-in)  | done   | ~80 LOC   | low      | #28 |
 | C2  | `proptest` matcher invariants + Type AST generators        | done   | ~150 LOC  | low      | #28 |
 | C3  | Cross-backend differential property tests                  | todo   | ~200 LOC  | medium   | —   |
-| C4  | Proof export CI gate (`lake build` via elan)               | done   | CI yaml   | low      | stage 2 |
+| C4  | Proof export CI gate (`lake build` via elan)               | done   | CI yaml   | low      | #29 |
 
 Note: `cargo-fuzz` revisited and rejected for now. The crate requires nightly Rust (libfuzzer-sys uses `-Z` flags); Aver's CI is stable-Rust throughout (`dtolnay/rust-toolchain@stable`). Adding a nightly toolchain to CI just for fuzz targets is a real cost. `proptest` covers the same surface for structured inputs (matcher invariants, cross-backend differential) and reaches into crash-resistance via `prop::collection::vec(any::<u8>(), 0..N)` strategies — bytes-in, lexer/parser must not panic. If we later need true coverage-guided fuzzing (corpus evolution, mutation-based), the right path is a separate fuzz workflow on a dedicated nightly job, not pulling nightly into the main CI gate.
 

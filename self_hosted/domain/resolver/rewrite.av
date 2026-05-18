@@ -64,6 +64,7 @@ fn rewriteInternalExprAfterLeaf(expr: Expr) -> Expr
         Expr.ExprSub(a, b) -> rewriteInternalBinop(BinOp.OpSub, rewriteInternalExpr(a), rewriteInternalExpr(b))
         Expr.ExprMul(a, b) -> rewriteInternalBinop(BinOp.OpMul, rewriteInternalExpr(a), rewriteInternalExpr(b))
         Expr.ExprDiv(a, b) -> rewriteInternalBinop(BinOp.OpDiv, rewriteInternalExpr(a), rewriteInternalExpr(b))
+        Expr.ExprNeg(inner) -> Expr.ExprNeg(rewriteInternalExpr(inner))
         Expr.ExprEq(a, b) -> rewriteInternalCmp(CmpOp.CmpEq, rewriteInternalExpr(a), rewriteInternalExpr(b))
         Expr.ExprNeq(a, b) -> rewriteInternalCmp(CmpOp.CmpNeq, rewriteInternalExpr(a), rewriteInternalExpr(b))
         Expr.ExprLt(a, b) -> rewriteInternalCmp(CmpOp.CmpLt, rewriteInternalExpr(a), rewriteInternalExpr(b))

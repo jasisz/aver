@@ -706,6 +706,7 @@ fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
             expr_mentions_ident(callee, name) || args.iter().any(|a| expr_mentions_ident(a, name))
         }
         Expr::BinOp(_, a, b) => expr_mentions_ident(a, name) || expr_mentions_ident(b, name),
+        Expr::Neg(inner) => expr_mentions_ident(inner, name),
         Expr::Match { subject, arms } => {
             expr_mentions_ident(subject, name)
                 || arms.iter().any(|a| expr_mentions_ident(&a.body, name))

@@ -219,6 +219,14 @@ fn rewrite_expr(
                 same_module_fns,
             );
         }
+        Expr::Neg(inner) => {
+            rewrite_expr(
+                &mut inner.node,
+                prefixes,
+                same_module_prefix,
+                same_module_fns,
+            );
+        }
         Expr::Match { subject, arms } => {
             rewrite_expr(
                 &mut subject.node,

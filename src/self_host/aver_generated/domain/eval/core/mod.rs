@@ -446,6 +446,10 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Val, AverStr> 
                         let b = (*b).clone();
                         return evalBinop(&a, &b, &env, &fns, &BinOp::OpDiv);
                     }
+                    Expr::ExprNeg(inner) => {
+                        let inner = (*inner).clone();
+                        return evalNeg(&inner, &env, &fns);
+                    }
                     Expr::ExprEq(a, b) => {
                         let a = (*a).clone();
                         let b = (*b).clone();
@@ -1336,6 +1340,10 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> Result<Val, AverStr> 
                         let a = (*a).clone();
                         let b = (*b).clone();
                         return evalBinopSlot(&a, &b, &env, &slotMap, &fns, &BinOp::OpDiv);
+                    }
+                    Expr::ExprNeg(inner) => {
+                        let inner = (*inner).clone();
+                        return evalNegSlot(&inner, &env, &slotMap, &fns);
                     }
                     Expr::ExprEq(a, b) => {
                         let a = (*a).clone();
@@ -3045,6 +3053,19 @@ pub fn evalBinop(
     }
 }
 
+/// Evaluate unary minus on the named-env path.
+pub fn evalNeg(
+    inner: &Expr,
+    env: &aver_rt::AverMap<AverStr, Val>,
+    fns: &FnStore,
+) -> Result<Val, AverStr> {
+    crate::cancel_checkpoint();
+    match evalExpr(inner, env, fns) {
+        Err(e) => Err(e),
+        Ok(v) => crate::aver_generated::domain::eval::ops::evalNegVals(&v),
+    }
+}
+
 /// Evaluate right side of comparison and apply.
 pub fn evalCmpRight(
     va: &Val,
@@ -3967,6 +3988,18 @@ pub fn evalBinopSlot(
     let va = evalExprSlot(a, env, slotMap, fns)?;
     let vb = evalExprSlot(b, env, slotMap, fns)?;
     crate::aver_generated::domain::eval::ops::evalBinopVals(&va, &vb, op)
+}
+
+/// Unary minus in slot path.
+pub fn evalNegSlot(
+    inner: &Expr,
+    env: &aver_rt::AverVector<Val>,
+    slotMap: &aver_rt::AverMap<AverStr, i64>,
+    fns: &FnStore,
+) -> Result<Val, AverStr> {
+    crate::cancel_checkpoint();
+    let v = evalExprSlot(inner, env, slotMap, fns)?;
+    crate::aver_generated::domain::eval::ops::evalNegVals(&v)
 }
 
 /// Comparison in slot path.
