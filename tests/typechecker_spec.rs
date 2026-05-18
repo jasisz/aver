@@ -2431,3 +2431,91 @@ fn terminal_read_key_returns_option_string() {
     );
     assert_no_errors(src);
 }
+
+// ---------------------------------------------------------------------------
+// Polymorphic recursion (0.20.1 — occurs check regression)
+// ---------------------------------------------------------------------------
+
+/// Polymorphic recursion that would need `A := List<A>` must surface as
+/// a normal type-incompatibility error — not silently typecheck, not
+/// loop, not panic. The matcher's occurs check is what guarantees this:
+/// `bind_expected_var` refuses the circular bind, the caller emits the
+/// standard "expected A, got List<A>" diagnostic.
+///
+/// Phase 4.7+ pass 6 — closes the theoretical gap a reviewer of Zero
+/// (peer language at the time) flagged: "polymorphic recursion can make
+/// type-check non-terminate". Aver never looped (the matcher terminated
+/// structurally regardless), but it could populate the substitution map
+/// with a circular `A → List<A>` entry. Belt + suspenders fix.
+#[test]
+fn polymorphic_recursion_with_t_into_list_t_is_type_error() {
+    let src = concat!("fn nest(v: A) -> Unit\n", "    nest([v])\n",);
+    let errs = errors(src);
+    assert!(
+        !errs.is_empty(),
+        "expected at least one type error for `A := List<A>` recursive call shape, got none"
+    );
+    // The exact wording is "expected A, got List<A>" or similar; the
+    // diagnostic shape isn't pinned to a specific phrasing here so a
+    // future error-message polish doesn't break the regression test.
+    // What we lock in is *some* error surfaces — the matcher refuses
+    // the bind, the caller emits a real diagnostic.
+}
+
+/// Sanity that a similar recursive shape WITHOUT the type expansion
+/// (just `A` consumed at the same level) still typechecks cleanly. Makes
+/// sure the occurs check isn't over-rejecting legitimate recursive
+/// generic calls.
+#[test]
+fn monomorphic_recursion_at_same_type_param_is_fine() {
+    let src = concat!("fn identityChain(v: A) -> Unit\n", "    identityChain(v)\n",);
+    assert_no_errors(src);
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate function names (Iron — A2)
+// ---------------------------------------------------------------------------
+
+/// Pre-Iron, defining the same fn name twice silently dropped the first
+/// definition (AGENTS.md "Known issues" §`No check for duplicate
+/// function names`). The user got no signal — their program ran the
+/// second definition and the first was dead code they didn't know was
+/// dead. Now the second definition surfaces a real type error.
+#[test]
+fn duplicate_function_name_is_rejected() {
+    let src = concat!(
+        "fn double(x: Int) -> Int\n",
+        "    x * 2\n",
+        "fn double(x: Int) -> Int\n",
+        "    x + x\n",
+    );
+    assert_error_containing(src, "Function 'double' is already defined");
+}
+
+/// Same fn name with different signatures (parameter count / type /
+/// return) is still a duplicate — Aver does not have function
+/// overloading, the second def is the bug shape regardless of how it
+/// differs from the first.
+#[test]
+fn duplicate_function_name_rejected_even_with_different_signature() {
+    let src = concat!(
+        "fn handler() -> Unit\n",
+        "    handler()\n",
+        "fn handler(x: Int) -> Int\n",
+        "    x\n",
+    );
+    assert_error_containing(src, "Function 'handler' is already defined");
+}
+
+/// Sanity: distinct fn names compile cleanly. Locks the check at
+/// "duplicate" rather than "any second registration in fn_sigs".
+#[test]
+fn distinct_function_names_compile_cleanly() {
+    let src = concat!(
+        "fn double(x: Int) -> Int\n",
+        "    x * 2\n",
+        "fn triple(x: Int) -> Int\n",
+        "    x * 3\n",
+    );
+    assert_no_errors(src);
+}

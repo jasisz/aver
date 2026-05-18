@@ -489,8 +489,51 @@ impl TypeChecker {
             return Self::match_expected_type(actual, &bound, subst)
                 && Self::match_expected_type(&bound, actual, subst);
         }
+        // Occurs check — refuse `T := F<…T…>` style circular bindings.
+        // Without this, polymorphic recursion patterns like `fn nest(v:
+        // A) -> Unit; nest([v])` would insert `A → List<A>` into `subst`
+        // and rely on downstream structural mismatch to terminate
+        // matching. The HashMap entry itself is still a cycle that
+        // later `instantiate_type` walks would have to skip; rejecting
+        // the bind at source keeps the substitution map well-formed
+        // and surfaces the constraint failure to the caller as a
+        // normal type-incompatibility error.
+        if Self::type_contains_var(actual, name) {
+            return false;
+        }
         subst.insert(name.to_string(), actual.clone());
         true
+    }
+
+    /// Structural recursion over `ty` looking for any `Type::Var(name)`.
+    /// Used by the occurs check in [`bind_expected_var`]; not exposed
+    /// elsewhere because it's a one-step deep walk over a finite Type
+    /// AST (no shared subterms, no cycles in the AST itself — the cycle
+    /// would only exist in the substitution map, which the bind path
+    /// is what guards).
+    fn type_contains_var(ty: &Type, name: &str) -> bool {
+        match ty {
+            Type::Var(other) => other == name,
+            Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Invalid
+            | Type::Named(_) => false,
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                Self::type_contains_var(inner, name)
+            }
+            Type::Result(ok, err) => {
+                Self::type_contains_var(ok, name) || Self::type_contains_var(err, name)
+            }
+            Type::Map(k, v) => Self::type_contains_var(k, name) || Self::type_contains_var(v, name),
+            Type::Tuple(items) => items.iter().any(|t| Self::type_contains_var(t, name)),
+            Type::Fn(params, ret, _effects) => {
+                params.iter().any(|p| Self::type_contains_var(p, name))
+                    || Self::type_contains_var(ret, name)
+            }
+        }
     }
 
     pub(super) fn instantiate_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {

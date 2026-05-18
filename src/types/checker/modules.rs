@@ -29,6 +29,27 @@ impl TypeChecker {
                             Type::Invalid
                         }
                     };
+                    // Iron — A2: refuse silent shadowing. Pre-Iron the
+                    // second `fn foo` simply overwrote the first in
+                    // `fn_sigs`; the program then type-checked + ran the
+                    // second definition's body, the first was dead code
+                    // the user almost certainly didn't realise was being
+                    // dropped. Now an explicit error fires at the
+                    // duplicate's source line; the entry is still
+                    // overwritten so downstream checking proceeds against
+                    // the latest definition rather than poisoning every
+                    // subsequent call site with a fresh error.
+                    //
+                    // Scope note: this check fires within a single
+                    // `items` list (one module). Cross-module clashes
+                    // are surfaced by the visibility / SymbolRegistry
+                    // layer at integration time, not here.
+                    if self.fn_sigs.contains_key(&f.name) {
+                        self.error_at_line(
+                            f.line,
+                            format!("Function '{}' is already defined in this module", f.name),
+                        );
+                    }
                     self.fn_sigs.insert(
                         f.name.clone(),
                         FnSig {

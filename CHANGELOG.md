@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.21.0 "Iron" (unreleased)
+
+### Added
+- **Duplicate function name is now a type error.** Defining the same `fn` name twice in a module surfaces "Function 'X' is already defined in this module" at the duplicate's source line. Pre-Iron, the second definition silently dropped the first — a typo could swap your function's body without any signal.
+- **Polymorphic recursion that would need `T := F<...T...>` is rejected.** Shapes like `fn nest(v: A) -> Unit; nest([v])` (where the recursive call would need `A` to equal `List<A>`) now surface as a normal type-incompatibility error instead of silently typechecking with a circular binding.
+
 ## 0.20.0 "Pulse" — 2026-05-18
 
 > _The same Aver source that opened HTTP both ways in 0.19 now opens raw TCP — connect, send, receive, ping. One pool, one handle shape, every backend the same._

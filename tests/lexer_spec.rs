@@ -4,6 +4,7 @@
 /// sequence of token kinds.  Structural tokens (Newline, Eof) are filtered out
 /// unless the test is specifically about structure.
 use aver::lexer::{Lexer, TokenKind};
+use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -507,5 +508,47 @@ fn double_brace_mixed_with_interpolation() {
         assert_eq!(parts[1], (true, "name".to_string()));
     } else {
         panic!("expected InterpStr");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Crash-resistance (Iron — C1)
+// ---------------------------------------------------------------------------
+//
+// The lexer is a frontend boundary — it consumes user-provided bytes
+// that may be malformed in any way. The only acceptable response to a
+// malformed input is `LexerError`; a panic would crash the whole
+// process. These property tests sweep random bytes through `tokenize()`
+// and assert it always returns — never panics, never loops.
+//
+// Coverage: arbitrary UTF-8 fragments + arbitrary raw bytes
+// (decoded with `from_utf8_lossy`). The first exercises the lexer's
+// UTF-8-aware codepath; the second catches edges where a sequence is
+// valid UTF-8 by chance but the content trips an indentation-stack /
+// interpolation-depth / token-boundary state machine. The 0..512
+// length cap keeps generation bounded; CI's `PROPTEST_CASES` bump
+// explores deeper.
+
+proptest! {
+    #[test]
+    fn lexer_does_not_panic_on_arbitrary_utf8(src in "[\\PC\\s]{0,512}") {
+        // `\PC` = any non-control Unicode char, `\s` = whitespace.
+        // Always-valid UTF-8 by construction; the lexer's panic
+        // surface should be empty for any input shape here.
+        let mut lexer = Lexer::new(&src);
+        let _ = lexer.tokenize();
+    }
+
+    #[test]
+    fn lexer_does_not_panic_on_arbitrary_bytes(
+        bytes in prop::collection::vec(prop::num::u8::ANY, 0..512),
+    ) {
+        // Lossy UTF-8 decode mirrors what a hostile source-file load
+        // would funnel into the lexer. Any byte sequence — including
+        // truncated multi-byte sequences, mixed BOMs, NUL bytes,
+        // unusual whitespace — must yield a Result, never a panic.
+        let src = String::from_utf8_lossy(&bytes);
+        let mut lexer = Lexer::new(&src);
+        let _ = lexer.tokenize();
     }
 }
