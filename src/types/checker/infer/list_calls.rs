@@ -52,7 +52,7 @@ impl TypeChecker {
                 let val_ty = arg_types[0].clone();
                 if matches!(elem_ty, Type::Var(_)) {
                     elem_ty = val_ty;
-                } else if !Self::constraint_compatible(&val_ty, &elem_ty) {
+                } else if !self.compatible(&val_ty, &elem_ty) {
                     self.error(format!(
                         "Argument 1 of '{}': expected {}, got {}",
                         name,
@@ -113,7 +113,7 @@ impl TypeChecker {
                 let needle_ty = arg_types[1].clone();
                 if !matches!(elem_ty, Type::Var(_) | Type::Invalid)
                     && !matches!(needle_ty, Type::Var(_) | Type::Invalid)
-                    && !Self::constraint_compatible(&needle_ty, &elem_ty)
+                    && !self.compatible(&needle_ty, &elem_ty)
                 {
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",

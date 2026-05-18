@@ -96,7 +96,7 @@ impl TypeChecker {
                 let key_ty = arg_types[1].clone();
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
-                } else if !Self::constraint_compatible(&key_ty, &k) {
+                } else if !self.compatible(&key_ty, &k) {
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
                         name,
@@ -116,7 +116,7 @@ impl TypeChecker {
                 let key_ty = arg_types[1].clone();
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
-                } else if !Self::constraint_compatible(&key_ty, &k) {
+                } else if !self.compatible(&key_ty, &k) {
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
                         name,
@@ -136,7 +136,7 @@ impl TypeChecker {
                 let key_ty = arg_types[1].clone();
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
-                } else if !Self::constraint_compatible(&key_ty, &k) {
+                } else if !self.compatible(&key_ty, &k) {
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
                         name,
@@ -158,7 +158,7 @@ impl TypeChecker {
 
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
-                } else if !Self::constraint_compatible(&key_ty, &k) {
+                } else if !self.compatible(&key_ty, &k) {
                     self.error(format!(
                         "Argument 2 of '{}': expected {}, got {}",
                         name,
@@ -168,7 +168,7 @@ impl TypeChecker {
                 }
                 if matches!(v, Type::Var(_)) {
                     v = val_ty.clone();
-                } else if !Self::constraint_compatible(&val_ty, &v) {
+                } else if !self.compatible(&val_ty, &v) {
                     self.error(format!(
                         "Argument 3 of '{}': expected {}, got {}",
                         name,

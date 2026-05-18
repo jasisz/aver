@@ -1513,11 +1513,15 @@ pub(super) fn aver_to_wasm(
         // variant constructor's type idx still emits a concrete
         // struct.new; the parent ref shape is what params/locals
         // declare.
+        // Variant parent match: tolerate "Types.Tile" coming in from
+        // a canonicalised type stamp when the discovery walker
+        // registered the variants under bare "Tile" (Iron — A3).
+        let trimmed_bare = trimmed.rsplit_once('.').map_or(trimmed, |(_, b)| b);
         if reg
             .variants
             .values()
             .flat_map(|v| v.iter())
-            .any(|v| v.parent == trimmed)
+            .any(|v| v.parent == trimmed || v.parent == trimmed_bare)
         {
             // Phase-3a: use `(ref null eq)` as the carrier — every
             // wasm-gc struct is a subtype of `eq`. Real subtype

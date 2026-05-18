@@ -126,7 +126,7 @@ impl TypeChecker {
             self.fn_bindings.clear();
 
             let last_type = self.check_stmts(f.body.stmts(), &f.name, &declared_effects);
-            if !Self::constraint_compatible(&last_type, &declared_ret) {
+            if !self.compatible(&last_type, &declared_ret) {
                 // Find line of the last expression in body for secondary span.
                 let body_last_line = f.body.stmts().last().map(|stmt| match stmt {
                     Stmt::Expr(e) => e.line,
@@ -188,7 +188,7 @@ impl TypeChecker {
                             let ty = if let Some(ann_src) = type_ann {
                                 match crate::types::parse_type_str_strict(ann_src) {
                                     Ok(annotated) => {
-                                        if !Self::constraint_compatible(&inferred, &annotated) {
+                                        if !self.compatible(&inferred, &annotated) {
                                             self.error(format!(
                                                 "Binding '{}': expression has type {}, annotation says {}",
                                                 name, inferred.display(), annotated.display()
@@ -422,7 +422,7 @@ impl TypeChecker {
                         if let crate::ast::VerifyGivenDomain::Explicit(vals) = &given.domain {
                             for v in vals {
                                 let actual = self.infer_type(v);
-                                if !Self::constraint_compatible(&actual, &expected) {
+                                if !self.compatible(&actual, &expected) {
                                     self.error_at_line(
                                         v.line,
                                         format!(
@@ -470,7 +470,7 @@ impl TypeChecker {
                     self.with_verify_law_givens(&law.givens, |checker| {
                         if let Some(when_expr) = &law.when {
                             let when_ty = checker.infer_type(when_expr);
-                            if !Self::constraint_compatible(&when_ty, &Type::Bool) {
+                            if !checker.compatible(&when_ty, &Type::Bool) {
                                 checker.error_at_line(
                                     vb.line,
                                     format!(
@@ -536,7 +536,7 @@ impl TypeChecker {
                         && let Some(sample_guard) = law.sample_guards.get(idx)
                     {
                         let guard_ty = self.infer_type(sample_guard);
-                        if !Self::constraint_compatible(&guard_ty, &Type::Bool) {
+                        if !self.compatible(&guard_ty, &Type::Bool) {
                             self.error_at_line(
                                 vb.line,
                                 format!(
@@ -590,7 +590,7 @@ impl TypeChecker {
                         let ty = if let Some(ann_src) = type_ann {
                             match crate::types::parse_type_str_strict(ann_src) {
                                 Ok(annotated) => {
-                                    if !Self::constraint_compatible(&inferred, &annotated) {
+                                    if !self.compatible(&inferred, &annotated) {
                                         self.error(format!(
                                             "Binding '{}': expression has type {}, annotation says {}",
                                             name, inferred.display(), annotated.display()

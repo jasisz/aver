@@ -82,7 +82,7 @@ impl TypeChecker {
                 let val_ty = arg_types[2].clone();
                 if matches!(elem, Type::Var(_)) {
                     elem = val_ty.clone();
-                } else if !Self::constraint_compatible(&val_ty, &elem) {
+                } else if !self.compatible(&val_ty, &elem) {
                     self.error(format!(
                         "Argument 3 of '{}': expected {}, got {}",
                         name,
