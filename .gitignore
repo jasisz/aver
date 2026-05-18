@@ -16,6 +16,11 @@ out/
 tools/wasm-runner/target/
 *.cwasm/
 
+# AFL++ fuzz harness build + live queue. `fuzz/` is excluded from the
+# workspace; the `out/` queue regenerates from the committed corpus.
+fuzz/target/
+fuzz/out/
+
 # editor / OS junk
 .DS_Store
 **/.DS_Store

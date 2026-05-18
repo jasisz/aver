@@ -1,0 +1,13 @@
+fn safeDiv(a: Int, b: Int) -> Result<Int, String>
+    match b
+        0 -> Result.Err("div by zero")
+        _ -> Result.Ok(a / b)
+
+fn first(xs: List<Int>) -> Option<Int>
+    match xs
+        [] -> Option.None
+        [head, ..rest] -> Option.Some(head)
+
+fn chain(a: Int, b: Int) -> Result<Int, String>
+    x = safeDiv(a, b)?
+    Result.Ok(x + 1)

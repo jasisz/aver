@@ -1,0 +1,189 @@
+name: Fuzz
+
+# Two surfaces:
+#   * `pr-smoke`     — runs on every PR + push to main with a 180 s
+#                      time-box. Cheap regression net for "did this
+#                      change introduce a parser ICE", not a real
+#                      exploration run.
+#   * `nightly`      — runs on cron at 03:00 UTC against main with a
+#                      30-minute budget. Same target, fresh corpus
+#                      seeded from `fuzz/corpus/parser/` plus the
+#                      AFL++ dictionary. Crashes uploaded as artifacts
+#                      so the next morning's first action is `afl-tmin`
+#                      → `tests/regressions/parser/<hash>.av`.
+#
+# Both jobs are Linux-only by deliberate choice. AFL++ on macOS hosted
+# runners hits frequent CPU-scaling and persistent-mode quirks that
+# burn CI minutes without finding more bugs; the value of "fuzz on
+# every platform" is low compared to the cost. macOS coverage falls
+# out from the rest of the test matrix.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # 03:00 UTC daily — runs against the tip of main.
+    - cron: '0 3 * * *'
+  # Allow manual nightly runs from the Actions tab (useful when
+  # triaging a crash that AFL found in a previous nightly).
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # AFL++ recommendations for hosted/virtualised CI. `AFL_SKIP_CPUFREQ`
+  # silences the "scaling governor isn't `performance`" abort; the
+  # GHA runner gives us no `sudo` for the proper fix. `AFL_NO_AFFINITY`
+  # avoids pinning to cores AFL thinks are free but the kernel keeps
+  # rescheduling on a virtualised host. `AFL_NO_UI` strips the
+  # interactive curses dashboard from the log stream. `AFL_FAST_CAL`
+  # and `AFL_CMPLOG_ONLY_NEW` are the CI presets AFL++ docs call out
+  # for short campaigns over a curated seed corpus.
+  AFL_SKIP_CPUFREQ: '1'
+  AFL_NO_AFFINITY: '1'
+  AFL_NO_UI: '1'
+  AFL_FAST_CAL: '1'
+  AFL_CMPLOG_ONLY_NEW: '1'
+  # Ubuntu's `/proc/sys/kernel/core_pattern` points at the apport pipe
+  # (`|/usr/share/apport/...`), which AFL refuses to run against — it
+  # would mis-classify crashes as timeouts. We don't have passwordless
+  # sudo to rewrite `core_pattern`, and our harness catches panics via
+  # `panic::catch_unwind` rather than SIGSEGVs, so the trade-off AFL
+  # documents (some real signal-crashes might surface as hangs) does
+  # not apply here.
+  AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES: '1'
+
+jobs:
+  pr-smoke:
+    name: Parser fuzz (180 s smoke)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Cache the `cargo-afl` install + AFL++ binaries (the build.rs in
+      # `afl.rs` compiles afl-cc / afl-fuzz from source on first install,
+      # which is ~5 min uncached).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            fuzz
+
+      - name: Install cargo-afl
+        run: |
+          if ! command -v cargo-afl >/dev/null; then
+            cargo install cargo-afl --locked
+          fi
+          cargo afl --version
+
+      - name: Build fuzz target
+        working-directory: fuzz
+        run: cargo afl build --release
+
+      - name: Fuzz (180 s)
+        working-directory: fuzz
+        # `-V 180` is fuzz time, not wall time — total job runtime
+        # includes build above + this run + post-step coverage minimise.
+        # `mkdir -p out` first: AFL's `-o` flag wants the parent
+        # directory to exist; on a fresh runner there is no `out/`.
+        # Exits cleanly when the budget elapses; we then inspect
+        # `out/parser/default/crashes/` ourselves.
+        run: |
+          mkdir -p out
+          cargo afl fuzz \
+            -V 180 \
+            -i corpus/parser \
+            -o out/parser \
+            -x dicts/aver.dict \
+            -- target/release/fuzz_parse_bytes
+
+      - name: Fail on crash
+        # AFL writes one file per distinct crash under
+        # `out/<target>/<id>/crashes/`. Anything other than the
+        # `README.txt` AFL drops there means we found an ICE the
+        # parser must not produce.
+        working-directory: fuzz
+        run: |
+          shopt -s nullglob
+          crashes=(out/parser/default/crashes/id:*)
+          if [ "${#crashes[@]}" -gt 0 ]; then
+            echo "AFL++ found ${#crashes[@]} crash(es):"
+            for c in "${crashes[@]}"; do
+              echo "--- $c ---"
+              xxd "$c" | head -40
+            done
+            exit 1
+          fi
+          echo "no crashes — parser robust for 180 s"
+
+      - name: Upload AFL queue (debug)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: afl-pr-smoke-out
+          path: fuzz/out/parser
+          retention-days: 7
+
+  nightly:
+    name: Parser fuzz (30 min nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            fuzz
+
+      - name: Install cargo-afl
+        run: |
+          if ! command -v cargo-afl >/dev/null; then
+            cargo install cargo-afl --locked
+          fi
+          cargo afl --version
+
+      - name: Build fuzz target
+        working-directory: fuzz
+        run: cargo afl build --release
+
+      - name: Fuzz (30 min)
+        working-directory: fuzz
+        run: |
+          mkdir -p out
+          cargo afl fuzz \
+            -V 1800 \
+            -i corpus/parser \
+            -o out/parser \
+            -x dicts/aver.dict \
+            -- target/release/fuzz_parse_bytes
+
+      - name: Summarise findings
+        working-directory: fuzz
+        run: |
+          shopt -s nullglob
+          crashes=(out/parser/default/crashes/id:*)
+          hangs=(out/parser/default/hangs/id:*)
+          queue=(out/parser/default/queue/id:*)
+          echo "queue:   ${#queue[@]}"
+          echo "crashes: ${#crashes[@]}"
+          echo "hangs:   ${#hangs[@]}"
+          if [ "${#crashes[@]}" -gt 0 ] || [ "${#hangs[@]}" -gt 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload AFL output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: afl-nightly-out
+          path: fuzz/out/parser
+          retention-days: 30

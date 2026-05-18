@@ -1,0 +1,27 @@
+[package]
+name = "aver-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Stand-alone crate — not a workspace member. Mirrors the cargo-fuzz
+# convention; keeps `cargo build` at the repo root unaware of AFL.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+afl = "0.15"
+aver-lang = { path = "..", default-features = false }
+
+[[bin]]
+name = "fuzz_parse_bytes"
+path = "fuzz_targets/parse_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
+overflow-checks = true
