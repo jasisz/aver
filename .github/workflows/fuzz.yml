@@ -74,11 +74,21 @@ jobs:
             fuzz
 
       - name: Install cargo-afl
+        # `cargo install cargo-afl` only puts the cargo subcommand on
+        # PATH; the AFL LLVM runtime libraries are *Rust-version-
+        # specific* and have to be built separately via
+        # `cargo afl config --build`. Without this second step the
+        # following `cargo afl build` errors out with
+        # "AFL LLVM runtime was not built for Rust rustc-X.Y.Z".
+        # `--force` is harmless on a fresh runner and required when
+        # the cached toolchain version differs from the cached
+        # runtime build.
         run: |
           if ! command -v cargo-afl >/dev/null; then
             cargo install cargo-afl --locked
           fi
           cargo afl --version
+          cargo afl config --build --force
 
       - name: Build fuzz target
         working-directory: fuzz
@@ -145,11 +155,21 @@ jobs:
             fuzz
 
       - name: Install cargo-afl
+        # `cargo install cargo-afl` only puts the cargo subcommand on
+        # PATH; the AFL LLVM runtime libraries are *Rust-version-
+        # specific* and have to be built separately via
+        # `cargo afl config --build`. Without this second step the
+        # following `cargo afl build` errors out with
+        # "AFL LLVM runtime was not built for Rust rustc-X.Y.Z".
+        # `--force` is harmless on a fresh runner and required when
+        # the cached toolchain version differs from the cached
+        # runtime build.
         run: |
           if ! command -v cargo-afl >/dev/null; then
             cargo install cargo-afl --locked
           fi
           cargo afl --version
+          cargo afl config --build --force
 
       - name: Build fuzz target
         working-directory: fuzz
