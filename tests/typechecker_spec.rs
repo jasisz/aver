@@ -2449,10 +2449,7 @@ fn terminal_read_key_returns_option_string() {
 /// with a circular `A → List<A>` entry. Belt + suspenders fix.
 #[test]
 fn polymorphic_recursion_with_t_into_list_t_is_type_error() {
-    let src = concat!(
-        "fn nest(v: A) -> Unit\n",
-        "    nest([v])\n",
-    );
+    let src = concat!("fn nest(v: A) -> Unit\n", "    nest([v])\n",);
     let errs = errors(src);
     assert!(
         !errs.is_empty(),
@@ -2471,10 +2468,7 @@ fn polymorphic_recursion_with_t_into_list_t_is_type_error() {
 /// generic calls.
 #[test]
 fn monomorphic_recursion_at_same_type_param_is_fine() {
-    let src = concat!(
-        "fn identityChain(v: A) -> Unit\n",
-        "    identityChain(v)\n",
-    );
+    let src = concat!("fn identityChain(v: A) -> Unit\n", "    identityChain(v)\n",);
     assert_no_errors(src);
 }
 

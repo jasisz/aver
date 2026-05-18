@@ -47,10 +47,7 @@ impl TypeChecker {
                     if self.fn_sigs.contains_key(&f.name) {
                         self.error_at_line(
                             f.line,
-                            format!(
-                                "Function '{}' is already defined in this module",
-                                f.name
-                            ),
+                            format!("Function '{}' is already defined in this module", f.name),
                         );
                     }
                     self.fn_sigs.insert(

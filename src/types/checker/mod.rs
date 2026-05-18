@@ -514,7 +514,12 @@ impl TypeChecker {
     fn type_contains_var(ty: &Type, name: &str) -> bool {
         match ty {
             Type::Var(other) => other == name,
-            Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Invalid
+            Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Invalid
             | Type::Named(_) => false,
             Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
                 Self::type_contains_var(inner, name)
@@ -522,9 +527,7 @@ impl TypeChecker {
             Type::Result(ok, err) => {
                 Self::type_contains_var(ok, name) || Self::type_contains_var(err, name)
             }
-            Type::Map(k, v) => {
-                Self::type_contains_var(k, name) || Self::type_contains_var(v, name)
-            }
+            Type::Map(k, v) => Self::type_contains_var(k, name) || Self::type_contains_var(v, name),
             Type::Tuple(items) => items.iter().any(|t| Self::type_contains_var(t, name)),
             Type::Fn(params, ret, _effects) => {
                 params.iter().any(|p| Self::type_contains_var(p, name))

@@ -1,5 +1,7 @@
 use super::{TypeChecker, run_type_check};
-use crate::ast::{BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel, Type};
+use crate::ast::{
+    BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, TopLevel, Type,
+};
 use std::collections::HashMap;
 
 fn errors(items: Vec<TopLevel>) -> Vec<String> {
@@ -389,8 +391,7 @@ type Val
 fn match_binds_expected_var_to_concrete_actual() {
     // `T` in expected, `Int` in actual → bind T := Int.
     let mut subst = HashMap::new();
-    let ok =
-        TypeChecker::match_expected_type(&Type::Int, &Type::Var("T".to_string()), &mut subst);
+    let ok = TypeChecker::match_expected_type(&Type::Int, &Type::Var("T".to_string()), &mut subst);
     assert!(ok, "expected match to succeed");
     assert_eq!(subst.get("T"), Some(&Type::Int));
 }
@@ -400,8 +401,7 @@ fn match_rejects_var_in_actual_against_concrete_expected() {
     // Asymmetric matching contract: `Var("T")` in the actual position
     // never satisfies a concrete expected type.
     let mut subst = HashMap::new();
-    let ok =
-        TypeChecker::match_expected_type(&Type::Var("T".to_string()), &Type::Int, &mut subst);
+    let ok = TypeChecker::match_expected_type(&Type::Var("T".to_string()), &Type::Int, &mut subst);
     assert!(
         !ok,
         "actual-side Var must not match a concrete expected; matcher returned true"
@@ -431,8 +431,7 @@ fn second_bind_must_match_first() {
         &Type::Var("T".to_string()),
         &mut subst,
     ));
-    let ok =
-        TypeChecker::match_expected_type(&Type::Str, &Type::Var("T".to_string()), &mut subst);
+    let ok = TypeChecker::match_expected_type(&Type::Str, &Type::Var("T".to_string()), &mut subst);
     assert!(
         !ok,
         "second bind with conflicting type must fail; got success with subst={subst:?}"
@@ -448,8 +447,7 @@ fn occurs_check_rejects_t_bound_to_list_of_t() {
     // "expected T, got List<T>" error in user-visible diagnostics.
     let mut subst = HashMap::new();
     let actual = Type::List(Box::new(Type::Var("T".to_string())));
-    let ok =
-        TypeChecker::match_expected_type(&actual, &Type::Var("T".to_string()), &mut subst);
+    let ok = TypeChecker::match_expected_type(&actual, &Type::Var("T".to_string()), &mut subst);
     assert!(
         !ok,
         "occurs-check failure expected; matcher accepted `T := List<T>` and subst={subst:?}"
@@ -487,11 +485,7 @@ fn occurs_check_walks_nested_structures() {
         Type::List(Box::new(Type::List(Box::new(Type::Var("T".to_string()))))),
     ] {
         let mut subst = HashMap::new();
-        let ok = TypeChecker::match_expected_type(
-            &actual,
-            &Type::Var("T".to_string()),
-            &mut subst,
-        );
+        let ok = TypeChecker::match_expected_type(&actual, &Type::Var("T".to_string()), &mut subst);
         assert!(
             !ok,
             "occurs check missed `T` inside {actual:?}; matcher returned true with subst={subst:?}"
@@ -506,8 +500,7 @@ fn unrelated_var_binds_normally_even_when_actual_mentions_other_var() {
     // "reject any actual containing any Var".
     let mut subst = HashMap::new();
     let actual = Type::List(Box::new(Type::Var("T".to_string())));
-    let ok =
-        TypeChecker::match_expected_type(&actual, &Type::Var("U".to_string()), &mut subst);
+    let ok = TypeChecker::match_expected_type(&actual, &Type::Var("U".to_string()), &mut subst);
     assert!(
         ok,
         "binding U to List<T> should succeed (no occurs of U), got false; subst={subst:?}"
