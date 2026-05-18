@@ -13,7 +13,7 @@ Tagline draft: *Iron in the frame — the type checker stops lying to itself abo
 | A0  | Occurs check in `bind_expected_var`                        | done   | 5 LOC    | low      | #28 |
 | A1  | Unary minus → `Expr::Neg` (cross-backend + self-host)      | done   | ~530 LOC | medium   | stage 5 |
 | A2  | Duplicate fn name detection (currently silent shadow)      | done   | ~20 LOC  | low      | #28 |
-| A3  | `Type::Named` matching via `SymbolRegistry` canonical name | todo   | ~80 LOC  | high     | —   |
+| A3  | `Type::Named` matching via `SymbolRegistry` canonical name | done   | ~300 LOC | high     | stage 8 |
 | A4  | `Type::Invalid` cascade rigor — audit + document           | todo   | ~30 LOC  | low      | —   |
 | A5  | `record_field_types` string keys → struct                  | todo   | ~200 LOC | medium   | —   |
 

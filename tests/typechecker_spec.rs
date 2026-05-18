@@ -2519,3 +2519,117 @@ fn distinct_function_names_compile_cleanly() {
     );
     assert_no_errors(src);
 }
+
+/// Iron — A3 soundness regression: two modules each exposing a type
+/// `Shape` with different variant sets used to silently merge through
+/// the matcher's `ends_with(".Shape")` suffix fallback, so a function
+/// declared `fn takesShape(s: A.Shape)` would accept a value of type
+/// `B.Shape` at the call site and crash at runtime. After A3 the
+/// matcher resolves `Type::Named` references to their canonical
+/// "Module.Type" via `sig_aliases` before strict comparison; the
+/// crossed call is rejected at typecheck time.
+#[test]
+fn cross_module_same_named_types_do_not_merge() {
+    let root = temp_module_root("cross_module_shape");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "Module A's Shape."
+
+type Shape
+    Circle(Float)
+    Square(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape]
+    intent = "Module B's Shape."
+
+type Shape
+    Triangle(Float)
+    Hexagon(Float)
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Crosses A.Shape and B.Shape."
+
+fn takesShape(s: A.Shape) -> Float
+    match s
+        A.Shape.Circle(r) -> r
+        A.Shape.Square(s) -> s
+
+fn main() -> Float
+    takesShape(B.Shape.Triangle(3.0))
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    // After A3 the matcher resolves `Type::Named` references through
+    // `sig_aliases` before strict comparison; the call therefore
+    // surfaces as an argument-type mismatch instead of silently
+    // accepting the wrong canonical. The "got" side displays the
+    // raw Type::Named string (bare `Shape`), but the mismatch with
+    // the expected `A.Shape` is the load-bearing assertion.
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Argument 1 of 'takesShape'") && e.contains("expected A.Shape")),
+        "expected A.Shape mismatch on takesShape arg, got: {:?}",
+        errs
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Counter-test for the soundness gate above: when only ONE module
+/// exposes a `Status`, a function in a dependent module referring
+/// to it by either the bare name or the qualified `Mod.Status` form
+/// type-checks identically. Locks in "tighter matcher must not
+/// regress the legit aliasing path" alongside the soundness fix.
+#[test]
+fn bare_and_qualified_name_for_same_type_match() {
+    let root = temp_module_root("bare_vs_qualified");
+    std::fs::write(
+        root.join("Types.av"),
+        r#"module Types
+    exposes [Status, open]
+    intent = "Single module Status."
+
+type Status
+    Open
+    Closed
+
+fn open() -> Status
+    Status.Open
+"#,
+    )
+    .expect("write Types.av failed");
+
+    let src = r#"module App
+    depends [Types]
+    intent = "Mixes bare and qualified references to the same type."
+
+record Wrapper
+    status: Types.Status
+
+fn make() -> Wrapper
+    Wrapper(status = Types.open())
+
+fn pick() -> Int
+    match make().status
+        Types.Status.Open -> 1
+        Types.Status.Closed -> 0
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected single-module qualified usage to typecheck, got:\n  {}",
+        errs.join("\n  ")
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

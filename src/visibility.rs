@@ -215,6 +215,15 @@ pub enum SymbolKind {
         name: String,
         variants: Vec<String>,
     },
+    /// Top-level entry for a `record` (product) type. Lets
+    /// `Type::Named("MyRecord")` resolve to a canonical
+    /// `Module.MyRecord` the same way sum types do, instead of
+    /// being implicit-from-its-fields and forcing per-backend
+    /// special-casing of the bare name.
+    ProductType {
+        name: String,
+        fields: Vec<String>,
+    },
     Constructor {
         type_name: String,
         variant_name: String,
@@ -287,8 +296,8 @@ impl SymbolRegistry {
                         let id = entries.len() as u32;
                         entries.push(SymbolEntry {
                             id,
-                            canonical_name: type_name.clone(),
-                            alias: None,
+                            canonical_name: qualified_name(module_name, type_name),
+                            alias: Some(type_name.clone()),
                             module: module_name.to_string(),
                             kind: SymbolKind::OpaqueType {
                                 name: type_name.clone(),
@@ -298,8 +307,8 @@ impl SymbolRegistry {
                         let id = entries.len() as u32;
                         entries.push(SymbolEntry {
                             id,
-                            canonical_name: type_name.clone(),
-                            alias: None,
+                            canonical_name: qualified_name(module_name, type_name),
+                            alias: Some(type_name.clone()),
                             module: module_name.to_string(),
                             kind: SymbolKind::SumType {
                                 name: type_name.clone(),
@@ -323,14 +332,30 @@ impl SymbolRegistry {
                         let id = entries.len() as u32;
                         entries.push(SymbolEntry {
                             id,
-                            canonical_name: type_name.clone(),
-                            alias: None,
+                            canonical_name: qualified_name(module_name, type_name),
+                            alias: Some(type_name.clone()),
                             module: module_name.to_string(),
                             kind: SymbolKind::OpaqueType {
                                 name: type_name.clone(),
                             },
                         });
                     } else {
+                        // Record types also get a top-level entry alongside their
+                        // per-field entries. Pre-A3 they were implicit (only the
+                        // RecordField entries existed), which left no SymbolEntry
+                        // for `Type::Named("MyRecord")` to resolve against and
+                        // forced every backend to special-case the bare name.
+                        let id = entries.len() as u32;
+                        entries.push(SymbolEntry {
+                            id,
+                            canonical_name: qualified_name(module_name, type_name),
+                            alias: Some(type_name.clone()),
+                            module: module_name.to_string(),
+                            kind: SymbolKind::ProductType {
+                                name: type_name.clone(),
+                                fields: fields.iter().map(|(n, _)| n.clone()).collect(),
+                            },
+                        });
                         for (field_name, ty_str) in fields {
                             let id = entries.len() as u32;
                             let canonical =

@@ -30,7 +30,7 @@ impl TypeChecker {
                 }
             }
             BinOp::Eq | BinOp::Neq => {
-                if !Self::constraint_compatible(lt, rt) && !Self::constraint_compatible(rt, lt) {
+                if !self.compatible(lt, rt) && !self.compatible(rt, lt) {
                     self.error_at_line(
                         line,
                         format!(

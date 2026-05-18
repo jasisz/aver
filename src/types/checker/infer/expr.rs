@@ -107,6 +107,11 @@ impl TypeChecker {
     /// inference logic lives in `infer_type_inner`; this wrapper exists only
     /// to keep the `set_ty` step in one place.
     pub(in super::super) fn infer_type(&mut self, expr: &Spanned<Expr>) -> Type {
+        // Iron — A3: leave Spanned.ty stamps in whatever form the
+        // source wrote (bare or qualified) so downstream discovery
+        // walkers (wasm-gc TypeRegistry, codegen helpers) keep seeing
+        // the source-faithful shape. The matcher itself resolves
+        // bare ↔ canonical via `sig_aliases` at comparison time.
         let t = self.infer_type_inner(expr);
         expr.set_ty(t.clone());
         t
@@ -145,7 +150,7 @@ impl TypeChecker {
                 Type::List(inner) => {
                     for (idx, item) in items.iter().enumerate() {
                         let item_ty = self.infer_type_with_expected(item, Some(inner));
-                        if !Self::constraint_compatible(&item_ty, inner) {
+                        if !self.compatible(&item_ty, inner) {
                             self.error(format!(
                                 "List element {}: expected {}, got {}",
                                 idx + 1,
@@ -209,7 +214,7 @@ impl TypeChecker {
                             Type::List(Box::new(Type::Tuple(vec![*k.clone(), *v.clone()])));
                         let list_ty =
                             self.infer_type_with_expected(&args[0], Some(&expected_pairs));
-                        if !Self::constraint_compatible(&list_ty, &expected_pairs) {
+                        if !self.compatible(&list_ty, &expected_pairs) {
                             self.error(format!(
                                 "Argument 1 of 'Map.fromList': expected {}, got {}",
                                 expected_pairs.display(),
@@ -224,7 +229,7 @@ impl TypeChecker {
                     ("Vector.fromList", 1, Type::Vector(inner)) => {
                         let expected_list = Type::List(inner.clone());
                         let list_ty = self.infer_type_with_expected(&args[0], Some(&expected_list));
-                        if !Self::constraint_compatible(&list_ty, &expected_list) {
+                        if !self.compatible(&list_ty, &expected_list) {
                             self.error(format!(
                                 "Argument 1 of 'Vector.fromList': expected {}, got {}",
                                 expected_list.display(),
@@ -241,21 +246,21 @@ impl TypeChecker {
                         let map_ty = self.infer_type_with_expected(&args[0], Some(&expected_map));
                         let key_ty = self.infer_type_with_expected(&args[1], Some(k));
                         let val_ty = self.infer_type_with_expected(&args[2], Some(v));
-                        if !Self::constraint_compatible(&map_ty, &expected_map) {
+                        if !self.compatible(&map_ty, &expected_map) {
                             self.error(format!(
                                 "Argument 1 of 'Map.set': expected {}, got {}",
                                 expected_map.display(),
                                 map_ty.display()
                             ));
                         }
-                        if !Self::constraint_compatible(&key_ty, k) {
+                        if !self.compatible(&key_ty, k) {
                             self.error(format!(
                                 "Argument 2 of 'Map.set': expected {}, got {}",
                                 k.display(),
                                 key_ty.display()
                             ));
                         }
-                        if !Self::constraint_compatible(&val_ty, v) {
+                        if !self.compatible(&val_ty, v) {
                             self.error(format!(
                                 "Argument 3 of 'Map.set': expected {}, got {}",
                                 v.display(),
@@ -322,7 +327,7 @@ impl TypeChecker {
                 };
                 if matches!(k, Type::Var(_)) {
                     k = key_ty.clone();
-                } else if !Self::constraint_compatible(&key_ty, &k) {
+                } else if !self.compatible(&key_ty, &k) {
                     self.error(format!(
                         "Argument 2 of 'Map.set': expected {}, got {}",
                         k.display(),
@@ -331,7 +336,7 @@ impl TypeChecker {
                 }
                 if matches!(v, Type::Var(_)) {
                     v = val_ty.clone();
-                } else if !Self::constraint_compatible(&val_ty, &v) {
+                } else if !self.compatible(&val_ty, &v) {
                     self.error(format!(
                         "Argument 3 of 'Map.set': expected {}, got {}",
                         v.display(),
@@ -364,9 +369,7 @@ impl TypeChecker {
                         val_ty.clone()
                     }
                 };
-                if !matches!(elem_ty, Type::Var(_))
-                    && !Self::constraint_compatible(&val_ty, &elem_ty)
-                {
+                if !matches!(elem_ty, Type::Var(_)) && !self.compatible(&val_ty, &elem_ty) {
                     self.error(format!(
                         "Argument 1 of 'List.prepend': expected {}, got {}",
                         elem_ty.display(),
@@ -464,7 +467,7 @@ impl TypeChecker {
                         for (i, (arg_ty, param_ty)) in
                             arg_types.iter().zip(sig.params.iter()).enumerate()
                         {
-                            if !Self::match_expected_type(arg_ty, param_ty, &mut subst) {
+                            if !tc.match_with(arg_ty, param_ty, &mut subst) {
                                 tc.error_at_line(
                                     err_line,
                                     format!(
@@ -613,7 +616,7 @@ impl TypeChecker {
                             let actual_ctx = &arg_types[1];
                             if !matches!(expected_ctx, Type::Invalid)
                                 && !matches!(actual_ctx, Type::Invalid)
-                                && !Self::constraint_compatible(actual_ctx, expected_ctx)
+                                && !self.compatible(actual_ctx, expected_ctx)
                             {
                                 self.error_at_line(
                                     err_line,
@@ -785,9 +788,7 @@ impl TypeChecker {
                                 match self.current_fn_ret.clone() {
                                     Some(Type::Result(_, fn_err_ty)) => {
                                         let mut subst = HashMap::new();
-                                        if !Self::match_expected_type(
-                                            &err_ty, &fn_err_ty, &mut subst,
-                                        ) {
+                                        if !self.match_with(&err_ty, &fn_err_ty, &mut subst) {
                                             self.error_at_line(prop_line, format!(
                                                 "Independent product '?!': Err type {} is incompatible with function's Err type {}",
                                                 err_ty.display(),
@@ -853,7 +854,7 @@ impl TypeChecker {
                     if matches!(key_ty, Type::Var(_)) {
                         key_ty = current_key.clone();
                     } else if !matches!(current_key, Type::Invalid)
-                        && !Self::constraint_compatible(&current_key, &key_ty)
+                        && !self.compatible(&current_key, &key_ty)
                     {
                         self.error(format!(
                             "Map literal contains incompatible key types: {} vs {}",
@@ -865,7 +866,7 @@ impl TypeChecker {
                     if matches!(val_ty, Type::Var(_)) {
                         val_ty = current_val.clone();
                     } else if !matches!(current_val, Type::Invalid)
-                        && !Self::constraint_compatible(&current_val, &val_ty)
+                        && !self.compatible(&current_val, &val_ty)
                     {
                         self.error(format!(
                             "Map literal contains incompatible value types: {} vs {}",
@@ -939,7 +940,7 @@ impl TypeChecker {
                             Some(Type::Result(_, fn_err_ty)) => {
                                 let mut subst = HashMap::new();
                                 let err_matches = matches!(err_ty.as_ref(), Type::Var(_))
-                                    || Self::match_expected_type(&err_ty, &fn_err_ty, &mut subst);
+                                    || self.match_with(&err_ty, &fn_err_ty, &mut subst);
                                 if !err_matches {
                                     self.error_at_line(prop_line, format!(
                                         "Operator '?': Err type {} is incompatible with function's Err type {}",

@@ -2,18 +2,30 @@ use super::*;
 
 impl TypeChecker {
     pub(super) fn check(&mut self, items: &[TopLevel], base_dir: Option<&str>) {
-        self.build_signatures(items);
-
+        // Iron — A3: load + integrate dependency modules FIRST so the
+        // alias map is populated before `build_signatures`
+        // canonicalises local fn / type annotations. Without this, a
+        // bare reference to an imported type in a local signature
+        // stays as `Type::Named("Discount")` instead of resolving to
+        // `Type::Named("Pricing.Discount.Discount")`, and the strict
+        // matcher then rejects every call site of that function.
+        let mut loaded_modules: Vec<crate::source::LoadedModule> = Vec::new();
         if let Some(base) = base_dir
             && let Some(module) = Self::module_decl(items)
         {
             match crate::source::load_module_tree(&module.depends, base) {
                 Ok(modules) => {
                     self.integrate_loaded_modules(&modules);
-                    self.check_loaded_module_bodies(&modules);
+                    loaded_modules = modules;
                 }
                 Err(e) => self.error(e),
             }
+        }
+
+        self.build_signatures(items);
+
+        if !loaded_modules.is_empty() {
+            self.check_loaded_module_bodies(&loaded_modules);
         }
 
         self.check_body(items);
@@ -28,8 +40,12 @@ impl TypeChecker {
         items: &[TopLevel],
         loaded: &[crate::source::LoadedModule],
     ) {
-        self.build_signatures(items);
+        // Iron — A3: dependency aliases come in before local
+        // signatures so `build_signatures`'s canonicalization sees
+        // imported types (e.g. `Tile` resolves to `Types.Tile` when
+        // `Types` is in `depends`).
         self.integrate_loaded_modules(loaded);
+        self.build_signatures(items);
         self.check_loaded_module_bodies(loaded);
         self.check_body(items);
     }
@@ -69,10 +85,15 @@ impl TypeChecker {
             // re-enforces opacity even when the parent compile was kicked
             // off with `--with-self-host-support`.
             sub.self_host_mode = self.self_host_mode;
-            sub.build_signatures(&module.items);
-            // Pull in the OTHER modules' canonical (qualified) signatures —
-            // skip self so the module sees its own types as transparent
-            // (opaque enforcement only applies cross-module).
+            // Iron — A3: pull in dependency aliases BEFORE building
+            // local signatures. build_signatures canonicalizes every
+            // type annotation by walking `sig_aliases`; without the
+            // imported types in there first, a bare reference like
+            // `Tile` (imported from `Types`) stays as
+            // `Type::Named("Tile")` instead of being rewritten to
+            // `Type::Named("Types.Tile")`, and the strict matcher
+            // then rejects the call site that passes the canonical
+            // form.
             let others: Vec<_> = modules
                 .iter()
                 .enumerate()
@@ -80,6 +101,7 @@ impl TypeChecker {
                 .map(|(_, m)| m.clone())
                 .collect();
             sub.integrate_loaded_modules(&others);
+            sub.build_signatures(&module.items);
             sub.check_top_level_stmts(&module.items);
             sub.check_verify_blocks(&module.items);
             for item in &module.items {
@@ -133,11 +155,16 @@ impl TypeChecker {
 
     /// Check whether a named user-defined type has only memo-safe fields.
     pub(super) fn named_type_memo_safe(&self, name: &str, visiting: &mut HashSet<String>) -> bool {
-        // Check record fields: keys are "TypeName.fieldName"
+        // Check record fields: keys are "TypeName.fieldName". Filter
+        // for single-segment remainders so the dual-keyed
+        // "Module.Type.field" canonical entries don't double-count
+        // (Iron — A3).
         let prefix = format!("{}.", name);
         let mut found_fields = false;
         for (key, field_ty) in &self.record_field_types {
-            if key.starts_with(&prefix) {
+            if let Some(rest) = key.strip_prefix(&prefix)
+                && !rest.contains('.')
+            {
                 found_fields = true;
                 if !self.is_memo_safe(field_ty, visiting) {
                     return false;

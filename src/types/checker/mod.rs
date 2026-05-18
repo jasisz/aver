@@ -120,7 +120,11 @@ pub fn run_type_check_with_loaded_self_host(
 }
 
 fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCheckResult {
-    let fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = checker
+    // Internal `fn_sigs` is keyed by canonical "Module.name" (Iron — A3).
+    // The exported map preserves both forms so external consumers
+    // (`verify_effects`, Lean / Dafny codegen, the CLI summary) can
+    // continue to look entries up by the bare name the user wrote.
+    let mut fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = checker
         .fn_sigs
         .iter()
         .map(|(k, v)| {
@@ -130,6 +134,16 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
             )
         })
         .collect();
+    for (alias, canonical) in &checker.sig_aliases {
+        if !fn_sigs.contains_key(alias)
+            && let Some(sig) = checker.fn_sigs.get(canonical)
+        {
+            fn_sigs.insert(
+                alias.clone(),
+                (sig.params.clone(), sig.ret.clone(), sig.effects.clone()),
+            );
+        }
+    }
 
     let memo_safe_types = checker.compute_memo_safe_types(items);
 
@@ -387,19 +401,45 @@ impl TypeChecker {
             .cloned()
     }
 
-    /// Compatibility used for checker constraints (returns, ascriptions, and
-    /// simple non-polymorphic call args). Variables in the expected type may bind
-    /// to the actual type; variables in the actual type only satisfy the exact
-    /// same expected variable and never satisfy concrete requirements.
-    pub(super) fn constraint_compatible(actual: &Type, expected: &Type) -> bool {
+    /// Iron — A3: `&self`-bearing constraint check. Resolves bare
+    /// Named types through `sig_aliases` so source-faithful Spanned
+    /// stamps (often bare inside a module) match against
+    /// canonicalised fn signatures (always "Module.Type").
+    pub(super) fn compatible(&self, actual: &Type, expected: &Type) -> bool {
         let mut subst = HashMap::new();
-        Self::match_expected_type(actual, expected, &mut subst)
+        Self::match_expected_type_inner(actual, expected, &mut subst, &self.sig_aliases)
     }
 
+    /// Static-form matcher (no alias resolution). Tests use this
+    /// directly; production code should reach for `compatible`
+    /// instead.
     pub(super) fn match_expected_type(
         actual: &Type,
         expected: &Type,
         subst: &mut HashMap<String, Type>,
+    ) -> bool {
+        Self::match_expected_type_inner(actual, expected, subst, &HashMap::new())
+    }
+
+    /// Iron — A3: `&self` matcher that lets the caller carry a
+    /// substitution (poly fn arg inference). The pure `compatible`
+    /// helper above hides `subst` for the common "no Type::Var
+    /// involved" callers; this method exposes it for the FnCall arg
+    /// loop in `infer/expr.rs`.
+    pub(super) fn match_with(
+        &self,
+        actual: &Type,
+        expected: &Type,
+        subst: &mut HashMap<String, Type>,
+    ) -> bool {
+        Self::match_expected_type_inner(actual, expected, subst, &self.sig_aliases)
+    }
+
+    fn match_expected_type_inner(
+        actual: &Type,
+        expected: &Type,
+        subst: &mut HashMap<String, Type>,
+        aliases: &HashMap<String, String>,
     ) -> bool {
         match expected {
             Type::Var(name) => Self::bind_expected_var(name, actual, subst),
@@ -410,42 +450,60 @@ impl TypeChecker {
             Type::Bool => matches!(actual, Type::Bool),
             Type::Unit => matches!(actual, Type::Unit),
             Type::Named(expected_name) => match actual {
+                // Iron — A3: bare ↔ canonical resolves through
+                // `sig_aliases`. After A3, fn / record / variant
+                // signatures live under their "Module.Type" key and
+                // mirror a bare-name alias in `sig_aliases`; source
+                // expressions stamp Spanned.ty in whatever form the
+                // user wrote. Resolve both sides to the canonical
+                // form first, then compare strictly. Two distinct
+                // modules both exposing "Shape" still produce
+                // ambiguous aliases at registration time — that's
+                // surfaced upfront elsewhere; here we only need to
+                // know that whatever bare form survives in
+                // `sig_aliases` IS the unique canonical.
                 Type::Named(actual_name) => {
-                    actual_name == expected_name
-                        || actual_name.ends_with(&format!(".{}", expected_name))
-                        || expected_name.ends_with(&format!(".{}", actual_name))
+                    let exp_canon = aliases
+                        .get(expected_name)
+                        .map(String::as_str)
+                        .unwrap_or(expected_name);
+                    let act_canon = aliases
+                        .get(actual_name)
+                        .map(String::as_str)
+                        .unwrap_or(actual_name);
+                    act_canon == exp_canon
                 }
                 _ => false,
             },
             Type::Option(expected_inner) => match actual {
                 Type::Option(actual_inner) => {
-                    Self::match_expected_type(actual_inner, expected_inner, subst)
+                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, aliases)
                 }
                 _ => false,
             },
             Type::List(expected_inner) => match actual {
                 Type::List(actual_inner) => {
-                    Self::match_expected_type(actual_inner, expected_inner, subst)
+                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, aliases)
                 }
                 _ => false,
             },
             Type::Vector(expected_inner) => match actual {
                 Type::Vector(actual_inner) => {
-                    Self::match_expected_type(actual_inner, expected_inner, subst)
+                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, aliases)
                 }
                 _ => false,
             },
             Type::Result(expected_ok, expected_err) => match actual {
                 Type::Result(actual_ok, actual_err) => {
-                    Self::match_expected_type(actual_ok, expected_ok, subst)
-                        && Self::match_expected_type(actual_err, expected_err, subst)
+                    Self::match_expected_type_inner(actual_ok, expected_ok, subst, aliases)
+                        && Self::match_expected_type_inner(actual_err, expected_err, subst, aliases)
                 }
                 _ => false,
             },
             Type::Map(expected_k, expected_v) => match actual {
                 Type::Map(actual_k, actual_v) => {
-                    Self::match_expected_type(actual_k, expected_k, subst)
-                        && Self::match_expected_type(actual_v, expected_v, subst)
+                    Self::match_expected_type_inner(actual_k, expected_k, subst, aliases)
+                        && Self::match_expected_type_inner(actual_v, expected_v, subst, aliases)
                 }
                 _ => false,
             },
@@ -453,7 +511,12 @@ impl TypeChecker {
                 Type::Tuple(actual_items) if actual_items.len() == expected_items.len() => {
                     actual_items.iter().zip(expected_items.iter()).all(
                         |(actual_item, expected_item)| {
-                            Self::match_expected_type(actual_item, expected_item, subst)
+                            Self::match_expected_type_inner(
+                                actual_item,
+                                expected_item,
+                                subst,
+                                aliases,
+                            )
                         },
                     )
                 }
@@ -465,9 +528,14 @@ impl TypeChecker {
                 {
                     actual_params.iter().zip(expected_params.iter()).all(
                         |(actual_param, expected_param)| {
-                            Self::match_expected_type(actual_param, expected_param, subst)
+                            Self::match_expected_type_inner(
+                                actual_param,
+                                expected_param,
+                                subst,
+                                aliases,
+                            )
                         },
-                    ) && Self::match_expected_type(actual_ret, expected_ret, subst)
+                    ) && Self::match_expected_type_inner(actual_ret, expected_ret, subst, aliases)
                         && actual_effects.iter().all(|actual| {
                             expected_effects
                                 .iter()
@@ -488,6 +556,10 @@ impl TypeChecker {
         if let Some(bound) = subst.get(name).cloned() {
             return Self::match_expected_type(actual, &bound, subst)
                 && Self::match_expected_type(&bound, actual, subst);
+            // bind_expected_var is alias-agnostic — Var bindings
+            // never compare Named types against `sig_aliases` since
+            // the binding rule already accepts whatever concrete
+            // type the caller hands in.
         }
         // Occurs check — refuse `T := F<…T…>` style circular bindings.
         // Without this, polymorphic recursion patterns like `fn nest(v:
