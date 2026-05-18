@@ -140,7 +140,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aver-lang"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "aver-memory",
  "aver-rt",
@@ -168,7 +168,7 @@ dependencies = [
 
 [[package]]
 name = "aver-lsp"
-version = "0.6.10"
+version = "0.6.11"
 dependencies = [
  "aver-lang",
  "serde_json",
@@ -178,14 +178,14 @@ dependencies = [
 
 [[package]]
 name = "aver-memory"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "aver-rt",
 ]
 
 [[package]]
 name = "aver-rt"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "crossterm",
  "getrandom 0.3.4",

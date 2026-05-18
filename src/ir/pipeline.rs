@@ -275,9 +275,7 @@ pub fn typecheck(items: &[TopLevel], mode: &TypecheckMode<'_>) -> TypeCheckResul
     match mode {
         TypecheckMode::Full { base_dir } => run_type_check_full(items, *base_dir),
         TypecheckMode::WithLoaded(loaded) => run_type_check_with_loaded(items, loaded),
-        TypecheckMode::FullSelfHost { base_dir } => {
-            run_type_check_full_self_host(items, *base_dir)
-        }
+        TypecheckMode::FullSelfHost { base_dir } => run_type_check_full_self_host(items, *base_dir),
         TypecheckMode::WithLoadedSelfHost(loaded) => {
             run_type_check_with_loaded_self_host(items, loaded)
         }
