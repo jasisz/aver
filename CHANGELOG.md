@@ -8,6 +8,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **Duplicate function name is now a type error.** Defining the same `fn` name twice in a module surfaces "Function 'X' is already defined in this module" at the duplicate's source line. Pre-Iron, the second definition silently dropped the first — a typo could swap your function's body without any signal.
 - **Polymorphic recursion that would need `T := F<...T...>` is rejected.** Shapes like `fn nest(v: A) -> Unit; nest([v])` (where the recursive call would need `A` to equal `List<A>`) now surface as a normal type-incompatibility error instead of silently typechecking with a circular binding.
 
+### Fixed
+- **Replay can load `Vector` values.** `aver run --record` emitted a `$vector` marker for `Value::Vector`, but `aver replay` had no matching decode arm — any recording with a Vector value failed to load with `unknown replay marker '$vector'`.
+- **Replay can load `Map`s with a single string key.** A 1-entry string-keyed `Map` encoded as `{"key": value}` collided with the marker-wrap shape; replay tried to interpret `key` as an unknown marker. The decoder now only treats `$`-prefixed keys as markers, so plain string keys flow through as map entries.
+
 ## 0.20.0 "Pulse" — 2026-05-18
 
 > _The same Aver source that opened HTTP both ways in 0.19 now opens raw TCP — connect, send, receive, ping. One pool, one handle shape, every backend the same._
