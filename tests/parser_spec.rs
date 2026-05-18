@@ -6,6 +6,7 @@
 use aver::ast::*;
 use aver::lexer::Lexer;
 use aver::parser::Parser;
+use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1505,5 +1506,46 @@ fn module_exposes_opaque_multiple() {
         );
     } else {
         panic!("expected Module");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Crash-resistance (Iron — C1)
+// ---------------------------------------------------------------------------
+//
+// Mirror of the lexer crash-resistance property in lexer_spec.rs:
+// the parser must always return `Result<…, ParseError>` for any
+// token stream the lexer was able to produce — never panic, never
+// loop. End-to-end pipeline test asserts the combined frontend
+// reports errors via the Result chain rather than crashing the
+// process.
+//
+// Why: the parser is recursive-descent over a hand-written state
+// machine with many `expect_*` invariants. Most invariants are
+// reached only on well-formed input; malformed input should funnel
+// through error recovery instead of triggering an `expect` that
+// has no graceful fallback. Fuzzing surfaces exactly that class of
+// bug.
+
+proptest! {
+    #[test]
+    fn parser_does_not_panic_on_arbitrary_utf8(src in "[\\PC\\s]{0,512}") {
+        let mut lexer = Lexer::new(&src);
+        if let Ok(tokens) = lexer.tokenize() {
+            let mut parser = Parser::new(tokens);
+            let _ = parser.parse();
+        }
+    }
+
+    #[test]
+    fn parser_does_not_panic_on_arbitrary_bytes(
+        bytes in prop::collection::vec(prop::num::u8::ANY, 0..512),
+    ) {
+        let src = String::from_utf8_lossy(&bytes);
+        let mut lexer = Lexer::new(&src);
+        if let Ok(tokens) = lexer.tokenize() {
+            let mut parser = Parser::new(tokens);
+            let _ = parser.parse();
+        }
     }
 }
