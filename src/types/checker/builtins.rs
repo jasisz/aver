@@ -23,10 +23,8 @@ impl TypeChecker {
             ("headers", header_map()),
         ];
         for (field, ty) in net_resp_fields {
-            self.record_field_types.insert(
-                crate::visibility::member_key("HttpResponse", field),
-                ty.clone(),
-            );
+            self.record_field_types
+                .insert(RecordFieldKey::new("HttpResponse", *field), ty.clone());
         }
         let net_req_fields: &[(&str, Type)] = &[
             ("method", Type::Str),
@@ -36,10 +34,8 @@ impl TypeChecker {
             ("headers", header_map()),
         ];
         for (field, ty) in net_req_fields {
-            self.record_field_types.insert(
-                crate::visibility::member_key("HttpRequest", field),
-                ty.clone(),
-            );
+            self.record_field_types
+                .insert(RecordFieldKey::new("HttpRequest", *field), ty.clone());
         }
         let effect_arg_var = || Type::Var("EffectArg".to_string());
         // `printable_var` retired in 0.16: Console.print/error/warn now
@@ -63,7 +59,7 @@ impl TypeChecker {
         ];
         for (field, ty) in effect_event_fields {
             self.record_field_types.insert(
-                crate::visibility::member_key(crate::types::effect_event::TYPE_NAME, field),
+                RecordFieldKey::new(crate::types::effect_event::TYPE_NAME, *field),
                 ty.clone(),
             );
         }
@@ -77,17 +73,15 @@ impl TypeChecker {
         )];
         for (field, ty) in trace_fields {
             self.record_field_types.insert(
-                crate::visibility::member_key(crate::types::trace::TYPE_NAME, field),
+                RecordFieldKey::new(crate::types::trace::TYPE_NAME, *field),
                 ty.clone(),
             );
         }
         let tcp_conn_fields: &[(&str, Type)] =
             &[("id", Type::Str), ("host", Type::Str), ("port", Type::Int)];
         for (field, ty) in tcp_conn_fields {
-            self.record_field_types.insert(
-                crate::visibility::member_key("Tcp.Connection", field),
-                ty.clone(),
-            );
+            self.record_field_types
+                .insert(RecordFieldKey::new("Tcp.Connection", *field), ty.clone());
         }
         // Phase 4.7+ fix #11 — `Tcp.Connection` is opaque. It's a
         // stateful handle to a pool slot: `id` is internal, `host`
@@ -426,10 +420,8 @@ impl TypeChecker {
             let terminal_size_fields: &[(&str, Type)] =
                 &[("width", Type::Int), ("height", Type::Int)];
             for (field, ty) in terminal_size_fields {
-                self.record_field_types.insert(
-                    crate::visibility::member_key("Terminal.Size", field),
-                    ty.clone(),
-                );
+                self.record_field_types
+                    .insert(RecordFieldKey::new("Terminal.Size", *field), ty.clone());
             }
         }
 

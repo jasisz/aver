@@ -155,29 +155,23 @@ impl TypeChecker {
 
     /// Check whether a named user-defined type has only memo-safe fields.
     pub(super) fn named_type_memo_safe(&self, name: &str, visiting: &mut HashSet<String>) -> bool {
-        // Check record fields: keys are "TypeName.fieldName". Filter
-        // for single-segment remainders so the dual-keyed
-        // "Module.Type.field" canonical entries don't double-count
-        // (Iron — A3).
-        let prefix = format!("{}.", name);
-        let mut found_fields = false;
-        for (key, field_ty) in &self.record_field_types {
-            if let Some(rest) = key.strip_prefix(&prefix)
-                && !rest.contains('.')
-            {
-                found_fields = true;
-                if !self.is_memo_safe(field_ty, visiting) {
+        // Iron — A5: `fields_for_type` resolves `name` through
+        // `sig_aliases` and returns one `(field_name, field_type)`
+        // per declared field; no dual-key arithmetic.
+        let fields = self.fields_for_type(name);
+        if !fields.is_empty() {
+            for (_, field_ty) in fields {
+                if !self.is_memo_safe(&field_ty, visiting) {
                     return false;
                 }
             }
-        }
-        if found_fields {
             return true;
         }
 
         // Check sum type variants: constructors are registered in fn_sigs
         // as "TypeName.VariantName" with param types, or in value_members
         // for zero-arg constructors.
+        let prefix = format!("{}.", name);
         let mut found_variants = false;
         for (key, sig) in &self.fn_sigs {
             if key.starts_with(&prefix) && key.len() > prefix.len() {
