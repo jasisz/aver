@@ -218,7 +218,22 @@ fn marker_single_key(obj: &BTreeMap<String, JsonValue>) -> Option<(&str, &JsonVa
     if obj.len() != 1 {
         return None;
     }
-    obj.iter().next().map(|(k, v)| (k.as_str(), v))
+    // Iron — B3: only treat a single-key object as a marker wrap when
+    // the key starts with `$`. All real markers (`$ok`, `$err`,
+    // `$some`, `$none`, `$tuple`, `$map`, `$record`, `$variant`,
+    // `$vector`) use that sigil. A user-level `Map` with a single
+    // string key (e.g. `{"a" → 0}`) also encodes as a single-key
+    // JSON object — without the `$`-gate, the decoder was treating
+    // every 1-entry string-keyed map as an attempted-but-unknown
+    // marker wrap and erroring `unknown replay marker 'a'`. Found
+    // by `tests/replay_proptest.rs`.
+    obj.iter().next().and_then(|(k, v)| {
+        if k.starts_with('$') {
+            Some((k.as_str(), v))
+        } else {
+            None
+        }
+    })
 }
 
 fn decode_marker(marker: &str, payload: &JsonValue) -> Result<Value, String> {
@@ -231,8 +246,24 @@ fn decode_marker(marker: &str, payload: &JsonValue) -> Result<Value, String> {
         "$map" => decode_map(payload),
         "$record" => decode_record(payload),
         "$variant" => decode_variant(payload),
+        "$vector" => decode_vector(payload),
         _ => Err(format!("unknown replay marker '{}'", marker)),
     }
+}
+
+/// Iron — B3: `value_to_json` emits `wrap_marker("$vector", JsonValue::Array(...))`
+/// for `Value::Vector`, but pre-Iron `decode_marker` had no
+/// matching arm — encoding produced JSON the decoder rejected
+/// with "unknown replay marker '$vector'". Any replay recording
+/// that captured a Vector value failed to load back. Found by
+/// the replay-codec roundtrip property test (`tests/replay_proptest.rs`).
+fn decode_vector(payload: &JsonValue) -> Result<Value, String> {
+    let items = parse_array(payload, "$vector")?;
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        out.push(json_to_value(item)?);
+    }
+    Ok(Value::Vector(aver_rt::AverVector::from_vec(out)))
 }
 
 fn decode_tuple(payload: &JsonValue) -> Result<Value, String> {
