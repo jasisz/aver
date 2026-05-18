@@ -190,6 +190,19 @@ fn run_component(component_bytes: &[u8], program_args: &[String]) -> wasmtime::R
             wasmtime_wasi::FilePerms::all(),
         )
         .map_err(|e| wasmtime::Error::msg(format!("preopen `.`: {e}")))?;
+    // Phase 4 (0.20) — wasi-sockets capabilities for `Tcp.*`.
+    // `inherit_network` grants the guest access to the host's
+    // network stack (without it every wasi:sockets call returns the
+    // default-deny error); `allow_ip_name_lookup` gates
+    // `wasi:sockets/ip-name-lookup` (required even for IP-literal
+    // hosts — `resolve-addresses` rejects every input otherwise);
+    // `allow_tcp` gates `wasi:sockets/tcp` (`create-tcp-socket`
+    // traps without it). Aver's source-level `Tcp.*` surface
+    // requires all three to function end-to-end. UDP stays off
+    // (Aver doesn't expose UDP today).
+    ctx_builder.inherit_network();
+    ctx_builder.allow_ip_name_lookup(true);
+    ctx_builder.allow_tcp(true);
     let ctx = ctx_builder.build();
 
     struct Host {

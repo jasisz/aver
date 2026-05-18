@@ -656,6 +656,110 @@ pub(super) enum Wasip2ImportSlot {
     ///     pos6: i32,
     ///     pos7: i32) -> ()`.
     HttpTypesResponseOutparamSet,
+
+    // ── 0.20 "Phase 4" — wasi:sockets/* slots for `Tcp.*` (client). ─
+    //
+    // Each source-level `Tcp.connect` walks a 5-resource choreography
+    // (network → resolve-address-stream → tcp-socket → pollable →
+    // (input-stream, output-stream)), which is why 12 slots are needed
+    // for a single connect call. `Tcp.write/read/close/ping` reuse
+    // these slots plus io/streams + io/poll already wired by HTTP.
+    /// `wasi:sockets/instance-network.instance-network:
+    ///   func() -> network`. Returns the default network handle
+    ///   (program-lifetime, never dropped in v1). Phase 4 caches it
+    ///   in a wasm global, mirroring `disk_preopen_handle`.
+    /// Canonical-ABI signature: `() -> i32`.
+    SocketsInstanceNetworkInstanceNetwork,
+    /// `wasi:sockets/ip-name-lookup.resolve-addresses:
+    ///   func(network: borrow<network>, name: string)
+    ///   -> result<resolve-address-stream, error-code>`.
+    /// Returns an async stream of resolved IP addresses. Result via
+    /// retptr (8 bytes: `tag@0` + stream handle / error-code @4).
+    /// Canonical-ABI signature:
+    ///   `(network: i32, name_ptr: i32, name_len: i32, retptr: i32)
+    ///    -> ()`.
+    SocketsIpNameLookupResolveAddresses,
+    /// `wasi:sockets/ip-name-lookup.[method]resolve-address-stream.
+    ///   resolve-next-address: func(this: borrow<resolve-address-stream>)
+    ///   -> result<option<ip-address>, error-code>`.
+    ///
+    /// Retptr layout (22 bytes, align 2):
+    /// - byte 0:  result tag (0 = Ok, 1 = Err)
+    /// - byte 2:  Ok → option tag (0 = None, 1 = Some) | Err → error-code u8
+    /// - byte 4:  ip-address variant tag (0 = ipv4, 1 = ipv6) — only on Some
+    /// - bytes 6..10  (ipv4): 4× u8 octets
+    /// - bytes 6..22 (ipv6): 8× u16 hextets
+    ///
+    /// Phase 4 only consumes ipv4 (first-IPv4-wins policy).
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    SocketsIpNameLookupResolveNextAddress,
+    /// `wasi:sockets/ip-name-lookup.[method]resolve-address-stream.
+    ///   subscribe: func(this: borrow<resolve-address-stream>)
+    ///   -> pollable`. Phase 4 pairs this with `io/poll.poll` to
+    /// block until the resolver has at least one address ready.
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    SocketsIpNameLookupResolveAddressStreamSubscribe,
+    /// `wasi:sockets/ip-name-lookup.[resource-drop]resolve-address-stream:
+    ///   func(this: resolve-address-stream) -> ()`. Phase 4 drops the
+    /// stream once the first address has been pulled.
+    /// Canonical-ABI signature: `(handle: i32) -> ()`.
+    SocketsIpNameLookupResourceDropResolveAddressStream,
+    /// `wasi:sockets/tcp-create-socket.create-tcp-socket:
+    ///   func(address-family: ip-address-family)
+    ///   -> result<tcp-socket, error-code>`.
+    ///
+    /// `ip-address-family` is the variant `{ ipv4, ipv6 }` flattened
+    /// to a tag i32. Result via retptr (8 bytes: `tag@0` + socket
+    /// handle / error-code @4). Phase 4 always passes `ipv4`.
+    /// Canonical-ABI signature: `(family: i32, retptr: i32) -> ()`.
+    SocketsTcpCreateSocketCreateTcpSocket,
+    /// `wasi:sockets/tcp.[method]tcp-socket.start-connect:
+    ///   func(this: borrow<tcp-socket>, network: borrow<network>,
+    ///        remote-address: ip-socket-address)
+    ///   -> result<_, error-code>`.
+    ///
+    /// `ip-socket-address` flattens via canonical-ABI variant join to
+    /// 12 i32 positions (tag + max-per-position of ipv4(5) and
+    /// ipv6(11) flat shapes). The flat layout is:
+    /// - pos 0: variant tag (0 = ipv4, 1 = ipv6)
+    /// - pos 1: port (u16 zero-extended)
+    /// - pos 2..6: ipv4 octets (a, b, c, d as i32) | ipv6 flow-info + first 4 hextets
+    /// - pos 6..12: ipv6 trailing hextets + scope-id (unused for ipv4)
+    ///
+    /// Result via retptr (2 bytes: `tag@0` + error-code @1).
+    /// Canonical-ABI signature (14 i32 args + retptr):
+    ///   `(this: i32, network: i32, addr_tag: i32, p1..p11: i32 × 11,
+    ///     retptr: i32) -> ()`.
+    SocketsTcpStartConnect,
+    /// `wasi:sockets/tcp.[method]tcp-socket.finish-connect:
+    ///   func(this: borrow<tcp-socket>)
+    ///   -> result<tuple<input-stream, output-stream>, error-code>`.
+    ///
+    /// Retptr layout (12 bytes): `tag@0` + on Ok `(in_stream@4,
+    /// out_stream@8)`, on Err `error-code@4`.
+    /// Canonical-ABI signature: `(this: i32, retptr: i32) -> ()`.
+    SocketsTcpFinishConnect,
+    /// `wasi:sockets/tcp.[method]tcp-socket.subscribe:
+    ///   func(this: borrow<tcp-socket>) -> pollable`. Phase 4 uses
+    /// this both for connect-readiness and (combined with
+    /// `subscribe-duration`) the ping-timeout race.
+    /// Canonical-ABI signature: `(this: i32) -> i32`.
+    SocketsTcpSubscribe,
+    /// `wasi:sockets/tcp.[method]tcp-socket.shutdown:
+    ///   func(this: borrow<tcp-socket>, shutdown-type: shutdown-type)
+    ///   -> result<_, error-code>`.
+    ///
+    /// `shutdown-type` is an enum `{ receive, send, both }` flattened
+    /// to a tag i32. Phase 4 `Tcp.close` calls this with `both` (=2)
+    /// before dropping the socket handle. Result via retptr (2 bytes).
+    /// Canonical-ABI signature:
+    ///   `(this: i32, shutdown_type: i32, retptr: i32) -> ()`.
+    SocketsTcpShutdown,
+    /// `wasi:sockets/tcp.[resource-drop]tcp-socket: func(this: tcp-socket)
+    ///   -> ()`. Phase 4 `Tcp.close` calls this last (after the
+    /// in/out stream drops + shutdown) to release the host-side
+    /// socket. Canonical-ABI signature: `(handle: i32) -> ()`.
+    SocketsTcpResourceDropTcpSocket,
 }
 
 impl Wasip2ImportSlot {
@@ -860,6 +964,44 @@ impl Wasip2ImportSlot {
             }
             Wasip2ImportSlot::HttpTypesResponseOutparamSet => {
                 ("wasi:http/types@0.2.4", "[static]response-outparam.set")
+            }
+            // ── wasi:sockets/* (Phase 4 / 0.20). ───────────────────
+            Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork => {
+                ("wasi:sockets/instance-network@0.2.4", "instance-network")
+            }
+            Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses => {
+                ("wasi:sockets/ip-name-lookup@0.2.4", "resolve-addresses")
+            }
+            Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress => (
+                "wasi:sockets/ip-name-lookup@0.2.4",
+                "[method]resolve-address-stream.resolve-next-address",
+            ),
+            Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe => (
+                "wasi:sockets/ip-name-lookup@0.2.4",
+                "[method]resolve-address-stream.subscribe",
+            ),
+            Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream => (
+                "wasi:sockets/ip-name-lookup@0.2.4",
+                "[resource-drop]resolve-address-stream",
+            ),
+            Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket => {
+                ("wasi:sockets/tcp-create-socket@0.2.4", "create-tcp-socket")
+            }
+            Wasip2ImportSlot::SocketsTcpStartConnect => {
+                ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.start-connect")
+            }
+            Wasip2ImportSlot::SocketsTcpFinishConnect => (
+                "wasi:sockets/tcp@0.2.4",
+                "[method]tcp-socket.finish-connect",
+            ),
+            Wasip2ImportSlot::SocketsTcpSubscribe => {
+                ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.subscribe")
+            }
+            Wasip2ImportSlot::SocketsTcpShutdown => {
+                ("wasi:sockets/tcp@0.2.4", "[method]tcp-socket.shutdown")
+            }
+            Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket => {
+                ("wasi:sockets/tcp@0.2.4", "[resource-drop]tcp-socket")
             }
         }
     }
@@ -1106,6 +1248,69 @@ impl Wasip2ImportSlot {
                 ValType::I32, // pos 6
                 ValType::I32, // pos 7
             ],
+            // ── wasi:sockets/* (Phase 4 / 0.20). ───────────────────
+            // `instance-network() -> network` — no params.
+            Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork => Vec::new(),
+            // `resolve-addresses(network, name) -> result<stream, ec>` —
+            // network handle + (ptr, len) for the name string + retptr.
+            Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses => vec![
+                ValType::I32, // network handle
+                ValType::I32, // name_ptr
+                ValType::I32, // name_len
+                ValType::I32, // retptr (8 bytes)
+            ],
+            // `resolve-next-address(this) -> result<option<ip-address>, ec>`
+            // — single i32 + retptr (22 bytes).
+            Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress => {
+                vec![ValType::I32, ValType::I32]
+            }
+            // `[method]resolve-address-stream.subscribe(this) -> pollable` —
+            // flat i32 in/out.
+            Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe => {
+                vec![ValType::I32]
+            }
+            // `[resource-drop]resolve-address-stream(this)` — single i32.
+            Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream => {
+                vec![ValType::I32]
+            }
+            // `create-tcp-socket(family) -> result<tcp-socket, ec>` —
+            // ip-address-family enum (i32) + retptr (8 bytes).
+            Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket => {
+                vec![ValType::I32, ValType::I32]
+            }
+            // `start-connect(this, network, addr) -> result<_, ec>` —
+            // ip-socket-address variant joins to 12 flat i32 positions
+            // (1 tag + max(ipv4=5, ipv6=11) = 12). Plus this, network,
+            // retptr = 15 params total — matches wasip2-1.0.1 bindings.
+            Wasip2ImportSlot::SocketsTcpStartConnect => vec![
+                ValType::I32, // this
+                ValType::I32, // network
+                ValType::I32, // addr variant tag
+                ValType::I32, // pos 1 (port for ipv4 | port for ipv6)
+                ValType::I32, // pos 2 (octet a for ipv4 | flow-info for ipv6)
+                ValType::I32, // pos 3 (octet b for ipv4 | h0 for ipv6)
+                ValType::I32, // pos 4 (octet c for ipv4 | h1 for ipv6)
+                ValType::I32, // pos 5 (octet d for ipv4 | h2 for ipv6)
+                ValType::I32, // pos 6 (0 for ipv4 | h3 for ipv6)
+                ValType::I32, // pos 7 (0 for ipv4 | h4 for ipv6)
+                ValType::I32, // pos 8 (0 for ipv4 | h5 for ipv6)
+                ValType::I32, // pos 9 (0 for ipv4 | h6 for ipv6)
+                ValType::I32, // pos 10 (0 for ipv4 | h7 for ipv6)
+                ValType::I32, // pos 11 (0 for ipv4 | scope-id for ipv6)
+                ValType::I32, // retptr (2 bytes)
+            ],
+            // `finish-connect(this) -> result<tuple<in, out>, ec>` —
+            // single i32 + retptr (12 bytes).
+            Wasip2ImportSlot::SocketsTcpFinishConnect => vec![ValType::I32, ValType::I32],
+            // `[method]tcp-socket.subscribe(this) -> pollable` — flat i32 in/out.
+            Wasip2ImportSlot::SocketsTcpSubscribe => vec![ValType::I32],
+            // `shutdown(this, shutdown-type) -> result<_, ec>` —
+            // i32 handle + enum tag i32 + retptr (2 bytes).
+            Wasip2ImportSlot::SocketsTcpShutdown => {
+                vec![ValType::I32, ValType::I32, ValType::I32]
+            }
+            // `[resource-drop]tcp-socket(this)` — single i32.
+            Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket => vec![ValType::I32],
         }
     }
 
@@ -1187,6 +1392,21 @@ impl Wasip2ImportSlot {
             Wasip2ImportSlot::HttpTypesIncomingRequestHeaders
             | Wasip2ImportSlot::HttpTypesOutgoingResponseNew
             | Wasip2ImportSlot::HttpTypesOutgoingResponseSetStatusCode => vec![ValType::I32],
+            // ── wasi:sockets/* (Phase 4 / 0.20). ───────────────────
+            // Flat i32 returns (resource handles / pollables).
+            Wasip2ImportSlot::SocketsInstanceNetworkInstanceNetwork
+            | Wasip2ImportSlot::SocketsIpNameLookupResolveAddressStreamSubscribe
+            | Wasip2ImportSlot::SocketsTcpSubscribe => vec![ValType::I32],
+            // Retptr-only — no inline return.
+            Wasip2ImportSlot::SocketsIpNameLookupResolveAddresses
+            | Wasip2ImportSlot::SocketsIpNameLookupResolveNextAddress
+            | Wasip2ImportSlot::SocketsTcpCreateSocketCreateTcpSocket
+            | Wasip2ImportSlot::SocketsTcpStartConnect
+            | Wasip2ImportSlot::SocketsTcpFinishConnect
+            | Wasip2ImportSlot::SocketsTcpShutdown => Vec::new(),
+            // Resource drops — no return.
+            Wasip2ImportSlot::SocketsIpNameLookupResourceDropResolveAddressStream
+            | Wasip2ImportSlot::SocketsTcpResourceDropTcpSocket => Vec::new(),
         }
     }
 }

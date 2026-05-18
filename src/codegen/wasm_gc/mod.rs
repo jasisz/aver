@@ -25,6 +25,7 @@ mod wasip2_helpers;
 mod wasip2_http;
 mod wasip2_http_server;
 mod wasip2_imports;
+mod wasip2_tcp;
 mod wat_helper;
 
 pub use flatten::flatten_multimodule;

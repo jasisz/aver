@@ -13,8 +13,6 @@ impl TypeChecker {
             ));
             return Type::Named(type_name.to_string());
         }
-        // Tcp.Connection is no longer opaque — fields are public metadata,
-        // actual socket is protected by thread-local ID lookup at runtime.
 
         let schema_prefix = format!("{}.", type_name);
         let mut expected = HashMap::new();

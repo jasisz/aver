@@ -1348,12 +1348,30 @@ fn valid_tcp_close_with_connection() {
 }
 
 #[test]
-fn valid_tcp_connection_field_access() {
+fn error_tcp_connection_field_access_is_opaque() {
+    // Phase 4.7+ fix #11 — `Tcp.Connection` is opaque. Field reads
+    // and destructuring are rejected; the record is a stateful
+    // handle, not a value with public metadata. Programs pass it
+    // back to `Tcp.{close, writeLine, readLine}` and never inspect
+    // its bytes.
     let src = concat!(
         "fn getId(conn: Tcp.Connection) -> String\n",
         "    conn.id\n",
     );
-    assert_no_errors(src);
+    assert_error_containing(src, "opaque type 'Tcp.Connection'");
+}
+
+#[test]
+fn error_tcp_connection_manual_construction_is_opaque() {
+    // Same opaque check, construction path. A hand-crafted record
+    // with a forged `id` string would otherwise alias an unrelated
+    // live pool slot at runtime (`aver-rt::tcp` keys its HashMap by
+    // id; wasip2 parses the digits as the slot index).
+    let src = concat!(
+        "fn fake() -> Tcp.Connection\n",
+        "    Tcp.Connection(id = \"tcp-0\", host = \"x\", port = 80)\n",
+    );
+    assert_error_containing(src, "opaque type 'Tcp.Connection'");
 }
 
 #[test]

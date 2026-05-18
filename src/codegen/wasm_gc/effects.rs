@@ -738,7 +738,13 @@ impl EffectName {
                 | EffectName::HttpDelete
                 | EffectName::HttpPost
                 | EffectName::HttpPut
-                | EffectName::HttpPatch,
+                | EffectName::HttpPatch
+                | EffectName::TcpConnect
+                | EffectName::TcpWriteLine
+                | EffectName::TcpReadLine
+                | EffectName::TcpSend
+                | EffectName::TcpClose
+                | EffectName::TcpPing,
         )
     }
 }

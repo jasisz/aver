@@ -17,6 +17,8 @@ use super::builtins_wasip2::{
     emit_disk_read_text_wasip2, emit_disk_write_text_wasip2, emit_env_get_wasip2,
     emit_http_delete_wasip2, emit_http_get_wasip2, emit_http_head_wasip2, emit_http_patch_wasip2,
     emit_http_post_wasip2, emit_http_put_wasip2, emit_random_float_wasip2, emit_random_int_wasip2,
+    emit_tcp_close_wasip2, emit_tcp_connect_wasip2, emit_tcp_ping_wasip2,
+    emit_tcp_read_line_wasip2, emit_tcp_send_wasip2, emit_tcp_write_line_wasip2,
     emit_time_now_wasip2, emit_time_sleep_wasip2, emit_time_unix_ms_wasip2,
 };
 use super::emit::{emit_default_value, emit_expr};
@@ -143,6 +145,27 @@ pub(super) fn emit_dotted_builtin(
         }
         if parent == "Http" && method == "patch" {
             return emit_http_patch_wasip2(func, args, slots, ctx);
+        }
+        // Phase 4.2.x — Tcp.connect. Phase 4.3 — Tcp.close. The
+        // remaining four (`writeLine`, `readLine`, `send`, `ping`)
+        // stay rejected by `wasip2::effect_check` until 4.4 / 4.5.
+        if parent == "Tcp" && method == "connect" {
+            return emit_tcp_connect_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Tcp" && method == "close" {
+            return emit_tcp_close_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Tcp" && method == "writeLine" {
+            return emit_tcp_write_line_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Tcp" && method == "readLine" {
+            return emit_tcp_read_line_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Tcp" && method == "send" {
+            return emit_tcp_send_wasip2(func, args, slots, ctx);
+        }
+        if parent == "Tcp" && method == "ping" {
+            return emit_tcp_ping_wasip2(func, args, slots, ctx);
         }
     }
 

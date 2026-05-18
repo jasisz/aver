@@ -89,6 +89,15 @@ impl TypeChecker {
                 ty.clone(),
             );
         }
+        // Phase 4.7+ fix #11 — `Tcp.Connection` is opaque. It's a
+        // stateful handle to a pool slot: `id` is internal, `host`
+        // / `port` are inputs the caller already knows. A program
+        // never needs to read or destructure the record — only
+        // pass it back to `Tcp.{close, writeLine, readLine}`. Full
+        // opacity closes the "forge an id" hole on every backend
+        // (aver-rt + wasip2) at the type level rather than
+        // backend-by-backend runtime guards.
+        self.opaque_types.insert("Tcp.Connection".to_string());
 
         let net_ret = || {
             Type::Result(

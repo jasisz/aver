@@ -88,6 +88,28 @@ The component the wasm-gc backend emits uses the WebAssembly **wasm-gc** + **tai
 
 The component itself is portable: the only host requirement is "WASI 0.2 wasi:http/proxy host with wasm-gc + tail-call proposals on". Future Aver work to widen host coverage waits on host updates, not codegen changes.
 
+## Running `Tcp.*` programs (Phase 4.2.x in flight, 0.20)
+
+`Tcp.*` programs compile to the same `wasi:cli/command` world as the other CLI effects, but the runtime additionally needs wasi-sockets imports enabled. With `wasmtime run`:
+
+```
+wasmtime run \
+    -W gc=y -W tail-call=y \
+    -S inherit-network=y \
+    -S allow-ip-name-lookup=y \
+    -S tcp=y \
+    component.wasm
+```
+
+| Flag | Why |
+|---|---|
+| `-W gc=y -W tail-call=y` | Engine proposals — same requirement as the HTTP/proxy world. |
+| `-S inherit-network=y` | Grants the guest access to the host's network stack (otherwise every wasi-sockets call returns the default-deny error). |
+| `-S allow-ip-name-lookup=y` | Enables `wasi:sockets/ip-name-lookup`. Required even for IP-literal hosts like `"127.0.0.1"` — without it `resolve-addresses` rejects every input. |
+| `-S tcp=y` | Enables `wasi:sockets/tcp`. Without it `create-tcp-socket` traps before the connect can start. |
+
+`-S udp=y` is intentionally not needed: Aver's `Tcp.*` does not touch wasi:sockets/udp. Embedded wasmtime hosts get the same capability via `WasiCtxBuilder::inherit_network()` + `allow_ip_name_lookup(true)` + `socket_addr_check(...)`.
+
 ## `aver compile --target wasip2 -o out`
 
 Produces:
@@ -123,7 +145,7 @@ Aver effects lower directly to WASI 0.2 imports. The mapping is fixed per effect
 | `Http.{get, head, delete, post, put, patch}` | `wasi:http/outgoing-handler.handle` + the future-incoming-response / incoming-response choreography (Phase 2 / 0.19 shipped). Method tag selects `outgoing-request.set-method`. Body-bearing verbs marshal a request body via `request.body` + `outgoing-body.write` + chunked `blocking-write-and-flush` + `outgoing-body.finish`. Headers (request and response) lower as `Map<String, List<String>>`; multi-valued field names preserve server emit order. `error-code` variant discriminants surface as per-variant `http: <name>` Err messages (39 cases). |
 | `HttpServer.listen` | `wasi:http/incoming-handler.handle` export (Phase 3 / 0.19 shipped). Requires `--world wasi:http/proxy --handler <fn>`. The handler wrapper decodes the host-supplied incoming-request into an Aver `HttpRequest` (method via the 10-case variant, path-with-query split into path/query, headers iteration as `Map<String, List<String>>`, body via `incoming-body.stream` + drained `input-stream.blocking-read`), runs the user's `fn(HttpRequest) -> HttpResponse`, marshals the result into an outgoing-response (`outgoing-response` constructor + `set-status-code` + body via `outgoing-body.write` + chunked `blocking-write-and-flush` + `outgoing-body.finish`), and calls `response-outparam.set`. `Content-Length` is synthesised from the response body byte count. The `port` argument to `HttpServer.listen` in source is honoured by the VM but ignored by wasip2 codegen — the host's listener flag (`wasmtime serve --addr=:N` etc.) binds the socket. |
 | `HttpServer.listenWith` | **Compile-rejected** — deferred one iteration; requires per-instance wasm-global context plumbing. |
-| `Tcp.*` | **Compile-rejected** — out of 0.19 client scope (Phase 2.1 / 0.19+) |
+| `Tcp.{connect, close, writeLine, readLine, send, ping}` | `wasi:sockets/{instance-network, ip-name-lookup, tcp-create-socket, tcp}` (Phase 4 / 0.20 "Pulse" shipped, hardened through five peer-review passes). `__rt_tcp_connect` walks lazy-network init → resolve-addresses → async pollable loop → first-IPv4 → create-tcp-socket → start/finish-connect → pool-slot allocation via first-free scan → `Tcp.Connection` materialise. The 256-slot pool refuses the 257th simultaneous connect with `Err("tcp: connection limit reached (256 max)")` (matches `aver-rt::tcp::connect`'s HashMap-len gate); a closed slot is reusable immediately. `Tcp.close` drops streams + shutdown + drops socket; subsequent close on the same handle surfaces `Err("tcp: unknown connection")`. `writeLine`/`readLine` thread bytes through chunked blocking-write / 1-byte blocking-read against the pooled streams; writeLine appends `\r\n` and readLine strips the trailing `\r` only when terminated by `\n` (intra-payload CR preserved). Stale-handle paths on `writeLine`/`readLine` (null pool, slot-scan miss, `in_use == 0`) surface `Err("tcp: unknown connection")` so callers can tell a closed handle apart from a real wasi-side write failure or peer EOF. `Tcp.send` is fully **ephemeral** — inline DNS + socket + connect (no pool slot), raw write on the wire (no `\r\n` appended) + `shutdown(send)`, read-until-EOF capped at 10 MiB; stream errors split as `stream-error.last-operation-failed → Err("tcp: stream error")` vs `stream-error.closed → Ok(buf)`. `Tcp.ping` is also **ephemeral** — same inline dial as `send` minus the read/write phase, drop streams + socket on success, return `Result.Ok(())`; no pool slot, so a program holding 256 live `Tcp.connect` handles can still ping. `Tcp.Connection` is opaque from the surface (the type checker rejects construction and field reads). IPv6 yields from the resolver are skipped (first-IPv4-wins); no in-line `subscribe-duration` connect timeout in v1. |
 | `Terminal.*` (12 methods) | **Compile-rejected** — WASI 0.2 has no raw/cooked-mode operations |
 
 ### Why `Terminal.*` / `Env.set` are rejected, not stubbed
@@ -134,7 +156,7 @@ In 0.18:
 
 - **`Terminal.*`** — WASI 0.2 has `wasi:cli/terminal-input` and `terminal-output` as TTY signals, but no standardised raw/cooked-mode operations (`set-raw-mode`, `set-echo`, `get-window-size`). The capability is structurally absent.
 - **`Env.set`** — WASI 0.2 environment is read-only. There is no host implementation that could ever satisfy a write. Silent no-op would be a trap: source declares "I set X" and the program runs as if it succeeded while the environment is unchanged.
-- **`Tcp.*`, `HttpServer.listenWith`** — out of 0.19 scope by deliberate design (Phase 2.1 / `listenWith` deferred one iteration). Same compile-time `target-effect-unsupported` shape so the user sees one consistent error type rather than a mix of stubs and rejects.
+- **`HttpServer.listenWith`** — deferred one iteration; requires per-instance wasm-global context plumbing.
 
 (Earlier 0.18 betas grouped `Time.sleep` with the structural rejects on the assumption that the pollable model was out of scope. That was a scoping mistake — pollables can be wrapped *inside* a single helper without leaking to source. Phase 1.4c shipped `__rt_time_sleep` doing exactly that, so `Time.sleep` lowers natively now.)
 

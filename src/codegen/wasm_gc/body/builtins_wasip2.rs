@@ -522,11 +522,180 @@ pub(super) fn emit_disk_exists_wasip2(
     Ok(())
 }
 
-/// Phase 1.5.2 — `Disk.readText(path: String) ->
-/// Result<String, String>` on `--target wasip2`. Pushes the path
-/// expression onto the stack and calls `__rt_disk_read_text`,
-/// which owns the open-at + read-via-stream + blocking-read loop
-/// + per-call resource drops.
+/// Phase 4.5b (0.20) — `Tcp.ping(host, port) -> Result<Unit, String>`
+/// on `--target wasip2`. Pushes (host, port) and calls the
+/// light `__rt_tcp_ping` wrapper.
+pub(super) fn emit_tcp_ping_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.ping on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.ping on `--target wasip2` expects 2 args (host, port), got {}",
+            args.len()
+        )));
+    }
+    let ping_fn = lowering.tcp_ping_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.ping on wasip2: __rt_tcp_ping fn idx missing".into())
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    emit_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(ping_fn));
+    Ok(())
+}
+
+/// Phase 4.5a (0.20) — `Tcp.send(host, port, data) ->
+/// Result<String, String>` on `--target wasip2`. One-shot
+/// pipeline: connect + writeLine + readLine + close. Pushes
+/// (host, port, data) and calls the `__rt_tcp_send` orchestrator
+/// helper.
+pub(super) fn emit_tcp_send_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.send on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 3 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.send on `--target wasip2` expects 3 args (host, port, data), got {}",
+            args.len()
+        )));
+    }
+    let send_fn = lowering.tcp_send_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.send on wasip2: __rt_tcp_send fn idx missing".into())
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    emit_expr(func, &args[1], slots, ctx)?;
+    emit_expr(func, &args[2], slots, ctx)?;
+    func.instruction(&Instruction::Call(send_fn));
+    Ok(())
+}
+
+/// Phase 4.4b (0.20) — `Tcp.readLine(conn) -> Result<String, String>`
+/// on `--target wasip2`. Pushes conn and calls the helper.
+pub(super) fn emit_tcp_read_line_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.readLine on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.readLine on `--target wasip2` expects 1 arg (conn), got {}",
+            args.len()
+        )));
+    }
+    let read_line_fn = lowering.tcp_read_line_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.readLine on wasip2: __rt_tcp_read_line fn idx missing".into())
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(read_line_fn));
+    Ok(())
+}
+
+/// Phase 4.4a (0.20) — `Tcp.writeLine(conn, line) -> Result<Unit, String>`
+/// on `--target wasip2`. Pushes (conn, line) and calls the
+/// `__rt_tcp_write_line` helper.
+pub(super) fn emit_tcp_write_line_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.writeLine on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.writeLine on `--target wasip2` expects 2 args (conn, line), got {}",
+            args.len()
+        )));
+    }
+    let write_line_fn = lowering.tcp_write_line_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.writeLine on wasip2: __rt_tcp_write_line fn idx missing".into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    emit_expr(func, &args[1], slots, ctx)?;
+    func.instruction(&Instruction::Call(write_line_fn));
+    Ok(())
+}
+
+/// Phase 4.3 (0.20) — `Tcp.close(conn: Tcp.Connection) ->
+/// Result<Unit, String>` on `--target wasip2`. Pushes the conn
+/// ref onto the stack and calls the `__rt_tcp_close` helper.
+pub(super) fn emit_tcp_close_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.close on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 1 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.close on `--target wasip2` expects 1 arg (conn: Tcp.Connection), got {}",
+            args.len()
+        )));
+    }
+    let close_fn = lowering.tcp_close_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.close on wasip2: __rt_tcp_close fn idx missing — helper not allocated".into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?;
+    func.instruction(&Instruction::Call(close_fn));
+    Ok(())
+}
+
+/// Phase 4.2.1 (0.20) — `Tcp.connect(host: String, port: Int) ->
+/// Result<Tcp.Connection, String>` on `--target wasip2`. Pushes
+/// both args onto the stack and calls the `__rt_tcp_connect`
+/// helper, whose stub body currently returns Result.Err. Real
+/// DNS / socket / connect pipeline replaces the helper body in
+/// Phase 4.2.2+ — this dispatcher stays put.
+pub(super) fn emit_tcp_connect_wasip2(
+    func: &mut wasm_encoder::Function,
+    args: &[Spanned<Expr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<(), WasmGcError> {
+    let lowering = ctx.wasip2_lowering.ok_or_else(|| {
+        WasmGcError::Validation("Tcp.connect on wasip2: lowering ctx missing".into())
+    })?;
+    if args.len() != 2 {
+        return Err(WasmGcError::Validation(format!(
+            "Tcp.connect on `--target wasip2` expects 2 args (host: String, port: Int), got {}",
+            args.len()
+        )));
+    }
+    let connect_fn = lowering.tcp_connect_fn_idx.ok_or_else(|| {
+        WasmGcError::Validation(
+            "Tcp.connect on wasip2: __rt_tcp_connect fn idx missing — \
+             helper not allocated (check Result<Tcp.Connection,String> + \
+             String slot + stub-error literal registration)"
+                .into(),
+        )
+    })?;
+    emit_expr(func, &args[0], slots, ctx)?; // host: ref string
+    emit_expr(func, &args[1], slots, ctx)?; // port: i64
+    func.instruction(&Instruction::Call(connect_fn));
+    Ok(())
+}
+
 pub(super) fn emit_disk_read_text_wasip2(
     func: &mut wasm_encoder::Function,
     args: &[Spanned<Expr>],

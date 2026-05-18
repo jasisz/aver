@@ -465,6 +465,73 @@ pub(super) struct Wasip2Lowering {
     /// per-call resource drops, HttpResponse build). `Some(...)`
     /// when `Http.get` is registered.
     pub(super) http_get_fn_idx: Option<u32>,
+
+    /// Phase 4.2.x (0.20) — `__rt_tcp_connect(host: ref string,
+    /// port: i64) -> ref Result<Tcp.Connection, String>` helper
+    /// wasm fn idx. `Some(...)` when `Tcp.connect` is registered.
+    /// Full body shipped in 4.2.2d: lazy network init + DNS
+    /// resolve loop + first-IPv4 + create-tcp-socket + start/
+    /// finish-connect + pool-slot allocation + record build.
+    pub(super) tcp_connect_fn_idx: Option<u32>,
+    /// Phase 4.3 (0.20) — `__rt_tcp_close(conn: ref Tcp.Connection)
+    /// -> ref Result<Unit, String>` helper wasm fn idx. Drops the
+    /// per-slot streams + shuts down + drops the socket + marks
+    /// the slot free. Idempotent on already-closed slots.
+    pub(super) tcp_close_fn_idx: Option<u32>,
+    /// Phase 4.4a (0.20) — `__rt_tcp_write_line(conn, line) ->
+    /// ref Result<Unit, String>` helper wasm fn idx. Marshals
+    /// `line + "\n"` into LM and chunked-writes through the
+    /// slot's out-stream.
+    pub(super) tcp_write_line_fn_idx: Option<u32>,
+    /// Phase 4.4b (0.20) — `__rt_tcp_read_line(conn) -> ref
+    /// Result<String, String>` helper wasm fn idx. Loops 1-byte
+    /// blocking-read against slot.in_stream, terminates on '\n',
+    /// EOF, or stream-error.
+    pub(super) tcp_read_line_fn_idx: Option<u32>,
+    /// Phase 4.5a (0.20) — `__rt_tcp_send(host, port, data) ->
+    /// ref Result<String, String>` helper wasm fn idx. One-shot
+    /// orchestrator: connect + writeLine + readLine + close.
+    pub(super) tcp_send_fn_idx: Option<u32>,
+    /// Phase 4.5b (0.20) — `__rt_tcp_ping(host, port) -> ref
+    /// Result<Unit, String>` helper wasm fn idx. Light connect +
+    /// close wrapper; no in-line 1s timeout for v1.
+    pub(super) tcp_ping_fn_idx: Option<u32>,
+
+    // ── Phase 4 (0.20) — TCP pool globals + GC type slots. ─────
+    //
+    // All five fields are write-only on Phase 4.1b; the connect /
+    // close / write / read / send / ping emitters in Phase 4.2+
+    // are the readers. `#[allow(dead_code)]` until then so the
+    // wireup commit can land without a warning.
+    /// `wasi:sockets/instance-network.instance-network` handle
+    /// cache. `Some(...)` whenever the TCP slot for instance-network
+    /// is registered (any Tcp.* effect that needs a connect path).
+    /// -1 sentinel = "not yet fetched"; the helper calls
+    /// `instance-network()` once on first use and stores the
+    /// resulting handle here.
+    #[allow(dead_code)]
+    pub(super) network_handle_global: Option<u32>,
+    /// `tcp_pool: ref null $tcp_pool` global. `Some(...)` whenever
+    /// any Tcp.* effect is declared. Initialised to null; the
+    /// connect helper lazy-allocates an `array.new_default $tcp_pool 256`
+    /// on first call.
+    #[allow(dead_code)]
+    pub(super) tcp_pool_global: Option<u32>,
+    /// `tcp_next_id: i32 = 0` global. Bumps after each successful
+    /// `Tcp.connect`. Modulo `tcp_pool` capacity gives the slot
+    /// index; the resulting `"tcp-{idx}"` string is stored in the
+    /// returned `Tcp.Connection.id` field for cross-backend
+    /// portability.
+    #[allow(dead_code)]
+    pub(super) tcp_next_id_global: Option<u32>,
+    /// `$tcp_slot` wasm-gc type idx — the 4-field struct each pool
+    /// entry stores. `Some(...)` when `tcp_pool_global` is.
+    #[allow(dead_code)]
+    pub(super) tcp_slot_type_idx: Option<u32>,
+    /// `$tcp_pool` wasm-gc type idx — `(array (mut $tcp_slot))`.
+    /// `Some(...)` when `tcp_pool_global` is.
+    #[allow(dead_code)]
+    pub(super) tcp_pool_type_idx: Option<u32>,
 }
 
 impl<'a> EmitCtx<'a> {

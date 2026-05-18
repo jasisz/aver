@@ -127,6 +127,17 @@ pub(super) struct TypeRegistry {
     /// addressing layout uses `keys[i] == null` as the empty marker,
     /// which only works when keys are emitted as ref values.
     pub(super) non_newtypable_keys: std::collections::HashSet<String>,
+    /// Phase 4 (0.20) — `(struct (mut i32 socket) (mut i32 in_stream)
+    /// (mut i32 out_stream) (mut i32 in_use))` slot type for an entry
+    /// in the TCP connection pool. `None` when no `Tcp.*` effect is
+    /// declared in any fn. The pool itself (`tcp_pool_type_idx`) is
+    /// an `(array (mut $tcp_slot))` containing 256 of these.
+    pub(super) tcp_slot_type_idx: Option<u32>,
+    /// Phase 4 (0.20) — `(array (mut $tcp_slot))` array type carrying
+    /// 256 connection slots. `None` when no `Tcp.*` effect is
+    /// declared. The runtime allocates the array lazily on first
+    /// `Tcp.connect` call via `array.new_default` against this idx.
+    pub(super) tcp_pool_type_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -202,8 +213,20 @@ impl TypeRegistry {
             // synthesised `aver_http_handle` wrapper builds an
             // HttpRequest from host effects and reads HttpResponse
             // back, both of which are codegen-only references.
-            let force = handler_active
+            //
+            // Phase 4.5a similarly forces `Tcp.Connection` whenever
+            // any `Tcp.*` effect is declared: even programs that only
+            // call `Tcp.send` (and never name the record in source)
+            // need its slot allocated because the orchestrator helper
+            // threads a `Tcp.Connection` through internally.
+            let force_handler = handler_active
                 && (record.aver_name == "HttpRequest" || record.aver_name == "HttpResponse");
+            let force_tcp = record.aver_name == "Tcp.Connection"
+                && items.iter().any(|item| match item {
+                    TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node.starts_with("Tcp.")),
+                    _ => false,
+                });
+            let force = force_handler || force_tcp;
             if !force && !items_reference_name(items, record.aver_name) {
                 continue;
             }
@@ -246,6 +269,28 @@ impl TypeRegistry {
             Some(idx)
         } else {
             None
+        };
+
+        // Phase 4 (0.20) — TCP connection pool type slots. `$tcp_slot`
+        // is a 4-field struct (socket / in_stream / out_stream / in_use
+        // handles, all i32), and `$tcp_pool` is the `(array (mut $tcp_slot))`
+        // that holds 256 of them. Allocated whenever a fn declares any
+        // `Tcp.*` effect; effect-target wiring (whether to actually emit
+        // the connection pipeline) lives in module.rs. Both slots land
+        // adjacent so the array type can reference the slot type without
+        // crossing a rec-group boundary.
+        let needs_tcp = items.iter().any(|item| match item {
+            TopLevel::FnDef(fd) => fd.effects.iter().any(|e| e.node.starts_with("Tcp.")),
+            _ => false,
+        });
+        let (tcp_slot_type_idx, tcp_pool_type_idx) = if needs_tcp {
+            let slot_idx = next_idx;
+            next_idx += 1;
+            let pool_idx = next_idx;
+            next_idx += 1;
+            (Some(slot_idx), Some(pool_idx))
+        } else {
+            (None, None)
         };
 
         // Discover monomorphized `Vector<T>` instantiations. Walk fn
@@ -755,6 +800,58 @@ impl TypeRegistry {
             });
         }
 
+        // Phase 4.2.1 (0.20) — register the placeholder error
+        // message the `__rt_tcp_connect` stub returns until the real
+        // DNS/connect/finish pipeline lands. Gated on `needs_tcp`
+        // (any fn declares a Tcp.* effect) so non-TCP programs don't
+        // carry the literal.
+        if needs_tcp {
+            for msg in [
+                b"tcp: connect not yet implemented".as_ref(),
+                b"tcp: dns resolve failed".as_ref(),
+                b"tcp: dns no addresses".as_ref(),
+                b"tcp: socket create failed".as_ref(),
+                b"tcp: connect failed".as_ref(),
+                b"tcp: write failed".as_ref(),
+                b"tcp: eof".as_ref(),
+                // Phase 4.7+ — aver-rt cross-backend alignment.
+                // VM / self-host / wasm-gc all return `Err("Tcp.X:
+                // unknown connection 'tcp-N'")` on stale handles;
+                // wasip2 matches the prefix shape (we drop the
+                // method name since one segment serves close /
+                // writeLine / readLine).
+                b"tcp: unknown connection".as_ref(),
+                // Phase 4.7+ — port validation. VM message verbatim
+                // (`Tcp: port N is out of range (0\u{2013}65535)`)
+                // is parameterised on the port value; we ship a
+                // canned message instead because the Err string is
+                // built from a static data segment, not concat.
+                b"tcp: port out of range".as_ref(),
+                // Phase 4.7+ fix #10 — pool-limit alignment with
+                // `aver-rt::tcp::connect`. Pool is 256 slots; the
+                // 257th live connect must refuse rather than evict
+                // the slot's existing live occupant.
+                b"tcp: connection limit reached (256 max)".as_ref(),
+                // Phase 4.7+ fix #17 — `Tcp.send` `stream-error.
+                // last-operation-failed`. The wasi:io read variant
+                // distinguishes I/O errors from a clean half-close;
+                // wasip2 used to fold both into a partial-Ok return,
+                // mismatching `aver-rt::tcp::send`'s explicit Err.
+                b"tcp: stream error".as_ref(),
+                // Phase 4.7+ fix #18 — `Tcp.send` response cap.
+                // `aver-rt::tcp::send` caps at 10 MiB; wasip2 used
+                // to grow the buffer unbounded.
+                b"tcp: response exceeds 10 MiB limit".as_ref(),
+            ] {
+                let bytes = msg.to_vec();
+                string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
+                    let idx = string_literals.len() as u32;
+                    string_literals.push(bytes);
+                    idx
+                });
+            }
+        }
+
         // Mark every record/variant used as a `Map<K, *>` key as
         // non-newtypable so it stays a struct ref in the type
         // section — the open-addressing layout's `keys[i] == null`
@@ -798,6 +895,8 @@ impl TypeRegistry {
             string_literals,
             string_literal_idx,
             non_newtypable_keys,
+            tcp_slot_type_idx,
+            tcp_pool_type_idx,
         }
     }
 

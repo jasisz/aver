@@ -3914,8 +3914,8 @@ fn mkResponse(body: String) -> HttpResponse
 fn requestPath(req: HttpRequest) -> String
     req.path
 
-fn connPort(conn: Tcp.Connection) -> Int
-    conn.port
+fn echoConn(conn: Tcp.Connection) -> Tcp.Connection
+    conn
 "#,
             "network_helpers",
         );
@@ -3924,6 +3924,9 @@ fn connPort(conn: Tcp.Connection) -> Int
 
         assert!(lean.contains("structure HttpResponse where"));
         assert!(lean.contains("structure HttpRequest where"));
+        // `Tcp.Connection` is opaque from the surface (Phase 4.7+
+        // fix #11), but the Lean prelude still ships its struct
+        // so functions that take/return `Tcp.Connection` typecheck.
         assert!(lean.contains("structure Tcp_Connection where"));
         assert!(lean.contains("port : Int"));
         // Headers field renders as the Map shape (Lean uses List of pairs).
