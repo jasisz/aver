@@ -32,7 +32,7 @@ Tagline draft: *Iron in the frame — the type checker stops lying to itself abo
 |-----|------------------------------------------------------------|--------|-----------|----------|-----|
 | C1  | Parser + lexer crash-resistance via `proptest` (bytes-in)  | done   | ~80 LOC   | low      | #28 |
 | C2  | `proptest` matcher invariants + Type AST generators        | done   | ~150 LOC  | low      | #28 |
-| C3  | Cross-backend differential property tests                  | todo   | ~200 LOC  | medium   | —   |
+| C3  | Cross-backend differential property tests                  | done   | ~280 LOC  | medium   | stage 7 |
 | C4  | Proof export CI gate (`lake build` via elan)               | done   | CI yaml   | low      | #29 |
 | C5  | AFL++ via `afl.rs` — coverage-guided parser fuzz           | todo   | fuzz crate + CI | medium | — |
 
@@ -80,6 +80,23 @@ Sanitizers (`-Z sanitizer=address`) are nightly territory regardless
 of which fuzzer we pick, so C5 ships without ASAN. Crashes that need
 sanitizer-level diagnosis get triaged manually with a nightly toolchain
 locally; CI stays stable.
+
+### Findings logged
+
+- **C3 #1 — wasm-gc `String.fromFloat` printer drifts from VM's ryu.**
+  The first cross-backend property run (`cross_float_arithmetic_vm_vs_wasm_gc`,
+  8 cases, shrunk in seconds) flagged
+  `String.fromFloat((-853.6346) + (-827.3495))` as
+  `-1680.9841000000001` on VM vs `-1680.9841000000002` on wasm-gc.
+  Bit-level investigation confirmed the f64 result is identical on
+  both backends — the divergence is in `String.fromFloat`, where the
+  VM uses Rust's ryu shortest-roundtrip and the wasm-gc backend emits
+  a hand-rolled WAT printer
+  (`codegen/wasm_gc/builtins/mod.rs::emit_string_from_float`) whose
+  tie-break disagrees with ryu in the last decimal digit. The C3
+  property tolerates this with a relative-epsilon float compare;
+  porting a real shortest-roundtrip algorithm to WAT is the proper
+  fix and is out of Iron scope.
 
 ---
 
