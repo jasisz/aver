@@ -292,8 +292,13 @@ impl<'a> JsonParser<'a> {
     }
 
     fn expect_keyword(&mut self, keyword: &str) -> Result<(), String> {
+        // Compare on the byte slice, not the `&str` slice. AFL found
+        // a real input where `self.pos` lands mid-UTF-8 codepoint
+        // (em-dash `—` is three bytes), and `&self.src[pos..end]`
+        // then panics with "byte index N is not a char boundary".
+        // `bytes[..].eq(keyword.as_bytes())` has no such requirement.
         let end = self.pos + keyword.len();
-        if end > self.bytes.len() || &self.src[self.pos..end] != keyword {
+        if end > self.bytes.len() || &self.bytes[self.pos..end] != keyword.as_bytes() {
             return Err(self.error(&format!("expected '{}'", keyword)));
         }
         self.pos = end;
