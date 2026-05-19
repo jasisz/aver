@@ -26,8 +26,7 @@ use aver::parser::Parser;
 
 #[test]
 fn verify_runner_regressions_do_not_hang() {
-    let dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/regressions/verify_runner");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/regressions/verify_runner");
     if !dir.exists() {
         return;
     }
@@ -91,8 +90,7 @@ fn verify_runner_regressions_do_not_hang() {
 fn verify_runner_regressions_do_not_hang_wasm_gc() {
     use aver::diagnostics::wasm_gc_verify::run_verify_for_items_wasm_gc;
 
-    let dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/regressions/verify_runner");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/regressions/verify_runner");
     if !dir.exists() {
         return;
     }
