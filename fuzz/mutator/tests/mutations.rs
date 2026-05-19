@@ -137,6 +137,8 @@ strategy_test!(strategy_7_rename_param, 7, 1);
 // most corpus fns are single-expression bodies.
 strategy_test!(strategy_8_swap_statements, 8, 0_usize);
 strategy_test!(strategy_9_negate_expression, 9, 1);
+strategy_test!(strategy_10_bare_namespace, 10, 1);
+strategy_test!(strategy_11_toggle_effects, 11, 1);
 
 /// `strategy_name` is the label AFL embeds into queue + crash
 /// filenames via the custom mutator's `describe` hook, so it has to
