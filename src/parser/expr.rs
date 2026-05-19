@@ -27,7 +27,17 @@ impl Parser {
     }
 
     pub fn parse_expr(&mut self) -> Result<Spanned<Expr>, ParseError> {
-        self.parse_comparison()
+        // Iron — B4: every recursive descent into a sub-expression
+        // (LParen, LBrace, LBracket, Option.Some(...), nested
+        // interpolation, …) re-enters `parse_expr`. Counting only
+        // here is sufficient — `parse_unary`'s self-recursion is
+        // bounded by the same chain (`-(-(-(x)))` parses through
+        // `parse_unary → parse_postfix → parse_atom → LParen →
+        // parse_expr` once the first non-`-` token appears).
+        self.enter_recursion()?;
+        let result = self.parse_comparison();
+        self.exit_recursion();
+        result
     }
 
     pub(super) fn parse_comparison(&mut self) -> Result<Spanned<Expr>, ParseError> {
