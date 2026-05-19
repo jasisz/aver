@@ -62,10 +62,22 @@ struct RunOutput {
     exit_status: i32,
 }
 
-fn run_aver(aver: &PathBuf, mode: &str, source_path: &PathBuf) -> Result<RunOutput, String> {
+/// Drive `aver run` for one backend. `extra_args` carries
+/// backend-selection flags — empty slice for VM (the default),
+/// `&["--wasm-gc"]` for the wasm-gc backend. `aver run` does
+/// **not** accept a literal `--vm` flag; passing one makes the
+/// CLI bail with `error: unexpected argument '--vm' found`,
+/// which the parity comparison would misread as "VM failed,
+/// wasm-gc succeeded" and crash on every input. Spent the first
+/// CI run learning that the hard way.
+fn run_aver(
+    aver: &PathBuf,
+    extra_args: &[&str],
+    source_path: &PathBuf,
+) -> Result<RunOutput, String> {
     let mut child = Command::new(aver)
         .arg("run")
-        .arg(mode) // either "--vm" or "--wasm-gc"
+        .args(extra_args)
         .arg(source_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -164,8 +176,8 @@ fn main() {
             return;
         }
 
-        let vm_result = run_aver(&aver, "--vm", &source_path);
-        let wasm_result = run_aver(&aver, "--wasm-gc", &source_path);
+        let vm_result = run_aver(&aver, &[], &source_path);
+        let wasm_result = run_aver(&aver, &["--wasm-gc"], &source_path);
         let _ = std::fs::remove_file(&source_path);
 
         match (vm_result, wasm_result) {
