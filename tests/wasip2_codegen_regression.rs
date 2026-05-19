@@ -137,29 +137,24 @@ fn wasip2_codegen_emits_valid_component_for_every_single_file_example() {
                 continue;
             }
         };
-        let core_bytes =
-            match aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None) {
-                Ok(b) => b,
-                Err(e) => {
-                    failures.push(format!(
-                        "{}: compile_to_wasm_gc_for_wasip2: {}",
-                        path.display(),
-                        e
-                    ));
-                    continue;
-                }
-            };
+        let core_bytes = match aver::codegen::wasm_gc::compile_to_wasm_gc_for_wasip2(&items, None) {
+            Ok(b) => b,
+            Err(e) => {
+                failures.push(format!(
+                    "{}: compile_to_wasm_gc_for_wasip2: {}",
+                    path.display(),
+                    e
+                ));
+                continue;
+            }
+        };
         let component_bytes = match aver::codegen::wasip2::compile_to_component(
             &core_bytes,
             aver::codegen::wasip2::Wasip2World::CliCommand,
         ) {
             Ok((bytes, _wit)) => bytes,
             Err(e) => {
-                failures.push(format!(
-                    "{}: compile_to_component: {}",
-                    path.display(),
-                    e
-                ));
+                failures.push(format!("{}: compile_to_component: {}", path.display(), e));
                 continue;
             }
         };
@@ -167,9 +162,8 @@ fn wasip2_codegen_emits_valid_component_for_every_single_file_example() {
         // explicitly enabled — `WasmFeatures::default()` enables it,
         // but spell it out so a future wasmparser default flip
         // doesn't silently turn this into a core-module check.
-        let mut validator = wasmparser::Validator::new_with_features(
-            wasmparser::WasmFeatures::default(),
-        );
+        let mut validator =
+            wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default());
         if let Err(e) = validator.validate_all(&component_bytes) {
             failures.push(format!(
                 "{}: component validate ({} bytes): {}",
