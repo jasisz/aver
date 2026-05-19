@@ -1,0 +1,213 @@
+{
+  "effects": [
+    {
+      "args": [
+        "/tmp/aver_disk_demo"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      },
+      "seq": 1,
+      "type": "Disk.makeDir"
+    },
+    {
+      "args": [
+        "Created: /tmp/aver_disk_demo"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 2,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "/tmp/aver_disk_demo/hello.txt",
+        "Hello from Aver!"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      },
+      "seq": 3,
+      "type": "Disk.writeText"
+    },
+    {
+      "args": [
+        "Wrote: /tmp/aver_disk_demo/hello.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 4,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "/tmp/aver_disk_demo/hello.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": "Hello from Aver!"
+        }
+      },
+      "seq": 5,
+      "type": "Disk.readText"
+    },
+    {
+      "args": [
+        "Read back: Hello from Aver!"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 6,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "/tmp/aver_disk_demo/app.log",
+        "started\n"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      },
+      "seq": 7,
+      "type": "Disk.appendText"
+    },
+    {
+      "args": [
+        "Appended to: /tmp/aver_disk_demo/app.log"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 8,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "/tmp/aver_disk_demo/hello.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": true
+      },
+      "seq": 9,
+      "type": "Disk.exists"
+    },
+    {
+      "args": [
+        "exists check: /tmp/aver_disk_demo/hello.txt is present"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 10,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "/tmp/aver_disk_demo"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": [
+            "app.log",
+            "hello.txt"
+          ]
+        }
+      },
+      "seq": 11,
+      "type": "Disk.listDir"
+    },
+    {
+      "args": [
+        [
+          "app.log",
+          "hello.txt"
+        ]
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 12,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "/tmp/aver_disk_demo/hello.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      },
+      "seq": 13,
+      "type": "Disk.delete"
+    },
+    {
+      "args": [
+        "Deleted: /tmp/aver_disk_demo/hello.txt"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 14,
+      "type": "Console.print"
+    },
+    {
+      "args": [
+        "/tmp/aver_disk_demo"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": {
+          "$ok": null
+        }
+      },
+      "seq": 15,
+      "type": "Disk.deleteDir"
+    },
+    {
+      "args": [
+        "Removed tree: /tmp/aver_disk_demo"
+      ],
+      "outcome": {
+        "kind": "value",
+        "value": null
+      },
+      "seq": 16,
+      "type": "Console.print"
+    }
+  ],
+  "entry_fn": "main",
+  "input": null,
+  "module_root": ".",
+  "output": {
+    "kind": "value",
+    "value": null
+  },
+  "program_file": "examples/services/disk_demo.av",
+  "request_id": "rec-1772437585738",
+  "schema_version": 1,
+  "timestamp": "unix-1772437585"
+}

@@ -13,7 +13,11 @@ cargo-fuzz = true
 
 [dependencies]
 afl = "0.15"
-aver-lang = { path = "..", default-features = false }
+# `runtime` enables the `replay` module the codec target needs.
+# Parser and typecheck targets don't strictly require it but the
+# extra LOC cost is in the noise vs sharing one feature set across
+# every fuzz binary.
+aver-lang = { path = "..", default-features = false, features = ["runtime"] }
 
 [[bin]]
 name = "fuzz_parse_bytes"
@@ -25,6 +29,13 @@ bench = false
 [[bin]]
 name = "fuzz_typecheck_program"
 path = "fuzz_targets/typecheck_program.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_replay_codec"
+path = "fuzz_targets/replay_codec.rs"
 test = false
 doc = false
 bench = false

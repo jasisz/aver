@@ -77,9 +77,22 @@ jobs:
       # other.
       fail-fast: false
       matrix:
-        target:
-          - fuzz_parse_bytes
-          - fuzz_typecheck_program
+        # `corpus` + `dict` per target — parse_bytes and
+        # typecheck_program share `corpus/parser` + the Aver dict
+        # (typecheck runs every parser-accepted input through extra
+        # passes, so seeds for one are valid seeds for the other),
+        # while `fuzz_replay_codec` consumes JSON and uses a
+        # dedicated dictionary of marker keys + schema fields.
+        include:
+          - target: fuzz_parse_bytes
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_typecheck_program
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_replay_codec
+            corpus: corpus/replay
+            dict: dicts/replay_json.dict
     steps:
       - uses: actions/checkout@v4
 
@@ -130,11 +143,12 @@ jobs:
         working-directory: fuzz
         # `-V 180` is fuzz time, not wall time — total job runtime
         # includes build above + this run + post-step coverage minimise.
-        # The seed corpus is `corpus/parser/` for both targets — every
-        # valid Aver program that parses is also a valid input to the
-        # typecheck pipeline (typecheck just runs more passes on the
-        # same bytes), so reusing the corpus avoids hand-curating a
-        # second seed set.
+        # Seed corpus + token dictionary both come from the matrix
+        # because each target consumes a different language:
+        #   - parse_bytes / typecheck_program — Aver source +
+        #     `dicts/aver.dict`
+        #   - replay_codec — replay-format JSON +
+        #     `dicts/replay_json.dict`
         # `mkdir -p out`: AFL's `-o` flag wants the parent
         # directory to exist; on a fresh runner there is no `out/`.
         # Exits cleanly when the budget elapses; we then inspect
@@ -143,9 +157,9 @@ jobs:
           mkdir -p out
           cargo afl fuzz \
             -V 180 \
-            -i corpus/parser \
+            -i ${{ matrix.corpus }} \
             -o out/${{ matrix.target }} \
-            -x dicts/aver.dict \
+            -x ${{ matrix.dict }} \
             -- target/release/${{ matrix.target }}
 
       - name: Fail on crash
@@ -202,9 +216,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - fuzz_parse_bytes
-          - fuzz_typecheck_program
+        # `corpus` + `dict` per target — parse_bytes and
+        # typecheck_program share `corpus/parser` + the Aver dict
+        # (typecheck runs every parser-accepted input through extra
+        # passes, so seeds for one are valid seeds for the other),
+        # while `fuzz_replay_codec` consumes JSON and uses a
+        # dedicated dictionary of marker keys + schema fields.
+        include:
+          - target: fuzz_parse_bytes
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_typecheck_program
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_replay_codec
+            corpus: corpus/replay
+            dict: dicts/replay_json.dict
     steps:
       - uses: actions/checkout@v4
 
@@ -260,8 +287,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out seed
-          # Default seed: curated corpus committed to the repo.
-          seed_dir="corpus/parser"
+          # Default seed: curated corpus committed to the repo for
+          # this target. Matrix `corpus` field picks the right one.
+          seed_dir="${{ matrix.corpus }}"
           # Grab the most recent successful nightly's artifact for this
           # target. `gh run list` is cheap (one API call); `gh run
           # download` only fires if a run matched.
@@ -308,16 +336,16 @@ jobs:
                   seed_dir="seed/resume"
                   echo "Resuming from $(ls seed/resume | wc -l) previous queue entries"
                 else
-                  echo "Previous queue empty after filtering — falling back to corpus/parser"
+                  echo "Previous queue empty after filtering — falling back to ${{ matrix.corpus }}"
                 fi
               else
-                echo "Downloaded artifact has no queue dir — falling back to corpus/parser"
+                echo "Downloaded artifact has no queue dir — falling back to ${{ matrix.corpus }}"
               fi
             else
-              echo "No previous artifact for ${{ matrix.target }} — falling back to corpus/parser"
+              echo "No previous artifact for ${{ matrix.target }} — falling back to ${{ matrix.corpus }}"
             fi
           else
-            echo "No previous successful nightly run on main — falling back to corpus/parser"
+            echo "No previous successful nightly run on main — falling back to ${{ matrix.corpus }}"
           fi
           # Stash the chosen seed path for the next step.
           echo "SEED_DIR=$seed_dir" >> "$GITHUB_ENV"
@@ -330,7 +358,7 @@ jobs:
             -V 1800 \
             -i "$SEED_DIR" \
             -o out/${{ matrix.target }} \
-            -x dicts/aver.dict \
+            -x ${{ matrix.dict }} \
             -- target/release/${{ matrix.target }}
 
       - name: Summarise findings
