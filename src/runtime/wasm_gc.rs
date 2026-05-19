@@ -120,8 +120,8 @@ pub fn run_in_process(
     analysis: Option<&AnalysisResult>,
     config: RunConfig,
 ) -> Result<RunOutcome, String> {
-    let bytes = aver::codegen::wasm_gc::compile_to_wasm_gc(items, analysis)
-        .map_err(|e| format!("{e}"))?;
+    let bytes =
+        aver::codegen::wasm_gc::compile_to_wasm_gc(items, analysis).map_err(|e| format!("{e}"))?;
 
     let entry_fn_name: &str = config
         .entry_info

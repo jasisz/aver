@@ -81,7 +81,13 @@ pub(super) fn cmd_run_wasm_gc(
     }
     #[cfg(not(feature = "wasm"))]
     {
-        let _ = (file, module_root_override, program_args, record_dir, entry_expr);
+        let _ = (
+            file,
+            module_root_override,
+            program_args,
+            record_dir,
+            entry_expr,
+        );
         eprintln!("{}", "WASM requires --features wasm".red());
         process::exit(1);
     }
