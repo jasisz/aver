@@ -13,11 +13,16 @@ cargo-fuzz = true
 
 [dependencies]
 afl = "0.15"
-# `runtime` enables the `replay` module the codec target needs.
-# Parser and typecheck targets don't strictly require it but the
-# extra LOC cost is in the noise vs sharing one feature set across
-# every fuzz binary.
-aver-lang = { path = "..", default-features = false, features = ["runtime"] }
+# `runtime` enables `replay`; `wasm-compile` pulls in the wasm-gc
+# codegen used by `fuzz_codegen_wasm_gc` (which also needs the
+# `wasmparser` validator at the end of the pipeline). Sharing one
+# feature set across every fuzz binary keeps the `aver-lang`
+# monomorphisation to one copy.
+aver-lang = { path = "..", default-features = false, features = ["runtime", "wasm-compile"] }
+# Validate codegen output bytes after `compile_to_wasm_gc`. We pin
+# the same minor as `aver-lang`'s optional dep so the workspace
+# resolver picks a single version.
+wasmparser = "0.248"
 
 [[bin]]
 name = "fuzz_parse_bytes"
@@ -36,6 +41,13 @@ bench = false
 [[bin]]
 name = "fuzz_replay_codec"
 path = "fuzz_targets/replay_codec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_codegen_wasm_gc"
+path = "fuzz_targets/codegen_wasm_gc.rs"
 test = false
 doc = false
 bench = false
