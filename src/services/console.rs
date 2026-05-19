@@ -54,6 +54,21 @@ where
     (result, out, err)
 }
 
+/// Capture-aware `println!`-equivalent — embedders that bypass the
+/// `Console.print` builtin (currently the wasm-gc backend's import
+/// handler in `runtime::wasm_gc::imports::lm`) should call this
+/// instead of raw `println!` so the thread-local `capture_output`
+/// buffer sees their writes too.
+pub fn write_stdout_str(s: &str) {
+    write_stdout(s);
+}
+
+/// Capture-aware `eprintln!`-equivalent. Same rationale as
+/// `write_stdout_str`.
+pub fn write_stderr_plain_str(s: &str) {
+    write_stderr_plain(s);
+}
+
 fn write_stdout(s: &str) {
     CAPTURE.with(|c| {
         if let Some((out, _)) = c.borrow_mut().as_mut() {
