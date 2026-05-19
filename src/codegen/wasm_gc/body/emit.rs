@@ -1076,6 +1076,18 @@ pub(super) fn emit_attr_get(
     if ctx.registry.newtype_underlying(&record_name).is_some() {
         return emit_expr(func, obj, slots, ctx);
     }
+    // `Type::Invalid` flows in here when the obj is a namespace handle
+    // (`Vector` in `Vector.set`, `Console` in `Console.print` used as a
+    // bare value, etc.) — the typechecker stamps the inner ident with
+    // `Invalid` because Aver namespaces aren't first-class values. The
+    // emit-path for a real record's `.field` access has nothing useful
+    // to do here; produce a targeted diagnostic instead of letting the
+    // user puzzle over "unknown record type `Invalid`".
+    if record_name == "Invalid" {
+        return Err(WasmGcError::Validation(format!(
+            "the wasm-gc backend doesn't support a bare `<namespace>.{field}` reference as a value. Either call it (`<namespace>.{field}(...)`) or wrap it in a fn: `fn helper(args) -> T = <namespace>.{field}(args)`."
+        )));
+    }
     let type_idx = ctx
         .registry
         .record_type_idx(&record_name)

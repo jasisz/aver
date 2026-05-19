@@ -1061,14 +1061,31 @@ impl TypeChecker {
                     let obj_key = parts.join(".");
                     parts.push(field.clone());
                     let key = parts.join(".");
+                    // The lookups below resolve the *whole* `Vector.set`
+                    // path without ever recursing into `obj` — so for
+                    // namespace shapes the inner `Spanned<Expr>` (the
+                    // `Ident("Vector")`) never gets `set_ty` called and
+                    // codegen later panics in `aver_type_of` walking into
+                    // a stamp-less node. Iron 0.21 fuzz_codegen_wasm_gc
+                    // surfaced exactly this shape three times:
+                    // `Vector.set`, `Option.Some`, `List.prepend` as bare
+                    // expressions. Stamp the inner ident with
+                    // `Type::Invalid` *only* when the lookup recognised
+                    // it as namespace-shaped; doing it unconditionally
+                    // poisons normal `record.field` accesses where `obj`
+                    // is a local that the value-member branch wouldn't
+                    // have stamped before either (but where downstream
+                    // codegen needs the real record type, not `Invalid`).
                     if let Some(ty) = self.find_value_member(&key) {
                         return ty.clone();
                     }
                     if let Some(sig) = self.find_fn_sig(&key) {
+                        obj.set_ty(Type::Invalid);
                         return Self::fn_type_from_sig(sig);
                     }
                     if self.has_namespace_prefix(&key) {
                         // Intermediate namespace (e.g. Models.User in Models.User.findById)
+                        obj.set_ty(Type::Invalid);
                         return Type::Invalid;
                     }
                     if self.has_namespace_prefix(&obj_key) {
@@ -1076,6 +1093,7 @@ impl TypeChecker {
                             "Unknown member '{}.{}' (not exposed or missing)",
                             obj_key, field
                         ));
+                        obj.set_ty(Type::Invalid);
                         return Type::Invalid;
                     }
                 }
