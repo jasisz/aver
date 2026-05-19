@@ -65,10 +65,10 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             walk(&path, out);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("av")
-            && !is_skipped(&path)
-        {
-            let Ok(text) = fs::read_to_string(&path) else { continue };
+        } else if path.extension().and_then(|s| s.to_str()) == Some("av") && !is_skipped(&path) {
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
             if !text
                 .lines()
                 .any(|ln| ln.trim_start().starts_with("depends ["))
@@ -83,9 +83,7 @@ fn parse_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| format!("lex: {:?}", e))?;
     let mut parser = Parser::new(tokens);
-    let mut items = parser
-        .parse()
-        .map_err(|e| format!("parse: {:?}", e))?;
+    let mut items = parser.parse().map_err(|e| format!("parse: {:?}", e))?;
     // Mirror what `aver compile --target wasm-gc` does internally:
     // skip the VM-specific `run_interp_lower` + `run_buffer_build`
     // passes (they emit `__buf_*` / `__interp_*` calls the wasm-gc
