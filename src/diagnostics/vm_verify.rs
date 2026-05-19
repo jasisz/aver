@@ -453,6 +453,7 @@ pub fn run_verify_for_items_vm_with_mode(
         vm::compile_program_with_modules(&items, &mut arena, base_dir, source_file, None)
             .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
+    machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }
@@ -463,6 +464,18 @@ pub fn run_verify_for_items_vm_with_mode(
     }
     Ok(results)
 }
+
+/// Per-`run_named_function` opcode cap installed before evaluating
+/// verify cases. AFL nightly found tail-recursive shapes
+/// (`fn id(x) -> Int = id(-7)` and friends — byte-havoc dropping the
+/// terminating arm) where Aver's TCO turns infinite recursion into a
+/// goto-loop with no stack growth, so without this cap the VM
+/// dispatch loop never terminates. 10M opcodes is well above what
+/// real verify cases need (per-case eval is normally <10k steps on
+/// the bench suite) and short enough that an unconverging case bails
+/// in ~50-200ms instead of pinning the host. The cap resets per
+/// `run_named_function`, so cases don't share budget.
+const VERIFY_VM_STEP_LIMIT: u64 = 10_000_000;
 
 /// Variant for audit / LSP: accept pre-loaded dependency modules
 /// (virtual filesystems) instead of resolving from disk.
@@ -521,6 +534,7 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
         vm::compile_program_with_loaded_modules(&items, &mut arena, loaded, source_file, None)
             .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
+    machine.set_step_limit(Some(VERIFY_VM_STEP_LIMIT));
     if let Some(cfg) = config {
         machine.set_runtime_policy(cfg);
     }

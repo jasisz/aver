@@ -408,6 +408,16 @@ fn build_verify_wasm_gc_plans(
     plans
 }
 
+/// Per-case wasmtime fuel budget — symmetric to
+/// `vm_verify::VERIFY_VM_STEP_LIMIT`. Wasmtime "fuel" is a
+/// per-Store counter that drops to zero on every executed wasm
+/// instruction; running out raises `Trap::OutOfFuel`, surfaced
+/// here as a `RuntimeError` so a tail-recursive user fn bails as
+/// a clean Failure instead of pinning wasmtime forever. 10M wasm
+/// ops is well above what real verify cases need on the bench
+/// suite and short enough to bail in a few hundred ms.
+const WASM_GC_VERIFY_FUEL: u64 = 10_000_000;
+
 fn run_verify_cases_in_wasmtime(
     bytes: &[u8],
     plans: &[WasmGcVerifyPlan],
@@ -423,6 +433,11 @@ fn run_verify_cases_in_wasmtime(
     config.wasm_reference_types(true);
     config.wasm_multi_value(true);
     config.wasm_bulk_memory(true);
+    // Mirror the VM-side `step_limit` cap: per-case fuel budget so a
+    // tail-recursive user fn (AFL byte-havoc favourite) bails as a
+    // `RuntimeError` instead of pinning wasmtime. Reset before every
+    // case below so cases don't share budget.
+    config.consume_fuel(true);
     let engine = Engine::new(&config).map_err(|e| format!("wasmtime engine: {}", e))?;
 
     let module =
@@ -490,6 +505,15 @@ fn run_verify_cases_in_wasmtime(
                 .get(idx)
                 .copied()
                 .unwrap_or(false);
+
+            // Refuel before each case. Guard + check + repr helpers all
+            // share this one budget; a single tail-recursive user fn
+            // consumes it and triggers `Trap::OutOfFuel` ≈ a few hundred
+            // ms instead of looping forever. Mirrors the VM's per-call
+            // `step_limit` reset in `Machine::run_named_function`.
+            store
+                .set_fuel(WASM_GC_VERIFY_FUEL)
+                .map_err(|e| format!("wasm-gc verify: set_fuel: {}", e))?;
 
             // Guard — when present and false, skip the case.
             if let Some(gname) = &case.guard {

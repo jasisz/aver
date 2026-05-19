@@ -106,11 +106,27 @@ impl VM {
             }};
         }
 
+        // Per-call dispatched-opcode counter. Bumped every iteration;
+        // checked against `step_limit` in the same 256-op cadence as
+        // cancellation so the hot path stays branch-light. Reset by
+        // `run_named_function` at the top of every verify case so cases
+        // don't share budget.
+        let mut step_count: u64 = 0;
         loop {
-            // Cooperative cancellation: check every 256 opcodes to amortise cost.
-            if ip & 0xFF == 0 && self.is_cancelled() {
-                return Err(VmError::runtime("cancelled by sibling branch"));
+            // Cooperative cancellation + step-limit: both amortised by
+            // checking every 256 opcodes. Step limit defaults to `None`
+            // (unlimited, normal `aver run`); verify path installs ~10M.
+            if ip & 0xFF == 0 {
+                if self.is_cancelled() {
+                    return Err(VmError::runtime("cancelled by sibling branch"));
+                }
+                if let Some(limit) = self.step_limit
+                    && step_count >= limit
+                {
+                    return Err(VmError::StepLimit { limit, line: 0 });
+                }
             }
+            step_count += 1;
 
             let code: &[u8] = unsafe { std::slice::from_raw_parts(code_ptr, code_len) };
 
