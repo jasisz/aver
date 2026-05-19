@@ -10,11 +10,12 @@ publish = false
 [workspace]
 
 [lib]
-# Phase 1: just a Rust lib so we can test the unparser via `cargo
-# test`. The AFL custom-mutator `cdylib` shape switches on once the
-# unparser passes its corpus round-trip suite and the mutation
-# strategies land on top of it. For now `cargo test -p
-# aver-fuzz-mutator` is the gate.
+# `lib` for `cargo test` to reach the unparser + mutations modules
+# from the integration tests; `cdylib` for AFL++ to `dlopen` the
+# built `.so` via `AFL_CUSTOM_MUTATOR_LIBRARY`. The C ABI surface
+# lives in `src/afl_api.rs` and is namespaced under feature
+# `afl_api` to keep the unsafe surface out of `cargo test` builds.
+crate-type = ["lib", "cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
@@ -24,6 +25,11 @@ path = "src/lib.rs"
 # with the fuzz targets avoids a second monomorphisation of
 # `aver-lang` against a different feature set on the same workspace.
 aver-lang = { path = "../..", default-features = false, features = ["runtime"] }
+
+# Deterministic PRNG so a given AFL seed produces the same mutation
+# chain across re-runs. SmallRng is the cheap-and-fast PRNG the
+# AFL C custom mutator examples use.
+rand = { version = "0.9", default-features = false, features = ["small_rng"] }
 
 [dev-dependencies]
 # Walk `../corpus/parser/` during integration tests.

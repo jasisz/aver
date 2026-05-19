@@ -28,6 +28,8 @@
 //!   operator precedence; every `BinOp`, `Neg`, and `ErrorProp`
 //!   wraps its operands. The parser handles the redundant parens.
 
+pub mod afl_api;
+pub mod mutations;
 pub mod unparse;
 
 pub use unparse::{UnparseError, unparse};

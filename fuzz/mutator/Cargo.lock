@@ -63,6 +63,7 @@ name = "aver-fuzz-mutator"
 version = "0.0.0"
 dependencies = [
  "aver-lang",
+ "rand",
  "walkdir",
 ]
 
