@@ -1,19 +1,12 @@
 name: Fuzz
 
-# Two surfaces over a matrix of targets:
-#   * `pr-smoke`     — runs on every PR + push to main with a 180 s
-#                      time-box per target. Cheap regression net for
-#                      "did this change introduce a parser / typecheck
-#                      ICE", not a real exploration run.
-#   * `nightly`      — runs on cron at 03:00 UTC against main with a
-#                      30-minute budget per target. Each nightly job
-#                      tries to download the previous run's AFL queue
-#                      as the seed corpus so 30 min of exploration
-#                      compounds night over night; falls back to the
-#                      committed `corpus/<target>/` seeds when no
-#                      previous artifact exists. Crashes uploaded as
-#                      artifacts so the next morning's first action is
-#                      `afl-tmin` → `tests/regressions/<target>/<hash>.av`.
+# `nightly` — runs on cron at 03:00 UTC against main with a
+# 30-minute budget per target. Each nightly job tries to download
+# the previous run's AFL queue as the seed corpus so 30 min of
+# exploration compounds night over night; falls back to the
+# committed `corpus/<target>/` seeds when no previous artifact
+# exists. Crashes uploaded as artifacts so the next morning's first
+# action is `afl-tmin` → `tests/regressions/<target>/<hash>.av`.
 #
 # Targets:
 #   * `fuzz_parse_bytes`        — bytes → lexer → parser. Catches
@@ -21,18 +14,27 @@ name: Fuzz
 #   * `fuzz_typecheck_program`  — bytes → lex → parse → typecheck →
 #     resolve. Catches panics in any post-parse pass — the surface a
 #     real user touches every time they run `aver check`.
+#   * `fuzz_replay_codec`       — JSON record codec roundtrip.
+#   * `fuzz_codegen_wasm_gc`    — source → compile → wasmparser validate.
+#   * `fuzz_verify_runner`      — source → run_verify_for_items_vm.
+#   * `fuzz_parity_vm_vs_wasm_gc` — VM ↔ wasm-gc in-process differential.
 #
-# Both jobs are Linux-only by deliberate choice. AFL++ on macOS hosted
-# runners hits frequent CPU-scaling and persistent-mode quirks that
-# burn CI minutes without finding more bugs; the value of "fuzz on
-# every platform" is low compared to the cost. macOS coverage falls
-# out from the rest of the test matrix.
+# Linux-only by deliberate choice. AFL++ on macOS hosted runners
+# hits frequent CPU-scaling and persistent-mode quirks that burn CI
+# minutes without finding more bugs; the value of "fuzz on every
+# platform" is low compared to the cost. macOS coverage falls out
+# from the rest of the test matrix.
+#
+# **No PR-smoke job here.** A 180-s smoke pass per target burned
+# ~11 min wall on every PR and overlapped heavily with the
+# cross-backend proptest + replay proptest already in `Check &
+# Test` (~256-1024 iterations per fn, in <2 min). The per-PR signal
+# wasn't worth the wait: real finds come from nightly's 30-min
+# budget + custom AST mutator + queue seeding. Manual smoke is
+# still available via `workflow_dispatch` if you want to chase a
+# specific shape before nightly.
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   schedule:
     # 03:00 UTC daily — runs against the tip of main.
     - cron: '0 3 * * *'
@@ -66,181 +68,6 @@ env:
   AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES: '1'
 
 jobs:
-  pr-smoke:
-    name: Fuzz smoke (${{ matrix.target }})
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    strategy:
-      # Each target runs in its own job — independent failure modes,
-      # independent crash artifacts. `fail-fast: false` so a parser
-      # ICE in one target doesn't suppress a typecheck panic in the
-      # other.
-      fail-fast: false
-      matrix:
-        # `corpus` + `dict` per target — parse_bytes and
-        # typecheck_program share `corpus/parser` + the Aver dict
-        # (typecheck runs every parser-accepted input through extra
-        # passes, so seeds for one are valid seeds for the other),
-        # while `fuzz_replay_codec` consumes JSON and uses a
-        # dedicated dictionary of marker keys + schema fields.
-        include:
-          - target: fuzz_parse_bytes
-            corpus: corpus/parser
-            dict: dicts/aver.dict
-          - target: fuzz_typecheck_program
-            corpus: corpus/parser
-            dict: dicts/aver.dict
-          - target: fuzz_replay_codec
-            corpus: corpus/replay
-            dict: dicts/replay_json.dict
-          - target: fuzz_codegen_wasm_gc
-            corpus: corpus/parser
-            dict: dicts/aver.dict
-          - target: fuzz_verify_runner
-            corpus: corpus/parser
-            dict: dicts/aver.dict
-          - target: fuzz_parity_vm_vs_wasm_gc
-            corpus: corpus/parser
-            dict: dicts/aver.dict
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      # Cache the `cargo-afl` install + AFL++ binaries (the build.rs in
-      # `afl.rs` compiles afl-cc / afl-fuzz from source on first install,
-      # which is ~5 min uncached).
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Cache only the host workspace, NOT `fuzz/`. `cargo afl
-          # build` injects `-C target-cpu=native` into RUSTFLAGS,
-          # which bakes the runner's exact micro-arch (AVX512 vs
-          # AVX2 etc.) into every artifact. GHA pool rotates CPUs
-          # between runs, and a cache restored from one runner can
-          # SIGILL on another with a narrower instruction set —
-          # which is exactly the failure mode that flapped fuzz
-          # smoke after PR #41's third commit. Rebuilding fuzz/
-          # from scratch costs ~5 min per job; correctness wins.
-          workspaces: |
-            .
-
-      - name: Install cargo-afl
-        # Three things have to line up before `cargo afl build` works:
-        #   1. The `cargo-afl` subcommand binary on PATH.
-        #   2. The AFLplusplus source tree extracted under
-        #      `~/.cargo/registry/src/.../cargo-afl-common-*/AFLplusplus`,
-        #      which `cargo afl config --build` consumes.
-        #   3. The Rust-toolchain-specific AFL LLVM runtime libraries,
-        #      built by `cargo afl config --build`.
-        # `Swatinem/rust-cache` happily restores (1) from cache while
-        # silently dropping (2) — registry source dirs are not in its
-        # default cache set. Result: install step appears to "succeed",
-        # then the next step errors out with either "AFL LLVM runtime
-        # was not built" or "cannot stat .../AFLplusplus".
-        # Fix: install only if binary is missing, then *try*
-        # `cargo afl config --build --force`; if it fails (source
-        # dir gone), force-reinstall to repopulate the registry and
-        # rebuild the runtime.
-        run: |
-          if ! command -v cargo-afl >/dev/null; then
-            cargo install cargo-afl --locked
-          fi
-          cargo afl --version
-          if ! cargo afl config --build --force; then
-            echo "cargo-afl source missing — force-reinstalling"
-            cargo install cargo-afl --locked --force
-            cargo afl config --build --force
-          fi
-
-      - name: Build fuzz target
-        working-directory: fuzz
-        run: cargo afl build --release --bin ${{ matrix.target }}
-
-      - name: Fuzz (180 s)
-        working-directory: fuzz
-        # `-V 180` is fuzz time, not wall time — total job runtime
-        # includes build above + this run + post-step coverage minimise.
-        # Seed corpus + token dictionary both come from the matrix
-        # because each target consumes a different language:
-        #   - parse_bytes / typecheck_program — Aver source +
-        #     `dicts/aver.dict`
-        #   - replay_codec — replay-format JSON +
-        #     `dicts/replay_json.dict`
-        # `mkdir -p out`: AFL's `-o` flag wants the parent
-        # directory to exist; on a fresh runner there is no `out/`.
-        # Exits cleanly when the budget elapses; we then inspect
-        # `out/${{ matrix.target }}/default/crashes/` ourselves.
-        run: |
-          mkdir -p out
-          cargo afl fuzz \
-            -V 180 \
-            -i ${{ matrix.corpus }} \
-            -o out/${{ matrix.target }} \
-            -x ${{ matrix.dict }} \
-            -- target/release/${{ matrix.target }}
-
-      - name: Iron Phase 0 metrics
-        # Each fuzz target writes accumulator stats to
-        # `/tmp/aver_fuzz_metrics_<target>.txt` every 10k execs.
-        # The file persists between AFL persistent-mode iterations
-        # and gets a final snapshot just before the harness exits.
-        # CI surfaces it so we can chart parse-success rate, AST
-        # shape distribution, and depth high-water marks
-        # independently from AFL's bitmap coverage. Phase 1 (custom
-        # AFL mutator) will compare its own pre/post numbers
-        # against this baseline.
-        if: always()
-        run: |
-          metrics_file="/tmp/aver_fuzz_metrics_${{ matrix.target }}.txt"
-          echo "::group::Iron Phase 0 fuzz metrics — ${{ matrix.target }}"
-          if [ -f "$metrics_file" ]; then
-            cat "$metrics_file"
-          else
-            echo "no metrics snapshot (target ran < 10k execs)"
-          fi
-          echo "::endgroup::"
-
-      - name: Fail on crash
-        # AFL writes one file per distinct crash under
-        # `out/<target>/<id>/crashes/`. Anything other than the
-        # `README.txt` AFL drops there means we found an ICE.
-        working-directory: fuzz
-        run: |
-          shopt -s nullglob
-          crashes=(out/${{ matrix.target }}/default/crashes/id:*)
-          if [ "${#crashes[@]}" -gt 0 ]; then
-            echo "AFL++ found ${#crashes[@]} crash(es) in ${{ matrix.target }}:"
-            for c in "${crashes[@]}"; do
-              echo "--- $c ---"
-              xxd "$c" | head -40
-            done
-            exit 1
-          fi
-          echo "no crashes — ${{ matrix.target }} robust for 180 s"
-
-      - name: Pack AFL output
-        # AFL names every crash / queue entry like
-        # `id:000000,sig:06,src:002748,time:...,execs:...,op:havoc,rep:1`.
-        # `actions/upload-artifact@v4` rejects any path containing `:`
-        # for Windows compat reasons, so a directory upload silently
-        # drops every AFL finding. Wrap the whole `out/<target>/`
-        # tree in a tarball before handing it to the upload action —
-        # the colon-bearing names live inside the archive, where the
-        # filename validator doesn't look.
-        if: failure()
-        working-directory: fuzz
-        run: |
-          tar -czf afl-pr-smoke-${{ matrix.target }}.tar.gz \
-            -C out/${{ matrix.target }} default
-
-      - name: Upload AFL output (debug)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: afl-pr-smoke-${{ matrix.target }}
-          path: fuzz/afl-pr-smoke-${{ matrix.target }}.tar.gz
-          retention-days: 7
-
   nightly:
     name: Fuzz nightly (${{ matrix.target }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -292,15 +119,20 @@ jobs:
           # AVX2 etc.) into every artifact. GHA pool rotates CPUs
           # between runs, and a cache restored from one runner can
           # SIGILL on another with a narrower instruction set —
-          # which is exactly the failure mode that flapped fuzz
-          # smoke after PR #41's third commit. Rebuilding fuzz/
-          # from scratch costs ~5 min per job; correctness wins.
+          # which is exactly the failure mode that flapped the
+          # nightly fuzz after PR #41's third commit. Rebuilding
+          # fuzz/ from scratch costs ~5 min per job; correctness
+          # wins.
           workspaces: |
             .
 
       - name: Install cargo-afl
-        # See pr-smoke comment for why all three of these checks are
-        # load-bearing.
+        # Three checks are load-bearing: (1) the binary may be
+        # cached from a previous job, (2) the version probe ensures
+        # the cached binary is functional, (3) `config --build`
+        # ensures the AFL llvm passes are compiled — a half-baked
+        # cache restore can leave the binary present but the
+        # instrumentation source missing.
         run: |
           if ! command -v cargo-afl >/dev/null; then
             cargo install cargo-afl --locked
@@ -453,11 +285,10 @@ jobs:
             -- target/release/${{ matrix.target }}
 
       - name: Iron Phase 0 metrics
-        # Same metrics surface as pr-smoke — see the comment there.
-        # On a 30-min nightly the snapshot is far more interesting
-        # than on a 180-s smoke: parse_ok / typecheck_clean rates
-        # tell us whether the target is exploring deep pipeline
-        # paths or stuck rejecting at the lexer.
+        # Dump the lex_ok / parse_ok / typecheck_clean / max_ast_depth
+        # snapshot the target's `common::counters()` recorded during
+        # the 30-min run. Tells us whether the target is exploring
+        # deep pipeline paths or stuck rejecting at the lexer.
         if: always()
         run: |
           metrics_file="/tmp/aver_fuzz_metrics_${{ matrix.target }}.txt"
@@ -485,7 +316,7 @@ jobs:
           fi
 
       - name: Pack AFL output
-        # See `Pack AFL output` in `pr-smoke` for why this tar step is
+        # AFL filenames contain `:` characters that
         # mandatory: AFL filenames contain `:` characters that
         # actions/upload-artifact@v4 silently drops, producing a
         # zero-byte artifact and breaking the resume mechanism.
