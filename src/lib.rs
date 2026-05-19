@@ -32,6 +32,8 @@ pub mod playground;
 pub mod replay;
 pub mod resolver;
 #[cfg(feature = "runtime")]
+pub mod runtime;
+#[cfg(feature = "runtime")]
 pub mod runtime_bench_cases;
 #[cfg(feature = "runtime")]
 pub mod services;
