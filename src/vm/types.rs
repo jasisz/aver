@@ -171,6 +171,10 @@ pub enum VmError {
     MatchFail(u16),
     /// Stack underflow (bug in compiler).
     StackUnderflow,
+    /// Dispatched opcode count exceeded `VM::step_limit`. Carries the
+    /// limit value so the caller (verify runner) can put it in the
+    /// failure message — "did not converge in 10_000_000 steps".
+    StepLimit { limit: u64, line: u16 },
 }
 
 impl VmError {
@@ -221,6 +225,14 @@ impl std::fmt::Display for VmError {
             VmError::Type { msg, .. } => write!(f, "Type error: {}", msg),
             VmError::MatchFail(line) => write!(f, "Non-exhaustive match at line {}", line),
             VmError::StackUnderflow => write!(f, "Internal error: stack underflow"),
+            VmError::StepLimit { limit, line } if *line > 0 => write!(
+                f,
+                "VM step limit exceeded ({} steps) [line {}]",
+                limit, line
+            ),
+            VmError::StepLimit { limit, .. } => {
+                write!(f, "VM step limit exceeded ({} steps)", limit)
+            }
         }
     }
 }

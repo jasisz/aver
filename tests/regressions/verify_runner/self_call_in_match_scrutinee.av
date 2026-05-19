@@ -1,0 +1,11 @@
+module M
+fn abs(x: Int) -> Int
+    ? "Self-call inside the `match` scrutinee — VM evaluates `abs(x)` to pick the arm, which recurses without ever reaching an arm body."
+    match (abs(x) > 3)
+        true -> (-x)
+        false -> x
+
+verify abs
+    abs(0) => 0
+    abs(7) => 7
+    abs((-7)) => 7

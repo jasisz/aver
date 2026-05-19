@@ -1,0 +1,9 @@
+module M
+fn id(x: Int) -> Int
+    ? "Mutated body has `x id(42)` on a single line — parser folds it into a call/expression statement that re-enters `id`."
+    x id(42)
+
+verify id
+    id(0)   => 0
+    id(42)  => 42
+    id(-7)  => -7

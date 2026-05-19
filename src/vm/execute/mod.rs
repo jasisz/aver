@@ -25,6 +25,15 @@ pub struct VM {
     error_ip: u32,
     /// Cooperative cancellation flag — set by sibling threads on error.
     cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Optional cap on dispatched opcodes per `run_named_function` /
+    /// `run` call. `None` (default) = unlimited, the production `aver run`
+    /// path. `Some(n)` is set by the verify runner so a single case can't
+    /// pin the host on a tail-recursive fn that never converges — AFL
+    /// nightly's hang corpus is full of those shapes (e.g. `fn id(x) =
+    /// id(-7)` where TCO turns infinite recursion into a goto-loop with
+    /// no stack growth). Counter resets at the top of each
+    /// `run_named_function` so consecutive cases don't share budget.
+    step_limit: Option<u64>,
     /// Mutable scratch buffers for the deforestation lowering's `__buf_*`
     /// intrinsics (0.15 Traversal). Slots are `Option<String>` so finalize
     /// can take ownership and leave a tombstone; `BUFFER_NEW` reuses freed
@@ -57,7 +66,17 @@ impl VM {
             error_ip: 0,
             cancelled: None,
             buffer_pool: Vec::new(),
+            step_limit: None,
         }
+    }
+
+    /// Cap the number of dispatched opcodes per `run_named_function` /
+    /// `run` call. The verify runner uses this so a tail-recursive case
+    /// without a base case (very easy for AFL byte-havoc to produce by
+    /// dropping a terminating arm) bails as a `Failure` instead of
+    /// pinning the host. `None` removes the cap.
+    pub fn set_step_limit(&mut self, limit: Option<u64>) {
+        self.step_limit = limit;
     }
 
     pub fn start_profiling(&mut self) {

@@ -1,0 +1,10 @@
+module M
+fn id(x: Int) -> Int
+    ? "byte-havoc dropped the terminating body, leaving a self-call as the only statement before the trailing `x`. TCO turns this into a goto-loop with no stack growth."
+    id(-7)
+    x
+
+verify id
+    id(0)   => 0
+    id(42)  => 42
+    id(-7)  => -7

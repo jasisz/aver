@@ -1,0 +1,7 @@
+module M
+fn double(x: Int) -> Int
+    ? "AFL byte-havoc turned `(x * 2)` into `double((-3))(x * 2)`, an apply-to-self-call shape that recurses on every entry."
+    double((-3))(x * 2)
+
+verify double
+    double(0) => 0
