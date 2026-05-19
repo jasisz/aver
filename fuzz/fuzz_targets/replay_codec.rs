@@ -54,4 +54,5 @@ fn main() {
         // generator side.
         let _ = aver::replay::json::value_to_json(&value);
     });
+    common::counters().flush();
 }

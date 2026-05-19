@@ -35,4 +35,8 @@ fn main() {
         let (nodes, depth) = common::ast_metrics(&items);
         c.record_parse_ok(nodes, depth);
     });
+    // Final snapshot — interval flush may not fire if AFL terminates
+    // the persistent loop mid-budget. CI reads this file after the
+    // fuzz step.
+    common::counters().flush();
 }

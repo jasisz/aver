@@ -61,4 +61,5 @@ fn main() {
         // suppresses cascading from.
         aver::resolver::resolve_program(&mut items);
     });
+    common::counters().flush();
 }

@@ -78,6 +78,14 @@ impl Counters {
         }
     }
 
+    /// Force a snapshot write regardless of flush interval. Call
+    /// from the fuzz target's `main` after `afl::fuzz!` returns so
+    /// the final state survives even when AFL terminates the loop
+    /// mid-budget at the `-V` deadline.
+    pub fn flush(&self) {
+        self.flush_to_disk();
+    }
+
     pub fn record_lex_ok(&self) {
         self.lex_ok.fetch_add(1, Ordering::Relaxed);
     }
@@ -113,9 +121,12 @@ impl Counters {
 }
 
 /// How often to snapshot to disk. Tuned so the I/O cost is
-/// negligible vs the fuzz throughput (10k execs takes ~1 s in
-/// persistent mode, so once per second of fuzzing is the budget).
-const FLUSH_INTERVAL: u64 = 10_000;
+/// negligible vs the fuzz throughput (1k execs takes ~100ms in
+/// persistent mode, so ten flushes per second of fuzzing is the
+/// budget — cheap, and short PR-smoke runs (180 s) reach the
+/// first flush in well under a second even on the slow
+/// typecheck target).
+const FLUSH_INTERVAL: u64 = 1_000;
 
 /// Count AST nodes by walking every `TopLevel` and its expression
 /// subtree iteratively. We care about the order of magnitude, not
@@ -231,15 +242,12 @@ fn expr_metrics(root: &aver::ast::Spanned<aver::ast::Expr>, base_depth: u64) -> 
 }
 
 /// Global counters per fuzz binary. Each target initialises its
-/// own `Counters` via `Counters::new("fuzz_<target>")` and reaches
-/// for it through `counters()`.
+/// own `Counters` via `Counters::new(env!("CARGO_BIN_NAME"))` and
+/// reaches for it through `counters()`. Using the cargo-injected
+/// bin name (compile-time) instead of a runtime env var means the
+/// AFL forkserver child processes don't need any env plumbing —
+/// the binary's identity is baked in at link time.
 pub fn counters() -> &'static Counters {
     static COUNTERS: OnceLock<Counters> = OnceLock::new();
-    COUNTERS.get_or_init(|| {
-        let target = std::env::var("AVER_FUZZ_TARGET_NAME")
-            .ok()
-            .map(|s| Box::leak(s.into_boxed_str()) as &'static str)
-            .unwrap_or("fuzz_unknown");
-        Counters::new(target)
-    })
+    COUNTERS.get_or_init(|| Counters::new(env!("CARGO_BIN_NAME")))
 }
