@@ -137,3 +137,35 @@ strategy_test!(strategy_7_rename_param, 7, 1);
 // most corpus fns are single-expression bodies.
 strategy_test!(strategy_8_swap_statements, 8, 0_usize);
 strategy_test!(strategy_9_negate_expression, 9, 1);
+
+/// `strategy_name` is the label AFL embeds into queue + crash
+/// filenames via the custom mutator's `describe` hook, so it has to
+/// be unique per strategy (otherwise triage can't tell two
+/// strategies apart) and filename-safe (no `/`, no NUL, no spaces).
+#[test]
+fn strategy_names_are_unique_and_filename_safe() {
+    use std::collections::HashSet;
+    let mut seen: HashSet<&'static str> = HashSet::new();
+    for idx in 0..aver_fuzz_mutator::mutations::STRATEGY_COUNT {
+        let name = aver_fuzz_mutator::mutations::strategy_name(idx);
+        assert!(
+            !name.is_empty(),
+            "strategy {} returned empty label",
+            idx
+        );
+        assert!(
+            name.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+            "strategy {} label `{}` contains a filename-hostile character (AFL splices it into queue filenames)",
+            idx,
+            name,
+        );
+        assert!(
+            seen.insert(name),
+            "strategy {} label `{}` collides with an earlier strategy",
+            idx,
+            name,
+        );
+    }
+    assert_eq!(seen.len() as u32, aver_fuzz_mutator::mutations::STRATEGY_COUNT);
+}
