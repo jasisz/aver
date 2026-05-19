@@ -18,7 +18,14 @@ afl = "0.15"
 # `wasmparser` validator at the end of the pipeline). Sharing one
 # feature set across every fuzz binary keeps the `aver-lang`
 # monomorphisation to one copy.
-aver-lang = { path = "..", default-features = false, features = ["runtime", "wasm-compile"] }
+# `wasm` pulls in the wasm-gc backend; `runtime-net` + `terminal`
+# unlock the HTTP / Terminal effect import handlers `runtime::wasm_gc`
+# wires unconditionally. The production `aver` bin has them via its
+# `required-features`, but a lib-only build (fuzz crate consumes
+# `aver-lang` as a library) has to ask explicitly. Keeping them in
+# the parity build means the wasm-gc executor sees the same effect
+# surface AFL might generate from real Aver corpus seeds.
+aver-lang = { path = "..", default-features = false, features = ["runtime", "wasm-compile", "wasm", "runtime-net", "terminal"] }
 # Validate codegen output bytes after `compile_to_wasm_gc`. We pin
 # the same minor as `aver-lang`'s optional dep so the workspace
 # resolver picks a single version.
