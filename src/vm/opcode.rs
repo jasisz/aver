@@ -90,6 +90,19 @@ pub const MUL_FLOAT: u8 = 0x1C;
 /// the spec, no runtime check.
 pub const DIV_FLOAT: u8 = 0x1D;
 
+/// Typed unary `-` on an `Int` operand. Pops one value, decodes
+/// via `as_int` (inline), negates with `wrapping_neg`, re-boxes
+/// through `NanValue::new_int`. Skips the `is_int / is_float`
+/// branch in `NEG`. Emitted when `inner.ty()` resolves to
+/// `Type::Int`.
+pub const NEG_INT: u8 = 0x1E;
+/// Typed unary `-` on a `Float` operand. Same shape as `NEG_INT`
+/// but on the float side: raw `f64::from_bits`, IEEE 754 negation
+/// (sign-bit flip), push as `NanValue::new_float`. Skips the
+/// `NEG` tag-dispatch chain and preserves `-0.0` because the
+/// negation runs on the float bit pattern, not on `0 - x` desugar.
+pub const NEG_FLOAT: u8 = 0x1F;
+
 // -- Comparison --------------------------------------------------------------
 
 /// Pop b, pop a, push a == b.
@@ -403,6 +416,8 @@ pub fn opcode_name(op: u8) -> &'static str {
         DIV => "DIV",
         MOD => "MOD",
         NEG => "NEG",
+        NEG_INT => "NEG_INT",
+        NEG_FLOAT => "NEG_FLOAT",
         NOT => "NOT",
         EQ => "EQ",
         EQ_INT => "EQ_INT",
@@ -493,6 +508,8 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | DIV
         | MOD
         | NEG
+        | NEG_INT
+        | NEG_FLOAT
         | NOT
         | EQ
         | EQ_INT

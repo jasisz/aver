@@ -289,6 +289,15 @@ impl VM {
                         return Err(VmError::type_err("cannot negate non-numeric"));
                     }
                 }
+                NEG_INT => {
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).wrapping_neg();
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+                NEG_FLOAT => {
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    self.stack.push(NanValue::new_float(-a.as_float()));
+                }
                 NOT => {
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(!a.as_bool()));
