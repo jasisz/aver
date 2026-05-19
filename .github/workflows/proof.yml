@@ -1,0 +1,81 @@
+name: Proof
+
+# Nightly proof-export gate. `tests/proof_spec.rs` emits Lean
+# (`aver proof <example> --target lean` → `lake build`) and Dafny
+# (`aver proof --backend dafny` → `dafny verify`) on the real
+# `examples/formal/` corpus. The job installs both toolchains and
+# runs the same `cargo test --test proof_spec` invocation — the
+# Dafny arm is conditional on `dafny --version` succeeding, so
+# whether we install it here is the only thing standing between
+# "tested" and "silently skipped".
+#
+# Moved off the per-PR CI gate (was 1m6s Lean-only) to consolidate
+# heavy toolchain installs into one nightly run, matching the
+# fuzz workflow's "PR is fast, nightly catches regressions"
+# strategy. A proof codegen regression now surfaces on the next
+# morning's nightly artefacts; manual workflow_dispatch is one
+# click away if you want pre-merge confirmation on a specific
+# proof-touching PR.
+
+on:
+  schedule:
+    # 03:00 UTC daily — runs against the tip of main, same as fuzz
+    # nightly. Both jobs read main, neither needs the other's
+    # artefacts.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  proof-export:
+    name: Proof Export (Lean + Dafny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Lean (via elan)
+        # Elan with a real default toolchain — `--default-toolchain none`
+        # leaves `lake` as a wrapper that errors on every call because
+        # it has no toolchain to delegate to (works for a project dir
+        # with its own `lean-toolchain` file, broken for the upfront
+        # `lake --version` sanity check). Pinning `stable` makes the
+        # bare-PATH lake binary executable; emitted proof projects with
+        # a different `lean-toolchain` still trigger elan to fetch the
+        # matching version on first `lake build`.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Verify `lake` reachable
+        run: lake --version
+
+      - name: Install Dafny
+        # `tests/proof_spec.rs` already gates the Dafny arms on
+        # `Command::new("dafny").arg("--version").output().is_ok()`,
+        # so locally these tests skip cleanly. On nightly we install
+        # the toolchain so the same `cargo test` invocation exercises
+        # both backends — `aver proof --backend dafny <example>`
+        # followed by `dafny verify Prog.dfy` against the emitted
+        # project. A Dafny-side proof failure on any fixture fails
+        # the job.
+        uses: dafny-lang/setup-dafny-action@v1.7.3
+        with:
+          dafny-version: 4.9.0
+
+      - name: Verify `dafny` reachable
+        run: dafny --version
+
+      - name: Run proof-export tests
+        # Restricting to the proof_spec target keeps this job short
+        # (no overlap with the lib / wasm / bench jobs). Lean and
+        # Dafny arms are interleaved inside individual #[test] fns;
+        # the test harness picks whichever toolchains are on PATH.
+        run: cargo test -p aver-lang --test proof_spec
