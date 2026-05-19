@@ -20,7 +20,7 @@ pub enum Type {
     Vector(Box<Type>),
     Fn(Vec<Type>, Box<Type>, Vec<String>),
     Var(String), // named type variable in polymorphic builtin signatures (instantiated at call site)
-    Invalid,     // checker recovery after an earlier error; never compatible with concrete types
+    Invalid, // checker recovery after an earlier error; matches anything in `.compatible` to suppress cascading diagnostics
     Named(String), // user-defined type: Shape, User, etc.
 }
 
@@ -28,15 +28,21 @@ impl Type {
     /// `a.compatible(b)` — can a value of type `self` be used where `other` is expected?
     /// Two concrete types must be equal (structurally) to be compatible. Type variables
     /// are resolved by the type checker at call sites, not by this raw relation.
+    ///
+    /// Iron — A4: `Type::Invalid` is the checker's "already-errored"
+    /// sentinel and matches anything. Without this, a single bad
+    /// expression would fan its `Invalid` type out through every
+    /// downstream `.compatible(...)` check and produce a chain of
+    /// duplicate diagnostics.
     pub fn compatible(&self, other: &Type) -> bool {
         match (self, other) {
+            (Type::Invalid, _) | (_, Type::Invalid) => true,
             (Type::Int, Type::Int) => true,
             (Type::Float, Type::Float) => true,
             (Type::Str, Type::Str) => true,
             (Type::Bool, Type::Bool) => true,
             (Type::Unit, Type::Unit) => true,
             (Type::Var(a), Type::Var(b)) => a == b,
-            (Type::Invalid, _) | (_, Type::Invalid) => false,
             (Type::Result(a1, b1), Type::Result(a2, b2)) => a1.compatible(a2) && b1.compatible(b2),
             (Type::Option(a), Type::Option(b)) => a.compatible(b),
             (Type::List(a), Type::List(b)) => a.compatible(b),

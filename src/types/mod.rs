@@ -437,8 +437,10 @@ mod tests {
     fn test_compatible() {
         assert!(Type::Int.compatible(&Type::Int));
         assert!(!Type::Int.compatible(&Type::Str));
-        assert!(!Type::Invalid.compatible(&Type::Int));
-        assert!(!Type::Int.compatible(&Type::Invalid));
+        // Iron — A4: `Type::Invalid` is the already-errored sentinel,
+        // so it matches anything to suppress cascading diagnostics.
+        assert!(Type::Invalid.compatible(&Type::Int));
+        assert!(Type::Int.compatible(&Type::Invalid));
         assert!(!Type::Int.compatible(&Type::Float)); // no implicit widening
         assert!(
             Type::Result(Box::new(Type::Int), Box::new(Type::Str))
