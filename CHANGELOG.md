@@ -8,6 +8,9 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **Duplicate function name is now a type error.** Defining the same `fn` name twice in a module surfaces "Function 'X' is already defined in this module" at the duplicate's source line. Pre-Iron, the second definition silently dropped the first — a typo could swap your function's body without any signal.
 - **Polymorphic recursion that would need `T := F<...T...>` is rejected.** Shapes like `fn nest(v: A) -> Unit; nest([v])` (where the recursive call would need `A` to equal `List<A>`) now surface as a normal type-incompatibility error instead of silently typechecking with a circular binding.
 
+### Improved
+- **Unary minus skips runtime tag-dispatch on the VM.** Two new typed opcodes (`NEG_INT` / `NEG_FLOAT`) replace the generic `NEG`'s `is_int / is_float` branch when the operand's source type resolves to `Int` or `Float`. Continues the typed-arith pipeline established in 0.17.2 (`ADD_INT`, `MUL_FLOAT`, …) — `-x` in tight numeric loops now dispatches in the same shape as `+`, `*`, `/`. As a side effect `-0.0` on a `Float`-typed operand round-trips its sign bit through the VM the same way it does on every other backend, because the typed dispatch operates on the float bit pattern instead of decoding through a generic path.
+
 ### Fixed
 - **Replay can load `Vector` values.** `aver run --record` emitted a `$vector` marker for `Value::Vector`, but `aver replay` had no matching decode arm — any recording with a Vector value failed to load with `unknown replay marker '$vector'`.
 - **Replay can load `Map`s with a single string key.** A 1-entry string-keyed `Map` encoded as `{"key": value}` collided with the marker-wrap shape; replay tried to interpret `key` as an unknown marker. The decoder now only treats `$`-prefixed keys as markers, so plain string keys flow through as map entries.

@@ -64,7 +64,18 @@ impl<'a> FnCompiler<'a> {
             }
             Expr::Neg(inner) => {
                 self.compile_expr(inner)?;
-                self.emit_op(crate::vm::opcode::NEG);
+                // Iron — B1: pick a typed NEG when the operand's
+                // `Spanned::ty()` resolves to a numeric primitive.
+                // Skips the `is_int / is_float` branch in `NEG` and
+                // (for Float) preserves `-0.0` because the typed
+                // dispatch operates on the float bit pattern, not on
+                // `0 - x` desugar.
+                let op = match inner.ty() {
+                    Some(crate::ast::Type::Int) => crate::vm::opcode::NEG_INT,
+                    Some(crate::ast::Type::Float) => crate::vm::opcode::NEG_FLOAT,
+                    _ => crate::vm::opcode::NEG,
+                };
+                self.emit_op(op);
                 Ok(())
             }
             Expr::FnCall(fn_expr, args) => self.compile_call(fn_expr, args),
