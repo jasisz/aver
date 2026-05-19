@@ -21,21 +21,39 @@
 // Steps 3 and 4 are gated on the prior step producing an `Ok` — we
 // don't want to count "parser said no" as a typecheck panic, and we
 // don't want to count "typecheck wrote errors" as a resolver panic.
+//
+// Iron 0.21 Hardcore Fuzz Phase 0: metrics surface to
+// `/tmp/aver_fuzz_metrics_fuzz_typecheck_program.txt`. The `typecheck_clean`
+// counter is the headline metric this target adds over `parse_bytes`
+// — once Phase 1 lands the custom mutator, the ratio
+// `typecheck_clean / parse_ok` is the direct measure of whether
+// structured mutations push inputs deeper into the pipeline.
+
+#[path = "common.rs"]
+mod common;
 
 fn main() {
     afl::fuzz!(|data: &[u8]| {
+        let c = common::counters();
+        c.record_exec();
         let Ok(source) = std::str::from_utf8(data) else {
             return;
         };
         let mut lexer = aver::lexer::Lexer::new(source);
         let Ok(tokens) = lexer.tokenize() else { return };
+        c.record_lex_ok();
         let mut parser = aver::parser::Parser::new(tokens);
         let Ok(mut items) = parser.parse() else { return };
+        let (nodes, depth) = common::ast_metrics(&items);
+        c.record_parse_ok(nodes, depth);
         // run_type_check returns a Vec<TypeError> for valid frontend
         // inputs that have real type problems — that's not a panic and
         // not a fuzz finding. We only care that the function returns
         // cleanly without unwinding.
-        let _ = aver::types::checker::run_type_check(&items);
+        let errors = aver::types::checker::run_type_check(&items);
+        if errors.is_empty() {
+            c.record_typecheck_clean();
+        }
         // The resolver mutates its input — feed it the same `items`
         // afterwards. If typecheck wrote `Spanned::ty` annotations,
         // resolve sees them; if not, resolve falls through the
@@ -43,4 +61,5 @@ fn main() {
         // suppresses cascading from.
         aver::resolver::resolve_program(&mut items);
     });
+    common::counters().flush();
 }
