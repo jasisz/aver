@@ -40,6 +40,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "fuzz_verify_runner"
+path = "fuzz_targets/verify_runner.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parity_vm_vs_wasm_gc"
+path = "fuzz_targets/parity_vm_vs_wasm_gc.rs"
+test = false
+doc = false
+bench = false
+
 [profile.release]
 debug = 1
 overflow-checks = true
