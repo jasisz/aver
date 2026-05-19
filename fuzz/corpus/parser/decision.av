@@ -1,5 +1,29 @@
+module Decision
+    intent =
+        "Seed corpus entry for the `decision` block shape: top-level"
+        "design-decision records with date / reason / chosen / rejected /"
+        "impacts. Exercises both the bare-string and quoted-multi-line"
+        "shapes of the reason field, plus the impacts list referencing"
+        "module-local symbols."
+    exposes [namespacedSet]
+    effects []
+
 decision FullNamespaceEverywhere
-    date 2026-01-15
-    reason "Flat builtins blur ownership; namespaced helpers keep modules cohesive."
-    chosen "Vector.set / Map.get under owning namespaces"
-    rejected "Top-level set, get, push without namespace"
+    date = "2026-01-15"
+    reason =
+        "Flat builtins blur ownership boundaries; helpers anchored to a"
+        "namespace make module surfaces self-describing and keep"
+        "extension points cohesive at the call site."
+    chosen = "Vector.set / Map.get under owning namespaces"
+    rejected = ["Top-level set / get / push without namespace", "PerType ad-hoc helper modules"]
+    impacts = [namespacedSet]
+
+fn namespacedSet(v: Vector<Int>, idx: Int, x: Int) -> Vector<Int>
+    ? "Wraps Vector.set's Option<Vector<T>> result, returning the original on out-of-bounds. Demonstrates the namespaced builtin call shape this decision records."
+    match Vector.set(v, idx, x)
+        Option.Some(updated) -> updated
+        Option.None          -> v
+
+verify namespacedSet
+    namespacedSet(Vector.fromList([1, 2, 3]), 1, 9)  => Vector.fromList([1, 9, 3])
+    namespacedSet(Vector.fromList([1, 2, 3]), 99, 9) => Vector.fromList([1, 2, 3])

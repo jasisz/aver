@@ -1,16 +1,26 @@
 name: Fuzz
 
-# Two surfaces:
+# Two surfaces over a matrix of targets:
 #   * `pr-smoke`     — runs on every PR + push to main with a 180 s
-#                      time-box. Cheap regression net for "did this
-#                      change introduce a parser ICE", not a real
-#                      exploration run.
+#                      time-box per target. Cheap regression net for
+#                      "did this change introduce a parser / typecheck
+#                      ICE", not a real exploration run.
 #   * `nightly`      — runs on cron at 03:00 UTC against main with a
-#                      30-minute budget. Same target, fresh corpus
-#                      seeded from `fuzz/corpus/parser/` plus the
-#                      AFL++ dictionary. Crashes uploaded as artifacts
-#                      so the next morning's first action is `afl-tmin`
-#                      → `tests/regressions/parser/<hash>.av`.
+#                      30-minute budget per target. Each nightly job
+#                      tries to download the previous run's AFL queue
+#                      as the seed corpus so 30 min of exploration
+#                      compounds night over night; falls back to the
+#                      committed `corpus/<target>/` seeds when no
+#                      previous artifact exists. Crashes uploaded as
+#                      artifacts so the next morning's first action is
+#                      `afl-tmin` → `tests/regressions/<target>/<hash>.av`.
+#
+# Targets:
+#   * `fuzz_parse_bytes`        — bytes → lexer → parser. Catches
+#     frontend ICEs on hostile source bytes.
+#   * `fuzz_typecheck_program`  — bytes → lex → parse → typecheck →
+#     resolve. Catches panics in any post-parse pass — the surface a
+#     real user touches every time they run `aver check`.
 #
 # Both jobs are Linux-only by deliberate choice. AFL++ on macOS hosted
 # runners hits frequent CPU-scaling and persistent-mode quirks that
@@ -27,7 +37,8 @@ on:
     # 03:00 UTC daily — runs against the tip of main.
     - cron: '0 3 * * *'
   # Allow manual nightly runs from the Actions tab (useful when
-  # triaging a crash that AFL found in a previous nightly).
+  # triaging a crash that AFL found in a previous nightly, or when
+  # seeding the queue artifact for the first time on a new target).
   workflow_dispatch:
 
 env:
@@ -56,9 +67,19 @@ env:
 
 jobs:
   pr-smoke:
-    name: Parser fuzz (180 s smoke)
+    name: Fuzz smoke (${{ matrix.target }})
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    strategy:
+      # Each target runs in its own job — independent failure modes,
+      # independent crash artifacts. `fail-fast: false` so a parser
+      # ICE in one target doesn't suppress a typecheck panic in the
+      # other.
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_parse_bytes
+          - fuzz_typecheck_program
     steps:
       - uses: actions/checkout@v4
 
@@ -103,57 +124,87 @@ jobs:
 
       - name: Build fuzz target
         working-directory: fuzz
-        run: cargo afl build --release
+        run: cargo afl build --release --bin ${{ matrix.target }}
 
       - name: Fuzz (180 s)
         working-directory: fuzz
         # `-V 180` is fuzz time, not wall time — total job runtime
         # includes build above + this run + post-step coverage minimise.
-        # `mkdir -p out` first: AFL's `-o` flag wants the parent
+        # The seed corpus is `corpus/parser/` for both targets — every
+        # valid Aver program that parses is also a valid input to the
+        # typecheck pipeline (typecheck just runs more passes on the
+        # same bytes), so reusing the corpus avoids hand-curating a
+        # second seed set.
+        # `mkdir -p out`: AFL's `-o` flag wants the parent
         # directory to exist; on a fresh runner there is no `out/`.
         # Exits cleanly when the budget elapses; we then inspect
-        # `out/parser/default/crashes/` ourselves.
+        # `out/${{ matrix.target }}/default/crashes/` ourselves.
         run: |
           mkdir -p out
           cargo afl fuzz \
             -V 180 \
             -i corpus/parser \
-            -o out/parser \
+            -o out/${{ matrix.target }} \
             -x dicts/aver.dict \
-            -- target/release/fuzz_parse_bytes
+            -- target/release/${{ matrix.target }}
 
       - name: Fail on crash
         # AFL writes one file per distinct crash under
         # `out/<target>/<id>/crashes/`. Anything other than the
-        # `README.txt` AFL drops there means we found an ICE the
-        # parser must not produce.
+        # `README.txt` AFL drops there means we found an ICE.
         working-directory: fuzz
         run: |
           shopt -s nullglob
-          crashes=(out/parser/default/crashes/id:*)
+          crashes=(out/${{ matrix.target }}/default/crashes/id:*)
           if [ "${#crashes[@]}" -gt 0 ]; then
-            echo "AFL++ found ${#crashes[@]} crash(es):"
+            echo "AFL++ found ${#crashes[@]} crash(es) in ${{ matrix.target }}:"
             for c in "${crashes[@]}"; do
               echo "--- $c ---"
               xxd "$c" | head -40
             done
             exit 1
           fi
-          echo "no crashes — parser robust for 180 s"
+          echo "no crashes — ${{ matrix.target }} robust for 180 s"
 
-      - name: Upload AFL queue (debug)
+      - name: Pack AFL output
+        # AFL names every crash / queue entry like
+        # `id:000000,sig:06,src:002748,time:...,execs:...,op:havoc,rep:1`.
+        # `actions/upload-artifact@v4` rejects any path containing `:`
+        # for Windows compat reasons, so a directory upload silently
+        # drops every AFL finding. Wrap the whole `out/<target>/`
+        # tree in a tarball before handing it to the upload action —
+        # the colon-bearing names live inside the archive, where the
+        # filename validator doesn't look.
+        if: failure()
+        working-directory: fuzz
+        run: |
+          tar -czf afl-pr-smoke-${{ matrix.target }}.tar.gz \
+            -C out/${{ matrix.target }} default
+
+      - name: Upload AFL output (debug)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: afl-pr-smoke-out
-          path: fuzz/out/parser
+          name: afl-pr-smoke-${{ matrix.target }}
+          path: fuzz/afl-pr-smoke-${{ matrix.target }}.tar.gz
           retention-days: 7
 
   nightly:
-    name: Parser fuzz (30 min nightly)
+    name: Fuzz nightly (${{ matrix.target }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      # `gh run download` needs `actions:read` to enumerate previous
+      # workflow runs and pull their artifacts.
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_parse_bytes
+          - fuzz_typecheck_program
     steps:
       - uses: actions/checkout@v4
 
@@ -166,22 +217,8 @@ jobs:
             fuzz
 
       - name: Install cargo-afl
-        # Three things have to line up before `cargo afl build` works:
-        #   1. The `cargo-afl` subcommand binary on PATH.
-        #   2. The AFLplusplus source tree extracted under
-        #      `~/.cargo/registry/src/.../cargo-afl-common-*/AFLplusplus`,
-        #      which `cargo afl config --build` consumes.
-        #   3. The Rust-toolchain-specific AFL LLVM runtime libraries,
-        #      built by `cargo afl config --build`.
-        # `Swatinem/rust-cache` happily restores (1) from cache while
-        # silently dropping (2) — registry source dirs are not in its
-        # default cache set. Result: install step appears to "succeed",
-        # then the next step errors out with either "AFL LLVM runtime
-        # was not built" or "cannot stat .../AFLplusplus".
-        # Fix: install only if binary is missing, then *try*
-        # `cargo afl config --build --force`; if it fails (source
-        # dir gone), force-reinstall to repopulate the registry and
-        # rebuild the runtime.
+        # See pr-smoke comment for why all three of these checks are
+        # load-bearing.
         run: |
           if ! command -v cargo-afl >/dev/null; then
             cargo install cargo-afl --locked
@@ -195,7 +232,95 @@ jobs:
 
       - name: Build fuzz target
         working-directory: fuzz
-        run: cargo afl build --release
+        run: cargo afl build --release --bin ${{ matrix.target }}
+
+      - name: Seed from previous nightly queue
+        # Try to download the most recent successful nightly's AFL
+        # queue and use it as `-i` instead of the static
+        # `corpus/<target>/` seed. Compounds 30 min of exploration
+        # night over night: today's run resumes from where yesterday's
+        # left off, so by the end of the week the fuzzer has chewed
+        # through ~3.5 h of cumulative coverage instead of restarting
+        # from the 12-file curated corpus every time.
+        #
+        # Fallback shape: if no previous artifact exists (first run on
+        # a new target, branch with no nightly history, or the last
+        # nightly failed and uploaded crashes-only), or if the queue
+        # directory inside the artifact is empty / malformed, fall
+        # back to the static seed corpus. The fuzz step always has a
+        # non-empty `-i` directory; whether it's yesterday's evolved
+        # queue or the static seed is opaque to AFL.
+        #
+        # Uses `gh run download` instead of `actions/download-artifact`
+        # so we can target the artifact by name from a *previous* run
+        # without hard-coding a workflow-run-id.
+        working-directory: fuzz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p out seed
+          # Default seed: curated corpus committed to the repo.
+          seed_dir="corpus/parser"
+          # Grab the most recent successful nightly's artifact for this
+          # target. `gh run list` is cheap (one API call); `gh run
+          # download` only fires if a run matched.
+          prev_run=$(gh run list \
+            --workflow=fuzz.yml \
+            --status=success \
+            --branch=main \
+            --limit=10 \
+            --json databaseId,name \
+            --jq '[.[] | select(.name | startswith("Fuzz"))] | .[0].databaseId' \
+            || echo "")
+          if [ -n "$prev_run" ] && [ "$prev_run" != "null" ]; then
+            echo "Trying to download afl-nightly-${{ matrix.target }} from run $prev_run"
+            if gh run download "$prev_run" \
+                 -n "afl-nightly-${{ matrix.target }}" \
+                 -D seed/prev \
+                 2>&1; then
+              # The artifact is a tarball — colon-bearing AFL filenames
+              # (`id:000000,sig:06,...`) cannot survive the
+              # actions/upload-artifact@v4 Windows-compat filename
+              # validator unwrapped, so the upload step tars the whole
+              # `default/` directory before publishing. Unpack here.
+              if [ -f seed/prev/afl-nightly-${{ matrix.target }}.tar.gz ]; then
+                mkdir -p seed/prev_unpacked
+                tar -xzf seed/prev/afl-nightly-${{ matrix.target }}.tar.gz \
+                  -C seed/prev_unpacked
+              fi
+              # AFL queue dir lives at `<unpacked>/default/queue/`.
+              queue_src=""
+              if [ -d seed/prev_unpacked/default/queue ]; then
+                queue_src=seed/prev_unpacked/default/queue
+              elif [ -d seed/prev/default/queue ]; then
+                # Backwards compat: old artifact layout (pre-tar fix)
+                # in case a partial successful upload exists. Will not
+                # actually fire because pre-tar uploads always failed
+                # the colon validator and produced empty artifacts.
+                queue_src=seed/prev/default/queue
+              fi
+              if [ -n "$queue_src" ] && \
+                 [ -n "$(ls -A "$queue_src" 2>/dev/null)" ]; then
+                mkdir -p seed/resume
+                cp "$queue_src"/id:* seed/resume/ 2>/dev/null || true
+                if [ -n "$(ls -A seed/resume 2>/dev/null)" ]; then
+                  seed_dir="seed/resume"
+                  echo "Resuming from $(ls seed/resume | wc -l) previous queue entries"
+                else
+                  echo "Previous queue empty after filtering — falling back to corpus/parser"
+                fi
+              else
+                echo "Downloaded artifact has no queue dir — falling back to corpus/parser"
+              fi
+            else
+              echo "No previous artifact for ${{ matrix.target }} — falling back to corpus/parser"
+            fi
+          else
+            echo "No previous successful nightly run on main — falling back to corpus/parser"
+          fi
+          # Stash the chosen seed path for the next step.
+          echo "SEED_DIR=$seed_dir" >> "$GITHUB_ENV"
 
       - name: Fuzz (30 min)
         working-directory: fuzz
@@ -203,18 +328,19 @@ jobs:
           mkdir -p out
           cargo afl fuzz \
             -V 1800 \
-            -i corpus/parser \
-            -o out/parser \
+            -i "$SEED_DIR" \
+            -o out/${{ matrix.target }} \
             -x dicts/aver.dict \
-            -- target/release/fuzz_parse_bytes
+            -- target/release/${{ matrix.target }}
 
       - name: Summarise findings
         working-directory: fuzz
         run: |
           shopt -s nullglob
-          crashes=(out/parser/default/crashes/id:*)
-          hangs=(out/parser/default/hangs/id:*)
-          queue=(out/parser/default/queue/id:*)
+          crashes=(out/${{ matrix.target }}/default/crashes/id:*)
+          hangs=(out/${{ matrix.target }}/default/hangs/id:*)
+          queue=(out/${{ matrix.target }}/default/queue/id:*)
+          echo "target:  ${{ matrix.target }}"
           echo "queue:   ${#queue[@]}"
           echo "crashes: ${#crashes[@]}"
           echo "hangs:   ${#hangs[@]}"
@@ -222,10 +348,29 @@ jobs:
             exit 1
           fi
 
+      - name: Pack AFL output
+        # See `Pack AFL output` in `pr-smoke` for why this tar step is
+        # mandatory: AFL filenames contain `:` characters that
+        # actions/upload-artifact@v4 silently drops, producing a
+        # zero-byte artifact and breaking the resume mechanism.
+        if: always()
+        working-directory: fuzz
+        run: |
+          if [ -d out/${{ matrix.target }}/default ]; then
+            tar -czf afl-nightly-${{ matrix.target }}.tar.gz \
+              -C out/${{ matrix.target }} default
+          else
+            echo "No out/${{ matrix.target }}/default — fuzz step likely never ran"
+            exit 0
+          fi
+
       - name: Upload AFL output
+        # Always upload so the *next* nightly can seed from this run's
+        # queue. `if: failure()` would lose the queue every time we
+        # have a clean run, defeating the resume mechanism.
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: afl-nightly-out
-          path: fuzz/out/parser
+          name: afl-nightly-${{ matrix.target }}
+          path: fuzz/afl-nightly-${{ matrix.target }}.tar.gz
           retention-days: 30

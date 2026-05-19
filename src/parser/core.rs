@@ -2,7 +2,31 @@ use super::*;
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, pos: 0 }
+        Parser {
+            tokens,
+            pos: 0,
+            recursion_depth: 0,
+        }
+    }
+
+    /// Iron — B4: bump the recursion counter and surface a normal
+    /// parse error if it crosses [`MAX_PARSE_DEPTH`]. Callers MUST
+    /// pair this with [`Self::exit_recursion`] on every return path
+    /// (use `?` early-return + match-and-exit pattern, or hold a
+    /// scope guard if the recursion grows multiple call sites).
+    pub(super) fn enter_recursion(&mut self) -> Result<(), ParseError> {
+        if self.recursion_depth >= super::MAX_PARSE_DEPTH {
+            return Err(self.error(format!(
+                "Expression too deeply nested (max {} levels). Refactor with named bindings or smaller sub-expressions.",
+                super::MAX_PARSE_DEPTH
+            )));
+        }
+        self.recursion_depth += 1;
+        Ok(())
+    }
+
+    pub(super) fn exit_recursion(&mut self) {
+        self.recursion_depth = self.recursion_depth.saturating_sub(1);
     }
 
     pub(super) fn error(&self, msg: impl Into<String>) -> ParseError {
