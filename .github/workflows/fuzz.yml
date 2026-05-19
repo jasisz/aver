@@ -170,6 +170,27 @@ jobs:
             -x ${{ matrix.dict }} \
             -- target/release/${{ matrix.target }}
 
+      - name: Iron Phase 0 metrics
+        # Each fuzz target writes accumulator stats to
+        # `/tmp/aver_fuzz_metrics_<target>.txt` every 10k execs.
+        # The file persists between AFL persistent-mode iterations
+        # and gets a final snapshot just before the harness exits.
+        # CI surfaces it so we can chart parse-success rate, AST
+        # shape distribution, and depth high-water marks
+        # independently from AFL's bitmap coverage. Phase 1 (custom
+        # AFL mutator) will compare its own pre/post numbers
+        # against this baseline.
+        if: always()
+        run: |
+          metrics_file="/tmp/aver_fuzz_metrics_${{ matrix.target }}.txt"
+          echo "::group::Iron Phase 0 fuzz metrics — ${{ matrix.target }}"
+          if [ -f "$metrics_file" ]; then
+            cat "$metrics_file"
+          else
+            echo "no metrics snapshot (target ran < 10k execs)"
+          fi
+          echo "::endgroup::"
+
       - name: Fail on crash
         # AFL writes one file per distinct crash under
         # `out/<target>/<id>/crashes/`. Anything other than the
@@ -376,6 +397,23 @@ jobs:
             -o out/${{ matrix.target }} \
             -x ${{ matrix.dict }} \
             -- target/release/${{ matrix.target }}
+
+      - name: Iron Phase 0 metrics
+        # Same metrics surface as pr-smoke — see the comment there.
+        # On a 30-min nightly the snapshot is far more interesting
+        # than on a 180-s smoke: parse_ok / typecheck_clean rates
+        # tell us whether the target is exploring deep pipeline
+        # paths or stuck rejecting at the lexer.
+        if: always()
+        run: |
+          metrics_file="/tmp/aver_fuzz_metrics_${{ matrix.target }}.txt"
+          echo "::group::Iron Phase 0 fuzz metrics — ${{ matrix.target }}"
+          if [ -f "$metrics_file" ]; then
+            cat "$metrics_file"
+          else
+            echo "no metrics snapshot (target ran < 10k execs)"
+          fi
+          echo "::endgroup::"
 
       - name: Summarise findings
         working-directory: fuzz
