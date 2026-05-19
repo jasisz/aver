@@ -719,6 +719,20 @@ fn emit_inner_eq_dispatch(
         "Bool" => {
             f.instruction(&Instruction::I32Eq);
         }
+        "Unit" => {
+            // `Unit` has no wasm representation, but the surrounding
+            // `Result<Unit, X>` / `Tuple<Unit, X>` struct uses a
+            // dummy `i32` slot (see module.rs:4150, "Unit on either
+            // side has no wasm value; we use a dummy `i32` slot").
+            // The caller did two `struct.get` and pushed two dummy
+            // i32s; comparing them with `I32Eq` always yields 1
+            // since any two Unit values are equal by definition.
+            // `Option<Unit>` never reaches this path — Option's
+            // struct emitter rejects Unit element earlier
+            // ("Option element type `Unit` has no wasm
+            // representation").
+            f.instruction(&Instruction::I32Eq);
+        }
         "Float" => {
             f.instruction(&Instruction::F64Eq);
         }

@@ -46,17 +46,10 @@ fn single_file_examples() -> Vec<PathBuf> {
 ///   * `examples/formal/oracle_independent_products.av` — uses a
 ///     `BranchPath` carrier the wasm-gc backend doesn't yet dispatch.
 ///     Tracked under the wasm-gc verify limitations doc.
-///   * `examples/apps/status_board.av` — uses `Result<Unit, String>`
-///     which trips the carrier-eq path: `emit_inner_eq_dispatch`
-///     has no `"Unit"` arm and the surrounding `StructGet` assumes
-///     the inner field pushes a value. Real codegen bug, tracked
-///     under its own ticket — this suite is the regression net, not
-///     the fix.
 fn is_skipped(path: &Path) -> bool {
     let s = path.to_string_lossy();
     s.contains("/examples/diagnostics/")
         || s.ends_with("/examples/formal/oracle_independent_products.av")
-        || s.ends_with("/examples/apps/status_board.av")
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
