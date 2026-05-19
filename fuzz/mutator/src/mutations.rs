@@ -50,6 +50,29 @@ pub fn apply<R: Rng>(strategy_index: u32, rng: &mut R, items: &mut [TopLevel]) -
     }
 }
 
+/// Short label per strategy. Used by the AFL custom mutator
+/// `describe` hook so the queue filename + crash report name carries
+/// the strategy that produced the input. Keep these kebab-case and
+/// short — AFL embeds them into filenames. No `/`: AFL splices the
+/// describe string into `id:NNN,...,<describe>` and a `/` turns it
+/// into a subdir path that AFL doesn't create, aborting the run with
+/// a SYSTEM ERROR.
+pub fn strategy_name(strategy_index: u32) -> &'static str {
+    match strategy_index % STRATEGY_COUNT {
+        0 => "swap-binop",
+        1 => "int-boundary",
+        2 => "inject-err",
+        3 => "remove-err",
+        4 => "swap-match-arms",
+        5 => "dup-match-arm",
+        6 => "swap-type-ann",
+        7 => "rename-param",
+        8 => "swap-stmts",
+        9 => "neg-expr",
+        _ => unreachable!(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Site collection — walk AST, collect mutable references the
 // strategies will edit. Each strategy picks one site uniformly at

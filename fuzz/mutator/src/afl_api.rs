@@ -67,8 +67,16 @@ pub struct State {
     /// across calls, so we own a stable buffer and AFL keeps
     /// `out_buf` valid until the next `afl_custom_fuzz` returns.
     out_buffer: Vec<u8>,
+    /// Label returned by `afl_custom_describe`. Re-built per fuzz
+    /// call so the AFL queue / crash filename embeds the strategy
+    /// that produced the input (`aver-fuzz-mutator-v0:swap-binop`,
+    /// etc.). Updated by [`try_mutate`] on success; left as the
+    /// neutral version-only string when no mutation was applied so
+    /// the describe never refers to a stale strategy.
     describe: std::ffi::CString,
 }
+
+const DESCRIBE_BASE: &str = "aver-fuzz-mutator-v0";
 
 impl State {
     fn new(seed: u32) -> Self {
@@ -87,8 +95,19 @@ impl State {
             // and a SYSTEM ERROR that aborts the whole 30-min
             // nightly. Caught on the first nightly run after the
             // mutator landed.
-            describe: std::ffi::CString::new("aver-fuzz-mutator-v0").unwrap(),
+            describe: std::ffi::CString::new(DESCRIBE_BASE).unwrap(),
         }
+    }
+
+    /// Rewrite the describe label with the strategy that just
+    /// produced an input. AFL reads it synchronously after every
+    /// `afl_custom_fuzz` so the pointer only needs to be valid until
+    /// the next call replaces it.
+    fn set_describe_strategy(&mut self, strategy: &str) {
+        let label = format!("{}:{}", DESCRIBE_BASE, strategy);
+        // `CString::new` only fails on interior NUL bytes; strategy
+        // labels are static kebab-case ASCII, so unwrap is safe.
+        self.describe = std::ffi::CString::new(label).unwrap();
     }
 }
 
@@ -128,6 +147,10 @@ fn try_mutate(state: &mut State, input: &[u8]) -> usize {
     if !matches!(applied, Ok(true)) {
         return 0;
     }
+    // Tag the describe label with the strategy that just applied so
+    // AFL embeds it into queue + crash filenames; per-strategy
+    // attribution lands in triage automatically.
+    state.set_describe_strategy(mutations::strategy_name(strategy));
 
     // Unparse. catch_unwind because the unparser is full of
     // recursive calls — `Expr::Resolved` etc. are explicit
