@@ -96,6 +96,12 @@ jobs:
           - target: fuzz_codegen_wasm_gc
             corpus: corpus/parser
             dict: dicts/aver.dict
+          - target: fuzz_verify_runner
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_parity_vm_vs_wasm_gc
+            corpus: corpus/parser
+            dict: dicts/aver.dict
     steps:
       - uses: actions/checkout@v4
 
@@ -150,6 +156,15 @@ jobs:
         working-directory: fuzz
         run: cargo afl build --release --bin ${{ matrix.target }}
 
+      - name: Build host aver binary (parity target only)
+        # `fuzz_parity_vm_vs_wasm_gc` shells out to the production
+        # `aver` CLI for each fuzz iteration (no in-process
+        # VM+wasm-gc runner exists). Build the release binary so
+        # the fuzz step has something to invoke; `AVER_BIN` env
+        # var below points the target at it.
+        if: matrix.target == 'fuzz_parity_vm_vs_wasm_gc'
+        run: cargo build --release --bin aver --features wasm
+
       - name: Fuzz (180 s)
         working-directory: fuzz
         # `-V 180` is fuzz time, not wall time — total job runtime
@@ -164,6 +179,11 @@ jobs:
         # directory to exist; on a fresh runner there is no `out/`.
         # Exits cleanly when the budget elapses; we then inspect
         # `out/${{ matrix.target }}/default/crashes/` ourselves.
+        env:
+          # Parity target shells out to the production `aver`
+          # binary built by the previous step. Other targets
+          # don't read this; an empty value is harmless.
+          AVER_BIN: ${{ matrix.target == 'fuzz_parity_vm_vs_wasm_gc' && format('{0}/target/release/aver', github.workspace) || '' }}
         run: |
           mkdir -p out
           cargo afl fuzz \
@@ -267,6 +287,12 @@ jobs:
           - target: fuzz_codegen_wasm_gc
             corpus: corpus/parser
             dict: dicts/aver.dict
+          - target: fuzz_verify_runner
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_parity_vm_vs_wasm_gc
+            corpus: corpus/parser
+            dict: dicts/aver.dict
     steps:
       - uses: actions/checkout@v4
 
@@ -303,6 +329,12 @@ jobs:
       - name: Build fuzz target
         working-directory: fuzz
         run: cargo afl build --release --bin ${{ matrix.target }}
+
+      - name: Build host aver binary (parity target only)
+        # Mirrors the pr-smoke step — see its comment for why
+        # parity needs a real `aver` CLI on disk.
+        if: matrix.target == 'fuzz_parity_vm_vs_wasm_gc'
+        run: cargo build --release --bin aver --features wasm
 
       - name: Build custom AST mutator
         # The mutator is a `cdylib` AFL loads via
@@ -424,6 +456,8 @@ jobs:
           # the conditional and yaml is happy with an empty
           # value when the target doesn't get one.
           AFL_CUSTOM_MUTATOR_LIBRARY: ${{ matrix.target != 'fuzz_replay_codec' && format('{0}/fuzz/mutator/target/release/libaver_fuzz_mutator.so', github.workspace) || '' }}
+          # Parity target shells out to the production aver CLI.
+          AVER_BIN: ${{ matrix.target == 'fuzz_parity_vm_vs_wasm_gc' && format('{0}/target/release/aver', github.workspace) || '' }}
         run: |
           mkdir -p out
           if [ -n "${AFL_CUSTOM_MUTATOR_LIBRARY:-}" ]; then

@@ -10,7 +10,22 @@ struct JsonParser<'a> {
     src: &'a str,
     bytes: &'a [u8],
     pos: usize,
+    /// Recursion depth. Bumped by `parse_array` / `parse_object`
+    /// because both can nest other arrays/objects/values
+    /// arbitrarily deep, and AFL found a 51 KB shape with
+    /// ~50 000 nested `[[[...]]]` arrays that unwound the
+    /// parser's stack (Iron — B4-equivalent for the JSON
+    /// codec). Capped at 128, same shape as the Aver source
+    /// parser's `MAX_PARSE_DEPTH`.
+    depth: u32,
 }
+
+/// Hard cap on JSON nesting depth. Anything legitimate fits well
+/// under this — replay recordings carry program output trees
+/// (typical depth: 3-5) plus an effect log (each effect's args
+/// add one level). 128 is comfortably above hand-written shapes
+/// and comfortably below the test-runner's 2 MiB worker stack.
+const MAX_JSON_DEPTH: u32 = 128;
 
 impl<'a> JsonParser<'a> {
     fn new(src: &'a str) -> Self {
@@ -18,6 +33,7 @@ impl<'a> JsonParser<'a> {
             src,
             bytes: src.as_bytes(),
             pos: 0,
+            depth: 0,
         }
     }
 
@@ -29,6 +45,20 @@ impl<'a> JsonParser<'a> {
             return Err(self.error("trailing characters after JSON value"));
         }
         Ok(value)
+    }
+
+    fn enter_depth(&mut self) -> Result<(), String> {
+        if self.depth >= MAX_JSON_DEPTH {
+            return Err(self.error(&format!(
+                "JSON nested too deeply (max {MAX_JSON_DEPTH} levels)"
+            )));
+        }
+        self.depth += 1;
+        Ok(())
+    }
+
+    fn exit_depth(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
     }
 
     fn parse_value(&mut self) -> Result<JsonValue, String> {
@@ -59,6 +89,13 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_array(&mut self) -> Result<JsonValue, String> {
+        self.enter_depth()?;
+        let result = self.parse_array_inner();
+        self.exit_depth();
+        result
+    }
+
+    fn parse_array_inner(&mut self) -> Result<JsonValue, String> {
         self.expect_byte(b'[')?;
         self.skip_ws();
 
@@ -88,6 +125,13 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_object(&mut self) -> Result<JsonValue, String> {
+        self.enter_depth()?;
+        let result = self.parse_object_inner();
+        self.exit_depth();
+        result
+    }
+
+    fn parse_object_inner(&mut self) -> Result<JsonValue, String> {
         self.expect_byte(b'{')?;
         self.skip_ws();
 
