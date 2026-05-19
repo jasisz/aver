@@ -28,7 +28,7 @@ use rand::seq::IndexedRandom;
 /// Total number of strategies available. The dispatcher modulo-
 /// indexes into this so callers can pick a strategy uniformly with
 /// `rng.random_range(0..STRATEGY_COUNT)`.
-pub const STRATEGY_COUNT: u32 = 10;
+pub const STRATEGY_COUNT: u32 = 12;
 
 /// Apply one mutation strategy chosen by `strategy_index`. Returns
 /// `true` if the AST was modified, `false` if the strategy found
@@ -46,6 +46,8 @@ pub fn apply<R: Rng>(strategy_index: u32, rng: &mut R, items: &mut [TopLevel]) -
         7 => rename_param(rng, items),
         8 => swap_adjacent_statements(rng, items),
         9 => negate_expression(rng, items),
+        10 => replace_ident_with_bare_namespace(rng, items),
+        11 => toggle_module_effects(rng, items),
         _ => unreachable!(),
     }
 }
@@ -69,6 +71,8 @@ pub fn strategy_name(strategy_index: u32) -> &'static str {
         7 => "rename-param",
         8 => "swap-stmts",
         9 => "neg-expr",
+        10 => "bare-namespace",
+        11 => "toggle-effects",
         _ => unreachable!(),
     }
 }
@@ -492,4 +496,68 @@ fn negate_expression<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
     let inner = std::mem::replace(span_ref, placeholder);
     *span_ref = Spanned::new(Expr::Neg(Box::new(inner)), line);
     true
+}
+
+/// Replace a random `Expr::Ident(name)` with a bare namespace
+/// identifier — `Vector`, `List`, `Option`, `Map`, `Result`. These
+/// are namespace handles in Aver, not first-class values; the
+/// typechecker accepts them as `Type::Var` in some positions but
+/// the wasm-gc codegen's `aver_type_of` assert fires on them when
+/// they reach codegen unstamped. Iron 0.21 nightly's first
+/// fuzz_codegen_wasm_gc run produced 3 such crashes; we mitigated
+/// with `catch_unwind` in the target, but a targeted mutator
+/// strategy keeps the surface under fuzz pressure so a future
+/// real-fix can be checked against actual coverage.
+fn replace_ident_with_bare_namespace<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    const NAMESPACES: &[&str] = &["Vector", "List", "Option", "Map", "Result"];
+    let mut sites: Vec<*mut String> = Vec::new();
+    visit_exprs_mut(items, |expr| {
+        if let Expr::Ident(name) = &mut expr.node {
+            // Skip identifiers that already look like a namespace
+            // — flipping `Vector` to `Map` is fine but wasted
+            // coverage compared to flipping a user-defined name.
+            if !NAMESPACES.contains(&name.as_str()) {
+                sites.push(name as *mut String);
+            }
+        }
+        false
+    });
+    let &site = sites.choose(rng).unwrap_or(&std::ptr::null_mut());
+    if site.is_null() {
+        return false;
+    }
+    let new_name = NAMESPACES.choose(rng).copied().unwrap_or("Vector");
+    unsafe { *site = new_name.to_string() };
+    true
+}
+
+/// Cycle the `effects [...]` clause on the first `TopLevel::Module`
+/// declaration. Three states form a cycle:
+///   * `None` (legacy / no declaration) → `Some(vec![])` (explicit pure)
+///   * `Some(vec![])` → `Some(vec!["Console.print".to_string()])`
+///   * non-empty → `None`
+/// Crosses the boundary the typechecker's effect-surface checker
+/// gates on. Iron 0.21 parity nightly surfaced a real
+/// `effects []` + `verify` block divergence (`List literal:
+/// cannot resolve list instantiation`) that the existing byte
+/// havoc only stumbled into by accident; this strategy targets
+/// the transition directly.
+fn toggle_module_effects<R: Rng>(_rng: &mut R, items: &mut [TopLevel]) -> bool {
+    for item in items {
+        if let TopLevel::Module(module) = item {
+            match &module.effects {
+                None => {
+                    module.effects = Some(Vec::new());
+                }
+                Some(effs) if effs.is_empty() => {
+                    module.effects = Some(vec!["Console.print".to_string()]);
+                }
+                Some(_) => {
+                    module.effects = None;
+                }
+            }
+            return true;
+        }
+    }
+    false
 }
