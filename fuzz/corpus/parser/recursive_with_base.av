@@ -1,0 +1,23 @@
+module RecursiveWithBase
+    intent =
+        "Tail-recursive fn with an explicit base case — the shape AFL nightly"
+        "mutated into the verify_runner hangs (drop the base, the recursion"
+        "becomes an infinite TCO loop). Seeds the neighbourhood so mutator"
+        "byte-havoc + targeted strategies have a starting point that already"
+        "exercises the step-limit boundary."
+    effects []
+
+fn countDown(n: Int) -> Int
+    ? "Counts down to zero. Real terminating recursion."
+    match n
+        0 -> 0
+        _ -> countDown(n - 1)
+
+verify countDown
+    countDown(0)   => 0
+    countDown(1)   => 0
+    countDown(10)  => 0
+
+fn main() -> Int
+    ! []
+    countDown(5)

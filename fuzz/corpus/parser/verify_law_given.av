@@ -1,0 +1,23 @@
+module VerifyLawGiven
+    intent =
+        "verify <fn> law with given + when clause — the shape verify_runner's"
+        "law expansion path exercises (collect_combinations cartesian)."
+        "Seeds the corpus so the AST mutator can byte-havoc the law boundary."
+    effects []
+
+fn double(x: Int) -> Int
+    ? "Doubles its argument."
+    x * 2
+
+verify double law doubleIsAddSelf
+    given x: Int = [0, 1, 7, (-3), 100]
+    double(x) => (x + x)
+
+verify double law doubleNonNegativeWhenInputNonNegative
+    given x: Int = [0, 2, 4, 100]
+    when (x >= 0)
+    (double(x) >= 0) => true
+
+fn main() -> Int
+    ! []
+    double(21)

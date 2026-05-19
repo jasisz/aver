@@ -1,0 +1,24 @@
+module DeepMatch
+    intent =
+        "Match arms with nested constructors + literal + binding patterns."
+        "Exercises pattern compilation depth + exhaustiveness checker shapes."
+    effects []
+
+type Tree
+    Leaf
+    Node(Tree, Int, Tree)
+
+fn sumTree(t: Tree) -> Int
+    ? "Recursive tree sum — nested match destructures both subtrees."
+    match t
+        Tree.Leaf -> 0
+        Tree.Node(left, value, right) -> sumTree(left) + value + sumTree(right)
+
+verify sumTree
+    sumTree(Tree.Leaf) => 0
+    sumTree(Tree.Node(Tree.Leaf, 5, Tree.Leaf)) => 5
+    sumTree(Tree.Node(Tree.Node(Tree.Leaf, 1, Tree.Leaf), 2, Tree.Node(Tree.Leaf, 3, Tree.Leaf))) => 6
+
+fn main() -> Int
+    ! []
+    sumTree(Tree.Node(Tree.Leaf, 7, Tree.Leaf))

@@ -1,0 +1,24 @@
+module ResultUnit
+    intent =
+        "Result<Unit, X> — the shape that tripped emit_inner_eq_dispatch in"
+        "wasm-gc codegen (Iron 0.21 PR #53 fix). Carrier eq path needs the"
+        "Unit dummy-i32-slot handling; seeds make sure the corpus mutates"
+        "around the boundary."
+    effects []
+
+fn ensurePositive(n: Int) -> Result<Unit, String>
+    ? "Returns Ok(Unit) when n > 0, Err with reason otherwise."
+    match n > 0
+        true  -> Result.Ok(Unit)
+        false -> Result.Err("non-positive")
+
+verify ensurePositive
+    ensurePositive(1)  => Result.Ok(Unit)
+    ensurePositive(0)  => Result.Err("non-positive")
+    ensurePositive(-5) => Result.Err("non-positive")
+
+fn main() -> Int
+    ! []
+    match ensurePositive(3)
+        Result.Ok(_)  -> 0
+        Result.Err(_) -> 1
