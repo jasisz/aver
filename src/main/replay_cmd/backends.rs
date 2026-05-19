@@ -216,7 +216,7 @@ pub(super) fn run_vm_replay(
 /// Re-materialises the entry call from the recording (default
 /// `main` ↔ no `entry_info`; `--expr` recording ↔ `(fn_name,
 /// decoded_args)`), drives the wasm-gc executor under
-/// `EffectMode::Replaying`, and maps `RunOutcome` onto the shared
+/// `EffectMode::Replay`, and maps `RunOutcome` onto the shared
 /// shape `build_replay_result` consumes.
 #[cfg(feature = "wasm")]
 pub(super) fn run_wasm_gc_replay(
@@ -233,13 +233,14 @@ pub(super) fn run_wasm_gc_replay(
             Some((recording.entry_fn.clone(), args))
         };
     let mode =
-        super::super::run_wasm_gc::EffectMode::Replaying(Box::new(recording.clone()), check_args);
+        super::super::run_wasm_gc::EffectMode::Replay(Box::new(recording.clone()), check_args);
     let run = super::super::run_wasm_gc::try_run_wasm_gc(
         replay_program_file,
         Some(replay_module_root),
         Vec::new(),
         mode,
         entry_info,
+        None,
     )?;
     Ok(BackendReplayOutcome {
         actual: RecordedOutcome::Value(run.output),
