@@ -66,7 +66,7 @@ jobs:
         # followed by `dafny verify Prog.dfy` against the emitted
         # project. A Dafny-side proof failure on any fixture fails
         # the job.
-        uses: dafny-lang/setup-dafny-action@v1.7.3
+        uses: dafny-lang/setup-dafny-action@v1.9.1
         with:
           dafny-version: 4.9.0
 
