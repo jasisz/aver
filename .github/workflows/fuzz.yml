@@ -298,6 +298,23 @@ jobs:
         working-directory: fuzz
         run: cargo afl build --release --bin ${{ matrix.target }}
 
+      - name: Build custom AST mutator
+        # The mutator is a `cdylib` AFL loads via
+        # `AFL_CUSTOM_MUTATOR_LIBRARY`. It needs the *normal* rust
+        # toolchain (not afl-instrumented) because AFL only
+        # instruments the target; the mutator runs in the
+        # forkserver parent. Build with `cargo build`, not
+        # `cargo afl build`. Source-aware mutations on the AST
+        # complement byte havoc and produce inputs that reach
+        # typecheck / resolver / codegen layers the raw-byte
+        # surface rarely penetrates.
+        # Only `fuzz_parse_bytes` and `fuzz_typecheck_program`
+        # consume Aver source; `fuzz_replay_codec` reads JSON, so
+        # the AST mutator isn't applicable there.
+        if: matrix.target != 'fuzz_replay_codec'
+        working-directory: fuzz/mutator
+        run: cargo build --release
+
       - name: Seed from previous nightly queue
         # Try to download the most recent successful nightly's AFL
         # queue and use it as `-i` instead of the static
@@ -389,8 +406,27 @@ jobs:
 
       - name: Fuzz (30 min)
         working-directory: fuzz
+        env:
+          # Wire the AST mutator in as AFL's custom mutator stage
+          # for Aver-source targets. The library exposes the
+          # standard `afl_custom_*` entry points; AFL dlopens it
+          # and threads it into the per-input mutation loop
+          # alongside byte havoc (we do NOT set
+          # `AFL_CUSTOM_MUTATOR_ONLY`, so the byte-level surface
+          # stays explored too). The path is computed inline
+          # because matrix expression interpolation runs before
+          # the conditional and yaml is happy with an empty
+          # value when the target doesn't get one.
+          AFL_CUSTOM_MUTATOR_LIBRARY: ${{ matrix.target != 'fuzz_replay_codec' && format('{0}/fuzz/mutator/target/release/libaver_fuzz_mutator.so', github.workspace) || '' }}
         run: |
           mkdir -p out
+          if [ -n "${AFL_CUSTOM_MUTATOR_LIBRARY:-}" ]; then
+            echo "AFL custom mutator: $AFL_CUSTOM_MUTATOR_LIBRARY"
+            ls -lh "$AFL_CUSTOM_MUTATOR_LIBRARY" || {
+              echo "::warning::mutator library missing at expected path; AFL will fall through to byte havoc only"
+              unset AFL_CUSTOM_MUTATOR_LIBRARY
+            }
+          fi
           cargo afl fuzz \
             -V 1800 \
             -i "$SEED_DIR" \

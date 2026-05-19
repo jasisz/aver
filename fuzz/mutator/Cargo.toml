@@ -1,0 +1,40 @@
+[package]
+name = "aver-fuzz-mutator"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Stand-alone crate — not a workspace member. Mirrors the fuzz/
+# parent crate's structure (also stand-alone, mirrors cargo-fuzz
+# convention) so nothing leaks into the host workspace.
+[workspace]
+
+[lib]
+# `lib` for `cargo test` to reach the unparser + mutations modules
+# from the integration tests; `cdylib` for AFL++ to `dlopen` the
+# built `.so` via `AFL_CUSTOM_MUTATOR_LIBRARY`. The C ABI surface
+# lives in `src/afl_api.rs` and is namespaced under feature
+# `afl_api` to keep the unsafe surface out of `cargo test` builds.
+crate-type = ["lib", "cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# `runtime` enables the `replay` module the upcoming codec target
+# will share. Phase 1 only needs `parser` / `lexer` / `ast` — all
+# in the no-feature surface — but keeping the feature set aligned
+# with the fuzz targets avoids a second monomorphisation of
+# `aver-lang` against a different feature set on the same workspace.
+aver-lang = { path = "../..", default-features = false, features = ["runtime"] }
+
+# Deterministic PRNG so a given AFL seed produces the same mutation
+# chain across re-runs. SmallRng is the cheap-and-fast PRNG the
+# AFL C custom mutator examples use.
+rand = { version = "0.9", default-features = false, features = ["small_rng"] }
+
+[dev-dependencies]
+# Walk `../corpus/parser/` during integration tests.
+walkdir = "2"
+
+[profile.release]
+debug = 1
+overflow-checks = true
