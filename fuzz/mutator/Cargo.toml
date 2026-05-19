@@ -1,0 +1,34 @@
+[package]
+name = "aver-fuzz-mutator"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Stand-alone crate — not a workspace member. Mirrors the fuzz/
+# parent crate's structure (also stand-alone, mirrors cargo-fuzz
+# convention) so nothing leaks into the host workspace.
+[workspace]
+
+[lib]
+# Phase 1: just a Rust lib so we can test the unparser via `cargo
+# test`. The AFL custom-mutator `cdylib` shape switches on once the
+# unparser passes its corpus round-trip suite and the mutation
+# strategies land on top of it. For now `cargo test -p
+# aver-fuzz-mutator` is the gate.
+path = "src/lib.rs"
+
+[dependencies]
+# `runtime` enables the `replay` module the upcoming codec target
+# will share. Phase 1 only needs `parser` / `lexer` / `ast` — all
+# in the no-feature surface — but keeping the feature set aligned
+# with the fuzz targets avoids a second monomorphisation of
+# `aver-lang` against a different feature set on the same workspace.
+aver-lang = { path = "../..", default-features = false, features = ["runtime"] }
+
+[dev-dependencies]
+# Walk `../corpus/parser/` during integration tests.
+walkdir = "2"
+
+[profile.release]
+debug = 1
+overflow-checks = true
