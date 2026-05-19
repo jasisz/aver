@@ -254,16 +254,31 @@ impl Parser {
     }
 
     pub(super) fn dotted_name(expr: &Spanned<Expr>) -> Option<String> {
-        match &expr.node {
-            Expr::Ident(name) => Some(name.clone()),
-            Expr::Attr(inner, field) => {
-                let mut base = Self::dotted_name(inner)?;
-                base.push('.');
-                base.push_str(field);
-                Some(base)
+        // Iron — B4 round 4: AFL nightly on main caught a 29 KB
+        // shape with a deeply-nested Attr chain (`a.b.c.…` 3000+
+        // segments via match-arm-body construction) that overflowed
+        // the stack here because the old recursive form descended
+        // through every `Attr` node before returning. Walk
+        // iteratively instead: collect segments tail-first, then
+        // join in source order. Same observable behaviour, bounded
+        // stack regardless of chain depth.
+        let mut segments: Vec<&str> = Vec::new();
+        let mut cur = expr;
+        loop {
+            match &cur.node {
+                Expr::Ident(name) => {
+                    segments.push(name.as_str());
+                    break;
+                }
+                Expr::Attr(inner, field) => {
+                    segments.push(field.as_str());
+                    cur = inner;
+                }
+                _ => return None,
             }
-            _ => None,
         }
+        segments.reverse();
+        Some(segments.join("."))
     }
 
     pub(super) fn parse_call_or_atom(&mut self) -> Result<Spanned<Expr>, ParseError> {
