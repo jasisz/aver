@@ -19,6 +19,9 @@ name: Fuzz
 #   * `fuzz_codegen_wasip2`     — source → wasip2 core + component → component-model validate.
 #   * `fuzz_verify_runner`      — source → run_verify_for_items_vm.
 #   * `fuzz_parity_vm_vs_wasm_gc` — VM ↔ wasm-gc in-process differential.
+#   * `fuzz_replay_roundtrip`   — VM record → replay roundtrip; asserts
+#     replay reproduces the recording's stdout + return value + full
+#     trace consumption.
 #
 # Linux-only by deliberate choice. AFL++ on macOS hosted runners
 # hits frequent CPU-scaling and persistent-mode quirks that burn CI
@@ -108,6 +111,9 @@ jobs:
             corpus: corpus/parser
             dict: dicts/aver.dict
           - target: fuzz_codegen_wasip2
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_replay_roundtrip
             corpus: corpus/parser
             dict: dicts/aver.dict
     steps:

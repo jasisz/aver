@@ -80,6 +80,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "fuzz_replay_roundtrip"
+path = "fuzz_targets/replay_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
 [profile.release]
 debug = 1
 overflow-checks = true
