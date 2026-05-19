@@ -103,9 +103,17 @@ jobs:
       # which is ~5 min uncached).
       - uses: Swatinem/rust-cache@v2
         with:
+          # Cache only the host workspace, NOT `fuzz/`. `cargo afl
+          # build` injects `-C target-cpu=native` into RUSTFLAGS,
+          # which bakes the runner's exact micro-arch (AVX512 vs
+          # AVX2 etc.) into every artifact. GHA pool rotates CPUs
+          # between runs, and a cache restored from one runner can
+          # SIGILL on another with a narrower instruction set —
+          # which is exactly the failure mode that flapped fuzz
+          # smoke after PR #41's third commit. Rebuilding fuzz/
+          # from scratch costs ~5 min per job; correctness wins.
           workspaces: |
             .
-            fuzz
 
       - name: Install cargo-afl
         # Three things have to line up before `cargo afl build` works:
@@ -239,9 +247,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
+          # Cache only the host workspace, NOT `fuzz/`. `cargo afl
+          # build` injects `-C target-cpu=native` into RUSTFLAGS,
+          # which bakes the runner's exact micro-arch (AVX512 vs
+          # AVX2 etc.) into every artifact. GHA pool rotates CPUs
+          # between runs, and a cache restored from one runner can
+          # SIGILL on another with a narrower instruction set —
+          # which is exactly the failure mode that flapped fuzz
+          # smoke after PR #41's third commit. Rebuilding fuzz/
+          # from scratch costs ~5 min per job; correctness wins.
           workspaces: |
             .
-            fuzz
 
       - name: Install cargo-afl
         # See pr-smoke comment for why all three of these checks are
