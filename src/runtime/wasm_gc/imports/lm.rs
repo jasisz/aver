@@ -44,22 +44,25 @@ pub(crate) fn host_print(
             Val::I32(n) => n,
             _ => 0,
         };
-        if len > 0 {
+        let text: String = if len > 0 {
             let mut buf = vec![0u8; len as usize];
             let _ = memory.read(&caller, 0, &mut buf);
-            let text = String::from_utf8_lossy(&buf);
-            if to_stdout {
-                println!("{}", text);
-            } else {
-                eprintln!("{}", text);
-            }
+            String::from_utf8_lossy(&buf).into_owned()
         } else {
-            // Empty string still emits a newline in VM semantics.
-            if to_stdout {
-                println!();
-            } else {
-                eprintln!();
-            }
+            // Empty string still emits a newline in VM semantics —
+            // `write_stdout` appends the newline itself.
+            String::new()
+        };
+        // Route through `aver::services::console` instead of direct
+        // `println!` / `eprintln!` so the in-process parity fuzz
+        // target's `capture_output` thread-local sees wasm-gc writes
+        // too (the VM already routes here). Direct stdio bypassed
+        // the buffer, hiding semantic divergence behind a "wasm-gc
+        // stdout looks empty when captured" symptom.
+        if to_stdout {
+            crate::services::console::write_stdout_str(&text);
+        } else {
+            crate::services::console::write_stderr_plain_str(&text);
         }
     }
     Ok(())
