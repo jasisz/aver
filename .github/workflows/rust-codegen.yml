@@ -1,0 +1,68 @@
+name: Rust codegen
+
+# Nightly Rust codegen regression. For a hand-picked corpus of
+# single-file `examples/core/*.av` programs, run
+# `aver compile <file> --target rust -o <tmp>` then
+# `cargo check --manifest-path <tmp>/Cargo.toml`. Asserts the
+# emitted Rust project actually type-checks under the real
+# compiler.
+#
+# Catches the bug class where `compile_to_rust` emits syntactically
+# valid but semantically broken source: missing imports, mistyped
+# fn signatures, wrong trait bounds, generic drift. The
+# `tests/compile_spec.rs` cancel-mode end-to-end probe runs in
+# `Check & Test`; this suite is the breadth check across the core
+# example corpus, run nightly so the per-example `cargo check`
+# (~30-60 s each) doesn't burden every PR.
+#
+# Sister workflow to `proof.yml`. Both consolidate heavy toolchain
+# / build work into one nightly run instead of adding latency to
+# every compiler-touching PR.
+
+on:
+  schedule:
+    # 03:00 UTC daily — runs against the tip of main, same cadence
+    # as fuzz nightly + proof nightly. Three independent workflows
+    # each reading main, no cross-artefact deps.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-codegen:
+    name: Rust codegen regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Cache both the host workspace and the shared
+          # `target/rust-codegen-regression-shared/` directory the
+          # integration test reuses across corpus examples. First
+          # example in the run pays full dep compile (~30 s); rest
+          # are seconds because Swatinem's cache restores the
+          # shared target between runs too.
+          workspaces: |
+            .
+
+      - name: Build `aver` binary
+        # The integration test discovers the binary via
+        # `env!("CARGO_BIN_EXE_aver")`, but `cargo test --test`
+        # only builds dependencies of the specific test binary —
+        # not the `aver` bin. Explicitly build it first so the
+        # spawned subprocess in the test finds it.
+        run: cargo build --bin aver --features runtime
+
+      - name: Run Rust codegen regression
+        # `--test rust_codegen_regression` scopes the run to this
+        # suite. The test panics on any corpus example whose
+        # emitted Rust project fails `cargo check`, surfacing the
+        # named example + the cargo check output in the failure
+        # message.
+        run: cargo test --test rust_codegen_regression -- --nocapture
