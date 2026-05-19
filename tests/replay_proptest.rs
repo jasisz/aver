@@ -276,3 +276,27 @@ fn replay_parse_does_not_panic_on_utf8_in_keyword_position() {
         "expected typed parse error, got {result:?}"
     );
 }
+
+/// Iron 0.21 Hardcore Fuzz — first nightly find by AFL.
+///
+/// 51 KB JSON shape with ~50 000 nested arrays (`[[[[...]]]]`)
+/// unwound the recursive descent parser's stack. Closed by a
+/// `MAX_JSON_DEPTH = 128` guard on `parse_array` / `parse_object`
+/// in the same shape the Aver source parser's depth guard takes.
+#[test]
+fn replay_parse_does_not_panic_on_deeply_nested_arrays() {
+    let depth = 5000;
+    let mut s = String::with_capacity(depth * 2 + 1);
+    for _ in 0..depth {
+        s.push('[');
+    }
+    s.push('1');
+    for _ in 0..depth {
+        s.push(']');
+    }
+    let result = aver::replay::json::parse_json(&s);
+    assert!(
+        result.is_err(),
+        "expected depth-cap parse error, got {result:?}"
+    );
+}

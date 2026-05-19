@@ -7,11 +7,86 @@
 ///   Console.readLine()    — read one line from stdin; Ok(line) or Err("EOF")
 ///
 /// Each method requires its own exact effect (`Console.print`, `Console.error`, etc.).
+///
+/// Output capture (Iron 0.21 Hardcore Fuzz — parity target):
+///   `capture_output(|| { ... })` redirects every `Console.print` /
+///   `Console.error` / `Console.warn` call inside the closure into
+///   thread-local in-memory buffers. The closure's return value
+///   plus `(stdout_bytes, stderr_bytes)` come back to the caller.
+///   When no capture is active, the macros fall through to
+///   `println!` / `eprintln!` exactly as before. The flag is per
+///   thread so a long-running aver process that spawns a verify
+///   worker doesn't accidentally swallow the user's output.
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
 use crate::nan_value::{Arena, NanValue};
 use crate::value::{RuntimeError, Value, aver_display};
+
+thread_local! {
+    /// Per-thread capture buffers. `None` (default) means writes go
+    /// through to the process stdio fds; `Some((out, err))` means
+    /// they accumulate in the buffers and the caller will retrieve
+    /// them via [`finish_capture`].
+    static CAPTURE: RefCell<Option<(Vec<u8>, Vec<u8>)>> = const { RefCell::new(None) };
+}
+
+/// Run `f` with all `Console.*` writes inside it redirected to
+/// in-memory buffers. Returns `(f_result, stdout_bytes,
+/// stderr_bytes)`. Nesting is illegal — the outer call's buffers
+/// would mix with the inner's; we panic rather than silently
+/// merge. The expected user is the fuzz harness, which never
+/// nests captures.
+pub fn capture_output<F, R>(f: F) -> (R, Vec<u8>, Vec<u8>)
+where
+    F: FnOnce() -> R,
+{
+    CAPTURE.with(|c| {
+        let mut slot = c.borrow_mut();
+        if slot.is_some() {
+            panic!("capture_output: nested capture is not supported");
+        }
+        *slot = Some((Vec::new(), Vec::new()));
+    });
+    let result = f();
+    let (out, err) = CAPTURE.with(|c| c.borrow_mut().take()).unwrap_or_default();
+    (result, out, err)
+}
+
+fn write_stdout(s: &str) {
+    CAPTURE.with(|c| {
+        if let Some((out, _)) = c.borrow_mut().as_mut() {
+            out.extend_from_slice(s.as_bytes());
+            out.push(b'\n');
+        } else {
+            println!("{}", s);
+        }
+    });
+}
+
+fn write_stderr_plain(s: &str) {
+    CAPTURE.with(|c| {
+        if let Some((_, err)) = c.borrow_mut().as_mut() {
+            err.extend_from_slice(s.as_bytes());
+            err.push(b'\n');
+        } else {
+            eprintln!("{}", s);
+        }
+    });
+}
+
+fn write_stderr_warn(s: &str) {
+    CAPTURE.with(|c| {
+        if let Some((_, err)) = c.borrow_mut().as_mut() {
+            err.extend_from_slice(b"[warn] ");
+            err.extend_from_slice(s.as_bytes());
+            err.push(b'\n');
+        } else {
+            eprintln!("[warn] {}", s);
+        }
+    });
+}
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
@@ -50,15 +125,9 @@ pub fn effects(name: &str) -> &'static [&'static str] {
 /// Returns `Some(result)` when `name` is owned by this service, `None` otherwise.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
     match name {
-        "Console.print" => Some(one_msg(name, args, |s| {
-            println!("{}", s);
-        })),
-        "Console.error" => Some(one_msg(name, args, |s| {
-            eprintln!("{}", s);
-        })),
-        "Console.warn" => Some(one_msg(name, args, |s| {
-            eprintln!("[warn] {}", s);
-        })),
+        "Console.print" => Some(one_msg(name, args, write_stdout)),
+        "Console.error" => Some(one_msg(name, args, write_stderr_plain)),
+        "Console.warn" => Some(one_msg(name, args, write_stderr_warn)),
         "Console.readLine" => Some(read_line(args)),
         _ => None,
     }
@@ -115,15 +184,9 @@ pub fn call_nv(
     arena: &mut Arena,
 ) -> Option<Result<NanValue, RuntimeError>> {
     match name {
-        "Console.print" => Some(one_msg_nv(name, args, arena, |s| {
-            println!("{}", s);
-        })),
-        "Console.error" => Some(one_msg_nv(name, args, arena, |s| {
-            eprintln!("{}", s);
-        })),
-        "Console.warn" => Some(one_msg_nv(name, args, arena, |s| {
-            eprintln!("[warn] {}", s);
-        })),
+        "Console.print" => Some(one_msg_nv(name, args, arena, write_stdout)),
+        "Console.error" => Some(one_msg_nv(name, args, arena, write_stderr_plain)),
+        "Console.warn" => Some(one_msg_nv(name, args, arena, write_stderr_warn)),
         "Console.readLine" => Some(read_line_nv(args, arena)),
         _ => None,
     }

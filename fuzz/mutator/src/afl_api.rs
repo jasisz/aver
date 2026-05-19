@@ -79,7 +79,15 @@ impl State {
         State {
             rng: rand::rngs::SmallRng::seed_from_u64(seed64),
             out_buffer: Vec::with_capacity(MAX_OUTPUT_SIZE),
-            describe: std::ffi::CString::new("aver-fuzz-mutator/0.1").unwrap(),
+            // No `/` in the describe string. AFL splices it into
+            // the queue entry filename ("id:NNN,src:...,<describe>"),
+            // and a slash turns the filename into a subdir path
+            // that AFL doesn't create — producing
+            //   `Unable to create 'out/.../queue/id:000075,src:000000,...,aver-fuzz-mutator/0.1'`
+            // and a SYSTEM ERROR that aborts the whole 30-min
+            // nightly. Caught on the first nightly run after the
+            // mutator landed.
+            describe: std::ffi::CString::new("aver-fuzz-mutator-v0").unwrap(),
         }
     }
 }
