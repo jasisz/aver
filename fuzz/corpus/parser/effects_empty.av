@@ -1,0 +1,20 @@
+module EffectsEmpty
+    intent =
+        "Explicit `effects []` declaration. Iron 0.21 parity nightly found a"
+        "real VM↔wasm-gc divergence on a program with `effects []` plus a"
+        "verify block (`List literal: cannot resolve list instantiation`)."
+        "Seed targets the transition the `toggle-effects` mutator cycles."
+    effects []
+
+fn pure(x: Int) -> Int
+    ? "Pure function — no effects, no IO."
+    x * 2
+
+verify pure
+    pure(0)   => 0
+    pure(1)   => 2
+    pure(-3)  => -6
+
+fn main() -> Int
+    ! []
+    pure(21)

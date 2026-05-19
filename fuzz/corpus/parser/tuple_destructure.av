@@ -1,0 +1,19 @@
+module TupleDestructure
+    intent =
+        "Tuple construction + destructure in match. Tuple<A, B> carrier"
+        "type goes through the same eq_helpers path as Option / Result."
+    effects []
+
+fn swap(t: Tuple<Int, String>) -> Tuple<String, Int>
+    ? "Swaps a 2-tuple's elements."
+    match t
+        (i, s) -> (s, i)
+
+verify swap
+    swap((1, "one")) => ("one", 1)
+    swap((42, "answer")) => ("answer", 42)
+
+fn main() -> Int
+    ! []
+    match swap((7, "hello"))
+        (_, n) -> n

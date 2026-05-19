@@ -1,0 +1,25 @@
+module BareNamespace
+    intent =
+        "Mention every namespace by bare name in a position where typecheck"
+        "may or may not accept it — Vector / List / Option / Map / Result."
+        "Iron 0.21 fuzz_codegen_wasm_gc nightly produced three aver_type_of"
+        "panics on this exact shape (typecheck pass without Spanned::ty stamp)."
+    effects []
+
+fn shapes() -> List<Int>
+    ? "Plain List literal returning the expected type."
+    [1, 2, 3]
+
+fn options() -> Option<Int>
+    ? "Some constructor with primitive payload."
+    Option.Some(42)
+
+fn results() -> Result<Int, String>
+    ? "Ok constructor with primitive payload."
+    Result.Ok(7)
+
+fn main() -> Int
+    ! []
+    match Option.Some(1)
+        Option.Some(n) -> n
+        Option.None -> 0

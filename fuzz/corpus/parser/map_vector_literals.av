@@ -1,0 +1,23 @@
+module MapVectorLiterals
+    intent =
+        "Map + Vector + List literals in expression positions. Exercises"
+        "the per-instantiation codegen registry (Map<K,V> / Vector<T> /"
+        "List<T>) — recurring source of `List literal: cannot resolve"
+        "list instantiation` shapes in parity nightlies."
+    effects []
+
+fn counts() -> Map<String, Int>
+    ? "Map literal with String keys and Int values."
+    {"alpha" => 1, "beta" => 2, "gamma" => 3}
+
+fn sequence() -> List<Int>
+    ? "Plain List literal."
+    [10, 20, 30]
+
+fn buckets() -> Vector<Int>
+    ? "Vector built from a List literal."
+    Vector.fromList([1, 2, 3, 4])
+
+fn main() -> Int
+    ! []
+    List.len(sequence())
