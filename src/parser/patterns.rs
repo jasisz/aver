@@ -42,6 +42,21 @@ impl Parser {
     }
 
     pub(super) fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        // Iron — B4 round 4: `parse_pattern` self-recurses through
+        // its LParen / tuple arms with no depth bound. A pattern
+        // like `(((((...x...)))))` then walks parse_pattern N times
+        // before returning, which AFL turned into a real stack-
+        // overflow input. Same guard as `parse_expr` — shares the
+        // counter, so a `match` arm whose subject deeply nests
+        // through `parse_expr` plus a pattern that adds more layers
+        // hits the cap on whichever side blows it first.
+        self.enter_recursion()?;
+        let result = self.parse_pattern_inner();
+        self.exit_recursion();
+        result
+    }
+
+    fn parse_pattern_inner(&mut self) -> Result<Pattern, ParseError> {
         match self.current().kind.clone() {
             TokenKind::Ident(ref s) if s == "_" => {
                 self.advance();
