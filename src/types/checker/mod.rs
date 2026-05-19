@@ -226,13 +226,42 @@ struct FnSig {
     effects: Vec<String>,
 }
 
+/// Iron — A5: typed key for `record_field_types`. Pre-A5 the map
+/// was keyed by `"TypeName.fieldName"` stringifications, which
+/// forced every reader to `strip_prefix(format!("{type}."))` and
+/// then re-check that the remainder didn't itself contain a dot
+/// (because the post-A3 dual-keying mirrored each entry under both
+/// the canonical `"Module.Type.field"` form and the bare alias
+/// `"Type.field"` — and the canonical form spuriously matched the
+/// `"Module."` prefix-strip when the read came from a module
+/// looking up its own fields). The struct key separates the two
+/// dimensions, so the canonical resolution happens once at
+/// insert/lookup (via `sig_aliases`) and iteration filters on
+/// `key.type_name == canonical` with no string-shape gymnastics.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct RecordFieldKey {
+    pub(crate) type_name: String,
+    pub(crate) field_name: String,
+}
+
+impl RecordFieldKey {
+    pub(crate) fn new(type_name: impl Into<String>, field_name: impl Into<String>) -> Self {
+        Self {
+            type_name: type_name.into(),
+            field_name: field_name.into(),
+        }
+    }
+}
+
 struct TypeChecker {
     fn_sigs: HashMap<String, FnSig>,
     value_members: HashMap<String, Type>,
-    /// Field types for record types: "TypeName.fieldName" → Type.
+    /// Field types for record types, keyed by `(type_name, field_name)`.
     /// Populated for both user-defined `record` types and built-in records
-    /// (HttpResponse, Header). Enables checked dot-access on Named types.
-    record_field_types: HashMap<String, Type>,
+    /// (HttpResponse, Header). Single entry per (canonical type name, field);
+    /// lookup canonicalises `type_name` through `sig_aliases` at read time.
+    /// Enables checked dot-access on Named types.
+    record_field_types: HashMap<RecordFieldKey, Type>,
     /// Unqualified → qualified aliases for cross-module lookups.
     /// E.g. "Shape.Circle" → "Data.Shape.Circle".
     sig_aliases: HashMap<String, String>,
@@ -329,12 +358,53 @@ impl TypeChecker {
         })
     }
 
-    fn find_record_field_type(&self, key: &str) -> Option<&Type> {
-        self.record_field_types.get(key).or_else(|| {
-            self.sig_aliases
-                .get(key)
-                .and_then(|c| self.record_field_types.get(c))
-        })
+    fn find_record_field_type(&self, type_name: &str, field_name: &str) -> Option<&Type> {
+        // Iron — A5: lookup canonicalises the type-name dimension via
+        // `sig_aliases` before hashing. We only need to do that for
+        // the type-name part — field names are intra-type and stay
+        // verbatim.
+        let direct = RecordFieldKey::new(type_name, field_name);
+        if let Some(ty) = self.record_field_types.get(&direct) {
+            return Some(ty);
+        }
+        if let Some(canonical_type) = self.sig_aliases.get(type_name) {
+            let canonical = RecordFieldKey::new(canonical_type, field_name);
+            return self.record_field_types.get(&canonical);
+        }
+        None
+    }
+
+    /// Iron — A5: list every `(field_name, field_type)` pair declared
+    /// for `type_name`. Resolves `type_name` through `sig_aliases`
+    /// so a bare reference in source matches a canonical entry; the
+    /// reverse direction (canonical reference hitting a bare entry)
+    /// is a no-op because A3 normalises stored keys to canonical
+    /// form whenever a module alias exists.
+    fn fields_for_type(&self, type_name: &str) -> Vec<(String, Type)> {
+        let canonical = self
+            .sig_aliases
+            .get(type_name)
+            .map(String::as_str)
+            .unwrap_or(type_name);
+        self.record_field_types
+            .iter()
+            .filter(|(k, _)| k.type_name == canonical || k.type_name == type_name)
+            .map(|(k, v)| (k.field_name.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Iron — A5: `true` if any field has been registered for
+    /// `type_name`. Drops the pre-A5 `record_field_types.keys().any(|k|
+    /// k.starts_with(&format!("{}.", type_name)))` substring probe.
+    fn has_record_schema(&self, type_name: &str) -> bool {
+        let canonical = self
+            .sig_aliases
+            .get(type_name)
+            .map(String::as_str)
+            .unwrap_or(type_name);
+        self.record_field_types
+            .keys()
+            .any(|k| k.type_name == canonical || k.type_name == type_name)
     }
 
     // -- Helpers -----------------------------------------------------------

@@ -217,19 +217,27 @@ impl TypeChecker {
                     self.fn_sigs.insert(type_name.clone(), prod_sig);
                 }
                 // Register per-field types so dot-access is checked.
-                // Dual-keyed (canonical + bare) so the `Type.field`
-                // prefix-strip pass in `infer/records.rs` sees the
-                // bare keys while `find_record_field` lookups still
-                // chase the canonical via `sig_aliases`.
+                // Iron — A5: single entry under the canonical
+                // `(Module.Type, field)` key. Bare-name lookups
+                // canonicalise via `sig_aliases`; no more mirror
+                // entry under `(Type, field)`. The bare→canonical
+                // alias is still recorded so other code paths
+                // (`find_value_member`, `find_fn_sig`) can resolve
+                // bare references.
                 for (field_name, ty_str) in fields {
                     let field_ty = parse_type_str_strict(ty_str).unwrap_or(Type::Invalid);
-                    let alias_key = crate::visibility::member_key(type_name, field_name);
-                    let canonical_key = canonical_name(module_name, &alias_key);
+                    let canonical_type = if module_name != type_name {
+                        canonical_name(module_name, type_name)
+                    } else {
+                        type_name.clone()
+                    };
                     self.record_field_types
-                        .insert(canonical_key.clone(), field_ty.clone());
-                    if canonical_key != alias_key {
-                        self.sig_aliases.insert(alias_key.clone(), canonical_key);
-                        self.record_field_types.insert(alias_key, field_ty);
+                        .insert(RecordFieldKey::new(&canonical_type, field_name), field_ty);
+                    if canonical_type != *type_name {
+                        let alias_key = crate::visibility::member_key(type_name, field_name);
+                        let canonical_key =
+                            crate::visibility::member_key(&canonical_type, field_name);
+                        self.sig_aliases.insert(alias_key, canonical_key);
                     }
                 }
             }
@@ -399,13 +407,16 @@ impl TypeChecker {
                 }
                 SymbolKind::RecordField { field_type, .. } => {
                     let field_ty = parse_type_str_strict(field_type).unwrap_or(Type::Invalid);
-                    self.record_field_types
-                        .insert(entry.canonical_name.clone(), field_ty.clone());
-                    // Mirror to the bare alias key so the
-                    // `Type.field` prefix-strip pass in
-                    // `infer/records.rs` reaches imported records too.
-                    if let Some(alias) = &entry.alias {
-                        self.record_field_types.insert(alias.clone(), field_ty);
+                    // Iron — A5: canonical_name is
+                    // "Module.Type.field"; split off the trailing
+                    // field name and keep the rest as the typed-key
+                    // `type_name`. Bare alias still goes into
+                    // `sig_aliases` so a source reference of `Type`
+                    // canonicalises to `Module.Type` at lookup.
+                    let canonical = &entry.canonical_name;
+                    if let Some((canonical_type, field_name)) = canonical.rsplit_once('.') {
+                        self.record_field_types
+                            .insert(RecordFieldKey::new(canonical_type, field_name), field_ty);
                     }
                 }
             }

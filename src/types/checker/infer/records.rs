@@ -25,22 +25,10 @@ impl TypeChecker {
             return Type::Named(canonical_type);
         }
 
-        // Iron — A3: `record_field_types` is dual-keyed under both the
-        // canonical "Module.Type.field" and the bare alias
-        // "Type.field". Strip the prefix and accept only keys that
-        // produce a single-segment field name; otherwise the
-        // canonical entry "Module.Type.field" matches the bare
-        // prefix "Type." and the leftover "Module.field"-shaped
-        // remainder leaks in as a phantom required field.
-        let schema_prefix = format!("{}.", type_name);
-        let mut expected = HashMap::new();
-        for (key, ty) in &self.record_field_types {
-            if let Some(field_name) = key.strip_prefix(&schema_prefix)
-                && !field_name.contains('.')
-            {
-                expected.insert(field_name.to_string(), ty.clone());
-            }
-        }
+        // Iron — A5: `fields_for_type` canonicalises `type_name`
+        // through `sig_aliases` so an unqualified reference picks
+        // up the canonical `"Module.Type"` entries and back.
+        let expected: HashMap<String, Type> = self.fields_for_type(type_name).into_iter().collect();
 
         let mut seen = HashSet::new();
         for (field_name, expr) in fields {
@@ -131,19 +119,9 @@ impl TypeChecker {
             ));
         }
 
-        // Same dual-key filter as `infer_record_create_expr`: keep
-        // only entries whose prefix-strip leaves a single segment so
-        // the canonical "Module.Type.field" entry doesn't pollute the
-        // map when `type_name` matches the module name.
-        let schema_prefix = format!("{}.", type_name);
-        let mut expected_fields = HashMap::new();
-        for (key, ty) in &self.record_field_types {
-            if let Some(field_name) = key.strip_prefix(&schema_prefix)
-                && !field_name.contains('.')
-            {
-                expected_fields.insert(field_name.to_string(), ty.clone());
-            }
-        }
+        // Iron — A5: same canonicalised lookup as construction.
+        let expected_fields: HashMap<String, Type> =
+            self.fields_for_type(type_name).into_iter().collect();
 
         for (field_name, expr) in updates {
             // Bidirectional: same propagation as RecordCreate so generic

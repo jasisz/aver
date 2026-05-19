@@ -1105,21 +1105,12 @@ impl TypeChecker {
                             ));
                             return Type::Invalid;
                         }
-                        let key = crate::visibility::member_key(type_name, field);
-                        if let Some(field_ty) = self.find_record_field_type(&key) {
+                        if let Some(field_ty) = self.find_record_field_type(type_name, field) {
                             field_ty.clone()
+                        } else if self.has_record_schema(type_name) {
+                            self.error(format!("Record '{}' has no field '{}'", type_name, field));
+                            Type::Invalid
                         } else {
-                            let schema_prefix = format!("{}.", type_name);
-                            let has_known_schema = self
-                                .record_field_types
-                                .keys()
-                                .any(|k| k.starts_with(&schema_prefix));
-                            if has_known_schema {
-                                self.error(format!(
-                                    "Record '{}' has no field '{}'",
-                                    type_name, field
-                                ));
-                            }
                             Type::Invalid
                         }
                     }
