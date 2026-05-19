@@ -1,0 +1,41 @@
+# AFL++ dictionary for the replay JSON codec. Each entry is a token
+# the codec recognises — splicing them into mutations is far faster
+# than random byte discovery for a structured format.
+#
+# JSON syntax
+"\"{\""
+"\"}\""
+"\"[\""
+"\"]\""
+"\":\""
+"\",\""
+"\"\\\"\""
+
+# JSON primitives
+"\"null\""
+"\"true\""
+"\"false\""
+
+# Replay marker keys (Iron — B3 codec bugs hit two of these)
+"\"$vector\""
+"\"$record\""
+"\"$tuple\""
+"\"$err\""
+
+# Schema fields
+"\"schema_version\""
+"\"entry_fn\""
+"\"input\""
+"\"effects\""
+"\"output\""
+"\"kind\""
+"\"value\""
+"\"seq\""
+"\"type\""
+"\"args\""
+"\"outcome\""
+
+# Outcome kinds
+"\"value\""
+"\"error\""
+"\"timeout\""

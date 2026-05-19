@@ -259,3 +259,20 @@ proptest! {
         prop_assert_eq!(j1, j2);
     }
 }
+
+/// Iron — B4 round 3: AFL found a 113-byte JSON shape with an em-dash
+/// (`—`, 3 UTF-8 bytes) positioned so the keyword parser inside
+/// `parse_json` tried to slice across a UTF-8 codepoint boundary.
+/// `&self.src[pos..end]` panics on non-char-boundary indices; the
+/// byte-slice comparison the fix introduced does not. Pinned as a
+/// fixed-string regression in addition to the general round-trip
+/// property above.
+#[test]
+fn replay_parse_does_not_panic_on_utf8_in_keyword_position() {
+    let crash_input = "{\"sc\":1,\"fipgp[dn\":\"hdsl\",\"o\":no — no real I/O side effecthlnlg\":{\"kxwd\":\"vezue\",\"vatqc\":{\"$jdawur\":[1,2,3]}}}\n";
+    let result = aver::replay::json::parse_json(crash_input);
+    assert!(
+        result.is_err(),
+        "expected typed parse error, got {result:?}"
+    );
+}

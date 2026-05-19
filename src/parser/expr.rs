@@ -99,17 +99,45 @@ impl Parser {
     }
 
     pub(super) fn parse_unary(&mut self) -> Result<Spanned<Expr>, ParseError> {
-        if self.check_exact(&TokenKind::Minus) {
-            let line = self.current().line;
+        // Iron — B4 followup: `------x` patterns don't pass through
+        // `parse_expr`, so the parse_expr-only guard doesn't bound
+        // their stack. Count unary minus consecutive tokens
+        // iteratively, then descend once. Folds an N-deep `Neg(...)`
+        // chain into the same shape the recursive form produces.
+        let mut neg_depth: u32 = 0;
+        let mut first_line = self.current().line;
+        while self.check_exact(&TokenKind::Minus) {
+            if neg_depth == 0 {
+                first_line = self.current().line;
+            }
             self.advance();
-            let operand = self.parse_unary()?;
-            return Ok(self.spanned(Expr::Neg(Box::new(operand)), line));
+            neg_depth = neg_depth.saturating_add(1);
+            if neg_depth > super::MAX_PARSE_DEPTH {
+                return Err(self.error(format!(
+                    "Unary minus chained too deeply (max {} levels). Refactor with named bindings.",
+                    super::MAX_PARSE_DEPTH
+                )));
+            }
         }
-        self.parse_postfix()
+        let mut operand = self.parse_postfix()?;
+        for _ in 0..neg_depth {
+            operand = self.spanned(Expr::Neg(Box::new(operand)), first_line);
+        }
+        Ok(operand)
     }
 
     pub(super) fn parse_postfix(&mut self) -> Result<Spanned<Expr>, ParseError> {
         let mut expr = self.parse_call_or_atom()?;
+        // Iron — B4 followup: bound the postfix chain length. The
+        // parser itself wraps each `?` / `.field` / `(args)` in a
+        // single AST node via the surrounding loop — that's
+        // iteration, not recursion, so this side is safe. The AST
+        // it produces is what carries the depth: every downstream
+        // walker (`run_type_check`, `resolve_program`, codegen
+        // visitors) recurses into `Box<Spanned<Expr>>` arms and
+        // explodes the thread stack on a 10 000-deep chain. Cap the
+        // *chain* at parse time so the AST never reaches that depth.
+        let mut postfix_depth: u32 = 0;
 
         loop {
             if self.check_exact(&TokenKind::Question) && self.peek(1).kind == TokenKind::Bang {
@@ -212,6 +240,13 @@ impl Parser {
                 }
             } else {
                 break;
+            }
+            postfix_depth = postfix_depth.saturating_add(1);
+            if postfix_depth > super::MAX_PARSE_DEPTH {
+                return Err(self.error(format!(
+                    "Postfix chain too long (max {} steps). Refactor with named bindings; downstream walkers (typecheck, resolve, codegen) recurse into each step and exhaust the test-runner stack on longer chains.",
+                    super::MAX_PARSE_DEPTH
+                )));
             }
         }
 
