@@ -93,6 +93,9 @@ jobs:
           - target: fuzz_replay_codec
             corpus: corpus/replay
             dict: dicts/replay_json.dict
+          - target: fuzz_codegen_wasm_gc
+            corpus: corpus/parser
+            dict: dicts/aver.dict
           - target: fuzz_verify_runner
             corpus: corpus/parser
             dict: dicts/aver.dict
@@ -281,6 +284,9 @@ jobs:
           - target: fuzz_replay_codec
             corpus: corpus/replay
             dict: dicts/replay_json.dict
+          - target: fuzz_codegen_wasm_gc
+            corpus: corpus/parser
+            dict: dicts/aver.dict
           - target: fuzz_verify_runner
             corpus: corpus/parser
             dict: dicts/aver.dict
