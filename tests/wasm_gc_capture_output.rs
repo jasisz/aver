@@ -61,10 +61,14 @@ fn wasm_gc_console_print_writes_to_capture_buffer() {
     });
 
     if let Err(e) = &run_res {
-        panic!("wasm-gc run_in_process should succeed on hello-world, got: {}", e);
+        panic!(
+            "wasm-gc run_in_process should succeed on hello-world, got: {}",
+            e
+        );
     }
     assert_eq!(
-        stdout, b"hello, world\n",
+        stdout,
+        b"hello, world\n",
         "wasm-gc Console.print must populate the capture_output stdout buffer; got {:?}",
         String::from_utf8_lossy(&stdout)
     );
