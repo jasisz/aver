@@ -16,6 +16,7 @@ name: Fuzz
 #     real user touches every time they run `aver check`.
 #   * `fuzz_replay_codec`       — JSON record codec roundtrip.
 #   * `fuzz_codegen_wasm_gc`    — source → compile → wasmparser validate.
+#   * `fuzz_codegen_wasip2`     — source → wasip2 core + component → component-model validate.
 #   * `fuzz_verify_runner`      — source → run_verify_for_items_vm.
 #   * `fuzz_parity_vm_vs_wasm_gc` — VM ↔ wasm-gc in-process differential.
 #
@@ -104,6 +105,9 @@ jobs:
             corpus: corpus/parser
             dict: dicts/aver.dict
           - target: fuzz_parity_vm_vs_wasm_gc
+            corpus: corpus/parser
+            dict: dicts/aver.dict
+          - target: fuzz_codegen_wasip2
             corpus: corpus/parser
             dict: dicts/aver.dict
     steps:
