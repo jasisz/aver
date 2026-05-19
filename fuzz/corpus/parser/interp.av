@@ -1,8 +1,34 @@
-fn greet(name: String) -> String
-    "hello, {name}"
-
-fn nested() -> String
-    "outer {inner("x")} done"
+module Interp
+    intent =
+        "Seed for Aver's string-interpolation syntax — single-variable"
+        "slots, function calls inside slots, and back-and-forth between"
+        "functions that both produce interpolated strings."
+    effects []
 
 fn inner(s: String) -> String
+    ? "Wraps a string in square brackets via interpolation."
     "[{s}]"
+
+verify inner
+    inner("x")     => "[x]"
+    inner("")      => "[]"
+    inner("hello") => "[hello]"
+
+fn greet(name: String) -> String
+    ? "Single-variable interpolation slot."
+    "hello, {name}"
+
+verify greet
+    greet("world") => "hello, world"
+    greet("aver")  => "hello, aver"
+
+fn nested() -> String
+    ? "Interpolation with a function call inside the slot — slot expression is itself a call."
+    nestedFormat(inner("x"))
+
+verify nested
+    nested() => "outer [x] done"
+
+fn nestedFormat(inside: String) -> String
+    ? "Wraps an already-formatted piece in the 'outer/done' frame."
+    "outer {inside} done"

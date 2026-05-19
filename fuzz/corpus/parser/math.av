@@ -1,14 +1,46 @@
+module Math
+    intent =
+        "Seed corpus entry for numeric primitives: Int / Float arithmetic,"
+        "unary minus (the post-Iron `Expr::Neg` shape that preserves -0.0),"
+        "and pattern-match-as-conditional. Includes a verify law to cover"
+        "the `given / when` shape on numeric inputs."
+    exposes [double, negate, abs]
+    effects []
+
 fn double(x: Int) -> Int
+    ? "Multiplies its argument by two — the canonical 'pure scalar' shape."
     x * 2
 
+verify double
+    double(0)  => 0
+    double(7)  => 14
+    double(-3) => -6
+
+verify double law doubleIsAddSelf
+    given x: Int = [0, 1, 7, -3, 100]
+    double(x) => x + x
+
 fn negate(x: Float) -> Float
+    ? "IEEE-correct unary negation — flips sign bit so -0.0 round-trips."
     -x
 
+verify negate
+    negate(0.0)  => -0.0
+    negate(-0.0) => 0.0
+    negate(3.14) => -3.14
+
 fn abs(x: Int) -> Int
+    ? "Absolute value — match on the predicate `x < 0` to pick a branch."
     match x < 0
-        true -> -x
+        true  -> -x
         false -> x
 
-verify double
-    double(0) => 0
-    double(7) => 14
+verify abs
+    abs(0)   => 0
+    abs(7)   => 7
+    abs(-7)  => 7
+
+verify abs law absIsNonNegative
+    given x: Int = [-100, -1, 0, 1, 100]
+    when x > -2147483648
+    abs(x) >= 0 => true

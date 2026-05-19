@@ -1,7 +1,20 @@
 module Hello
     intent =
-        "Smallest non-trivial Aver program."
+        "Smallest non-trivial Aver program — a `main` with one effect"
+        "and a helper function exercised by a verify block. Seeds the"
+        "fuzzer with the canonical hello-world shape every Aver user"
+        "will encounter."
     effects [Console.print]
 
-fn main() -> Unit ! [Console.print]
-    Console.print("hello, world")
+fn greet(name: String) -> String
+    ? "Builds a personalised greeting string."
+    "hello, {name}"
+
+verify greet
+    greet("world") => "hello, world"
+    greet("aver")  => "hello, aver"
+
+fn main() -> Unit
+    ? "Prints the greeting to stdout."
+    ! [Console.print]
+    Console.print(greet("world"))

@@ -1,11 +1,23 @@
 module Effects
-    effects [Console.print, Time.now, Disk.readText]
+    intent =
+        "Seed corpus entry for Aver's effect surface: per-fn `! [...]`"
+        "effect rows, module-level `effects [...]` declarations, and"
+        "the canonical three families — Console output, Time read,"
+        "Disk read."
+    exposes [stamp, dump, say]
+    effects [Console.print, Disk.readText, Time.unixMs]
 
-fn stamp() -> Int ! [Time.now]
-    Time.now()
+fn stamp() -> Int
+    ? "Returns the current Unix millisecond timestamp."
+    ! [Time.unixMs]
+    Time.unixMs()
 
-fn dump(path: String) -> Result<String, String> ! [Disk.readText]
+fn dump(path: String) -> Result<String, String>
+    ? "Reads the entire contents of a file as a UTF-8 String."
+    ! [Disk.readText]
     Disk.readText(path)
 
-fn say(msg: String) -> Unit ! [Console.print]
+fn say(msg: String) -> Unit
+    ? "Writes a single line to stdout, no trailing newline ceremony."
+    ! [Console.print]
     Console.print(msg)

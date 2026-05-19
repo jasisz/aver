@@ -1,4 +1,18 @@
+module Comments
+    intent =
+        "Seed corpus entry covering Aver's comment forms:"
+        "top-level line comments, inside-body comments, and"
+        "trailing comments after expressions."
+    effects []
+
 // top-level line comment
+
 fn id(x: Int) -> Int
+    ? "Identity on Int — exercises both comment positions plus a trivial body."
     // inside-body comment
-    x
+    x  // trailing-after-expression comment
+
+verify id
+    id(0)   => 0
+    id(42)  => 42
+    id(-7)  => -7
