@@ -185,6 +185,24 @@ impl TypeChecker {
                                 ));
                             }
                             let inferred = self.infer_type(expr);
+                            // Per `docs/language.md:228`: top-level fns are
+                            // first-class *as call arguments*
+                            // (`HttpServer.listen(port, handler)`) but not as
+                            // local bindings or standalone refs. Every
+                            // backend treats `h = <fn>` as unimplemented —
+                            // VM has no slot, wasm-gc emit reaches the
+                            // backend with "not implemented yet — bare Ident
+                            // reached emitter", `<namespace>.<method>`
+                            // (`Vector.set`) used to panic codegen entirely
+                            // before Iron 0.21. Lift the rejection into
+                            // typecheck so the same message lands on every
+                            // target.
+                            if matches!(&inferred, Type::Fn(..)) {
+                                self.error(format!(
+                                    "Binding '{}' to a fn reference is not supported. Aver allows top-level fns as first-class values only in call-argument position (e.g. `HttpServer.listen(port, {})`). For local use, call it: `{} = <fn>(...)`.",
+                                    name, name, name
+                                ));
+                            }
                             let ty = if let Some(ann_src) = type_ann {
                                 match crate::types::parse_type_str_strict(ann_src) {
                                     Ok(annotated) => {
@@ -587,6 +605,15 @@ impl TypeChecker {
                             .as_ref()
                             .and_then(|src| crate::types::parse_type_str_strict(src).ok());
                         let inferred = self.infer_type_with_expected(expr, parsed_ann.as_ref());
+                        // Mirror the top-level rejection above — fn refs
+                        // aren't supported as local bindings, period. See
+                        // `flow.rs:175` for the rationale.
+                        if matches!(&inferred, Type::Fn(..)) {
+                            self.error(format!(
+                                "Binding '{}' to a fn reference is not supported. Aver allows top-level fns as first-class values only in call-argument position (e.g. `HttpServer.listen(port, {})`). For local use, call it: `{} = <fn>(...)`.",
+                                name, name, name
+                            ));
+                        }
                         let ty = if let Some(ann_src) = type_ann {
                             match crate::types::parse_type_str_strict(ann_src) {
                                 Ok(annotated) => {

@@ -4,6 +4,74 @@ fn type_var(name: &str) -> Type {
     Type::Var(name.to_string())
 }
 
+/// Tailored diagnostic for an unresolved bare `Expr::Ident(name)` whose
+/// text matches a known namespace handle (built-in generic carrier,
+/// effect service, user-defined sum type). Returns `None` for plain
+/// typos so the caller falls back to "Unknown identifier 'X'".
+///
+/// Aver namespaces aren't first-class values — you can't bind one to a
+/// name or pass it as an argument. The hint nudges the user at the
+/// shape that actually works for each category (literal / constructor /
+/// dotted method call).
+fn ident_namespace_diagnostic(
+    name: &str,
+    type_variants: &std::collections::HashMap<String, Vec<String>>,
+) -> Option<String> {
+    // Hard-coded categories. Service / generic-carrier names live here
+    // (not in `type_variants`) so they wouldn't surface via the
+    // user-type branch below. Keep this list close to the registered
+    // services + the lowering-known carriers; a stale entry is harmless
+    // (only fires on unresolved idents), a missing one falls through
+    // to the user-type / generic path.
+    const GENERIC_CARRIERS: &[&str] = &["Vector", "List", "Map", "Option", "Result", "Tuple"];
+    const SERVICE_NAMESPACES: &[&str] = &[
+        "Console",
+        "Disk",
+        "Http",
+        "HttpServer",
+        "Tcp",
+        "Time",
+        "Random",
+        "Env",
+        "Args",
+        "Terminal",
+    ];
+
+    if GENERIC_CARRIERS.contains(&name) {
+        let hint = match name {
+            "Vector" => "Try `Vector.fromList([1, 2, 3])` or `Vector.<method>(...)`.",
+            "List" => "Try a list literal `[1, 2, 3]` or `List.<method>(...)`.",
+            "Map" => "Try a map literal `{\"a\" => 1, \"b\" => 2}` or `Map.<method>(...)`.",
+            "Option" => "Try `Option.Some(value)` or `Option.None`.",
+            "Result" => "Try `Result.Ok(value)` or `Result.Err(reason)`.",
+            "Tuple" => "Try a tuple literal like `(a, b)`.",
+            _ => unreachable!(),
+        };
+        return Some(format!(
+            "`{name}` is a namespace, not a value — it can't be bound to a name or passed by itself. {hint}"
+        ));
+    }
+
+    if SERVICE_NAMESPACES.contains(&name) {
+        return Some(format!(
+            "`{name}` is an effect service, not a value — call one of its methods (`{name}.<method>(...)`) instead of using the bare name."
+        ));
+    }
+
+    if let Some(variants) = type_variants.get(name) {
+        let suggestion = if let Some(first) = variants.first() {
+            format!(" Try a constructor like `{name}.{first}(...)`.")
+        } else {
+            String::new()
+        };
+        return Some(format!(
+            "`{name}` is a type, not a value — it can't be used in expression position.{suggestion}"
+        ));
+    }
+
+    None
+}
+
 fn display_type_for_expected(ty: &Type) -> String {
     match ty {
         // Named vars (`Var("K")`, `Var("T")`, ...) display as their name.
@@ -408,7 +476,16 @@ impl TypeChecker {
                 } else if let Some(sig) = self.find_fn_sig(name) {
                     Self::fn_type_from_sig(sig)
                 } else {
-                    self.error(format!("Unknown identifier '{}'", name));
+                    // Tailored diagnostic when the bare ident is actually a
+                    // namespace handle (built-in carrier, service, or user
+                    // sum type) instead of a value. AFL byte-havoc + real
+                    // beginner intuition both produce `let x = Vector` or
+                    // `match Foo { ... }` shapes; the generic "Unknown
+                    // identifier" left users guessing and tripped wasm-gc
+                    // codegen via `aver_type_of` on a stamp-less node.
+                    let msg = ident_namespace_diagnostic(name, &self.type_variants)
+                        .unwrap_or_else(|| format!("Unknown identifier '{}'", name));
+                    self.error(msg);
                     Type::Invalid
                 }
             }
@@ -984,14 +1061,31 @@ impl TypeChecker {
                     let obj_key = parts.join(".");
                     parts.push(field.clone());
                     let key = parts.join(".");
+                    // The lookups below resolve the *whole* `Vector.set`
+                    // path without ever recursing into `obj` — so for
+                    // namespace shapes the inner `Spanned<Expr>` (the
+                    // `Ident("Vector")`) never gets `set_ty` called and
+                    // codegen later panics in `aver_type_of` walking into
+                    // a stamp-less node. Iron 0.21 fuzz_codegen_wasm_gc
+                    // surfaced exactly this shape three times:
+                    // `Vector.set`, `Option.Some`, `List.prepend` as bare
+                    // expressions. Stamp the inner ident with
+                    // `Type::Invalid` *only* when the lookup recognised
+                    // it as namespace-shaped; doing it unconditionally
+                    // poisons normal `record.field` accesses where `obj`
+                    // is a local that the value-member branch wouldn't
+                    // have stamped before either (but where downstream
+                    // codegen needs the real record type, not `Invalid`).
                     if let Some(ty) = self.find_value_member(&key) {
                         return ty.clone();
                     }
                     if let Some(sig) = self.find_fn_sig(&key) {
+                        obj.set_ty(Type::Invalid);
                         return Self::fn_type_from_sig(sig);
                     }
                     if self.has_namespace_prefix(&key) {
                         // Intermediate namespace (e.g. Models.User in Models.User.findById)
+                        obj.set_ty(Type::Invalid);
                         return Type::Invalid;
                     }
                     if self.has_namespace_prefix(&obj_key) {
@@ -999,6 +1093,7 @@ impl TypeChecker {
                             "Unknown member '{}.{}' (not exposed or missing)",
                             obj_key, field
                         ));
+                        obj.set_ty(Type::Invalid);
                         return Type::Invalid;
                     }
                 }

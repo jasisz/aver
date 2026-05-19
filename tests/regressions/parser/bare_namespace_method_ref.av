@@ -1,0 +1,11 @@
+module M
+fn id(x: Int) -> Int
+    ? "Vector.set as a bare expression. Iron 0.21 fuzz_codegen_wasm_gc"
+    ? "panicked on this shape (`Ident('Vector')` no stamp) — typecheck"
+    ? "now stamps the namespace ident with Type::Invalid, codegen emits"
+    ? "a clean Validation error instead of aborting."
+    Vector.set
+    x
+
+verify id
+    id(0) => 0
