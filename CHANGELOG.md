@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.21.0 "Iron" (unreleased)
+## 0.21.0 "Iron" — 2026-05-20
 
 > _Iron in the frame — the type checker stops lying to itself about negation, recursion, and identity. A new fuzz harness shakes the rest of the toolchain until things fall out._
 
