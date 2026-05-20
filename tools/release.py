@@ -240,7 +240,7 @@ def regenerate_self_host(dry_run: bool) -> None:
 def regenerate_playground(dry_run: bool) -> None:
     print("Regenerating playground WASM artifacts...")
     if dry_run:
-        print("  [dry-run] would run: python3 tools/website/rebuild_playground.py --skip-compiler")
+        print("  [dry-run] would run: python3 tools/website/rebuild_playground.py")
         return
 
     # Build release binary for playground
@@ -248,7 +248,6 @@ def regenerate_playground(dry_run: bool) -> None:
     run([
         sys.executable,
         str(REPO_ROOT / "tools" / "website" / "rebuild_playground.py"),
-        "--skip-compiler",
         "--aver-bin", str(REPO_ROOT / "target" / "release" / "aver"),
     ])
 
