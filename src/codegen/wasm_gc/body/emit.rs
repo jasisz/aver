@@ -3069,7 +3069,20 @@ pub(super) fn emit_match(
     for arm in arms {
         match &arm.pattern {
             Pattern::Literal(Literal::Int(n)) => typed_arms.push((*n, &arm.body)),
-            Pattern::Wildcard => wildcard_body = Some(&arm.body),
+            // First wildcard wins. Aver match semantics is
+            // first-applicable-arm; a plain `wildcard_body =
+            // Some(...)` here let *later* wildcards overwrite the
+            // earlier one, so a program with several `_ -> ...`
+            // arms produced bytecode that ran the *last* wildcard
+            // — diverging from VM which honours source order. Iron
+            // 0.21 nightly's `int-boundary` mutator strategy hit
+            // exactly this against the new `recursive_with_base.av`
+            // seed: VM returned the terminal arm's value, wasm-gc
+            // applied the trailing `(-countDown((n-1)))` arm and
+            // produced the negated value.
+            Pattern::Wildcard => {
+                wildcard_body.get_or_insert(&arm.body);
+            }
             _ => {
                 return Err(WasmGcError::Unimplemented(
                     "phase 4 — Int match supports only Int literal patterns + wildcard",
