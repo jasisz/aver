@@ -99,6 +99,133 @@ fn nested_attr_callee_key() {
 }
 
 #[test]
+fn duplicate_wildcard_arms_are_unreachable() {
+    let f = FnDef {
+        name: "f".to_string(),
+        line: 1,
+        params: vec![("n".to_string(), "Int".to_string())],
+        return_type: "Int".to_string(),
+        effects: vec![],
+        desc: None,
+        body: std::sync::Arc::new(FnBody::from_expr(Spanned::new(
+            Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Spanned::new(Expr::Literal(Literal::Int(1)), 3)),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Spanned::new(Expr::Literal(Literal::Int(2)), 4)),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
+                ],
+            },
+            2,
+        ))),
+        resolution: None,
+    };
+    let errs = type_errors(vec![TopLevel::FnDef(f)]);
+    let hit = errs
+        .iter()
+        .find(|e| e.message.contains("Unreachable match arm"));
+    assert!(hit.is_some(), "expected unreachable arm error: {errs:?}");
+    assert_eq!(hit.expect("checked above").line, 4);
+    assert!(
+        hit.expect("checked above").message.contains("line 3"),
+        "earlier arm line should be cited: {:?}",
+        hit
+    );
+}
+
+#[test]
+fn duplicate_literal_int_arms_are_unreachable() {
+    let f = FnDef {
+        name: "f".to_string(),
+        line: 1,
+        params: vec![("n".to_string(), "Int".to_string())],
+        return_type: "Int".to_string(),
+        effects: vec![],
+        desc: None,
+        body: std::sync::Arc::new(FnBody::from_expr(Spanned::new(
+            Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Int(0)),
+                        body: Box::new(Spanned::new(Expr::Literal(Literal::Int(1)), 3)),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Int(0)),
+                        body: Box::new(Spanned::new(Expr::Literal(Literal::Int(2)), 4)),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Spanned::new(Expr::Literal(Literal::Int(3)), 5)),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
+                ],
+            },
+            2,
+        ))),
+        resolution: None,
+    };
+    let errs = type_errors(vec![TopLevel::FnDef(f)]);
+    let hit = errs
+        .iter()
+        .find(|e| e.message.contains("Unreachable match arm"));
+    assert!(hit.is_some(), "expected unreachable arm error: {errs:?}");
+    assert_eq!(hit.expect("checked above").line, 4);
+}
+
+#[test]
+fn distinct_literal_int_arms_are_ok() {
+    let f = FnDef {
+        name: "f".to_string(),
+        line: 1,
+        params: vec![("n".to_string(), "Int".to_string())],
+        return_type: "Int".to_string(),
+        effects: vec![],
+        desc: None,
+        body: std::sync::Arc::new(FnBody::from_expr(Spanned::new(
+            Expr::Match {
+                subject: Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
+                arms: vec![
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Int(0)),
+                        body: Box::new(Spanned::new(Expr::Literal(Literal::Int(1)), 3)),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Literal(Literal::Int(1)),
+                        body: Box::new(Spanned::new(Expr::Literal(Literal::Int(2)), 4)),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
+                    MatchArm {
+                        pattern: Pattern::Wildcard,
+                        body: Box::new(Spanned::new(Expr::Literal(Literal::Int(3)), 5)),
+                        binding_slots: std::sync::OnceLock::new(),
+                    },
+                ],
+            },
+            2,
+        ))),
+        resolution: None,
+    };
+    let errs = type_errors(vec![TopLevel::FnDef(f)]);
+    assert!(
+        !errs
+            .iter()
+            .any(|e| e.message.contains("Unreachable match arm")),
+        "distinct literals must not trigger redundancy: {errs:?}"
+    );
+}
+
+#[test]
 fn non_exhaustive_match_reports_match_line() {
     let f = FnDef {
         name: "f".to_string(),
