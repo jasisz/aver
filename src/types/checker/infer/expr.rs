@@ -964,6 +964,7 @@ impl TypeChecker {
                 };
                 let subject_ty = self.infer_type(subject);
                 self.check_match_exhaustiveness(&subject_ty, arms, match_line);
+                self.check_match_redundancy(arms);
                 // Bidirectional: propagate the enclosing fn's declared
                 // return type into each arm body. Lets generic constructors
                 // in arm positions (`[] -> Option.None`) pick up T without

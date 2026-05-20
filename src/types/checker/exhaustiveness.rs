@@ -40,6 +40,31 @@ struct CtorSpec {
 }
 
 impl TypeChecker {
+    /// Walk arms forward; if an earlier arm's normalized pattern subsumes a
+    /// later one, the later arm can never fire (Aver match is first-arm-wins).
+    /// Emits a type error naming the earlier covering arm so the user can pick
+    /// which one to delete.
+    pub(super) fn check_match_redundancy(&mut self, arms: &[crate::ast::MatchArm]) {
+        let pats: Vec<CoverPat> = arms.iter().map(|a| normalize_pattern(&a.pattern)).collect();
+        for i in 1..pats.len() {
+            for j in 0..i {
+                if pattern_subsumes(&pats[j], &pats[i]) {
+                    let line = arms[i].body.line.max(1);
+                    let earlier_line = arms[j].body.line.max(1);
+                    self.error_at_line(
+                        line,
+                        format!(
+                            "Unreachable match arm: pattern {} is already covered by an earlier arm at line {}",
+                            format_cover_pattern(&pats[i]),
+                            earlier_line,
+                        ),
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
     /// Check whether a match expression covers all possible values of the subject type.
     /// Emits a type error if any cases are missing.
     pub(super) fn check_match_exhaustiveness(
@@ -256,6 +281,26 @@ impl TypeChecker {
         }
         // Zero-arg constructors are values, not fn_sigs entries.
         Vec::new()
+    }
+}
+
+fn pattern_subsumes(earlier: &CoverPat, current: &CoverPat) -> bool {
+    match (earlier, current) {
+        (CoverPat::Wild, _) => true,
+        (CoverPat::Lit(a), CoverPat::Lit(b)) => a == b,
+        (CoverPat::EmptyList, CoverPat::EmptyList) => true,
+        (CoverPat::Cons(h1, t1), CoverPat::Cons(h2, t2)) => {
+            pattern_subsumes(h1, h2) && pattern_subsumes(t1, t2)
+        }
+        (CoverPat::Tuple(a), CoverPat::Tuple(b)) if a.len() == b.len() => {
+            a.iter().zip(b).all(|(x, y)| pattern_subsumes(x, y))
+        }
+        (CoverPat::Constructor(n1, a1), CoverPat::Constructor(n2, a2))
+            if ctor_name_matches(n2, n1) && a1.len() == a2.len() =>
+        {
+            a1.iter().zip(a2).all(|(x, y)| pattern_subsumes(x, y))
+        }
+        _ => false,
     }
 }
 
