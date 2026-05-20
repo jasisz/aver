@@ -1,12 +1,6 @@
 module M
 fn countDown(n: Int) -> Int
-    ? "Multiple `_ -> ...` arms — Aver match is first-arm-wins, but the"
-    ? "wasm-gc Int-match emitter used to overwrite `wildcard_body` on"
-    ? "every Wildcard pattern, so the *last* arm ran instead. Iron 0.21"
-    ? "nightly's `int-boundary` mutator strategy hit this against the"
-    ? "recursive_with_base.av seed: VM returned the terminal arm's"
-    ? "value, wasm-gc applied the trailing `(-countDown((n-1)))` arm"
-    ? "and produced the negated value at every recursive level."
+    ? "Multiple `_ -> ...` arms — Aver match is first-arm-wins, but the wasm-gc Int-match emitter used to overwrite `wildcard_body` on every Wildcard pattern, so the last arm ran instead. Iron 0.21 nightly's int-boundary mutator hit this against recursive_with_base.av."
     match (-(-(-n)))
         0 -> 1
         0 -> 0
