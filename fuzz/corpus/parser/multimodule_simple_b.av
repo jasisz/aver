@@ -1,0 +1,13 @@
+module SimpleB
+    intent =
+        "Multi-module seed — callee side. Exposes one function via"
+        "`exposes [echo]` so the symmetric `SimpleA` seed has a"
+        "well-defined target for its cross-module call shape. The"
+        "two seeds together exercise the depends + exposes ACL"
+        "surface; either can be mutated independently."
+    exposes [echo]
+    effects []
+
+fn echo(x: Int) -> Int
+    ? "Identity passthrough — the simplest exposed shape."
+    x

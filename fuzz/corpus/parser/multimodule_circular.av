@@ -1,0 +1,17 @@
+module Circular
+    intent =
+        "Multi-module seed — circular depends. Declares a"
+        "dependency on `Circular` itself; the AGENTS.md `modules vs"
+        "DI` direction (2026-02-25) commits to treating circular"
+        "imports as a hard error with an explicit `A -> B -> A`"
+        "chain. The seed exists so the mutator can churn the"
+        "depends list — `insert-depends` is the obvious counterpart"
+        "— and so AFL has a parseable starting point that drives"
+        "the cycle-detection path."
+    depends [Circular]
+    exposes [step]
+    effects []
+
+fn step(x: Int) -> Int
+    ? "Trivial body — the value is the depends header, not the fn."
+    x

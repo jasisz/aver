@@ -1,0 +1,19 @@
+module Acl
+    intent =
+        "Multi-module seed — exposes ACL boundary. `helper` is"
+        "internal-only (not in `exposes [...]`); `entry` is the"
+        "public surface. The `swap-exposes-acl` mutator strategy"
+        "removes a name from the exposes list, producing a shape"
+        "where an externally referenced fn becomes invisible — the"
+        "resolver's cross-module visibility check is the unit"
+        "under fuzz pressure."
+    exposes [entry]
+    effects []
+
+fn helper(x: Int) -> Int
+    ? "Module-private helper — only callers inside Acl see this."
+    x + 1
+
+fn entry(x: Int) -> Int
+    ? "Public entry point — forwards through the private helper."
+    helper(x)

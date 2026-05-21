@@ -161,6 +161,20 @@ strategy_test!(strategy_14_replace_fn_body, 14, 1);
 // to a literal of one of the three supported return types when
 // scope is empty.
 strategy_test!(strategy_15_inject_fn, 15, 1);
+// strategy 16 (insert-depends) fires on every seed that has a
+// `module` declaration, which is every non-empty corpus seed in
+// the parser dir bar `empty.av`.
+strategy_test!(strategy_16_insert_depends, 16, 1);
+// strategy 17 (inject-cross-module-call) needs at least one
+// expression site in a fn body — every non-empty seed qualifies.
+strategy_test!(strategy_17_inject_cross_call, 17, 1);
+// strategy 18 (attempt-opaque-violation) lower bound is 0: only
+// seeds with `exposes opaque [T]` (the new multi-module ones)
+// will fire. Original corpus has no opaque exposures.
+strategy_test!(strategy_18_opaque_violation, 18, 0_usize);
+// strategy 19 (swap-exposes-acl) fires on any seed declaring a
+// non-empty `exposes [...]`. Most non-trivial seeds do.
+strategy_test!(strategy_19_swap_exposes_acl, 19, 1);
 
 /// `strategy_name` is the label AFL embeds into queue + crash
 /// filenames via the custom mutator's `describe` hook, so it has to
