@@ -1073,13 +1073,12 @@ impl VM {
                         // means the claim doesn't hold for this stub map.
                         let reverse = self.runtime.reverse_independent_eval();
                         let mut results: Vec<NanValue> = vec![NanValue::UNIT; count];
-                        let iter: Box<dyn Iterator<Item = (usize, &(NanValue, Vec<NanValue>))>> =
-                            if reverse {
-                                Box::new(element_calls.iter().enumerate().rev())
-                            } else {
-                                Box::new(element_calls.iter().enumerate())
-                            };
-                        for (i, (callable, args)) in iter {
+                        let mut order: Vec<usize> = (0..count).collect();
+                        if reverse {
+                            order.reverse();
+                        }
+                        for i in order {
+                            let (callable, args) = &element_calls[i];
                             self.runtime.replay_set_branch(i as u32);
                             let result = self.invoke_callable_value(
                                 *callable,
