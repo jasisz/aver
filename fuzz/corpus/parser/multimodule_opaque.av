@@ -1,0 +1,20 @@
+module Opaque
+    intent =
+        "Multi-module seed — opaque boundary. The `Token` type is"
+        "exposed opaquely, so external code can see the name but"
+        "cannot construct it, access fields, or pattern-match it."
+        "Pairs with the `attempt-opaque-violation` mutator strategy"
+        "which injects `Token(...)` constructor calls at random"
+        "expression sites; the opaque enforcement check (PR #38's"
+        "namespace-aware path) gets stressed under the resulting"
+        "shapes."
+    exposes [issue, opaque Token]
+    effects []
+
+record Token
+    secret: String
+    issuedAt: Int
+
+fn issue(s: String, at: Int) -> Token
+    ? "Internal constructor — the only way to mint a Token."
+    Token(secret = s, issuedAt = at)

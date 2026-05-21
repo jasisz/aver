@@ -1,0 +1,20 @@
+module Chain
+    intent =
+        "Multi-module seed — depth-3 dependency chain. Declares two"
+        "outgoing dependencies and exposes two surface functions,"
+        "so the resolver has multiple unresolved edges to walk and"
+        "the mutator (insert-depends, inject-cross-module-call,"
+        "swap-exposes-acl) has more than one slot to mutate per"
+        "pass. The chain shape (A depends [B, C]) is the seed; AFL"
+        "expands it into deeper trees through repeated mutation."
+    depends [Chain.Mid, Chain.Leaf]
+    exposes [head, tail]
+    effects []
+
+fn head(x: Int) -> Int
+    ? "First hop in the chain — calls Mid."
+    Chain.Mid.next(x)
+
+fn tail(x: Int) -> Int
+    ? "Final hop — calls Leaf directly."
+    Chain.Leaf.final(x)

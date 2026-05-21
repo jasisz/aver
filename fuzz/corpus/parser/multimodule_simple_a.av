@@ -1,0 +1,15 @@
+module SimpleA
+    intent =
+        "Multi-module seed — caller side. Declares a dependency on"
+        "SimpleB and calls one of its exposed functions. The fuzz"
+        "harness parses single files, so SimpleB is never actually"
+        "resolved; the value is that the mutator sees the cross-module"
+        "shape (`depends [...]` + `Other.fn(...)` call) and can churn"
+        "more of it through the resolver / module-loader error paths."
+    depends [SimpleB]
+    exposes [bridge]
+    effects []
+
+fn bridge(x: Int) -> Int
+    ? "Forwards through a cross-module dependency."
+    SimpleB.echo(x)

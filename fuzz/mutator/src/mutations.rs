@@ -30,7 +30,7 @@ use crate::typed_gen;
 /// Total number of strategies available. The dispatcher modulo-
 /// indexes into this so callers can pick a strategy uniformly with
 /// `rng.random_range(0..STRATEGY_COUNT)`.
-pub const STRATEGY_COUNT: u32 = 16;
+pub const STRATEGY_COUNT: u32 = 20;
 
 /// Apply one mutation strategy chosen by `strategy_index`. Returns
 /// `true` if the AST was modified, `false` if the strategy found
@@ -57,6 +57,10 @@ pub fn apply<R: Rng>(strategy_index: u32, rng: &mut R, items: &mut Vec<TopLevel>
         13 => shift_map_literal_entries(rng, items.as_mut_slice()),
         14 => replace_fn_body(rng, items.as_mut_slice()),
         15 => inject_fn(rng, items),
+        16 => insert_depends(rng, items.as_mut_slice()),
+        17 => inject_cross_module_call(rng, items.as_mut_slice()),
+        18 => attempt_opaque_violation(rng, items.as_mut_slice()),
+        19 => swap_exposes_acl(rng, items.as_mut_slice()),
         _ => unreachable!(),
     }
 }
@@ -86,6 +90,10 @@ pub fn strategy_name(strategy_index: u32) -> &'static str {
         13 => "shift-map-entries",
         14 => "replace-fn-body",
         15 => "inject-fn",
+        16 => "insert-depends",
+        17 => "inject-cross-call",
+        18 => "opaque-violation",
+        19 => "swap-exposes-acl",
         _ => unreachable!(),
     }
 }
@@ -840,4 +848,189 @@ fn inject_fn<R: Rng>(rng: &mut R, items: &mut Vec<TopLevel>) -> bool {
     };
     items.push(TopLevel::FnDef(new_fn));
     true
+}
+
+// ---------------------------------------------------------------------------
+// Multi-module strategies
+//
+// The fuzz harness parses single .av files end-to-end (lex → parse →
+// typecheck → resolve); multi-file resolution is out of scope per
+// `fuzz_targets/typecheck_program.rs`. These strategies still cover
+// the cross-module *surface* by producing source whose declarations
+// reference modules the typechecker can't resolve, which drives the
+// resolver / opaque-enforcement / exposes-ACL error paths under
+// inputs the existing local-edit strategies don't reach.
+// ---------------------------------------------------------------------------
+
+/// Pool of synthetic module names. Picked to look plausible
+/// (CamelCase, no namespace dots) so the result lines up with the
+/// `depends [Foo, Bar]` grammar without tripping the parser on the
+/// way in. The names are deliberately *not* present in the corpus,
+/// so resolver lookups land on the "unknown module" path.
+const SYNTHETIC_MODULES: &[&str] = &[
+    "Other", "Helper", "Util", "Aux", "Core", "Lib", "Ext", "Adj",
+];
+
+/// Append a fresh module name to the first `TopLevel::Module`'s
+/// `depends [...]` list. Forces the resolver to walk an extra
+/// (unresolvable) edge, exercising error paths the AFL byte-havoc
+/// stage rarely produces because the depends grammar is delicate.
+fn insert_depends<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    for item in items.iter_mut() {
+        if let TopLevel::Module(m) = item {
+            let candidate = *SYNTHETIC_MODULES.choose(rng).unwrap();
+            if m.depends.iter().any(|d| d == candidate) {
+                // Already present — pick the next unused one rather
+                // than reporting `false`, since a seed that already
+                // hit the candidate is exactly the shape the
+                // mutator should keep churning on.
+                if let Some(fresh) = SYNTHETIC_MODULES
+                    .iter()
+                    .copied()
+                    .find(|n| !m.depends.iter().any(|d| d == n))
+                {
+                    m.depends.push(fresh.to_string());
+                    return true;
+                }
+                return false;
+            }
+            m.depends.push(candidate.to_string());
+            return true;
+        }
+    }
+    false
+}
+
+/// Replace one expression in any fn body with a synthesized
+/// `OtherModule.fn(args)` shape. The callee module is picked from
+/// the existing `depends` list when present (so the call shape
+/// matches a declared dependency the resolver should be able to
+/// find), and falls back to a synthetic name otherwise. Either way
+/// the cross-module resolver path runs against an unresolvable
+/// target, which is the coverage zone — module loading happens
+/// outside this fuzz harness.
+fn inject_cross_module_call<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    // Pick a module name to call into. Prefer one we've already
+    // declared a dependency on (so the shape matches "depends [X];
+    // call X.fn()"), otherwise fall back to a synthetic name.
+    let mut module_name: Option<String> = None;
+    for item in items.iter() {
+        if let TopLevel::Module(m) = item {
+            if let Some(name) = m.depends.choose(rng) {
+                module_name = Some(name.clone());
+            }
+            break;
+        }
+    }
+    let module_name = module_name.unwrap_or_else(|| {
+        (*SYNTHETIC_MODULES.choose(rng).unwrap()).to_string()
+    });
+
+    let fn_names = ["call", "do", "get", "make", "run", "step"];
+    let fn_name = *fn_names.choose(rng).unwrap();
+
+    let mut sites: Vec<*mut Spanned<Expr>> = Vec::new();
+    visit_exprs_mut(items, |expr| {
+        // Restrict to value-position expressions. Callee-position
+        // nodes (`Attr`, `Constructor`) and post-parse-only shapes
+        // produce nonsense when replaced with a FnCall: e.g. the
+        // visitor hands us `(Vector).set` (an `Attr` callee) and
+        // replacing it leaves the outer call's arg list dangling
+        // as `(Other.fn())(args)`, which Aver's grammar rejects.
+        if matches!(
+            &expr.node,
+            Expr::Literal(_) | Expr::Ident(_) | Expr::FnCall(..) | Expr::Match { .. }
+        ) {
+            sites.push(expr as *mut Spanned<Expr>);
+        }
+        false
+    });
+    let &site = sites.choose(rng).unwrap_or(&std::ptr::null_mut());
+    if site.is_null() {
+        return false;
+    }
+    // SAFETY: same contract as the other strategies — the raw
+    // pointer was just collected from the live mutable borrow on
+    // `items`; no aliasing reference exists between visit and write.
+    let span_ref: &mut Spanned<Expr> = unsafe { &mut *site };
+    let line = span_ref.line;
+    let callee = Spanned::new(
+        Expr::Attr(
+            Box::new(Spanned::new(Expr::Ident(module_name), line)),
+            fn_name.to_string(),
+        ),
+        line,
+    );
+    let new = Expr::FnCall(Box::new(callee), Vec::new());
+    let _ = std::mem::replace(span_ref, Spanned::new(new, line));
+    true
+}
+
+/// If the module declares `exposes opaque [T]`, splice a bare
+/// constructor call to `T` into a random expression site. Within
+/// the defining module that's syntactically legal; the value here
+/// is exercising the opaque-name resolution path (PR #38's
+/// namespace-aware enforcement) under fuzz-driven contexts where
+/// the constructor lands at unusual positions (tuple element,
+/// match arm body, record-update base, ...).
+fn attempt_opaque_violation<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    let mut opaque_name: Option<String> = None;
+    for item in items.iter() {
+        if let TopLevel::Module(m) = item {
+            if let Some(n) = m.exposes_opaque.choose(rng) {
+                opaque_name = Some(n.clone());
+            }
+            break;
+        }
+    }
+    let Some(opaque_name) = opaque_name else {
+        return false;
+    };
+
+    let mut sites: Vec<*mut Spanned<Expr>> = Vec::new();
+    visit_exprs_mut(items, |expr| {
+        if matches!(
+            &expr.node,
+            Expr::Literal(_) | Expr::Ident(_) | Expr::FnCall(..)
+        ) {
+            sites.push(expr as *mut Spanned<Expr>);
+        }
+        false
+    });
+    let &site = sites.choose(rng).unwrap_or(&std::ptr::null_mut());
+    if site.is_null() {
+        return false;
+    }
+    let span_ref: &mut Spanned<Expr> = unsafe { &mut *site };
+    let line = span_ref.line;
+    // Construct `T()` as a parser-shaped FnCall(Ident("T"), []).
+    // The typechecker decides what to do: in the defining module
+    // it's fine, in an external context it's the canonical opaque
+    // violation. Either way the opaque-name lookup runs.
+    let callee = Spanned::new(Expr::Ident(opaque_name), line);
+    let new = Expr::FnCall(Box::new(callee), Vec::new());
+    let _ = std::mem::replace(span_ref, Spanned::new(new, line));
+    true
+}
+
+/// Drop one fn name from the module's `exposes [...]` list. Within
+/// the same file callers still resolve (exposes only governs the
+/// cross-module visibility check), so the mutated source still
+/// parses + typechecks locally. The interest is in the consistency
+/// path: any tooling that cross-references the exposes list with
+/// the body names (decision-block validators, intent checker, the
+/// `aver context` graph) sees a name that's defined but no longer
+/// publicly reachable.
+fn swap_exposes_acl<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    for item in items.iter_mut() {
+        if let TopLevel::Module(m) = item {
+            if m.exposes.is_empty() {
+                return false;
+            }
+            let idx = rng.random_range(0..m.exposes.len());
+            m.exposes.remove(idx);
+            return true;
+        }
+    }
+    false
 }
