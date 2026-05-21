@@ -130,7 +130,11 @@ strategy_test!(strategy_2_inject_error_prop, 2, 1);
 // targeting moves it off that file the strategy is a no-op.
 strategy_test!(strategy_3_remove_error_prop, 3, 0_usize);
 strategy_test!(strategy_4_swap_match_arms, 4, 1);
-strategy_test!(strategy_5_duplicate_match_arm, 5, 1);
+// strategy 5 (swap_bang_element) lower bound is 0: only seeds
+// that exercise `(a, b)!` independent products will fire the
+// permutation. The corpus has at most a handful, so a strict
+// per-seed lower bound would be brittle.
+strategy_test!(strategy_5_swap_bang_element, 5, 0_usize);
 strategy_test!(strategy_6_swap_type_annotation, 6, 1);
 strategy_test!(strategy_7_rename_param, 7, 1);
 // strategy 8 (swap_adjacent_statements) lower bound is 0:
@@ -139,6 +143,14 @@ strategy_test!(strategy_8_swap_statements, 8, 0_usize);
 strategy_test!(strategy_9_negate_expression, 9, 1);
 strategy_test!(strategy_10_bare_namespace, 10, 1);
 strategy_test!(strategy_11_toggle_effects, 11, 1);
+// strategy 12 (reverse_match_arms) needs `match` with ≥ 2 arms.
+// Several corpus seeds (Result match, list match) have that
+// shape, so 1 is a safe lower bound.
+strategy_test!(strategy_12_reverse_match_arms, 12, 1);
+// strategy 13 (shift_map_entries) lower bound is 0: the corpus
+// includes map literals on at most a couple of seeds, so a
+// strict per-seed bound would be brittle to corpus churn.
+strategy_test!(strategy_13_shift_map_entries, 13, 0_usize);
 
 /// `strategy_name` is the label AFL embeds into queue + crash
 /// filenames via the custom mutator's `describe` hook, so it has to

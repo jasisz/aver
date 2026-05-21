@@ -28,7 +28,7 @@ use rand::seq::IndexedRandom;
 /// Total number of strategies available. The dispatcher modulo-
 /// indexes into this so callers can pick a strategy uniformly with
 /// `rng.random_range(0..STRATEGY_COUNT)`.
-pub const STRATEGY_COUNT: u32 = 12;
+pub const STRATEGY_COUNT: u32 = 14;
 
 /// Apply one mutation strategy chosen by `strategy_index`. Returns
 /// `true` if the AST was modified, `false` if the strategy found
@@ -41,13 +41,15 @@ pub fn apply<R: Rng>(strategy_index: u32, rng: &mut R, items: &mut [TopLevel]) -
         2 => inject_error_prop(rng, items),
         3 => remove_error_prop(rng, items),
         4 => swap_adjacent_match_arms(rng, items),
-        5 => duplicate_match_arm(rng, items),
+        5 => swap_bang_element(rng, items),
         6 => swap_type_annotation(rng, items),
         7 => rename_param(rng, items),
         8 => swap_adjacent_statements(rng, items),
         9 => negate_expression(rng, items),
         10 => replace_ident_with_bare_namespace(rng, items),
         11 => toggle_module_effects(rng, items),
+        12 => reverse_match_arms(rng, items),
+        13 => shift_map_literal_entries(rng, items),
         _ => unreachable!(),
     }
 }
@@ -66,13 +68,15 @@ pub fn strategy_name(strategy_index: u32) -> &'static str {
         2 => "inject-err",
         3 => "remove-err",
         4 => "swap-match-arms",
-        5 => "dup-match-arm",
+        5 => "swap-bang-element",
         6 => "swap-type-ann",
         7 => "rename-param",
         8 => "swap-stmts",
         9 => "neg-expr",
         10 => "bare-namespace",
         11 => "toggle-effects",
+        12 => "reverse-match-arms",
+        13 => "shift-map-entries",
         _ => unreachable!(),
     }
 }
@@ -347,16 +351,22 @@ fn swap_adjacent_match_arms<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool
     true
 }
 
-/// Duplicate one match arm. Same body + same pattern → typecheck
-/// rejects (overlapping arm), exhaustiveness recomputes, parser
-/// stays happy.
-fn duplicate_match_arm<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
-    let mut sites: Vec<*mut Vec<aver::ast::MatchArm>> = Vec::new();
+/// Swap two elements inside an `(a, b, c)!` independent product.
+/// Aver's typecheck enforces every element is a fn call, so the
+/// shape post-swap is still legal — the mutation is always
+/// typecheck-clean and reaches codegen + CALL_PAR dispatch.
+/// Semantically it's a real shake: with the 0.21.1 order-axis
+/// hostile twin, the forward run's positional tuple is `(f(), g())`
+/// while a permuted source is `(g(), f())` — different positions,
+/// same independence claim, exercising the assumption that source
+/// order is purely positional and not load-bearing for the result.
+fn swap_bang_element<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    let mut sites: Vec<*mut Vec<Spanned<Expr>>> = Vec::new();
     visit_exprs_mut(items, |expr| {
-        if let Expr::Match { arms, .. } = &mut expr.node
-            && !arms.is_empty()
+        if let Expr::IndependentProduct(items, _) = &mut expr.node
+            && items.len() >= 2
         {
-            sites.push(arms as *mut Vec<aver::ast::MatchArm>);
+            sites.push(items as *mut Vec<Spanned<Expr>>);
         }
         false
     });
@@ -364,11 +374,16 @@ fn duplicate_match_arm<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
     if site.is_null() {
         return false;
     }
-    let arms: &mut Vec<aver::ast::MatchArm> = unsafe { &mut *site };
-    let idx = rng.random_range(0..arms.len());
-    let clone = arms[idx].clone();
-    let insert_at = (idx + 1).min(arms.len());
-    arms.insert(insert_at, clone);
+    let items: &mut Vec<Spanned<Expr>> = unsafe { &mut *site };
+    let i = rng.random_range(0..items.len());
+    let j = {
+        let mut k = rng.random_range(0..items.len());
+        if k == i {
+            k = (k + 1) % items.len();
+        }
+        k
+    };
+    items.swap(i, j);
     true
 }
 
@@ -560,4 +575,66 @@ fn toggle_module_effects<R: Rng>(_rng: &mut R, items: &mut [TopLevel]) -> bool {
         }
     }
     false
+}
+
+/// Reverse the entire match arm list. Aver match is first-arm-wins
+/// (Aver source order), so flipping `[Lit(0) -> ..., _ -> ...]` to
+/// `[_ -> ..., Lit(0) -> ...]` is a real semantic shake — the
+/// catch-all arm now shadows the literal one. With the 0.21
+/// unreachable-arm detection in place, the result is either
+/// typecheck-clean (reachable in the new order) or a clean error
+/// (an arm became unreachable). Either way the input lands on a
+/// post-typecheck shape, unlike the now-deleted `dup-match-arm`
+/// which always tripped the new unreachable check. Reversing one
+/// arm is `swap-adjacent-match-arms`; reversing the whole list is
+/// a strictly different shape, useful for code where the catch-all
+/// sits at the end.
+fn reverse_match_arms<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    let mut sites: Vec<*mut Vec<aver::ast::MatchArm>> = Vec::new();
+    visit_exprs_mut(items, |expr| {
+        if let Expr::Match { arms, .. } = &mut expr.node
+            && arms.len() >= 2
+        {
+            sites.push(arms as *mut Vec<aver::ast::MatchArm>);
+        }
+        false
+    });
+    let &site = sites.choose(rng).unwrap_or(&std::ptr::null_mut());
+    if site.is_null() {
+        return false;
+    }
+    let arms: &mut Vec<aver::ast::MatchArm> = unsafe { &mut *site };
+    arms.reverse();
+    true
+}
+
+/// Rotate the entry list of a map literal by one position. The
+/// keys, values, and the entry count stay identical — Map is an
+/// unordered collection at the value level — so typecheck and the
+/// usual semantic invariants are unaffected. But the IR / codegen
+/// preserves source order in the literal initialiser, so the
+/// rotation exercises insertion-order paths in the Map builder
+/// (hash-table chunking on the WASM/Rust backends, Finset
+/// canonicalisation on the Lean proof backend, set-literal flatten
+/// on Dafny). Strategies #2–#3 (`inject-err` / `remove-err`)
+/// cover the Result-value shake; this one covers the Map-value
+/// shake that no current strategy touches.
+fn shift_map_literal_entries<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    let mut sites: Vec<*mut Vec<(Spanned<Expr>, Spanned<Expr>)>> = Vec::new();
+    visit_exprs_mut(items, |expr| {
+        if let Expr::MapLiteral(entries) = &mut expr.node
+            && entries.len() >= 2
+        {
+            sites.push(entries as *mut Vec<(Spanned<Expr>, Spanned<Expr>)>);
+        }
+        false
+    });
+    let &site = sites.choose(rng).unwrap_or(&std::ptr::null_mut());
+    if site.is_null() {
+        return false;
+    }
+    let entries: &mut Vec<(Spanned<Expr>, Spanned<Expr>)> = unsafe { &mut *site };
+    let shift = rng.random_range(1..entries.len());
+    entries.rotate_left(shift);
+    true
 }
