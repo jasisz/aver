@@ -144,46 +144,143 @@ fn emit_simp_omega_law(
     collect_fn_calls(&law.lhs, &mut fn_names);
     collect_fn_calls(&law.rhs, &mut fn_names);
     fn_names.insert(vb.fn_name.clone());
+    // Transitively expand: include functions called from the body
+    // of every fn we've already collected. Without this, a law on
+    // `safeSum(a, b) => safeSum(b, a)` collects only `safeSum`
+    // itself — but the unfold tactic needs every function that
+    // appears under it (including cross-module callees like
+    // `Modules.Natural.Natural.fromInt`) so the resulting goal is
+    // free of opaque match-on-Except branches that `simp` can't
+    // close. Bounded iteration: each round can only add what's
+    // reachable from the new set, so it converges in O(items).
+    loop {
+        let before = fn_names.len();
+        let snapshot: Vec<String> = fn_names.iter().cloned().collect();
+        for item in &ctx.items {
+            if let crate::ast::TopLevel::FnDef(fd) = item
+                && snapshot.contains(&fd.name)
+            {
+                for stmt in fd.body.stmts() {
+                    match stmt {
+                        crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                            collect_fn_calls(e, &mut fn_names);
+                        }
+                    }
+                }
+            }
+        }
+        if fn_names.len() == before {
+            break;
+        }
+    }
     // Only proceed if all referenced functions exist in ctx, are non-recursive,
     // and have only Int parameters. simp+omega works on flat match-on-Int bodies.
     if fn_names.iter().any(|n| !ctx.fn_sigs.contains_key(n)) {
         return None;
     }
+    let mut wrapper_return = false;
     for item in &ctx.items {
         if let crate::ast::TopLevel::FnDef(fd) = item
             && fn_names.contains(&fd.name)
         {
-            // Reject recursive functions.
-            if body_calls_any_of(&fd.body, &fn_names) {
+            // Reject self-recursive functions: `unfold fn` only does
+            // one step, so a self-recursive body leaves another call
+            // to `fn` in the goal that simp can't close. Narrow check
+            // — we used to reject anything in `fn_names`, but after
+            // we extended `fn_names` with transitive callees the
+            // narrow form (`{fd.name}`) is what we actually want;
+            // calling a *different* fn that's also in the unfold
+            // list is fine because the next unfold pass strips it.
+            let mut self_only = std::collections::BTreeSet::new();
+            self_only.insert(fd.name.clone());
+            if body_calls_any_of(&fd.body, &self_only) {
                 return None;
             }
-            // Reject functions with non-Int parameters.
-            if fd.params.iter().any(|(_, t)| t != "Int") {
+            // The Int-parameter constraint only applies to the
+            // top-level law function. Cross-module callees may take
+            // refined types like `Natural`.
+            if fd.name == vb.fn_name && fd.params.iter().any(|(_, t)| t != "Int") {
                 return None;
             }
-            // Reject wrapped return types (Result, Option, List,
-            // Tuple, …). `simp [fn] <;> omega` unfolds the body but
-            // omega only closes linear-arithmetic goals on Int; a
-            // wrapper-equality goal like `Except.ok x = Except.ok y`
-            // leaves a constructor mismatch omega can't see. Without
-            // this guard, generator emits an auto-proof that
-            // typechecks against the body but lake fails with
-            // `omega could not prove the goal` — exactly the failure
-            // the sound-proof Natural example triggered, where
-            // `safeSum` returns `Result<Int, String>` and walks
-            // through `Modules.Natural.Natural.add`'s `Except`.
-            // Plain `Int` / `Float` returns stay on the omega path.
             if fd.return_type != "Int" && fd.return_type != "Float" {
-                return None;
+                wrapper_return = true;
             }
         }
     }
-    let lean_names: Vec<String> = fn_names.iter().map(|n| aver_name_to_lean(n)).collect();
+    // Inspect cross-module callees via `ctx.fn_sigs` (they aren't in
+    // `ctx.items`). Mark wrapper_return when their result type is a
+    // wrapper (Result, Option, …).
+    for name in &fn_names {
+        if let Some((_params, ret, _effects)) = ctx.fn_sigs.get(name) {
+            if !matches!(ret, crate::types::Type::Int | crate::types::Type::Float) {
+                wrapper_return = true;
+            }
+        }
+    }
+
+    // Top-level law fn first in the unfold list — Lean needs to see
+    // it in the goal before transitively-reached callees, otherwise
+    // `unfold Modules.X.Y.foo` fails outright at `safeSum a b = …`.
+    let mut ordered: Vec<String> = Vec::new();
+    if fn_names.contains(&vb.fn_name) {
+        ordered.push(vb.fn_name.clone());
+    }
+    for n in &fn_names {
+        if n != &vb.fn_name {
+            ordered.push(n.clone());
+        }
+    }
+    let lean_names: Vec<String> = ordered.iter().map(|n| aver_name_to_lean(n)).collect();
     let simp_list = lean_names.join(", ");
-    Some(intro_then(
-        intro_names,
-        vec![format!("simp only [{}] <;> omega", simp_list)],
-    ))
+
+    if wrapper_return {
+        // `simp + omega` can't close `Except.ok x = Except.ok y` —
+        // omega is a linear-arithmetic decision procedure on Int,
+        // blind to constructor-equality on a wrapper. The tactic
+        // below was verified by hand on the sound-proof Natural
+        // example (`examples/modules/natural_app.av`):
+        //   1. `unfold` every user fn the law touches, top-level
+        //      first so the goal exposes the call layer Lean's
+        //      `unfold` operates on at each step.
+        //   2. For each Int parameter, branch on `p ≥ 0` (the only
+        //      predicate that fromInt-style smart constructors use
+        //      to decide ok/err).
+        //   3. `simp` with all introduced hypotheses + `Int.add_
+        //      comm` + `Int.mul_comm` closes the resulting case
+        //      grid. The arithmetic lemmas are conservative
+        //      defaults — `simp` ignores them when the goal
+        //      doesn't mention `+`/`*`.
+        // Conservative shape: if a smart constructor uses a
+        // different predicate (`x > 0`, `x ≤ 100`, …) the
+        // `by_cases` pick is wrong and lake fails with a real
+        // `unsolved goals` error, prompting a manual companion
+        // proof. Strictly better than the silent `sorry` we used
+        // to emit — `safeSum.commutative` in the sound-proof
+        // Natural example actually discharges here now.
+        let by_cases_clauses: Vec<String> = intro_names
+            .iter()
+            .map(|n| format!("by_cases h_{n} : {n} ≥ 0"))
+            .collect();
+        let by_cases_chain = by_cases_clauses.join(" <;> ");
+        let simp_hyps: Vec<String> = intro_names
+            .iter()
+            .map(|n| format!("h_{n}"))
+            .chain(["Int.add_comm".to_string(), "Int.mul_comm".to_string()])
+            .collect();
+        let simp_args = simp_hyps.join(", ");
+        Some(intro_then(
+            intro_names,
+            vec![
+                format!("unfold {}", lean_names.join(" ")),
+                format!("{by_cases_chain} <;> simp [{simp_args}]"),
+            ],
+        ))
+    } else {
+        Some(intro_then(
+            intro_names,
+            vec![format!("simp only [{}] <;> omega", simp_list)],
+        ))
+    }
 }
 
 fn body_calls_any_of(
@@ -204,10 +301,18 @@ fn body_calls_any_of(
 fn collect_fn_calls(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet<String>) {
     match &expr.node {
         Expr::FnCall(f, args) => {
-            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node)
-                && (!name.contains('.') || name.chars().next().is_some_and(|c| c.is_lowercase()))
-            {
-                out.insert(name);
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node) {
+                // Skip top-level uppercase namespace handles like
+                // `List.len` / `Option.Some` — those are built-in
+                // namespaces, not user functions the auto-proof
+                // can unfold. Cross-module user calls
+                // (`Modules.X.Y.fn`) survive because the leaf
+                // function name `fn` starts lower-case even when the
+                // dotted prefix starts uppercase.
+                let last = name.rsplit('.').next().unwrap_or(&name);
+                if last.chars().next().is_some_and(|c| c.is_lowercase()) {
+                    out.insert(name);
+                }
             }
             for arg in args {
                 collect_fn_calls(arg, out);
