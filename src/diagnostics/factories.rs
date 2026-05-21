@@ -422,7 +422,34 @@ pub fn verify_mismatch_diagnostic(
         fields.push(("origin", origin_label));
     }
     let repair = if from_hostile {
-        if hostile_profile.is_some() {
+        if hostile_profile
+            .map(|p| p.contains("reverse-eval"))
+            .unwrap_or(false)
+        {
+            // Order-axis hostile: the case differs between forward and
+            // reverse evaluation of an `(a, b)!` independent product.
+            // Pure laws claim their independent products commute, so
+            // a divergence usually means the law accidentally pinned
+            // execution order through a flat trace projection like
+            // `.trace.event(k)` (which indexes the global emission
+            // sequence) instead of a structural one like
+            // `.trace.group(g).branch(b).event(k)` (which indexes by
+            // source position and is order-invariant).
+            Repair::primary(
+                "the law's tuple disagrees between forward and reverse \
+                 evaluation of the `(a, b)!` independent product — Aver \
+                 makes no guarantee about which branch runs first, so any \
+                 law that does is fragile. If you used a flat projection \
+                 like `.trace.event(k)`, rewrite it as \
+                 `.trace.group(g).branch(b).event(k)` to address events by \
+                 source position instead of execution order. If the \
+                 divergence is in the return value itself, you've found a \
+                 stub or compiler-level ordering dependency that the \
+                 \"independent\" claim doesn't actually support — drop \
+                 `!` for sequential evaluation, or fix the stub to be \
+                 purely a function of `(path, n, args...)`.",
+            )
+        } else if hostile_profile.is_some() {
             // Effect-side hostile fires inside `verify <fn> law <name>`
             // (with or without `trace`). Three honest options: adjust
             // the impl (the profile models a real production world);
