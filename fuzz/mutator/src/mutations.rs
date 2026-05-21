@@ -272,19 +272,24 @@ fn replace_int_literal_boundary<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> 
 /// typecheck paths. When the receiver happens to be a Result,
 /// flushes the Result-unwrap path through resolver + codegen.
 fn inject_error_prop<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
-    let mut sites: Vec<*mut Spanned<Expr>> = Vec::new();
-    visit_exprs_mut(items, |expr| {
-        // Skip leaves — adding `?` to a literal is more shape
-        // disruption than coverage win. Skip existing ErrorProps
-        // to avoid `(x?)??...` chains the round-4 patch already
-        // bounds; we want one shape transition, not depth.
-        if matches!(
-            &expr.node,
-            Expr::FnCall(..) | Expr::Attr(..) | Expr::Ident(_) | Expr::Match { .. }
-        ) {
-            sites.push(expr as *mut Spanned<Expr>);
+    // Two filters at once: shape (don't wrap leaves / existing
+    // ErrorProps / Match) and context (don't wrap a callee slot,
+    // because `(x)?(args)` is not a legal Aver shape — the
+    // parser treats `?` as a final postfix and refuses to follow
+    // it with another call).
+    //
+    // Match exclusion is shape-side: the unparser emits the
+    // block-form `match x\n    pat -> body\n    ...`, and even
+    // wrapped in parens the inner arm bodies carry their own
+    // newlines, so `(match ...)?` reparses as `pattern ')'`.
+    let sites = collect_sites_with_ctx(items, |expr, ctx| {
+        if matches!(ctx, ExprCtx::Callee { .. }) {
+            return false;
         }
-        false
+        matches!(
+            &expr.node,
+            Expr::FnCall(..) | Expr::Attr(..) | Expr::Ident(_)
+        )
     });
     let &site = sites.choose(rng).unwrap_or(&std::ptr::null_mut());
     if site.is_null() {
@@ -534,25 +539,158 @@ fn negate_expression<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
 /// real-fix can be checked against actual coverage.
 fn replace_ident_with_bare_namespace<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
     const NAMESPACES: &[&str] = &["Vector", "List", "Option", "Map", "Result"];
-    let mut sites: Vec<*mut String> = Vec::new();
-    visit_exprs_mut(items, |expr| {
-        if let Expr::Ident(name) = &mut expr.node {
-            // Skip identifiers that already look like a namespace
-            // — flipping `Vector` to `Map` is fine but wasted
-            // coverage compared to flipping a user-defined name.
-            if !NAMESPACES.contains(&name.as_str()) {
-                sites.push(name as *mut String);
-            }
+    // Context-aware walk: skip zero-arg callee slots so we never
+    // emit `Namespace()` (the parser explicitly rejects this with
+    // `Zero-argument constructor call ... is not allowed`). The
+    // in-arg / RHS / list-element positions are still in play —
+    // those are the ones that flow a bare namespace handle into
+    // codegen's `aver_type_of` assert, which is the wasm-gc bug
+    // surface this strategy was added to keep under pressure.
+    let sites = collect_sites_with_ctx(items, |expr, ctx| {
+        let Expr::Ident(name) = &expr.node else {
+            return false;
+        };
+        if NAMESPACES.contains(&name.as_str()) {
+            return false;
         }
-        false
+        !matches!(ctx, ExprCtx::Callee { zero_args: true })
     });
     let &site = sites.choose(rng).unwrap_or(&std::ptr::null_mut());
     if site.is_null() {
         return false;
     }
+    let span_ref: &mut Spanned<Expr> = unsafe { &mut *site };
+    let Expr::Ident(name) = &mut span_ref.node else {
+        return false;
+    };
     let new_name = NAMESPACES.choose(rng).copied().unwrap_or("Vector");
-    unsafe { *site = new_name.to_string() };
+    *name = new_name.to_string();
     true
+}
+
+/// Parent-context flag the context-aware walker hands every site
+/// it visits. The variants that show up here mirror the parser
+/// positions where post-mutation shape collisions actually occur
+/// — strategies that wrap (`?`, `-`) or rewrite a node need to
+/// know whether the parent will accept the new shape *before*
+/// committing the edit.
+#[derive(Copy, Clone, PartialEq)]
+enum ExprCtx {
+    /// Stand-alone position: statement body, RHS of a binding,
+    /// element of a list/tuple/record/map literal, match arm
+    /// body, ... — anywhere the parser is willing to read a
+    /// fresh expression from the precedence chain entry.
+    Free,
+    /// Slot of `Expr::FnCall(<here>, args)`. The Aver parser
+    /// rejects `Namespace()` and `(x)?(args)`-style shapes here,
+    /// because a callee that already encodes a postfix-style
+    /// operator can't be re-used as the head of a call list.
+    /// `zero_args` is true when the enclosing FnCall has an empty
+    /// arg list — strategy_10 cares specifically about that
+    /// subset (bare `Namespace` in a `Namespace()` slot), while
+    /// strategy_2 wants to skip any callee context to avoid the
+    /// `?`-wrap.
+    Callee { zero_args: bool },
+}
+
+/// Context-aware analogue of `visit_exprs_mut`. The filter
+/// callback receives both the candidate node and its parent
+/// `ExprCtx` so strategies can express "skip me if I'm in a
+/// callee slot" without needing a custom walker per strategy.
+/// Returning `true` from the filter records the node's address
+/// as a candidate site; the strategy then picks one at random
+/// from the returned vec and performs its edit.
+fn collect_sites_with_ctx<F>(
+    items: &mut [TopLevel],
+    mut filter: F,
+) -> Vec<*mut Spanned<Expr>>
+where
+    F: FnMut(&Spanned<Expr>, ExprCtx) -> bool,
+{
+    let mut sites: Vec<*mut Spanned<Expr>> = Vec::new();
+    for item in items {
+        if let TopLevel::FnDef(fd) = item {
+            let body = std::sync::Arc::make_mut(&mut fd.body);
+            for stmt in body.stmts_mut() {
+                let expr = match stmt {
+                    Stmt::Expr(e) => e,
+                    Stmt::Binding(_, _, e) => e,
+                };
+                walk_with_ctx(expr, ExprCtx::Free, &mut filter, &mut sites);
+            }
+        }
+    }
+    sites
+}
+
+fn walk_with_ctx<F>(
+    expr: &mut Spanned<Expr>,
+    ctx: ExprCtx,
+    filter: &mut F,
+    out: &mut Vec<*mut Spanned<Expr>>,
+) where
+    F: FnMut(&Spanned<Expr>, ExprCtx) -> bool,
+{
+    if filter(expr, ctx) {
+        out.push(expr as *mut Spanned<Expr>);
+    }
+    match &mut expr.node {
+        Expr::FnCall(callee, args) => {
+            let cctx = ExprCtx::Callee {
+                zero_args: args.is_empty(),
+            };
+            walk_with_ctx(callee, cctx, filter, out);
+            for a in args.iter_mut() {
+                walk_with_ctx(a, ExprCtx::Free, filter, out);
+            }
+        }
+        Expr::BinOp(_, lhs, rhs) => {
+            walk_with_ctx(lhs, ExprCtx::Free, filter, out);
+            walk_with_ctx(rhs, ExprCtx::Free, filter, out);
+        }
+        Expr::Neg(inner) | Expr::Attr(inner, _) | Expr::ErrorProp(inner) => {
+            walk_with_ctx(inner, ExprCtx::Free, filter, out);
+        }
+        Expr::Constructor(_, Some(arg)) => {
+            walk_with_ctx(arg, ExprCtx::Free, filter, out);
+        }
+        Expr::Match { subject, arms } => {
+            walk_with_ctx(subject, ExprCtx::Free, filter, out);
+            for arm in arms.iter_mut() {
+                walk_with_ctx(&mut arm.body, ExprCtx::Free, filter, out);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items.iter_mut() {
+                walk_with_ctx(it, ExprCtx::Free, filter, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries.iter_mut() {
+                walk_with_ctx(k, ExprCtx::Free, filter, out);
+                walk_with_ctx(v, ExprCtx::Free, filter, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields.iter_mut() {
+                walk_with_ctx(v, ExprCtx::Free, filter, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            walk_with_ctx(base, ExprCtx::Free, filter, out);
+            for (_, v) in updates.iter_mut() {
+                walk_with_ctx(v, ExprCtx::Free, filter, out);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts.iter_mut() {
+                if let aver::ast::StrPart::Parsed(e) = p {
+                    walk_with_ctx(e, ExprCtx::Free, filter, out);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Cycle the `effects [...]` clause on the first `TopLevel::Module`
