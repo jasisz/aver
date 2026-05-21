@@ -30,6 +30,7 @@
 
 pub mod afl_api;
 pub mod mutations;
+pub mod typed_gen;
 pub mod unparse;
 
 pub use unparse::{UnparseError, unparse};

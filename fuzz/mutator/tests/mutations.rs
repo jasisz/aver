@@ -151,6 +151,16 @@ strategy_test!(strategy_12_reverse_match_arms, 12, 1);
 // includes map literals on at most a couple of seeds, so a
 // strict per-seed bound would be brittle to corpus churn.
 strategy_test!(strategy_13_shift_map_entries, 13, 0_usize);
+// strategy 14 (replace-fn-body) needs at least one pure FnDef
+// whose return type the type-driven generator can parse. Every
+// non-empty corpus seed has at least one such fn (math, hello,
+// effects' `dump` is pure-Result, types' `area` is Float).
+strategy_test!(strategy_14_replace_fn_body, 14, 1);
+// strategy 15 (inject-fn) appends a fresh fn — always applies to
+// any corpus seed that parses, because the generator falls back
+// to a literal of one of the three supported return types when
+// scope is empty.
+strategy_test!(strategy_15_inject_fn, 15, 1);
 
 /// `strategy_name` is the label AFL embeds into queue + crash
 /// filenames via the custom mutator's `describe` hook, so it has to
