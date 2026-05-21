@@ -1,0 +1,40 @@
+module NaturalApp
+    depends [Modules.Natural.Natural]
+    exposes [safeSum]
+    intent =
+        "Consumer side of the Natural refinement-via-opaque example."
+        "Demonstrates that external callers reach Natural only through"
+        "the exposed API (fromInt, add, toInt) — direct Natural(value"
+        "= ...) construction would be rejected by the typechecker"
+        "because Natural is declared `exposes opaque`."
+    effects [Console.print]
+
+fn safeSum(a: Int, b: Int) -> Result<Int, String>
+    ? "Validate both inputs through the smart constructor, add the two Naturals, unwrap to Int. Either side being negative — or the sum overflowing i64 — surfaces as Err."
+    match Modules.Natural.Natural.fromInt(a)
+        Result.Err(msg) -> Result.Err(msg)
+        Result.Ok(na) -> match Modules.Natural.Natural.fromInt(b)
+            Result.Err(msg) -> Result.Err(msg)
+            Result.Ok(nb) -> match Modules.Natural.Natural.add(na, nb)
+                Result.Err(msg) -> Result.Err(msg)
+                Result.Ok(sum) -> Result.Ok(Modules.Natural.Natural.toInt(sum))
+
+verify safeSum
+    safeSum(3, 4)   => Result.Ok(7)
+    safeSum(0, 0)   => Result.Ok(0)
+    safeSum(-1, 5)  => Result.Err("Nat must be non-negative")
+    safeSum(5, -1)  => Result.Err("Nat must be non-negative")
+
+fn render(r: Result<Int, String>) -> String
+    ? "Render Result<Int, String> for display."
+    match r
+        Result.Ok(n)    -> "sum = {n}"
+        Result.Err(msg) -> "error: {msg}"
+
+verify render
+    render(Result.Ok(7)) => "sum = 7"
+    render(Result.Err("Nat must be non-negative")) => "error: Nat must be non-negative"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(render(safeSum(3, 4)))

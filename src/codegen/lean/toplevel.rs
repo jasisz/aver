@@ -1584,8 +1584,19 @@ fn emit_verify_law_block(
             .join(" ∧ ");
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
+                // `checked_domain` is one nested ∧-conjunction with N
+                // implications. When the law's case body produces a
+                // wrapper type (Result → `Except String T`, Option →
+                // `Option T`), Lean's default `synthInstance.maxSize`
+                // (~200) is too small to reach `DecidableEq` through
+                // the wrapper instance at ~16+ conjuncts — `native_
+                // decide` then dies with `failed to synthesize
+                // Decidable`. Bumping the budget locally to the theorem
+                // is cheaper than rewriting the emitter to fan the
+                // cases out into N separate theorems (the per-case
+                // `sample_N` theorems below already cover that view).
                 lines.push(format!(
-                    "theorem {} : {} := by native_decide",
+                    "set_option synthInstance.maxSize 4096 in\ntheorem {} : {} := by native_decide",
                     domain_theorem_name, domain_prop
                 ));
             }
