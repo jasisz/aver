@@ -444,6 +444,16 @@ pub struct VerifyBlock {
     /// expanded (declared, value-hostile-only, or fns without applicable
     /// classified effects). All entries empty under non-hostile runs.
     pub case_hostile_profiles: Vec<Vec<(String, String)>>,
+    /// Parallel to `cases`: `true` when `aver verify --hostile` has
+    /// injected a reverse-order twin of an earlier case. The twin
+    /// shares LHS/RHS/given/profile with its forward sibling — only
+    /// the execution order of independent-product branches
+    /// (`(a, b)!` lowers to `CALL_PAR`) is flipped. A pure law claims
+    /// its branches are independent, so the twin must produce the
+    /// same result; divergence proves the claim doesn't hold under
+    /// the stub map and surfaces as `verify-hostile-order-mismatch`.
+    /// All entries `false` under non-hostile runs.
+    pub case_reverse_order: Vec<bool>,
     pub kind: VerifyKind,
     /// Oracle v1: `trace` keyword enables trace-aware assertions
     /// (`.trace.*`, `.result`, event literals in `.contains` / match
@@ -471,6 +481,7 @@ impl VerifyBlock {
         let case_spans = vec![SourceSpan::default(); cases.len()];
         let case_hostile_origins = vec![false; cases.len()];
         let case_hostile_profiles = vec![Vec::new(); cases.len()];
+        let case_reverse_order = vec![false; cases.len()];
         Self {
             fn_name,
             line,
@@ -479,6 +490,7 @@ impl VerifyBlock {
             case_givens: vec![],
             case_hostile_origins,
             case_hostile_profiles,
+            case_reverse_order,
             kind,
             trace: false,
             cases_givens: vec![],

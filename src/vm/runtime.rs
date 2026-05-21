@@ -69,6 +69,16 @@ pub(super) struct VmRuntime {
     /// `fn_id` of the frame that issued the call. Used by
     /// `record_trace_event` to apply the helper-boundary filter.
     pub(super) trace_caller_fn_id: u32,
+    /// Hostile order-axis: when true, `CALL_PAR` (the `(a, b)!`
+    /// independent-product opcode) executes its branches in reverse
+    /// source order but assigns results to the same positional slots,
+    /// so a pure law's output stays identical. A divergence between
+    /// forward and reverse runs proves the law's "independent" claim
+    /// doesn't actually hold — either the stub has hidden state, or
+    /// the compiler is reordering through side-effecting glue. Default
+    /// false; flipped on by the verify runner for hostile-order twin
+    /// cases.
+    pub(super) reverse_independent_eval: bool,
 }
 
 /// Oracle v1: structural coordinates for a recorded trace event.
@@ -105,7 +115,16 @@ impl VmRuntime {
             trace_collecting: false,
             trace_root_fn_id: None,
             trace_caller_fn_id: 0,
+            reverse_independent_eval: false,
         }
+    }
+
+    pub(super) fn set_reverse_independent_eval(&mut self, value: bool) {
+        self.reverse_independent_eval = value;
+    }
+
+    pub(super) fn reverse_independent_eval(&self) -> bool {
+        self.reverse_independent_eval
     }
 
     pub(super) fn start_trace_collection(&mut self) {

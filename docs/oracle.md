@@ -317,7 +317,7 @@ value of the `given` clauses' types". The declared set
 think will exercise the law — but the claim itself ranges over the
 whole type. `--hostile` checks that.
 
-`--hostile` works on **two axes**, both tied to law form:
+`--hostile` works on **three axes**, all tied to law form:
 
 1. **Value-side** — on `verify <fn> law <name>` (with or without
    `trace`). Typed `given` clauses get augmented with the per-type
@@ -328,13 +328,20 @@ whole type. `--hostile` checks that.
    multiplied by an adversarial profile cartesian. The user's `given
    <Effect>` stub is one chosen world; hostile asks "what if you chose
    wrong?" by overriding the stub with each profile in turn.
+3. **Order-side** — for laws whose fn contains an `(a, b)!`
+   independent-product. Each case gets a twin in which the branches
+   execute right-to-left while results land in their source positions;
+   a pure law's tuple is order-invariant, so a divergence proves
+   "independent" doesn't actually hold for the active stub map.
+   Failures show `+reverse-eval` in the case's origin. Skipped for fns
+   without `!` because the twin would be a pure copy with no signal.
 
-| Form | Value-side | Effect-side |
-|---|---|---|
-| `verify <fn>` (plain) | — | — |
-| `verify <fn> trace` (cases-form trace) | — | — |
-| `verify <fn> law <name>` | ✓ | ✓ |
-| `verify <fn> trace law <name>` | ✓ | ✓ |
+| Form | Value-side | Effect-side | Order-side |
+|---|---|---|---|
+| `verify <fn>` (plain) | — | — | — |
+| `verify <fn> trace` (cases-form trace) | — | — | — |
+| `verify <fn> law <name>` | ✓ | ✓ | ✓ if `!` |
+| `verify <fn> trace law <name>` | ✓ | ✓ | ✓ if `!` |
 
 Cases-form opts out — both plain `verify <fn>` and `verify <fn> trace`
 (no `law`) are fixtures: explicit scenarios with chosen stubs.

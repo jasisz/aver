@@ -2,6 +2,11 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.21.1 (unreleased)
+
+### Verify
+- **`aver verify --hostile` now exercises a third axis: execution order.** Every `verify <fn> law` case whose fn contains an `(a, b)!` independent-product gets a twin run in which the branches execute right-to-left, with each result placed back into its source position. A pure law claims its independent products commute, so the twin's tuple must match the forward run; a mismatch surfaces as `verify-hostile-mismatch` with origin `+reverse-eval`. Catches the class of bug where the runtime, the stub map, or a compiler optimisation has snuck a hidden ordering dependency into code Aver was treating as order-invariant. Same `--hostile` flag — no new CLI surface, no source-language change.
+
 ## 0.21.0 "Iron" — 2026-05-20
 
 > _Iron in the frame — the type checker stops lying to itself about negation, recursion, and identity. A new fuzz harness shakes the rest of the toolchain until things fall out._
