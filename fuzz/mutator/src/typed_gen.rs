@@ -25,10 +25,15 @@ use rand::seq::IndexedRandom;
 
 /// Maximum nesting depth for generated expressions. At this depth we
 /// stop recurring through fn calls / constructors and fall back to
-/// the cheapest base case (literal or in-scope local). Five is enough
-/// to thread a Result around two fn calls or build a 3-deep tuple,
-/// which covers the shapes the existing corpus stresses.
-const MAX_DEPTH: u32 = 5;
+/// the cheapest base case (literal or in-scope local). Three keeps
+/// the generated AST small enough that AFL's coverage map churns at
+/// a sustainable rate — the first CI nightly with this mutator wired
+/// in hit `shmget()` exhaustion on three targets because a depth-5
+/// generator produced so many unique well-typed shapes that AFL ran
+/// out of shared-memory segments calibrating them. Three still
+/// covers the shapes the existing corpus stresses (Result around a
+/// fn call, 2-deep tuple, 1-level record).
+const MAX_DEPTH: u32 = 3;
 
 /// Subset of Aver's `Type` enum that we need for generation. We
 /// re-derive it from source-level annotations rather than reusing
