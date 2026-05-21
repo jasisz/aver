@@ -22,6 +22,8 @@ The toolchain (run / verify / check / audit / why / context / compile / bench / 
 
 This is not a language optimized for humans to type by hand all day. It is optimized for AI to generate code that humans can inspect, constrain, test, and ship.
 
+**Prompting an LLM to write Aver?** Feed it [`llms.txt`](https://averlang.dev/llms.txt) (419 lines, curated). Same file at repo root ([`llms.txt`](llms.txt)) and at [averlang.dev/llms.txt](https://averlang.dev/llms.txt) — `.av` extension, single-line match arms, qualified constructors, classified effects, `verify` block shapes, and every other rule that catches model-generated code on first try. Longer reference cut: [`llms-full.txt`](https://averlang.dev/llms-full.txt).
+
 Website: [averlang.dev](https://averlang.dev)  
 Browser playground: [averlang.dev/playground](https://averlang.dev/playground/)
 

@@ -154,6 +154,19 @@ impl VM {
         self.runtime.clear_oracle_stubs();
     }
 
+    /// Hostile order-axis: when `true`, the next `CALL_PAR`
+    /// (`(a, b)!` independent-product) executes its branches in
+    /// reverse source order but assigns each result back to its
+    /// source position. The verify runner flips this on for
+    /// hostile-order twin cases — a pure law's tuple must stay
+    /// invariant, so a divergence proves the "independent" claim
+    /// doesn't hold for the active stub map. Always pair with a
+    /// reset to `false` before the next case to avoid leaking the
+    /// flag into unrelated runs.
+    pub fn set_reverse_independent_eval(&mut self, value: bool) {
+        self.runtime.set_reverse_independent_eval(value);
+    }
+
     /// Resolve an Aver top-level function name to its VM fn_id. Used by
     /// the verify runner when wiring stubs from a `given` clause.
     pub fn find_fn_id(&self, name: &str) -> Option<u32> {

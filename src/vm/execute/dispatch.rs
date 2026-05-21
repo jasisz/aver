@@ -1063,8 +1063,22 @@ impl VM {
                     let has_oracle_stubs = !self.runtime.oracle_stubs.is_empty();
                     let mut had_vm_error: Option<VmError> = None;
                     let results = if is_tracking || has_oracle_stubs || count <= 1 {
-                        let mut results = Vec::with_capacity(count);
-                        for (i, (callable, args)) in element_calls.iter().enumerate() {
+                        // Hostile order-axis: when the verify runner has
+                        // flipped `reverse_independent_eval` on for this
+                        // case, execute branches right-to-left but place
+                        // each result back into its source-position slot.
+                        // A pure law claims its branches are independent —
+                        // that is, the resulting tuple is invariant under
+                        // execution order. Forward vs reverse divergence
+                        // means the claim doesn't hold for this stub map.
+                        let reverse = self.runtime.reverse_independent_eval();
+                        let mut results: Vec<NanValue> = vec![NanValue::UNIT; count];
+                        let mut order: Vec<usize> = (0..count).collect();
+                        if reverse {
+                            order.reverse();
+                        }
+                        for i in order {
+                            let (callable, args) = &element_calls[i];
                             self.runtime.replay_set_branch(i as u32);
                             let result = self.invoke_callable_value(
                                 *callable,
@@ -1072,7 +1086,7 @@ impl VM {
                                 caller_fn_id,
                                 caller_ip,
                             )?;
-                            results.push(result);
+                            results[i] = result;
                         }
                         results
                     } else {

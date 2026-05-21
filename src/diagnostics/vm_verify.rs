@@ -91,24 +91,32 @@ pub(crate) fn apply_hostile_expansion(
     };
 
     let effect_combos = collect_effect_profile_combinations(block, items);
+    let fn_uses_independent_product = fn_body_uses_independent_product(block, items);
 
     // Pre-flight cap check. The post-expansion length is
-    // value_expanded × (1 + |effect_combos|); we use checked_mul so
-    // 32-bit-overflowing inputs (rare but possible if the user wrote
-    // a `given x: Int = 0..i32::MAX`) still return a clean diagnostic
-    // instead of panicking on the unsigned wrap.
+    // value_expanded × (1 + |effect_combos|) × (order-axis multiplier),
+    // where the order-axis adds a reverse-execution twin for every
+    // forward case but only for laws whose fn body actually contains
+    // an `(a, b)!` independent-product (otherwise the twin would be
+    // a pure copy with no observable difference). checked_mul keeps
+    // 32-bit-overflowing `given` domains from panicking on wrap.
     let per_value = effect_combos.len().saturating_add(1);
-    let projected = value_expanded.len().checked_mul(per_value);
+    let order_factor: usize = if fn_uses_independent_product { 2 } else { 1 };
+    let projected = value_expanded
+        .len()
+        .checked_mul(per_value)
+        .and_then(|n| n.checked_mul(order_factor));
     if projected
         .map(|n| n > VERIFY_HOSTILE_MAX_CASES)
         .unwrap_or(true)
     {
         return Err(format!(
-            "verify '{}' under --hostile expands to more than {} cases ({} declared/boundary cases × {} adversarial worlds). Tighten the `given` domain, add a `when` precondition, or drop hostile mode for this law.",
+            "verify '{}' under --hostile expands to more than {} cases ({} declared/boundary cases × {} adversarial worlds × {} eval orders). Tighten the `given` domain, add a `when` precondition, or drop hostile mode for this law.",
             block.fn_name,
             VERIFY_HOSTILE_MAX_CASES,
             value_expanded.len(),
             per_value,
+            order_factor,
         ));
     }
 
@@ -133,29 +141,52 @@ pub(crate) fn apply_hostile_expansion(
     let mut new_givens: Vec<Vec<(String, Spanned<Expr>)>> = Vec::new();
     let mut new_spans: Vec<SourceSpan> = Vec::new();
     let mut new_profiles: Vec<Vec<(String, String)>> = Vec::new();
+    let mut new_reverse: Vec<bool> = Vec::new();
     let mut new_guards: Vec<Spanned<Expr>> = Vec::new();
     let has_when = matches!(&block.kind, VerifyKind::Law(law) if law.when.is_some());
 
-    for (lhs, rhs, from_hostile, bindings, guard) in value_expanded {
-        // Always keep the un-effected case (declared or value-hostile).
-        new_cases.push((lhs.clone(), rhs.clone()));
-        new_origins.push(from_hostile);
-        new_givens.push(bindings.clone());
-        new_spans.push(block_span.clone());
-        new_profiles.push(Vec::new());
-        if has_when && let Some(g) = &guard {
-            new_guards.push(g.clone());
-        }
+    // Order-axis: each forward case gets a reverse-execution twin
+    // when the fn under test uses `(a, b)!` (CALL_PAR). The twin
+    // shares LHS/RHS/given/profile — only `case_reverse_order[idx]`
+    // is true. A pure law's branches are independent, so the twin
+    // must agree with the forward run; mismatch surfaces as
+    // `verify-hostile-order-mismatch`. We skip the twin for fns
+    // without CALL_PAR because reverse_eval is a no-op there — pure
+    // 2× cost for zero new signal.
+    let orders: &[bool] = if fn_uses_independent_product {
+        &[false, true]
+    } else {
+        &[false]
+    };
 
-        // Then add one case per effect-profile cartesian combination.
-        for combo in &effect_combos {
+    for (lhs, rhs, from_hostile, bindings, guard) in value_expanded {
+        // Always keep the un-effected case (declared or value-hostile),
+        // each in forward then reverse order.
+        for &reverse in orders {
             new_cases.push((lhs.clone(), rhs.clone()));
-            new_origins.push(true);
+            new_origins.push(from_hostile || reverse);
             new_givens.push(bindings.clone());
             new_spans.push(block_span.clone());
-            new_profiles.push(combo.clone());
+            new_profiles.push(Vec::new());
+            new_reverse.push(reverse);
             if has_when && let Some(g) = &guard {
                 new_guards.push(g.clone());
+            }
+        }
+
+        // Then add one case per effect-profile cartesian combination,
+        // each in forward then reverse order.
+        for combo in &effect_combos {
+            for &reverse in orders {
+                new_cases.push((lhs.clone(), rhs.clone()));
+                new_origins.push(true);
+                new_givens.push(bindings.clone());
+                new_spans.push(block_span.clone());
+                new_profiles.push(combo.clone());
+                new_reverse.push(reverse);
+                if has_when && let Some(g) = &guard {
+                    new_guards.push(g.clone());
+                }
             }
         }
     }
@@ -165,10 +196,90 @@ pub(crate) fn apply_hostile_expansion(
     block.case_givens = new_givens;
     block.case_hostile_origins = new_origins;
     block.case_hostile_profiles = new_profiles;
+    block.case_reverse_order = new_reverse;
     if let VerifyKind::Law(law_box) = &mut block.kind {
         law_box.sample_guards = new_guards;
     }
     Ok(())
+}
+
+/// Walk the fn's body looking for any `Expr::IndependentProduct`,
+/// which lowers to the VM `CALL_PAR` opcode. Only laws whose fn
+/// contains one of these have anything to gain from the order-axis
+/// hostile twin — for every other shape, reverse-eval is a no-op
+/// (sequential evaluation) and the twin would just double cost.
+fn fn_body_uses_independent_product(block: &VerifyBlock, items: &[TopLevel]) -> bool {
+    let Some(fn_def) = items.iter().find_map(|i| match i {
+        TopLevel::FnDef(fd) if fd.name == block.fn_name => Some(fd),
+        _ => None,
+    }) else {
+        return false;
+    };
+    fn_body_contains_independent_product(&fn_def.body)
+}
+
+fn fn_body_contains_independent_product(body: &crate::ast::FnBody) -> bool {
+    let crate::ast::FnBody::Block(stmts) = body;
+    stmts.iter().any(stmt_contains_independent_product)
+}
+
+fn stmt_contains_independent_product(stmt: &crate::ast::Stmt) -> bool {
+    match stmt {
+        crate::ast::Stmt::Expr(e) | crate::ast::Stmt::Binding(_, _, e) => {
+            expr_contains_independent_product(&e.node)
+        }
+    }
+}
+
+fn expr_contains_independent_product(expr: &Expr) -> bool {
+    match expr {
+        Expr::IndependentProduct(_, _) => true,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => false,
+        Expr::Attr(obj, _) | Expr::Neg(obj) | Expr::ErrorProp(obj) => {
+            expr_contains_independent_product(&obj.node)
+        }
+        Expr::BinOp(_, l, r) => {
+            expr_contains_independent_product(&l.node) || expr_contains_independent_product(&r.node)
+        }
+        Expr::FnCall(callee, args) => {
+            expr_contains_independent_product(&callee.node)
+                || args
+                    .iter()
+                    .any(|a| expr_contains_independent_product(&a.node))
+        }
+        Expr::TailCall(boxed) => boxed
+            .args
+            .iter()
+            .any(|a| expr_contains_independent_product(&a.node)),
+        Expr::Match { subject, arms } => {
+            expr_contains_independent_product(&subject.node)
+                || arms
+                    .iter()
+                    .any(|arm| expr_contains_independent_product(&arm.body.node))
+        }
+        Expr::Constructor(_, payload) => payload
+            .as_deref()
+            .is_some_and(|p| expr_contains_independent_product(&p.node)),
+        Expr::List(items) | Expr::Tuple(items) => items
+            .iter()
+            .any(|e| expr_contains_independent_product(&e.node)),
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_contains_independent_product(&k.node) || expr_contains_independent_product(&v.node)
+        }),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, v)| expr_contains_independent_product(&v.node)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_contains_independent_product(&base.node)
+                || updates
+                    .iter()
+                    .any(|(_, v)| expr_contains_independent_product(&v.node))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|part| match part {
+            crate::ast::StrPart::Parsed(inner) => expr_contains_independent_product(&inner.node),
+            _ => false,
+        }),
+    }
 }
 
 /// For a verify block, find the function under test and return the
@@ -1254,8 +1365,23 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
             .get(idx)
             .copied()
             .unwrap_or(false);
-        let hostile_profile =
+        let base_hostile_profile =
             render_hostile_profile_label(block.case_hostile_profiles.get(idx).map(Vec::as_slice));
+        let case_reverse = block.case_reverse_order.get(idx).copied().unwrap_or(false);
+        // Layer the order-axis tag on top of any effect-profile label so
+        // a failure renderer surfaces "+reverse-eval" alongside the
+        // profile that was active. Lets the user tell apart a baseline
+        // mismatch (effect profile failing as expected) from an
+        // order-axis catch (Aver claims independent products but a
+        // reversed eval gives a different tuple under the same world).
+        let hostile_profile = if case_reverse {
+            Some(match base_hostile_profile {
+                Some(s) => format!("{}+reverse-eval", s),
+                None => "reverse-eval".to_string(),
+            })
+        } else {
+            base_hostile_profile
+        };
 
         // Profile-multiplied case for a base that already failed?
         // Skip the VM run; record an outcome variant the renderer
@@ -1332,6 +1458,8 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         if has_stubs {
             machine.install_oracle_stubs(oracle_stubs);
         }
+        let reverse_order = block.case_reverse_order.get(idx).copied().unwrap_or(false);
+        machine.set_reverse_independent_eval(reverse_order);
         machine.start_trace_collection();
         let root_fn_id = machine.find_fn_id(&block.fn_name);
         machine.set_trace_root_fn_id(root_fn_id);
@@ -1350,6 +1478,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                 if has_stubs {
                     m.clear_oracle_stubs();
                 }
+                m.set_reverse_independent_eval(false);
             };
             match guard_result {
                 Ok(Value::Bool(true)) => {
@@ -1467,6 +1596,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
         if has_stubs {
             machine.clear_oracle_stubs();
         }
+        machine.set_reverse_independent_eval(false);
 
         match (left_result, right_result) {
             (Ok(VmVerifyEval::Value(left_val)), Ok(VmVerifyEval::Value(right_val))) => {
@@ -1585,6 +1715,7 @@ mod tests {
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "test".to_string(),
                 givens: vec![],
@@ -1629,6 +1760,7 @@ mod tests {
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "test".to_string(),
                 givens: vec![],
@@ -1660,6 +1792,7 @@ mod tests {
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "test".to_string(),
                 givens: vec![],
@@ -1687,6 +1820,7 @@ mod tests {
             case_givens: vec![],
             case_hostile_origins: vec![],
             case_hostile_profiles: vec![],
+            case_reverse_order: vec![],
             kind: VerifyKind::Law(Box::new(VerifyLaw {
                 name: "test".to_string(),
                 givens: vec![],

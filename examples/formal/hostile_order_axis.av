@@ -1,0 +1,32 @@
+module HostileOrderAxis
+    intent =
+        "Demonstrates the order-axis of `aver verify --hostile`."
+        "Two laws over the same `(a, b)!` independent product. One"
+        "pins the first event by flat `trace.event(0)` — that's a"
+        "hidden assumption that source order equals trace order, and"
+        "--hostile's reverse-eval twin catches it. The other pins by"
+        "structural `trace.group(0).branch(b).event(0)`, which is"
+        "source-positional and stays order-invariant. Use this file"
+        "to see the failure shape and the right repair pattern."
+    effects [Random.int]
+
+fn lowStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int
+    ? "Deterministic stub: every Random.int returns the lower bound."
+    min
+
+fn rollPair() -> Tuple<Int, Int>
+    ? "Two independent dice rolls in one bang group."
+    ! [Random.int]
+    (Random.int(1, 6), Random.int(7, 12))!
+
+verify rollPair trace law firstEventOfFirstBranch
+    given rnd: Random.int = [lowStub]
+    rollPair().trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [1, 6], path = "0"))
+
+verify rollPair trace law firstEventOfSecondBranch
+    given rnd: Random.int = [lowStub]
+    rollPair().trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = "Random.int", args = [7, 12], path = "1"))
+
+verify lowStub
+    lowStub(BranchPath.Root, 0, 1, 6) => 1
+    lowStub(BranchPath.Root, 5, 7, 12) => 7
