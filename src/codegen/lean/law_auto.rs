@@ -161,6 +161,21 @@ fn emit_simp_omega_law(
             if fd.params.iter().any(|(_, t)| t != "Int") {
                 return None;
             }
+            // Reject wrapped return types (Result, Option, List,
+            // Tuple, …). `simp [fn] <;> omega` unfolds the body but
+            // omega only closes linear-arithmetic goals on Int; a
+            // wrapper-equality goal like `Except.ok x = Except.ok y`
+            // leaves a constructor mismatch omega can't see. Without
+            // this guard, generator emits an auto-proof that
+            // typechecks against the body but lake fails with
+            // `omega could not prove the goal` — exactly the failure
+            // the sound-proof Natural example triggered, where
+            // `safeSum` returns `Result<Int, String>` and walks
+            // through `Modules.Natural.Natural.add`'s `Except`.
+            // Plain `Int` / `Float` returns stay on the omega path.
+            if fd.return_type != "Int" && fd.return_type != "Float" {
+                return None;
+            }
         }
     }
     let lean_names: Vec<String> = fn_names.iter().map(|n| aver_name_to_lean(n)).collect();

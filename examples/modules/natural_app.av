@@ -25,6 +25,11 @@ verify safeSum
     safeSum(-1, 5)  => Result.Err("Nat must be non-negative")
     safeSum(5, -1)  => Result.Err("Nat must be non-negative")
 
+verify safeSum law commutative
+    given a: Int = [-1, 0, 1, 7, 100]
+    given b: Int = [-1, 0, 1, 7, 100]
+    safeSum(a, b) => safeSum(b, a)
+
 fn render(r: Result<Int, String>) -> String
     ? "Render Result<Int, String> for display."
     match r

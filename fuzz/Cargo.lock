@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "aver-lang"
-version = "0.20.0"
+version = "0.21.1"
 dependencies = [
  "aver-memory",
  "aver-rt",
