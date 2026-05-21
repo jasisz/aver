@@ -25,31 +25,38 @@ use aver::ast::{BinOp, Expr, FnDef, Literal, Spanned, Stmt, TopLevel};
 use rand::Rng;
 use rand::seq::IndexedRandom;
 
+use crate::typed_gen;
+
 /// Total number of strategies available. The dispatcher modulo-
 /// indexes into this so callers can pick a strategy uniformly with
 /// `rng.random_range(0..STRATEGY_COUNT)`.
-pub const STRATEGY_COUNT: u32 = 14;
+pub const STRATEGY_COUNT: u32 = 16;
 
 /// Apply one mutation strategy chosen by `strategy_index`. Returns
 /// `true` if the AST was modified, `false` if the strategy found
 /// no applicable site (caller treats `false` as "skip this
-/// mutation").
-pub fn apply<R: Rng>(strategy_index: u32, rng: &mut R, items: &mut [TopLevel]) -> bool {
+/// mutation"). Takes a `&mut Vec` so the strategies that grow the
+/// program (e.g. `inject-fn`) can push without resorting to a
+/// scratch buffer; in-place strategies still see the slice they
+/// need via `&mut **items` coercion at the call site.
+pub fn apply<R: Rng>(strategy_index: u32, rng: &mut R, items: &mut Vec<TopLevel>) -> bool {
     match strategy_index % STRATEGY_COUNT {
-        0 => swap_binop(rng, items),
-        1 => replace_int_literal_boundary(rng, items),
-        2 => inject_error_prop(rng, items),
-        3 => remove_error_prop(rng, items),
-        4 => swap_adjacent_match_arms(rng, items),
-        5 => swap_bang_element(rng, items),
-        6 => swap_type_annotation(rng, items),
-        7 => rename_param(rng, items),
-        8 => swap_adjacent_statements(rng, items),
-        9 => negate_expression(rng, items),
-        10 => replace_ident_with_bare_namespace(rng, items),
-        11 => toggle_module_effects(rng, items),
-        12 => reverse_match_arms(rng, items),
-        13 => shift_map_literal_entries(rng, items),
+        0 => swap_binop(rng, items.as_mut_slice()),
+        1 => replace_int_literal_boundary(rng, items.as_mut_slice()),
+        2 => inject_error_prop(rng, items.as_mut_slice()),
+        3 => remove_error_prop(rng, items.as_mut_slice()),
+        4 => swap_adjacent_match_arms(rng, items.as_mut_slice()),
+        5 => swap_bang_element(rng, items.as_mut_slice()),
+        6 => swap_type_annotation(rng, items.as_mut_slice()),
+        7 => rename_param(rng, items.as_mut_slice()),
+        8 => swap_adjacent_statements(rng, items.as_mut_slice()),
+        9 => negate_expression(rng, items.as_mut_slice()),
+        10 => replace_ident_with_bare_namespace(rng, items.as_mut_slice()),
+        11 => toggle_module_effects(rng, items.as_mut_slice()),
+        12 => reverse_match_arms(rng, items.as_mut_slice()),
+        13 => shift_map_literal_entries(rng, items.as_mut_slice()),
+        14 => replace_fn_body(rng, items.as_mut_slice()),
+        15 => inject_fn(rng, items),
         _ => unreachable!(),
     }
 }
@@ -77,6 +84,8 @@ pub fn strategy_name(strategy_index: u32) -> &'static str {
         11 => "toggle-effects",
         12 => "reverse-match-arms",
         13 => "shift-map-entries",
+        14 => "replace-fn-body",
+        15 => "inject-fn",
         _ => unreachable!(),
     }
 }
@@ -636,5 +645,61 @@ fn shift_map_literal_entries<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> boo
     let entries: &mut Vec<(Spanned<Expr>, Spanned<Expr>)> = unsafe { &mut *site };
     let shift = rng.random_range(1..entries.len());
     entries.rotate_left(shift);
+    true
+}
+
+/// Pick a random pure `FnDef`, throw away its body, and splice in a
+/// freshly-generated expression of the declared return type. The
+/// generator walks bottom-up against a structural type so the new
+/// body typechecks by construction — different polarity from the
+/// other strategies, which mostly route inputs into typecheck
+/// rejection paths. Effectful fns (declared `! [...]`) are skipped:
+/// the generator only emits pure expressions, so splicing one in
+/// would produce a declared-effects-but-empty-body shape the parser
+/// accepts but every effect-aware downstream pass flags as suspect.
+/// That mismatch is its own coverage slice, but it overlaps the
+/// existing `toggle-module-effects` shake; the value-add of this
+/// strategy is the well-typed expression, not the effect drift.
+fn replace_fn_body<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
+    let snapshot: Vec<TopLevel> = items.to_vec();
+    let mut candidates: Vec<usize> = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        if let TopLevel::FnDef(fd) = item {
+            if fd.effects.is_empty() && typed_gen::parse_type(&fd.return_type).is_some() {
+                candidates.push(i);
+            }
+        }
+    }
+    let &idx = candidates.choose(rng).unwrap_or(&usize::MAX);
+    if idx == usize::MAX {
+        return false;
+    }
+    if let TopLevel::FnDef(fd) = &mut items[idx] {
+        typed_gen::replace_body(rng, &snapshot, fd)
+    } else {
+        false
+    }
+}
+
+/// Synthesize a fresh pure fn and append it to the program. Uses
+/// the type-driven generator to build a body matching the random
+/// signature, so the new fn typechecks by construction. Append
+/// rather than insert so the `module` declaration (which must be
+/// the first top-level) keeps its position.
+fn inject_fn<R: Rng>(rng: &mut R, items: &mut Vec<TopLevel>) -> bool {
+    let existing_names: Vec<String> = items
+        .iter()
+        .filter_map(|i| {
+            if let TopLevel::FnDef(fd) = i {
+                Some(fd.name.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let Some(new_fn) = typed_gen::synthesize_fn(rng, items, &existing_names) else {
+        return false;
+    };
+    items.push(TopLevel::FnDef(new_fn));
     true
 }
