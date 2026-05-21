@@ -827,12 +827,27 @@ fn replace_fn_body<R: Rng>(rng: &mut R, items: &mut [TopLevel]) -> bool {
     }
 }
 
+/// Maximum total `TopLevel` count after `inject-fn` will keep
+/// pushing. AFL chains custom mutators across the queue, so a seed
+/// that already grew to N items can come back through the mutator
+/// hundreds of times in one campaign. Without a ceiling, programs
+/// stack into the thousands of fns, every additional fn touches new
+/// edges in resolver / typecheck / codegen, and AFL's queue grows
+/// faster than the host can calibrate. 32 is the empirical knee:
+/// large enough to exercise cross-fn shapes the seed corpus doesn't
+/// reach, small enough that the queue + shm budget stays within
+/// hosted-runner limits.
+const MAX_TOPLEVEL_AFTER_INJECT: usize = 32;
+
 /// Synthesize a fresh pure fn and append it to the program. Uses
 /// the type-driven generator to build a body matching the random
 /// signature, so the new fn typechecks by construction. Append
 /// rather than insert so the `module` declaration (which must be
 /// the first top-level) keeps its position.
 fn inject_fn<R: Rng>(rng: &mut R, items: &mut Vec<TopLevel>) -> bool {
+    if items.len() >= MAX_TOPLEVEL_AFTER_INJECT {
+        return false;
+    }
     let existing_names: Vec<String> = items
         .iter()
         .filter_map(|i| {

@@ -62,6 +62,16 @@ env:
   AFL_NO_UI: '1'
   AFL_FAST_CAL: '1'
   AFL_CMPLOG_ONLY_NEW: '1'
+  # CMPLOG forkserver allocates its own SysV shared memory segments
+  # per calibration. With the type-driven AST mutator landed, queue
+  # growth jumped ~5× — the first CI run saw three targets abort with
+  # `shmget() failed` after ~12 min, never producing a `crashes saved`
+  # entry (the failure was systemic, not a real find). Disabling
+  # CMPLOG keeps the standard forkserver coverage path and trades the
+  # cmp-instrumentation guidance for a stable run. If a future fuzz
+  # finding hinges on CMPLOG-found magic constants, re-enable it
+  # together with a tighter `-q` queue cap.
+  AFL_NO_CMPLOG: '1'
   # Ubuntu's `/proc/sys/kernel/core_pattern` points at the apport pipe
   # (`|/usr/share/apport/...`), which AFL refuses to run against — it
   # would mis-classify crashes as timeouts. We don't have passwordless
