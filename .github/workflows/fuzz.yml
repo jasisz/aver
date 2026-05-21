@@ -61,17 +61,11 @@ env:
   AFL_NO_AFFINITY: '1'
   AFL_NO_UI: '1'
   AFL_FAST_CAL: '1'
-  AFL_CMPLOG_ONLY_NEW: '1'
-  # CMPLOG forkserver allocates its own SysV shared memory segments
-  # per calibration. With the type-driven AST mutator landed, queue
-  # growth jumped ~5× — the first CI run saw three targets abort with
-  # `shmget() failed` after ~12 min, never producing a `crashes saved`
-  # entry (the failure was systemic, not a real find). Disabling
-  # CMPLOG keeps the standard forkserver coverage path and trades the
-  # cmp-instrumentation guidance for a stable run. If a future fuzz
-  # finding hinges on CMPLOG-found magic constants, re-enable it
-  # together with a tighter `-q` queue cap.
-  AFL_NO_CMPLOG: '1'
+  # CMPLOG used to be tuned via env (`AFL_CMPLOG_ONLY_NEW`); to
+  # actually *disable* it we have to pass `-c 0` on the `cargo afl
+  # fuzz` invocation — there is no `AFL_NO_CMPLOG` env variable
+  # (AFL warns "Mistyped" on it). See the `Fuzz (30 min)` step below
+  # where `-c 0` lives.
   # Ubuntu's `/proc/sys/kernel/core_pattern` points at the apport pipe
   # (`|/usr/share/apport/...`), which AFL refuses to run against — it
   # would mis-classify crashes as timeouts. We don't have passwordless
@@ -297,8 +291,17 @@ jobs:
               unset AFL_CUSTOM_MUTATOR_LIBRARY
             }
           fi
+          # `-c 0` disables CMPLOG. CMPLOG runs a second forkserver
+          # with its own SysV shared-memory segments per calibration;
+          # with the type-driven AST mutator landed in PR #68 the
+          # queue growth rate doubled that pressure and three targets
+          # aborted with `shmget() failed` on the first post-merge
+          # nightly. There is no `AFL_NO_CMPLOG` env variable — AFL
+          # explicitly warns "Mistyped" on it — so the disable has to
+          # be a CLI flag, not an env knob.
           cargo afl fuzz \
             -V 1800 \
+            -c 0 \
             -i "$SEED_DIR" \
             -o out/${{ matrix.target }} \
             -x ${{ matrix.dict }} \
