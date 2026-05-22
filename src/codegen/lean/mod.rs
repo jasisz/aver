@@ -305,6 +305,9 @@ private def normalizeFloatString (s : String) : String :=
   else s
 def String.fromFloat (f : Float) : String := normalizeFloatString (toString f)
 def String.chars (s : String) : List String := s.toList.map Char.toString
+def String.containsSubstr (haystack needle : String) : Bool :=
+  if needle.length == 0 then true
+  else decide ((haystack.splitOn needle).length > 1)
 private theorem char_to_string_append_mk (c : Char) (chars : List Char) :
     Char.toString c ++ String.mk chars = String.mk (c :: chars) := by
   rfl
