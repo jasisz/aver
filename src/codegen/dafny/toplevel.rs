@@ -707,13 +707,12 @@ fn sample_within_closable_range(bindings: &[(String, Spanned<Expr>)]) -> bool {
             .parse::<i64>()
             .map(|n| n.abs() <= SAMPLE_CLOSABLE_LITERAL_LIMIT)
             .unwrap_or(false),
-        // Non-Int givens (list literals, records) are conservative —
-        // Dafny's fuel encoding rarely chases them to a ground term,
-        // so the body defaults to `assume {:axiom}` rather than
-        // failing the sample. The bounded-∀ universal composes both
-        // shapes the same way, and the native-decreases path skips
-        // this check entirely via the `all_native` short-circuit.
-        None => false,
+        // Non-Int givens (list literals, records) attempt a real
+        // proof — `{}` body, let Dafny chase it. The cutoff is only
+        // an honest fallback for the *specific* Int-literal cliff
+        // BigInt's 10⁹ sits on; for other shapes we'd rather see
+        // the failure than paper over it with `assume {:axiom}`.
+        None => true,
     })
 }
 
@@ -767,7 +766,23 @@ pub fn emit_law_samples(
         .unwrap_or(false);
     let needs_bounded_form = any_opaque || any_native_mutual;
 
-    let cap = if needs_bounded_form {
+    // Only lift the sample cap when the universal lemma will *also*
+    // emit as bounded-∀ (every given Int + Explicit literal-int
+    // domain). For other shapes (List/Json givens, open Int givens),
+    // per-sample lemma form stays capped at `MAX_LAW_SAMPLES` — the
+    // bigger budget without a corresponding universal proof just
+    // produces more per-sample failures without buying any reasoning
+    // power. BigInt-style Int-domain laws keep the full grid.
+    let bounded_universal_targets = !law.givens.is_empty()
+        && law.givens.iter().all(|g| {
+            g.type_name == "Int"
+                && matches!(
+                    &g.domain,
+                    VerifyGivenDomain::Explicit(vs)
+                        if vs.iter().all(|v| literal_int_value(v).is_some())
+                )
+        });
+    let cap = if needs_bounded_form && bounded_universal_targets {
         vb.cases.len()
     } else {
         MAX_LAW_SAMPLES
