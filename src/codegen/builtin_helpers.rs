@@ -81,6 +81,8 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "String.charAt",
             "String.slice",
             "String.chars",
+            "String.containsSubstr",
+            "containsSubstr ",
             "StringCharAt(",
             "StringChars(",
             "StringJoin(",

@@ -1,0 +1,58 @@
+module Email
+    exposes [fromString, toString, isValid]
+    exposes opaque [Email]
+    intent =
+        "Refinement-via-opaque on String. The smart constructor"
+        "validates a minimum structural invariant (contains '@',"
+        "length at least 3) and the opaque seal then guarantees"
+        "that any Email value reaching downstream code has been"
+        "validated once — no repeated parsing or re-checking."
+        ""
+        "Why this looks different from the Int-carrier variants:"
+        "the proof-export pipeline currently lifts refinement"
+        "records into Lean `Subtype` only for Int carriers (where"
+        "the carrier supports universal algebraic laws — Int"
+        "commutativity is in the standard library, Float doesn't"
+        "have it via IEEE 754, String concatenation isn't"
+        "commutative either). Email therefore stays on the plain-"
+        "structure path: `aver verify` checks sample assertions,"
+        "and `aver proof` produces sample-domain theorems via"
+        "`native_decide`. The pattern still pays for itself —"
+        "downstream code can't accidentally hand in a raw String"
+        "where an Email is expected, even before the proof story"
+        "kicks in."
+    effects []
+
+record Email
+    address: String
+
+fn isValid(s: String) -> Bool
+    ? "Minimum structural check: contains '@' and is long enough to plausibly hold a local part + domain."
+    Bool.and(String.contains(s, "@"), String.len(s) >= 3)
+
+verify isValid
+    isValid("a@b")          => true
+    isValid("user@host")    => true
+    isValid("noatsign")     => false
+    isValid("@")            => false
+    isValid("")             => false
+
+fn fromString(s: String) -> Result<Email, String>
+    ? "Smart constructor: returns Ok(Email) for valid shapes, Err with a description otherwise."
+    match isValid(s)
+        true  -> Result.Ok(Email(address = s))
+        false -> Result.Err("Invalid email format")
+
+verify fromString
+    fromString("user@host")  => Result.Ok(Email(address = "user@host"))
+    fromString("a@b")        => Result.Ok(Email(address = "a@b"))
+    fromString("noatsign")   => Result.Err("Invalid email format")
+    fromString("")           => Result.Err("Invalid email format")
+
+fn toString(e: Email) -> String
+    ? "Unwrap the validated address. Always passes isValid by construction."
+    e.address
+
+verify toString
+    toString(Email(address = "user@host"))  => "user@host"
+    toString(Email(address = "a@b"))        => "a@b"

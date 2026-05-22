@@ -1,5 +1,5 @@
 module NaturalApp
-    depends [Modules.Natural.Natural]
+    depends [Refinement.Natural.Natural]
     exposes [safeSum]
     intent =
         "Consumer side of the Natural refinement-via-opaque example."
@@ -11,13 +11,13 @@ module NaturalApp
 
 fn safeSum(a: Int, b: Int) -> Result<Int, String>
     ? "Validate both inputs through the smart constructor, add the two Naturals, unwrap to Int. Either side being negative — or the sum overflowing i64 — surfaces as Err."
-    match Modules.Natural.Natural.fromInt(a)
+    match Refinement.Natural.Natural.fromInt(a)
         Result.Err(msg) -> Result.Err(msg)
-        Result.Ok(na) -> match Modules.Natural.Natural.fromInt(b)
+        Result.Ok(na) -> match Refinement.Natural.Natural.fromInt(b)
             Result.Err(msg) -> Result.Err(msg)
-            Result.Ok(nb) -> match Modules.Natural.Natural.add(na, nb)
+            Result.Ok(nb) -> match Refinement.Natural.Natural.add(na, nb)
                 Result.Err(msg) -> Result.Err(msg)
-                Result.Ok(sum) -> Result.Ok(Modules.Natural.Natural.toInt(sum))
+                Result.Ok(sum) -> Result.Ok(Refinement.Natural.Natural.toInt(sum))
 
 verify safeSum
     safeSum(3, 4)   => Result.Ok(7)
