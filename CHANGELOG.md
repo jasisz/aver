@@ -2,6 +2,23 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.22.0 "Lift" — UNRELEASED
+
+> _Refinement records carry their invariant in the type. Universal proofs collapse to one line on both Lean and Dafny — same shape whether you build the module standalone or as a dependency._
+
+### Refinement records
+- **`record X { v: Int }` paired with a validating `fromX: Int -> Result<X, _>` lifts to a true refinement type on both proof backends.** Lean emits `abbrev X := { v : Int // P v }`, Dafny emits `type X = v: int | P v witness W` — the predicate from the smart constructor's bool guard rides in the type itself. Universal laws like `add_commutative(a: Natural, b: Natural) ensures add(a, b) == add(b, a)` now close in one line (`intro; unfold; simp [Int.add_comm]` on Lean, empty `{}` body on Dafny); the previous hand-rolled `by_cases / unfold / ad-hoc tactic` plumbing for each law shape is gone. The lift is automatic — no source-language change, no annotation. Triggers for single-field `Int` carriers; `Float` / `String` / multi-field records keep the plain structure-with-field shape because their carriers don't admit universal algebraic laws (IEEE 754 NaN, etc.).
+- **Cross-module refinement works the same as standalone.** A `Natural` declared in its own module emits the lifted Subtype/subset shape whether you build the module alone (`aver proof natural.av`) or as a dependency of another program (`aver proof natural_app.av --module-root examples`). Pre-0.22 cross-module fell back to the wrapper shape and lost the one-line universal proof.
+
+### Proof export — Lean
+- **Mutual-recursion sample assertions don't trip Lean's elaboration synth budget.** Programs whose smart constructor matched a compound bool predicate (`Bool.and(n >= 0, n <= 100)`) were causing a Subtype elaboration synth retry loop on per-sample `native_decide`; the synth budget is no longer the bottleneck for these shapes.
+
+### Proof export — Dafny
+- **Mutual-rec sample assertions verify as real proofs.** Aver examples whose smart constructor and arithmetic span a mutual-recursion SCC (BigInt's `addDigits → addLeft → addStep → addDigits`) used to leave 5 sample assertions and the universal lemma unproven (`18 verified, 5 errors`). Sample assertions now emit as per-sample lemmas with fuel bumped on every transitive callee — Dafny unfolds the SCC enough times to compute both sides and close the equality. BigInt: 23 verified, 0 errors. Universal `add_commutative(a, b)` over the same SCC stays on `assume {:axiom}` — a true `∀` over fuel-bounded mutual recursion is genuinely beyond Z3.
+
+### Examples
+- **`examples/refinement/`** collects the canonical refinement-via-opaque demos in one place. `Natural` (Int + `>= 0`), `Positive` (Int + `>= 1`), `IntRange` (Int + compound `0 <= n <= 100`), `NonNegFloat` (Float carrier — structure path, sample-domain proofs), `Email` (String carrier — structure path), and `BigInt` (digits-of-base-10⁹ as `List<Int>`, arbitrary-precision arithmetic in pure Aver). Each example exercises a different point in the refinement design space so the pattern is documented by code, not prose.
+
 ## 0.21.1 — 2026-05-21
 
 ### Verify
