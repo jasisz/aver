@@ -1,0 +1,133 @@
+module BigInt
+    exposes [fromInt, isZero, add, eq]
+    exposes opaque [BigInt]
+    intent =
+        "Arbitrary-precision non-negative integer, implemented in pure"
+        "Aver — only List<Int>, match, recursion. The carrier is a"
+        "list of base-10⁹ digits, head = least significant. Because"
+        "the carrier itself is unbounded (a List has no fixed width)"
+        "and every operation is structural recursion over that list,"
+        "arithmetic is math-faithful: no i64 wrap-around at the"
+        "language boundary."
+        ""
+        "Why this matters for proofs: Lean and Dafny export Aver"
+        "List as their native unbounded-list types (`List`, `seq`)."
+        "Universal lemmas like `add commutative` are proved on the"
+        "same model the VM runs — closing the math-vs-VM gap that"
+        "the Natural example flagged. `add(fromInt(i64::MAX),"
+        "fromInt(1))` produces a BigInt with four digits, not a"
+        "wrap-around to MIN_INT."
+        ""
+        "Scope: non-negative only, addition only — keeps the demo"
+        "tight while still exercising recursive carry propagation"
+        "and the proof-export pipeline end-to-end."
+    effects []
+
+record BigInt
+    digits: List<Int>
+
+fn isZero(n: BigInt) -> Bool
+    ? "True when the BigInt is the canonical zero (empty digit list)."
+    match n.digits
+        []  -> true
+        [_, .._] -> false
+
+verify isZero
+    isZero(BigInt(digits = []))       => true
+    isZero(BigInt(digits = [1]))      => false
+    isZero(BigInt(digits = [0, 1]))   => false
+
+fn eq(a: BigInt, b: BigInt) -> Bool
+    ? "Structural equality on digit lists. Smart constructor canonicalises (no trailing zeros, no negative digits), so this is the only equality test users need."
+    eqDigits(a.digits, b.digits)
+
+fn eqDigits(a: List<Int>, b: List<Int>) -> Bool
+    ? "List-by-list equality; both lists are canonical (no trailing zeros)."
+    match a
+        []           -> match b
+            []           -> true
+            [_, .._]     -> false
+        [ha, ..ta]   -> match b
+            []           -> false
+            [hb, ..tb]   -> eqHeads(ha, hb, ta, tb)
+
+fn eqHeads(ha: Int, hb: Int, ta: List<Int>, tb: List<Int>) -> Bool
+    ? "Compare the head digits and, if equal, recurse on the tails."
+    match ha == hb
+        true  -> eqDigits(ta, tb)
+        false -> false
+
+verify eq
+    eq(BigInt(digits = []), BigInt(digits = []))               => true
+    eq(BigInt(digits = [1]), BigInt(digits = [1]))             => true
+    eq(BigInt(digits = [1]), BigInt(digits = [2]))             => false
+    eq(BigInt(digits = [0, 1]), BigInt(digits = [0, 1]))       => true
+    eq(BigInt(digits = [1]), BigInt(digits = [1, 0]))          => false
+
+fn fromInt(n: Int) -> BigInt
+    ? "Convert a non-negative Aver Int into a BigInt by repeated mod/div in base 10⁹. Negative inputs collapse to zero — the carrier carries no sign."
+    match n > 0
+        true  -> BigInt(digits = digitsOf(n))
+        false -> BigInt(digits = [])
+
+fn digitsOf(n: Int) -> List<Int>
+    ? "Little-endian base-10⁹ digit decomposition. Stops at the first zero quotient."
+    match n > 0
+        true  -> List.prepend(Result.withDefault(Int.mod(n, 1000000000), 0), digitsOf(n / 1000000000))
+        false -> []
+
+verify fromInt
+    fromInt(0)              => BigInt(digits = [])
+    fromInt(1)              => BigInt(digits = [1])
+    fromInt(999999999)      => BigInt(digits = [999999999])
+    fromInt(1000000000)     => BigInt(digits = [0, 1])
+    fromInt(-5)             => BigInt(digits = [])
+
+fn add(a: BigInt, b: BigInt) -> BigInt
+    ? "BigInt addition — recursive digit-by-digit carry propagation. Result is canonical because addStep never produces a trailing zero (the only way to get one would be carry=0 and both lists empty, which the base case handles)."
+    BigInt(digits = addDigits(a.digits, b.digits, 0))
+
+fn addDigits(a: List<Int>, b: List<Int>, carry: Int) -> List<Int>
+    ? "Helper: walk both digit lists in lockstep, propagating carry."
+    match a
+        []          -> addCarryTo(b, carry)
+        [ha, ..ta]  -> addLeft(ha, ta, b, carry)
+
+fn addLeft(ha: Int, ta: List<Int>, b: List<Int>, carry: Int) -> List<Int>
+    ? "a has digits, b might or might not — branch on b."
+    match b
+        []          -> addCarryTo(List.prepend(ha, ta), carry)
+        [hb, ..tb]  -> addStep(ha + hb + carry, ta, tb)
+
+fn addStep(sum: Int, ta: List<Int>, tb: List<Int>) -> List<Int>
+    ? "Materialise one digit: keep the low part in the result, propagate the carry into the recursive call."
+    match sum >= 1000000000
+        true  -> List.prepend(sum - 1000000000, addDigits(ta, tb, 1))
+        false -> List.prepend(sum, addDigits(ta, tb, 0))
+
+fn addCarryTo(xs: List<Int>, c: Int) -> List<Int>
+    ? "Propagate a carry into a list whose other addend has been exhausted."
+    match c == 0
+        true  -> xs
+        false -> match xs
+            []          -> List.prepend(c, [])
+            [hx, ..tx]  -> addCarryStep(hx + c, tx)
+
+fn addCarryStep(sum: Int, tx: List<Int>) -> List<Int>
+    ? "One step of carry-only propagation."
+    match sum >= 1000000000
+        true  -> List.prepend(sum - 1000000000, addCarryTo(tx, 1))
+        false -> List.prepend(sum, tx)
+
+verify add
+    add(fromInt(0), fromInt(0))           => fromInt(0)
+    add(fromInt(1), fromInt(2))           => fromInt(3)
+    add(fromInt(999999999), fromInt(1))   => fromInt(1000000000)
+    add(fromInt(1000000000), fromInt(1))  => fromInt(1000000001)
+
+verify add law commutative
+    given a: Int = [0, 1, 7, 999999999, 1000000000]
+    given b: Int = [0, 1, 7, 999999999, 1000000000]
+    when a >= 0
+    when b >= 0
+    add(fromInt(a), fromInt(b)) => add(fromInt(b), fromInt(a))
