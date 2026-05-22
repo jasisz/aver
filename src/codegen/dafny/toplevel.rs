@@ -707,7 +707,13 @@ fn sample_within_closable_range(bindings: &[(String, Spanned<Expr>)]) -> bool {
             .parse::<i64>()
             .map(|n| n.abs() <= SAMPLE_CLOSABLE_LITERAL_LIMIT)
             .unwrap_or(false),
-        None => true,
+        // Non-Int givens (list literals, records) are conservative —
+        // Dafny's fuel encoding rarely chases them to a ground term,
+        // so the body defaults to `assume {:axiom}` rather than
+        // failing the sample. The bounded-∀ universal composes both
+        // shapes the same way, and the native-decreases path skips
+        // this check entirely via the `all_native` short-circuit.
+        None => false,
     })
 }
 
