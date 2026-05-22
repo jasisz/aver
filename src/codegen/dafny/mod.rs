@@ -320,7 +320,8 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                 axiom_fn_names.union(&fuel_emitted).cloned().collect();
             let opaque_fns = toplevel::transitive_opaque_closure(ctx, &direct_opaque);
             if !vb.cases.is_empty()
-                && let Some(code) = toplevel::emit_law_samples(vb, law, ctx, &suffix, &opaque_fns)
+                && let Some(code) =
+                    toplevel::emit_law_samples(vb, law, ctx, &suffix, &opaque_fns, &fuel_emitted)
             {
                 entry_sections.push(code);
             }

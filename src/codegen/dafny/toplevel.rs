@@ -675,6 +675,7 @@ pub fn emit_law_samples(
     ctx: &CodegenContext,
     suffix: &str,
     opaque_fns: &std::collections::HashSet<String>,
+    fuel_emitted: &std::collections::HashSet<String>,
 ) -> Option<String> {
     if vb.cases.is_empty() {
         return None;
@@ -685,6 +686,28 @@ pub fn emit_law_samples(
 
     let samples: Vec<_> = vb.cases.iter().take(MAX_LAW_SAMPLES).collect();
     let truncated = vb.cases.len() > MAX_LAW_SAMPLES;
+
+    // Pre-pass: rewrite each sample once and decide whether *any* of
+    // them transitively reaches an opaque (fuel-bounded mutual-rec or
+    // axiom-fallback) callee. If so, switch the whole block from a
+    // `method { assert; ... }` to a series of per-sample lemmas with
+    // fuel bumped on every transitive callee — Dafny then unfolds the
+    // SCC enough times to compute both sides and close the equality.
+    // Lean parity: each sample becomes its own theorem.
+    let rewritten: Vec<(Spanned<Expr>, Spanned<Expr>)> = samples
+        .iter()
+        .enumerate()
+        .map(|(idx, (lhs, rhs))| {
+            let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
+            let lhs_rw = rewrite_effectful_calls_in_law(lhs, law, ctx, mode.clone());
+            let rhs_rw = rewrite_effectful_calls_in_law(rhs, law, ctx, mode);
+            (lhs_rw, rhs_rw)
+        })
+        .collect();
+    let any_opaque = rewritten
+        .iter()
+        .any(|(l, r)| law_refs_opaque_fn(l, opaque_fns) || law_refs_opaque_fn(r, opaque_fns));
 
     let mut lines = Vec::new();
     if truncated {
@@ -701,35 +724,88 @@ pub fn emit_law_samples(
             fn_name, law_name
         ));
     }
-    lines.push(format!(
-        "method test_{}_{}{}_samples() {{",
-        fn_name, law_name, suffix
-    ));
 
-    for (idx, (lhs, rhs)) in samples.iter().enumerate() {
-        // Oracle v1: rewrite sample assertions the same way the lemma
-        // body is rewritten — inject `BranchPath.root()` + given
-        // bindings for effectful fns. Surface `pickOne()` can't stay
-        // literal; it must become `pickOne(BranchPath.root(), stub)`.
-        // Each case carries its own per-given binding (e.g. one case
-        // with `stub = httpDown`, another with `stub = httpOk`), so
-        // use the case-specific map rather than the law-level domain
-        // `.first()` which would emit `httpDown = httpOk` mismatches.
-        let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-        let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
-        let lhs_rw = rewrite_effectful_calls_in_law(lhs, law, ctx, mode.clone());
-        let rhs_rw = rewrite_effectful_calls_in_law(rhs, law, ctx, mode);
-        let l = emit_expr(&lhs_rw, ctx);
-        let r = emit_expr(&rhs_rw, ctx);
-        // Sample shares the universal lemma's opaque story: when a
-        // (transitive) callee is mutual-rec fuel-bounded or axiomatic,
-        // Z3 can't unfold it inside a method either. Emit `assume
-        // {:axiom}` to mirror the universal lemma's `sorry`-style
-        // exit, so the sample method type-checks without claiming a
-        // proof we don't have.
-        if law_refs_opaque_fn(&lhs_rw, opaque_fns) || law_refs_opaque_fn(&rhs_rw, opaque_fns) {
-            lines.push(format!("  assume {{:axiom}} {} == {};", l, r));
-        } else {
+    if any_opaque {
+        // Per-sample lemma form. Each gets fuel bumped on every
+        // (transitive) callee + the matching `__fuel` helper for
+        // mutual-rec SCC members.
+        let known: std::collections::HashSet<String> = ctx
+            .items
+            .iter()
+            .filter_map(|i| {
+                if let TopLevel::FnDef(fd) = i {
+                    Some(fd.name.clone())
+                } else {
+                    None
+                }
+            })
+            .chain(
+                ctx.modules
+                    .iter()
+                    .flat_map(|m| m.fn_defs.iter().map(|fd| fd.name.clone())),
+            )
+            .collect();
+        for (idx, (lhs_rw, rhs_rw)) in rewritten.iter().enumerate() {
+            let l = emit_expr(lhs_rw, ctx);
+            let r = emit_expr(rhs_rw, ctx);
+            let mut callees = std::collections::BTreeSet::new();
+            collect_called_fns(lhs_rw, &mut callees);
+            collect_called_fns(rhs_rw, &mut callees);
+            let mut transitive = std::collections::BTreeSet::new();
+            for f in &callees {
+                if let Some(fd) = ctx
+                    .items
+                    .iter()
+                    .filter_map(|i| {
+                        if let TopLevel::FnDef(fd) = i {
+                            Some(fd)
+                        } else {
+                            None
+                        }
+                    })
+                    .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+                    .find(|fd| &fd.name == f)
+                {
+                    collect_called_fns_in_body(&fd.body, &mut transitive);
+                }
+            }
+            callees.extend(transitive);
+            let mut fuel_targets: Vec<String> = Vec::new();
+            for f in &callees {
+                if !known.contains(f) {
+                    continue;
+                }
+                fuel_targets.push(aver_name_to_dafny(f));
+                if fuel_emitted.contains(f) {
+                    fuel_targets.push(crate::codegen::recursion::fuel_helper_name(f));
+                }
+            }
+            fuel_targets.sort();
+            fuel_targets.dedup();
+            let fuel_attrs = fuel_targets
+                .iter()
+                .map(|f| format!("{{:fuel {}, 100}}", f))
+                .collect::<Vec<_>>()
+                .join(" ");
+            lines.push(format!(
+                "lemma {} {}_{}{}__sample_{}()\n  ensures {} == {}\n{{ }}",
+                fuel_attrs,
+                fn_name,
+                law_name,
+                suffix,
+                idx + 1,
+                l,
+                r
+            ));
+        }
+    } else {
+        lines.push(format!(
+            "method test_{}_{}{}_samples() {{",
+            fn_name, law_name, suffix
+        ));
+        for (lhs_rw, rhs_rw) in &rewritten {
+            let l = emit_expr(lhs_rw, ctx);
+            let r = emit_expr(rhs_rw, ctx);
             // `{:split_here}` tells Dafny to check the preceding assert as
             // its own VC — without it, Z3 accumulates hypothesis state
             // across all samples in the method and occasionally times out
@@ -737,9 +813,8 @@ pub fn emit_law_samples(
             // sub(b, a)` over 5 samples). Splitting isolates each sample.
             lines.push(format!("  assert {{:split_here}} {} == {};", l, r));
         }
+        lines.push("}\n".to_string());
     }
-
-    lines.push("}\n".to_string());
     Some(lines.join("\n"))
 }
 
