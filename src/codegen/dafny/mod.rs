@@ -325,7 +325,13 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             {
                 entry_sections.push(code);
             }
-            entry_sections.push(toplevel::emit_verify_law(vb, law, ctx, &opaque_fns));
+            entry_sections.push(toplevel::emit_verify_law(
+                vb,
+                law,
+                ctx,
+                &opaque_fns,
+                &suffix,
+            ));
         }
     }
 
