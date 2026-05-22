@@ -15,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{
-    BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TailCallData, TypeDef,
+    BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TailCallData, TopLevel, TypeDef,
 };
 use crate::call_graph;
 use crate::codegen::CodegenContext;
@@ -398,6 +398,66 @@ pub(crate) fn collect_recursive_subterm_binders(
     }
     tracked.remove(param_name);
     tracked
+}
+
+/// Body of the `0` arm of `match <countdown_param> { 0 -> BASE; _ -> rec(...) }`,
+/// when the fn body has exactly that two-arm shape and no other recursive
+/// branches. Returned to the codegen so the native-emit wrapper can use
+/// `BASE` for the `p < 0` case (outside the well-formed Aver domain).
+///
+/// Conservative: requires the top-level expression to be a `match` whose
+/// subject is the countdown param itself (after resolution). Inner /
+/// nested matches don't qualify — those are handled by the fuel path
+/// where well-foundedness is encoded structurally.
+pub(crate) fn int_countdown_native_arms(
+    fd: &FnDef,
+    param_index: usize,
+) -> Option<(i64, Spanned<Expr>, Spanned<Expr>)> {
+    let (param_name, _) = fd.params.get(param_index)?;
+    // Body must be exactly one expression — leading `let` bindings
+    // would need to be threaded into both the wrapper and the aux, which
+    // the simple string-level emit can't do. Fuel path stays available
+    // for fns with let-prefix bodies.
+    if fd.body.stmts().len() != 1 {
+        return None;
+    }
+    let tail = fd.body.tail_expr()?;
+    let Expr::Match { subject, arms, .. } = &tail.node else {
+        return None;
+    };
+    if !is_ident(subject, param_name) {
+        return None;
+    }
+    if arms.len() != 2 {
+        return None;
+    }
+    let mut literal_arm: Option<(i64, Spanned<Expr>)> = None;
+    let mut wildcard_arm_body: Option<Spanned<Expr>> = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(crate::ast::Literal::Int(n)) => {
+                literal_arm = Some((*n, (*arm.body).clone()));
+            }
+            Pattern::Wildcard | Pattern::Ident(_) => {
+                wildcard_arm_body = Some((*arm.body).clone());
+            }
+            _ => return None,
+        }
+    }
+    let (literal_value, literal_arm_body) = literal_arm?;
+    let wildcard_arm_body = wildcard_arm_body?;
+
+    let mut lit_calls = Vec::new();
+    collect_calls_from_expr(&literal_arm_body, &mut lit_calls);
+    if lit_calls.iter().any(|(n, _)| call_matches(n, &fd.name)) {
+        return None;
+    }
+    let mut wc_calls = Vec::new();
+    collect_calls_from_expr(&wildcard_arm_body, &mut wc_calls);
+    if !wc_calls.iter().any(|(n, _)| call_matches(n, &fd.name)) {
+        return None;
+    }
+    Some((literal_value, literal_arm_body, wildcard_arm_body))
 }
 
 pub(crate) fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
@@ -1109,6 +1169,345 @@ pub(crate) fn supports_mutual_sizeof_ranked(
     Some(out)
 }
 
+/// True when every callsite of `fn_name` visible inside `ctx` is also
+/// inside `ctx` — i.e. no module that uses `ctx` for proof emission can
+/// have an external caller we can't analyze. Holds when either:
+/// - the fn lives in the entry items and the entry module has no
+///   explicit `exposes` clause (single-file program or implicitly-
+///   private surface), or has an `exposes` list that omits `fn_name`;
+/// - the fn lives in a dep module and that dep module's `exposes`
+///   omits `fn_name`. Dep modules without an `exposes` clause are
+///   conservative — treated as exposed since downstream consumers may
+///   pull them in unscoped; we don't yet thread that distinction so
+///   the conservative side is "not closed-world".
+///
+/// The `ctx.items` carry a `TopLevel::Module(m)` for entry; dep
+/// modules currently surface no `Module` block in `ModuleInfo`, so
+/// the dep-module branch returns `false` until that plumbing is
+/// added. Practically this matches the issue-84 scope: per-file
+/// proof targets (fibonacci.av) where the analyzed fn is in the
+/// entry module.
+pub(crate) fn is_closed_world_pure_fn(fn_name: &str, ctx: &CodegenContext) -> bool {
+    let entry_module = ctx.items.iter().find_map(|item| match item {
+        TopLevel::Module(m) => Some(m),
+        _ => None,
+    });
+    let entry_fn_names: std::collections::HashSet<&str> = ctx
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::FnDef(fd) => Some(fd.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    if entry_fn_names.contains(fn_name) {
+        match entry_module {
+            None => return true,
+            Some(m) => {
+                if m.exposes_line.is_none() {
+                    return true;
+                }
+                return !m.exposes.iter().any(|e| e == fn_name);
+            }
+        }
+    }
+    false
+}
+
+/// Find the unique external caller of `target_fn` in `ctx` and return
+/// the path-constraint predicates that wrap the callsite — flipped to
+/// positive form and substituted into the callee's variable space.
+///
+/// Returns `None` when:
+/// - there are zero or more than one callers (the issue-84 single-caller
+///   simplification — same idea as opaque types having one smart
+///   constructor);
+/// - the caller has multiple callsites with non-identical enclosing
+///   guards (no single weakest precondition);
+/// - the arg passed at the countdown-param position isn't a plain local
+///   name (caller did `worker(n + 5)` or `worker(f(n))` — substitution
+///   would need arithmetic the proof emitter doesn't run);
+/// - any enclosing guard is `match (non-bool expression) { ... }` —
+///   only `match Bool { true/false -> ... }` and `if/then/else` over
+///   bool subjects give a flat predicate, anything else is rejected so
+///   the fall-through to fuel stays sound.
+///
+/// On success the returned list's conjunction is the precondition for
+/// `target_fn`'s aux: every clause is a positive `Spanned<Expr>` Bool
+/// predicate in the callee's variable space, ready to feed straight
+/// into `emit_expr` the same way opaque-type predicates do.
+pub(crate) fn find_single_external_caller_predicate(
+    target_fn: &str,
+    target_param_index: usize,
+    callee_param_name: &str,
+    ctx: &CodegenContext,
+) -> Option<Vec<Spanned<Expr>>> {
+    let all_callers: Vec<&FnDef> = ctx
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::FnDef(fd) if fd.name != target_fn => Some(fd),
+            _ => None,
+        })
+        .chain(
+            ctx.modules
+                .iter()
+                .flat_map(|m| m.fn_defs.iter().filter(|fd| fd.name != target_fn)),
+        )
+        .filter(|fd| {
+            collect_calls_from_body(fd.body.as_ref())
+                .iter()
+                .any(|(n, _)| call_matches(n, target_fn))
+        })
+        .collect();
+
+    if all_callers.len() != 1 {
+        return None;
+    }
+    let caller = all_callers[0];
+
+    let mut callsites: Vec<(Vec<Spanned<Expr>>, String)> = Vec::new();
+    for stmt in caller.body.stmts() {
+        match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                walk_caller_collect_callsite_guards(
+                    expr,
+                    target_fn,
+                    target_param_index,
+                    &[],
+                    &mut callsites,
+                );
+            }
+        }
+    }
+
+    if callsites.is_empty() {
+        return None;
+    }
+
+    // For multiple callsites: require IDENTICAL guard lists (else the
+    // weakest precondition isn't trivial and we punt to fuel).
+    let (first_guards, first_arg_name) = &callsites[0];
+    for (other_guards, other_arg_name) in &callsites[1..] {
+        if other_arg_name != first_arg_name || other_guards != first_guards {
+            return None;
+        }
+    }
+
+    let arg_name = first_arg_name.as_str();
+    let predicate = first_guards
+        .iter()
+        .filter(|g| crate::codegen::recursion::expr_references_ident(g, arg_name))
+        .map(|g| {
+            crate::codegen::recursion::substitute_ident_in_expr(g, arg_name, callee_param_name)
+        })
+        .collect::<Vec<_>>();
+
+    Some(predicate)
+}
+
+/// Walker that collects all callsites of `target_fn` inside `expr`,
+/// pairing each with (a) the chain of enclosing `match Bool` /
+/// `if-then-else` guards in **positive form** (false-arm guards
+/// flipped via `flip_comparison_binop`) and (b) the caller-side
+/// variable name passed at `target_param_index`.
+fn walk_caller_collect_callsite_guards(
+    expr: &Spanned<Expr>,
+    target_fn: &str,
+    target_param_index: usize,
+    enclosing_guards: &[Spanned<Expr>],
+    out: &mut Vec<(Vec<Spanned<Expr>>, String)>,
+) {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            if let Some(name) = expr_to_dotted_name(callee)
+                && call_matches(&name, target_fn)
+                && let Some(arg_at_idx) = args.get(target_param_index)
+                && let Some(arg_name) = local_name_of(arg_at_idx)
+            {
+                out.push((enclosing_guards.to_vec(), arg_name.to_string()));
+            }
+            walk_caller_collect_callsite_guards(
+                callee,
+                target_fn,
+                target_param_index,
+                enclosing_guards,
+                out,
+            );
+            for arg in args {
+                walk_caller_collect_callsite_guards(
+                    arg,
+                    target_fn,
+                    target_param_index,
+                    enclosing_guards,
+                    out,
+                );
+            }
+        }
+        Expr::TailCall(boxed) => {
+            for arg in &boxed.args {
+                walk_caller_collect_callsite_guards(
+                    arg,
+                    target_fn,
+                    target_param_index,
+                    enclosing_guards,
+                    out,
+                );
+            }
+        }
+        Expr::Match { subject, arms } => {
+            for arm in arms {
+                let mut new_guards: Vec<Spanned<Expr>> = enclosing_guards.to_vec();
+                match &arm.pattern {
+                    Pattern::Literal(crate::ast::Literal::Bool(true)) => {
+                        new_guards.push((**subject).clone());
+                    }
+                    Pattern::Literal(crate::ast::Literal::Bool(false)) => {
+                        if let Some(flipped) =
+                            crate::codegen::recursion::flip_comparison_binop(subject)
+                        {
+                            new_guards.push(flipped);
+                        } else {
+                            // Subject isn't a comparison BinOp — can't
+                            // flip into a positive Aver expression.
+                            // Drop the guard so the predicate stays
+                            // sound (subset of true constraints).
+                        }
+                    }
+                    _ => {
+                        // Non-bool arm (e.g., `0 -> ...`, `[head, ..tail]
+                        // -> ...`). Bind constraints aren't part of the
+                        // bool-predicate vocabulary; treat the arm as
+                        // transparent.
+                    }
+                }
+                walk_caller_collect_callsite_guards(
+                    &arm.body,
+                    target_fn,
+                    target_param_index,
+                    &new_guards,
+                    out,
+                );
+            }
+            walk_caller_collect_callsite_guards(
+                subject,
+                target_fn,
+                target_param_index,
+                enclosing_guards,
+                out,
+            );
+        }
+        Expr::BinOp(_, l, r) => {
+            walk_caller_collect_callsite_guards(
+                l,
+                target_fn,
+                target_param_index,
+                enclosing_guards,
+                out,
+            );
+            walk_caller_collect_callsite_guards(
+                r,
+                target_fn,
+                target_param_index,
+                enclosing_guards,
+                out,
+            );
+        }
+        Expr::Attr(inner, _) | Expr::Neg(inner) | Expr::ErrorProp(inner) => {
+            walk_caller_collect_callsite_guards(
+                inner,
+                target_fn,
+                target_param_index,
+                enclosing_guards,
+                out,
+            );
+        }
+        Expr::Constructor(_, arg) => {
+            if let Some(inner) = arg {
+                walk_caller_collect_callsite_guards(
+                    inner,
+                    target_fn,
+                    target_param_index,
+                    enclosing_guards,
+                    out,
+                );
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let crate::ast::StrPart::Parsed(inner) = p {
+                    walk_caller_collect_callsite_guards(
+                        inner,
+                        target_fn,
+                        target_param_index,
+                        enclosing_guards,
+                        out,
+                    );
+                }
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for item in items {
+                walk_caller_collect_callsite_guards(
+                    item,
+                    target_fn,
+                    target_param_index,
+                    enclosing_guards,
+                    out,
+                );
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                walk_caller_collect_callsite_guards(
+                    k,
+                    target_fn,
+                    target_param_index,
+                    enclosing_guards,
+                    out,
+                );
+                walk_caller_collect_callsite_guards(
+                    v,
+                    target_fn,
+                    target_param_index,
+                    enclosing_guards,
+                    out,
+                );
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                walk_caller_collect_callsite_guards(
+                    v,
+                    target_fn,
+                    target_param_index,
+                    enclosing_guards,
+                    out,
+                );
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            walk_caller_collect_callsite_guards(
+                base,
+                target_fn,
+                target_param_index,
+                enclosing_guards,
+                out,
+            );
+            for (_, v) in updates {
+                walk_caller_collect_callsite_guards(
+                    v,
+                    target_fn,
+                    target_param_index,
+                    enclosing_guards,
+                    out,
+                );
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+    }
+}
+
 /// Classify every recursive pure fn in `ctx`. The returned map assigns
 /// each supported function a [`RecursionPlan`]; anything that falls
 /// outside the recognised shapes becomes a [`ProofModeIssue`].
@@ -1180,7 +1579,42 @@ pub fn analyze_plans(
                 RecursionPlan::IntAscending { param_index, bound },
             );
         } else if let Some(param_index) = single_int_countdown_param_index(fd) {
-            plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
+            // Try native guarded emission first — when the body has the
+            // clean `match p { 0 -> BASE; _ -> rec(p-1, ...) }` shape and
+            // the fn is closed-world (no external module can call it
+            // with a negative param), Lean can emit a real recursive
+            // def with `(h : p ≥ 0)` precondition + termination on
+            // `p.natAbs`. Falls back to the fuel-encoded IntCountdown
+            // plan when either condition fails.
+            if is_closed_world_pure_fn(&fd.name, ctx)
+                && let Some((base_arm_literal, base_arm_body, wildcard_arm_body)) =
+                    int_countdown_native_arms(fd, param_index)
+                && let Some((callee_param_name, _)) = fd.params.get(param_index)
+            {
+                // Caller-derived precondition first; empty means
+                // "no single external caller in this artifact" and the
+                // Lean emitter defaults to `(h_dom : p ≥ 0)` for
+                // legacy fibTR-shape compatibility.
+                let precondition = find_single_external_caller_predicate(
+                    &fd.name,
+                    param_index,
+                    callee_param_name,
+                    ctx,
+                )
+                .unwrap_or_default();
+                plans.insert(
+                    fd.name.clone(),
+                    RecursionPlan::IntCountdownGuarded {
+                        param_index,
+                        base_arm_literal,
+                        base_arm_body,
+                        wildcard_arm_body,
+                        precondition,
+                    },
+                );
+            } else {
+                plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
+            }
         } else if supports_single_sizeof_structural(fd, ctx) {
             plans.insert(fd.name.clone(), RecursionPlan::SizeOfStructural);
         } else if let Some(param_index) = single_list_structural_param_index(fd) {

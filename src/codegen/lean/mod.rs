@@ -3223,9 +3223,263 @@ verify mirror law involutive
             .iter()
             .find_map(|(name, content)| (name == "Verify_mode.lean").then_some(content))
             .expect("expected generated Lean file");
-        assert!(lean.contains("def down__fuel"));
+        // No `Module` declaration in `ctx.items` ⇒ closed-world by the
+        // entry-script rule in `is_closed_world_pure_fn`. No external
+        // caller for `down` in this synthetic ctx, so the
+        // single-caller-predicate extractor returns empty and the Lean
+        // emitter defaults to `(h_dom : n ≥ 0)` — same fallback the
+        // legacy fibTR path used. Body has the canonical `match n { 0 ->
+        // 0; _ -> down(n-1) }` shape, so we land on the native guarded
+        // emit instead of fuel.
+        assert!(
+            lean.contains("def down__aux (n : Int) (h_dom : n ≥ 0) : Int :="),
+            "expected native aux def with default precondition, got:\n{}",
+            lean
+        );
+        assert!(
+            lean.contains("else down__aux (n - 1) (by omega)"),
+            "expected aux recursive call with omega proof, got:\n{}",
+            lean
+        );
+        assert!(lean.contains("termination_by Int.natAbs n"));
         assert!(lean.contains("def down (n : Int) : Int :="));
-        assert!(lean.contains("down__fuel ((Int.natAbs n) + 1) n"));
+        assert!(lean.contains("if h_dom : n ≥ 0 then down__aux n h_dom"));
+        assert!(!lean.contains("def down__fuel"));
+    }
+
+    #[test]
+    fn proof_mode_when_stronger_than_refinement_invariant_stays_in_theorem() {
+        // Before fix: `when` was dropped unconditionally whenever a
+        // given was refinement-lifted, on the assumption that `when`
+        // restated the type's invariant. A user-written stronger
+        // predicate (`when a >= 10` over `Natural` whose invariant is
+        // `a.val >= 0`) would silently disappear from the emitted
+        // theorem — the proof artifact would universally quantify
+        // over ALL Naturals while the user's source claim was
+        // restricted to `a >= 10`. After fix: `when_is_redundant_
+        // with_refinement_lifts` compares user's predicate to the
+        // type's invariant (via commutator-relaxed compare). Drop
+        // only fires when they match.
+        let src = "module Stronger\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             record Natural\n\
+             \x20   value: Int\n\
+             \n\
+             fn fromInt(n: Int) -> Result<Natural, String>\n\
+             \x20   match n >= 0\n\
+             \x20       true  -> Result.Ok(Natural(value = n))\n\
+             \x20       false -> Result.Err(\"must be >= 0\")\n\
+             \n\
+             fn identity(a: Natural) -> Natural\n\
+             \x20   a\n\
+             \n\
+             verify identity law selfEq\n\
+             \x20   given a: Int = [10, 20, 30]\n\
+             \x20   when a >= 10\n\
+             \x20   identity(Natural(value = a)) => identity(Natural(value = a))\n";
+        let mut ctx = ctx_from_source(src, "stronger");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        // `when a >= 10` is STRONGER than Natural's `n >= 0` invariant
+        // so the universal theorem must keep it as a premise.
+        let universal_theorem = lean
+            .lines()
+            .find(|l| l.contains("theorem identity_law_selfEq"))
+            .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
+        assert!(
+            universal_theorem.contains("a >= 10"),
+            "expected `when a >= 10` to stay in universal theorem premise, got:\n{}",
+            universal_theorem
+        );
+    }
+
+    #[test]
+    fn proof_mode_when_compound_equivalent_to_compound_invariant_drops_cleanly() {
+        // Regression guard for `examples/refinement/int_range/int_range.av`:
+        // the refinement predicate itself is `Bool.and(n >= 0, n <=
+        // 100)`. A naive bijective match (lift `[Bool.and(a >= 0, a <=
+        // 100), Bool.and(b >= 0, b <= 100)]` against flattened `when`
+        // `[a >= 0, a <= 100, b >= 0, b <= 100]`) would length-
+        // mismatch and keep the redundant premise — re-introducing
+        // the type-mismatch shape that pre-fix already worked around.
+        // The fix flattens BOTH sides; this test pins that.
+        let src = "module IR\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             record IntRange\n\
+             \x20   value: Int\n\
+             \n\
+             fn fromInt(n: Int) -> Result<IntRange, String>\n\
+             \x20   match Bool.and(n >= 0, n <= 100)\n\
+             \x20       true  -> Result.Ok(IntRange(value = n))\n\
+             \x20       false -> Result.Err(\"oob\")\n\
+             \n\
+             fn identity(a: IntRange) -> IntRange\n\
+             \x20   a\n\
+             \n\
+             verify identity law selfEq\n\
+             \x20   given a: Int = [0, 50, 100]\n\
+             \x20   when Bool.and(a >= 0, a <= 100)\n\
+             \x20   identity(IntRange(value = a)) => identity(IntRange(value = a))\n";
+        let mut ctx = ctx_from_source(src, "ir");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        let universal_theorem = lean
+            .lines()
+            .find(|l| l.contains("theorem identity_law_selfEq"))
+            .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
+        assert!(
+            !universal_theorem.contains("a >= 0"),
+            "expected compound `when` to be dropped when it matches compound invariant, got:\n{}",
+            universal_theorem
+        );
+        assert!(
+            !universal_theorem.contains("a <= 100"),
+            "expected compound `when` to be dropped when it matches compound invariant, got:\n{}",
+            universal_theorem
+        );
+        assert!(
+            universal_theorem.contains("∀ (a : IntRange)"),
+            "expected universal to quantify over IntRange, got:\n{}",
+            universal_theorem
+        );
+    }
+
+    #[test]
+    fn proof_mode_when_equivalent_to_refinement_invariant_drops_cleanly() {
+        // Regression: the typical natural.av-style case — `when a >=
+        // 0` over `Natural` (invariant `n >= 0`) — must continue to
+        // drop the redundant `when` so the universal theorem is `∀ (a
+        // : Natural), ...` not `∀ (a : Natural), a.val >= 0 -> ...`
+        // (which Lean type-mismatches against the Subtype carrier).
+        let src = "module Equiv\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             record Natural\n\
+             \x20   value: Int\n\
+             \n\
+             fn fromInt(n: Int) -> Result<Natural, String>\n\
+             \x20   match n >= 0\n\
+             \x20       true  -> Result.Ok(Natural(value = n))\n\
+             \x20       false -> Result.Err(\"must be >= 0\")\n\
+             \n\
+             fn identity(a: Natural) -> Natural\n\
+             \x20   a\n\
+             \n\
+             verify identity law selfEq\n\
+             \x20   given a: Int = [0, 1, 2]\n\
+             \x20   when a >= 0\n\
+             \x20   identity(Natural(value = a)) => identity(Natural(value = a))\n";
+        let mut ctx = ctx_from_source(src, "equiv");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        let universal_theorem = lean
+            .lines()
+            .find(|l| l.contains("theorem identity_law_selfEq"))
+            .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
+        // Predicate equivalent to invariant → drop.
+        assert!(
+            !universal_theorem.contains("a >= 0"),
+            "expected redundant `when a >= 0` to be dropped from universal theorem, got:\n{}",
+            universal_theorem
+        );
+        assert!(
+            universal_theorem.contains("∀ (a : Natural)"),
+            "expected universal to quantify over Natural, got:\n{}",
+            universal_theorem
+        );
+    }
+
+    #[test]
+    fn proof_mode_caller_with_compound_interval_guard_synthesizes_conjunction() {
+        // Issue 84 generalisation: a single caller wraps the callsite in
+        // nested `match (n > 2) { true -> match (n < 500) { true ->
+        // worker(n) }}` guards. The classifier extracts both predicates
+        // (positive form, in callee's variable space) and the Lean
+        // emitter joins them with `∧` for the aux's precondition. Same
+        // pattern opaque types use for smart-constructor predicates —
+        // single source-of-truth Spanned<Expr> representation.
+        let src = "module Worker\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             fn worker(n: Int) -> Int\n\
+             \x20   match n\n\
+             \x20       3 -> n\n\
+             \x20       _ -> worker(n - 1)\n\
+             \n\
+             fn caller(n: Int) -> Int\n\
+             \x20   match n > 2\n\
+             \x20       true -> match n < 500\n\
+             \x20           true -> worker(n)\n\
+             \x20           false -> 0\n\
+             \x20       false -> 0\n";
+        let mut ctx = ctx_from_source(src, "worker");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(
+            lean.contains("def worker__aux (n : Int) (h_dom : ((n > 2)) ∧ ((n < 500))) : Int :="),
+            "expected aux with ∧-joined caller-derived predicate, got:\n{}",
+            lean
+        );
+        // Body literal is `3`, not `0`, so the dependent-if splits on
+        // `n = 3`. This aligns with the caller's lower bound (`n > 2`)
+        // — preservation: `(n > 2 ∧ n < 500 ∧ n ≠ 3) → (n - 1 > 2 ∧ n -
+        // 1 < 500)` is exactly the linear-integer claim omega closes
+        // at the recursive callsite.
+        assert!(
+            lean.contains("if h_zero : n = 3 then n"),
+            "expected dependent-if on literal 3 with body-arm value, got:\n{}",
+            lean
+        );
+        assert!(
+            lean.contains("else worker__aux (n - 1) (by omega)"),
+            "expected rec call carrying (by omega), got:\n{}",
+            lean
+        );
+        assert!(
+            lean.contains("if h_dom : ((n > 2)) ∧ ((n < 500)) then worker__aux n h_dom"),
+            "expected wrapper dispatching on conjunction, got:\n{}",
+            lean
+        );
+        // Wrapper's else falls back to the body's literal-arm value
+        // (`n` here — the source's `3 -> n` arm).
+        assert!(
+            lean.contains("else n"),
+            "expected wrapper else falling through to base, got:\n{}",
+            lean
+        );
+        assert!(!lean.contains("def worker__fuel"));
+    }
+
+    #[test]
+    fn proof_mode_exposed_int_countdown_falls_back_to_fuel() {
+        // Closed-world check: a fn that lives in a module with an
+        // explicit `exposes [...]` listing the fn is open-world, so the
+        // native-guarded path is unsafe (callers outside this artifact
+        // could pass negative ints). The classifier must keep the fuel
+        // encoding for these.
+        let src = "module Down\n\
+             \x20   intent = \"t\"\n\
+             \x20   exposes [down]\n\
+             \n\
+             fn down(n: Int) -> Int\n\
+             \x20   match n\n\
+             \x20       0 -> 0\n\
+             \x20       _ -> down(n - 1)\n";
+        let mut ctx = ctx_from_source(src, "downmod");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+        let lean = generated_lean_file(&out);
+        assert!(
+            lean.contains("def down__fuel"),
+            "expected fuel emission for exposed fn, got:\n{}",
+            lean
+        );
+        assert!(
+            !lean.contains("down__aux"),
+            "should not emit native aux for exposed fn, got:\n{}",
+            lean
+        );
     }
 
     #[test]
@@ -4026,7 +4280,7 @@ fn echoConn(conn: Tcp.Connection) -> Tcp.Connection
     }
 
     #[test]
-    fn fibonacci_example_uses_fuelized_int_countdown_in_proof_mode() {
+    fn fibonacci_example_uses_native_guarded_int_countdown_in_proof_mode() {
         let mut ctx = ctx_from_source(
             include_str!("../../../examples/data/fibonacci.av"),
             "fibonacci",
@@ -4034,9 +4288,34 @@ fn echoConn(conn: Tcp.Connection) -> Tcp.Connection
         let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
 
-        assert!(lean.contains("def fibTR__fuel"));
+        // Native guarded emission: an aux fn with the precondition
+        // derived from `fib`'s `match (n < 0) { false -> fibTR(n,...) }`
+        // arm (flipped to positive form `n >= 0` at extract time) +
+        // termination on `n.natAbs`, plus a thin wrapper preserving the
+        // source signature. Replaces the historical `def fibTR__fuel`
+        // path so Lean can `simp`/`decide` through recursive calls
+        // instead of treating the helper as opaque.
+        assert!(
+            lean.contains(
+                "def fibTR__aux (n : Int) (a : Int) (b : Int) (h_dom : ((n >= 0))) : Int :="
+            ),
+            "expected fibTR aux with caller-derived precondition, got:\n{}",
+            lean
+        );
+        assert!(
+            lean.contains("if h_zero : n = 0 then a"),
+            "expected dependent-if on literal 0, got:\n{}",
+            lean
+        );
+        assert!(
+            lean.contains("else fibTR__aux (n - 1) b (a + b) (by omega)"),
+            "expected recursive call carrying (by omega), got:\n{}",
+            lean
+        );
+        assert!(lean.contains("termination_by Int.natAbs n"));
         assert!(lean.contains("def fibTR (n : Int) (a : Int) (b : Int) : Int :="));
-        assert!(lean.contains("fibTR__fuel ((Int.natAbs n) + 1) n a b"));
+        assert!(lean.contains("if h_dom : ((n >= 0)) then fibTR__aux n a b h_dom"));
+        assert!(!lean.contains("def fibTR__fuel"));
         assert!(!lean.contains("partial def fibTR"));
     }
 

@@ -828,4 +828,44 @@ mod tests {
             dfy
         );
     }
+
+    #[test]
+    fn int_countdown_guarded_emits_requires_clause() {
+        // The `match n { 0 -> 0; _ -> down(n - 1) }` shape is the Lean
+        // native-guarded target; on the Dafny side it lands on the
+        // single-fn `emit_fn_def` path whose `infer_decreases` already
+        // produces `requires n >= 0` + `decreases n`. This test pins the
+        // existing Dafny shape so the Lean refactor doesn't accidentally
+        // route this fn through a fuel/axiom path on the Dafny side.
+        let src = "module M\n\
+             \x20   intent = \"t\"\n\
+             \n\
+             fn down(n: Int) -> Int\n\
+             \x20   match n\n\
+             \x20       0 -> 0\n\
+             \x20       _ -> down(n - 1)\n";
+        let ctx = ctx_from_source(src, "m");
+        let out = transpile(&ctx);
+        let dfy = dafny_output(&out);
+        assert!(
+            dfy.contains("function down(n: int): int"),
+            "expected native Dafny function for countdown, got:\n{}",
+            dfy
+        );
+        assert!(
+            dfy.contains("requires n >= 0"),
+            "expected `requires n >= 0` clause, got:\n{}",
+            dfy
+        );
+        assert!(
+            dfy.contains("decreases n"),
+            "expected `decreases n` clause, got:\n{}",
+            dfy
+        );
+        assert!(
+            !dfy.contains("down__fuel"),
+            "should not emit fuel helper for native shape, got:\n{}",
+            dfy
+        );
+    }
 }
