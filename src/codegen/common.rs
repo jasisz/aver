@@ -46,18 +46,33 @@ pub fn refinement_info_for<'a>(
     type_name: &str,
     ctx: &'a CodegenContext,
 ) -> Option<RefinementInfo<'a>> {
-    let (carrier_field, carrier_type) = ctx.items.iter().find_map(|item| match item {
-        TopLevel::TypeDef(TypeDef::Product { name, fields, .. })
-            if name == type_name && fields.len() == 1 =>
-        {
-            let (fname, ftype) = &fields[0];
-            Some((fname.as_str(), ftype.as_str()))
-        }
+    // Refinement records may live in the entry file (`ctx.items`) or
+    // in a dependent module (`ctx.modules[i].type_defs`). Same for
+    // the smart constructor. Walk both so cross-module compilations
+    // (`aver proof natural_app.av` depending on a `Natural` module)
+    // produce the same lifted shape as the standalone module file.
+    let entry_typedefs = ctx.items.iter().filter_map(|item| match item {
+        TopLevel::TypeDef(td) => Some(td),
         _ => None,
-    })?;
+    });
+    let module_typedefs = ctx.modules.iter().flat_map(|m| m.type_defs.iter());
+    let (carrier_field, carrier_type) =
+        entry_typedefs
+            .chain(module_typedefs)
+            .find_map(|td| match td {
+                TypeDef::Product { name, fields, .. } if name == type_name && fields.len() == 1 => {
+                    let (fname, ftype) = &fields[0];
+                    Some((fname.as_str(), ftype.as_str()))
+                }
+                _ => None,
+            })?;
 
-    for item in &ctx.items {
-        let TopLevel::FnDef(fd) = item else { continue };
+    let entry_fns = ctx.items.iter().filter_map(|item| match item {
+        TopLevel::FnDef(fd) => Some(fd),
+        _ => None,
+    });
+    let module_fns = ctx.modules.iter().flat_map(|m| m.fn_defs.iter());
+    for fd in entry_fns.chain(module_fns) {
         if !fd.return_type.starts_with("Result<") {
             continue;
         }
@@ -226,9 +241,15 @@ fn search_refinement_wrapper<'a>(
                 // Need a stable reference into ctx for the returned
                 // &str. `refinement_info_for` returns refs into ctx
                 // already, but we want the *type name* itself; the
-                // name lives in the TypeDef in ctx.items.
-                for item in &ctx.items {
-                    if let TopLevel::TypeDef(TypeDef::Product { name, .. }) = item
+                // name may live in `ctx.items` (standalone build) or
+                // in a dependent module's `type_defs` (cross-module).
+                let entry_tds = ctx.items.iter().filter_map(|i| match i {
+                    TopLevel::TypeDef(td) => Some(td),
+                    _ => None,
+                });
+                let module_tds = ctx.modules.iter().flat_map(|m| m.type_defs.iter());
+                for td in entry_tds.chain(module_tds) {
+                    if let TypeDef::Product { name, .. } = td
                         && name == type_name
                     {
                         *result = Some(name.as_str());
