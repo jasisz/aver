@@ -1125,6 +1125,14 @@ pub fn emit_fn_def_proof(
     }
 
     if let Some(RecursionPlan::IntCountdown { param_index }) = recursion_plan {
+        // IntCountdown stays on fuel encoding — native
+        // `termination_by n.natAbs` would require proving
+        // `(n - 1).natAbs < n.natAbs`, which only holds for `n > 0`.
+        // Aver bodies don't always have a `match n { 0 -> base; _ ->
+        // rec(n-1) }` shape that clamps `n` to non-negative before
+        // the recursive call (fibonacci's `fibTR` recurses without
+        // an `n < 0` guard, relying on its caller to never pass a
+        // negative). Fuel encoding sidesteps the issue.
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
     }
 
