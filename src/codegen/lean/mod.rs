@@ -818,15 +818,7 @@ pub(super) fn bound_expr_to_lean(expr: &Spanned<Expr>) -> String {
     }
 }
 
-pub(crate) fn sizeof_measure_param_indices(fd: &FnDef) -> Vec<usize> {
-    fd.params
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, (_, type_name))| {
-            (!crate::codegen::recursion::detect::is_scalar_like_type(type_name)).then_some(idx)
-        })
-        .collect()
-}
+pub(crate) use crate::codegen::recursion::detect::sizeof_measure_param_indices;
 
 /// Proof-mode diagnostics for Lean transpilation.
 ///
@@ -3779,9 +3771,16 @@ verify mirror law involutive
 
         let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
+        // After the native-decreases path landed for mutual sizeOf
+        // SCCs (PR #84), this group emits as a plain `mutual ...
+        // end` block with `termination_by` instead of the older
+        // `__fuel` helper-and-wrapper pair. The classifier still
+        // recognises the recursion (no proof-mode issues raised),
+        // which is what this test pins.
         assert!(lean.contains("mutual"));
-        assert!(lean.contains("def f__fuel"));
-        assert!(lean.contains("def g__fuel"));
+        assert!(lean.contains("def f"));
+        assert!(lean.contains("def g"));
+        assert!(lean.contains("termination_by"));
         assert!(!lean.contains("partial def f"));
         assert!(!lean.contains("partial def g"));
     }

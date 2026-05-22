@@ -21,7 +21,6 @@ use crate::call_graph;
 use crate::codegen::CodegenContext;
 use crate::codegen::lean::{
     find_type_def, pure_fns, recursive_pure_fn_names, recursive_type_names,
-    sizeof_measure_param_indices,
 };
 
 use super::{ProofModeIssue, RecursionPlan};
@@ -907,6 +906,140 @@ pub(crate) fn is_scalar_like_type(type_name: &str) -> bool {
     matches!(
         type_name,
         "Int" | "Float" | "Bool" | "String" | "Char" | "Byte" | "Unit"
+    )
+}
+
+/// SizeOf-measure param indices for a fn — every non-scalar param
+/// position contributes a term to the structural measure. Matches
+/// the picks made for the Lean `termination_by` clause and the
+/// Dafny native `decreases` tuple so the same params drive measure
+/// inference on both backends.
+pub fn sizeof_measure_param_indices(fd: &FnDef) -> Vec<usize> {
+    fd.params
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, (_, type_name))| (!is_scalar_like_type(type_name)).then_some(idx))
+        .collect()
+}
+
+/// True iff some intra-SCC call passes a non-trivially-shrinking
+/// expression into a callee's sizeOf parameter — tail-recursive
+/// accumulator patterns like `[x] + acc` / `List.prepend(x, acc)`
+/// / `acc + [x]`, plus arbitrary `FnCall(...)` results we can't
+/// statically prove shrink. These all fail termination-by-measure
+/// even though fuel encoding handles them fine; backends fall back
+/// to fuel for those SCCs.
+pub fn scc_has_growing_accumulator(fns: &[&FnDef]) -> bool {
+    let names: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+    let mut sizeof_indices: HashMap<String, Vec<usize>> = HashMap::new();
+    for fd in fns {
+        sizeof_indices.insert(fd.name.clone(), sizeof_measure_param_indices(fd));
+    }
+    for fd in fns {
+        // String interpolation in a body that ends up calling an
+        // intra-SCC fn confuses Lean's wf elaboration — the recursive
+        // call lives inside the interpolation's anonymous `s!"{...}"`
+        // expansion, and the wf check pins anonymous binders the
+        // tactic chain can't pin back to the source-named param.
+        // Wumpus's `roomListItem` (`_ => s!"{rs}, {roomList rest}"`)
+        // is the canonical shape. Fall back to fuel for this case.
+        if body_has_intra_scc_call_in_interpolation(fd.body.as_ref(), &names) {
+            return true;
+        }
+        for (callee_raw, args) in collect_calls_from_body(fd.body.as_ref()) {
+            let Some(callee_name) = canonical_callee_name(&callee_raw, &names) else {
+                continue;
+            };
+            let Some(callee_indices) = sizeof_indices.get(&callee_name) else {
+                continue;
+            };
+            for callee_idx in callee_indices {
+                let Some(arg) = args.get(*callee_idx) else {
+                    continue;
+                };
+                if !arg_is_non_growing(arg) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn body_has_intra_scc_call_in_interpolation(body: &FnBody, names: &HashSet<String>) -> bool {
+    let FnBody::Block(stmts) = body;
+    stmts.iter().any(|s| match s {
+        Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
+            expr_has_intra_scc_call_in_interpolation(e, names)
+        }
+    })
+}
+
+fn expr_has_intra_scc_call_in_interpolation(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
+    use crate::ast::StrPart;
+    match &expr.node {
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            StrPart::Parsed(inner) => expr_calls_into_set(inner, names),
+            _ => false,
+        }),
+        Expr::Match { subject, arms, .. } => {
+            expr_has_intra_scc_call_in_interpolation(subject, names)
+                || arms
+                    .iter()
+                    .any(|a| expr_has_intra_scc_call_in_interpolation(&a.body, names))
+        }
+        Expr::FnCall(f, args) => {
+            expr_has_intra_scc_call_in_interpolation(f, names)
+                || args
+                    .iter()
+                    .any(|a| expr_has_intra_scc_call_in_interpolation(a, names))
+        }
+        Expr::TailCall(boxed) => boxed
+            .args
+            .iter()
+            .any(|a| expr_has_intra_scc_call_in_interpolation(a, names)),
+        Expr::BinOp(_, l, r) => {
+            expr_has_intra_scc_call_in_interpolation(l, names)
+                || expr_has_intra_scc_call_in_interpolation(r, names)
+        }
+        Expr::Constructor(_, Some(inner)) | Expr::Attr(inner, _) | Expr::Neg(inner) => {
+            expr_has_intra_scc_call_in_interpolation(inner, names)
+        }
+        _ => false,
+    }
+}
+
+fn expr_calls_into_set(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
+    match &expr.node {
+        Expr::FnCall(f, args) => {
+            let head_hit = expr_to_dotted_name(f)
+                .as_deref()
+                .map(|n| canonical_callee_name(n, names).is_some())
+                .unwrap_or(false);
+            head_hit
+                || args.iter().any(|a| expr_calls_into_set(a, names))
+                || expr_calls_into_set(f, names)
+        }
+        Expr::TailCall(boxed) => {
+            canonical_callee_name(&boxed.target, names).is_some()
+                || boxed.args.iter().any(|a| expr_calls_into_set(a, names))
+        }
+        Expr::Attr(inner, _) | Expr::Neg(inner) | Expr::Constructor(_, Some(inner)) => {
+            expr_calls_into_set(inner, names)
+        }
+        Expr::BinOp(_, l, r) => expr_calls_into_set(l, names) || expr_calls_into_set(r, names),
+        Expr::Match { subject, arms, .. } => {
+            expr_calls_into_set(subject, names)
+                || arms.iter().any(|a| expr_calls_into_set(&a.body, names))
+        }
+        _ => false,
+    }
+}
+
+fn arg_is_non_growing(expr: &Spanned<Expr>) -> bool {
+    matches!(
+        &expr.node,
+        Expr::Ident(_) | Expr::Resolved { .. } | Expr::Literal(_) | Expr::Attr(..)
     )
 }
 
