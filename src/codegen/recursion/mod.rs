@@ -36,7 +36,7 @@ pub enum RecursionPlan {
     /// and the fn is closed-world: every external callsite either passes a
     /// non-negative literal or sits in a guard branch that proves `p ≥ 0`.
     /// Proof backends emit a native def with an injected `p ≥ 0` precondition
-    /// + wrapper handling the `p < 0` case from the source's `0` arm, skipping
+    /// plus a wrapper handling the `p < 0` case from the source's `0` arm, skipping
     /// fuel entirely so Lean can `decide` / unfold for symbolic proofs. Carries
     /// both arm bodies so the Lean emitter can switch the elaborated shape to
     /// `if h_zero : p = 0 then BASE else REC` — needed because Lean's `match`
@@ -182,17 +182,15 @@ pub fn expr_references_ident(expr: &Spanned<Expr>, name: &str) -> bool {
             expr_references_ident(callee, name)
                 || args.iter().any(|a| expr_references_ident(a, name))
         }
-        Expr::BinOp(_, l, r) => {
-            expr_references_ident(l, name) || expr_references_ident(r, name)
-        }
+        Expr::BinOp(_, l, r) => expr_references_ident(l, name) || expr_references_ident(r, name),
         Expr::Neg(inner) => expr_references_ident(inner, name),
         Expr::Match { subject, arms } => {
             expr_references_ident(subject, name)
                 || arms.iter().any(|a| expr_references_ident(&a.body, name))
         }
-        Expr::Constructor(_, arg) => {
-            arg.as_deref().is_some_and(|a| expr_references_ident(a, name))
-        }
+        Expr::Constructor(_, arg) => arg
+            .as_deref()
+            .is_some_and(|a| expr_references_ident(a, name)),
         Expr::ErrorProp(inner) => expr_references_ident(inner, name),
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
             StrPart::Parsed(inner) => expr_references_ident(inner, name),
@@ -201,9 +199,9 @@ pub fn expr_references_ident(expr: &Spanned<Expr>, name: &str) -> bool {
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(|i| expr_references_ident(i, name))
         }
-        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
-            expr_references_ident(k, name) || expr_references_ident(v, name)
-        }),
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_references_ident(k, name) || expr_references_ident(v, name)),
         Expr::RecordCreate { fields, .. } => {
             fields.iter().any(|(_, v)| expr_references_ident(v, name))
         }
@@ -423,7 +421,9 @@ pub fn rewrite_native_guarded_calls_expr(
             inner, fn_name, aux_name,
         ))),
         Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(rewrite_native_guarded_calls_expr(subject, fn_name, aux_name)),
+            subject: Box::new(rewrite_native_guarded_calls_expr(
+                subject, fn_name, aux_name,
+            )),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
@@ -437,9 +437,8 @@ pub fn rewrite_native_guarded_calls_expr(
         },
         Expr::Constructor(name, arg) => Expr::Constructor(
             name.clone(),
-            arg.as_ref().map(|inner| {
-                Box::new(rewrite_native_guarded_calls_expr(inner, fn_name, aux_name))
-            }),
+            arg.as_ref()
+                .map(|inner| Box::new(rewrite_native_guarded_calls_expr(inner, fn_name, aux_name))),
         ),
         Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(rewrite_native_guarded_calls_expr(
             inner, fn_name, aux_name,
@@ -539,11 +538,7 @@ pub fn rewrite_native_guarded_calls_expr(
 }
 
 /// Body-level wrapper around [`rewrite_native_guarded_calls_expr`].
-pub fn rewrite_native_guarded_calls_body(
-    body: &FnBody,
-    fn_name: &str,
-    aux_name: &str,
-) -> FnBody {
+pub fn rewrite_native_guarded_calls_body(body: &FnBody, fn_name: &str, aux_name: &str) -> FnBody {
     FnBody::Block(
         body.stmts()
             .iter()

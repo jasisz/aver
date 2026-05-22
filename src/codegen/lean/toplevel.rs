@@ -705,11 +705,7 @@ fn emit_native_guarded_int_countdown_fn(
             .join(" ∧ ")
     };
 
-    let aux_params = format!(
-        "{} (h_dom : {})",
-        emit_fn_params(&fd.params),
-        precond_lean
-    );
+    let aux_params = format!("{} (h_dom : {})", emit_fn_params(&fd.params), precond_lean);
     let main_params = emit_fn_params(&fd.params);
     let ret_type = ret_type_or_unit(fd);
 
@@ -747,7 +743,10 @@ fn emit_native_guarded_int_countdown_fn(
     lines.push("  omega".to_string());
     lines.push(String::new());
 
-    lines.push(format!("def {} {} : {} :=", main_name, main_params, ret_type));
+    lines.push(format!(
+        "def {} {} : {} :=",
+        main_name, main_params, ret_type
+    ));
     lines.push(format!(
         "  if h_dom : {} then {} {} h_dom",
         precond_lean, lean_aux_name, arg_names

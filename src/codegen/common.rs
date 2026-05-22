@@ -378,10 +378,7 @@ pub fn swap_comparison_operands_op(op: &crate::ast::BinOp) -> Option<crate::ast:
 pub fn predicate_syntactic_eq(a: &Spanned<Expr>, b: &Spanned<Expr>) -> bool {
     match (&a.node, &b.node) {
         (Expr::BinOp(op_a, la, ra), Expr::BinOp(op_b, lb, rb)) => {
-            if op_a == op_b
-                && predicate_syntactic_eq(la, lb)
-                && predicate_syntactic_eq(ra, rb)
-            {
+            if op_a == op_b && predicate_syntactic_eq(la, lb) && predicate_syntactic_eq(ra, rb) {
                 return true;
             }
             if let Some(swapped) = swap_comparison_operands_op(op_a)
@@ -424,11 +421,7 @@ pub fn flatten_bool_and_conjuncts(expr: &Spanned<Expr>) -> Vec<Spanned<Expr>> {
 /// smart constructor's param name to the law's given name; future
 /// callers (verify-law domain translation, etc.) will too. Single
 /// definition keeps Lean and Dafny in sync.
-pub fn substitute_ident_in_expr(
-    expr: &Spanned<Expr>,
-    from: &str,
-    to: &str,
-) -> Spanned<Expr> {
+pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> Spanned<Expr> {
     use crate::ast::{MatchArm, StrPart, TailCallData};
     let line = expr.line;
     let new_node = match &expr.node {
@@ -579,8 +572,7 @@ pub fn when_is_redundant_with_refinement_lifts(
         let Some(info) = refinement_info_for(refined_type, ctx) else {
             return false;
         };
-        let substituted =
-            substitute_ident_in_expr(info.predicate, info.param_name, given_name);
+        let substituted = substitute_ident_in_expr(info.predicate, info.param_name, given_name);
         lifted_predicates.extend(flatten_bool_and_conjuncts(&substituted));
     }
     if when_conjuncts.len() != lifted_predicates.len() {
@@ -588,9 +580,9 @@ pub fn when_is_redundant_with_refinement_lifts(
     }
     let mut matched = vec![false; lifted_predicates.len()];
     for wc in &when_conjuncts {
-        let Some(idx) = (0..lifted_predicates.len()).find(|&i| {
-            !matched[i] && predicate_syntactic_eq(wc, &lifted_predicates[i])
-        }) else {
+        let Some(idx) = (0..lifted_predicates.len())
+            .find(|&i| !matched[i] && predicate_syntactic_eq(wc, &lifted_predicates[i]))
+        else {
             return false;
         };
         matched[idx] = true;

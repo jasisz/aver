@@ -1169,12 +1169,11 @@ pub fn emit_verify_law(
     // Natural` whose invariant is `a.val >= 0`). Same identity check
     // the Lean backend uses.
     if let Some(when_expr) = &law.when {
-        let when_redundant =
-            crate::codegen::common::when_is_redundant_with_refinement_lifts(
-                when_expr,
-                &lifted_vars,
-                ctx,
-            );
+        let when_redundant = crate::codegen::common::when_is_redundant_with_refinement_lifts(
+            when_expr,
+            &lifted_vars,
+            ctx,
+        );
         if !when_redundant {
             let when_str = emit_expr(when_expr, ctx);
             lines.push(format!("  requires {}", when_str));
