@@ -86,8 +86,80 @@ fn type_to_dafny(ty: &Type) -> String {
     }
 }
 
+/// Find a literal Int witness for a refinement subset type by inspecting
+/// the smart constructor's verify block (`fromX(K) => Result.Ok(...)` —
+/// the first such `K` satisfies the predicate by definition). Falls back
+/// to `None` when the verify block is missing or has no Ok case with a
+/// literal argument; the caller substitutes `0` in that case.
+fn refinement_witness_for(type_name: &str, ctx: &CodegenContext) -> Option<String> {
+    let smart_ctor_name = ctx.items.iter().find_map(|item| match item {
+        TopLevel::FnDef(fd)
+            if fd.return_type.starts_with("Result<")
+                && fd.return_type[7..].starts_with(type_name)
+                && fd.params.len() == 1 =>
+        {
+            Some(fd.name.clone())
+        }
+        _ => None,
+    })?;
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else {
+            continue;
+        };
+        if vb.fn_name != smart_ctor_name {
+            continue;
+        }
+        for (lhs, rhs) in &vb.cases {
+            if !is_result_ok(&rhs.node) {
+                continue;
+            }
+            let Expr::FnCall(_, args) = &lhs.node else {
+                continue;
+            };
+            if args.len() != 1 {
+                continue;
+            }
+            if let Some(lit) = literal_int_value(&args[0]) {
+                return Some(lit);
+            }
+        }
+    }
+    None
+}
+
+fn is_result_ok(expr: &Expr) -> bool {
+    match expr {
+        Expr::Constructor(name, _) => name == "Result.Ok",
+        Expr::FnCall(callee, _) => matches!(
+            &callee.node,
+            Expr::Attr(obj, field)
+                if field == "Ok" && matches!(&obj.node, Expr::Ident(n) if n == "Result")
+        ),
+        _ => false,
+    }
+}
+
+fn literal_int_value(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
+        Expr::Literal(Literal::Int(n)) => Some(n.to_string()),
+        Expr::Neg(inner) => {
+            let inner_str = literal_int_value(inner)?;
+            Some(format!("-{inner_str}"))
+        }
+        _ => None,
+    }
+}
+
 /// Emit a Dafny datatype/record from a TypeDef.
-pub fn emit_type_def(td: &TypeDef) -> Option<String> {
+///
+/// Refinement-via-opaque records with an `Int` carrier emit as a
+/// subset type (`type X = n: int | P n witness W`) so the invariant
+/// rides in the type and universal laws drop their `requires`
+/// clause. Other carriers (Float / String / multi-field) keep the
+/// plain `datatype` shape — `real` is Z3-unfriendly, strings are
+/// poorly automated, and multi-field needs a `predicate` over the
+/// product which the smart-constructor pattern doesn't supply.
+pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> Option<String> {
     match td {
         TypeDef::Sum { name, variants, .. } => {
             let variant_strs: Vec<String> = variants
@@ -116,6 +188,16 @@ pub fn emit_type_def(td: &TypeDef) -> Option<String> {
             ))
         }
         TypeDef::Product { name, fields, .. } => {
+            if let Some(info) = crate::codegen::common::refinement_info_for(name, ctx)
+                && info.carrier_type == "Int"
+            {
+                let predicate = super::expr::emit_expr(info.predicate, ctx);
+                let bind = aver_name_to_dafny(info.param_name);
+                let witness = refinement_witness_for(name, ctx).unwrap_or_else(|| "0".to_string());
+                return Some(format!(
+                    "type {name} = {bind}: int | {predicate} witness {witness}\n"
+                ));
+            }
             let field_strs: Vec<String> = fields
                 .iter()
                 .map(|(fname, ftype)| {
@@ -592,6 +674,8 @@ pub fn emit_law_samples(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     suffix: &str,
+    opaque_fns: &std::collections::HashSet<String>,
+    fuel_emitted: &std::collections::HashSet<String>,
 ) -> Option<String> {
     if vb.cases.is_empty() {
         return None;
@@ -602,6 +686,28 @@ pub fn emit_law_samples(
 
     let samples: Vec<_> = vb.cases.iter().take(MAX_LAW_SAMPLES).collect();
     let truncated = vb.cases.len() > MAX_LAW_SAMPLES;
+
+    // Pre-pass: rewrite each sample once and decide whether *any* of
+    // them transitively reaches an opaque (fuel-bounded mutual-rec or
+    // axiom-fallback) callee. If so, switch the whole block from a
+    // `method { assert; ... }` to a series of per-sample lemmas with
+    // fuel bumped on every transitive callee — Dafny then unfolds the
+    // SCC enough times to compute both sides and close the equality.
+    // Lean parity: each sample becomes its own theorem.
+    let rewritten: Vec<(Spanned<Expr>, Spanned<Expr>)> = samples
+        .iter()
+        .enumerate()
+        .map(|(idx, (lhs, rhs))| {
+            let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
+            let lhs_rw = rewrite_effectful_calls_in_law(lhs, law, ctx, mode.clone());
+            let rhs_rw = rewrite_effectful_calls_in_law(rhs, law, ctx, mode);
+            (lhs_rw, rhs_rw)
+        })
+        .collect();
+    let any_opaque = rewritten
+        .iter()
+        .any(|(l, r)| law_refs_opaque_fn(l, opaque_fns) || law_refs_opaque_fn(r, opaque_fns));
 
     let mut lines = Vec::new();
     if truncated {
@@ -618,41 +724,145 @@ pub fn emit_law_samples(
             fn_name, law_name
         ));
     }
-    lines.push(format!(
-        "method test_{}_{}{}_samples() {{",
-        fn_name, law_name, suffix
-    ));
 
-    for (idx, (lhs, rhs)) in samples.iter().enumerate() {
-        // Oracle v1: rewrite sample assertions the same way the lemma
-        // body is rewritten — inject `BranchPath.root()` + given
-        // bindings for effectful fns. Surface `pickOne()` can't stay
-        // literal; it must become `pickOne(BranchPath.root(), stub)`.
-        // Each case carries its own per-given binding (e.g. one case
-        // with `stub = httpDown`, another with `stub = httpOk`), so
-        // use the case-specific map rather than the law-level domain
-        // `.first()` which would emit `httpDown = httpOk` mismatches.
-        let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-        let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
-        let lhs_rw = rewrite_effectful_calls_in_law(lhs, law, ctx, mode.clone());
-        let rhs_rw = rewrite_effectful_calls_in_law(rhs, law, ctx, mode);
-        let l = emit_expr(&lhs_rw, ctx);
-        let r = emit_expr(&rhs_rw, ctx);
-        // `{:split_here}` tells Dafny to check the preceding assert as
-        // its own VC — without it, Z3 accumulates hypothesis state
-        // across all samples in the method and occasionally times out
-        // on otherwise-trivial arithmetic (e.g. `sub(a, b) == 0 -
-        // sub(b, a)` over 5 samples). Splitting isolates each sample.
-        lines.push(format!("  assert {{:split_here}} {} == {};", l, r));
+    if any_opaque {
+        // Per-sample lemma form. Each gets fuel bumped on every
+        // (transitive) callee + the matching `__fuel` helper for
+        // mutual-rec SCC members.
+        let known: std::collections::HashSet<String> = ctx
+            .items
+            .iter()
+            .filter_map(|i| {
+                if let TopLevel::FnDef(fd) = i {
+                    Some(fd.name.clone())
+                } else {
+                    None
+                }
+            })
+            .chain(
+                ctx.modules
+                    .iter()
+                    .flat_map(|m| m.fn_defs.iter().map(|fd| fd.name.clone())),
+            )
+            .collect();
+        for (idx, (lhs_rw, rhs_rw)) in rewritten.iter().enumerate() {
+            let l = emit_expr(lhs_rw, ctx);
+            let r = emit_expr(rhs_rw, ctx);
+            let mut callees = std::collections::BTreeSet::new();
+            collect_called_fns(lhs_rw, &mut callees);
+            collect_called_fns(rhs_rw, &mut callees);
+            let mut transitive = std::collections::BTreeSet::new();
+            for f in &callees {
+                if let Some(fd) = ctx
+                    .items
+                    .iter()
+                    .filter_map(|i| {
+                        if let TopLevel::FnDef(fd) = i {
+                            Some(fd)
+                        } else {
+                            None
+                        }
+                    })
+                    .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+                    .find(|fd| &fd.name == f)
+                {
+                    collect_called_fns_in_body(&fd.body, &mut transitive);
+                }
+            }
+            callees.extend(transitive);
+            let mut fuel_targets: Vec<String> = Vec::new();
+            for f in &callees {
+                if !known.contains(f) {
+                    continue;
+                }
+                fuel_targets.push(aver_name_to_dafny(f));
+                if fuel_emitted.contains(f) {
+                    fuel_targets.push(crate::codegen::recursion::fuel_helper_name(f));
+                }
+            }
+            fuel_targets.sort();
+            fuel_targets.dedup();
+            let fuel_attrs = fuel_targets
+                .iter()
+                .map(|f| format!("{{:fuel {}, 100}}", f))
+                .collect::<Vec<_>>()
+                .join(" ");
+            lines.push(format!(
+                "lemma {} {}_{}{}__sample_{}()\n  ensures {} == {}\n{{ }}",
+                fuel_attrs,
+                fn_name,
+                law_name,
+                suffix,
+                idx + 1,
+                l,
+                r
+            ));
+        }
+    } else {
+        lines.push(format!(
+            "method test_{}_{}{}_samples() {{",
+            fn_name, law_name, suffix
+        ));
+        for (lhs_rw, rhs_rw) in &rewritten {
+            let l = emit_expr(lhs_rw, ctx);
+            let r = emit_expr(rhs_rw, ctx);
+            // `{:split_here}` tells Dafny to check the preceding assert as
+            // its own VC — without it, Z3 accumulates hypothesis state
+            // across all samples in the method and occasionally times out
+            // on otherwise-trivial arithmetic (e.g. `sub(a, b) == 0 -
+            // sub(b, a)` over 5 samples). Splitting isolates each sample.
+            lines.push(format!("  assert {{:split_here}} {} == {};", l, r));
+        }
+        lines.push("}\n".to_string());
     }
-
-    lines.push("}\n".to_string());
     Some(lines.join("\n"))
 }
 
 use crate::codegen::common::{OracleInjectionMode, rewrite_effectful_calls_in_law};
 
 /// Emit a verify law as a Dafny lemma.
+/// Compute the transitive closure of opaque fns: any fn whose body
+/// (directly or transitively) calls a fn already in `opaque`. Dafny
+/// can't unfold a mutually-recursive callee inside a `{:fuel}`-bound
+/// SCC, so a law that calls a thin wrapper `add(a,b) = addDigits(...)`
+/// can't be proved either — even though `add` itself isn't in the
+/// SCC. Match Lean's `sorry` fallback by treating the wrapper as
+/// opaque too.
+pub fn transitive_opaque_closure(
+    ctx: &CodegenContext,
+    opaque: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let mut result = opaque.clone();
+    let all_fns: Vec<&FnDef> = ctx
+        .items
+        .iter()
+        .filter_map(|it| {
+            if let TopLevel::FnDef(fd) = it {
+                Some(fd)
+            } else {
+                None
+            }
+        })
+        .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+        .collect();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for fd in &all_fns {
+            if result.contains(&fd.name) {
+                continue;
+            }
+            let mut callees = std::collections::BTreeSet::new();
+            collect_called_fns_in_body(&fd.body, &mut callees);
+            if callees.iter().any(|c| result.contains(c)) {
+                result.insert(fd.name.clone());
+                changed = true;
+            }
+        }
+    }
+    result
+}
+
 fn law_refs_opaque_fn(expr: &Spanned<Expr>, opaque: &std::collections::HashSet<String>) -> bool {
     match &expr.node {
         Expr::FnCall(callee, args) => {
@@ -696,10 +906,32 @@ pub fn emit_verify_law(
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
 
+    // Refinement lift: for each Int given whose value is wrapped in
+    // a refinement record on either side (e.g. `IntRange(value = a)`),
+    // promote the param type from `int` to the refined name so the
+    // invariant rides in the type and the `when`-clause guard
+    // becomes redundant. Mirror of the Lean Subtype lift.
+    let mut lifted_vars: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for g in &law.givens {
+        if let Some(refined) = crate::codegen::common::refinement_lift_for_given(
+            &g.name,
+            &g.type_name,
+            &law.lhs,
+            &law.rhs,
+            ctx,
+        ) {
+            lifted_vars.insert(g.name.clone(), refined.to_string());
+        }
+    }
+
     let params: Vec<String> = law
         .givens
         .iter()
         .map(|g| {
+            if let Some(refined) = lifted_vars.get(&g.name) {
+                return format!("{}: {}", aver_name_to_dafny(&g.name), refined);
+            }
             // Oracle v1: if the given's "type" is a classified effect
             // reference (`Random.int`, `Http.get`, etc.), the param is
             // an oracle — emit the derived oracle signature instead of
@@ -726,6 +958,19 @@ pub fn emit_verify_law(
         rewrite_effectful_calls_in_law(&law.lhs, law, ctx, OracleInjectionMode::LemmaBinding);
     let law_rhs =
         rewrite_effectful_calls_in_law(&law.rhs, law, ctx, OracleInjectionMode::LemmaBinding);
+
+    // Refinement-lift wrapper stripping: when a given was promoted to
+    // a refined type, the source-written `X(value = a)` constructor
+    // is redundant — emit `a` directly so the lemma body type-checks
+    // against the lifted param.
+    let (law_lhs, law_rhs) = if lifted_vars.is_empty() {
+        (law_lhs, law_rhs)
+    } else {
+        (
+            crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars),
+            crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars),
+        )
+    };
 
     let lhs = emit_expr(&law_lhs, ctx);
     let rhs = emit_expr(&law_rhs, ctx);
@@ -790,7 +1035,13 @@ pub fn emit_verify_law(
         }
     }
 
-    if let Some(when_expr) = &law.when {
+    // Drop the `when` guard when any given was refinement-lifted: the
+    // predicate is now carried by the refined parameter type, so a
+    // `requires` clause restating it would be redundant (and would
+    // talk about a now-nonexistent `int` projection).
+    if let Some(when_expr) = &law.when
+        && lifted_vars.is_empty()
+    {
         let when_str = emit_expr(when_expr, ctx);
         lines.push(format!("  requires {}", when_str));
     }

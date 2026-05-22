@@ -112,6 +112,16 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_dafny(name),
         Expr::Attr(obj, field) => {
+            // Refinement-via-opaque records emit as Dafny subset types,
+            // so projecting the carrier field is the identity (the
+            // value *is* the underlying `int`).
+            if let Some(crate::types::Type::Named(t_name)) = obj.ty()
+                && let Some(info) = crate::codegen::common::refinement_info_for(t_name, ctx)
+                && info.carrier_type == "Int"
+                && field == info.carrier_field
+            {
+                return emit_expr(obj, ctx);
+            }
             if let Expr::Ident(type_name) = &obj.node {
                 if type_name == "Option" && field == "None" {
                     return "Option.None".to_string();
@@ -221,6 +231,18 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             }
         }
         Expr::RecordCreate { type_name, fields } => {
+            // Int-carrier refinement records emit as a subset type
+            // (`type X = n: int | P n`), so `X(value := k)` collapses
+            // to just `k` — the value already inhabits the subset.
+            // Dafny narrowing (via `if pred then ... else ...`) is
+            // what closes the refinement obligation at the call site.
+            if let Some(info) = crate::codegen::common::refinement_info_for(type_name, ctx)
+                && info.carrier_type == "Int"
+                && fields.len() == 1
+            {
+                let (_, value_expr) = &fields[0];
+                return emit_expr(value_expr, ctx);
+            }
             let field_strs: Vec<String> = fields
                 .iter()
                 .map(|(name, expr)| {

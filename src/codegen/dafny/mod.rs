@@ -176,7 +176,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     for module in &ctx.modules {
         let mut sections: Vec<String> = Vec::new();
         for td in &module.type_defs {
-            if let Some(code) = toplevel::emit_type_def(td) {
+            if let Some(code) = toplevel::emit_type_def(td, ctx) {
                 sections.push(code);
             }
         }
@@ -251,7 +251,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     // ---- Entry sections ----
     let mut entry_sections: Vec<String> = Vec::new();
     for td in &ctx.type_defs {
-        if let Some(code) = toplevel::emit_type_def(td) {
+        if let Some(code) = toplevel::emit_type_def(td, ctx) {
             entry_sections.push(code);
         }
     }
@@ -316,13 +316,15 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             } else {
                 String::new()
             };
+            let direct_opaque: HashSet<String> =
+                axiom_fn_names.union(&fuel_emitted).cloned().collect();
+            let opaque_fns = toplevel::transitive_opaque_closure(ctx, &direct_opaque);
             if !vb.cases.is_empty()
-                && let Some(code) = toplevel::emit_law_samples(vb, law, ctx, &suffix)
+                && let Some(code) =
+                    toplevel::emit_law_samples(vb, law, ctx, &suffix, &opaque_fns, &fuel_emitted)
             {
                 entry_sections.push(code);
             }
-            let opaque_fns: HashSet<String> =
-                axiom_fn_names.union(&fuel_emitted).cloned().collect();
             entry_sections.push(toplevel::emit_verify_law(vb, law, ctx, &opaque_fns));
         }
     }
