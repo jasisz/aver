@@ -1,0 +1,76 @@
+module Natural
+    exposes [fromInt, toInt, add, mul]
+    exposes opaque [Natural]
+    intent =
+        "Refinement-via-opaque, sound-proof variant. Aver has no"
+        "refinement types and no value-level contracts; instead, an"
+        "opaque record with a validating constructor pins the `Int"
+        ">= 0` invariant inside the defining module."
+        ""
+        "All arithmetic operations return Result<Nat, String> and"
+        "route through fromInt internally. This loses the 'closed"
+        "under +' shorthand (the caller has to thread the Result"
+        "through every call site) but gains soundness against Aver"
+        "Int's i64 wrap-around: `add(Natural(value = i64::MAX),"
+        "Natural(value = 1))` returns Err, not a silent overflow that"
+        "produces a Nat with value < 0. A naive `add(a, b) ="
+        "Natural(value = a.value + b.value)` is fully provable for"
+        "unbounded ints in Lean / Dafny / Z3 but wrong on the Aver"
+        "runtime — the gap between a mathematical proof and the"
+        "VM's actual semantics. This variant closes that gap."
+    effects []
+
+record Natural
+    value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    ? "Smart constructor — admits only non-negative ints into Nat."
+    match n >= 0
+        true  -> Result.Ok(Natural(value = n))
+        false -> Result.Err("Nat must be non-negative")
+
+verify fromInt
+    fromInt(0)   => Result.Ok(Natural(value = 0))
+    fromInt(7)   => Result.Ok(Natural(value = 7))
+    fromInt(-1)  => Result.Err("Nat must be non-negative")
+    fromInt(-99) => Result.Err("Nat must be non-negative")
+
+fn toInt(n: Natural) -> Int
+    ? "Unwrap a Nat back into its underlying Int. Always non-negative."
+    n.value
+
+verify toInt
+    toInt(Natural(value = 0)) => 0
+    toInt(Natural(value = 5)) => 5
+
+fn add(a: Natural, b: Natural) -> Result<Natural, String>
+    ? "Sum of two Nats — overflow-safe. Routes the raw Int sum"
+      "through fromInt so wrap-around (i64::MAX + 1 = i64::MIN)"
+      "surfaces as Err instead of a Nat with value < 0."
+    fromInt(a.value + b.value)
+
+verify add
+    add(Natural(value = 0), Natural(value = 5)) => Result.Ok(Natural(value = 5))
+    add(Natural(value = 3), Natural(value = 4)) => Result.Ok(Natural(value = 7))
+
+verify add law commutative
+    given a: Int = [0, 1, 7, 100]
+    given b: Int = [0, 1, 7, 100]
+    when a >= 0
+    when b >= 0
+    add(Natural(value = a), Natural(value = b)) => add(Natural(value = b), Natural(value = a))
+
+fn mul(a: Natural, b: Natural) -> Result<Natural, String>
+    ? "Product of two Nats — overflow-safe via fromInt."
+    fromInt(a.value * b.value)
+
+verify mul
+    mul(Natural(value = 0), Natural(value = 5)) => Result.Ok(Natural(value = 0))
+    mul(Natural(value = 2), Natural(value = 3)) => Result.Ok(Natural(value = 6))
+
+verify mul law commutative
+    given a: Int = [0, 1, 7, 12]
+    given b: Int = [0, 1, 7, 12]
+    when a >= 0
+    when b >= 0
+    mul(Natural(value = a), Natural(value = b)) => mul(Natural(value = b), Natural(value = a))

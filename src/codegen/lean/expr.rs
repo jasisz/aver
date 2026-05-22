@@ -354,11 +354,10 @@ fn emit_match(
         let cond = emit_expr(subject, ctx);
         let t = emit_expr(true_body, ctx);
         let f = emit_expr(false_body, ctx);
-        return format!("if {} then {}\n  else {}", cond, t, f);
+        let _ = line;
+        return format!("if {cond} then {t}\n  else {f}");
     }
-
     let subj = emit_expr(subject, ctx);
-    let eq_name = format!("h_{}", line);
     let mut arm_strs = Vec::new();
     for arm in arms {
         let pat = emit_pattern(&arm.pattern);
@@ -377,7 +376,20 @@ fn emit_match(
             arm_strs.push(format!("  | {} => {}", pat, body));
         }
     }
-    format!("match {} : {} with\n{}", eq_name, subj, arm_strs.join("\n"))
+    // Plain `match … with` (no `h_NN :` named hypothesis). The named
+    // form was historically defensive — equation-style proofs could
+    // refer to `h_NN` for hypothesis-driven reasoning — but the
+    // generated output never actually uses those bindings, and the
+    // shape blocks `simp` from reducing if-inside-match inside the
+    // auto-proof tactic for wrapper-return cross-module laws. The
+    // unused-variable linter was warning on them in every Lean
+    // export. Drop them so `simp [hyp]` + `by_cases` actually closes
+    // the resulting goal. Three fuel-helper emitters still call
+    // `strip_match_eq_binders`; with this change that strip is a
+    // no-op, but leaving the call in place keeps the older paths
+    // tolerant of any future re-introduction of named binders.
+    let _ = line;
+    format!("match {} with\n{}", subj, arm_strs.join("\n"))
 }
 
 /// If all arms are `true -> expr` and `false -> expr`, return (true_body, false_body).

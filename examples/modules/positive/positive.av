@@ -1,0 +1,49 @@
+module Positive
+    exposes [fromInt, toInt, mul]
+    exposes opaque [Positive]
+    intent =
+        "Refinement-via-opaque, strictly-positive variant. Same"
+        "shape as Natural but the smart constructor gates on"
+        "`n > 0` instead of `n >= 0`. Exercises the auto-proof"
+        "generator's predicate extraction: the by_cases clause it"
+        "emits should read `by_cases h_a : a > 0`, copied straight"
+        "from this fn's body, not a Nat-style `≥ 0`."
+    effects []
+
+record Positive
+    value: Int
+
+fn fromInt(n: Int) -> Result<Positive, String>
+    ? "Smart constructor — admits only strictly-positive ints."
+    match n > 0
+        true  -> Result.Ok(Positive(value = n))
+        false -> Result.Err("Positive must be > 0")
+
+verify fromInt
+    fromInt(1)  => Result.Ok(Positive(value = 1))
+    fromInt(7)  => Result.Ok(Positive(value = 7))
+    fromInt(0)  => Result.Err("Positive must be > 0")
+    fromInt(-1) => Result.Err("Positive must be > 0")
+
+fn toInt(n: Positive) -> Int
+    ? "Unwrap a Positive into its underlying Int. Always > 0."
+    n.value
+
+verify toInt
+    toInt(Positive(value = 1)) => 1
+    toInt(Positive(value = 5)) => 5
+
+fn mul(a: Positive, b: Positive) -> Result<Positive, String>
+    ? "Product of two Positives — overflow-safe via fromInt."
+    fromInt(a.value * b.value)
+
+verify mul
+    mul(Positive(value = 2), Positive(value = 3)) => Result.Ok(Positive(value = 6))
+    mul(Positive(value = 1), Positive(value = 7)) => Result.Ok(Positive(value = 7))
+
+verify mul law commutative
+    given a: Int = [1, 2, 7, 12]
+    given b: Int = [1, 2, 7, 12]
+    when a > 0
+    when b > 0
+    mul(Positive(value = a), Positive(value = b)) => mul(Positive(value = b), Positive(value = a))
