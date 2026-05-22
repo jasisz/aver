@@ -1162,15 +1162,22 @@ pub fn emit_verify_law(
         }
     }
 
-    // Drop the `when` guard when any given was refinement-lifted: the
-    // predicate is now carried by the refined parameter type, so a
-    // `requires` clause restating it would be redundant (and would
-    // talk about a now-nonexistent `int` projection).
-    if let Some(when_expr) = &law.when
-        && lifted_vars.is_empty()
-    {
-        let when_str = emit_expr(when_expr, ctx);
-        lines.push(format!("  requires {}", when_str));
+    // `when` is dropped only when it's syntactically equivalent (via
+    // commutator-relaxed compare) to the conjunction of lifted givens'
+    // refinement invariants — otherwise stronger / orthogonal user
+    // predicates would be silently lost (e.g. `when a >= 10` over `a :
+    // Natural` whose invariant is `a.val >= 0`). Same identity check
+    // the Lean backend uses.
+    if let Some(when_expr) = &law.when {
+        let when_redundant = crate::codegen::common::when_is_redundant_with_refinement_lifts(
+            when_expr,
+            &lifted_vars,
+            ctx,
+        );
+        if !when_redundant {
+            let when_str = emit_expr(when_expr, ctx);
+            lines.push(format!("  requires {}", when_str));
+        }
     }
 
     // Bounded-∀ detection: when the law reaches mutual-rec SCC fns

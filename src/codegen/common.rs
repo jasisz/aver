@@ -347,6 +347,249 @@ pub fn strip_refinement_wrappers(
     Spanned::new(new_node, expr.line)
 }
 
+/// Swap a comparison BinOp's operands canonically: `a OP b` ≡ `b OP' a`
+/// where OP' is the commutator-flipped op (`Lt ↔ Gt`, `Lte ↔ Gte`,
+/// `Eq` and `Neq` symmetric). Returns `None` for non-comparator BinOps.
+/// Used by `predicate_syntactic_eq` so `0 <= a` matches `a >= 0` for the
+/// `when`-vs-refinement-invariant check.
+pub fn swap_comparison_operands_op(op: &crate::ast::BinOp) -> Option<crate::ast::BinOp> {
+    use crate::ast::BinOp::*;
+    match op {
+        Lt => Some(Gt),
+        Gt => Some(Lt),
+        Lte => Some(Gte),
+        Gte => Some(Lte),
+        Eq => Some(Eq),
+        Neq => Some(Neq),
+        _ => None,
+    }
+}
+
+/// Structural equality on Aver predicate expressions with commutator
+/// relaxation: at every `BinOp` comparator node, allow the operands +
+/// operator to be swapped. Both `a >= 0` and `0 <= a` compare equal,
+/// recursively. Non-comparator BinOps (`Add`, `Sub`, ...) and other
+/// `Expr` variants fall through to the derived `PartialEq` on
+/// `Spanned<Expr>` (which compares `.node` only — line numbers don't
+/// participate). Used by the `when`-vs-refinement-invariant identity
+/// check so a redundantly-written user `when` gets recognised even when
+/// the operand order doesn't match the smart constructor's predicate
+/// verbatim.
+pub fn predicate_syntactic_eq(a: &Spanned<Expr>, b: &Spanned<Expr>) -> bool {
+    match (&a.node, &b.node) {
+        (Expr::BinOp(op_a, la, ra), Expr::BinOp(op_b, lb, rb)) => {
+            if op_a == op_b && predicate_syntactic_eq(la, lb) && predicate_syntactic_eq(ra, rb) {
+                return true;
+            }
+            if let Some(swapped) = swap_comparison_operands_op(op_a)
+                && &swapped == op_b
+                && predicate_syntactic_eq(la, rb)
+                && predicate_syntactic_eq(ra, lb)
+            {
+                return true;
+            }
+            false
+        }
+        _ => a.node == b.node,
+    }
+}
+
+/// Flatten a chain of `Bool.and(a, b)` calls into the flat list of
+/// leaf predicates. Aver's `when a >= 0` / `when b >= 0` syntax folds
+/// multiple `when` lines into nested `Bool.and(prev, next)` at parse
+/// time (see `parser/blocks.rs`'s law-block loop), so the predicate
+/// arrives at codegen as `Bool.and(Bool.and(p1, p2), p3)`. Identity
+/// checks against per-given refinement invariants need the flat shape.
+pub fn flatten_bool_and_conjuncts(expr: &Spanned<Expr>) -> Vec<Spanned<Expr>> {
+    if let Expr::FnCall(callee, args) = &expr.node
+        && args.len() == 2
+        && let Some(name) = expr_to_dotted_name(&callee.node)
+        && name == "Bool.and"
+    {
+        let mut out = flatten_bool_and_conjuncts(&args[0]);
+        out.extend(flatten_bool_and_conjuncts(&args[1]));
+        return out;
+    }
+    vec![expr.clone()]
+}
+
+/// Walk `expr` and rename every `Ident(from)` / `Resolved { name: from
+/// }` to `Ident(to)`. Lives here (not in `recursion`) because three
+/// proof-mode predicate sources reach for the same substitution:
+/// caller-guard extraction translates caller's local-var name to
+/// callee's param name; opaque-type `when`-redundancy check translates
+/// smart constructor's param name to the law's given name; future
+/// callers (verify-law domain translation, etc.) will too. Single
+/// definition keeps Lean and Dafny in sync.
+pub fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> Spanned<Expr> {
+    use crate::ast::{MatchArm, StrPart, TailCallData};
+    let line = expr.line;
+    let new_node = match &expr.node {
+        Expr::Ident(name) | Expr::Resolved { name, .. } if name == from => {
+            Expr::Ident(to.to_string())
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => return expr.clone(),
+        Expr::Attr(obj, field) => Expr::Attr(
+            Box::new(substitute_ident_in_expr(obj, from, to)),
+            field.clone(),
+        ),
+        Expr::FnCall(callee, args) => Expr::FnCall(
+            Box::new(substitute_ident_in_expr(callee, from, to)),
+            args.iter()
+                .map(|a| substitute_ident_in_expr(a, from, to))
+                .collect(),
+        ),
+        Expr::BinOp(op, left, right) => Expr::BinOp(
+            *op,
+            Box::new(substitute_ident_in_expr(left, from, to)),
+            Box::new(substitute_ident_in_expr(right, from, to)),
+        ),
+        Expr::Neg(inner) => Expr::Neg(Box::new(substitute_ident_in_expr(inner, from, to))),
+        Expr::Match { subject, arms } => Expr::Match {
+            subject: Box::new(substitute_ident_in_expr(subject, from, to)),
+            arms: arms
+                .iter()
+                .map(|arm| MatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: Box::new(substitute_ident_in_expr(&arm.body, from, to)),
+                    binding_slots: std::sync::OnceLock::new(),
+                })
+                .collect(),
+        },
+        Expr::Constructor(name, arg) => Expr::Constructor(
+            name.clone(),
+            arg.as_ref()
+                .map(|inner| Box::new(substitute_ident_in_expr(inner, from, to))),
+        ),
+        Expr::ErrorProp(inner) => {
+            Expr::ErrorProp(Box::new(substitute_ident_in_expr(inner, from, to)))
+        }
+        Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
+            parts
+                .iter()
+                .map(|part| match part {
+                    StrPart::Literal(_) => part.clone(),
+                    StrPart::Parsed(inner) => {
+                        StrPart::Parsed(Box::new(substitute_ident_in_expr(inner, from, to)))
+                    }
+                })
+                .collect(),
+        ),
+        Expr::List(items) => Expr::List(
+            items
+                .iter()
+                .map(|item| substitute_ident_in_expr(item, from, to))
+                .collect(),
+        ),
+        Expr::Tuple(items) => Expr::Tuple(
+            items
+                .iter()
+                .map(|item| substitute_ident_in_expr(item, from, to))
+                .collect(),
+        ),
+        Expr::IndependentProduct(items, flag) => Expr::IndependentProduct(
+            items
+                .iter()
+                .map(|item| substitute_ident_in_expr(item, from, to))
+                .collect(),
+            *flag,
+        ),
+        Expr::MapLiteral(entries) => Expr::MapLiteral(
+            entries
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        substitute_ident_in_expr(k, from, to),
+                        substitute_ident_in_expr(v, from, to),
+                    )
+                })
+                .collect(),
+        ),
+        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
+            type_name: type_name.clone(),
+            fields: fields
+                .iter()
+                .map(|(n, v)| (n.clone(), substitute_ident_in_expr(v, from, to)))
+                .collect(),
+        },
+        Expr::RecordUpdate {
+            type_name,
+            base,
+            updates,
+        } => Expr::RecordUpdate {
+            type_name: type_name.clone(),
+            base: Box::new(substitute_ident_in_expr(base, from, to)),
+            updates: updates
+                .iter()
+                .map(|(n, v)| (n.clone(), substitute_ident_in_expr(v, from, to)))
+                .collect(),
+        },
+        Expr::TailCall(boxed) => Expr::TailCall(Box::new(TailCallData::new(
+            boxed.target.clone(),
+            boxed
+                .args
+                .iter()
+                .map(|a| substitute_ident_in_expr(a, from, to))
+                .collect(),
+        ))),
+    };
+    Spanned::new(new_node, line)
+}
+
+/// True iff every refinement-lifted given's invariant is
+/// syntactically captured by some clause of `when` (and vice versa —
+/// a bijection between conjuncts). Used by both Lean and Dafny law
+/// emitters to decide whether `when` is provably redundant with the
+/// types of the lifted givens; if yes, drop it from the theorem
+/// premise (carrier is now the type's invariant); if no, keep it so
+/// the user's stronger / orthogonal predicate stays part of the claim
+/// and isn't silently lost.
+///
+/// Same `Spanned<Expr>`-as-predicate path opaque smart constructors
+/// already use — `refinement_info_for` provides the invariant, the
+/// substitution maps the smart constructor's param name into the
+/// given's variable space, and `predicate_syntactic_eq` does the
+/// commutator-relaxed compare. No new representation, no parallel
+/// emitter.
+pub fn when_is_redundant_with_refinement_lifts(
+    when_expr: &Spanned<Expr>,
+    lifted_vars: &std::collections::HashMap<String, String>,
+    ctx: &CodegenContext,
+) -> bool {
+    if lifted_vars.is_empty() {
+        return false;
+    }
+    let when_conjuncts = flatten_bool_and_conjuncts(when_expr);
+    // Flatten BOTH sides — IntRange-style refinement predicates carry a
+    // compound `Bool.and(n >= 0, n <= 100)` invariant; without
+    // flattening, a `when Bool.and(a >= 0, a <= 100)` user clause
+    // (which the parser also flattens into atoms during conjunct
+    // walk) would length-mismatch and keep the now-redundant
+    // premise. Same flatten on both sides keeps natural / positive
+    // / int_range behavior identical to pre-fix.
+    let mut lifted_predicates: Vec<Spanned<Expr>> = Vec::new();
+    for (given_name, refined_type) in lifted_vars {
+        let Some(info) = refinement_info_for(refined_type, ctx) else {
+            return false;
+        };
+        let substituted = substitute_ident_in_expr(info.predicate, info.param_name, given_name);
+        lifted_predicates.extend(flatten_bool_and_conjuncts(&substituted));
+    }
+    if when_conjuncts.len() != lifted_predicates.len() {
+        return false;
+    }
+    let mut matched = vec![false; lifted_predicates.len()];
+    for wc in &when_conjuncts {
+        let Some(idx) = (0..lifted_predicates.len())
+            .find(|&i| !matched[i] && predicate_syntactic_eq(wc, &lifted_predicates[i]))
+        else {
+            return false;
+        };
+        matched[idx] = true;
+    }
+    true
+}
+
 fn is_err_constructor(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::Constructor(name, Some(_)) => name == "Result.Err",

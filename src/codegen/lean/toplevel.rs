@@ -11,7 +11,7 @@ use super::types::type_annotation_to_lean;
 use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::codegen::recursion::rewrite_recursive_calls_body;
+use crate::codegen::recursion::{native_aux_name, rewrite_recursive_calls_body};
 use crate::verify_law::canonical_spec_ref;
 
 /// Emit a Lean 4 type definition from an Aver TypeDef.
@@ -655,6 +655,107 @@ fn strip_match_eq_binders(body: String) -> String {
         .join("\n")
 }
 
+/// Native `IntCountdown` emission for closed-world fns with the canonical
+/// `match p { 0 -> BASE; _ -> rec(p-1, ...) }` shape. Splits the fn into:
+///
+/// - `<name>__aux` — the real recursion carrying an explicit `(h : p ≥ 0)`
+///   precondition. Recursive callsites in its body are rewritten to call
+///   `<name>__aux` instead of `<name>` with an extra `(by omega)` proof
+///   obligation appended (synthesized via the
+///   `OMEGA_PROOF_SENTINEL` ident — see `lean::expr::emit_expr`).
+/// - `<name>` — the public wrapper preserving the original Aver signature.
+///   Dispatches on `p ≥ 0` to the aux; the `p < 0` branch returns `BASE`
+///   (the source's `0` arm). That falls outside the Aver well-formed
+///   domain for the issue-84 fibonacci-style targets, but keeping the aux
+///   private and total avoids forcing every call site (verify samples,
+///   peer fn bodies) to thread proof obligations.
+///
+/// Lean accepts this because the aux's `termination_by p.natAbs` together
+/// with `(h : p ≥ 0)` + the `_` arm's implicit `p ≠ 0` lets `omega`
+/// discharge `(p - 1).natAbs < p.natAbs` mechanically.
+fn emit_native_guarded_int_countdown_fn(
+    fd: &FnDef,
+    ctx: &CodegenContext,
+    param_index: usize,
+    base_arm_literal: i64,
+    base_arm_body: &Spanned<Expr>,
+    wildcard_arm_body: &Spanned<Expr>,
+    precondition: &[Spanned<Expr>],
+) -> String {
+    let aux_name = native_aux_name(&fd.name);
+    let main_name = aver_name_to_lean(&fd.name);
+    let lean_aux_name = aver_name_to_lean(&aux_name);
+    let Some((param_name, _)) = fd.params.get(param_index) else {
+        return emit_fuelized_int_countdown_fn(fd, ctx, param_index);
+    };
+    let lean_pname = aver_name_to_lean(param_name);
+
+    // Precondition: AND of caller-derived predicates, or `(p ≥ 0)`
+    // when the artifact has no single external caller (free-standing
+    // fns / test fixtures). Same `Spanned<Expr>`-as-predicate path
+    // opaque types use, so `emit_expr` is the single emitter — no
+    // parallel infrastructure.
+    let precond_lean = if precondition.is_empty() {
+        format!("{} ≥ 0", lean_pname)
+    } else {
+        precondition
+            .iter()
+            .map(|p| format!("({})", emit_expr(p, ctx)))
+            .collect::<Vec<_>>()
+            .join(" ∧ ")
+    };
+
+    let aux_params = format!("{} (h_dom : {})", emit_fn_params(&fd.params), precond_lean);
+    let main_params = emit_fn_params(&fd.params);
+    let ret_type = ret_type_or_unit(fd);
+
+    // Emit `if h_zero : n = LITERAL then BASE else REC` rather than
+    // `match n with | LITERAL => ... | _ => ...`. The dependent `if h :
+    // c then ... else` form puts `h : c` / `h : ¬c` in scope for the
+    // corresponding branch, which `omega` needs to discharge `(n - 1)
+    // ≥ 0` and `(n - 1).natAbs < n.natAbs` at the recursive callsite +
+    // termination check. Plain `match` would leave the case-split
+    // implicit (only an unnamed `casesOn` motive carries it) and
+    // `omega` can't see it.
+    let rewritten_wc = crate::codegen::recursion::rewrite_native_guarded_calls_expr(
+        wildcard_arm_body,
+        &fd.name,
+        &aux_name,
+    );
+    let base_str = emit_expr(base_arm_body, ctx);
+    let rec_str = emit_expr(&rewritten_wc, ctx);
+    let arg_names = emit_fn_param_names(&fd.params);
+
+    let mut lines = Vec::new();
+    lines.extend(emit_doc_comment(&fd.desc));
+    lines.push(format!(
+        "def {} {} : {} :=",
+        lean_aux_name, aux_params, ret_type
+    ));
+    lines.push(format!(
+        "  if h_zero : {} = {} then {}",
+        lean_pname, base_arm_literal, base_str
+    ));
+    lines.push(format!("  else {}", rec_str));
+    lines.push(format!("termination_by Int.natAbs {}", lean_pname));
+    lines.push("decreasing_by".to_string());
+    lines.push("  simp_wf".to_string());
+    lines.push("  omega".to_string());
+    lines.push(String::new());
+
+    lines.push(format!(
+        "def {} {} : {} :=",
+        main_name, main_params, ret_type
+    ));
+    lines.push(format!(
+        "  if h_dom : {} then {} {} h_dom",
+        precond_lean, lean_aux_name, arg_names
+    ));
+    lines.push(format!("  else {}", base_str));
+
+    lines.join("\n")
+}
+
 fn emit_fuelized_int_countdown_fn(fd: &FnDef, ctx: &CodegenContext, param_index: usize) -> String {
     let helper_name = fuel_helper_name(&fd.name);
     let params = emit_fn_params(&fd.params);
@@ -1136,6 +1237,25 @@ pub fn emit_fn_def_proof(
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
     }
 
+    if let Some(RecursionPlan::IntCountdownGuarded {
+        param_index,
+        base_arm_literal,
+        ref base_arm_body,
+        ref wildcard_arm_body,
+        ref precondition,
+    }) = recursion_plan
+    {
+        return Some(emit_native_guarded_int_countdown_fn(
+            fd,
+            ctx,
+            param_index,
+            base_arm_literal,
+            base_arm_body,
+            wildcard_arm_body,
+            precondition,
+        ));
+    }
+
     if let Some(RecursionPlan::IntAscending {
         param_index,
         ref bound,
@@ -1182,6 +1302,7 @@ pub fn emit_fn_def_proof(
         match plan {
             RecursionPlan::LinearRecurrence2 => {}
             RecursionPlan::IntCountdown { .. } => {}
+            RecursionPlan::IntCountdownGuarded { .. } => {}
             RecursionPlan::IntAscending { .. } => {}
             RecursionPlan::MutualIntCountdown => {
                 let Some((param_name, _)) = fd.params.first() else {
@@ -1926,15 +2047,19 @@ fn law_theorem_prop(
     lifted_vars: &std::collections::HashMap<String, String>,
 ) -> String {
     let mut premises = Vec::new();
+    let when_redundant_with_lifts = law
+        .when
+        .as_ref()
+        .map(|w| {
+            crate::codegen::common::when_is_redundant_with_refinement_lifts(w, lifted_vars, ctx)
+        })
+        .unwrap_or(false);
     if law.when.is_some() {
         // Lifted vars are quantified over the refinement record
-        // (`a : Natural`), not the carrier `Int`, so the
-        // disjunctive domain premise (`a = 0 ∨ a = 1 ∨ …`) is
-        // type-mismatched (Lean sees `0 : Int` against
-        // `a : Natural`) and the `when a ≥ 0` premise is trivially
-        // entailed by the type's invariant. Skip both for lifted
-        // givens — the universal claim over the refined type is
-        // strictly stronger than a domain-restricted one.
+        // (`a : Natural`), not the carrier `Int`, so the disjunctive
+        // domain premise (`a = 0 ∨ a = 1 ∨ …`) is type-mismatched
+        // (Lean sees `0 : Int` against `a : Natural`). Skip the
+        // domain premise for any lifted given.
         premises.extend(law.givens.iter().filter_map(|given| {
             if lifted_vars.contains_key(&given.name) {
                 None
@@ -1943,8 +2068,15 @@ fn law_theorem_prop(
             }
         }));
     }
+    // `when` drop is only sound when the predicate is syntactically
+    // equivalent (via commutator-relaxed compare) to the conjunction
+    // of lifted givens' refinement invariants — otherwise stronger /
+    // orthogonal user predicates would be silently lost from the
+    // emitted theorem (e.g. `when a >= 10` over `a : Natural` whose
+    // invariant is `a.val >= 0`). Same identity check the Dafny
+    // backend uses.
     if let Some(when_expr) = when_template
-        && !law.givens.iter().all(|g| lifted_vars.contains_key(&g.name))
+        && !when_redundant_with_lifts
     {
         premises.push(format!("{when_expr} = true"));
     }

@@ -10,6 +10,18 @@ use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_c
 pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
     match &expr.node {
         Expr::Literal(lit) => emit_literal(lit),
+        // Synthetic ident injected by the proof-mode recursion lowerer
+        // (`recursion::rewrite_native_guarded_calls`) to mark a position
+        // where Lean needs an `(by omega)` proof obligation for the
+        // recursive-call precondition. Stays a plain Aver `Expr::Ident`
+        // through the AST so Dafny's emit path (which doesn't inject this
+        // sentinel) and the type checker (already done before codegen)
+        // never see it.
+        Expr::Ident(name) | Expr::Resolved { name, .. }
+            if name == crate::codegen::recursion::OMEGA_PROOF_SENTINEL =>
+        {
+            "(by omega)".to_string()
+        }
         Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_lean(name),
         Expr::Attr(obj, field) => {
             // Refinement-via-opaque records emit as Lean `Subtype`,
