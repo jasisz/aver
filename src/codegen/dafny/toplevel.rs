@@ -574,6 +574,22 @@ fn collect_called_fns(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet
                 collect_called_fns(e, out);
             }
         }
+        Expr::TailCall(tc) => {
+            let TailCallData { target, args, .. } = tc.as_ref();
+            if !target.contains('.') {
+                out.insert(target.clone());
+            }
+            for a in args {
+                collect_called_fns(a, out);
+            }
+        }
+        Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
+            for e in elems {
+                collect_called_fns(e, out);
+            }
+        }
+        Expr::Attr(obj, _) => collect_called_fns(obj, out),
+        Expr::Neg(inner) => collect_called_fns(inner, out),
         _ => {}
     }
 }
@@ -751,25 +767,39 @@ pub fn emit_law_samples(
             let mut callees = std::collections::BTreeSet::new();
             collect_called_fns(lhs_rw, &mut callees);
             collect_called_fns(rhs_rw, &mut callees);
-            let mut transitive = std::collections::BTreeSet::new();
-            for f in &callees {
-                if let Some(fd) = ctx
-                    .items
-                    .iter()
-                    .filter_map(|i| {
-                        if let TopLevel::FnDef(fd) = i {
-                            Some(fd)
-                        } else {
-                            None
+            // Full transitive closure — 1-level was missing deep
+            // SCC members (addLeft → addStep → addDigits → ...).
+            // Without them, fuel attrs only land on direct callees
+            // and Z3 leaves the rest sealed by their wrappers'
+            // metric, which is enough for `add(0, X)` (recursion
+            // bottoms out immediately) but not for `(X, Y)` with
+            // multi-digit operands.
+            let mut changed = true;
+            while changed {
+                changed = false;
+                let snapshot: Vec<String> = callees.iter().cloned().collect();
+                for f in &snapshot {
+                    if let Some(fd) = ctx
+                        .items
+                        .iter()
+                        .filter_map(|i| {
+                            if let TopLevel::FnDef(fd) = i {
+                                Some(fd)
+                            } else {
+                                None
+                            }
+                        })
+                        .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+                        .find(|fd| &fd.name == f)
+                    {
+                        let before = callees.len();
+                        collect_called_fns_in_body(&fd.body, &mut callees);
+                        if callees.len() != before {
+                            changed = true;
                         }
-                    })
-                    .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
-                    .find(|fd| &fd.name == f)
-                {
-                    collect_called_fns_in_body(&fd.body, &mut transitive);
+                    }
                 }
             }
-            callees.extend(transitive);
             let mut fuel_targets: Vec<String> = Vec::new();
             for f in &callees {
                 if !known.contains(f) {
@@ -1055,11 +1085,11 @@ pub fn emit_verify_law(
     // ensures can't be proved from Dafny's side. Match Lean's
     // `sorry` fallback by emitting `assume` over the ensures —
     // users get the same "this lemma is accepted on trust" signal.
+    // (Bounded-∀ form via per-pair sample lemma dispatch was
+    // tried — works for small pairs but Z3 still can't close
+    // samples with large literals like 10⁹ even at fuel 500; see
+    // issue #81 for the follow-up.)
     if law_refs_opaque_fn(&law.lhs, opaque_fns) || law_refs_opaque_fn(&law.rhs, opaque_fns) {
-        // `{:axiom}` on the assume silences Dafny's
-        // "assume statement has no {:axiom} annotation" warning, since
-        // we're explicitly treating this as an axiom on trust (same
-        // shape as Lean's `sorry`).
         lines.push(format!("  assume {{:axiom}} {} == {};", lhs, rhs));
         lines.push("}\n".to_string());
         return lines.join("\n");
