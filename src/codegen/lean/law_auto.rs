@@ -11,7 +11,7 @@ mod spec;
 
 use super::VerifyEmitMode;
 use super::expr::{aver_name_to_lean, emit_expr};
-use crate::ast::{Expr, Pattern, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw, MatchArm};
+use crate::ast::{Expr, Literal, MatchArm, Pattern, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
 use sampled::emit_guarded_domain_law;

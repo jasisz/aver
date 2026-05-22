@@ -147,7 +147,10 @@ fn is_ok_constructor_with_identity(
         return false;
     }
     let (t, fields) = match ctor_arg_node {
-        Expr::RecordCreate { type_name: t, fields } => (t.as_str(), fields),
+        Expr::RecordCreate {
+            type_name: t,
+            fields,
+        } => (t.as_str(), fields),
         _ => return false,
     };
     if t != type_name || fields.len() != 1 {
