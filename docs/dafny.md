@@ -68,10 +68,20 @@ Recursive functions fall into three buckets based on the shared classifier in `c
 **Direct-recursion patterns** — emitted as normal Dafny `function`s with inferred `decreases` clauses:
 - List parameter → `decreases |xs|`
 - String parameter → `decreases |s|`
-- Int countdown (`match n { 0 -> …; _ -> recur(n-1, …) }`) → `requires n >= 0` + `decreases n`
-- Int countdown with explicit `match n < 0` base → `decreases if n >= 0 then n else 0`
+- Int countdown (`match n { 0 -> …; _ -> recur(n-1, …) }`) → `requires n >= 0` + `decreases n`. Callers discharge the `requires` via Dafny's auto-inference from surrounding `if`/`match` shapes — `match (n < 0) { false -> worker(n) }` resolves to `n >= 0` automatically.
+- Int countdown with explicit `match n < 0` base → `decreases if n >= 0 then n else 0` (no `requires`, the body itself handles the negative case).
 
-**Mutual-recursion SCCs** — emitted as fuel-guarded pairs, parallel to Lean's `def fn__fuel (fuel : Nat) …`:
+**Mutual-recursion SCCs** — preferred path emits as native `decreases` tuples when every member has a measurable `List`/`Vector`/`String` parameter (most BigInt-style SCCs):
+
+```dafny
+function fn(args): T
+  decreases <sizeof_measure>, <rank>
+{ <body with intra-SCC calls unchanged> }
+```
+
+The size measure sums `|seq_param|` for every `List`/`Vector`/`String` parameter; the rank is the recursion classifier's topo position over "same-measure" callees, so a call that keeps the size constant decreases lexicographically on rank instead. Z3 unfolds these to ground terms during proof obligations — no fuel ceiling on large literals (BigInt's `10⁹`).
+
+**Fuel fallback** — SCCs without a measurable parameter (pure `Int`-only mutual recursion) still go through fuel-guarded pairs, parallel to Lean's `def fn__fuel (fuel : Nat) …`:
 
 ```dafny
 function fn__fuel(fuel: nat, args): T

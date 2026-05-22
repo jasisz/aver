@@ -144,13 +144,13 @@ That combination means:
 - unsupported recursive pure functions are called out explicitly and emitted with `partial` fallback
 
 The current proof export supports:
-- single-function `Int` countdown on an `Int` parameter (`n -> n - 1`)
+- single-function `Int` countdown on an `Int` parameter (`n -> n - 1`). Closed-world fns (no `exposes` clause, or absent from the list) with the canonical `match p { L -> base; _ -> rec(p-1, ...) }` body emit as a native aux def carrying a precondition extracted from the unique external caller's surrounding `match`/`if` guards — `(h_dom : n ≥ 0)` from `fib`'s `match (n < 0) { false -> ... }` arm, or compound predicates like `(h_dom : n > 2 ∧ n < 500)` from nested caller guards. The aux is wrapped by a thin public def preserving the original signature. `Lean omega` closes the per-callsite preservation obligation and the `Int.natAbs n` decrease automatically. Other countdown shapes (exposed fns, multi-caller fns, leading let-bindings) fall back to fuel-encoded helpers.
 - single-function second-order affine `Int` recurrences with `n < 0` guard, `0/1` case split, and a matching pair-state tail worker, emitted via a private `Nat` helper
 - single-function structural recursion on any `List<_>` parameter
 - single-function `String + pos` recursion on `(String, Int)` signatures
 - mutual recursion SCC with first-parameter `Int` countdown
 - mutual recursion SCC with ranked `String + pos` progress
-- mutual recursion SCC with ranked structural descent over recursive parameters
+- mutual recursion SCC with ranked structural descent over recursive parameters (emitted as native `mutual ... termination_by ... end` block when every SCC member has a `List`/`Vector` sizeOf measure; fuel-encoded otherwise)
 
 ## Current end-to-end examples
 
