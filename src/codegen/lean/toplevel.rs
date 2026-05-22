@@ -869,6 +869,116 @@ fn emit_fuelized_mutual_int_countdown_group(fns: &[&FnDef], ctx: &CodegenContext
         .join("\n")
 }
 
+/// Termination measure for Lean's native `termination_by` clause —
+/// `name.length` for List/Vector/String params (Lean's stdlib
+/// `List.length` is what `decreasing_tactic` knows how to chase),
+/// `sizeOf name` fallback for recursive ADTs. Sum across every
+/// sizeOf-relevant param.
+fn emit_native_termination_measure(fd: &FnDef) -> Option<String> {
+    let indices = crate::codegen::recursion::detect::sizeof_measure_param_indices(fd);
+    let mut terms: Vec<String> = Vec::new();
+    for idx in indices {
+        let (name, ty) = fd.params.get(idx)?;
+        let parsed = crate::codegen::common::parse_type_annotation(ty);
+        let lean_name = aver_name_to_lean(name);
+        match parsed {
+            crate::types::Type::List(_) | crate::types::Type::Vector(_) => {
+                // `sizeOf` instead of `.length` so the user measure
+                // matches what Lean's mutual-block wf elaboration
+                // generates internally — `decreasing_tactic` then
+                // closes the chain without `simp_wf` scrambling.
+                terms.push(format!("sizeOf {lean_name}"));
+            }
+            // Skip Named ADTs and String: `sizeOf` decrease on a
+            // recursive ADT in a multi-arg measure (`step f` from
+            // `stepApp f arg`, measure `sizeOf f + sizeOf arg`)
+            // needs the strict-positivity fact `sizeOf arg ≥ 1`
+            // which omega doesn't get for free. Fall back to fuel
+            // for those SCCs — accumulator-pattern guard already
+            // filters them too, so the only effect here is a more
+            // conservative measure-existence gate.
+            _ => return None,
+        }
+    }
+    (!terms.is_empty()).then(|| terms.join(" + "))
+}
+
+/// Native termination emission for mutual-recursion SCCs whose
+/// every member has a sizeOf measure (List / Vector / String) and a
+/// classifier rank — Lean 4 `mutual ... end` block with one
+/// `termination_by` per def, lex tuple `(sizeOf_sum, rank)` from
+/// `MutualSizeOfRanked`. Mirrors the Dafny native path from #83.
+///
+/// Returns `None` when:
+/// - SCC isn't fully `MutualSizeOfRanked` (caller picks fuel)
+/// - Any member has no inferable sizeOf measure
+/// - Growing-accumulator pattern detected (tail-rec `[x] + acc`
+///   shapes won't decrease the lex tuple)
+fn emit_native_mutual_sizeof_group(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+    plans: &HashMap<String, RecursionPlan>,
+) -> Option<String> {
+    let mut ranks: HashMap<String, usize> = HashMap::new();
+    for fd in fns {
+        if !is_pure_fn(fd) {
+            return None;
+        }
+        match plans.get(&fd.name)? {
+            RecursionPlan::MutualSizeOfRanked { rank } => {
+                ranks.insert(fd.name.clone(), *rank);
+            }
+            _ => return None,
+        }
+    }
+    let mut measures: HashMap<String, String> = HashMap::new();
+    for fd in fns {
+        let measure = emit_native_termination_measure(fd)?;
+        measures.insert(fd.name.clone(), measure);
+    }
+    if crate::codegen::recursion::detect::scc_has_growing_accumulator(fns) {
+        return None;
+    }
+
+    let mut lines: Vec<String> = vec!["mutual".to_string()];
+    for fd in fns {
+        let measure = measures.get(&fd.name).unwrap();
+        let rank = ranks.get(&fd.name).unwrap();
+        let fn_name = aver_name_to_lean(&fd.name);
+        let params = emit_fn_params(&fd.params);
+        let ret_type = ret_type_or_unit(fd);
+        let lowered = lower_pure_question_bang_for_emit(fd);
+        let body_fn = lowered.as_ref().unwrap_or(fd);
+        let body_ast = lowered
+            .as_ref()
+            .map(|l| l.body.as_ref())
+            .unwrap_or(fd.body.as_ref());
+        let body = emit_fn_body_for(body_fn, body_ast, ctx);
+
+        lines.extend(
+            emit_doc_comment(&fd.desc)
+                .into_iter()
+                .map(|line| format!("  {line}")),
+        );
+        lines.push(format!("  def {} {} : {} :=", fn_name, params, ret_type));
+        for body_line in body.lines() {
+            lines.push(format!("  {body_line}"));
+        }
+        lines.push(format!("  termination_by ({measure}, {rank})"));
+        // Robust tactic chain — `decreasing_tactic` alone bottoms out
+        // on simple shapes (BigInt) but Lean elaborator on multi-arg
+        // mutual SCCs sometimes needs `simp_wf` to unfold sizeOf
+        // before omega can close the arithmetic on lengths.
+        lines.push(
+            "  decreasing_by all_goals (first | decreasing_tactic | (simp_wf; (try simp_all); first | omega | (constructor <;> first | rfl | omega)))"
+                .to_string(),
+        );
+        lines.push(String::new());
+    }
+    lines.push("end".to_string());
+    Some(lines.join("\n"))
+}
+
 fn emit_fuelized_mutual_sizeof_group(
     fns: &[&FnDef],
     ctx: &CodegenContext,
@@ -1979,6 +2089,9 @@ pub fn emit_mutual_group_proof(
             Some(RecursionPlan::MutualSizeOfRanked { .. })
         )
     }) {
+        if let Some(code) = emit_native_mutual_sizeof_group(fns, ctx, plans) {
+            return code;
+        }
         return emit_fuelized_mutual_sizeof_group(fns, ctx, plans);
     }
 

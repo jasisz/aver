@@ -172,7 +172,7 @@ pub fn emit_mutual_native_decreases_group(
     // counts down regardless of measure shape), so we fall back to
     // it for these SCCs. Conservative: any non-`Ident`/`Resolved`/
     // `Literal`/`Attr` arg in a sizeOf slot drops us back to fuel.
-    if scc_has_growing_accumulator(fns) {
+    if crate::codegen::recursion::detect::scc_has_growing_accumulator(fns) {
         return None;
     }
 
@@ -206,64 +206,6 @@ pub fn emit_mutual_native_decreases_group(
         lines.push("}\n".to_string());
     }
     Some(lines.join("\n"))
-}
-
-/// SizeOf param indices for a fn — non-scalar param positions.
-/// Matches `sizeof_measure_param_indices` on the Lean side so the
-/// same params drive measure / rank decisions across backends.
-fn sizeof_param_indices(fd: &FnDef) -> Vec<usize> {
-    fd.params
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, (_, ty))| {
-            (!crate::codegen::recursion::detect::is_scalar_like_type(ty)).then_some(idx)
-        })
-        .collect()
-}
-
-/// True iff some intra-SCC call passes a non-trivially-shrinking
-/// expression into a callee's sizeOf parameter — `[x] + acc`,
-/// `List.prepend(x, acc)`, `acc + [x]`, etc. These are tail-rec
-/// accumulator patterns that fuel encoding handles fine but
-/// `decreases` tuple cannot, since the measure either preserves or
-/// grows on those edges.
-fn scc_has_growing_accumulator(fns: &[&FnDef]) -> bool {
-    let names: std::collections::HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
-    let mut sizeof_indices: std::collections::HashMap<String, Vec<usize>> =
-        std::collections::HashMap::new();
-    for fd in fns {
-        sizeof_indices.insert(fd.name.clone(), sizeof_param_indices(fd));
-    }
-    for fd in fns {
-        let calls = crate::codegen::recursion::detect::collect_calls_from_body(fd.body.as_ref());
-        for (callee_raw, args) in calls {
-            let Some(callee_name) =
-                crate::codegen::recursion::detect::canonical_callee_name(&callee_raw, &names)
-            else {
-                continue;
-            };
-            let Some(callee_indices) = sizeof_indices.get(&callee_name) else {
-                continue;
-            };
-            for callee_idx in callee_indices {
-                let Some(arg) = args.get(*callee_idx) else {
-                    continue;
-                };
-                if !arg_is_non_growing(arg) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-fn arg_is_non_growing(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
-    use crate::ast::Expr;
-    matches!(
-        &expr.node,
-        Expr::Ident(_) | Expr::Resolved { .. } | Expr::Literal(_) | Expr::Attr(..)
-    )
 }
 
 /// SizeOf measure expression for a fn's `List`/`Vector`/`String`
