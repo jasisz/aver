@@ -108,6 +108,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
 
     let mut fuel_per_scope: HashMap<String, Vec<String>> = HashMap::new();
     let mut fuel_emitted: HashSet<String> = HashSet::new();
+    let mut native_emitted: HashSet<String> = HashSet::new();
     let mut axiom_fn_names: HashSet<String> = HashSet::new();
 
     for component in &mutual_components {
@@ -117,16 +118,32 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             .and_then(|fd| fn_scope.get(&fd.name))
             .cloned()
             .unwrap_or_default();
-        match fuel::emit_mutual_fuel_group(&scc_fns, ctx, &recursion_plans) {
-            Some(code) => {
-                fuel_per_scope.entry(scope).or_default().push(code);
-                for fd in &scc_fns {
-                    fuel_emitted.insert(fd.name.clone());
-                }
+        // Try native `decreases` tuple first — when every member has a
+        // sizeOf-measurable parameter and a classifier rank, the SCC
+        // emits as plain mutual functions and proofs over concrete
+        // values no longer hit the fuel-encoding's symbolic-unfolding
+        // ceiling (BigInt's 10⁹ pairs close as real samples instead of
+        // needing the literal-magnitude cutoff). Falls back to fuel
+        // when the SCC has a non-sizeOf member.
+        if let Some(code) =
+            fuel::emit_mutual_native_decreases_group(&scc_fns, ctx, &recursion_plans)
+        {
+            fuel_per_scope.entry(scope).or_default().push(code);
+            for fd in &scc_fns {
+                native_emitted.insert(fd.name.clone());
             }
-            None => {
-                for fd in &scc_fns {
-                    axiom_fn_names.insert(fd.name.clone());
+        } else {
+            match fuel::emit_mutual_fuel_group(&scc_fns, ctx, &recursion_plans) {
+                Some(code) => {
+                    fuel_per_scope.entry(scope).or_default().push(code);
+                    for fd in &scc_fns {
+                        fuel_emitted.insert(fd.name.clone());
+                    }
+                }
+                None => {
+                    for fd in &scc_fns {
+                        axiom_fn_names.insert(fd.name.clone());
+                    }
                 }
             }
         }
@@ -142,7 +159,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     let emit_pure_or_axiom = |fd: &FnDef| -> String {
         if needs_axiom_for_error_prop(fd) {
             toplevel::emit_fn_def_axiom(fd)
-        } else if fuel_emitted.contains(&fd.name) {
+        } else if fuel_emitted.contains(&fd.name) || native_emitted.contains(&fd.name) {
             String::new()
         } else if axiom_fn_names.contains(&fd.name) {
             toplevel::emit_fn_def_axiom(fd)
@@ -319,9 +336,22 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             let direct_opaque: HashSet<String> =
                 axiom_fn_names.union(&fuel_emitted).cloned().collect();
             let opaque_fns = toplevel::transitive_opaque_closure(ctx, &direct_opaque);
+            // Native mutual-rec members + their transitive callers
+            // also need bounded-∀ universal (true ∀ over int doesn't
+            // close even with native decreases) — but stays separate
+            // from opaque so per-sample bodies on the native path
+            // skip the fuel-magnitude cutoff.
+            let native_transitive = toplevel::transitive_opaque_closure(ctx, &native_emitted);
             if !vb.cases.is_empty()
-                && let Some(code) =
-                    toplevel::emit_law_samples(vb, law, ctx, &suffix, &opaque_fns, &fuel_emitted)
+                && let Some(code) = toplevel::emit_law_samples(
+                    vb,
+                    law,
+                    ctx,
+                    &suffix,
+                    &opaque_fns,
+                    &fuel_emitted,
+                    &native_transitive,
+                )
             {
                 entry_sections.push(code);
             }
@@ -330,6 +360,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                 law,
                 ctx,
                 &opaque_fns,
+                &native_transitive,
                 &suffix,
             ));
         }

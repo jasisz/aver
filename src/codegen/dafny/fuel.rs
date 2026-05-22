@@ -123,6 +123,98 @@ pub fn emit_mutual_fuel_group(
     )
 }
 
+/// Native `decreases` tuple emission for mutual-recursion SCCs whose
+/// every fn has a sizeOf measure on at least one parameter and the
+/// classifier already gave each fn a rank in the SCC. Replaces the
+/// fuel-bounded encoding entirely for these groups: Dafny verifies
+/// termination via the lexicographic tuple `(measure, rank)` and Z3
+/// can symbolically unfold the SCC for proofs over concrete values
+/// without hitting a fuel ceiling.
+///
+/// Returns `None` when the SCC isn't `MutualSizeOfRanked`, or when
+/// any member has no inferable sizeOf measure (no `List`/`Vector`/
+/// `String` parameter). The caller falls back to
+/// [`emit_mutual_fuel_group`] in that case.
+///
+/// Why ranks come from the classifier verbatim: `ranks_from_same_
+/// edges` already topo-sorts on "same-measure" callees, so a call
+/// that keeps the measure constant (e.g. `addStep → addDigits` on
+/// the same `(ta, tb)`) goes to a strictly lower rank — the lex
+/// tuple decreases on the second component. Calls that strictly
+/// shrink the measure (e.g. `addDigits → addLeft` peeling a head
+/// off `a`) decrease on the first component regardless of rank.
+pub fn emit_mutual_native_decreases_group(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+    plans: &std::collections::HashMap<String, RecursionPlan>,
+) -> Option<String> {
+    let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for fd in fns {
+        match plans.get(&fd.name)? {
+            RecursionPlan::MutualSizeOfRanked { rank } => {
+                ranks.insert(fd.name.clone(), *rank);
+            }
+            _ => return None,
+        }
+    }
+    let mut measures: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for fd in fns {
+        let measure = emit_sizeof_measure_expr_dafny(fd)?;
+        measures.insert(fd.name.clone(), measure);
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    for fd in fns {
+        let measure = measures.get(&fd.name).unwrap();
+        let rank = ranks.get(&fd.name).unwrap();
+        let fn_name = aver_name_to_dafny(&fd.name);
+        let params_str = emit_dafny_params(&fd.params);
+        let ret_type_str = super::toplevel::emit_type(&fd.return_type);
+        // Apply `?!` lowering so the body shape matches what the
+        // fuel path also emits — keeps `(f(x), g(y))?!` -> match-
+        // unwrapped tuple even on the native path.
+        let lowered_body = crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+            .ok()
+            .flatten()
+            .map(|lowered| lowered.body.as_ref().clone())
+            .unwrap_or_else(|| fd.body.as_ref().clone());
+        let body_str = super::toplevel::emit_fn_body(&lowered_body, ctx);
+
+        if let Some(desc) = &fd.desc {
+            lines.push(format!("// {}", desc));
+        }
+        lines.push(format!(
+            "function {}({}): {}",
+            fn_name, params_str, ret_type_str
+        ));
+        lines.push(format!("  decreases {}, {}", measure, rank));
+        lines.push("{".to_string());
+        lines.push(format!("  {}", body_str));
+        lines.push("}\n".to_string());
+    }
+    Some(lines.join("\n"))
+}
+
+/// SizeOf measure expression for a fn's `List`/`Vector`/`String`
+/// parameters — Dafny syntax `|name|` for seq/string length. Matches
+/// the index set [`sizeof_measure_param_indices`] uses on the Lean
+/// side so the same fns are picked across backends.
+fn emit_sizeof_measure_expr_dafny(fd: &FnDef) -> Option<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for (name, ty) in &fd.params {
+        let parsed = crate::codegen::common::parse_type_annotation(ty);
+        match parsed {
+            crate::types::Type::List(_)
+            | crate::types::Type::Vector(_)
+            | crate::types::Type::Str => {
+                terms.push(format!("|{}|", aver_name_to_dafny(name)));
+            }
+            _ => {}
+        }
+    }
+    (!terms.is_empty()).then(|| terms.join(" + "))
+}
+
 fn emit_dafny_params(params: &[(String, String)]) -> String {
     params
         .iter()
