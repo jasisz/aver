@@ -12,6 +12,23 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
         Expr::Literal(lit) => emit_literal(lit),
         Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_lean(name),
         Expr::Attr(obj, field) => {
+            // Refinement-via-opaque records emit as Lean `Subtype`,
+            // so the carrier field projects through `.val` instead
+            // of the source-named `.carrier_field`. Detect by the
+            // typechecker stamp on the host expression.
+            if let Some(crate::types::Type::Named(t_name)) = obj.ty()
+                && let Some(info) = crate::codegen::common::refinement_info_for(t_name, ctx)
+                && info.carrier_type == "Int"
+                && field == info.carrier_field
+            {
+                let obj_str = emit_expr(obj, ctx);
+                let needs_parens = !matches!(&obj.node, Expr::Ident(_) | Expr::Resolved { .. });
+                return if needs_parens {
+                    format!("({obj_str}).val")
+                } else {
+                    format!("{obj_str}.val")
+                };
+            }
             if let Expr::Ident(type_name) = &obj.node {
                 // Option.None → none
                 if type_name == "Option" && field == "None" {
@@ -115,6 +132,38 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             }
         }
         Expr::RecordCreate { type_name, fields } => {
+            // Refinement-via-opaque types emit as Lean `Subtype`,
+            // so construction is `⟨value, proof⟩`. The proof
+            // obligation is whatever predicate the smart
+            // constructor branches on; we emit `by omega` because:
+            //   * for `if h : pred then ⟨v, _⟩ else …` shapes the
+            //     dependent-if binding `h` is in scope and omega
+            //     picks it up automatically.
+            //   * for literal sample positions (`⟨7, _⟩` in a
+            //     theorem about `7 ≥ 0`) omega closes by constant
+            //     evaluation.
+            //   * for law-quantified positions where the law's
+            //     `when` clause guarantees the predicate, the
+            //     quant-lifter (toplevel.rs) emits the refined
+            //     type directly so RecordCreate never appears
+            //     against a free Int — only against concrete
+            //     samples and intro-bound values.
+            // Refinement records emit as Subtype only when the
+            // carrier is `Int` (see emit_product_type for the
+            // matching guard). Float-carrier records keep the
+            // structure shape and a plain `{ value := … }` record
+            // literal, so this fast-path is gated on the carrier
+            // matching.
+            if let Some(info) = crate::codegen::common::refinement_info_for(type_name, ctx)
+                && info.carrier_type == "Int"
+                && fields.len() == 1
+            {
+                let (_, value_expr) = &fields[0];
+                let value_str = emit_expr(value_expr, ctx);
+                return format!(
+                    "⟨{value_str}, by first | omega | decide | (simp_all; omega) | assumption⟩"
+                );
+            }
             let parts: Vec<String> = fields
                 .iter()
                 .map(|(name, expr)| {
@@ -354,7 +403,16 @@ fn emit_match(
         let cond = emit_expr(subject, ctx);
         let t = emit_expr(true_body, ctx);
         let f = emit_expr(false_body, ctx);
-        let _ = line;
+        // Dependent `if h : cond then T else F` ONLY when the true
+        // branch contains a refinement-Subtype constructor — those
+        // need the predicate as a hypothesis in scope to discharge
+        // their `by omega` proof obligation. Plain `if` everywhere
+        // else keeps spec-equivalence and other auto-provers (which
+        // pattern-match on the plain `if`-shape) working.
+        if true_body_uses_refinement_subtype(true_body, ctx) {
+            let hyp = format!("h_{line}");
+            return format!("if {hyp} : {cond} then {t}\n  else {f}");
+        }
         return format!("if {cond} then {t}\n  else {f}");
     }
     let subj = emit_expr(subject, ctx);
@@ -390,6 +448,34 @@ fn emit_match(
     // tolerant of any future re-introduction of named binders.
     let _ = line;
     format!("match {} with\n{}", subj, arm_strs.join("\n"))
+}
+
+/// True iff `expr` (recursively) contains a `RecordCreate` whose
+/// type is an Int-carrier refinement record — i.e. one we'll emit
+/// as a Lean Subtype constructor `⟨val, by omega⟩` that needs the
+/// surrounding `if`'s predicate as a hypothesis. Used to decide
+/// when the enclosing Bool match should emit dependent-`if h :
+/// cond then …`.
+fn true_body_uses_refinement_subtype(expr: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+    match &expr.node {
+        Expr::RecordCreate { type_name, .. } => {
+            crate::codegen::common::refinement_info_for(type_name, ctx)
+                .map(|info| info.carrier_type == "Int")
+                .unwrap_or(false)
+        }
+        Expr::FnCall(callee, args) => {
+            true_body_uses_refinement_subtype(callee, ctx)
+                || args
+                    .iter()
+                    .any(|a| true_body_uses_refinement_subtype(a, ctx))
+        }
+        Expr::Constructor(_, Some(arg)) => true_body_uses_refinement_subtype(arg, ctx),
+        Expr::Attr(o, _) => true_body_uses_refinement_subtype(o, ctx),
+        Expr::Match { arms, .. } => arms
+            .iter()
+            .any(|arm| true_body_uses_refinement_subtype(&arm.body, ctx)),
+        _ => false,
+    }
 }
 
 /// If all arms are `true -> expr` and `false -> expr`, return (true_body, false_body).

@@ -170,6 +170,165 @@ fn is_ok_constructor_with_identity(
     }
 }
 
+/// Walk `lhs`/`rhs` looking for `RecordCreate { type_name: X, fields:
+/// [(_, Ident(given_name))] }` where `X` is a refinement record whose
+/// carrier matches `given_type`. Returns the refined type name when
+/// found, so callers can lift `given_name`'s quantifier from the
+/// carrier type to the refined type. Without this, theorems would
+/// emit `∀ (a : Int), … RecordCreate(a) …` where the smart-
+/// constructor predicate has to be discharged from `a`'s `when`
+/// clause inside the theorem type — which is exactly what the
+/// previous heuristic-laden auto-proof had to work around.
+pub fn refinement_lift_for_given<'a>(
+    given_name: &str,
+    given_type: &str,
+    lhs: &Spanned<Expr>,
+    rhs: &Spanned<Expr>,
+    ctx: &'a CodegenContext,
+) -> Option<&'a str> {
+    // Float carriers don't get lifted: `Int.add_comm` exists and is
+    // universally provable in Lean's `Int` model, but `Float.add_
+    // comm` doesn't hold across IEEE 754 — `NaN ≠ NaN` blows up
+    // the universal claim. Sample-form assertions (concrete Float
+    // values, no NaN in the declared `given` domain) still pass
+    // through the older auto-proof shape; we only lift when the
+    // underlying arithmetic has a true universal law.
+    if given_type == "Float" {
+        return None;
+    }
+    let mut result: Option<&'a str> = None;
+    search_refinement_wrapper(lhs, given_name, given_type, ctx, &mut result);
+    search_refinement_wrapper(rhs, given_name, given_type, ctx, &mut result);
+    result
+}
+
+fn search_refinement_wrapper<'a>(
+    expr: &Spanned<Expr>,
+    given_name: &str,
+    given_type: &str,
+    ctx: &'a CodegenContext,
+    result: &mut Option<&'a str>,
+) {
+    if result.is_some() {
+        return;
+    }
+    match &expr.node {
+        Expr::RecordCreate { type_name, fields } if fields.len() == 1 => {
+            let (_, fvalue) = &fields[0];
+            let matches_var = matches!(
+                &fvalue.node,
+                Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
+            );
+            if matches_var
+                && let Some(info) = refinement_info_for(type_name, ctx)
+                && info.carrier_type == given_type
+            {
+                // Need a stable reference into ctx for the returned
+                // &str. `refinement_info_for` returns refs into ctx
+                // already, but we want the *type name* itself; the
+                // name lives in the TypeDef in ctx.items.
+                for item in &ctx.items {
+                    if let TopLevel::TypeDef(TypeDef::Product { name, .. }) = item
+                        && name == type_name
+                    {
+                        *result = Some(name.as_str());
+                        return;
+                    }
+                }
+            }
+            for (_, v) in fields {
+                search_refinement_wrapper(v, given_name, given_type, ctx, result);
+            }
+        }
+        Expr::FnCall(callee, args) => {
+            search_refinement_wrapper(callee, given_name, given_type, ctx, result);
+            for a in args {
+                search_refinement_wrapper(a, given_name, given_type, ctx, result);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            search_refinement_wrapper(l, given_name, given_type, ctx, result);
+            search_refinement_wrapper(r, given_name, given_type, ctx, result);
+        }
+        Expr::Attr(o, _) => search_refinement_wrapper(o, given_name, given_type, ctx, result),
+        Expr::Neg(i) | Expr::ErrorProp(i) => {
+            search_refinement_wrapper(i, given_name, given_type, ctx, result);
+        }
+        Expr::Match { subject, arms } => {
+            search_refinement_wrapper(subject, given_name, given_type, ctx, result);
+            for arm in arms {
+                search_refinement_wrapper(&arm.body, given_name, given_type, ctx, result);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                search_refinement_wrapper(it, given_name, given_type, ctx, result);
+            }
+        }
+        Expr::Constructor(_, Some(arg)) => {
+            search_refinement_wrapper(arg, given_name, given_type, ctx, result);
+        }
+        _ => {}
+    }
+}
+
+/// Strip `RecordCreate { type_name: X, fields: [(_, Ident(g))] }` →
+/// `Ident(g)` when `g` is in `lifted_vars` and `X` is the refined
+/// type those vars were lifted to. Used after `refinement_lift_for_
+/// given` decides the lift: theorem body talks about `g : Natural`
+/// directly, so the `Natural(value = g)` wrapper that aver source
+/// wrote becomes redundant noise.
+pub fn strip_refinement_wrappers(
+    expr: &Spanned<Expr>,
+    lifted_vars: &std::collections::HashMap<String, String>,
+    ctx: &CodegenContext,
+) -> Spanned<Expr> {
+    let new_node = match &expr.node {
+        Expr::RecordCreate { type_name, fields } if fields.len() == 1 => {
+            let (_, fvalue) = &fields[0];
+            let var_name = match &fvalue.node {
+                Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.clone()),
+                _ => None,
+            };
+            if let Some(name) = var_name
+                && let Some(refined) = lifted_vars.get(&name)
+                && refined == type_name
+            {
+                return Spanned::new(Expr::Ident(name), expr.line);
+            }
+            let new_fields: Vec<(String, Spanned<Expr>)> = fields
+                .iter()
+                .map(|(n, v)| (n.clone(), strip_refinement_wrappers(v, lifted_vars, ctx)))
+                .collect();
+            Expr::RecordCreate {
+                type_name: type_name.clone(),
+                fields: new_fields,
+            }
+        }
+        Expr::FnCall(callee, args) => Expr::FnCall(
+            Box::new(strip_refinement_wrappers(callee, lifted_vars, ctx)),
+            args.iter()
+                .map(|a| strip_refinement_wrappers(a, lifted_vars, ctx))
+                .collect(),
+        ),
+        Expr::BinOp(op, l, r) => Expr::BinOp(
+            *op,
+            Box::new(strip_refinement_wrappers(l, lifted_vars, ctx)),
+            Box::new(strip_refinement_wrappers(r, lifted_vars, ctx)),
+        ),
+        Expr::Attr(o, f) => Expr::Attr(
+            Box::new(strip_refinement_wrappers(o, lifted_vars, ctx)),
+            f.clone(),
+        ),
+        Expr::Neg(i) => Expr::Neg(Box::new(strip_refinement_wrappers(i, lifted_vars, ctx))),
+        Expr::ErrorProp(i) => {
+            Expr::ErrorProp(Box::new(strip_refinement_wrappers(i, lifted_vars, ctx)))
+        }
+        _ => expr.node.clone(),
+    };
+    Spanned::new(new_node, expr.line)
+}
+
 fn is_err_constructor(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
         Expr::Constructor(name, Some(_)) => name == "Result.Err",
