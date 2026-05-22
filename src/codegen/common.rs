@@ -281,7 +281,6 @@ fn search_refinement_wrapper<'a>(
 pub fn strip_refinement_wrappers(
     expr: &Spanned<Expr>,
     lifted_vars: &std::collections::HashMap<String, String>,
-    ctx: &CodegenContext,
 ) -> Spanned<Expr> {
     let new_node = match &expr.node {
         Expr::RecordCreate { type_name, fields } if fields.len() == 1 => {
@@ -298,7 +297,7 @@ pub fn strip_refinement_wrappers(
             }
             let new_fields: Vec<(String, Spanned<Expr>)> = fields
                 .iter()
-                .map(|(n, v)| (n.clone(), strip_refinement_wrappers(v, lifted_vars, ctx)))
+                .map(|(n, v)| (n.clone(), strip_refinement_wrappers(v, lifted_vars)))
                 .collect();
             Expr::RecordCreate {
                 type_name: type_name.clone(),
@@ -306,24 +305,22 @@ pub fn strip_refinement_wrappers(
             }
         }
         Expr::FnCall(callee, args) => Expr::FnCall(
-            Box::new(strip_refinement_wrappers(callee, lifted_vars, ctx)),
+            Box::new(strip_refinement_wrappers(callee, lifted_vars)),
             args.iter()
-                .map(|a| strip_refinement_wrappers(a, lifted_vars, ctx))
+                .map(|a| strip_refinement_wrappers(a, lifted_vars))
                 .collect(),
         ),
         Expr::BinOp(op, l, r) => Expr::BinOp(
             *op,
-            Box::new(strip_refinement_wrappers(l, lifted_vars, ctx)),
-            Box::new(strip_refinement_wrappers(r, lifted_vars, ctx)),
+            Box::new(strip_refinement_wrappers(l, lifted_vars)),
+            Box::new(strip_refinement_wrappers(r, lifted_vars)),
         ),
         Expr::Attr(o, f) => Expr::Attr(
-            Box::new(strip_refinement_wrappers(o, lifted_vars, ctx)),
+            Box::new(strip_refinement_wrappers(o, lifted_vars)),
             f.clone(),
         ),
-        Expr::Neg(i) => Expr::Neg(Box::new(strip_refinement_wrappers(i, lifted_vars, ctx))),
-        Expr::ErrorProp(i) => {
-            Expr::ErrorProp(Box::new(strip_refinement_wrappers(i, lifted_vars, ctx)))
-        }
+        Expr::Neg(i) => Expr::Neg(Box::new(strip_refinement_wrappers(i, lifted_vars))),
+        Expr::ErrorProp(i) => Expr::ErrorProp(Box::new(strip_refinement_wrappers(i, lifted_vars))),
         _ => expr.node.clone(),
     };
     Spanned::new(new_node, expr.line)

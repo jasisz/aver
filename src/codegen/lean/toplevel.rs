@@ -1461,12 +1461,12 @@ fn emit_verify_law_block(
     let law_lhs = if lifted_vars.is_empty() {
         law_lhs
     } else {
-        crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars, ctx)
+        crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars)
     };
     let law_rhs = if lifted_vars.is_empty() {
         law_rhs
     } else {
-        crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars, ctx)
+        crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars)
     };
     let lhs_template = emit_expr(&law_lhs, ctx);
     let rhs_template = emit_expr(&law_rhs, ctx);
@@ -1603,11 +1603,9 @@ fn emit_verify_law_block(
                         && snapshot.contains(&fd.name)
                     {
                         for stmt in fd.body.stmts() {
-                            if let crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) =
-                                stmt
-                            {
-                                collect_user_fn_calls(e, &mut fn_names);
-                            }
+                            let (crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e)) =
+                                stmt;
+                            collect_user_fn_calls(e, &mut fn_names);
                         }
                     }
                 }
