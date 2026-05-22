@@ -354,9 +354,9 @@ fn emit_match(
         let cond = emit_expr(subject, ctx);
         let t = emit_expr(true_body, ctx);
         let f = emit_expr(false_body, ctx);
-        return format!("if {} then {}\n  else {}", cond, t, f);
+        let _ = line;
+        return format!("if {cond} then {t}\n  else {f}");
     }
-
     let subj = emit_expr(subject, ctx);
     let mut arm_strs = Vec::new();
     for arm in arms {

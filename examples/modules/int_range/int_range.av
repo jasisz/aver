@@ -1,0 +1,51 @@
+module IntRange
+    exposes [fromInt, toInt, add]
+    exposes opaque [IntRange]
+    intent =
+        "Refinement-via-opaque, range-bounded variant. Smart"
+        "constructor gates on a compound predicate `Bool.and(n >="
+        "0, n <= 100)` (Aver has no && operator). Exercises the"
+        "auto-proof generator's predicate extraction on a compound"
+        "guard: the by_cases clause should read"
+        "`by_cases h_a : Bool.and(a >= 0, a <= 100)`. The `add` law"
+        "doesn't try closure (sum of two range-ints may exceed"
+        "100) — it claims commutativity, which holds regardless."
+    effects []
+
+record IntRange
+    value: Int
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    ? "Smart constructor — admits only ints in 0..=100."
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("IntRange must be in 0..=100")
+
+verify fromInt
+    fromInt(0)   => Result.Ok(IntRange(value = 0))
+    fromInt(50)  => Result.Ok(IntRange(value = 50))
+    fromInt(100) => Result.Ok(IntRange(value = 100))
+    fromInt(-1)  => Result.Err("IntRange must be in 0..=100")
+    fromInt(101) => Result.Err("IntRange must be in 0..=100")
+
+fn toInt(n: IntRange) -> Int
+    ? "Unwrap into the underlying Int. Always in 0..=100."
+    n.value
+
+verify toInt
+    toInt(IntRange(value = 50)) => 50
+
+fn add(a: IntRange, b: IntRange) -> Result<IntRange, String>
+    ? "Sum of two IntRange values — may overflow the upper bound, so the result is Result-bound; fromInt re-validates."
+    fromInt(a.value + b.value)
+
+verify add
+    add(IntRange(value = 10), IntRange(value = 20)) => Result.Ok(IntRange(value = 30))
+    add(IntRange(value = 60), IntRange(value = 50)) => Result.Err("IntRange must be in 0..=100")
+
+verify add law commutative
+    given a: Int = [0, 1, 50, 99, 100]
+    given b: Int = [0, 1, 50, 99, 100]
+    when Bool.and(a >= 0, a <= 100)
+    when Bool.and(b >= 0, b <= 100)
+    add(IntRange(value = a), IntRange(value = b)) => add(IntRange(value = b), IntRange(value = a))

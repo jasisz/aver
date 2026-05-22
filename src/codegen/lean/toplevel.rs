@@ -28,10 +28,10 @@ fn bounded_oracle_subtype_for(method: &str) -> Option<&'static str> {
     }
 }
 
-pub fn emit_type_def(td: &TypeDef) -> String {
+pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
     match td {
         TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants),
-        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields),
+        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, ctx),
     }
 }
 
@@ -78,7 +78,19 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
     lines.join("\n")
 }
 
-fn emit_product_type(name: &str, fields: &[(String, String)]) -> String {
+fn emit_product_type(name: &str, fields: &[(String, String)], ctx: &CodegenContext) -> String {
+    // Refinement detection lives in `refinement_info_for` (common.rs)
+    // — kept around as foundation for a future Subtype-based refactor
+    // that would eliminate the by_cases / unfold / simp heuristic in
+    // `law_auto.rs`. Not wired here yet: switching from `structure
+    // X { value : T }` to `abbrev X := { v : T // P v }` breaks the
+    // currently-generated theorem statements (they quantify over the
+    // carrier `Int` and construct `Natural(value = a)` inside the
+    // type, which under Subtype needs an in-type proof `(a : Int)
+    // → ... → ⟨a, proof⟩` that the law emitter doesn't know how to
+    // produce yet). Real refactor is a separate design task.
+    let _ = ctx;
+
     let mut lines = Vec::new();
     let is_recursive = is_recursive_product(name, fields);
 

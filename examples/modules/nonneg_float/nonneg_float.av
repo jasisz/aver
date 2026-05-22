@@ -1,0 +1,49 @@
+module NonNegFloat
+    exposes [fromFloat, toFloat, add]
+    exposes opaque [NonNegFloat]
+    intent =
+        "Refinement-via-opaque on Float. Same shape as Natural"
+        "but the carrier is Float instead of Int. Tests whether"
+        "the auto-proof path extends naturally to Float-typed"
+        "givens. Caveat IEEE 754: `-0.0 >= 0.0` is `true` and"
+        "`NaN >= 0.0` is `false`, so the smart constructor admits"
+        "negative zero and rejects NaN — `aver verify --hostile`"
+        "explores both boundaries."
+    effects []
+
+record NonNegFloat
+    value: Float
+
+fn fromFloat(x: Float) -> Result<NonNegFloat, String>
+    ? "Smart constructor — admits non-negative floats."
+    match x >= 0.0
+        true  -> Result.Ok(NonNegFloat(value = x))
+        false -> Result.Err("NonNegFloat must be >= 0.0")
+
+verify fromFloat
+    fromFloat(0.0)   => Result.Ok(NonNegFloat(value = 0.0))
+    fromFloat(1.5)   => Result.Ok(NonNegFloat(value = 1.5))
+    fromFloat(-1.5)  => Result.Err("NonNegFloat must be >= 0.0")
+
+fn toFloat(n: NonNegFloat) -> Float
+    ? "Unwrap a NonNegFloat into its underlying Float."
+    n.value
+
+verify toFloat
+    toFloat(NonNegFloat(value = 0.0)) => 0.0
+    toFloat(NonNegFloat(value = 2.5)) => 2.5
+
+fn add(a: NonNegFloat, b: NonNegFloat) -> Result<NonNegFloat, String>
+    ? "Sum of two non-negative floats. fromFloat re-validates because Float `+` can produce NaN (Inf + (-Inf)) or Inf — the predicate `x >= 0.0` filters both consistently."
+    fromFloat(a.value + b.value)
+
+verify add
+    add(NonNegFloat(value = 0.0), NonNegFloat(value = 1.5)) => Result.Ok(NonNegFloat(value = 1.5))
+    add(NonNegFloat(value = 2.0), NonNegFloat(value = 3.0)) => Result.Ok(NonNegFloat(value = 5.0))
+
+verify add law commutative
+    given a: Float = [0.0, 1.0, 2.5, 100.0]
+    given b: Float = [0.0, 1.0, 2.5, 100.0]
+    when a >= 0.0
+    when b >= 0.0
+    add(NonNegFloat(value = a), NonNegFloat(value = b)) => add(NonNegFloat(value = b), NonNegFloat(value = a))

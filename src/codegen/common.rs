@@ -1,11 +1,184 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    Expr, FnBody, FnDef, Spanned, Stmt, StrPart, TailCallData, TopLevel, TypeDef, TypeVariant,
-    VerifyBlock, VerifyGivenDomain, VerifyKind,
+    Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, Stmt, StrPart, TailCallData,
+    TopLevel, TypeDef, TypeVariant, VerifyBlock, VerifyGivenDomain, VerifyKind,
 };
 use crate::codegen::CodegenContext;
 use crate::types::Type;
+
+/// A "refinement record" is the canonical `refinement-via-opaque`
+/// pattern: a single-field `record X { carrier: T }` paired with a
+/// validating smart constructor
+///   `fn fromX(p: T) -> Result<X, _>` body = `match <pred-in-p> with`
+///   `    true  -> Result.Ok(X(carrier = p))`
+///   `    false -> Result.Err("...")`
+///
+/// Detecting this shape lets backends emit the type as a true
+/// dependent / subset type (`def X := { n : T // P n }` in Lean,
+/// `type X = n: T | P n` in Dafny) instead of a flat product, which
+/// in turn collapses universal-law proofs into one-liners
+/// (`rw [Int.add_comm]`) by carrying the invariant inside the type
+/// rather than threading it through ad-hoc tactic plumbing.
+#[derive(Debug, Clone)]
+pub struct RefinementInfo<'a> {
+    /// Carrier-type annotation as written in the record field
+    /// (`"Int"`, `"Float"`, …). Backends emit this as the
+    /// subset's underlying type.
+    pub carrier_type: &'a str,
+    /// Carrier-field name (e.g. `"value"`). Lean projects through
+    /// `.val` on a Subtype, so users of the carrier field have to
+    /// rewrite `n.value → n.val` when the host type is refined.
+    pub carrier_field: &'a str,
+    /// Name of the smart constructor's input parameter (`"n"` in
+    /// `fromInt(n: Int) → Result<X, _>`). Used when substituting
+    /// the law's quantified variable into the predicate.
+    pub param_name: &'a str,
+    /// AST node for the bool predicate the smart constructor
+    /// branches on — the body's `Match { subject = <here>, ... }`.
+    pub predicate: &'a Spanned<Expr>,
+}
+
+/// Inspect `ctx` for a refinement-via-opaque record by `type_name`.
+/// Returns `Some(info)` iff there's exactly one matching smart
+/// constructor and the record has a single carrier field.
+pub fn refinement_info_for<'a>(
+    type_name: &str,
+    ctx: &'a CodegenContext,
+) -> Option<RefinementInfo<'a>> {
+    let (carrier_field, carrier_type) = ctx.items.iter().find_map(|item| match item {
+        TopLevel::TypeDef(TypeDef::Product { name, fields, .. })
+            if name == type_name && fields.len() == 1 =>
+        {
+            let (fname, ftype) = &fields[0];
+            Some((fname.as_str(), ftype.as_str()))
+        }
+        _ => None,
+    })?;
+
+    for item in &ctx.items {
+        let TopLevel::FnDef(fd) = item else { continue };
+        if !fd.return_type.starts_with("Result<") {
+            continue;
+        }
+        if !fd.return_type[7..].starts_with(type_name) {
+            continue;
+        }
+        if fd.params.len() != 1 {
+            continue;
+        }
+        let (param_name, _) = &fd.params[0];
+        let stmts = fd.body.stmts();
+        if stmts.len() != 1 {
+            continue;
+        }
+        let Stmt::Expr(body_expr) = &stmts[0] else {
+            continue;
+        };
+        let Expr::Match { subject, arms } = &body_expr.node else {
+            continue;
+        };
+        if !is_bool_ok_err_match(arms, type_name, carrier_field, param_name) {
+            continue;
+        }
+        return Some(RefinementInfo {
+            carrier_type,
+            carrier_field,
+            param_name,
+            predicate: subject,
+        });
+    }
+    None
+}
+
+/// True iff a two-arm bool match is the canonical refinement shape:
+/// `true -> Result.Ok(<TypeName>(<carrier_field> = <param>))` and
+/// `false -> Result.Err(_)`. Required so we don't mis-classify a
+/// random `match … -> Result.Ok(...) | -> Result.Err(...)` (e.g. an
+/// effectful pipeline) as a smart constructor.
+fn is_bool_ok_err_match(
+    arms: &[MatchArm],
+    type_name: &str,
+    carrier_field: &str,
+    param_name: &str,
+) -> bool {
+    if arms.len() != 2 {
+        return false;
+    }
+    let mut true_ok = false;
+    let mut false_err = false;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(Literal::Bool(true)) => {
+                if is_ok_constructor_with_identity(&arm.body, type_name, carrier_field, param_name)
+                {
+                    true_ok = true;
+                }
+            }
+            Pattern::Literal(Literal::Bool(false)) => {
+                if is_err_constructor(&arm.body) {
+                    false_err = true;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true_ok && false_err
+}
+
+fn is_ok_constructor_with_identity(
+    expr: &Spanned<Expr>,
+    type_name: &str,
+    carrier_field: &str,
+    param_name: &str,
+) -> bool {
+    // Result.Ok(<TypeName>(<carrier_field> = <param>))
+    let (ctor_name, ctor_arg_node) = match &expr.node {
+        Expr::Constructor(name, Some(arg)) => (name.clone(), &arg.node),
+        Expr::FnCall(callee, args) if args.len() == 1 => {
+            let Some(name) = expr_to_dotted_name(&callee.node) else {
+                return false;
+            };
+            (name, &args[0].node)
+        }
+        _ => return false,
+    };
+    if ctor_name != "Result.Ok" {
+        return false;
+    }
+    let (t, fields) = match ctor_arg_node {
+        Expr::RecordCreate { type_name: t, fields } => (t.as_str(), fields),
+        _ => return false,
+    };
+    if t != type_name || fields.len() != 1 {
+        return false;
+    }
+    let (fname, fvalue) = &fields[0];
+    if fname != carrier_field {
+        return false;
+    }
+    // Post-resolver bodies have `Expr::Resolved` instead of
+    // `Expr::Ident` for fn-param references; accept both shapes so
+    // detection works regardless of which stage of the pipeline we
+    // run in.
+    match &fvalue.node {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => name == param_name,
+        _ => false,
+    }
+}
+
+fn is_err_constructor(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Constructor(name, Some(_)) => name == "Result.Err",
+        Expr::FnCall(callee, args) if args.len() == 1 => {
+            matches!(
+                expr_to_dotted_name(&callee.node),
+                Some(name) if name == "Result.Err"
+            )
+        }
+        _ => false,
+    }
+}
 
 // Backend-neutral predicates on AST items — all three codegen backends
 // (Lean, Dafny, Rust) want the same view of "is this pure?",

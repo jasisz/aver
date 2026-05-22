@@ -10,8 +10,8 @@ mod shared;
 mod spec;
 
 use super::VerifyEmitMode;
-use super::expr::aver_name_to_lean;
-use crate::ast::{Expr, Spanned, VerifyBlock, VerifyLaw};
+use super::expr::{aver_name_to_lean, emit_expr};
+use crate::ast::{Expr, Pattern, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw, MatchArm};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
 use sampled::emit_guarded_domain_law;
@@ -233,6 +233,26 @@ fn emit_simp_omega_law(
     let lean_names: Vec<String> = ordered.iter().map(|n| aver_name_to_lean(n)).collect();
     let simp_list = lean_names.join(", ");
 
+    // Pull the actual guard predicate out of whatever smart
+    // constructor the fn_names walk reaches. The canonical shape is
+    //   fn fromX(p: Int) -> Result<NamedY, _>
+    //       match <bool-expr-in-p>
+    //           true  -> Result.Ok(NamedY(...))
+    //           false -> Result.Err("...")
+    // — i.e. a refinement-via-opaque smart constructor. We grab the
+    // `<bool-expr-in-p>` subject and the param name, so when we
+    // build the `by_cases` clauses below we can substitute the
+    // law-quantified variable for the smart-constructor's
+    // parameter and emit the *actual* guard:
+    //   Nat       → `by_cases h_a : a ≥ 0`
+    //   Positive  → `by_cases h_a : a > 0`
+    //   Discount  → `by_cases h_a : (a ≥ 0) && (a ≤ 100)`
+    // Falls back to the conservative `a ≥ 0` (the Nat shape) when
+    // we can't find a matching smart constructor; lake will error
+    // loudly if the pick is wrong, prompting a manual companion
+    // proof rather than silently issuing `sorry`.
+    let smart_guard = extract_smart_constructor_guard(&fn_names, ctx);
+
     if wrapper_return {
         // `simp + omega` can't close `Except.ok x = Except.ok y` —
         // omega is a linear-arithmetic decision procedure on Int,
@@ -259,7 +279,16 @@ fn emit_simp_omega_law(
         // Natural example actually discharges here now.
         let by_cases_clauses: Vec<String> = intro_names
             .iter()
-            .map(|n| format!("by_cases h_{n} : {n} ≥ 0"))
+            .map(|n| {
+                let predicate = match &smart_guard {
+                    Some((param, subject)) => {
+                        let substituted = substitute_ident_in_expr(subject, param, n);
+                        emit_expr(&substituted, ctx)
+                    }
+                    None => format!("{n} ≥ 0"),
+                };
+                format!("by_cases h_{n} : {predicate}")
+            })
             .collect();
         let by_cases_chain = by_cases_clauses.join(" <;> ");
         let simp_hyps: Vec<String> = intro_names
@@ -381,4 +410,140 @@ pub(super) fn indent_lines(lines: Vec<String>, spaces: usize) -> Vec<String> {
         .into_iter()
         .map(|line| format!("{pad}{line}"))
         .collect()
+}
+
+/// Find a single-param smart constructor in `fn_names` whose body
+/// is the canonical refinement-via-opaque shape:
+///   match <subject:Bool>
+///       true  -> Result.Ok(...)
+///       false -> Result.Err(...)
+/// Returns `(param_name, subject_expr)` of the first match. Used
+/// by the wrapper-return auto-proof path so by_cases emits the
+/// real guard from the source, not a hard-coded `≥ 0`.
+fn extract_smart_constructor_guard(
+    fn_names: &std::collections::BTreeSet<String>,
+    ctx: &CodegenContext,
+) -> Option<(String, Spanned<Expr>)> {
+    for item in &ctx.items {
+        let crate::ast::TopLevel::FnDef(fd) = item else {
+            continue;
+        };
+        if !fn_names.contains(&fd.name) {
+            continue;
+        }
+        if !fd.return_type.starts_with("Result<") {
+            continue;
+        }
+        if fd.params.len() != 1 {
+            continue;
+        }
+        let (param_name, param_type) = &fd.params[0];
+        if param_type != "Int" {
+            continue;
+        }
+        let stmts = fd.body.stmts();
+        if stmts.len() != 1 {
+            continue;
+        }
+        let Stmt::Expr(body_expr) = &stmts[0] else {
+            continue;
+        };
+        let Expr::Match { subject, arms } = &body_expr.node else {
+            continue;
+        };
+        if arms.len() != 2 {
+            continue;
+        }
+        if !arms_are_bool_ok_err(arms) {
+            continue;
+        }
+        return Some((param_name.clone(), (**subject).clone()));
+    }
+    None
+}
+
+/// True iff the two arms together look like a smart-constructor
+/// branch on Bool: one arm has `Pattern::Literal(Bool(true))` and
+/// produces an `Result.Ok(...)`, the other `Bool(false)` →
+/// `Result.Err(...)`.
+fn arms_are_bool_ok_err(arms: &[MatchArm]) -> bool {
+    if arms.len() != 2 {
+        return false;
+    }
+    let mut saw_true_ok = false;
+    let mut saw_false_err = false;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(Literal::Bool(true)) => {
+                if body_starts_with_constructor(&arm.body, "Result.Ok") {
+                    saw_true_ok = true;
+                }
+            }
+            Pattern::Literal(Literal::Bool(false)) => {
+                if body_starts_with_constructor(&arm.body, "Result.Err") {
+                    saw_false_err = true;
+                }
+            }
+            _ => return false,
+        }
+    }
+    saw_true_ok && saw_false_err
+}
+
+/// Whether a Spanned<Expr> is a call to the named constructor
+/// (`Result.Ok` / `Result.Err`). Handles both AST shapes the
+/// parser can produce — `Expr::Constructor(name, ...)` and the
+/// `Expr::FnCall(Expr::Attr(Expr::Ident(ns), name), ...)` form.
+fn body_starts_with_constructor(expr: &Spanned<Expr>, full_name: &str) -> bool {
+    match &expr.node {
+        Expr::Constructor(name, _) => name == full_name,
+        Expr::FnCall(callee, _) => {
+            if let Expr::Attr(obj, field) = &callee.node
+                && let Expr::Ident(ns) = &obj.node
+            {
+                let dotted = format!("{ns}.{field}");
+                dotted == full_name
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Recursively substitute every `Expr::Ident(from)` with
+/// `Expr::Ident(to)` inside `expr`. Used by the wrapper-return
+/// auto-proof to rewrite a smart constructor's guard subject in
+/// terms of the law-quantified variable: a smart constructor that
+/// takes `n` and gates on `n ≥ 0` becomes `a ≥ 0` when the law
+/// quantifies over `a`.
+fn substitute_ident_in_expr(expr: &Spanned<Expr>, from: &str, to: &str) -> Spanned<Expr> {
+    let new_node = match &expr.node {
+        Expr::Ident(name) => Expr::Ident(if name == from {
+            to.to_string()
+        } else {
+            name.clone()
+        }),
+        Expr::BinOp(op, l, r) => Expr::BinOp(
+            *op,
+            Box::new(substitute_ident_in_expr(l, from, to)),
+            Box::new(substitute_ident_in_expr(r, from, to)),
+        ),
+        Expr::Neg(inner) => Expr::Neg(Box::new(substitute_ident_in_expr(inner, from, to))),
+        Expr::Attr(inner, field) => Expr::Attr(
+            Box::new(substitute_ident_in_expr(inner, from, to)),
+            field.clone(),
+        ),
+        Expr::FnCall(callee, args) => Expr::FnCall(
+            Box::new(substitute_ident_in_expr(callee, from, to)),
+            args.iter()
+                .map(|a| substitute_ident_in_expr(a, from, to))
+                .collect(),
+        ),
+        Expr::ErrorProp(inner) => {
+            Expr::ErrorProp(Box::new(substitute_ident_in_expr(inner, from, to)))
+        }
+        _ => expr.node.clone(),
+    };
+    Spanned::new(new_node, expr.line)
 }
