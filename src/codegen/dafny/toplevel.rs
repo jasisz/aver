@@ -682,6 +682,40 @@ fn collect_called_fns_in_body(body: &FnBody, out: &mut std::collections::BTreeSe
 /// samples to keep verification times reasonable.
 const MAX_LAW_SAMPLES: usize = 5;
 
+/// Maximum literal magnitude (absolute value) for which a sample
+/// lemma in opaque (mutual-rec) mode is expected to close as a real
+/// proof. Above this, Dafny's fuel-bounded encoding can't drive Z3
+/// through symbolic unfolding for examples like BigInt that pack
+/// base-10⁹ digits — a value of `1_000_000_000` produces a 2-digit
+/// decomposition and the SCC walk exceeds what Z3's unfolding will
+/// chase. Per-sample lemmas above this fall back to `assume
+/// {:axiom}` in the body (matching Lean's `sorry` for unreachable
+/// shapes); the bounded-∀ universal that dispatches to them still
+/// composes a real proof (just with mixed real/assume samples).
+/// Tracked in #81 for a structural fix (native `decreases` tuple
+/// over the SCC measure, which would remove this cliff entirely).
+const SAMPLE_CLOSABLE_LITERAL_LIMIT: i64 = 999_999_999;
+
+/// Walk the case's `(given_name, value_expr)` bindings and decide
+/// whether every literal value is within the fuel-closable range
+/// (see [`SAMPLE_CLOSABLE_LITERAL_LIMIT`]).  Used to gate the
+/// per-sample lemma body between real proof attempt (`{}`) and
+/// `assume {:axiom}` trust.
+fn sample_within_closable_range(bindings: &[(String, Spanned<Expr>)]) -> bool {
+    bindings.iter().all(|(_, v)| match literal_int_value(v) {
+        Some(s) => s
+            .parse::<i64>()
+            .map(|n| n.abs() <= SAMPLE_CLOSABLE_LITERAL_LIMIT)
+            .unwrap_or(false),
+        // Non-Int givens (list literals, records) attempt a real
+        // proof — `{}` body, let Dafny chase it. The cutoff is only
+        // an honest fallback for the *specific* Int-literal cliff
+        // BigInt's 10⁹ sits on; for other shapes we'd rather see
+        // the failure than paper over it with `assume {:axiom}`.
+        None => true,
+    })
+}
+
 /// Emit sample assertions from a law's domain expansion as a test method.
 /// These are concrete smoke tests (e.g. `assert fib(5) == fibSpec(5)`).
 /// Capped at [`MAX_LAW_SAMPLES`] to avoid Z3 timeouts on large domains.
@@ -692,6 +726,7 @@ pub fn emit_law_samples(
     suffix: &str,
     opaque_fns: &std::collections::HashSet<String>,
     fuel_emitted: &std::collections::HashSet<String>,
+    native_emitted: &std::collections::HashSet<String>,
 ) -> Option<String> {
     if vb.cases.is_empty() {
         return None;
@@ -700,16 +735,61 @@ pub fn emit_law_samples(
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
 
-    let samples: Vec<_> = vb.cases.iter().take(MAX_LAW_SAMPLES).collect();
-    let truncated = vb.cases.len() > MAX_LAW_SAMPLES;
+    // Pre-pre-pass: rewrite the first sample to detect whether the
+    // law reaches an opaque (mutual-rec) callee. Opaque mode emits
+    // *all* cases as per-sample lemmas (no cap) so the universal
+    // bounded-∀ in `emit_verify_law` can case-split to one lemma
+    // per pair. Non-opaque keeps the historical cap for Z3 budget.
+    let first_rewrite = vb.cases.first().map(|(lhs, rhs)| {
+        let case_bindings = vb.case_givens.first().map(|v| v.as_slice()).unwrap_or(&[]);
+        let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
+        (
+            rewrite_effectful_calls_in_law(lhs, law, ctx, mode.clone()),
+            rewrite_effectful_calls_in_law(rhs, law, ctx, mode),
+        )
+    });
+    let any_opaque = first_rewrite
+        .as_ref()
+        .map(|(l, r)| law_refs_opaque_fn(l, opaque_fns) || law_refs_opaque_fn(r, opaque_fns))
+        .unwrap_or(false);
+    // Native-decreases mutual recursion is *not* opaque (Dafny can
+    // unfold these on its own), but the universal `add_commutative
+    // (a, b: int)` over `int × int` still doesn't close as a true ∀
+    // — so we route through the bounded-∀ form with per-pair sample
+    // lemmas the same way. The lemma bodies stay `{}` (real proof)
+    // because there's no fuel ceiling to dodge.
+    let any_native_mutual = first_rewrite
+        .as_ref()
+        .map(|(l, r)| {
+            law_refs_opaque_fn(l, native_emitted) || law_refs_opaque_fn(r, native_emitted)
+        })
+        .unwrap_or(false);
+    let needs_bounded_form = any_opaque || any_native_mutual;
 
-    // Pre-pass: rewrite each sample once and decide whether *any* of
-    // them transitively reaches an opaque (fuel-bounded mutual-rec or
-    // axiom-fallback) callee. If so, switch the whole block from a
-    // `method { assert; ... }` to a series of per-sample lemmas with
-    // fuel bumped on every transitive callee — Dafny then unfolds the
-    // SCC enough times to compute both sides and close the equality.
-    // Lean parity: each sample becomes its own theorem.
+    // Only lift the sample cap when the universal lemma will *also*
+    // emit as bounded-∀ (every given Int + Explicit literal-int
+    // domain). For other shapes (List/Json givens, open Int givens),
+    // per-sample lemma form stays capped at `MAX_LAW_SAMPLES` — the
+    // bigger budget without a corresponding universal proof just
+    // produces more per-sample failures without buying any reasoning
+    // power. BigInt-style Int-domain laws keep the full grid.
+    let bounded_universal_targets = !law.givens.is_empty()
+        && law.givens.iter().all(|g| {
+            g.type_name == "Int"
+                && matches!(
+                    &g.domain,
+                    VerifyGivenDomain::Explicit(vs)
+                        if vs.iter().all(|v| literal_int_value(v).is_some())
+                )
+        });
+    let cap = if needs_bounded_form && bounded_universal_targets {
+        vb.cases.len()
+    } else {
+        MAX_LAW_SAMPLES
+    };
+    let samples: Vec<_> = vb.cases.iter().take(cap).collect();
+    let truncated = vb.cases.len() > cap;
+
     let rewritten: Vec<(Spanned<Expr>, Spanned<Expr>)> = samples
         .iter()
         .enumerate()
@@ -721,9 +801,6 @@ pub fn emit_law_samples(
             (lhs_rw, rhs_rw)
         })
         .collect();
-    let any_opaque = rewritten
-        .iter()
-        .any(|(l, r)| law_refs_opaque_fn(l, opaque_fns) || law_refs_opaque_fn(r, opaque_fns));
 
     let mut lines = Vec::new();
     if truncated {
@@ -741,7 +818,7 @@ pub fn emit_law_samples(
         ));
     }
 
-    if any_opaque {
+    if needs_bounded_form {
         // Per-sample lemma form. Each gets fuel bumped on every
         // (transitive) callee + the matching `__fuel` helper for
         // mutual-rec SCC members.
@@ -817,15 +894,33 @@ pub fn emit_law_samples(
                 .map(|f| format!("{{:fuel {}, 100}}", f))
                 .collect::<Vec<_>>()
                 .join(" ");
+            // Real-proof body when every transitive callee is on
+            // the native-decreases path — Dafny unfolds the SCC
+            // freely from a `{}` body, no fuel ceiling. When any
+            // callee stayed on fuel encoding, gate by literal
+            // magnitude: small enough to fit Dafny's fuel-driven
+            // symbolic unfolding gets `{}` body, anything past the
+            // cliff (e.g. BigInt's 10⁹) falls back to `assume
+            // {:axiom}` so the ensures is still available to the
+            // bounded-∀ universal even if this pair isn't a real
+            // proof.
+            let bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+            let all_native = callees.iter().all(|f| !fuel_emitted.contains(f));
+            let body = if all_native || sample_within_closable_range(bindings) {
+                "{ }".to_string()
+            } else {
+                format!("{{\n  assume {{:axiom}} {} == {};\n}}", l, r)
+            };
             lines.push(format!(
-                "lemma {} {}_{}{}__sample_{}()\n  ensures {} == {}\n{{ }}",
+                "lemma {} {}_{}{}__sample_{}()\n  ensures {} == {}\n{}",
                 fuel_attrs,
                 fn_name,
                 law_name,
                 suffix,
                 idx + 1,
                 l,
-                r
+                r,
+                body
             ));
         }
     } else {
@@ -932,6 +1027,8 @@ pub fn emit_verify_law(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     opaque_fns: &std::collections::HashSet<String>,
+    native_emitted: &std::collections::HashSet<String>,
+    suffix: &str,
 ) -> String {
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
@@ -1076,20 +1173,82 @@ pub fn emit_verify_law(
         lines.push(format!("  requires {}", when_str));
     }
 
+    // Bounded-∀ detection: when the law reaches mutual-rec SCC fns
+    // AND every given has an Explicit literal-int domain, emit a
+    // bounded universal — `requires a == k1 || ... ` per given,
+    // body case-splits on `(a, b, ...)` tuple and dispatches to the
+    // per-pair sample lemma (each fuel-bumped or assume-bodied per
+    // SAMPLE_CLOSABLE_LITERAL_LIMIT). Lean parity: bounded ∀ over
+    // the declared domain closed by `rcases` + `native_decide` per
+    // case. Falls back to `assume {:axiom}` for open-domain opaque
+    // (e.g. `given x: Int` without explicit values, oracle givens).
+    let is_opaque =
+        law_refs_opaque_fn(&law.lhs, opaque_fns) || law_refs_opaque_fn(&law.rhs, opaque_fns);
+    // Native-decreases mutual recursion isn't opaque (Dafny unfolds
+    // it), but the universal `add_commutative(a, b: int)` over
+    // `int × int` still doesn't close as a true ∀ without a domain
+    // restriction. Route through the bounded-∀ form the same way
+    // opaque does — the case-split body composes per-pair sample
+    // lemmas that Dafny *can* close from `{}` on the native path.
+    let is_native_mutual = law_refs_opaque_fn(&law.lhs, native_emitted)
+        || law_refs_opaque_fn(&law.rhs, native_emitted);
+    let needs_bounded_form = is_opaque || is_native_mutual;
+    let all_explicit_int = !law.givens.is_empty()
+        && law.givens.iter().all(|g| {
+            (g.type_name == "Int" || lifted_vars.contains_key(&g.name))
+                && matches!(
+                    &g.domain,
+                    VerifyGivenDomain::Explicit(vs)
+                        if vs.iter().all(|v| literal_int_value(v).is_some())
+                )
+        });
+    if needs_bounded_form && all_explicit_int {
+        for given in &law.givens {
+            let values = match &given.domain {
+                VerifyGivenDomain::Explicit(vs) => vs,
+                _ => unreachable!(),
+            };
+            let n = aver_name_to_dafny(&given.name);
+            let disj = values
+                .iter()
+                .map(|v| format!("{} == {}", n, literal_int_value(v).unwrap()))
+                .collect::<Vec<_>>()
+                .join(" || ");
+            lines.push(format!("  requires {}", disj));
+        }
+    }
+
     lines.push(format!("  ensures {} == {}", lhs, rhs));
     lines.push("{".to_string());
 
-    // Short-circuit: if the law's two sides reference any fn Dafny
-    // emitted as opaque (axiom fallback or mutual fuel-guarded
-    // declaration), the verifier has no body to unfold and the
-    // ensures can't be proved from Dafny's side. Match Lean's
-    // `sorry` fallback by emitting `assume` over the ensures —
-    // users get the same "this lemma is accepted on trust" signal.
-    // (Bounded-∀ form via per-pair sample lemma dispatch was
-    // tried — works for small pairs but Z3 still can't close
-    // samples with large literals like 10⁹ even at fuel 500; see
-    // issue #81 for the follow-up.)
-    if law_refs_opaque_fn(&law.lhs, opaque_fns) || law_refs_opaque_fn(&law.rhs, opaque_fns) {
+    if needs_bounded_form {
+        if all_explicit_int {
+            // Per-pair case split. Each case_givens[idx] gives the
+            // concrete (name, value) pairs for this case; emit
+            // `if a == k_a && b == k_b { sample_lemma_{idx+1}(); }`.
+            // Dafny derives the universal `ensures` from the union
+            // of case conjuncts (which together cover `requires`).
+            for (idx, _) in vb.cases.iter().enumerate() {
+                let Some(bindings) = vb.case_givens.get(idx) else {
+                    continue;
+                };
+                let guard = bindings
+                    .iter()
+                    .map(|(n, v)| {
+                        let val = literal_int_value(v).unwrap_or_else(|| emit_expr(v, ctx));
+                        format!("{} == {}", aver_name_to_dafny(n), val)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" && ");
+                let sample_name = format!("{}_{}{}__sample_{}", fn_name, law_name, suffix, idx + 1);
+                lines.push(format!("  if {} {{ {}(); }}", guard, sample_name));
+            }
+            lines.push("}\n".to_string());
+            return lines.join("\n");
+        }
+        // Open-domain opaque (no explicit literal values per given):
+        // keep the `sorry`-style fallback. `{:axiom}` on the assume
+        // silences Dafny's warning about unannotated assumes.
         lines.push(format!("  assume {{:axiom}} {} == {};", lhs, rhs));
         lines.push("}\n".to_string());
         return lines.join("\n");

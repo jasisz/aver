@@ -123,6 +123,169 @@ pub fn emit_mutual_fuel_group(
     )
 }
 
+/// Native `decreases` tuple emission for mutual-recursion SCCs whose
+/// every fn has a sizeOf measure on at least one parameter and the
+/// classifier already gave each fn a rank in the SCC. Replaces the
+/// fuel-bounded encoding entirely for these groups: Dafny verifies
+/// termination via the lexicographic tuple `(measure, rank)` and Z3
+/// can symbolically unfold the SCC for proofs over concrete values
+/// without hitting a fuel ceiling.
+///
+/// Returns `None` when the SCC isn't `MutualSizeOfRanked`, or when
+/// any member has no inferable sizeOf measure (no `List`/`Vector`/
+/// `String` parameter). The caller falls back to
+/// [`emit_mutual_fuel_group`] in that case.
+///
+/// Why ranks come from the classifier verbatim: `ranks_from_same_
+/// edges` already topo-sorts on "same-measure" callees, so a call
+/// that keeps the measure constant (e.g. `addStep → addDigits` on
+/// the same `(ta, tb)`) goes to a strictly lower rank — the lex
+/// tuple decreases on the second component. Calls that strictly
+/// shrink the measure (e.g. `addDigits → addLeft` peeling a head
+/// off `a`) decrease on the first component regardless of rank.
+pub fn emit_mutual_native_decreases_group(
+    fns: &[&FnDef],
+    ctx: &CodegenContext,
+    plans: &std::collections::HashMap<String, RecursionPlan>,
+) -> Option<String> {
+    let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for fd in fns {
+        match plans.get(&fd.name)? {
+            RecursionPlan::MutualSizeOfRanked { rank } => {
+                ranks.insert(fd.name.clone(), *rank);
+            }
+            _ => return None,
+        }
+    }
+    let mut measures: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for fd in fns {
+        let measure = emit_sizeof_measure_expr_dafny(fd)?;
+        measures.insert(fd.name.clone(), measure);
+    }
+
+    // Reject tail-recursive accumulator patterns where an intra-SCC
+    // call passes a sizeOf-relevant arg through `[x] + acc` /
+    // `List.prepend(x, acc)` / `acc + [x]` — measure grows across
+    // that edge so the lexicographic `(measure, rank)` tuple can't
+    // decrease and Dafny rejects the `decreases` clause. The fuel-
+    // bounded encoding still terminates these (fuel parameter
+    // counts down regardless of measure shape), so we fall back to
+    // it for these SCCs. Conservative: any non-`Ident`/`Resolved`/
+    // `Literal`/`Attr` arg in a sizeOf slot drops us back to fuel.
+    if scc_has_growing_accumulator(fns) {
+        return None;
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    for fd in fns {
+        let measure = measures.get(&fd.name).unwrap();
+        let rank = ranks.get(&fd.name).unwrap();
+        let fn_name = aver_name_to_dafny(&fd.name);
+        let params_str = emit_dafny_params(&fd.params);
+        let ret_type_str = super::toplevel::emit_type(&fd.return_type);
+        // Apply `?!` lowering so the body shape matches what the
+        // fuel path also emits — keeps `(f(x), g(y))?!` -> match-
+        // unwrapped tuple even on the native path.
+        let lowered_body = crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
+            .ok()
+            .flatten()
+            .map(|lowered| lowered.body.as_ref().clone())
+            .unwrap_or_else(|| fd.body.as_ref().clone());
+        let body_str = super::toplevel::emit_fn_body(&lowered_body, ctx);
+
+        if let Some(desc) = &fd.desc {
+            lines.push(format!("// {}", desc));
+        }
+        lines.push(format!(
+            "function {}({}): {}",
+            fn_name, params_str, ret_type_str
+        ));
+        lines.push(format!("  decreases {}, {}", measure, rank));
+        lines.push("{".to_string());
+        lines.push(format!("  {}", body_str));
+        lines.push("}\n".to_string());
+    }
+    Some(lines.join("\n"))
+}
+
+/// SizeOf param indices for a fn — non-scalar param positions.
+/// Matches `sizeof_measure_param_indices` on the Lean side so the
+/// same params drive measure / rank decisions across backends.
+fn sizeof_param_indices(fd: &FnDef) -> Vec<usize> {
+    fd.params
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, (_, ty))| {
+            (!crate::codegen::recursion::detect::is_scalar_like_type(ty)).then_some(idx)
+        })
+        .collect()
+}
+
+/// True iff some intra-SCC call passes a non-trivially-shrinking
+/// expression into a callee's sizeOf parameter — `[x] + acc`,
+/// `List.prepend(x, acc)`, `acc + [x]`, etc. These are tail-rec
+/// accumulator patterns that fuel encoding handles fine but
+/// `decreases` tuple cannot, since the measure either preserves or
+/// grows on those edges.
+fn scc_has_growing_accumulator(fns: &[&FnDef]) -> bool {
+    let names: std::collections::HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
+    let mut sizeof_indices: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for fd in fns {
+        sizeof_indices.insert(fd.name.clone(), sizeof_param_indices(fd));
+    }
+    for fd in fns {
+        let calls = crate::codegen::recursion::detect::collect_calls_from_body(fd.body.as_ref());
+        for (callee_raw, args) in calls {
+            let Some(callee_name) =
+                crate::codegen::recursion::detect::canonical_callee_name(&callee_raw, &names)
+            else {
+                continue;
+            };
+            let Some(callee_indices) = sizeof_indices.get(&callee_name) else {
+                continue;
+            };
+            for callee_idx in callee_indices {
+                let Some(arg) = args.get(*callee_idx) else {
+                    continue;
+                };
+                if !arg_is_non_growing(arg) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn arg_is_non_growing(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::Expr;
+    matches!(
+        &expr.node,
+        Expr::Ident(_) | Expr::Resolved { .. } | Expr::Literal(_) | Expr::Attr(..)
+    )
+}
+
+/// SizeOf measure expression for a fn's `List`/`Vector`/`String`
+/// parameters — Dafny syntax `|name|` for seq/string length. Matches
+/// the index set [`sizeof_measure_param_indices`] uses on the Lean
+/// side so the same fns are picked across backends.
+fn emit_sizeof_measure_expr_dafny(fd: &FnDef) -> Option<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for (name, ty) in &fd.params {
+        let parsed = crate::codegen::common::parse_type_annotation(ty);
+        match parsed {
+            crate::types::Type::List(_)
+            | crate::types::Type::Vector(_)
+            | crate::types::Type::Str => {
+                terms.push(format!("|{}|", aver_name_to_dafny(name)));
+            }
+            _ => {}
+        }
+    }
+    (!terms.is_empty()).then(|| terms.join(" + "))
+}
+
 fn emit_dafny_params(params: &[(String, String)]) -> String {
     params
         .iter()
