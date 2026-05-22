@@ -79,17 +79,23 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
 }
 
 fn emit_product_type(name: &str, fields: &[(String, String)], ctx: &CodegenContext) -> String {
-    // Refinement detection lives in `refinement_info_for` (common.rs)
-    // — kept around as foundation for a future Subtype-based refactor
-    // that would eliminate the by_cases / unfold / simp heuristic in
-    // `law_auto.rs`. Not wired here yet: switching from `structure
-    // X { value : T }` to `abbrev X := { v : T // P v }` breaks the
-    // currently-generated theorem statements (they quantify over the
-    // carrier `Int` and construct `Natural(value = a)` inside the
-    // type, which under Subtype needs an in-type proof `(a : Int)
-    // → ... → ⟨a, proof⟩` that the law emitter doesn't know how to
-    // produce yet). Real refactor is a separate design task.
-    let _ = ctx;
+    // Refinement-via-opaque records emit as Lean `Subtype` only
+    // when the carrier is `Int`. Float-carrier records (NonNegFloat,
+    // Discount, …) stay as plain `structure`, because Lean's `Float`
+    // model doesn't admit universal arithmetic laws (IEEE 754: `NaN
+    // ≠ NaN`, `+` not commutative across infinities), so the lift
+    // would just produce uniwersalne theorems we can't prove. The
+    // existing sample-based path covers them: domain values come
+    // from `given a: Float = […]`, and proofs are sample-by-sample
+    // via native_decide.
+    if let Some(info) = crate::codegen::common::refinement_info_for(name, ctx)
+        && info.carrier_type == "Int"
+    {
+        let carrier_ty = type_annotation_to_lean(info.carrier_type);
+        let param = aver_name_to_lean(info.param_name);
+        let predicate = super::expr::emit_expr(info.predicate, ctx);
+        return format!("abbrev {name} := {{ {param} : {carrier_ty} // {predicate} }}");
+    }
 
     let mut lines = Vec::new();
     let is_recursive = is_recursive_product(name, fields);
@@ -1429,6 +1435,39 @@ fn emit_verify_law_block(
         ctx,
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
     );
+    // Refinement quantifier lift: when a given Int variable shows up
+    // in the law body wrapped in a refinement-record constructor
+    // (`Natural(value = a)`, `Positive(value = a)`, …), lift the
+    // quantifier from the carrier type to the refined type so the
+    // theorem statement reads `∀ (a : Natural), …` instead of
+    // `∀ (a : Int), … Natural(value = a) …`. Strip the wrapper
+    // constructor in the body templates so they read as
+    // `add a b`, not `add (Natural(value = a)) (Natural(value = b))`.
+    // The smart-constructor predicate ceases to be a per-case proof
+    // obligation — it's already carried by the type.
+    let mut lifted_vars: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for given in &law.givens {
+        if let Some(refined) = crate::codegen::common::refinement_lift_for_given(
+            &given.name,
+            &given.type_name,
+            &law_lhs,
+            &law_rhs,
+            ctx,
+        ) {
+            lifted_vars.insert(given.name.clone(), refined.to_string());
+        }
+    }
+    let law_lhs = if lifted_vars.is_empty() {
+        law_lhs
+    } else {
+        crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars)
+    };
+    let law_rhs = if lifted_vars.is_empty() {
+        law_rhs
+    } else {
+        crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars)
+    };
     let lhs_template = emit_expr(&law_lhs, ctx);
     let rhs_template = emit_expr(&law_rhs, ctx);
     // The `when` clause references the same oracle bindings the law
@@ -1458,7 +1497,13 @@ fn emit_verify_law_block(
             // `∀ rng : BranchPath → Int → ... → Int`. Other effect
             // kinds (Output, unclassified) keep the plain function
             // signature.
-            let type_text = if let Some(subtype) = bounded_oracle_subtype_for(&given.type_name) {
+            // Refinement lift: quant param `a` lifts from `Int` to
+            // the wrapping refinement record (`Natural`, `Positive`,
+            // …) when the law body used `Natural(value = a)` etc.
+            // See `refinement_lift_for_given` for the detection.
+            let type_text = if let Some(refined) = lifted_vars.get(&given.name) {
+                refined.clone()
+            } else if let Some(subtype) = bounded_oracle_subtype_for(&given.type_name) {
                 subtype.to_string()
             } else {
                 match crate::types::checker::effect_classification::oracle_signature(
@@ -1511,6 +1556,7 @@ fn emit_verify_law_block(
             &lhs_template,
             &rhs_template,
             when_template.as_deref(),
+            &lifted_vars,
         );
         // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs
         // ASTs. For effectful laws the theorem statement has been
@@ -1527,7 +1573,77 @@ fn emit_verify_law_block(
             rhs: law_rhs.clone(),
             sample_guards: law.sample_guards.clone(),
         };
-        if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
+        // Refinement-lifted theorem (∀ a b : Natural, …) closes
+        // through a trivial unfold + `Int.add_comm` / `Int.mul_comm`
+        // rewrite — the Subtype invariant is in the type, so no
+        // by_cases or `simp [hyp]` machinery is needed. Emit
+        // directly here, skipping the auto_proof chain whose
+        // wrapper-return tactic was the last consumer of the
+        // by_cases heuristic.
+        let refinement_auto_proof = if !lifted_vars.is_empty()
+            && matches!(verify_mode, VerifyEmitMode::NativeDecide)
+        {
+            let intro_names: Vec<String> = law
+                .givens
+                .iter()
+                .map(|g| aver_name_to_lean(&g.name))
+                .collect();
+            let mut fn_names = std::collections::BTreeSet::new();
+            collect_user_fn_calls(&law_lhs, &mut fn_names);
+            collect_user_fn_calls(&law_rhs, &mut fn_names);
+            fn_names.insert(vb.fn_name.clone());
+            // Transitively expand so the unfold list reaches every
+            // user fn the law's body walks through (same expansion
+            // strategy as `emit_simp_omega_law` in `law_auto.rs`).
+            loop {
+                let before = fn_names.len();
+                let snapshot: Vec<String> = fn_names.iter().cloned().collect();
+                for item in &ctx.items {
+                    if let crate::ast::TopLevel::FnDef(fd) = item
+                        && snapshot.contains(&fd.name)
+                    {
+                        for stmt in fd.body.stmts() {
+                            let (crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e)) =
+                                stmt;
+                            collect_user_fn_calls(e, &mut fn_names);
+                        }
+                    }
+                }
+                if fn_names.len() == before {
+                    break;
+                }
+            }
+            // Top-level law fn first so `unfold` sees it in the
+            // goal before transitively-reached callees.
+            let mut ordered: Vec<String> = Vec::new();
+            if fn_names.contains(&vb.fn_name) {
+                ordered.push(vb.fn_name.clone());
+            }
+            for n in &fn_names {
+                if n != &vb.fn_name {
+                    ordered.push(n.clone());
+                }
+            }
+            let lean_names: Vec<String> = ordered.iter().map(|n| aver_name_to_lean(n)).collect();
+            let intro_clause = if intro_names.is_empty() {
+                String::new()
+            } else {
+                format!("  intro {}\n", intro_names.join(" "))
+            };
+            let proof_body = format!(
+                "{intro_clause}  unfold {}\n  simp [Int.add_comm, Int.mul_comm]",
+                lean_names.join(" ")
+            );
+            Some(proof_body)
+        } else {
+            None
+        };
+        if let Some(proof_body) = refinement_auto_proof {
+            lines.push(format!(
+                "theorem {} : ∀ {}, {} := by\n{}",
+                theorem_base, quant_params, theorem_prop, proof_body
+            ));
+        } else if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
             vb,
             &law_for_auto_proof,
             ctx,
@@ -1556,7 +1672,16 @@ fn emit_verify_law_block(
         }
     }
 
-    if !vb.cases.is_empty() {
+    // Skip checked_domain emission for refinement-lifted laws: the
+    // universal theorem already quantifies over the refined type
+    // (`∀ a b : Natural`), which strictly entails any
+    // sample-domain conjunction over the same body. Keeping
+    // checked_domain would emit a 25+ conjunct of `add ⟨v, by …⟩`
+    // calls that Lean has to run `native_decide` against, which
+    // for compound predicates (`Bool.and(n ≥ 0, n ≤ 100)`) blows
+    // through `maxHeartbeats`. The per-case `sample_N` theorems
+    // below still get emitted as a granular cross-check.
+    if !vb.cases.is_empty() && lifted_vars.is_empty() {
         let domain_theorem_name = format!("{}_checked_domain", theorem_base);
         let domain_prop = vb
             .cases
@@ -1680,16 +1805,29 @@ fn law_theorem_prop(
     lhs_template: &str,
     rhs_template: &str,
     when_template: Option<&str>,
+    lifted_vars: &std::collections::HashMap<String, String>,
 ) -> String {
     let mut premises = Vec::new();
     if law.when.is_some() {
-        premises.extend(
-            law.givens
-                .iter()
-                .map(|given| law_given_domain_prop(given, ctx)),
-        );
+        // Lifted vars are quantified over the refinement record
+        // (`a : Natural`), not the carrier `Int`, so the
+        // disjunctive domain premise (`a = 0 ∨ a = 1 ∨ …`) is
+        // type-mismatched (Lean sees `0 : Int` against
+        // `a : Natural`) and the `when a ≥ 0` premise is trivially
+        // entailed by the type's invariant. Skip both for lifted
+        // givens — the universal claim over the refined type is
+        // strictly stronger than a domain-restricted one.
+        premises.extend(law.givens.iter().filter_map(|given| {
+            if lifted_vars.contains_key(&given.name) {
+                None
+            } else {
+                Some(law_given_domain_prop(given, ctx))
+            }
+        }));
     }
-    if let Some(when_expr) = when_template {
+    if let Some(when_expr) = when_template
+        && !law.givens.iter().all(|g| lifted_vars.contains_key(&g.name))
+    {
         premises.push(format!("{when_expr} = true"));
     }
     let conclusion = format!("{lhs_template} = {rhs_template}");
@@ -1896,4 +2034,49 @@ pub fn emit_mutual_group_proof(
 
     lines.push("end".to_string());
     lines.join("\n")
+}
+
+/// Collect user-defined fn names referenced anywhere in `expr`,
+/// following the same last-segment-lowercase filter
+/// `law_auto::collect_fn_calls` uses (skip built-in namespace
+/// handles like `List.len`, keep cross-module `Modules.X.Y.fn`
+/// because their leaf segment starts lower-case).
+fn collect_user_fn_calls(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet<String>) {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&callee.node) {
+                let last = name.rsplit('.').next().unwrap_or(&name);
+                if last.chars().next().is_some_and(|c| c.is_lowercase()) {
+                    out.insert(name);
+                }
+            }
+            for a in args {
+                collect_user_fn_calls(a, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_user_fn_calls(l, out);
+            collect_user_fn_calls(r, out);
+        }
+        Expr::Attr(o, _) => collect_user_fn_calls(o, out),
+        Expr::Neg(i) | Expr::ErrorProp(i) => collect_user_fn_calls(i, out),
+        Expr::Match { subject, arms } => {
+            collect_user_fn_calls(subject, out);
+            for arm in arms {
+                collect_user_fn_calls(&arm.body, out);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                collect_user_fn_calls(it, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                collect_user_fn_calls(v, out);
+            }
+        }
+        Expr::Constructor(_, Some(arg)) => collect_user_fn_calls(arg, out),
+        _ => {}
+    }
 }
