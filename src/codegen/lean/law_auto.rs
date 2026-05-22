@@ -211,10 +211,10 @@ fn emit_simp_omega_law(
     // `ctx.items`). Mark wrapper_return when their result type is a
     // wrapper (Result, Option, …).
     for name in &fn_names {
-        if let Some((_params, ret, _effects)) = ctx.fn_sigs.get(name) {
-            if !matches!(ret, crate::types::Type::Int | crate::types::Type::Float) {
-                wrapper_return = true;
-            }
+        if let Some((_params, ret, _effects)) = ctx.fn_sigs.get(name)
+            && !matches!(ret, crate::types::Type::Int | crate::types::Type::Float)
+        {
+            wrapper_return = true;
         }
     }
 
