@@ -4,43 +4,41 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.22.0 "Lift" — UNRELEASED
 
-> _Refinement records now lift into native proof-language refinements. The invariant is carried by the type, so universal proofs become boring again — in Lean, in Dafny, standalone, and across modules._
+> _Aver source stays ordinary: records, guards, and private workers. The proof export recovers the stronger mathematical shape and carries the invariant into Lean/Dafny — standalone or across module boundaries._
 
-### Refinement records
+### Refinement recovery
 
-- **Single-field `Int` records with validating smart constructors now lift to native refinement types in both proof backends.**
-  A record like `Natural { v: Int }`, paired with a constructor that guards `v >= 0`, no longer exports as a plain wrapper plus separate assumptions. Lean emits a subtype shape (`{ v : Int // P v }`), and Dafny emits a subset type (`type X = v: int | P v witness W`). The predicate from the constructor travels with the type.
+- **Aver now recovers proof-language refinements from ordinary validated code shapes.**
+  A source program does not need refinement-type syntax for the proof backend to see a refinement. If the program establishes an invariant at a boundary — through a validating smart constructor, or through a guard before entering a private worker — the exporter can preserve that fact in the generated Lean/Dafny surface.
 
-- **Universal laws over lifted refinements now close in the backend's natural proof shape.**
-  Laws like `add_commutative(a: Natural, b: Natural)` no longer need hand-written `by_cases`, unfolding, or per-law tactic plumbing. Lean reduces them to the obvious integer law; Dafny can discharge the corresponding subset-type proof directly.
+- **Single-field `Int` records with validating smart constructors lift to native refinement/subset types.**
+  A record like `Natural { v: Int }`, paired with a constructor that guards `v >= 0`, now exports as a native proof-language refinement: Lean emits a subtype shape (`{ v : Int // P v }`), and Dafny emits a subset type (`type X = v: int | P v witness W`). The predicate from the constructor travels with the type.
 
-- **The lift is automatic and source-compatible.**
-  No new annotation is required in Aver. The exporter recognizes the safe pattern and chooses the stronger proof representation. Records over `Float`, `String`, or multiple fields keep the previous wrapper shape for now, because those carriers do not currently give the same clean universal algebraic story.
+- **Guarded public functions can refine the domain of private workers.**
+  A public function may accept a plain `Int`, reject invalid inputs at the boundary, and call a private recursive worker only under a stronger invariant such as `n >= 0`. The proof export now keeps that invariant in the generated theorem/definition shape instead of treating the worker as operating over an unconstrained `Int`.
 
-- **Cross-module refinement now behaves the same as standalone export.**
-  A `Natural` defined in its own module lifts whether you prove that module directly or import it as a dependency. Pre-0.22, cross-module export could fall back to the wrapper representation and lose the one-line proof shape.
+- **Universal laws over recovered refinements now close in the backend's natural proof shape.**
+  Laws like `add_commutative(a: Natural, b: Natural)` no longer need hand-written `by_cases`, unfolding, or per-law tactic plumbing. Lean reduces them to the underlying integer law; Dafny can discharge the corresponding subset-type proof directly.
 
-### Proof export — Lean
+- **The lift is conservative and source-compatible.**
+  No new Aver annotation is required. 0.22 recognizes safe `Int`-based patterns first: validated single-field carriers and guarded domains. Other carriers keep the previous wrapper shape until their proof story is explicit enough to lift safely.
 
-- **Private tail-recursive Int countdown workers now export as native recursive defs, with the precondition inferred from the caller's surrounding guards.**
-  Workers in the `fibTR` shape used to flow through a fuel-encoded helper because Lean's well-founded elaboration couldn't see the domain that made the recursion terminate. The compiler now reads the worker's external callsite — `fib`'s `false`-arm of `match (n < 0)`, or nested interval guards like `n > 2 ∧ n < 500` — and threads that predicate into the recursive def itself. Lean can `decide` and unfold through these workers in downstream proofs instead of treating them as opaque. Open-world workers and shapes with leading `let` bindings keep the fuel path.
+- **Recovered refinements survive module boundaries.**
+  A `Natural` declared in its own module emits the lifted subtype/subset shape whether you prove that module directly or import it as a dependency. Pre-0.22 cross-module export could fall back to the wrapper representation and lose the one-line proof shape.
 
-- **Verify `when` clauses are now preserved as theorem premises whenever they carry information beyond the refinement type's invariant.**
-  Pre-0.22, a `when` clause attached to a law over a refinement-lifted given got dropped on the unchecked assumption it just restated the type's invariant. A stronger predicate like `when a >= 10` over a `Natural` (invariant `a >= 0`) would silently disappear from the universal theorem. Both backends now compare the user's predicate against the conjunction of lifted invariants and only drop it when they are syntactically equivalent.
+- **User `when` clauses are preserved exactly as written, not silently absorbed by recovery.**
+  A `when` clause attached to a law over a refinement-lifted given used to be dropped on the assumption it repeated the type invariant. If the user's predicate was actually stronger, the universal claim would silently change. The exporter now keeps `when` as a theorem premise unless it is provably equivalent to the recovered invariant.
 
-- **Mutual-recursion sample assertions no longer hit Lean's elaboration synth budget.**
-  Programs whose smart constructor matched a compound boolean predicate could exhaust the default synthesis budget on per-sample `native_decide`. The budget is no longer the bottleneck for these shapes.
+### Mutual recursion in proof export
 
-- **Mutual-recursion SCCs with a `List` or `Vector` sizeOf measure now export as a single native `mutual ... termination_by ... end` block.**
-  The user's structural measure goes directly into the `termination_by` clause, lex-paired with the classifier's SCC rank. The helper-and-wrapper indirection of the fuel encoding is gone for these groups; SCCs that don't fit (recursive ADT measure, tail-recursive accumulator patterns) keep the fuel path so no existing example regresses.
+- **Mutual-recursion SCCs over `List` / `Vector` / `String` parameters export natively in both backends.**
+  Lean emits a single `mutual ... termination_by ... end` block keyed off the structural measure; Dafny emits a `decreases <size_measure>, <rank>` tuple on each member. The fuel-bounded helper-and-wrapper indirection is gone for these groups, and Z3 / Lean can unfold the SCC to ground terms during proof obligations. SCCs without a measurable structural parameter still go through the fuel encoding.
 
-### Proof export — Dafny
+- **Bounded-∀ universal laws over mutual recursion verify as real proofs.**
+  A `verify <fn> law` with bounded integer givens over a mutual-rec SCC now emits a bounded universal that case-splits across the declared domain and dispatches each pair to its per-sample lemma. BigInt's `add_commutative` moves from `assume {:axiom}` on trust to a verified theorem over the declared domain on Dafny, with Lean parity via `rcases` + `native_decide` per case.
 
-- **Mutual-recursion SCCs export as native `decreases` tuples instead of routing through fuel.**
-  Each function becomes a plain Dafny `function ... decreases <size_measure>, <rank>`; Z3 unfolds the SCC to ground terms during proof obligations and the fuel ceiling that used to cliff out on large literals (BigInt's `10⁹`) is gone. SCCs without a measurable sequence parameter still go through the fuel encoding.
-
-- **Universal laws over mutual recursion with bounded integer givens now verify as real bounded-∀ proofs.**
-  A `verify <fn> law` with `given a: Int = [...]` and `given b: Int = [...]` over a mutual-rec SCC emits a bounded universal lemma that case-splits across the declared domain and dispatches each `(a, b)` pair to its per-sample lemma. BigInt's `add_commutative` moves from `assume {:axiom}` on trust to a verified theorem over the declared domain (18 verified + 5 errors → 36 verified + 0 errors, no `assume` body anywhere).
+- **Mutual-recursion sample assertions no longer hit Lean's synthesis budget.**
+  Programs whose smart constructor matched a compound boolean predicate could exhaust the default synth budget on per-sample `native_decide`; the budget is no longer the bottleneck for these shapes.
 
 ### Examples
 
