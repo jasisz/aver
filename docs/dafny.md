@@ -102,6 +102,71 @@ Fuel metric depends on the plan: `natAbs(n) + 1` for `MutualIntCountdown`, `(|s|
 
 Lemmas whose `ensures` references an opaque fn (axiom or fuel-guarded) short-circuit their body to `assume {:axiom} <ensures>;` — parallel to Lean's `sorry`, accepted on trust rather than derived from unfolding. Dafny still type-checks the whole file; users add their own lemma proofs where the axiom fallback bites.
 
+## Refinement records (refinement-via-opaque)
+
+An Aver `record X { v: Int }` paired with a validating smart
+constructor `fn fromX(n: Int) -> Result<X, String>` whose body matches
+`match <pred(n)> { true -> Result.Ok(X(v = n)); false -> Result.Err(_) }`
+lifts to a Dafny subset type:
+
+```dafny
+type Natural = v: int | v >= 0 witness 0
+```
+
+The predicate from the smart constructor's bool guard becomes the
+subset constraint, so `verify add law commutative` over `Natural`
+emits the universal lemma with an empty proof body — Dafny's
+type-checker discharges the lift directly:
+
+```dafny
+lemma {:fuel add, 5} {:fuel fromInt, 5} add_commutative(a: Natural, b: Natural)
+  ensures add(a, b) == add(b, a)
+{ }
+```
+
+Triggers for single-field `Int` carriers; `Float` / `String` and
+multi-field records stay on the plain `datatype X = X(v: int)` shape
+(no universal algebraic laws to exploit). Cross-module emit is
+identical to standalone — `aver proof natural.av` and
+`aver proof natural_app.av --module-root examples` both generate the
+same `type Natural = ...` declaration.
+
+A `verify ... law` block's `when` clause stays as a `requires` clause
+on the universal lemma when it carries information beyond the
+refinement type's invariant. `when a >= 10` over `Natural` (invariant
+`a >= 0`) shows up as `requires a >= 10`; redundant `when a >= 0` is
+dropped cleanly so the universal lemma signature stays at
+`lemma add_law_commutative(a: Natural, b: Natural)`. Compound
+invariants (`Bool.and(n >= 0, n <= 100)`) flatten on both sides of
+the comparison so `IntRange`'s `when Bool.and(a >= 0, a <= 100)` is
+correctly recognised as equivalent to the subset constraint.
+
+## Bounded-∀ universal over mutual-rec SCCs
+
+A `verify <fn> law` with `given a: Int = [k₁, k₂, ...]` plus
+`given b: Int = [...]` over a mutual-recursion SCC emits the universal
+lemma as a bounded ∀ over the declared domain:
+
+```dafny
+lemma add_commutative(a: int, b: int)
+  requires (a == 0 || a == 1 || ...) && (b == 0 || b == 1 || ...)
+  ensures add(a, b) == add(b, a)
+{
+  if a == 0 && b == 0 { add_commutative_sample_1(); }
+  else if a == 0 && b == 1 { add_commutative_sample_2(); }
+  // ... per-(a, b) pair dispatch
+}
+```
+
+Per-pair `add_commutative_sample_n` lemmas close as real proofs
+(no `assume {:axiom}` body). BigInt's `add_commutative` was the
+canonical exercise — moved from 18 verified / 5 errors (and
+`assume {:axiom}` on the universal) to 36 verified / 0 errors
+with the universal as a verified bounded ∀ over the declared
+domain. Falls back to `assume {:axiom}` only when the law's givens
+have no explicit literal domain (open-`Int` quantifier, oracle
+binding, etc.).
+
 ## Inductive lemma hints
 
 For `verify law` blocks with a single `given n: Int` where both sides use directly-recursive functions, the codegen generates inductive proof structure:

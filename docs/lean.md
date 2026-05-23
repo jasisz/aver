@@ -152,6 +152,48 @@ The current proof export supports:
 - mutual recursion SCC with ranked `String + pos` progress
 - mutual recursion SCC with ranked structural descent over recursive parameters (emitted as native `mutual ... termination_by ... end` block when every SCC member has a `List`/`Vector` sizeOf measure; fuel-encoded otherwise)
 
+## Refinement records (refinement-via-opaque)
+
+An Aver `record X { v: Int }` paired with a validating smart constructor
+`fn fromX(n: Int) -> Result<X, String>` whose body is the canonical
+`match <pred(n)> { true -> Result.Ok(X(v = n)); false -> Result.Err(_) }`
+shape lifts to a true refinement subtype in Lean:
+
+```lean
+abbrev Natural := { v : Int // v ≥ 0 }
+```
+
+The predicate from the smart constructor's bool guard rides in the
+type itself, so a `verify add law commutative` over `Natural` quantifies
+directly over the refined type:
+
+```lean
+theorem add_law_commutative : ∀ (a b : Natural), add a b = add b a := by
+  intro a b
+  unfold add fromInt
+  simp [Int.add_comm, Int.mul_comm]
+```
+
+— one line, instead of the pre-0.22 `by_cases h_a : a ≥ 0 / by_cases
+h_b : b ≥ 0 / unfold / hand-rolled tactic` plumbing per law shape. The
+lift is automatic, no source-language change. Triggers for single-field
+`Int` carriers; `Float` and `String` carriers keep the plain
+structure path (IEEE 754 NaN breaks universal float laws, strings have
+no universal algebraic structure to exploit).
+
+Refinement records work the same way whether the type is declared in
+the entry file or in a dependent module — `aver proof natural.av` and
+`aver proof natural_app.av --module-root examples` both emit the same
+lifted Subtype shape. Pre-0.22 cross-module fell back to the wrapper
+shape and lost the one-line universal proof.
+
+`verify ... law` blocks with a `when` clause keep the clause as a
+theorem premise when it carries information beyond the refinement
+type's invariant. A `when a >= 10` over `Natural` (invariant
+`a.val >= 0`) shows up as a real `(a.val ≥ 10) -> ...` antecedent
+on the universal; a redundant `when a >= 0` is dropped cleanly so the
+universal stays in the one-line `∀ (a : Natural), ...` shape.
+
 ## Current end-to-end examples
 
 These examples are currently smoke-tested end to end with
@@ -163,6 +205,12 @@ These examples are currently smoke-tested end to end with
 - `examples/data/rle.av`
 - `examples/data/json.av`
 - `examples/core/grok_s_language.av`
+- `examples/refinement/natural/natural.av` — refinement-via-opaque (Int + `>= 0`)
+- `examples/refinement/positive/positive.av` — refinement (Int + `>= 1`)
+- `examples/refinement/int_range/int_range.av` — refinement with compound `Bool.and(n >= 0, n <= 100)`
+- `examples/refinement/bigint/bigint.av` — refinement over `List<Int>` + mutual-rec digit arithmetic
+- `examples/refinement/nonneg_float/nonneg_float.av` — Float carrier, structure path
+- `examples/refinement/email/email.av` — String carrier, structure path
 
 Other modules have unit coverage for proof-subset classification and generated
 Lean snippets, but are not currently listed here as end-to-end smoke cases.
