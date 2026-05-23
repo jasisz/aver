@@ -1328,7 +1328,7 @@ fn transpile_unified(
             format!("\n{}\n", opens.join("\n"))
         };
         let content = format!(
-            "{}\n{}\nnamespace {}\n\n{}\nend {}\n",
+            "{}\n\nset_option linter.unusedVariables false\n{}\nnamespace {}\n\n{}\nend {}\n",
             imports.join("\n"),
             opens_str,
             module.prefix,
@@ -1380,6 +1380,13 @@ fn transpile_unified(
     if !entry_opens.is_empty() {
         entry_parts.push(entry_opens.join("\n"));
     }
+    // Silence `unused variable` warnings for the named-match equation
+    // binders (`h_NN :`) that the wf elaborator needs but the user-
+    // source body never references. Without this every ListStructural
+    // recursion would surface a warning per nested match. Per-file
+    // because `set_option` is local; AverCommon already has the same
+    // option for its prelude defs.
+    entry_parts.push("set_option linter.unusedVariables false".to_string());
     let declared = crate::codegen::common::collect_declared_effects(ctx);
     let has_ip = union_body.contains("BranchPath");
     let has_classified =
