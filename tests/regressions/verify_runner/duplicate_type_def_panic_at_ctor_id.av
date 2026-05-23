@@ -1,0 +1,22 @@
+module M
+    intent =
+        "Minimal repro for fuzz_verify_runner crash id:000001."
+        "A second `type T` declaration overwrote the first via"
+        "HashMap::insert in the typechecker's signature table; the"
+        "VM compiler then asked the arena for a ctor id that"
+        "belonged to the first declaration's variant list and"
+        "panicked at vm/compiler/mod.rs:531 with `ctor id`."
+        "Typechecker now rejects duplicate type names so the second"
+        "declaration never reaches codegen."
+
+type T
+    A
+
+type T
+    A
+
+verify dummy
+    1 => 1
+
+fn dummy() -> Int
+    1

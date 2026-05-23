@@ -1,0 +1,19 @@
+module M
+    intent =
+        "Minimal repro for fuzz_verify_runner crash id:000000."
+        "Two variants with the same name in a single sum type made"
+        "the VM symbol table intern the same ctor key under two"
+        "distinct (variant_id, ctor_id) pairs and panic at"
+        "vm/symbol.rs:205 with `assertion left == right failed`."
+        "Typechecker now rejects duplicate variant names so the VM"
+        "never sees the inconsistency."
+
+type T
+    A
+    A
+
+verify dummy
+    1 => 1
+
+fn dummy() -> Int
+    1

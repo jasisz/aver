@@ -133,9 +133,47 @@ impl TypeChecker {
             TypeDef::Sum {
                 name: type_name,
                 variants,
-                ..
+                line,
             } => {
                 let canonical_type = canonical_name(module_name, type_name);
+                // Iron-followup: duplicate type defs in the same module
+                // used to silently overwrite via `HashMap::insert`,
+                // leaving the VM symbol table half-populated with the
+                // first variant set and trying to register the second.
+                // `fuzz_verify_runner` crash id:000001 minimised to a
+                // `type Tree ... \n type Tree he canonical Lea` shape
+                // that panicked at `vm/compiler/mod.rs:531 ctor id`
+                // because the arena's variant list belonged to the
+                // first decl but the symbol path used the second.
+                // Reject the duplicate at typecheck so the VM never
+                // sees the inconsistency.
+                if self.fn_sigs.contains_key(&canonical_type) {
+                    self.error_at_line(
+                        *line,
+                        format!("Type '{}' is already defined in this module", type_name),
+                    );
+                    return;
+                }
+                // Iron-followup: same module-level rule applies inside
+                // a single type: two variants with the same name make
+                // the VM symbol table register one ctor key under two
+                // distinct (variant_id, ctor_id) pairs, which the
+                // intern assertion catches as a panic
+                // (`vm/symbol.rs:205` — `fuzz_verify_runner` crash
+                // id:000000). Reject the duplicate at typecheck.
+                let mut seen_variants: std::collections::HashSet<&str> =
+                    std::collections::HashSet::new();
+                for variant in variants {
+                    if !seen_variants.insert(variant.name.as_str()) {
+                        self.error_at_line(
+                            *line,
+                            format!(
+                                "Type '{}': variant '{}' is declared more than once",
+                                type_name, variant.name
+                            ),
+                        );
+                    }
+                }
                 let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
                 // Register variant names for exhaustiveness under both
                 // the canonical and bare keys — exhaustiveness reads
@@ -194,9 +232,37 @@ impl TypeChecker {
             TypeDef::Product {
                 name: type_name,
                 fields,
-                ..
+                line,
             } => {
                 let canonical_type = canonical_name(module_name, type_name);
+                // Same duplicate-type rule as the Sum arm — a record
+                // re-declared in the same module would silently
+                // overwrite the first via `HashMap::insert` and leave
+                // downstream consumers (codegen, VM compiler, refinement
+                // detector) reading whichever copy won the race.
+                if self.fn_sigs.contains_key(&canonical_type) {
+                    self.error_at_line(
+                        *line,
+                        format!("Type '{}' is already defined in this module", type_name),
+                    );
+                    return;
+                }
+                // Duplicate field names in a record — same hazard the
+                // Sum-variant check guards against, just on the
+                // product side.
+                let mut seen_fields: std::collections::HashSet<&str> =
+                    std::collections::HashSet::new();
+                for (fname, _) in fields {
+                    if !seen_fields.insert(fname.as_str()) {
+                        self.error_at_line(
+                            *line,
+                            format!(
+                                "Type '{}': field '{}' is declared more than once",
+                                type_name, fname
+                            ),
+                        );
+                    }
+                }
                 // Record constructors are handled via Expr::RecordCreate
                 // — fn_sigs entry exists so `Ident("TypeName")` resolves
                 // to `Type::Named(bare)` (Iron — A3: source-faithful).
