@@ -446,20 +446,34 @@ fn emit_match(
             arm_strs.push(format!("  | {} => {}", pat, body));
         }
     }
-    // Plain `match … with` (no `h_NN :` named hypothesis). The named
-    // form was historically defensive — equation-style proofs could
-    // refer to `h_NN` for hypothesis-driven reasoning — but the
-    // generated output never actually uses those bindings, and the
-    // shape blocks `simp` from reducing if-inside-match inside the
-    // auto-proof tactic for wrapper-return cross-module laws. The
-    // unused-variable linter was warning on them in every Lean
-    // export. Drop them so `simp [hyp]` + `by_cases` actually closes
-    // the resulting goal. Three fuel-helper emitters still call
-    // `strip_match_eq_binders`; with this change that strip is a
-    // no-op, but leaving the call in place keeps the older paths
-    // tolerant of any future re-introduction of named binders.
-    let _ = line;
-    format!("match {} with\n{}", subj, arm_strs.join("\n"))
+    // Use `match h_NN : <ident> with …` (named form) only when the
+    // subject is a local ident — that's where Lean's wf elaboration
+    // needs the equation `h_NN : ident = pattern` to relate the
+    // outer match's pattern-binder to the inner match's wildcard
+    // binder during decreasing-tactic resolution. Concretely: a
+    // `ListStructural` fn like `showListIntInner` with nested
+    // `match xs / match tail` loses the `tail = x✝` equation under
+    // plain `match`, and `decreasing_tactic` can't prove the rec-arg
+    // measure decrease.
+    //
+    // Wrapper-return matches (e.g. `match foo() with | .ok x => ...
+    // | .error e => ...`) keep the plain form — their subject is an
+    // `Expr::FnCall` whose match equation is opaque to the
+    // wf elaborator anyway, and `simp [foo]` still needs to reduce
+    // `if`-inside-match cleanly in the auto-proof tactic chain.
+    // Three fuel-helper emitters still call `strip_match_eq_binders`;
+    // with this guard the strip only fires for the ident path,
+    // preserving wrapper-return emit untouched.
+    let needs_eq_binder = matches!(
+        &subject.node,
+        Expr::Ident(_) | Expr::Resolved { .. } | Expr::Attr(_, _)
+    );
+    if needs_eq_binder {
+        let eq_name = format!("h_{}", line);
+        format!("match {} : {} with\n{}", eq_name, subj, arm_strs.join("\n"))
+    } else {
+        format!("match {} with\n{}", subj, arm_strs.join("\n"))
+    }
 }
 
 /// True iff `expr` (recursively) contains a `RecordCreate` whose

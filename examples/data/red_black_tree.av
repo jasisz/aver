@@ -36,12 +36,8 @@ fn search(x: Int, left: Tree, value: Int, right: Tree) -> Bool
       true -> member(x, left)
       false -> member(x, right)
 
-verify search law rootMatch
-  given x: Int = [1]
-  given left: Tree = [Tree.Empty]
-  given value: Int = [1]
-  given right: Tree = [Tree.Empty]
-  search(x, left, value, right) => true
+verify search
+  search(1, Tree.Empty, 1, Tree.Empty) => true
 
 fn member(x: Int, t: Tree) -> Bool
   ? "Check if a value exists in the tree"
@@ -104,10 +100,8 @@ fn ins(x: Int, t: Tree) -> Tree
         true -> balanceBlack(ins(x, left), value, right)
         false -> balanceBlack(left, value, ins(x, right))
 
-verify ins law insertIntoEmpty
-  given x: Int = [1]
-  given t: Tree = [Tree.Empty]
-  ins(x, t) => Tree.Red(Tree.Empty, 1, Tree.Empty)
+verify ins
+  ins(1, Tree.Empty) => Tree.Red(Tree.Empty, 1, Tree.Empty)
 
 fn makeBlack(t: Tree) -> Tree
   ? "Force the root to black"
@@ -115,18 +109,15 @@ fn makeBlack(t: Tree) -> Tree
     Tree.Red(left, value, right) -> Tree.Black(left, value, right)
     _ -> t
 
-verify makeBlack law redRoot
-  given t: Tree = [Tree.Red(Tree.Empty, 1, Tree.Empty)]
-  makeBlack(t) => Tree.Black(Tree.Empty, 1, Tree.Empty)
+verify makeBlack
+  makeBlack(Tree.Red(Tree.Empty, 1, Tree.Empty)) => Tree.Black(Tree.Empty, 1, Tree.Empty)
 
 fn insert(x: Int, t: Tree) -> Tree
   ? "Insert a value into the red-black tree"
   makeBlack(ins(x, t))
 
-verify insert law rootBlackened
-  given x: Int = [1]
-  given t: Tree = [Tree.Empty]
-  insert(x, t) => Tree.Black(Tree.Empty, 1, Tree.Empty)
+verify insert
+  insert(1, Tree.Empty) => Tree.Black(Tree.Empty, 1, Tree.Empty)
 
 fn redden(t: Tree) -> Tree
   ? "Recolor a black node to red (for delete rebalancing)"
@@ -134,9 +125,8 @@ fn redden(t: Tree) -> Tree
     Tree.Black(left, value, right) -> Tree.Red(left, value, right)
     _ -> t
 
-verify redden law blackToRed
-  given t: Tree = [Tree.Black(Tree.Empty, 1, Tree.Empty)]
-  redden(t) => Tree.Red(Tree.Empty, 1, Tree.Empty)
+verify redden
+  redden(Tree.Black(Tree.Empty, 1, Tree.Empty)) => Tree.Red(Tree.Empty, 1, Tree.Empty)
 
 fn balDeleteLeft(left: Tree, value: Int, right: Tree) -> Tree
   ? "Rebalance after left subtree lost a black level"
