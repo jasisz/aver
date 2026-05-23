@@ -105,10 +105,20 @@ pub fn emit_builtin_call(
         }
         ListHead => format!("{}.head?", p(&a[0])),
         ListTail => format!("{}.tail?", p(&a[0])),
-        ListPrepend => format!("{} :: {}", a[0], p(&a[1])),
+        // Parens around `::` and `++` keep the result atomic when it
+        // lands as an argument to another fn call. `emit_expr_atom`'s
+        // heuristic "starts with `(` ⇒ atomic" is unsafe for `List.
+        // concat(toSorted(left), [value])`: the inner `toSorted(left)`
+        // emits as `(toSorted__fuel fuel' left)` (parens), so the whole
+        // `(toSorted__fuel fuel' left) ++ [value]` LOOKS atomic to
+        // emit_expr_atom and goes unparenthesised — then the outer
+        // `concatLists` call ends up as `concatLists xs ++ [v] ys`
+        // which Lean parses as `concatLists xs ++ ([v] ys)` and fails
+        // with "function expected at [v]". Same hazard for `::`.
+        ListPrepend => format!("({} :: {})", a[0], p(&a[1])),
         ListTake => format!("{}.take (Int.toNat {})", p(&a[0]), p(&a[1])),
         ListDrop => format!("{}.drop (Int.toNat {})", p(&a[0]), p(&a[1])),
-        ListConcat => format!("{} ++ {}", p(&a[0]), p(&a[1])),
+        ListConcat => format!("({} ++ {})", p(&a[0]), p(&a[1])),
         ListReverse => format!("{}.reverse", p(&a[0])),
         ListContains => format!("{}.contains {}", p(&a[0]), p(&a[1])),
         ListFind => format!("{}.find? {}", p(&a[0]), p(&a[1])),
