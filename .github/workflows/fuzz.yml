@@ -140,6 +140,22 @@ jobs:
           workspaces: |
             .
 
+      - name: Bump kernel SysV shmem limits
+        # AFL's forkserver allocates SysV shared memory segments per
+        # forkserver instance (one for the coverage bitmap, more under
+        # CMPLOG / persistent-mode setups). Ubuntu's defaults for
+        # `kernel.shmmni` (max number of segments) are tight enough that
+        # the type-driven AST mutator from PR #68 — which doubles AFL's
+        # queue growth and so the forkserver respawn pressure — can
+        # exhaust them inside the 30-min window, with the forkserver
+        # dying silently. GH-hosted runners give us passwordless sudo;
+        # raise the limits before AFL starts so we don't have to argue
+        # with it in production.
+        run: |
+          sudo sysctl -w kernel.shmmni=32768
+          sudo sysctl -w kernel.shmmax=137438953472
+          sudo sysctl -w kernel.shmall=4194304
+
       - name: Install cargo-afl
         # Three checks are load-bearing: (1) the binary may be
         # cached from a previous job, (2) the version probe ensures
@@ -299,13 +315,25 @@ jobs:
           # nightly. There is no `AFL_NO_CMPLOG` env variable — AFL
           # explicitly warns "Mistyped" on it — so the disable has to
           # be a CLI flag, not an env knob.
+          #
+          # Trailing `|| true`: silent forkserver aborts (no crashes
+          # saved, no `shmget()` message, just exit 1 after a quiet
+          # interval) used to fail the entire job and lose the queue
+          # artefact that the next nightly seeds from. Crash-class
+          # failures are the only ones worth blocking on, and the
+          # downstream "Summarise findings" step already gates on
+          # `crashes/id:*` count. Letting AFL exit non-zero without
+          # propagating that into the job result keeps the resume
+          # mechanism alive and surfaces real crashes through the
+          # triage step instead of conflating them with infra noise.
           cargo afl fuzz \
             -V 1800 \
             -c 0 \
             -i "$SEED_DIR" \
             -o out/${{ matrix.target }} \
             -x ${{ matrix.dict }} \
-            -- target/release/${{ matrix.target }}
+            -- target/release/${{ matrix.target }} \
+            || echo "::warning::AFL exited non-zero — triage step will gate on crash count"
 
       - name: Iron Phase 0 metrics
         # Dump the lex_ok / parse_ok / typecheck_clean / max_ast_depth
