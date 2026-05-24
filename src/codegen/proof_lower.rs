@@ -656,6 +656,11 @@ fn classify_law_strategy(
             extra_unfolds: post.extra_unfolds,
         };
     }
+    // Functional equivalence of `vb.fn_name` and a same-named spec
+    // fn whose body is syntactically identical to the impl's.
+    if let Some(extra_unfolds) = detect_spec_equivalence(law, fn_name, inputs) {
+        return ProofStrategy::SpecEquivalence { extra_unfolds };
+    }
     // Linear arithmetic over an unfold chain — generic catch-all.
     // Named for the semantic, not the backend tactic.
     if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs, refined_types) {
@@ -1186,6 +1191,117 @@ fn law_helper_unfolds(
     }
     names.remove(outer_fn);
     names.into_iter().collect()
+}
+
+/// Detect functional equivalence of `fn_name` and a same-named spec
+/// fn (`spec_fn_name = law.name`). Requires (a) law.name resolves to
+/// a pure user fn `spec_fd` in `inputs`; (b) law's lhs/rhs are direct
+/// calls — one to `fn_name`, one to `law.name` — with identical
+/// argument lists; (c) `impl_fd` and `spec_fd` bodies are single-
+/// terminal-expression bodies whose AST nodes match exactly.
+///
+/// On match, returns the unfold list: impl + spec + any user
+/// helpers reachable from the law sides. Sorted for deterministic
+/// emit.
+fn detect_spec_equivalence(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<Vec<String>> {
+    use crate::ast::Expr;
+    use std::collections::BTreeSet;
+
+    let spec_fn_name = &law.name;
+    if spec_fn_name == fn_name {
+        return None;
+    }
+    let spec_fd = inputs.find_fn_def_by_call_name(spec_fn_name)?;
+    if !spec_fd.effects.is_empty() || spec_fd.name == "main" {
+        return None;
+    }
+    let impl_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+
+    let direct_call =
+        |expr: &Spanned<crate::ast::Expr>| -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
+            let Expr::FnCall(callee, args) = &expr.node else {
+                return None;
+            };
+            let name = match &callee.node {
+                Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
+                _ => return None,
+            };
+            Some((name, args.clone()))
+        };
+    let canonical_shape =
+        |lhs: &Spanned<crate::ast::Expr>, rhs: &Spanned<crate::ast::Expr>| -> bool {
+            let Some((l_name, l_args)) = direct_call(lhs) else {
+                return false;
+            };
+            let Some((r_name, r_args)) = direct_call(rhs) else {
+                return false;
+            };
+            l_name == fn_name && r_name == *spec_fn_name && l_args == r_args
+        };
+    if !canonical_shape(&law.lhs, &law.rhs) && !canonical_shape(&law.rhs, &law.lhs) {
+        return None;
+    }
+
+    let impl_body = body_terminal_expr(impl_fd.body.as_ref())?;
+    let spec_body = body_terminal_expr(spec_fd.body.as_ref())?;
+    if impl_body.node != spec_body.node {
+        return None;
+    }
+
+    // Build the unfold set: impl + spec + transitively-reached user
+    // helpers from law sides. Mirrors the legacy `law_simp_defs`
+    // semantic but uses inputs (not CodegenContext).
+    let resolve_user_fn = |name: &str| -> Option<&FnDef> {
+        let fd = inputs.find_fn_def_by_call_name(name)?;
+        if !fd.effects.is_empty() || fd.name == "main" {
+            return None;
+        }
+        Some(fd)
+    };
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    names.insert(fn_name.to_string());
+    names.insert(spec_fn_name.clone());
+    let mut seed: BTreeSet<String> = BTreeSet::new();
+    collect_fn_calls_expr(&law.lhs, &mut seed);
+    collect_fn_calls_expr(&law.rhs, &mut seed);
+    if let Some(when_expr) = &law.when {
+        collect_fn_calls_expr(when_expr, &mut seed);
+    }
+    for n in seed {
+        if let Some(fd) = resolve_user_fn(&n) {
+            names.insert(fd.name.clone());
+        }
+    }
+    loop {
+        let before = names.len();
+        let snapshot: Vec<String> = names.iter().cloned().collect();
+        for name in snapshot {
+            let Some(fd) = resolve_user_fn(&name) else {
+                continue;
+            };
+            let mut called: BTreeSet<String> = BTreeSet::new();
+            for stmt in fd.body.stmts() {
+                match stmt {
+                    crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                        collect_fn_calls_expr(e, &mut called);
+                    }
+                }
+            }
+            for c in called {
+                if let Some(callee_fd) = resolve_user_fn(&c) {
+                    names.insert(callee_fd.name.clone());
+                }
+            }
+        }
+        if names.len() == before {
+            break;
+        }
+    }
+    Some(names.into_iter().collect())
 }
 
 /// Validate the outer fn's body matches the "inspect get, set in

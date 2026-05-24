@@ -1268,3 +1268,41 @@ fn map_key_tracked_increment_pinned_on_defaulted_get_plus_one() {
     };
     assert_eq!(outer_fn, "incCount");
 }
+
+#[test]
+fn spec_equivalence_pinned_on_identical_body_impl_spec_pair() {
+    // `verify absVal law absValSpec` with `absVal(x) => absValSpec(x)`
+    // and identical bodies in both fns. Step 37 pins
+    // `SpecEquivalence { extra_unfolds: [absVal, absValSpec] }`.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn absVal(x: Int) -> Int\n\
+         \x20   match x < 0\n\
+         \x20       true -> 0 - x\n\
+         \x20       false -> x\n\
+         \n\
+         fn absValSpec(x: Int) -> Int\n\
+         \x20   match x < 0\n\
+         \x20       true -> 0 - x\n\
+         \x20       false -> x\n\
+         \n\
+         verify absVal law absValSpec\n\
+         \x20   given x: Int = [0]\n\
+         \x20   absVal(x) => absValSpec(x)\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "absVal" && t.law_name == "absValSpec")
+        .expect("absVal::absValSpec law theorem missing");
+    let aver::ir::ProofStrategy::SpecEquivalence { ref extra_unfolds } = theorem.strategy else {
+        panic!("expected SpecEquivalence, got: {:?}", theorem.strategy);
+    };
+    assert_eq!(
+        extra_unfolds,
+        &vec!["absVal".to_string(), "absValSpec".to_string()],
+        "extra_unfolds should be the impl + spec pair (sorted)"
+    );
+}
