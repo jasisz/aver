@@ -284,6 +284,29 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             continue;
         }
 
+        // ListStructural — structural recursion on a List<_> param.
+        // Lean/Dafny don't actually use a fuel helper for this on
+        // recent backends (structural recursion is natively
+        // terminating); the metric stays as `SeqLenPlusOne` for
+        // backend-symmetric framing, and the consumer ignores it
+        // when emitting plain structural recursion.
+        if let RecursionPlan::ListStructural { param_index } = plan {
+            if let Some((param_name, _)) = fd.params.get(*param_index) {
+                ir.fn_contracts.insert(
+                    fn_name.clone(),
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::Fuel {
+                            fuel_metric: crate::ir::FuelMetric::SeqLenPlusOne {
+                                param: param_name.clone(),
+                            },
+                        }),
+                    },
+                );
+            }
+            continue;
+        }
+
         let RecursionPlan::IntCountdownGuarded {
             param_index,
             base_arm_literal,

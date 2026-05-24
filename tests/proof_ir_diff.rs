@@ -473,3 +473,60 @@ fn int_ascending_lowers_to_bound_fuel_contract() {
     assert_eq!(param, &fd.params[*legacy_idx].0);
     assert_eq!(spanned_repr(bound), spanned_repr(legacy_bound));
 }
+
+#[test]
+fn list_structural_lowers_to_seq_len_fuel_contract() {
+    // ListStructural — `match xs { [] -> base; [x, ..rest] -> rec(rest, ...) }`.
+    // ProofIR carries `SeqLenPlusOne { param }` for symmetry with
+    // the other fuel metrics; backends that emit structural recursion
+    // natively (Lean / Dafny via List induction) read the param name
+    // for the termination measure and ignore the +1 part.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn len(xs: List<Int>) -> Int\n\
+         \x20   match xs\n\
+         \x20       [] -> 0\n\
+         \x20       [_, ..rest] -> 1 + len(rest)\n";
+    let ctx = build_ctx(src);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, _) = analyze_plans(&inputs);
+
+    let RecursionPlan::ListStructural {
+        param_index: legacy_idx,
+    } = plans
+        .get("len")
+        .unwrap_or_else(|| panic!("len expected as ListStructural, got: {:?}", plans))
+    else {
+        panic!(
+            "expected legacy ListStructural, got: {:?}",
+            plans.get("len")
+        );
+    };
+
+    let contract = ctx
+        .proof_ir
+        .fn_contracts
+        .get("len")
+        .expect("len has no FnContract");
+    let RecursionContract::Fuel { fuel_metric } = contract
+        .recursion
+        .as_ref()
+        .expect("contract has no recursion")
+    else {
+        panic!("len contract must be Fuel, got: {:?}", contract.recursion);
+    };
+    let FuelMetric::SeqLenPlusOne { param } = fuel_metric else {
+        panic!("fuel metric must be SeqLenPlusOne, got: {:?}", fuel_metric);
+    };
+
+    let fd = ctx
+        .items
+        .iter()
+        .find_map(|item| match item {
+            aver::ast::TopLevel::FnDef(fd) if fd.name == "len" => Some(fd),
+            _ => None,
+        })
+        .expect("len FnDef");
+    assert_eq!(param, &fd.params[*legacy_idx].0);
+}
