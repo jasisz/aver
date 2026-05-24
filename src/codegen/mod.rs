@@ -11,6 +11,8 @@ pub mod dafny;
 #[cfg(feature = "runtime")]
 pub mod lean;
 #[cfg(feature = "runtime")]
+pub mod proof_lower;
+#[cfg(feature = "runtime")]
 pub mod recursion;
 #[cfg(feature = "runtime")]
 pub mod rust;
@@ -109,6 +111,16 @@ pub struct CodegenContext {
     /// pipeline (TCO / no-alloc / mutual-recursion all apply
     /// identically). Empty when no sinks are detected.
     pub synthesized_buffered_fns: Vec<FnDef>,
+    /// Proof-export decision IR populated by `proof_lower::lower`
+    /// during `build_context`. Backends (Lean, Dafny) read from
+    /// here to decide refinement-record lift, recursion contracts,
+    /// law-theorem shape, etc. Single source of truth — both
+    /// backends see the same decisions so cross-backend drift
+    /// becomes impossible at the shape level. Step 2: only
+    /// `refined_types` is populated; backends still consume legacy
+    /// `refinement_info_for` for now. Step 3+ migrates backends.
+    #[cfg(feature = "runtime")]
+    pub proof_ir: crate::ir::ProofIR,
 }
 
 /// Output files from a codegen backend.
@@ -367,7 +379,7 @@ pub fn build_context(
         );
     }
 
-    CodegenContext {
+    let mut ctx = CodegenContext {
         items,
         fn_sigs,
         memo_fns,
@@ -390,7 +402,17 @@ pub fn build_context(
         buffer_build_sinks,
         buffer_fusion_sites,
         synthesized_buffered_fns,
+        #[cfg(feature = "runtime")]
+        proof_ir: crate::ir::ProofIR::default(),
+    };
+    // Populate ProofIR after the ctx is otherwise built so the
+    // lowerer can read all fields it needs (items, modules, etc.).
+    // Step 2 only fills `refined_types`; subsequent steps extend.
+    #[cfg(feature = "runtime")]
+    {
+        ctx.proof_ir = crate::codegen::proof_lower::lower(&ctx);
     }
+    ctx
 }
 
 impl CodegenContext {
