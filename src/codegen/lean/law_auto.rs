@@ -145,6 +145,25 @@ pub fn emit_verify_law_forall_auto_proof(
         }
     }
 
+    // IR-pinned `SpecEquivalence` — the lowerer validated impl and
+    // spec fns have syntactically-identical bodies; backend closes
+    // via `simpa [<unfolds>]` (impl + spec + transitively-reached
+    // helpers). Falls through to the legacy spec dispatch when IR
+    // didn't pin (other 4 sub-shapes are still backend-driven).
+    if let Some(crate::ir::ProofStrategy::SpecEquivalence { ref extra_unfolds }) =
+        law_strategy_for(ctx, &vb.fn_name, &law.name)
+    {
+        let lean_names: Vec<String> = extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines: intro_then(
+                &proof_intro_names,
+                vec![format!("simpa [{}]", lean_names.join(", "))],
+            ),
+            replaces_theorem: false,
+        });
+    }
+
     spec::emit_spec_function_equivalence_law(vb, law, ctx, &proof_intro_names)
         .or_else(|| {
             // IR-pinned Map library axiom (has_set_self / get_set_self).

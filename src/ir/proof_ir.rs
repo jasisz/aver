@@ -491,6 +491,21 @@ pub enum ProofStrategy {
         /// The key argument as it appears at the law's call site.
         key_arg: Spanned<crate::ast::Expr>,
     },
+    /// Functional equivalence between an impl fn and a (declared)
+    /// spec fn — the law states `impl(args) == spec(args)` and the
+    /// two fn bodies are syntactically identical (after typecheck).
+    /// Backends close the goal by unfolding both fns; their bodies
+    /// reduce to the same term and the equality holds by reflexivity
+    /// modulo simp normalisation. Lean emits `simpa [<unfolds>]`,
+    /// Dafny would reveal both and let Z3 prove the equivalence.
+    /// Named for the algebraic content (functional equivalence),
+    /// not the backend tactic.
+    SpecEquivalence {
+        /// All user fn source names to unfold — impl + spec + any
+        /// transitively-reached helpers from law sides. Source
+        /// names; backends translate to their lemma vocabulary.
+        extra_unfolds: Vec<String>,
+    },
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
