@@ -130,6 +130,10 @@ pub fn emit_verify_law_forall_auto_proof(
                 };
                 Some(vec![step])
             }
+            // SimpOmegaUnfold runs at its position in the chain
+            // (below spec_equivalence + maps) — falls through here
+            // and emits in the dedicated arm further down.
+            ProofStrategy::SimpOmegaUnfold { .. } => None,
             _ => None,
         };
         if let Some(lines) = proof_lines {
@@ -185,6 +189,30 @@ pub fn emit_verify_law_forall_auto_proof(
             )
         })
         .or_else(|| {
+            // IR-pinned SimpOmegaUnfold takes precedence over the
+            // legacy detection here — the lowerer already ran the
+            // same shape check and captured `unfold_fns`,
+            // `wrapper_return`, `smart_guard`. When the IR didn't
+            // pin (BackendDispatch), fall through to the legacy
+            // detector below.
+            if let Some(crate::ir::ProofStrategy::SimpOmegaUnfold {
+                ref unfold_fns,
+                wrapper_return,
+                ref smart_guard,
+            }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+            {
+                return Some(AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines: emit_simp_omega_from_ir(
+                        unfold_fns,
+                        wrapper_return,
+                        smart_guard.as_ref(),
+                        &proof_intro_names,
+                        ctx,
+                    ),
+                    replaces_theorem: false,
+                });
+            }
             emit_simp_omega_law(vb, law, ctx, &proof_intro_names).map(|proof_lines| AutoProof {
                 support_lines: Vec::new(),
                 proof_lines,
@@ -205,6 +233,58 @@ pub fn emit_verify_law_forall_auto_proof(
 /// Works when the function is a non-recursive match on Int args
 /// (e.g. `computeScore(0, level) => 0`). `simp` unfolds the function,
 /// `omega` closes the linear arithmetic goal.
+/// Render the simp+omega tactic from IR-pinned data. Mirrors the
+/// emit body of the legacy `emit_simp_omega_law` (kept as fallback
+/// for `BackendDispatch`) but sources `unfold_fns` / `wrapper_
+/// return` / `smart_guard` from `ProofIR.law_theorems[*].strategy`.
+fn emit_simp_omega_from_ir(
+    unfold_fns: &[String],
+    wrapper_return: bool,
+    smart_guard: Option<&crate::ir::SmartGuard>,
+    intro_names: &[String],
+    ctx: &CodegenContext,
+) -> Vec<String> {
+    let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
+    if wrapper_return {
+        let by_cases_clauses: Vec<String> = intro_names
+            .iter()
+            .map(|n| {
+                let predicate = match smart_guard {
+                    Some(g) => {
+                        let substituted = crate::codegen::common::substitute_ident_in_expr(
+                            &g.predicate,
+                            &g.param,
+                            n,
+                        );
+                        emit_expr(&substituted, ctx)
+                    }
+                    None => format!("{n} ≥ 0"),
+                };
+                format!("by_cases h_{n} : {predicate}")
+            })
+            .collect();
+        let by_cases_chain = by_cases_clauses.join(" <;> ");
+        let simp_hyps: Vec<String> = intro_names
+            .iter()
+            .map(|n| format!("h_{n}"))
+            .chain(["Int.add_comm".to_string(), "Int.mul_comm".to_string()])
+            .collect();
+        let simp_args = simp_hyps.join(", ");
+        intro_then(
+            intro_names,
+            vec![
+                format!("unfold {}", lean_names.join(" ")),
+                format!("{by_cases_chain} <;> simp [{simp_args}]"),
+            ],
+        )
+    } else {
+        intro_then(
+            intro_names,
+            vec![format!("simp only [{}] <;> omega", lean_names.join(", "))],
+        )
+    }
+}
+
 fn emit_simp_omega_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
