@@ -307,6 +307,46 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             continue;
         }
 
+        // SizeOfStructural — recursion on a user ADT (e.g. an AST
+        // type). Fuel metric `sizeOf(call_frame) + 1`. The classifier
+        // doesn't pin a single bound param — `sizeOf` measures the
+        // whole frame — so the IR variant carries no param name.
+        if matches!(plan, RecursionPlan::SizeOfStructural) {
+            ir.fn_contracts.insert(
+                fn_name.clone(),
+                FnContract {
+                    source_name: fn_name.clone(),
+                    recursion: Some(RecursionContract::Fuel {
+                        fuel_metric: crate::ir::FuelMetric::SizeOfPlusOne,
+                    }),
+                },
+            );
+            continue;
+        }
+
+        // StringPosAdvance — `(s, pos)`-shape recursion: `s` invariant
+        // (first param, String), `pos` advances (second param, Int).
+        // Fuel formula `s.length - pos`.
+        if matches!(plan, RecursionPlan::StringPosAdvance) {
+            if let (Some((string_param, _)), Some((pos_param, _))) =
+                (fd.params.first(), fd.params.get(1))
+            {
+                ir.fn_contracts.insert(
+                    fn_name.clone(),
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::Fuel {
+                            fuel_metric: crate::ir::FuelMetric::StringLenMinusPos {
+                                string_param: string_param.clone(),
+                                pos_param: pos_param.clone(),
+                            },
+                        }),
+                    },
+                );
+            }
+            continue;
+        }
+
         let RecursionPlan::IntCountdownGuarded {
             param_index,
             base_arm_literal,

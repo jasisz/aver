@@ -203,6 +203,17 @@ pub enum FuelMetric {
     },
     /// `xs.length + 1` — List/String structural recursion.
     SeqLenPlusOne { param: String },
+    /// `sizeOf(x) + 1` — structural recursion on a user-defined
+    /// recursive ADT (e.g. `Term::App(f, arg)`). The classifier
+    /// doesn't pin the bound param — sizeOf walks the whole call
+    /// frame — so this variant carries no param name.
+    SizeOfPlusOne,
+    /// `s.length - pos` — StringPosAdvance: a `String` carrier stays
+    /// invariant, an `Int` position climbs toward its length.
+    StringLenMinusPos {
+        string_param: String,
+        pos_param: String,
+    },
     /// Lexicographic pair for mutual recursion SCCs.
     Lex { params: Vec<String>, rank: usize },
 }

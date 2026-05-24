@@ -530,3 +530,103 @@ fn list_structural_lowers_to_seq_len_fuel_contract() {
         .expect("len FnDef");
     assert_eq!(param, &fd.params[*legacy_idx].0);
 }
+
+#[test]
+fn sizeof_structural_lowers_to_sizeof_fuel_contract() {
+    // SizeOfStructural — recursion on a user ADT. Fuel formula
+    // `sizeOf(call_frame) + 1`, classifier-side measure walks the
+    // whole frame so the IR variant carries no param binding.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         type Tree\n\
+         \x20   Leaf\n\
+         \x20   Node(Tree, Tree)\n\
+         \n\
+         fn count(t: Tree) -> Int\n\
+         \x20   match t\n\
+         \x20       Tree.Leaf -> 1\n\
+         \x20       Tree.Node(l, r) -> count(l) + count(r)\n";
+    let ctx = build_ctx(src);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, _) = analyze_plans(&inputs);
+
+    assert!(
+        matches!(plans.get("count"), Some(RecursionPlan::SizeOfStructural)),
+        "count expected as SizeOfStructural, got: {:?}",
+        plans.get("count")
+    );
+
+    let contract = ctx
+        .proof_ir
+        .fn_contracts
+        .get("count")
+        .expect("count has no FnContract");
+    let RecursionContract::Fuel { fuel_metric } = contract
+        .recursion
+        .as_ref()
+        .expect("contract has no recursion")
+    else {
+        panic!("count contract must be Fuel, got: {:?}", contract.recursion);
+    };
+    assert!(
+        matches!(fuel_metric, FuelMetric::SizeOfPlusOne),
+        "fuel metric must be SizeOfPlusOne, got: {:?}",
+        fuel_metric
+    );
+}
+
+#[test]
+fn string_pos_advance_lowers_to_string_pos_fuel_contract() {
+    // StringPosAdvance — `(s: String, pos: Int)` pair with `s`
+    // preserved and `pos` advancing. Fuel formula `s.length - pos`.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn walk(s: String, pos: Int) -> Int\n\
+         \x20   match pos < String.len(s)\n\
+         \x20       false -> 0\n\
+         \x20       true -> walk(s, pos + 1)\n";
+    let ctx = build_ctx(src);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, _) = analyze_plans(&inputs);
+
+    assert!(
+        matches!(plans.get("walk"), Some(RecursionPlan::StringPosAdvance)),
+        "walk expected as StringPosAdvance, got: {:?}",
+        plans.get("walk")
+    );
+
+    let contract = ctx
+        .proof_ir
+        .fn_contracts
+        .get("walk")
+        .expect("walk has no FnContract");
+    let RecursionContract::Fuel { fuel_metric } = contract
+        .recursion
+        .as_ref()
+        .expect("contract has no recursion")
+    else {
+        panic!("walk contract must be Fuel, got: {:?}", contract.recursion);
+    };
+    let FuelMetric::StringLenMinusPos {
+        string_param,
+        pos_param,
+    } = fuel_metric
+    else {
+        panic!(
+            "fuel metric must be StringLenMinusPos, got: {:?}",
+            fuel_metric
+        );
+    };
+    let fd = ctx
+        .items
+        .iter()
+        .find_map(|item| match item {
+            aver::ast::TopLevel::FnDef(fd) if fd.name == "walk" => Some(fd),
+            _ => None,
+        })
+        .expect("walk FnDef");
+    assert_eq!(string_param, &fd.params[0].0);
+    assert_eq!(pos_param, &fd.params[1].0);
+}
