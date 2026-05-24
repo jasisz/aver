@@ -1219,21 +1219,32 @@ pub fn emit_fn_def_proof(
         return None;
     }
 
-    if matches!(recursion_plan, Some(RecursionPlan::LinearRecurrence2))
+    // LinearRecurrence2 — dedicated `RecursionContract::LinearRecurrence2`
+    // marker. Backend still calls `detect_second_order_int_linear_
+    // recurrence` to extract base cases + coefficients; the contract
+    // just signals "this fn lowers as pair-state Nat worker, not fuel".
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && matches!(
+            contract.recursion,
+            Some(crate::ir::RecursionContract::LinearRecurrence2)
+        )
         && let Some(shape) = detect_second_order_int_linear_recurrence(fd)
     {
         return Some(emit_nat_linear_recurrence_fn(fd, &shape, ctx));
     }
 
-    if let Some(RecursionPlan::IntCountdown { param_index }) = recursion_plan {
-        // IntCountdown stays on fuel encoding — native
-        // `termination_by n.natAbs` would require proving
-        // `(n - 1).natAbs < n.natAbs`, which only holds for `n > 0`.
-        // Aver bodies don't always have a `match n { 0 -> base; _ ->
-        // rec(n-1) }` shape that clamps `n` to non-negative before
-        // the recursive call (fibonacci's `fibTR` recurses without
-        // an `n < 0` guard, relying on its caller to never pass a
-        // negative). Fuel encoding sidesteps the issue.
+    // IntCountdown now reads through ProofIR's `Fuel { NatAbsPlusOne }`
+    // contract. Fuel encoding stays — native `termination_by n.natAbs`
+    // would require `(n - 1).natAbs < n.natAbs` which only holds for
+    // `n > 0`; Aver bodies don't always clamp to non-negative before
+    // recursing (fibTR sans-guard relies on its caller). Fuel
+    // sidesteps the issue.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && let Some(crate::ir::RecursionContract::Fuel {
+            fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne { param },
+        }) = contract.recursion.as_ref()
+        && let Some(param_index) = fd.params.iter().position(|(n, _)| n == param)
+    {
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
     }
 
@@ -1269,10 +1280,14 @@ pub fn emit_fn_def_proof(
         }
     }
 
-    if let Some(RecursionPlan::IntAscending {
-        param_index,
-        ref bound,
-    }) = recursion_plan
+    // IntAscending reads `Fuel { BoundMinusParamNatAbsPlusOne }`.
+    // The bound stays as `Spanned<Expr>` in the contract; backend
+    // renders it through `bound_expr_to_lean` here.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && let Some(crate::ir::RecursionContract::Fuel {
+            fuel_metric: crate::ir::FuelMetric::BoundMinusParamNatAbsPlusOne { param, bound },
+        }) = contract.recursion.as_ref()
+        && let Some(param_index) = fd.params.iter().position(|(n, _)| n == param)
     {
         let bound_lean = super::bound_expr_to_lean(bound);
         return Some(emit_fuelized_int_ascending_fn(
@@ -1283,11 +1298,30 @@ pub fn emit_fn_def_proof(
         ));
     }
 
-    if matches!(recursion_plan, Some(RecursionPlan::SizeOfStructural)) {
+    // SizeOfStructural — `Fuel { SizeOfPlusOne }`. No params bound;
+    // sizeOf walks the whole call frame.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && matches!(
+            contract.recursion,
+            Some(crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::SizeOfPlusOne,
+            })
+        )
+    {
         return Some(emit_fuelized_sizeof_fn(fd, ctx));
     }
 
-    if matches!(recursion_plan, Some(RecursionPlan::StringPosAdvance)) {
+    // StringPosAdvance — `Fuel { StringLenMinusPos { string, pos } }`.
+    // Lean's emit reads the params from fd.params directly so the
+    // contract just acts as the dispatch signal.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && matches!(
+            contract.recursion,
+            Some(crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::StringLenMinusPos { .. },
+            })
+        )
+    {
         return Some(emit_fuelized_string_pos_fn(fd, ctx));
     }
 
