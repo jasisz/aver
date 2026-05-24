@@ -3289,14 +3289,23 @@ verify mirror law involutive
         let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         // `when a >= 10` is STRONGER than Natural's `n >= 0` invariant
-        // so the universal theorem must keep it as a premise.
+        // so the universal theorem must keep it as a premise — AND
+        // project `a` to `a.val` because the quantifier is now over
+        // the Subtype carrier, not the underlying Int. The bare-`a`
+        // shape would fail `lake build` with `failed to synthesize LE
+        // Natural / OfNat Natural 10`.
         let universal_theorem = lean
             .lines()
             .find(|l| l.contains("theorem identity_law_selfEq"))
             .unwrap_or_else(|| panic!("expected universal theorem line, got:\n{}", lean));
         assert!(
-            universal_theorem.contains("a >= 10"),
-            "expected `when a >= 10` to stay in universal theorem premise, got:\n{}",
+            universal_theorem.contains("a.val >= 10"),
+            "expected `when a.val >= 10` (projected) in universal theorem premise, got:\n{}",
+            universal_theorem
+        );
+        assert!(
+            !universal_theorem.contains(" a >= 10"),
+            "must NOT emit bare `a >= 10` — Subtype carrier has no `LE Natural` instance, got:\n{}",
             universal_theorem
         );
     }
@@ -3399,14 +3408,18 @@ verify mirror law involutive
     }
 
     #[test]
-    fn proof_mode_caller_with_compound_interval_guard_synthesizes_conjunction() {
-        // Issue 84 generalisation: a single caller wraps the callsite in
-        // nested `match (n > 2) { true -> match (n < 500) { true ->
-        // worker(n) }}` guards. The classifier extracts both predicates
-        // (positive form, in callee's variable space) and the Lean
-        // emitter joins them with `∧` for the aux's precondition. Same
-        // pattern opaque types use for smart-constructor predicates —
-        // single source-of-truth Spanned<Expr> representation.
+    fn proof_mode_non_zero_base_literal_falls_back_to_fuel() {
+        // Conservative guard: native IntCountdownGuarded emit assumes
+        // the aux's default `(h_dom : p ≥ 0)` precondition, under
+        // which only `match p { 0 -> ... }` proves preservation
+        // (wildcard arm gives `p ≠ 0`, with `p ≥ 0` that's `p ≥ 1`,
+        // so `p - 1 ≥ 0`). A non-zero base literal like `match p { 5
+        // -> ... }` would let `p = 0` reach the wildcard arm and
+        // recurse with `p - 1 = -1`, breaking the precondition.
+        // `omega` would rightly reject it at lake build. Compiler
+        // must reject the shape upfront — generalising to arbitrary
+        // literals needs a real preservation check that doesn't
+        // exist yet (follow-up). Falls back to fuel encoding.
         let src = "module Worker\n\
              \x20   intent = \"t\"\n\
              \n\
@@ -3425,38 +3438,15 @@ verify mirror law involutive
         let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
         assert!(
-            lean.contains("def worker__aux (n : Int) (h_dom : ((n > 2)) ∧ ((n < 500))) : Int :="),
-            "expected aux with ∧-joined caller-derived predicate, got:\n{}",
-            lean
-        );
-        // Body literal is `3`, not `0`, so the dependent-if splits on
-        // `n = 3`. This aligns with the caller's lower bound (`n > 2`)
-        // — preservation: `(n > 2 ∧ n < 500 ∧ n ≠ 3) → (n - 1 > 2 ∧ n -
-        // 1 < 500)` is exactly the linear-integer claim omega closes
-        // at the recursive callsite.
-        assert!(
-            lean.contains("if h_zero : n = 3 then n"),
-            "expected dependent-if on literal 3 with body-arm value, got:\n{}",
+            !lean.contains("worker__aux"),
+            "must NOT emit native aux when base literal != 0 — preservation isn't provable without a real linear-int check; got:\n{}",
             lean
         );
         assert!(
-            lean.contains("else worker__aux (n - 1) (by omega)"),
-            "expected rec call carrying (by omega), got:\n{}",
+            lean.contains("def worker__fuel"),
+            "expected fuel fallback for non-zero base literal, got:\n{}",
             lean
         );
-        assert!(
-            lean.contains("if h_dom : ((n > 2)) ∧ ((n < 500)) then worker__aux n h_dom"),
-            "expected wrapper dispatching on conjunction, got:\n{}",
-            lean
-        );
-        // Wrapper's else falls back to the body's literal-arm value
-        // (`n` here — the source's `3 -> n` arm).
-        assert!(
-            lean.contains("else n"),
-            "expected wrapper else falling through to base, got:\n{}",
-            lean
-        );
-        assert!(!lean.contains("def worker__fuel"));
     }
 
     #[test]

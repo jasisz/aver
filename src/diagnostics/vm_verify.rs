@@ -203,19 +203,126 @@ pub(crate) fn apply_hostile_expansion(
     Ok(())
 }
 
-/// Walk the fn's body looking for any `Expr::IndependentProduct`,
-/// which lowers to the VM `CALL_PAR` opcode. Only laws whose fn
-/// contains one of these have anything to gain from the order-axis
-/// hostile twin — for every other shape, reverse-eval is a no-op
+/// Walk the fn's body and every transitively-reachable callee
+/// looking for any `Expr::IndependentProduct`, which lowers to the
+/// VM `CALL_PAR` opcode. Only laws whose call-graph closure contains
+/// one of these have anything to gain from the order-axis hostile
+/// twin — for every other shape, reverse-eval is a no-op
 /// (sequential evaluation) and the twin would just double cost.
+///
+/// Transitive coverage matters: a wrapper that calls a helper which
+/// itself contains `(a, b)!` is order-sensitive, but the root fn's
+/// own body doesn't show that. Pre-fix this gate ran only against
+/// `block.fn_name`'s body and silently skipped the reverse-eval
+/// twin for those shapes, so hostile mode missed real order bugs in
+/// transitively-called helpers.
 fn fn_body_uses_independent_product(block: &VerifyBlock, items: &[TopLevel]) -> bool {
-    let Some(fn_def) = items.iter().find_map(|i| match i {
-        TopLevel::FnDef(fd) if fd.name == block.fn_name => Some(fd),
-        _ => None,
-    }) else {
-        return false;
-    };
-    fn_body_contains_independent_product(&fn_def.body)
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stack: Vec<String> = vec![block.fn_name.clone()];
+    while let Some(name) = stack.pop() {
+        if !visited.insert(name.clone()) {
+            continue;
+        }
+        let Some(fn_def) = items.iter().find_map(|i| match i {
+            TopLevel::FnDef(fd) if fd.name == name => Some(fd),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if fn_body_contains_independent_product(&fn_def.body) {
+            return true;
+        }
+        let mut callees = std::collections::HashSet::new();
+        for stmt in fn_def.body.stmts() {
+            match stmt {
+                crate::ast::Stmt::Expr(e) | crate::ast::Stmt::Binding(_, _, e) => {
+                    collect_fn_call_names(&e.node, &mut callees);
+                }
+            }
+        }
+        for callee in callees {
+            if !visited.contains(&callee) {
+                stack.push(callee);
+            }
+        }
+    }
+    false
+}
+
+fn collect_fn_call_names(expr: &Expr, out: &mut std::collections::HashSet<String>) {
+    match expr {
+        Expr::FnCall(callee, args) => {
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&callee.node) {
+                // Skip namespace builtins (Console.print, List.reverse, etc.)
+                // — they don't have user-side `(a, b)!` shapes that hostile
+                // would reorder. Same heuristic the dafny collect_called_fns
+                // helper uses.
+                if !name.contains('.') {
+                    out.insert(name);
+                }
+            }
+            collect_fn_call_names(&callee.node, out);
+            for arg in args {
+                collect_fn_call_names(&arg.node, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            if !boxed.target.contains('.') {
+                out.insert(boxed.target.clone());
+            }
+            for arg in &boxed.args {
+                collect_fn_call_names(&arg.node, out);
+            }
+        }
+        Expr::Attr(o, _) | Expr::Neg(o) | Expr::ErrorProp(o) => {
+            collect_fn_call_names(&o.node, out);
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_fn_call_names(&l.node, out);
+            collect_fn_call_names(&r.node, out);
+        }
+        Expr::Match { subject, arms } => {
+            collect_fn_call_names(&subject.node, out);
+            for arm in arms {
+                collect_fn_call_names(&arm.body.node, out);
+            }
+        }
+        Expr::Constructor(_, payload) => {
+            if let Some(p) = payload.as_deref() {
+                collect_fn_call_names(&p.node, out);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for item in items {
+                collect_fn_call_names(&item.node, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                collect_fn_call_names(&k.node, out);
+                collect_fn_call_names(&v.node, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                collect_fn_call_names(&v.node, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_fn_call_names(&base.node, out);
+            for (_, v) in updates {
+                collect_fn_call_names(&v.node, out);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let crate::ast::StrPart::Parsed(inner) = part {
+                    collect_fn_call_names(&inner.node, out);
+                }
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+    }
 }
 
 fn fn_body_contains_independent_product(body: &crate::ast::FnBody) -> bool {
