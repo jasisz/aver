@@ -25,10 +25,8 @@ use std::collections::HashSet;
 fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
     aver::ir::pipeline::tco(&mut items);
-    let tc = aver::ir::pipeline::typecheck(
-        &items,
-        &aver::ir::TypecheckMode::Full { base_dir: None },
-    );
+    let tc =
+        aver::ir::pipeline::typecheck(&items, &aver::ir::TypecheckMode::Full { base_dir: None });
     assert!(tc.errors.is_empty(), "source typechecks: {:?}", tc.errors);
     aver::codegen::build_context(items, &tc, None, HashSet::new(), "diff".to_string(), vec![])
 }
@@ -62,7 +60,11 @@ fn assert_equiv(src: &str, type_names: &[&str]) {
     let ctx = build_ctx(src);
     for &type_name in type_names {
         let legacy = legacy_decision(&ctx, type_name);
-        let new = ctx.proof_ir.refined_types.values().find(|d| d.name == type_name);
+        let new = ctx
+            .proof_ir
+            .refined_types
+            .values()
+            .find(|d| d.name == type_name);
         match (&legacy, new) {
             (None, None) => continue,
             (Some(_), None) => panic!(

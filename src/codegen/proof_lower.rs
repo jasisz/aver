@@ -169,11 +169,7 @@ fn literal_int_value(expr: &Spanned<Expr>) -> Option<String> {
     }
 }
 
-fn eval_int_bool_predicate(
-    expr: &Spanned<Expr>,
-    param_name: &str,
-    value: i64,
-) -> Option<bool> {
+fn eval_int_bool_predicate(expr: &Spanned<Expr>, param_name: &str, value: i64) -> Option<bool> {
     match &expr.node {
         Expr::Literal(Literal::Bool(b)) => Some(*b),
         Expr::BinOp(op, l, r) => {
@@ -228,4 +224,3 @@ fn eval_int_arith(expr: &Spanned<Expr>, param_name: &str, value: i64) -> Option<
         _ => None,
     }
 }
-
