@@ -134,6 +134,15 @@ pub enum RecursionContract {
         /// `|xs| + 1`, etc.). Backends translate per target.
         fuel_metric: FuelMetric,
     },
+    /// Affine second-order linear recurrence on `Int`, shape
+    /// `f(n) = a*f(n-1) + b*f(n-2)` with literal `0`/`1` base cases
+    /// and an `n < 0` guard. Lowered to a private Nat pair-state
+    /// worker (Lean / Dafny both emit native structural recursion on
+    /// the Nat counter, no fuel). The lowerer doesn't carry the
+    /// shape coefficients yet — backends still pattern-match the
+    /// fn body via `lean::recurrence::detect_second_order_int_
+    /// linear_recurrence`. Step N+1 could materialise them here.
+    LinearRecurrence2,
     /// Native recursion with explicit precondition. Lowerer proved
     /// both `preservation` (rec args stay in domain) and `decrease`
     /// (measure strictly drops) before constructing this variant.

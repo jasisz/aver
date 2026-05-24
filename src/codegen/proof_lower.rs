@@ -410,6 +410,16 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 );
                 continue;
             }
+            RecursionPlan::LinearRecurrence2 => {
+                ir.fn_contracts.insert(
+                    fn_name.clone(),
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::LinearRecurrence2),
+                    },
+                );
+                continue;
+            }
             _ => {}
         }
 

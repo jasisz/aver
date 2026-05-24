@@ -3227,6 +3227,9 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR) -> String {
             Some(RecursionContract::Fuel { fuel_metric }) => {
                 writeln!(out, "Fuel {{ {:?} }}", fuel_metric).unwrap();
             }
+            Some(RecursionContract::LinearRecurrence2) => {
+                writeln!(out, "LinearRecurrence2 (pair-state Nat worker)").unwrap();
+            }
             Some(RecursionContract::Native {
                 precondition,
                 measure,

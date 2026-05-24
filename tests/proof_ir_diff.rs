@@ -684,3 +684,44 @@ fn mutual_int_countdown_lowers_to_lex_fuel_contract() {
         assert_eq!(*rank, 0);
     }
 }
+
+#[test]
+fn linear_recurrence_lowers_to_dedicated_contract() {
+    // Canonical LinearRecurrence2 shape: f(n) = f(n-1) + f(n-2) with
+    // literal 0/1 base + `n < 0` guard. ProofIR lowers to a dedicated
+    // RecursionContract::LinearRecurrence2 marker — pair-state Nat
+    // worker emission, no fuel.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fib(n: Int) -> Int\n\
+         \x20   match n < 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> match n\n\
+         \x20           0 -> 0\n\
+         \x20           1 -> 1\n\
+         \x20           _ -> fib(n - 1) + fib(n - 2)\n";
+    let ctx = build_ctx(src);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, _) = analyze_plans(&inputs);
+
+    assert!(
+        matches!(plans.get("fib"), Some(RecursionPlan::LinearRecurrence2)),
+        "fib expected as LinearRecurrence2, got: {:?}",
+        plans.get("fib"),
+    );
+
+    let contract = ctx
+        .proof_ir
+        .fn_contracts
+        .get("fib")
+        .expect("fib has no FnContract");
+    assert!(
+        matches!(
+            contract.recursion,
+            Some(RecursionContract::LinearRecurrence2)
+        ),
+        "fib contract must be LinearRecurrence2, got: {:?}",
+        contract.recursion,
+    );
+}
