@@ -2419,6 +2419,7 @@ fn build_codegen_context(
     apply_traversal_lowering: bool,
     run_refinement_lower: bool,
     run_contract_lower: bool,
+    run_law_lower: bool,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -2484,6 +2485,7 @@ fn build_codegen_context(
             run_buffer_build: apply_traversal_lowering,
             run_refinement_lower,
             run_contract_lower,
+            run_law_lower,
             dep_modules: &modules,
             ..Default::default()
         },
@@ -3057,12 +3059,13 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "escape" => Some(PipelineStage::Escape),
         "refinement_lower" => Some(PipelineStage::RefinementLower),
         "contract_lower" => Some(PipelineStage::ContractLower),
+        "law_lower" => Some(PipelineStage::LawLower),
         other => {
             eprintln!(
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, refinement_lower, contract_lower",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, refinement_lower, contract_lower, law_lower",
                     other
                 )
                 .red()
@@ -3102,7 +3105,8 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     let neutral_policy = aver::ir::NeutralAllocPolicy;
     let run_refinement_lower = target == PipelineStage::RefinementLower;
     let run_contract_lower = target == PipelineStage::ContractLower;
-    let proof_target = run_refinement_lower || run_contract_lower;
+    let run_law_lower = target == PipelineStage::LawLower;
+    let proof_target = run_refinement_lower || run_contract_lower || run_law_lower;
     // Proof stages walk both entry items and dep modules. Pre-load
     // deps when targeting one of them so the dump reflects what
     // production (`aver proof`) sees. Other stages don't need the
@@ -3126,6 +3130,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             alloc_policy: Some(&neutral_policy),
             run_refinement_lower,
             run_contract_lower,
+            run_law_lower,
             dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage, items_after| {
                 if stage == target {
@@ -3261,6 +3266,20 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR) -> String {
     }
     writeln!(out).unwrap();
     writeln!(out, "## law_theorems ({})", ir.law_theorems.len()).unwrap();
+    let mut laws: Vec<_> = ir.law_theorems.iter().collect();
+    laws.sort_by(|a, b| (&a.fn_name, &a.law_name).cmp(&(&b.fn_name, &b.law_name)));
+    for theorem in laws {
+        writeln!(
+            out,
+            "- {}::{} ({:?}, {} quantifier(s), {} premise(s))",
+            theorem.fn_name,
+            theorem.law_name,
+            theorem.strategy,
+            theorem.quantifiers.len(),
+            theorem.premises.len(),
+        )
+        .unwrap();
+    }
     out
 }
 
@@ -3305,6 +3324,7 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
             alloc_policy: Some(&neutral_policy),
             run_refinement_lower: true,
             run_contract_lower: true,
+            run_law_lower: true,
             dep_modules: &dep_modules,
             ..Default::default()
         },
@@ -3464,6 +3484,11 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
             }
             PassReport::ContractLower { fn_contracts } => {
                 out.push_str(&format!("{label} {fn_contracts} fn contract(s) decided\n"));
+            }
+            PassReport::LawLower { law_theorems } => {
+                out.push_str(&format!(
+                    "{label} {law_theorems} verify-law theorem(s) lowered\n"
+                ));
             }
         }
         out.push('\n');
@@ -3625,6 +3650,9 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             PassReport::ContractLower { fn_contracts } => {
                 out.push_str(&format!("{{\"fn_contracts\":{}}}", fn_contracts));
             }
+            PassReport::LawLower { law_theorems } => {
+                out.push_str(&format!("{{\"law_theorems\":{}}}", law_theorems));
+            }
         }
         out.push('}');
     }
@@ -3738,6 +3766,7 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         true,  // apply_traversal_lowering — Rust target wants the optimized form
         false, // run_refinement_lower — runtime backend, doesn't need ProofIR
         false, // run_contract_lower — same
+        false, // run_law_lower — same
     );
     if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
         eprintln!("{}", err.red());
@@ -4375,6 +4404,7 @@ pub(super) fn cmd_proof(
         false, // apply_traversal_lowering — proof export wants source-level IR
         true,  // run_refinement_lower — proof backends need ProofIR
         true,  // run_contract_lower — same
+        true,  // run_law_lower — same
     );
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the

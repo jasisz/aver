@@ -43,6 +43,7 @@ fn build_ctx(src: &str) -> CodegenContext {
             run_escape: false,
             run_refinement_lower: true,
             run_contract_lower: true,
+            run_law_lower: true,
             dep_modules: &[],
             alloc_policy: None,
             call_ctx: None,
@@ -723,5 +724,52 @@ fn linear_recurrence_lowers_to_dedicated_contract() {
         ),
         "fib contract must be LinearRecurrence2, got: {:?}",
         contract.recursion,
+    );
+}
+
+#[test]
+fn law_lower_populates_theorems_from_verify_law_blocks() {
+    // `verify add law commutative ... add(a, b) => add(b, a)` →
+    // ProofIR.law_theorems gets an entry with quantifiers extracted
+    // from `given a/b: Int`, premises empty (no `when` clause), and
+    // claim_lhs / claim_rhs pointing at the source AST nodes.
+    // Strategy stays `BackendDispatch` until subsequent Steps
+    // migrate concrete strategies (rfl, induction, …) into the
+    // lowerer.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn add(a: Int, b: Int) -> Int\n\
+         \x20   a + b\n\
+         \n\
+         verify add law commutative\n\
+         \x20   given a: Int = -2..2\n\
+         \x20   given b: Int = -2..2\n\
+         \x20   add(a, b) => add(b, a)\n";
+    let ctx = build_ctx(src);
+
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "add" && t.law_name == "commutative")
+        .expect("add::commutative law theorem missing from ProofIR");
+
+    assert_eq!(theorem.quantifiers.len(), 2, "expected 2 quantifiers");
+    assert_eq!(theorem.quantifiers[0].name, "a");
+    assert_eq!(theorem.quantifiers[1].name, "b");
+    assert!(matches!(
+        &theorem.quantifiers[0].binder_type,
+        QuantifierType::Plain(t) if t == "Int"
+    ));
+    assert!(
+        theorem.premises.is_empty(),
+        "no `when` clause → no premises, got: {:?}",
+        theorem.premises
+    );
+    assert!(
+        matches!(theorem.strategy, aver::ir::ProofStrategy::BackendDispatch),
+        "Step 23 always emits BackendDispatch, got: {:?}",
+        theorem.strategy,
     );
 }

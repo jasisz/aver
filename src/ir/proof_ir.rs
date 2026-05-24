@@ -335,6 +335,14 @@ pub enum ProofStrategy {
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,
+    /// Lowerer has not pinned a strategy yet; the backend's
+    /// existing `or_else` chain decides. Placeholder during the
+    /// Step 23+ migration — every law theorem starts here, and
+    /// subsequent Steps move concrete strategies (Reflexive,
+    /// Induction, …) into the lowerer one shape at a time. The
+    /// backend treats `BackendDispatch` as "fall through to ad-hoc
+    /// strategy chain", same behaviour as pre-migration.
+    BackendDispatch,
 }
 
 /// A bool predicate with explicit free-variable context. Stays in

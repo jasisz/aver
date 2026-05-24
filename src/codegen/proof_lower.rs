@@ -144,6 +144,7 @@ pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
     let mut ir = ProofIR::default();
     populate_refined_types(inputs, &mut ir);
     populate_fn_contracts(inputs, &mut ir);
+    populate_law_theorems(inputs, &mut ir);
     ir
 }
 
@@ -472,6 +473,64 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 }),
             },
         );
+    }
+}
+
+/// Walk every verify block, lift `VerifyKind::Law` entries into
+/// `ProofIR.law_theorems`.
+///
+/// **Step 23 scope**: extract the law's shape — quantifiers from
+/// `givens`, premises from `when` (when non-empty), the claim from
+/// `lhs == rhs`. Strategy stays `ProofStrategy::BackendDispatch`; the
+/// backend's existing ad-hoc chain (rfl / induction / arithmetic
+/// wrapper / spec equiv / map laws / simp+omega / guarded domain)
+/// still decides which proof tactic emits. Subsequent Steps move
+/// concrete strategy decisions into the lowerer, one shape at a time.
+pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
+    use crate::ast::{TopLevel, VerifyKind};
+    use crate::ir::{LawTheorem, Predicate, ProofStrategy, Quantifier, QuantifierType};
+
+    let entry_verifies = inputs.entry_items.iter().filter_map(|item| match item {
+        TopLevel::Verify(vb) => Some(vb),
+        _ => None,
+    });
+    // Dep modules don't expose verify blocks today (ModuleInfo carries
+    // type_defs + fn_defs only), so the walk stays entry-side. When
+    // ModuleInfo gains a `verify_blocks` field, extend here.
+    for vb in entry_verifies {
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+
+        let quantifiers: Vec<Quantifier> = law
+            .givens
+            .iter()
+            .map(|g| Quantifier {
+                name: g.name.clone(),
+                binder_type: QuantifierType::Plain(g.type_name.clone()),
+            })
+            .collect();
+
+        let premises: Vec<Predicate> = match &law.when {
+            Some(when_expr) => vec![Predicate {
+                free_vars: quantifiers
+                    .iter()
+                    .map(|q| (q.name.clone(), q.binder_type.clone()))
+                    .collect(),
+                expr: when_expr.clone(),
+            }],
+            None => Vec::new(),
+        };
+
+        ir.law_theorems.push(LawTheorem {
+            fn_name: vb.fn_name.clone(),
+            law_name: law.name.clone(),
+            quantifiers,
+            premises,
+            claim_lhs: law.lhs.clone(),
+            claim_rhs: law.rhs.clone(),
+            strategy: ProofStrategy::BackendDispatch,
+        });
     }
 }
 

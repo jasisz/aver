@@ -1554,6 +1554,7 @@ mod tests {
                 run_escape: false,
                 run_refinement_lower: true,
                 run_contract_lower: true,
+                run_law_lower: true,
                 dep_modules: &[],
                 alloc_policy: None,
                 call_ctx: None,

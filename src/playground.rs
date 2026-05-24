@@ -281,6 +281,7 @@ fn build_ctx(
             run_buffer_build: apply_traversal_lowering,
             run_refinement_lower: proof_target,
             run_contract_lower: proof_target,
+            run_law_lower: proof_target,
             ..Default::default()
         },
     );

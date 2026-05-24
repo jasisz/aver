@@ -54,6 +54,15 @@ pub enum PipelineStage {
     /// backend could enable one without the other, even though the
     /// production proof exporters always want both.
     ContractLower,
+    /// Verify-law universal theorem lowering — walks every
+    /// `VerifyKind::Law(law)` in the source, extracts quantifiers
+    /// from `givens`, premises from `when`, and the claim from
+    /// `lhs == rhs`, then populates `ProofIR.law_theorems`. Strategy
+    /// pinning (Reflexive / Induction / SimpOverLemmas / …) lives
+    /// in subsequent migration steps; the initial drop carries
+    /// `ProofStrategy::BackendDispatch` and the consumer's ad-hoc
+    /// chain still decides.
+    LawLower,
 }
 
 impl PipelineStage {
@@ -69,6 +78,7 @@ impl PipelineStage {
             Self::Escape => "escape",
             Self::RefinementLower => "refinement_lower",
             Self::ContractLower => "contract_lower",
+            Self::LawLower => "law_lower",
         }
     }
 }
@@ -134,6 +144,12 @@ pub struct PipelineConfig<'a> {
     /// recursion plans (Fuel / Native shapes) and populates
     /// `ProofIR.fn_contracts`. Independent of `run_refinement_lower`.
     pub run_contract_lower: bool,
+    /// Whether to run the verify-law theorem lowering pass. Walks
+    /// `VerifyKind::Law` blocks and populates `ProofIR.law_theorems`.
+    /// Independent of the other proof stages; production proof
+    /// exporters always enable it alongside refinement_lower and
+    /// contract_lower.
+    pub run_law_lower: bool,
     /// Pre-loaded dependent modules. Carried alongside items so the
     /// proof-lower pass can walk both the entry and dep type/fn defs
     /// (refinement records live in either; cross-module recursion is
@@ -171,6 +187,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_escape: true,
             run_refinement_lower: false,
             run_contract_lower: false,
+            run_law_lower: false,
             dep_modules: &[],
             alloc_policy: None,
             call_ctx: None,
@@ -250,6 +267,11 @@ pub enum PassReport {
         /// only covers the IntCountdownGuarded shape; extends as more
         /// `RecursionPlan` variants migrate into ProofIR.
         fn_contracts: usize,
+    },
+    LawLower {
+        /// Verify-law theorems lowered. Each entry pairs `(fn, law)`
+        /// with quantifiers + premises + claim.
+        law_theorems: usize,
     },
 }
 
@@ -464,12 +486,12 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         crate::ir::alias::annotate_program_alias_slots(items);
     }
 
-    // Proof-export lowerings come last — both need post-analyze
-    // facts. The two stages share an output sink (`result.proof_ir`)
-    // but populate disjoint fields: RefinementLower writes
-    // `refined_types`, ContractLower writes `fn_contracts`. Each is
+    // Proof-export lowerings come last — they share an output sink
+    // (`result.proof_ir`) but populate disjoint fields:
+    // RefinementLower writes `refined_types`, ContractLower writes
+    // `fn_contracts`, LawLower writes `law_theorems`. Each is
     // independently opt-in.
-    if cfg.run_refinement_lower || cfg.run_contract_lower {
+    if cfg.run_refinement_lower || cfg.run_contract_lower || cfg.run_law_lower {
         let recursive_fns_owned: std::collections::HashSet<String> = result
             .analysis
             .as_ref()
@@ -493,6 +515,11 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             crate::codegen::proof_lower::populate_fn_contracts(&inputs, &mut ir);
             result.pass_diagnostics.push(diag_for_contract_lower(&ir));
             fire(&mut cfg, PipelineStage::ContractLower, items);
+        }
+        if cfg.run_law_lower {
+            crate::codegen::proof_lower::populate_law_theorems(&inputs, &mut ir);
+            result.pass_diagnostics.push(diag_for_law_lower(&ir));
+            fire(&mut cfg, PipelineStage::LawLower, items);
         }
         result.proof_ir = Some(ir);
     }
@@ -676,6 +703,15 @@ fn diag_for_contract_lower(ir: &crate::ir::ProofIR) -> PassDiagnostic {
         stage: PipelineStage::ContractLower,
         report: PassReport::ContractLower {
             fn_contracts: ir.fn_contracts.len(),
+        },
+    }
+}
+
+fn diag_for_law_lower(ir: &crate::ir::ProofIR) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::LawLower,
+        report: PassReport::LawLower {
+            law_theorems: ir.law_theorems.len(),
         },
     }
 }
