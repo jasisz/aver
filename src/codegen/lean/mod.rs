@@ -817,9 +817,17 @@ pub(crate) use crate::codegen::recursion::detect::sizeof_measure_param_indices;
 /// Returns human-readable notices for recursive shapes that still fall back to
 /// regular `partial` Lean defs instead of total proof-mode emission.
 pub fn proof_mode_findings(ctx: &CodegenContext) -> Vec<ProofModeIssue> {
-    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
-    let (_plans, issues) = crate::codegen::recursion::analyze_plans(&inputs);
-    issues
+    // ProofIR carries `unclassified_fns` populated by the ContractLower
+    // pipeline stage — same data analyze_plans used to return, just
+    // read off the IR instead of re-running the classifier.
+    ctx.proof_ir
+        .unclassified_fns
+        .iter()
+        .map(|uf| ProofModeIssue {
+            line: uf.line,
+            message: uf.message.clone(),
+        })
+        .collect()
 }
 
 pub fn proof_mode_issues(ctx: &CodegenContext) -> Vec<String> {
@@ -1196,19 +1204,11 @@ fn transpile_unified(
     verify_mode: VerifyEmitMode,
     emit_mode: LeanEmitMode,
 ) -> ProjectOutput {
-    use crate::codegen::recursion::RecursionPlan;
-
     // Read recursion fact from `ctx.recursive_fns` — populated upstream
     // by `refresh_facts()` (test stubs) or `build_context` (production).
     let recursive_fns: HashSet<String> = ctx.recursive_fns.clone();
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
-    let (plans, _proof_issues) = match emit_mode {
-        LeanEmitMode::Proof => crate::codegen::recursion::analyze_plans(
-            &crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx),
-        ),
-        LeanEmitMode::Standard => (HashMap::<String, RecursionPlan>::new(), Vec::new()),
-    };
 
     // Pure fns are SCC-routed per scope (per dependent module + entry)
     // independently — shared `route_pure_components_per_scope` handles
@@ -1239,7 +1239,12 @@ fn transpile_unified(
                 let emitted = match emit_mode {
                     LeanEmitMode::Proof => {
                         let is_recursive = recursive_names.contains(&fd.name);
-                        if is_recursive && !plans.contains_key(&fd.name) {
+                        // ProofIR's `fn_contracts` holds an entry only for
+                        // recursive fns the ContractLower stage could
+                        // classify. Recursive fns without a contract land
+                        // in `unclassified_fns` and fall through to the
+                        // partial/non-recursive emit.
+                        if is_recursive && !ctx.proof_ir.fn_contracts.contains_key(&fd.name) {
                             toplevel::emit_fn_def(fd, &recursive_names, ctx)
                         } else {
                             toplevel::emit_fn_def_proof(fd, ctx)
