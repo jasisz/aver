@@ -4771,6 +4771,7 @@ mod tests {
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
+            proof_ir: aver::ir::ProofIR::default(),
         }
     }
 
