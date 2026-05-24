@@ -614,7 +614,284 @@ fn classify_law_strategy(
     if let Some(inner_fn) = detect_wrapper_unary_equivalence(law, fn_name, inputs) {
         return ProofStrategy::WrapperUnaryEquivalence { inner_fn };
     }
+    // `simp + omega` over an unfolded fn chain — generic catch-all
+    // for Int laws whose two sides reduce to flat arithmetic once
+    // every reachable fn is unfolded. Runs last so the more-
+    // specific wrapper strategies pin their shapes first.
+    if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs) {
+        return ProofStrategy::SimpOmegaUnfold {
+            unfold_fns: plan.unfold_fns,
+            wrapper_return: plan.wrapper_return,
+            smart_guard: plan.smart_guard,
+        };
+    }
     ProofStrategy::BackendDispatch
+}
+
+/// Internal scratch for the simp+omega detector. Carries the
+/// same fields as the IR variant but lives outside the IR enum so
+/// callers can build it incrementally before pinning.
+struct SimpOmegaPlan {
+    unfold_fns: Vec<String>,
+    wrapper_return: bool,
+    smart_guard: Option<crate::ir::SmartGuard>,
+}
+
+fn detect_simp_omega_unfold(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<SimpOmegaPlan> {
+    use std::collections::BTreeSet;
+
+    // Outer fn must take only Int params — `simp + omega` works on
+    // linear arithmetic, not on opaque wrapper types.
+    let outer_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if outer_fd.params.iter().any(|(_, t)| t != "Int") {
+        return None;
+    }
+    // All law givens Int.
+    if law.givens.is_empty() || law.givens.iter().any(|g| g.type_name != "Int") {
+        return None;
+    }
+
+    // Seed the unfold set from the law's two sides + the outer fn.
+    let mut fn_names: BTreeSet<String> = BTreeSet::new();
+    collect_fn_calls_expr(&law.lhs, &mut fn_names);
+    collect_fn_calls_expr(&law.rhs, &mut fn_names);
+    fn_names.insert(fn_name.to_string());
+
+    // Transitive expansion through entry+dep fn bodies. Each round
+    // can only add fns reachable from the new set; converges in
+    // O(items). Without this, cross-module refinement smart
+    // constructors (`Modules.Natural.Natural.fromInt`) wouldn't be
+    // in the unfold list and the goal would carry opaque
+    // match-on-Result branches simp/omega can't close.
+    loop {
+        let before = fn_names.len();
+        let snapshot: Vec<String> = fn_names.iter().cloned().collect();
+        for fd in iter_all_fn_defs(inputs) {
+            if !snapshot.contains(&fd.name) {
+                continue;
+            }
+            for stmt in fd.body.stmts() {
+                match stmt {
+                    crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                        collect_fn_calls_expr(e, &mut fn_names);
+                    }
+                }
+            }
+        }
+        if fn_names.len() == before {
+            break;
+        }
+    }
+
+    // Self-recursion rejection — `unfold fn` only does one step, so
+    // a recursive body leaves a stale `fn` in the goal that simp
+    // can't close. Check against the narrow self-only set; calling
+    // a peer fn in the unfold list is fine.
+    let mut wrapper_return = false;
+    for fd in iter_all_fn_defs(inputs) {
+        if !fn_names.contains(&fd.name) {
+            continue;
+        }
+        let mut self_only: BTreeSet<String> = BTreeSet::new();
+        self_only.insert(fd.name.clone());
+        if body_calls_any_of_inputs(&fd.body, &self_only) {
+            return None;
+        }
+        // Int-only check only for the outer law fn — cross-module
+        // callees may take refined types.
+        if fd.name == fn_name && fd.params.iter().any(|(_, t)| t != "Int") {
+            return None;
+        }
+        let ret = fd.return_type.as_str();
+        if ret != "Int" && ret != "Float" {
+            wrapper_return = true;
+        }
+    }
+
+    // Top-level law fn first in the unfold list — Lean needs to see
+    // it in the goal before transitively-reached callees, otherwise
+    // `unfold` fails outright at the outermost call layer.
+    let mut ordered: Vec<String> = Vec::new();
+    if fn_names.contains(fn_name) {
+        ordered.push(fn_name.to_string());
+    }
+    for n in &fn_names {
+        if n != fn_name {
+            ordered.push(n.clone());
+        }
+    }
+
+    let smart_guard = extract_smart_constructor_guard(&fn_names, inputs);
+
+    Some(SimpOmegaPlan {
+        unfold_fns: ordered,
+        wrapper_return,
+        smart_guard,
+    })
+}
+
+fn iter_all_fn_defs<'a>(inputs: &'a ProofLowerInputs<'a>) -> impl Iterator<Item = &'a FnDef> {
+    inputs
+        .entry_items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .chain(inputs.dep_modules.iter().flat_map(|m| m.fn_defs.iter()))
+}
+
+fn body_calls_any_of_inputs(
+    body: &crate::ast::FnBody,
+    names: &std::collections::BTreeSet<String>,
+) -> bool {
+    let mut called = std::collections::BTreeSet::new();
+    for stmt in body.stmts() {
+        match stmt {
+            crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                collect_fn_calls_expr(e, &mut called);
+            }
+        }
+    }
+    called.iter().any(|c| names.contains(c))
+}
+
+fn collect_fn_calls_expr(
+    expr: &Spanned<crate::ast::Expr>,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::FnCall(f, args) => {
+            if let Some(name) = expr_to_dotted_name(&f.node) {
+                // Skip uppercase namespace handles (`List.len`,
+                // `Option.Some`) — those are built-in namespaces,
+                // not user fns the auto-proof can unfold. The leaf
+                // segment's case discriminates user fns from
+                // namespace types (cross-module user calls survive
+                // because the leaf fn name starts lower-case).
+                let last = name.rsplit('.').next().unwrap_or(&name);
+                if last.chars().next().is_some_and(|c| c.is_lowercase()) {
+                    out.insert(name);
+                }
+            }
+            for arg in args {
+                collect_fn_calls_expr(arg, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_fn_calls_expr(l, out);
+            collect_fn_calls_expr(r, out);
+        }
+        Expr::Attr(obj, _) => collect_fn_calls_expr(obj, out),
+        Expr::Match { subject, arms, .. } => {
+            collect_fn_calls_expr(subject, out);
+            for arm in arms {
+                collect_fn_calls_expr(&arm.body, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            out.insert(boxed.target.clone());
+            for arg in &boxed.args {
+                collect_fn_calls_expr(arg, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Find a single-param smart constructor in the unfold set whose
+/// body is the canonical `match <bool-subj> { true → Ok; false →
+/// Err }` shape. Returns the param name + bool subject of the
+/// first match.
+fn extract_smart_constructor_guard(
+    fn_names: &std::collections::BTreeSet<String>,
+    inputs: &ProofLowerInputs,
+) -> Option<crate::ir::SmartGuard> {
+    use crate::ast::{Expr, MatchArm, Pattern, Stmt};
+    for fd in iter_all_fn_defs(inputs) {
+        if !fn_names.contains(&fd.name) {
+            continue;
+        }
+        if !fd.return_type.starts_with("Result<") {
+            continue;
+        }
+        if fd.params.len() != 1 {
+            continue;
+        }
+        let (param_name, param_type) = &fd.params[0];
+        if param_type != "Int" {
+            continue;
+        }
+        let stmts = fd.body.stmts();
+        if stmts.len() != 1 {
+            continue;
+        }
+        let Stmt::Expr(body_expr) = &stmts[0] else {
+            continue;
+        };
+        let Expr::Match { subject, arms } = &body_expr.node else {
+            continue;
+        };
+        if !arms_match_bool_ok_err(arms) {
+            continue;
+        }
+        return Some(crate::ir::SmartGuard {
+            param: param_name.clone(),
+            predicate: (**subject).clone(),
+        });
+        // Reference the type to satisfy the MatchArm import.
+        #[allow(unreachable_code)]
+        {
+            let _: Option<&MatchArm> = None;
+            let _: Option<&Pattern> = None;
+        }
+    }
+    None
+}
+
+fn arms_match_bool_ok_err(arms: &[crate::ast::MatchArm]) -> bool {
+    use crate::ast::{Expr, Literal, Pattern};
+    if arms.len() != 2 {
+        return false;
+    }
+    let starts_with_ctor = |expr: &Spanned<Expr>, name: &str| -> bool {
+        match &expr.node {
+            Expr::Constructor(n, _) => n == name,
+            Expr::FnCall(callee, _) => {
+                if let Expr::Attr(obj, field) = &callee.node
+                    && let Expr::Ident(ns) = &obj.node
+                {
+                    format!("{ns}.{field}") == name
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    };
+    let mut saw_true_ok = false;
+    let mut saw_false_err = false;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(Literal::Bool(true)) => {
+                if starts_with_ctor(&arm.body, "Result.Ok") {
+                    saw_true_ok = true;
+                }
+            }
+            Pattern::Literal(Literal::Bool(false)) => {
+                if starts_with_ctor(&arm.body, "Result.Err") {
+                    saw_false_err = true;
+                }
+            }
+            _ => return false,
+        }
+    }
+    saw_true_ok && saw_false_err
 }
 
 /// Return `Some(op)` iff `fn_name` resolves to a 2-arg Int wrapper

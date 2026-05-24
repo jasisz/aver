@@ -975,3 +975,40 @@ fn wrapper_unary_equivalence_pinned_with_inner_fn_name() {
     };
     assert_eq!(inner_fn, "add");
 }
+
+#[test]
+fn simp_omega_unfold_pinned_on_sub_anti_comm_via_zero() {
+    // `sub(a, b) => 0 - sub(b, a)` doesn't fit
+    // WrapperSubAntiCommutative (that requires `Neg(call)` form);
+    // falls through to SimpOmegaUnfold. The IR captures the
+    // unfold list (just `sub` — non-recursive) plus
+    // `wrapper_return: false` (sub returns Int).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn sub(a: Int, b: Int) -> Int\n\
+         \x20   a - b\n\
+         \n\
+         verify sub law antiCommutative\n\
+         \x20   given a: Int = -2..2\n\
+         \x20   given b: Int = -2..2\n\
+         \x20   sub(a, b) => 0 - sub(b, a)\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "sub" && t.law_name == "antiCommutative")
+        .expect("sub::antiCommutative law theorem missing");
+    let aver::ir::ProofStrategy::SimpOmegaUnfold {
+        ref unfold_fns,
+        wrapper_return,
+        ref smart_guard,
+    } = theorem.strategy
+    else {
+        panic!("expected SimpOmegaUnfold, got: {:?}", theorem.strategy);
+    };
+    assert!(unfold_fns.contains(&"sub".to_string()));
+    assert!(!wrapper_return, "sub returns Int, not a wrapper");
+    assert!(smart_guard.is_none(), "no refinement in chain");
+}

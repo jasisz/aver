@@ -72,6 +72,18 @@ pub struct UnclassifiedFn {
     pub message: String,
 }
 
+/// Refinement smart-constructor guard a `SimpOmegaUnfold` strategy
+/// found in the law's fn unfold chain. `param` is the smart
+/// constructor's input parameter name; `predicate` is the Bool
+/// subject of its `match true/false → Ok/Err` body. Backends emit
+/// `by_cases h_<v> : <substituted predicate>` for each law-given by
+/// rewriting `param` to `<v>` inside the predicate.
+#[derive(Debug, Clone)]
+pub struct SmartGuard {
+    pub param: String,
+    pub predicate: Spanned<crate::ast::Expr>,
+}
+
 /// A refinement-lifted user type — opaque record with a single
 /// carrier field, paired with a validating smart constructor. The
 /// presence of this decl in `ProofIR.refined_types` is the
@@ -366,6 +378,37 @@ pub enum ProofStrategy {
         /// Source-level name of the inner binary wrapper the unary
         /// fn equals (the law's "other side" calls this).
         inner_fn: String,
+    },
+    /// `simp + omega` over an unfolded fn chain — the generic
+    /// catch-all for Int laws whose lhs/rhs reduce to flat linear
+    /// arithmetic once every reachable fn is unfolded. Triggers when
+    /// every given is `Int` and the transitive fn-call closure of
+    /// the law's two sides is non-recursive. The backend emits a
+    /// `simp only [<unfold_fns>] <;> omega` chain, optionally
+    /// wrapped in `by_cases` when a refinement smart constructor
+    /// sits in the chain (its guard goes on top so omega doesn't
+    /// face an `Except.ok` / `Except.err` split).
+    SimpOmegaUnfold {
+        /// Ordered fn unfold list. Top-level law fn comes first —
+        /// Lean's `unfold` resolves left-to-right and the call
+        /// layer the tactic peels at each step must match the goal
+        /// shape.
+        unfold_fns: Vec<String>,
+        /// `true` when at least one fn in `unfold_fns` returns a
+        /// wrapper (Result, Option, …). Drives the by_cases branch
+        /// in the emit — `omega` is a linear-arithmetic decision
+        /// procedure that can't close constructor-equality goals,
+        /// so the wrapper case splits on the smart-constructor
+        /// guard predicate first.
+        wrapper_return: bool,
+        /// Smart-constructor guard pulled from the first refinement
+        /// `fromX(p: Int) -> Result<X, _>` in the unfold chain.
+        /// `Some` when one was found; `None` falls back to the
+        /// conservative `(n ≥ 0)` predicate on the wrapper-return
+        /// path. The pair carries the smart constructor's parameter
+        /// name (so the law-quantified var can be substituted in)
+        /// and the Bool subject of the constructor's `match`.
+        smart_guard: Option<SmartGuard>,
     },
     /// Structural induction on a recursive ADT parameter.
     Induction { param: String },
