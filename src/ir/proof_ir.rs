@@ -191,8 +191,19 @@ pub struct NativeIntCountdownBody {
 /// Fuel metric for the fallback fuel-encoded emit path.
 #[derive(Debug, Clone)]
 pub enum FuelMetric {
+    /// `n.natAbs + 1` — classic IntCountdown fuel.
     NatAbsPlusOne { param: String },
+    /// `(bound - n).natAbs + 1` — IntAscending: param climbs toward
+    /// a bound expression. Backends render the bound through their
+    /// own `Spanned<Expr>` emitter (Lean: `bound_expr_to_lean`,
+    /// Dafny: `emit_expr` over int subset).
+    BoundMinusParamNatAbsPlusOne {
+        param: String,
+        bound: Spanned<crate::ast::Expr>,
+    },
+    /// `xs.length + 1` — List/String structural recursion.
     SeqLenPlusOne { param: String },
+    /// Lexicographic pair for mutual recursion SCCs.
     Lex { params: Vec<String>, rank: usize },
 }
 

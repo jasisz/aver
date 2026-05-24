@@ -262,6 +262,28 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             continue;
         }
 
+        // IntAscending — fuel formula `(bound - n).natAbs + 1`. The
+        // bound stays as `Spanned<Expr>` so backends render it through
+        // their own emitters (it can be a literal, a fn param, or a
+        // small arith expression).
+        if let RecursionPlan::IntAscending { param_index, bound } = plan {
+            if let Some((param_name, _)) = fd.params.get(*param_index) {
+                ir.fn_contracts.insert(
+                    fn_name.clone(),
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::Fuel {
+                            fuel_metric: crate::ir::FuelMetric::BoundMinusParamNatAbsPlusOne {
+                                param: param_name.clone(),
+                                bound: bound.clone(),
+                            },
+                        }),
+                    },
+                );
+            }
+            continue;
+        }
+
         let RecursionPlan::IntCountdownGuarded {
             param_index,
             base_arm_literal,

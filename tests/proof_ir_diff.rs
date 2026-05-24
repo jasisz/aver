@@ -409,3 +409,67 @@ fn exposed_int_countdown_lowers_to_fuel_contract() {
         .expect("exposed_count FnDef");
     assert_eq!(param, &fd.params[*legacy_idx].0);
 }
+
+#[test]
+fn int_ascending_lowers_to_bound_fuel_contract() {
+    // IntAscending: param climbs toward a bound checked via
+    // `match param == BOUND { true -> base; false -> rec(param + k) }`.
+    // Fuel formula `(bound - n).natAbs + 1`. ProofIR captures the
+    // bound as `Spanned<Expr>` so backends render through their own
+    // emitters (literal here, but it can be a non-trivial arith
+    // expression).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn climb(n: Int) -> Int\n\
+         \x20   match n == 10\n\
+         \x20       true -> 0\n\
+         \x20       false -> climb(n + 1)\n";
+    let ctx = build_ctx(src);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, _) = analyze_plans(&inputs);
+
+    let RecursionPlan::IntAscending {
+        param_index: legacy_idx,
+        bound: legacy_bound,
+    } = plans
+        .get("climb")
+        .unwrap_or_else(|| panic!("climb expected as IntAscending, got: {:?}", plans))
+    else {
+        panic!(
+            "expected legacy IntAscending, got: {:?}",
+            plans.get("climb")
+        );
+    };
+
+    let contract = ctx
+        .proof_ir
+        .fn_contracts
+        .get("climb")
+        .expect("climb has no FnContract");
+    let RecursionContract::Fuel { fuel_metric } = contract
+        .recursion
+        .as_ref()
+        .expect("contract has no recursion")
+    else {
+        panic!("climb contract must be Fuel, got: {:?}", contract.recursion);
+    };
+
+    let FuelMetric::BoundMinusParamNatAbsPlusOne { param, bound } = fuel_metric else {
+        panic!(
+            "fuel metric must be BoundMinusParamNatAbsPlusOne, got: {:?}",
+            fuel_metric
+        );
+    };
+
+    let fd = ctx
+        .items
+        .iter()
+        .find_map(|item| match item {
+            aver::ast::TopLevel::FnDef(fd) if fd.name == "climb" => Some(fd),
+            _ => None,
+        })
+        .expect("climb FnDef");
+    assert_eq!(param, &fd.params[*legacy_idx].0);
+    assert_eq!(spanned_repr(bound), spanned_repr(legacy_bound));
+}
