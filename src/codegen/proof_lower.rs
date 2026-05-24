@@ -347,6 +347,72 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             continue;
         }
 
+        // Mutual-recursion SCCs — each member of the SCC gets its own
+        // plan with the same family. All three lower to a Lex fuel
+        // metric; the params vector + rank distinguish per-shape /
+        // per-member roles.
+        //
+        // - MutualIntCountdown: every member counts down its first
+        //   Int param; rank stays 0 (no inter-member ranking — every
+        //   edge decreases the shared dimension).
+        // - MutualStringPosAdvance { rank }: (s, pos) shape across
+        //   the SCC; rank distinguishes members for same-measure
+        //   inter-fn edges.
+        // - MutualSizeOfRanked { rank }: sizeOf measures the whole
+        //   call frame; rank distinguishes members. No bound param —
+        //   the empty params vec signals "frame-level measure".
+        match plan {
+            RecursionPlan::MutualIntCountdown => {
+                let params = fd
+                    .params
+                    .first()
+                    .map(|(n, _)| vec![n.clone()])
+                    .unwrap_or_default();
+                ir.fn_contracts.insert(
+                    fn_name.clone(),
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::Fuel {
+                            fuel_metric: crate::ir::FuelMetric::Lex { params, rank: 0 },
+                        }),
+                    },
+                );
+                continue;
+            }
+            RecursionPlan::MutualStringPosAdvance { rank } => {
+                let params = fd.params.iter().take(2).map(|(n, _)| n.clone()).collect();
+                ir.fn_contracts.insert(
+                    fn_name.clone(),
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::Fuel {
+                            fuel_metric: crate::ir::FuelMetric::Lex {
+                                params,
+                                rank: *rank,
+                            },
+                        }),
+                    },
+                );
+                continue;
+            }
+            RecursionPlan::MutualSizeOfRanked { rank } => {
+                ir.fn_contracts.insert(
+                    fn_name.clone(),
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::Fuel {
+                            fuel_metric: crate::ir::FuelMetric::Lex {
+                                params: Vec::new(),
+                                rank: *rank,
+                            },
+                        }),
+                    },
+                );
+                continue;
+            }
+            _ => {}
+        }
+
         let RecursionPlan::IntCountdownGuarded {
             param_index,
             base_arm_literal,

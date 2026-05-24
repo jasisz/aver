@@ -630,3 +630,57 @@ fn string_pos_advance_lowers_to_string_pos_fuel_contract() {
     assert_eq!(string_param, &fd.params[0].0);
     assert_eq!(pos_param, &fd.params[1].0);
 }
+
+#[test]
+fn mutual_int_countdown_lowers_to_lex_fuel_contract() {
+    // Canonical mutual-Int-countdown shape: even/odd SCC. Every
+    // member's recursive call to its peer decrements the shared
+    // first-Int param. ProofIR lowers each member to a Lex fuel
+    // metric carrying the first-param name + rank 0 (no inter-
+    // member ranking).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn even(n: Int) -> Bool\n\
+         \x20   match n\n\
+         \x20       0 -> true\n\
+         \x20       _ -> odd(n - 1)\n\
+         \n\
+         fn odd(n: Int) -> Bool\n\
+         \x20   match n\n\
+         \x20       0 -> false\n\
+         \x20       _ -> even(n - 1)\n";
+    let ctx = build_ctx(src);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, _) = analyze_plans(&inputs);
+
+    for fn_name in ["even", "odd"] {
+        assert!(
+            matches!(plans.get(fn_name), Some(RecursionPlan::MutualIntCountdown)),
+            "{} expected as MutualIntCountdown, got: {:?}",
+            fn_name,
+            plans.get(fn_name),
+        );
+
+        let contract = ctx
+            .proof_ir
+            .fn_contracts
+            .get(fn_name)
+            .unwrap_or_else(|| panic!("{} has no FnContract", fn_name));
+        let RecursionContract::Fuel { fuel_metric } = contract
+            .recursion
+            .as_ref()
+            .expect("contract has no recursion")
+        else {
+            panic!(
+                "{} contract must be Fuel, got: {:?}",
+                fn_name, contract.recursion
+            );
+        };
+        let FuelMetric::Lex { params, rank } = fuel_metric else {
+            panic!("{} metric must be Lex, got: {:?}", fn_name, fuel_metric);
+        };
+        assert_eq!(params, &vec!["n".to_string()]);
+        assert_eq!(*rank, 0);
+    }
+}
