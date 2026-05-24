@@ -768,12 +768,12 @@ fn law_lower_populates_theorems_from_verify_law_blocks() {
         theorem.premises
     );
     // `add(a, b) => add(b, a)` — Step 25 pins
-    // `WrapperCommutative { op: Add }` for this shape (2-arg Int
+    // `Commutative { op: Add }` for this shape (2-arg Int
     // wrapper around `BinOp::Add`).
     assert!(
         matches!(
             theorem.strategy,
-            aver::ir::ProofStrategy::WrapperCommutative {
+            aver::ir::ProofStrategy::Commutative {
                 op: aver::ast::BinOp::Add
             }
         ),
@@ -814,7 +814,7 @@ fn reflexive_law_pinned_when_lhs_equals_rhs() {
 #[test]
 fn wrapper_associative_pinned_on_three_int_givens_assoc_shape() {
     // `add(add(a,b),c) => add(a,add(b,c))` over `fn add(a,b) -> a+b`
-    // — Step 25 pins `WrapperAssociative { op: Add }`.
+    // — Step 25 pins `Associative { op: Add }`.
     let src = "module M\n\
          \x20   intent = \"t\"\n\
          \n\
@@ -836,7 +836,7 @@ fn wrapper_associative_pinned_on_three_int_givens_assoc_shape() {
     assert!(
         matches!(
             theorem.strategy,
-            aver::ir::ProofStrategy::WrapperAssociative {
+            aver::ir::ProofStrategy::Associative {
                 op: aver::ast::BinOp::Add
             }
         ),
@@ -848,7 +848,7 @@ fn wrapper_associative_pinned_on_three_int_givens_assoc_shape() {
 #[test]
 fn wrapper_identity_pinned_on_add_with_zero_rhs() {
     // `add(a, 0) => a` over `fn add(a,b) -> a+b` — pins
-    // `WrapperIdentity { op: Add }`. The identity literal is
+    // `IdentityElement { op: Add }`. The identity literal is
     // implicit (`0` for Add; `1` for Mul).
     let src = "module M\n\
          \x20   intent = \"t\"\n\
@@ -869,7 +869,7 @@ fn wrapper_identity_pinned_on_add_with_zero_rhs() {
     assert!(
         matches!(
             theorem.strategy,
-            aver::ir::ProofStrategy::WrapperIdentity {
+            aver::ir::ProofStrategy::IdentityElement {
                 op: aver::ast::BinOp::Add
             }
         ),
@@ -881,7 +881,7 @@ fn wrapper_identity_pinned_on_add_with_zero_rhs() {
 #[test]
 fn wrapper_sub_right_identity_pinned_on_sub_with_zero_rhs() {
     // `sub(a, 0) => a` over `fn sub(a, b) -> a - b` — Step 26 pins
-    // `WrapperSubRightIdentity`. Sub-specific because subtraction's
+    // `IdentityElement { op: aver::ast::BinOp::Sub }`. Sub-specific because subtraction's
     // identity is one-sided.
     let src = "module M\n\
          \x20   intent = \"t\"\n\
@@ -902,9 +902,11 @@ fn wrapper_sub_right_identity_pinned_on_sub_with_zero_rhs() {
     assert!(
         matches!(
             theorem.strategy,
-            aver::ir::ProofStrategy::WrapperSubRightIdentity
+            aver::ir::ProofStrategy::IdentityElement {
+                op: aver::ast::BinOp::Sub
+            }
         ),
-        "expected WrapperSubRightIdentity, got: {:?}",
+        "expected IdentityElement {{ op: Sub }}, got: {:?}",
         theorem.strategy,
     );
 }
@@ -912,7 +914,7 @@ fn wrapper_sub_right_identity_pinned_on_sub_with_zero_rhs() {
 #[test]
 fn wrapper_sub_anti_commutative_pinned_with_neg_direction() {
     // `sub(a, b) => -sub(b, a)` over `fn sub(a, b) -> a - b` —
-    // `WrapperSubAntiCommutative { neg_on_rhs: true }`. The IR's
+    // `AntiCommutative { op: aver::ast::BinOp::Sub, neg_on_rhs: true }`. The IR's
     // direction flag drives `.symm` selection on the Lean side.
     let src = "module M\n\
          \x20   intent = \"t\"\n\
@@ -934,7 +936,10 @@ fn wrapper_sub_anti_commutative_pinned_with_neg_direction() {
     assert!(
         matches!(
             theorem.strategy,
-            aver::ir::ProofStrategy::WrapperSubAntiCommutative { neg_on_rhs: true }
+            aver::ir::ProofStrategy::AntiCommutative {
+                op: aver::ast::BinOp::Sub,
+                neg_on_rhs: true
+            }
         ),
         "expected WrapperSubAntiCommutative {{ neg_on_rhs: true }}, got: {:?}",
         theorem.strategy,
@@ -945,7 +950,7 @@ fn wrapper_sub_anti_commutative_pinned_with_neg_direction() {
 fn wrapper_unary_equivalence_pinned_with_inner_fn_name() {
     // `addOne(a) => add(a, 1)` over `fn addOne(a) -> a + 1` and
     // `fn add(a, b) -> a + b` — Step 27 pins
-    // `WrapperUnaryEquivalence { inner_fn: "add" }`. The inner fn
+    // `UnaryEqualsBinary { inner_fn: "add" }`. The inner fn
     // name lives in the IR so the backend renders
     // `simp [addOne, add]` without rescanning.
     let src = "module M\n\
@@ -967,11 +972,8 @@ fn wrapper_unary_equivalence_pinned_with_inner_fn_name() {
         .iter()
         .find(|t| t.fn_name == "addOne" && t.law_name == "identityViaAdd")
         .expect("addOne::identityViaAdd law theorem missing");
-    let aver::ir::ProofStrategy::WrapperUnaryEquivalence { ref inner_fn } = theorem.strategy else {
-        panic!(
-            "expected WrapperUnaryEquivalence, got: {:?}",
-            theorem.strategy
-        );
+    let aver::ir::ProofStrategy::UnaryEqualsBinary { ref inner_fn } = theorem.strategy else {
+        panic!("expected UnaryEqualsBinary, got: {:?}", theorem.strategy);
     };
     assert_eq!(inner_fn, "add");
 }
@@ -980,7 +982,7 @@ fn wrapper_unary_equivalence_pinned_with_inner_fn_name() {
 fn simp_omega_unfold_pinned_on_sub_anti_comm_via_zero() {
     // `sub(a, b) => 0 - sub(b, a)` doesn't fit
     // WrapperSubAntiCommutative (that requires `Neg(call)` form);
-    // falls through to SimpOmegaUnfold. The IR captures the
+    // falls through to LinearArithmetic. The IR captures the
     // unfold list (just `sub` — non-recursive) plus
     // `wrapper_return: false` (sub returns Int).
     let src = "module M\n\
@@ -1000,13 +1002,13 @@ fn simp_omega_unfold_pinned_on_sub_anti_comm_via_zero() {
         .iter()
         .find(|t| t.fn_name == "sub" && t.law_name == "antiCommutative")
         .expect("sub::antiCommutative law theorem missing");
-    let aver::ir::ProofStrategy::SimpOmegaUnfold {
+    let aver::ir::ProofStrategy::LinearArithmetic {
         ref unfold_fns,
         wrapper_return,
         ref smart_guard,
     } = theorem.strategy
     else {
-        panic!("expected SimpOmegaUnfold, got: {:?}", theorem.strategy);
+        panic!("expected LinearArithmetic, got: {:?}", theorem.strategy);
     };
     assert!(unfold_fns.contains(&"sub".to_string()));
     assert!(!wrapper_return, "sub returns Int, not a wrapper");

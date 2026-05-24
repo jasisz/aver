@@ -82,45 +82,38 @@ pub fn emit_verify_law_forall_auto_proof(
         let fn_lean = aver_name_to_lean(&vb.fn_name);
         let proof_lines = match strategy {
             ProofStrategy::Reflexive => Some(vec!["rfl".to_string()]),
-            ProofStrategy::WrapperCommutative { op } => match op {
+            ProofStrategy::Commutative { op } => match op {
                 BinOp::Add => Some(vec![format!("simp [{}, Int.add_comm]", fn_lean)]),
                 BinOp::Mul => Some(vec![format!("simp [{}, Int.mul_comm]", fn_lean)]),
                 _ => None,
             },
-            ProofStrategy::WrapperAssociative { op } => match op {
+            ProofStrategy::Associative { op } => match op {
                 BinOp::Add => Some(vec![format!("simp [{}, Int.add_assoc]", fn_lean)]),
                 BinOp::Mul => Some(vec![format!("simp [{}, Int.mul_assoc]", fn_lean)]),
                 _ => None,
             },
-            ProofStrategy::WrapperIdentity { .. } => {
+            ProofStrategy::IdentityElement { .. } => {
                 // Add → `simp [fn]` collapses `a + 0` / `0 + a`;
-                // Mul → same against `a * 1` / `1 * a`. The IR's
-                // op tag is implicit in the wrapper fn body Lean
-                // unfolds.
+                // Mul → same against `a * 1` / `1 * a`; Sub →
+                // `simp [fn]` reduces `a - 0` to `a` (one-sided —
+                // detector enforces shape). Op-agnostic emit:
+                // unfold the wrapper and simp closes via Lean's
+                // built-in identity lemmas.
                 Some(vec![format!("simp [{}]", fn_lean)])
             }
-            ProofStrategy::WrapperSubRightIdentity => {
-                // `sub(a, 0) => a` unfolds the wrapper; Lean's
-                // `simp [sub]` reduces `a - 0` to `a` without
-                // extra lemmas.
-                Some(vec![format!("simp [{}]", fn_lean)])
-            }
-            ProofStrategy::WrapperUnaryEquivalence { ref inner_fn } => {
-                // `outer(a) = inner(a, K)` (or `inner(K, a)`) over
-                // the same op. Lean's `simp [outer, inner]`
-                // collapses both wrappers to the underlying op
-                // expression on both sides.
+            ProofStrategy::UnaryEqualsBinary { ref inner_fn } => {
+                // `outer(a) = inner(a, K)` (or `inner(K, a)`) —
+                // simp unfolds both fns to the same underlying op
+                // expression on each side.
                 Some(vec![format!(
                     "simp [{}, {}]",
                     fn_lean,
                     aver_name_to_lean(inner_fn)
                 )])
             }
-            ProofStrategy::WrapperSubAntiCommutative { neg_on_rhs } => {
-                // `Int.neg_sub b a : -(b - a) = a - b`. When the
-                // negation sits on the rhs of the user's law we
-                // need `.symm` to align directions; when it's on
-                // the lhs the law statement already matches.
+            ProofStrategy::AntiCommutative { neg_on_rhs, .. } => {
+                // `Int.neg_sub b a : -(b - a) = a - b`. `.symm` flip
+                // when the user's law puts the negation on rhs.
                 let a = aver_name_to_lean(&law.givens[0].name);
                 let b = aver_name_to_lean(&law.givens[1].name);
                 let step = if neg_on_rhs {
@@ -130,10 +123,10 @@ pub fn emit_verify_law_forall_auto_proof(
                 };
                 Some(vec![step])
             }
-            // SimpOmegaUnfold runs at its position in the chain
+            // LinearArithmetic runs at its position in the chain
             // (below spec_equivalence + maps) — falls through here
             // and emits in the dedicated arm further down.
-            ProofStrategy::SimpOmegaUnfold { .. } => None,
+            ProofStrategy::LinearArithmetic { .. } => None,
             _ => None,
         };
         if let Some(lines) = proof_lines {
@@ -195,7 +188,7 @@ pub fn emit_verify_law_forall_auto_proof(
             // `wrapper_return`, `smart_guard`. When the IR didn't
             // pin (BackendDispatch), fall through to the legacy
             // detector below.
-            if let Some(crate::ir::ProofStrategy::SimpOmegaUnfold {
+            if let Some(crate::ir::ProofStrategy::LinearArithmetic {
                 ref unfold_fns,
                 wrapper_return,
                 ref smart_guard,
