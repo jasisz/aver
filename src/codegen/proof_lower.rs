@@ -592,6 +592,18 @@ fn classify_law_strategy(
     if detect_wrapper_identity(law, fn_name, op) {
         return ProofStrategy::WrapperIdentity { op };
     }
+    // Sub-specific shapes (right identity + anti-commutative). The
+    // Add/Mul wrappers can't fit these — Sub's negation behaviour
+    // is structurally different, and Mul has no anti-commutative
+    // law (commutative). Gated on `op == Sub`.
+    if matches!(op, crate::ast::BinOp::Sub) {
+        if detect_wrapper_sub_right_identity(law, fn_name) {
+            return ProofStrategy::WrapperSubRightIdentity;
+        }
+        if let Some(neg_on_rhs) = detect_wrapper_sub_anti_commutative(law, fn_name) {
+            return ProofStrategy::WrapperSubAntiCommutative { neg_on_rhs };
+        }
+    }
     ProofStrategy::BackendDispatch
 }
 
@@ -619,7 +631,7 @@ fn wrapper_binop(fn_name: &str, inputs: &ProofLowerInputs) -> Option<crate::ast:
     if !matches_ident_expr(left, p1) || !matches_ident_expr(right, p2) {
         return None;
     }
-    matches!(op, BinOp::Add | BinOp::Mul).then_some(*op)
+    matches!(op, BinOp::Add | BinOp::Mul | BinOp::Sub).then_some(*op)
 }
 
 fn detect_wrapper_commutative(
@@ -651,6 +663,38 @@ fn detect_wrapper_associative(
     let nested = |side| matches_assoc_nested(side, fn_name, a, b, c);
     let flat = |side| matches_assoc_flat(side, fn_name, a, b, c);
     (nested(&law.lhs) && flat(&law.rhs)) || (nested(&law.rhs) && flat(&law.lhs))
+}
+
+fn detect_wrapper_sub_right_identity(law: &crate::ast::VerifyLaw, fn_name: &str) -> bool {
+    if law.givens.len() != 1 || law.givens[0].type_name != "Int" {
+        return false;
+    }
+    let g = &law.givens[0].name;
+    matches_sub_right_identity_side(&law.lhs, &law.rhs, fn_name, g)
+        || matches_sub_right_identity_side(&law.rhs, &law.lhs, fn_name, g)
+}
+
+/// Detect `sub(a, b) => -sub(b, a)` or the swapped arrangement.
+/// Returns `Some(neg_on_rhs)` — `true` when the negation is on the
+/// rhs (canonical direction); `false` when swapped (call on rhs,
+/// negation on lhs). `None` when the shape doesn't fit.
+fn detect_wrapper_sub_anti_commutative(law: &crate::ast::VerifyLaw, fn_name: &str) -> Option<bool> {
+    if law.givens.len() != 2 || law.givens.iter().any(|g| g.type_name != "Int") {
+        return None;
+    }
+    let a = &law.givens[0].name;
+    let b = &law.givens[1].name;
+    if matches_binary_call(&law.lhs, fn_name, a, b)
+        && matches_neg_binary_call(&law.rhs, fn_name, b, a)
+    {
+        return Some(true);
+    }
+    if matches_binary_call(&law.rhs, fn_name, a, b)
+        && matches_neg_binary_call(&law.lhs, fn_name, b, a)
+    {
+        return Some(false);
+    }
+    None
 }
 
 fn detect_wrapper_identity(
@@ -750,6 +794,36 @@ fn matches_assoc_flat(
         return false;
     };
     matches_ident_expr(x, a) && matches_ident_expr(y, b) && matches_ident_expr(z, c)
+}
+
+fn matches_sub_right_identity_side(
+    call_side: &Spanned<crate::ast::Expr>,
+    ident_side: &Spanned<crate::ast::Expr>,
+    fn_name: &str,
+    given_name: &str,
+) -> bool {
+    use crate::ast::{Expr, Literal};
+    if !matches_ident_expr(ident_side, given_name) {
+        return false;
+    }
+    let Some((x, y)) = call2_args(call_side, fn_name) else {
+        return false;
+    };
+    matches_ident_expr(x, given_name)
+        && matches!(&y.node, Expr::Literal(Literal::Int(n)) if *n == 0)
+}
+
+fn matches_neg_binary_call(
+    expr: &Spanned<crate::ast::Expr>,
+    fn_name: &str,
+    a: &str,
+    b: &str,
+) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::Neg(inner) => matches_binary_call(inner, fn_name, a, b),
+        _ => false,
+    }
 }
 
 fn matches_identity_side(

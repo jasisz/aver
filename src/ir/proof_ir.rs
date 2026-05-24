@@ -341,6 +341,21 @@ pub enum ProofStrategy {
     /// `wrapper(a, 1) => a` for `Mul`). The identity literal is
     /// determined by `op` — backends compute it directly.
     WrapperIdentity { op: crate::ast::BinOp },
+    /// Right-identity over a 2-arg Sub wrapper: `sub(a, 0) => a`.
+    /// Sub-specific because subtraction's identity is one-sided —
+    /// the symmetric `0 - a` is `-a`, not `a`, so it doesn't fit
+    /// `WrapperIdentity`.
+    WrapperSubRightIdentity,
+    /// Anti-commutative law over a 2-arg Sub wrapper:
+    /// `sub(a, b) => -sub(b, a)` or the swapped arrangement.
+    /// `neg_on_rhs` records which side carries the negation —
+    /// drives the `.symm` flip on backends that prove via
+    /// `Int.neg_sub`.
+    WrapperSubAntiCommutative {
+        /// `true` for `sub(a, b) => -sub(b, a)`, `false` for the
+        /// swapped form `-sub(b, a) => sub(a, b)`.
+        neg_on_rhs: bool,
+    },
     /// Structural induction on a recursive ADT parameter.
     Induction { param: String },
     /// Bounded universal: case-split over the declared `given`

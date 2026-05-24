@@ -877,3 +877,66 @@ fn wrapper_identity_pinned_on_add_with_zero_rhs() {
         theorem.strategy,
     );
 }
+
+#[test]
+fn wrapper_sub_right_identity_pinned_on_sub_with_zero_rhs() {
+    // `sub(a, 0) => a` over `fn sub(a, b) -> a - b` — Step 26 pins
+    // `WrapperSubRightIdentity`. Sub-specific because subtraction's
+    // identity is one-sided.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn sub(a: Int, b: Int) -> Int\n\
+         \x20   a - b\n\
+         \n\
+         verify sub law rightIdentity\n\
+         \x20   given a: Int = -3..3\n\
+         \x20   sub(a, 0) => a\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "sub" && t.law_name == "rightIdentity")
+        .expect("sub::rightIdentity law theorem missing");
+    assert!(
+        matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::WrapperSubRightIdentity
+        ),
+        "expected WrapperSubRightIdentity, got: {:?}",
+        theorem.strategy,
+    );
+}
+
+#[test]
+fn wrapper_sub_anti_commutative_pinned_with_neg_direction() {
+    // `sub(a, b) => -sub(b, a)` over `fn sub(a, b) -> a - b` —
+    // `WrapperSubAntiCommutative { neg_on_rhs: true }`. The IR's
+    // direction flag drives `.symm` selection on the Lean side.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn sub(a: Int, b: Int) -> Int\n\
+         \x20   a - b\n\
+         \n\
+         verify sub law antiCommutative\n\
+         \x20   given a: Int = -2..2\n\
+         \x20   given b: Int = -2..2\n\
+         \x20   sub(a, b) => -sub(b, a)\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "sub" && t.law_name == "antiCommutative")
+        .expect("sub::antiCommutative law theorem missing");
+    assert!(
+        matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::WrapperSubAntiCommutative { neg_on_rhs: true }
+        ),
+        "expected WrapperSubAntiCommutative {{ neg_on_rhs: true }}, got: {:?}",
+        theorem.strategy,
+    );
+}
