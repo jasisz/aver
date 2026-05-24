@@ -696,8 +696,18 @@ pub fn emit_law_samples(
         let case_bindings = vb.case_givens.first().map(|v| v.as_slice()).unwrap_or(&[]);
         let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
         (
-            rewrite_effectful_calls_in_law(lhs, law, ctx, mode.clone()),
-            rewrite_effectful_calls_in_law(rhs, law, ctx, mode),
+            rewrite_effectful_calls_in_law(
+                lhs,
+                law,
+                |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                mode.clone(),
+            ),
+            rewrite_effectful_calls_in_law(
+                rhs,
+                law,
+                |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                mode,
+            ),
         )
     });
     let any_opaque = first_rewrite
@@ -748,8 +758,18 @@ pub fn emit_law_samples(
         .map(|(idx, (lhs, rhs))| {
             let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
             let mode = OracleInjectionMode::SampleCaseBinding(case_bindings);
-            let lhs_rw = rewrite_effectful_calls_in_law(lhs, law, ctx, mode.clone());
-            let rhs_rw = rewrite_effectful_calls_in_law(rhs, law, ctx, mode);
+            let lhs_rw = rewrite_effectful_calls_in_law(
+                lhs,
+                law,
+                |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                mode.clone(),
+            );
+            let rhs_rw = rewrite_effectful_calls_in_law(
+                rhs,
+                law,
+                |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                mode,
+            );
             (lhs_rw, rhs_rw)
         })
         .collect();
@@ -1033,10 +1053,18 @@ pub fn emit_verify_law(
     // lifted `pickOne` takes `(path, rnd_Random_int, <orig_args>)`.
     // Inject `BranchPath.root()` + the matching given identifier for
     // each classified non-output effect in the callee's signature.
-    let law_lhs =
-        rewrite_effectful_calls_in_law(&law.lhs, law, ctx, OracleInjectionMode::LemmaBinding);
-    let law_rhs =
-        rewrite_effectful_calls_in_law(&law.rhs, law, ctx, OracleInjectionMode::LemmaBinding);
+    let law_lhs = rewrite_effectful_calls_in_law(
+        &law.lhs,
+        law,
+        |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+        OracleInjectionMode::LemmaBinding,
+    );
+    let law_rhs = rewrite_effectful_calls_in_law(
+        &law.rhs,
+        law,
+        |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+        OracleInjectionMode::LemmaBinding,
+    );
 
     // Refinement-lift wrapper stripping: when a given was promoted to
     // a refined type, the source-written `X(value = a)` constructor

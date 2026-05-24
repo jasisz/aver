@@ -661,6 +661,17 @@ fn classify_law_strategy(
     if let Some(extra_unfolds) = detect_spec_equivalence(law, fn_name, inputs) {
         return ProofStrategy::SpecEquivalence { extra_unfolds };
     }
+    // Effectful counterpart — Oracle Lift normalises both sides
+    // (oracle args injected into impl call) and the lowerer matches
+    // the canonical `impl(args) == spec(args)` shape on the
+    // rewritten form. Fires on real oracle-spec laws like
+    // `pickPair() => pairSpec(BranchPath.Root, rnd)`.
+    if let Some(spec_fn) = detect_effectful_spec_equivalence(law, fn_name, inputs) {
+        return ProofStrategy::EffectfulSpecEquivalence {
+            impl_fn: fn_name.to_string(),
+            spec_fn,
+        };
+    }
     // Linear arithmetic over an unfold chain — generic catch-all.
     // Named for the semantic, not the backend tactic.
     if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs, refined_types) {
@@ -1302,6 +1313,83 @@ fn detect_spec_equivalence(
         }
     }
     Some(names.into_iter().collect())
+}
+
+/// Detect functional equivalence between an effectful impl fn and
+/// a spec fn (different name). Runs Oracle Lift over both sides of
+/// the law first — injecting `BranchPath.Root` and oracle givens
+/// into every classified effectful call site — then matches the
+/// canonical `impl(args) == spec(args)` direct-call shape with
+/// identical argument lists on the rewritten form. Returns the
+/// spec fn name on match.
+///
+/// Body-match is not required here (and would fail — impl and spec
+/// bodies usually differ syntactically; Oracle Lift normalises them
+/// to a common oracle call only after backend-side `simp` unfolds).
+fn detect_effectful_spec_equivalence(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<String> {
+    use crate::ast::Expr;
+
+    let impl_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if impl_fd.effects.is_empty() {
+        return None;
+    }
+    if !impl_fd
+        .effects
+        .iter()
+        .all(|e| crate::types::checker::effect_classification::is_classified(&e.node))
+    {
+        return None;
+    }
+
+    let find_fn = |name: &str| -> Option<&crate::ast::FnDef> {
+        inputs
+            .entry_items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .find(|fd| fd.name == name)
+    };
+    let rewritten_lhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+        &law.lhs,
+        law,
+        find_fn,
+        crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+    );
+    let rewritten_rhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+        &law.rhs,
+        law,
+        find_fn,
+        crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+    );
+
+    let direct_call =
+        |expr: &Spanned<crate::ast::Expr>| -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
+            let Expr::FnCall(callee, args) = &expr.node else {
+                return None;
+            };
+            let name = match &callee.node {
+                Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
+                _ => return None,
+            };
+            Some((name, args.clone()))
+        };
+    let try_side = |impl_side: &Spanned<crate::ast::Expr>,
+                    spec_side: &Spanned<crate::ast::Expr>|
+     -> Option<String> {
+        let (l_name, l_args) = direct_call(impl_side)?;
+        let (r_name, r_args) = direct_call(spec_side)?;
+        if l_args != r_args || l_name == r_name || l_name != fn_name {
+            return None;
+        }
+        Some(r_name)
+    };
+    try_side(&rewritten_lhs, &rewritten_rhs).or_else(|| try_side(&rewritten_rhs, &rewritten_lhs))
 }
 
 /// Validate the outer fn's body matches the "inspect get, set in

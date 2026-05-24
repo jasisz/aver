@@ -1306,3 +1306,49 @@ fn spec_equivalence_pinned_on_identical_body_impl_spec_pair() {
         "extra_unfolds should be the impl + spec pair (sorted)"
     );
 }
+
+#[test]
+fn effectful_spec_equivalence_pinned_post_oracle_lift() {
+    // Effectful impl + spec via Random.int oracle. Source-level law
+    // shape `pickPair() => pairSpec(BranchPath.Root, rnd)` has
+    // mismatched arg counts (impl 0, spec 2) — non-canonical.
+    // Step 38's Oracle Lift in the detector injects
+    // `(BranchPath.Root, rnd)` into the impl call, both sides
+    // become `pickPair(BranchPath.Root, rnd) == pairSpec(...)` with
+    // identical args, and the canonical-shape match succeeds.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn counterStub(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   n\n\
+         \n\
+         fn pairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Tuple<Int, Int>\n\
+         \x20   (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 7, 12))\n\
+         \n\
+         fn pickPair() -> Tuple<Int, Int>\n\
+         \x20   ! [Random.int]\n\
+         \x20   (Random.int(1, 6), Random.int(7, 12))!\n\
+         \n\
+         verify pickPair law branchPathLaw\n\
+         \x20   given rnd: Random.int = [counterStub]\n\
+         \x20   pickPair() => pairSpec(BranchPath.Root, rnd)\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "pickPair" && t.law_name == "branchPathLaw")
+        .expect("pickPair::branchPathLaw law theorem missing");
+    let aver::ir::ProofStrategy::EffectfulSpecEquivalence {
+        ref impl_fn,
+        ref spec_fn,
+    } = theorem.strategy
+    else {
+        panic!(
+            "expected EffectfulSpecEquivalence, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(impl_fn, "pickPair");
+    assert_eq!(spec_fn, "pairSpec");
+}

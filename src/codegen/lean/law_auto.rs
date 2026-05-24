@@ -149,7 +149,7 @@ pub fn emit_verify_law_forall_auto_proof(
     // spec fns have syntactically-identical bodies; backend closes
     // via `simpa [<unfolds>]` (impl + spec + transitively-reached
     // helpers). Falls through to the legacy spec dispatch when IR
-    // didn't pin (other 4 sub-shapes are still backend-driven).
+    // didn't pin (other spec sub-shapes are still backend-driven).
     if let Some(crate::ir::ProofStrategy::SpecEquivalence { ref extra_unfolds }) =
         law_strategy_for(ctx, &vb.fn_name, &law.name)
     {
@@ -159,6 +159,29 @@ pub fn emit_verify_law_forall_auto_proof(
             proof_lines: intro_then(
                 &proof_intro_names,
                 vec![format!("simpa [{}]", lean_names.join(", "))],
+            ),
+            replaces_theorem: false,
+        });
+    }
+
+    // IR-pinned `EffectfulSpecEquivalence` — Oracle Lift normalised
+    // both sides; lowerer matched the canonical `impl(args) ==
+    // spec(args)` shape post-rewrite. Backend emits `simp [impl,
+    // spec]`; both definitions unfold to the same oracle call.
+    if let Some(crate::ir::ProofStrategy::EffectfulSpecEquivalence {
+        ref impl_fn,
+        ref spec_fn,
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+    {
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines: intro_then(
+                &proof_intro_names,
+                vec![format!(
+                    "simp [{}, {}]",
+                    aver_name_to_lean(impl_fn),
+                    aver_name_to_lean(spec_fn)
+                )],
             ),
             replaces_theorem: false,
         });

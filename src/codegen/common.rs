@@ -1134,12 +1134,15 @@ pub(crate) enum OracleInjectionMode<'a> {
 /// Backend-agnostic — operates on AST + `CodegenContext`. Both the
 /// Dafny and Lean backends call this before emitting the law body so
 /// the law statement matches the lifted fn shape emitted alongside.
-pub(crate) fn rewrite_effectful_calls_in_law(
+pub(crate) fn rewrite_effectful_calls_in_law<'fd, F>(
     expr: &crate::ast::Spanned<Expr>,
     law: &crate::ast::VerifyLaw,
-    ctx: &CodegenContext,
+    find_fn_def: F,
     mode: OracleInjectionMode,
-) -> crate::ast::Spanned<Expr> {
+) -> crate::ast::Spanned<Expr>
+where
+    F: Fn(&str) -> Option<&'fd crate::ast::FnDef> + Copy,
+{
     use crate::ast::{Spanned, VerifyGivenDomain};
 
     let injection_by_effect: std::collections::HashMap<String, Spanned<Expr>> = law
@@ -1172,7 +1175,7 @@ pub(crate) fn rewrite_effectful_calls_in_law(
             Some((g.type_name.clone(), arg_expr))
         })
         .collect();
-    let rewritten = rewrite_effectful_call(expr, &injection_by_effect, ctx);
+    let rewritten = rewrite_effectful_call(expr, &injection_by_effect, find_fn_def);
 
     // For `LemmaBindingProjected`, oracle bindings live as subtypes
     // (`RandomIntInBounds` etc.); direct calls `rng(path, n, min, max)`
@@ -1272,11 +1275,14 @@ fn project_oracle_direct_calls(
     Spanned::new(new_node, line)
 }
 
-fn rewrite_effectful_call(
+fn rewrite_effectful_call<'fd, F>(
     expr: &crate::ast::Spanned<Expr>,
     injection_by_effect: &std::collections::HashMap<String, crate::ast::Spanned<Expr>>,
-    ctx: &CodegenContext,
-) -> crate::ast::Spanned<Expr> {
+    find_fn_def: F,
+) -> crate::ast::Spanned<Expr>
+where
+    F: Fn(&str) -> Option<&'fd crate::ast::FnDef> + Copy,
+{
     use crate::ast::Spanned;
     use crate::types::checker::effect_classification::{EffectDimension, classify};
 
@@ -1284,10 +1290,13 @@ fn rewrite_effectful_call(
         Expr::FnCall(callee, args) => {
             let rewritten_args: Vec<Spanned<Expr>> = args
                 .iter()
-                .map(|a| rewrite_effectful_call(a, injection_by_effect, ctx))
+                .map(|a| rewrite_effectful_call(a, injection_by_effect, find_fn_def))
                 .collect();
-            let rewritten_callee =
-                Box::new(rewrite_effectful_call(callee, injection_by_effect, ctx));
+            let rewritten_callee = Box::new(rewrite_effectful_call(
+                callee,
+                injection_by_effect,
+                find_fn_def,
+            ));
 
             let callee_name = match &callee.node {
                 Expr::Ident(name) => Some(name.clone()),
@@ -1296,7 +1305,7 @@ fn rewrite_effectful_call(
             };
 
             if let Some(name) = callee_name
-                && let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == name)
+                && let Some(fd) = find_fn_def(&name)
                 && !fd.effects.is_empty()
                 && fd
                     .effects
@@ -1347,8 +1356,8 @@ fn rewrite_effectful_call(
         Expr::BinOp(op, l, r) => Spanned::new(
             Expr::BinOp(
                 *op,
-                Box::new(rewrite_effectful_call(l, injection_by_effect, ctx)),
-                Box::new(rewrite_effectful_call(r, injection_by_effect, ctx)),
+                Box::new(rewrite_effectful_call(l, injection_by_effect, find_fn_def)),
+                Box::new(rewrite_effectful_call(r, injection_by_effect, find_fn_def)),
             ),
             expr.line,
         ),
@@ -1356,7 +1365,7 @@ fn rewrite_effectful_call(
             Expr::Tuple(
                 items
                     .iter()
-                    .map(|i| rewrite_effectful_call(i, injection_by_effect, ctx))
+                    .map(|i| rewrite_effectful_call(i, injection_by_effect, find_fn_def))
                     .collect(),
             ),
             expr.line,

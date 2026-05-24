@@ -506,6 +506,22 @@ pub enum ProofStrategy {
         /// names; backends translate to their lemma vocabulary.
         extra_unfolds: Vec<String>,
     },
+    /// Functional equivalence between an effectful impl fn and a
+    /// spec fn. Same "claim states `impl(args) == spec(args)`"
+    /// content as [`SpecEquivalence`], but the law's source-level
+    /// shape is non-canonical (impl call usually omits oracle args
+    /// the spec call carries explicitly). The lowerer runs an
+    /// Oracle Lift over both sides — injecting oracle args from
+    /// `given oracle: Random.int = ...` into every classified
+    /// effectful call site — and matches the canonical shape on the
+    /// rewritten form. Backends emit `simp [impl, spec]`; both
+    /// definitions unfold to the same oracle call after lifting.
+    EffectfulSpecEquivalence {
+        /// Source name of the impl fn (= `vb.fn_name`).
+        impl_fn: String,
+        /// Source name of the spec fn (the other side of the law).
+        spec_fn: String,
+    },
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
