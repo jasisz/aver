@@ -212,7 +212,8 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
     //    NatAbsCountdown markers (only valid combo for this shape).
     let src = include_str!("../examples/data/fibonacci.av");
     let ctx = build_ctx(src);
-    let (plans, _) = analyze_plans(&ctx);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, _) = analyze_plans(&inputs);
 
     let RecursionPlan::IntCountdownGuarded {
         param_index,

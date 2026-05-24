@@ -74,7 +74,9 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     use crate::codegen::recursion::RecursionPlan;
     use std::collections::{HashMap, HashSet};
 
-    let (recursion_plans, _recursion_issues) = crate::codegen::recursion::analyze_plans(ctx);
+    let dafny_inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let (recursion_plans, _recursion_issues) =
+        crate::codegen::recursion::analyze_plans(&dafny_inputs);
     let mutual_planned: HashSet<String> = recursion_plans
         .iter()
         .filter(|(_, plan)| {

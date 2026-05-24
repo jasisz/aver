@@ -14,7 +14,7 @@ mod types;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnDef, Spanned, TopLevel, TypeDef, VerifyKind};
+use crate::ast::{Expr, FnDef, Spanned, TopLevel, VerifyKind};
 use crate::codegen::{CodegenContext, ProjectOutput};
 
 /// How verify blocks should be emitted in generated Lean.
@@ -781,14 +781,6 @@ fn lean_project_name(ctx: &CodegenContext) -> String {
     crate::codegen::common::entry_basename(ctx)
 }
 
-pub(crate) fn find_type_def<'a>(ctx: &'a CodegenContext, type_name: &str) -> Option<&'a TypeDef> {
-    ctx.modules
-        .iter()
-        .flat_map(|m| m.type_defs.iter())
-        .chain(ctx.type_defs.iter())
-        .find(|td| toplevel::type_def_name(td) == type_name)
-}
-
 pub(super) fn bound_expr_to_lean(expr: &Spanned<Expr>) -> String {
     match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(n)) => format!("{}", n),
@@ -825,7 +817,8 @@ pub(crate) use crate::codegen::recursion::detect::sizeof_measure_param_indices;
 /// Returns human-readable notices for recursive shapes that still fall back to
 /// regular `partial` Lean defs instead of total proof-mode emission.
 pub fn proof_mode_findings(ctx: &CodegenContext) -> Vec<ProofModeIssue> {
-    let (_plans, issues) = crate::codegen::recursion::analyze_plans(ctx);
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let (_plans, issues) = crate::codegen::recursion::analyze_plans(&inputs);
     issues
 }
 
@@ -1205,7 +1198,9 @@ fn transpile_unified(
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
     let (plans, _proof_issues) = match emit_mode {
-        LeanEmitMode::Proof => crate::codegen::recursion::analyze_plans(ctx),
+        LeanEmitMode::Proof => crate::codegen::recursion::analyze_plans(
+            &crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx),
+        ),
         LeanEmitMode::Standard => (HashMap::<String, RecursionPlan>::new(), Vec::new()),
     };
 

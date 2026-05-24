@@ -82,6 +82,64 @@ impl<'a> ProofLowerInputs<'a> {
             legacy_ctx: Some(ctx),
         }
     }
+
+    /// All pure fn defs across entry items and dep modules, in walk
+    /// order (entry first, then deps). `is_pure_fn` lives in the
+    /// Lean toplevel module today; pure_fns reaches there since the
+    /// pure-ness criterion is the same for every proof backend.
+    pub fn pure_fns(&self) -> Vec<&'a FnDef> {
+        self.entry_items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .chain(self.dep_modules.iter().flat_map(|m| m.fn_defs.iter()))
+            .filter(|fd| crate::codegen::common::is_pure_fn(fd))
+            .collect()
+    }
+
+    /// Recursive pure fn names. Filters `recursive_fns` (populated by
+    /// the analyze pipeline stage) by pure-ness.
+    pub fn recursive_pure_fn_names(&self) -> HashSet<String> {
+        let pure_names: HashSet<String> = self
+            .pure_fns()
+            .into_iter()
+            .map(|fd| fd.name.clone())
+            .collect();
+        self.recursive_fns
+            .iter()
+            .filter(|name| pure_names.contains(name.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    /// Names of every recursive user-defined type across entry + deps.
+    pub fn recursive_type_names(&self) -> HashSet<String> {
+        self.entry_items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::TypeDef(td) => Some(td),
+                _ => None,
+            })
+            .chain(self.dep_modules.iter().flat_map(|m| m.type_defs.iter()))
+            .filter(|td| crate::codegen::common::is_recursive_type_def(td))
+            .map(|td| crate::codegen::common::type_def_name(td).to_string())
+            .collect()
+    }
+
+    /// Find a type def by bare name across entry + deps. None on miss
+    /// or when the name resolves to a non-Product / non-Sum shape.
+    pub fn find_type_def(&self, type_name: &str) -> Option<&'a TypeDef> {
+        self.entry_items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::TypeDef(td) => Some(td),
+                _ => None,
+            })
+            .chain(self.dep_modules.iter().flat_map(|m| m.type_defs.iter()))
+            .find(|td| crate::codegen::common::type_def_name(td) == type_name)
+    }
 }
 
 /// Walk every type definition in the inputs (entry items + dependent
@@ -175,12 +233,7 @@ fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// the fibTR flagship, and once every variant is covered we delete
 /// the consumer-side `RecursionPlan` reads in a later Step.
 fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
-    // analyze_plans still takes &CodegenContext (migrates in Step 7b);
-    // skip when the pipeline-driven path provides no legacy ctx.
-    let Some(ctx) = inputs.legacy_ctx else {
-        return;
-    };
-    let (plans, _issues) = analyze_plans(ctx);
+    let (plans, _issues) = analyze_plans(inputs);
     let all_fns: Vec<&FnDef> = inputs
         .dep_modules
         .iter()
