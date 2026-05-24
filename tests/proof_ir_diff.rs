@@ -767,9 +767,42 @@ fn law_lower_populates_theorems_from_verify_law_blocks() {
         "no `when` clause → no premises, got: {:?}",
         theorem.premises
     );
+    // `add(a, b) => add(b, a)` — distinct LHS/RHS, falls through
+    // to BackendDispatch (Step 24+ pins Reflexive only when sides
+    // are syntactically identical; SimpOverLemmas, Induction, etc.
+    // come later).
     assert!(
         matches!(theorem.strategy, aver::ir::ProofStrategy::BackendDispatch),
-        "Step 23 always emits BackendDispatch, got: {:?}",
+        "commutative falls through to BackendDispatch, got: {:?}",
+        theorem.strategy,
+    );
+}
+
+#[test]
+fn reflexive_law_pinned_when_lhs_equals_rhs() {
+    // `x => x` is the canonical Reflexive shape. After Step 24
+    // proof_lower pins `ProofStrategy::Reflexive`, and Lean's
+    // law_auto reads from there instead of running the syntactic
+    // equality check ad-hoc.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn id(a: Int) -> Int\n\
+         \x20   a\n\
+         \n\
+         verify id law reflexive\n\
+         \x20   given x: Int = -2..2\n\
+         \x20   x => x\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "id" && t.law_name == "reflexive")
+        .expect("id::reflexive law theorem missing from ProofIR");
+    assert!(
+        matches!(theorem.strategy, aver::ir::ProofStrategy::Reflexive),
+        "x => x must pin Reflexive, got: {:?}",
         theorem.strategy,
     );
 }
