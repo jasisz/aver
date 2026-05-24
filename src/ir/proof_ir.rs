@@ -137,6 +137,10 @@ pub enum RecursionContract {
     /// Native recursion with explicit precondition. Lowerer proved
     /// both `preservation` (rec args stay in domain) and `decrease`
     /// (measure strictly drops) before constructing this variant.
+    /// Currently specialised to the IntCountdown-literal-zero shape
+    /// (`match p { 0 -> BASE; _ -> rec(p-1, ...) }`); other native-
+    /// recursion shapes (e.g. linear recurrence on a pair-state
+    /// worker) will land as additional `RecursionContract` variants.
     Native {
         /// Conjunction of precondition clauses, kept as a vector so
         /// backends can render one `requires` per clause (Dafny) or
@@ -155,7 +159,33 @@ pub enum RecursionContract {
         preservation: PreservationProof,
         /// Same for the decreasing measure.
         decrease: DecreaseProof,
+        /// Body decomposition for the IntCountdown-literal-zero shape:
+        /// the literal int that selects the base arm, the base arm's
+        /// body, and the wildcard arm's body. Carried so backends can
+        /// render the `if h : p = <lit> then base else rec(p-1, ...)`
+        /// switch without re-walking the source AST. The literal is
+        /// always `0` today — the `IntCountdownLiteralZero`
+        /// preservation marker attests it; carrying the value as data
+        /// keeps the IR shape forward-compatible with future
+        /// preservation proofs that admit other literals.
+        body: NativeIntCountdownBody,
     },
+}
+
+/// Body decomposition for the `IntCountdown-literal-zero` native
+/// shape. Each field is a slice of the source AST the lowerer
+/// extracted while classifying; backends render them directly
+/// without re-walking the source.
+#[derive(Debug, Clone)]
+pub struct NativeIntCountdownBody {
+    /// The literal int that selects the base arm. Always `0` today;
+    /// future preservation proofs may admit other literals, so the
+    /// value is carried as data rather than baked into the marker.
+    pub base_arm_literal: i64,
+    /// AST for the base arm's body (`match p { 0 -> THIS; _ -> ... }`).
+    pub base_arm_body: Spanned<crate::ast::Expr>,
+    /// AST for the wildcard arm's body — the recursive call site.
+    pub wildcard_arm_body: Spanned<crate::ast::Expr>,
 }
 
 /// Fuel metric for the fallback fuel-encoded emit path.

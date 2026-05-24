@@ -27,8 +27,8 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::{expr_to_dotted_name, refinement_info_for};
 use crate::codegen::recursion::{RecursionPlan, analyze_plans};
 use crate::ir::proof_ir::{
-    DecreaseProof, FnContract, Measure, Predicate, PreservationProof, ProofIR, QuantifierType,
-    RecursionContract, RefinedTypeDecl,
+    DecreaseProof, FnContract, Measure, NativeIntCountdownBody, Predicate, PreservationProof,
+    ProofIR, QuantifierType, RecursionContract, RefinedTypeDecl,
 };
 
 /// Walk every type definition in `ctx` (entry items + dependent
@@ -129,8 +129,10 @@ fn populate_fn_contracts(ctx: &CodegenContext, ir: &mut ProofIR) {
     for (fn_name, plan) in &plans {
         let RecursionPlan::IntCountdownGuarded {
             param_index,
+            base_arm_literal,
+            base_arm_body,
+            wildcard_arm_body,
             precondition,
-            ..
         } = plan
         else {
             continue;
@@ -164,6 +166,11 @@ fn populate_fn_contracts(ctx: &CodegenContext, ir: &mut ProofIR) {
                     },
                     preservation: PreservationProof::IntCountdownLiteralZero,
                     decrease: DecreaseProof::NatAbsCountdown,
+                    body: NativeIntCountdownBody {
+                        base_arm_literal: *base_arm_literal,
+                        base_arm_body: base_arm_body.clone(),
+                        wildcard_arm_body: wildcard_arm_body.clone(),
+                    },
                 }),
             },
         );

@@ -238,6 +238,7 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
         measure,
         preservation,
         decrease,
+        body,
     } = contract
         .recursion
         .as_ref()
@@ -291,4 +292,21 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
         assert_eq!(var_name, countdown_param);
         assert!(matches!(var_ty, QuantifierType::Plain(t) if t == "Int"));
     }
+
+    // Body decomposition matches the legacy plan's extracted arms.
+    let RecursionPlan::IntCountdownGuarded {
+        base_arm_literal: legacy_lit,
+        base_arm_body: legacy_base,
+        wildcard_arm_body: legacy_wild,
+        ..
+    } = plans.get("fibTR").unwrap()
+    else {
+        unreachable!();
+    };
+    assert_eq!(body.base_arm_literal, *legacy_lit);
+    assert_eq!(spanned_repr(&body.base_arm_body), spanned_repr(legacy_base));
+    assert_eq!(
+        spanned_repr(&body.wildcard_arm_body),
+        spanned_repr(legacy_wild),
+    );
 }

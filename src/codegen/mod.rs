@@ -459,5 +459,13 @@ impl CodegenContext {
             recursive_fns.extend(crate::call_graph::find_recursive_fns(&mod_items));
         }
         self.recursive_fns = recursive_fns;
+
+        // ProofIR's `fn_contracts` / `refined_types` are derived from
+        // the just-recomputed item set + the recursion classifier, so
+        // they must stay in step with the rest of the facts. Test
+        // helpers that build the context piecewise and call
+        // `refresh_facts` rely on this to see the same proof decisions
+        // the production pipeline would emit.
+        self.proof_ir = crate::codegen::proof_lower::lower(self);
     }
 }

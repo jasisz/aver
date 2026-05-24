@@ -1237,23 +1237,36 @@ pub fn emit_fn_def_proof(
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
     }
 
-    if let Some(RecursionPlan::IntCountdownGuarded {
-        param_index,
-        base_arm_literal,
-        ref base_arm_body,
-        ref wildcard_arm_body,
-        ref precondition,
-    }) = recursion_plan
-    {
-        return Some(emit_native_guarded_int_countdown_fn(
-            fd,
-            ctx,
-            param_index,
-            base_arm_literal,
-            base_arm_body,
-            wildcard_arm_body,
+    // IntCountdownGuarded now reads through ProofIR — the lowerer
+    // populates `ctx.proof_ir.fn_contracts` with a `Native` contract
+    // whose `precondition` + `body` carry everything the emit needs.
+    // Other RecursionPlan variants still flow through `recursion_plan`
+    // directly; Step 7+ migrates them one shape at a time.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && let Some(crate::ir::RecursionContract::Native {
             precondition,
-        ));
+            measure: crate::ir::Measure::NatAbsInt { param },
+            body,
+            ..
+        }) = contract.recursion.as_ref()
+    {
+        // Measure binds the countdown param by name; map back to the
+        // arg-position index the emit fn expects. Falls through if the
+        // param somehow vanished (shouldn't happen — populator just
+        // pulled it from fd.params).
+        if let Some(param_index) = fd.params.iter().position(|(n, _)| n == param) {
+            let precondition_clauses: Vec<crate::ast::Spanned<crate::ast::Expr>> =
+                precondition.iter().map(|p| p.expr.clone()).collect();
+            return Some(emit_native_guarded_int_countdown_fn(
+                fd,
+                ctx,
+                param_index,
+                body.base_arm_literal,
+                &body.base_arm_body,
+                &body.wildcard_arm_body,
+                &precondition_clauses,
+            ));
+        }
     }
 
     if let Some(RecursionPlan::IntAscending {
