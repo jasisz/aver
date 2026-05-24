@@ -134,7 +134,7 @@ pub struct PipelineConfig<'a> {
     /// preserved and skip this stage.
     pub run_escape: bool,
     /// Whether to run the refinement-lift pass. Walks user type defs
-    /// + smart constructors and populates `ProofIR.refined_types`.
+    /// and smart constructors, populating `ProofIR.refined_types`.
     /// Independent of `run_contract_lower` — a backend could opt into
     /// one without the other, though production proof exporters
     /// always enable both. Both stages share the same

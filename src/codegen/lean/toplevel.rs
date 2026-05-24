@@ -1046,7 +1046,7 @@ fn emit_native_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> Opti
         // other Lex shape (single-param mutual int-countdown, two-
         // param string-pos) fails this group's pre-conditions.
         match contract_lex_params_rank(ctx, &fd.name) {
-            Some((params, rank)) if params.is_empty() => {
+            Some(([], rank)) => {
                 ranks.insert(fd.name.clone(), rank);
             }
             _ => return None,
@@ -2350,7 +2350,7 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
                 lines.push("  decreasing_by".to_string());
                 lines.push("    simp_wf".to_string());
             }
-            Some((params, _)) if params.is_empty() => {
+            Some(([], _)) => {
                 // MutualSizeOfRanked — handled inside the SCC's
                 // dedicated emitter; no termination_by suffix here.
             }

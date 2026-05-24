@@ -418,16 +418,16 @@ pub fn build_context(
 }
 
 impl CodegenContext {
-    /// Test-only bridge: recompute every derived fact (`mutual_tco_
-    /// members`, `recursive_fns`, `proof_ir`) from the current `items`
-    /// + `modules`. Used exclusively by unit tests that construct a
-    /// `CodegenContext` piecewise — pushing synthetic `FnDef`s
-    /// straight into the items list rather than going through the
-    /// parser + pipeline. Production code never needs this: every
-    /// derived fact is populated by the pipeline stages (analyze,
-    /// proof_lower) and propagated through `build_context`. Calling
-    /// `refresh_facts` on a production-built ctx is redundant work
-    /// that produces the same answer — leave it off the hot path.
+    /// Test-only bridge: recompute every derived fact
+    /// (`mutual_tco_members`, `recursive_fns`, `proof_ir`) from the
+    /// current `items` and `modules`. Used exclusively by unit tests
+    /// that construct a `CodegenContext` piecewise — pushing synthetic
+    /// `FnDef`s straight into the items list rather than going through
+    /// the parser and pipeline. Production code never needs this:
+    /// every derived fact is populated by the pipeline stages
+    /// (analyze, proof_lower) and propagated through `build_context`.
+    /// Calling `refresh_facts` on a production-built ctx is redundant
+    /// work that produces the same answer — leave it off the hot path.
     pub fn refresh_facts(&mut self) {
         let entry_fn_refs: Vec<&FnDef> =
             self.fn_defs.iter().filter(|fd| fd.name != "main").collect();
