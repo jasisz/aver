@@ -224,7 +224,12 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// the fibTR flagship, and once every variant is covered we delete
 /// the consumer-side `RecursionPlan` reads in a later Step.
 pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
-    let (plans, _issues) = analyze_plans(inputs);
+    let (plans, issues) = analyze_plans(inputs);
+    ir.unclassified_fns
+        .extend(issues.into_iter().map(|issue| crate::ir::UnclassifiedFn {
+            line: issue.line,
+            message: issue.message,
+        }));
     let all_fns: Vec<&FnDef> = inputs
         .dep_modules
         .iter()

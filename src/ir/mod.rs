@@ -23,7 +23,7 @@ pub use pipeline::{
 pub use proof_ir::{
     DecreaseProof, FnContract, FuelMetric, LawTheorem, Measure, NativeIntCountdownBody, Predicate,
     PreservationProof, ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract,
-    RefinedTypeDecl,
+    RefinedTypeDecl, UnclassifiedFn,
 };
 
 pub use alloc_info::{

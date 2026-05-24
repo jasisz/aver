@@ -53,6 +53,23 @@ pub struct ProofIR {
     /// keep decisions baked in. Currently empty; populated when
     /// migrating the law emit path.
     pub law_theorems: Vec<LawTheorem>,
+    /// Recursive pure fns whose shape fell outside every recognised
+    /// pattern. Surfaced as diagnostics ("recursive function 'foo'
+    /// is outside proof subset (...)") and steers the consumer to
+    /// either skip the fn or emit it as a partial/axiom fallback.
+    /// Carried in ProofIR so consumers don't re-run the classifier
+    /// just to see what failed.
+    pub unclassified_fns: Vec<UnclassifiedFn>,
+}
+
+/// A recursive pure fn the contract classifier couldn't match against
+/// any supported shape. Carries the source line + a human-readable
+/// reason string so backends can render a diagnostic without
+/// inventing prose.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct UnclassifiedFn {
+    pub line: usize,
+    pub message: String,
 }
 
 /// A refinement-lifted user type — opaque record with a single
