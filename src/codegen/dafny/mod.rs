@@ -71,20 +71,22 @@ pub(crate) fn dafny_module_name(prefix: &str) -> String {
 /// and helpers under `module AverCommon`, and an entry `<project>.dfy`
 /// with the trust header, top-level items, and verify lemmas.
 fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
-    use crate::codegen::recursion::RecursionPlan;
     use std::collections::{HashMap, HashSet};
 
-    let dafny_inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
-    let (recursion_plans, _recursion_issues) =
-        crate::codegen::recursion::analyze_plans(&dafny_inputs);
-    let mutual_planned: HashSet<String> = recursion_plans
+    // ProofIR is populated by the ContractLower pipeline stage. Mutual
+    // SCC members are exactly the fns whose contract is `Fuel { Lex }`
+    // — that's the unifying shape MutualIntCountdown /
+    // MutualStringPosAdvance / MutualSizeOfRanked all lower to.
+    let mutual_planned: HashSet<String> = ctx
+        .proof_ir
+        .fn_contracts
         .iter()
-        .filter(|(_, plan)| {
+        .filter(|(_, contract)| {
             matches!(
-                plan,
-                RecursionPlan::MutualIntCountdown
-                    | RecursionPlan::MutualStringPosAdvance { .. }
-                    | RecursionPlan::MutualSizeOfRanked { .. }
+                contract.recursion,
+                Some(crate::ir::RecursionContract::Fuel {
+                    fuel_metric: crate::ir::FuelMetric::Lex { .. },
+                })
             )
         })
         .map(|(name, _)| name.clone())
@@ -127,15 +129,13 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         // ceiling (BigInt's 10⁹ pairs close as real samples instead of
         // needing the literal-magnitude cutoff). Falls back to fuel
         // when the SCC has a non-sizeOf member.
-        if let Some(code) =
-            fuel::emit_mutual_native_decreases_group(&scc_fns, ctx, &recursion_plans)
-        {
+        if let Some(code) = fuel::emit_mutual_native_decreases_group(&scc_fns, ctx) {
             fuel_per_scope.entry(scope).or_default().push(code);
             for fd in &scc_fns {
                 native_emitted.insert(fd.name.clone());
             }
         } else {
-            match fuel::emit_mutual_fuel_group(&scc_fns, ctx, &recursion_plans) {
+            match fuel::emit_mutual_fuel_group(&scc_fns, ctx) {
                 Some(code) => {
                     fuel_per_scope.entry(scope).or_default().push(code);
                     for fd in &scc_fns {

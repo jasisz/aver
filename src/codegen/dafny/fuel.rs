@@ -34,7 +34,7 @@ use super::expr::aver_name_to_dafny;
 use crate::ast::{FnDef, TypeDef};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::parse_type_annotation;
-use crate::codegen::recursion::{RecursionPlan, fuel_helper_name, rewrite_recursive_calls_body};
+use crate::codegen::recursion::{fuel_helper_name, rewrite_recursive_calls_body};
 use crate::types::Type;
 
 /// Emit the whole SCC as a fuel-guarded mutual group. The helper
@@ -45,11 +45,7 @@ use crate::types::Type;
 ///
 /// Returns `None` if any fn in the SCC has a return type without a
 /// total default in Dafny — those still have to fall back to axiom.
-pub fn emit_mutual_fuel_group(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &std::collections::HashMap<String, RecursionPlan>,
-) -> Option<String> {
+pub fn emit_mutual_fuel_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<String> {
     // Totality guard: every fn's return type needs a value to pick on
     // fuel exhaustion. Named ADTs walk their first variant; left-
     // recursive ADTs without a base variant first, or fn types, still
@@ -65,10 +61,6 @@ pub fn emit_mutual_fuel_group(
     let mut wrapper_lines: Vec<String> = Vec::new();
 
     for fd in fns {
-        let plan = plans
-            .get(&fd.name)
-            .cloned()
-            .unwrap_or(RecursionPlan::MutualSizeOfRanked { rank: 1 });
         let helper_name = fuel_helper_name(&fd.name);
         let fn_name = aver_name_to_dafny(&fd.name);
         let params_str = emit_dafny_params(&fd.params);
@@ -76,7 +68,7 @@ pub fn emit_mutual_fuel_group(
         let default_val = dafny_default_value(&fd.return_type, ctx)
             .expect("default value presence is checked above");
         let arg_names = emit_dafny_arg_names(&fd.params);
-        let metric = emit_fuel_metric(fd, &plan, scc_size);
+        let metric = emit_fuel_metric(fd, ctx, scc_size);
 
         // Apply `?!` lowering first (same step the non-fuel pure-fn
         // emission runs), then rewrite intra-SCC calls to reference
@@ -143,15 +135,18 @@ pub fn emit_mutual_fuel_group(
 /// tuple decreases on the second component. Calls that strictly
 /// shrink the measure (e.g. `addDigits → addLeft` peeling a head
 /// off `a`) decrease on the first component regardless of rank.
-pub fn emit_mutual_native_decreases_group(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &std::collections::HashMap<String, RecursionPlan>,
-) -> Option<String> {
+pub fn emit_mutual_native_decreases_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<String> {
+    // MutualSizeOfRanked SCC: every member's contract is
+    // `Fuel { Lex { params: [], rank } }` (empty params signal the
+    // frame-level sizeOf measure). Any other Lex shape (single-param
+    // mutual int-countdown, two-param string-pos) fails this group.
     let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for fd in fns {
-        match plans.get(&fd.name)? {
-            RecursionPlan::MutualSizeOfRanked { rank } => {
+        let contract = ctx.proof_ir.fn_contracts.get(&fd.name)?;
+        match contract.recursion.as_ref()? {
+            crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::Lex { params, rank },
+            } if params.is_empty() => {
                 ranks.insert(fd.name.clone(), *rank);
             }
             _ => return None,
@@ -262,17 +257,44 @@ fn emit_dafny_arg_names(params: &[(String, String)]) -> String {
 /// conservative upper bound keeps us on the safe side of Dafny's
 /// `decreases fuel` check even when the classifier's rank analysis is
 /// loose.
-fn emit_fuel_metric(fd: &FnDef, plan: &RecursionPlan, scc_size: usize) -> String {
-    match plan {
-        RecursionPlan::MutualIntCountdown => {
-            let Some(param) = first_int_param(fd) else {
-                return "1".to_string();
-            };
-            let name = aver_name_to_dafny(param);
+fn emit_fuel_metric(fd: &FnDef, ctx: &CodegenContext, scc_size: usize) -> String {
+    // Reads the contract's Lex shape and emits the appropriate Dafny
+    // fuel formula. Distinguishes by `params` length (the producer
+    // partition from Step 12):
+    //
+    // - `[p]` rank 0  → MutualIntCountdown: `natAbs(n) + 1`
+    // - `[s, pos]`    → MutualStringPosAdvance: `(|s| + 1) * (rank * scc_size + 1)`
+    // - `[]`          → MutualSizeOfRanked: `(|first_seq| + 1) * (rank * scc_size + 1)`
+    let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name) else {
+        return "1".to_string();
+    };
+    let Some(crate::ir::RecursionContract::Fuel {
+        fuel_metric: crate::ir::FuelMetric::Lex { params, rank },
+    }) = contract.recursion.as_ref()
+    else {
+        return "1".to_string();
+    };
+    match params.as_slice() {
+        [p] if *rank == 0 => {
+            // MutualIntCountdown — first Int param countdown.
+            let name = aver_name_to_dafny(p);
             format!("(if {n} >= 0 then {n} else 0) + 1", n = name)
         }
-        RecursionPlan::MutualStringPosAdvance { rank }
-        | RecursionPlan::MutualSizeOfRanked { rank } => {
+        [_s, _pos] => {
+            // MutualStringPosAdvance — fuel formula `(|s| + 1) *
+            // budget`. Falls back to a sequence param if the IR's
+            // stored `s` name doesn't resolve.
+            let Some(name) = first_seq_or_string_param(fd) else {
+                return format!("{}", rank.max(&1));
+            };
+            format!(
+                "(|{n}| + 1) * {budget}",
+                n = aver_name_to_dafny(name),
+                budget = rank * scc_size + 1
+            )
+        }
+        [] => {
+            // MutualSizeOfRanked — frame-level sizeOf measure.
             let Some(name) = first_seq_or_string_param(fd) else {
                 return format!("{}", rank.max(&1));
             };
@@ -284,13 +306,6 @@ fn emit_fuel_metric(fd: &FnDef, plan: &RecursionPlan, scc_size: usize) -> String
         }
         _ => "1".to_string(),
     }
-}
-
-fn first_int_param(fd: &FnDef) -> Option<&String> {
-    fd.params
-        .iter()
-        .find(|(_, t)| parse_type_annotation(t) == Type::Int)
-        .map(|(n, _)| n)
 }
 
 fn first_seq_or_string_param(fd: &FnDef) -> Option<&String> {
