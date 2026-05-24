@@ -1504,6 +1504,15 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc as Rc;
 
+    /// Populate `ctx.proof_ir` from the current items. Synthetic-AST
+    /// tests bypass the pipeline (where ProofLower runs automatically);
+    /// IR-pinned law strategies rely on this being populated so the
+    /// backend's IR-pin lookups can fire.
+    fn populate_proof_ir(ctx: &mut CodegenContext) {
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+        ctx.proof_ir = crate::codegen::proof_lower::lower(&inputs);
+    }
+
     fn empty_ctx() -> CodegenContext {
         CodegenContext {
             items: vec![],
@@ -2741,6 +2750,7 @@ verify square law squareSpec
             cases_givens: vec![],
         }));
 
+        populate_proof_ir(&mut ctx);
         let out = transpile(&mut ctx);
         let lean = out
             .files
@@ -3040,6 +3050,7 @@ verify mirror law involutive
             cases_givens: vec![],
         }));
 
+        populate_proof_ir(&mut ctx);
         let out = transpile(&mut ctx);
         let lean = out
             .files
@@ -3051,7 +3062,7 @@ verify mirror law involutive
             "expected keyPresent auto-proof with has_set_self"
         );
         assert!(
-            lean.contains("cases h : AverMap.get counts \"a\" <;> simp [AverMap.get_set_self, addOne, incCount]"),
+            lean.contains("cases h : AverMap.get counts \"a\" <;> simp [AverMap.get_set_self, incCount, addOne]"),
             "expected existingKeyIncrements auto-proof with get_set_self"
         );
     }

@@ -4,7 +4,6 @@
 /// matching and proof-shape logic lives in one place.
 mod arithmetic;
 mod induction;
-mod maps;
 mod sampled;
 mod shared;
 mod spec;
@@ -81,21 +80,6 @@ pub fn emit_verify_law_forall_auto_proof(
     ) {
         return Some(proof);
     }
-    // Fallback for BackendDispatch laws — same emit, just sourced
-    // from the legacy detector. Step 32 retires this once every
-    // induction-eligible shape pins through the IR.
-    if let Some(proof) = induction::emit_structural_induction_law(
-        vb,
-        law,
-        ctx,
-        &intro_names,
-        theorem_base,
-        quant_params,
-        theorem_prop,
-    ) {
-        return Some(proof);
-    }
-
     // IR-pinned strategies. The lowerer's decision wins over the
     // ad-hoc detection chain that follows; backend just renders the
     // tactic the IR selected. Each variant has a fixed Lean shape;
@@ -217,13 +201,7 @@ pub fn emit_verify_law_forall_auto_proof(
                     replaces_theorem: false,
                 });
             }
-            maps::emit_direct_map_set_law(law, ctx, &proof_intro_names).map(|proof_lines| {
-                AutoProof {
-                    support_lines: Vec::new(),
-                    proof_lines,
-                    replaces_theorem: false,
-                }
-            })
+            None
         })
         .or_else(|| {
             // IR-pinned `MapUpdatePostcondition` — the lowerer
@@ -283,13 +261,7 @@ pub fn emit_verify_law_forall_auto_proof(
                     replaces_theorem: false,
                 });
             }
-            maps::emit_map_update_law(vb, law, ctx, &proof_intro_names).map(|proof_lines| {
-                AutoProof {
-                    support_lines: Vec::new(),
-                    proof_lines,
-                    replaces_theorem: false,
-                }
-            })
+            None
         })
         .or_else(|| {
             // IR-pinned `MapKeyTrackedIncrement` — the lowerer
@@ -328,13 +300,7 @@ pub fn emit_verify_law_forall_auto_proof(
                     replaces_theorem: false,
                 });
             }
-            maps::emit_map_increment_tracked_count_law(vb, law, ctx, &proof_intro_names).map(
-                |proof_lines| AutoProof {
-                    support_lines: Vec::new(),
-                    proof_lines,
-                    replaces_theorem: false,
-                },
-            )
+            None
         })
         .or_else(|| {
             // IR-pinned SimpOmegaUnfold takes precedence over the
