@@ -99,6 +99,26 @@ pub fn emit_verify_law_forall_auto_proof(
                 // unfolds.
                 Some(vec![format!("simp [{}]", fn_lean)])
             }
+            ProofStrategy::WrapperSubRightIdentity => {
+                // `sub(a, 0) => a` unfolds the wrapper; Lean's
+                // `simp [sub]` reduces `a - 0` to `a` without
+                // extra lemmas.
+                Some(vec![format!("simp [{}]", fn_lean)])
+            }
+            ProofStrategy::WrapperSubAntiCommutative { neg_on_rhs } => {
+                // `Int.neg_sub b a : -(b - a) = a - b`. When the
+                // negation sits on the rhs of the user's law we
+                // need `.symm` to align directions; when it's on
+                // the lhs the law statement already matches.
+                let a = aver_name_to_lean(&law.givens[0].name);
+                let b = aver_name_to_lean(&law.givens[1].name);
+                let step = if neg_on_rhs {
+                    format!("simpa [{}] using (Int.neg_sub {} {}).symm", fn_lean, b, a)
+                } else {
+                    format!("simpa [{}] using (Int.neg_sub {} {})", fn_lean, b, a)
+                };
+                Some(vec![step])
+            }
             _ => None,
         };
         if let Some(lines) = proof_lines {
