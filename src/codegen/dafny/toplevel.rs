@@ -153,11 +153,7 @@ fn refinement_witness_for(type_name: &str, ctx: &CodegenContext) -> Option<Strin
 /// when the predicate uses a shape the evaluator can't reduce (e.g. a
 /// fn call to something other than `Bool.and`/`Bool.or`); witness
 /// emission then falls back to `0`.
-fn eval_int_bool_predicate(
-    expr: &Spanned<Expr>,
-    param_name: &str,
-    value: i64,
-) -> Option<bool> {
+fn eval_int_bool_predicate(expr: &Spanned<Expr>, param_name: &str, value: i64) -> Option<bool> {
     match &expr.node {
         Expr::Literal(Literal::Bool(b)) => Some(*b),
         Expr::BinOp(op, l, r) => {

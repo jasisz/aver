@@ -366,10 +366,7 @@ fn project_lifted_ident_leaf(
     if lifted_vars.contains_key(target_name) {
         Spanned::new(
             Expr::Attr(
-                Box::new(Spanned::new(
-                    Expr::Ident(target_name.clone()),
-                    expr.line,
-                )),
+                Box::new(Spanned::new(Expr::Ident(target_name.clone()), expr.line)),
                 "val".to_string(),
             ),
             expr.line,
