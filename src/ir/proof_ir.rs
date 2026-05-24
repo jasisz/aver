@@ -356,6 +356,17 @@ pub enum ProofStrategy {
         /// swapped form `-sub(b, a) => sub(a, b)`.
         neg_on_rhs: bool,
     },
+    /// Equivalence between a unary wrapper and a binary wrapper
+    /// over the same op, e.g. `fn addOne(a) -> a + 1` plus
+    /// `verify addOne law identityViaAdd ... addOne(a) => add(a, 1)`.
+    /// The IR captures the inner binary fn name so the backend
+    /// renders `simp [<outer>, <inner>]` without re-scanning the
+    /// AST for the equivalent.
+    WrapperUnaryEquivalence {
+        /// Source-level name of the inner binary wrapper the unary
+        /// fn equals (the law's "other side" calls this).
+        inner_fn: String,
+    },
     /// Structural induction on a recursive ADT parameter.
     Induction { param: String },
     /// Bounded universal: case-split over the declared `given`
