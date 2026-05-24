@@ -21,7 +21,7 @@ use aver::codegen::CodegenContext;
 use aver::codegen::common::refinement_info_for;
 use aver::codegen::recursion::{RecursionPlan, analyze_plans};
 use aver::ir::proof_ir::{
-    DecreaseProof, Measure, PreservationProof, QuantifierType, RecursionContract,
+    DecreaseProof, FuelMetric, Measure, PreservationProof, QuantifierType, RecursionContract,
 };
 use aver::source::parse_source;
 use std::collections::HashSet;
@@ -343,4 +343,69 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
         spanned_repr(&body.wildcard_arm_body),
         spanned_repr(legacy_wild),
     );
+}
+
+#[test]
+fn exposed_int_countdown_lowers_to_fuel_contract() {
+    // Closed-world rejection: when the entry module's `exposes` list
+    // names the countdown fn, external callers may pass negatives,
+    // so the classifier picks plain `IntCountdown` (fuel-encoded)
+    // over the native-guarded shape. ProofIR's translation: a Fuel
+    // contract with NatAbsPlusOne measure on the countdown param.
+    // No precondition derivation, no body decomposition — fuel
+    // sidesteps both.
+    let src = "module Worker\n\
+         \x20   intent = \"t\"\n\
+         \x20   exposes [exposed_count]\n\
+         \n\
+         fn exposed_count(n: Int) -> Int\n\
+         \x20   match n\n\
+         \x20       0 -> 0\n\
+         \x20       _ -> exposed_count(n - 1)\n";
+    let ctx = build_ctx(src);
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    let (plans, _) = analyze_plans(&inputs);
+
+    let RecursionPlan::IntCountdown {
+        param_index: legacy_idx,
+    } = plans
+        .get("exposed_count")
+        .unwrap_or_else(|| panic!("exposed_count expected as IntCountdown, got: {:?}", plans))
+    else {
+        panic!(
+            "expected legacy IntCountdown, got: {:?}",
+            plans.get("exposed_count")
+        );
+    };
+
+    let contract = ctx
+        .proof_ir
+        .fn_contracts
+        .get("exposed_count")
+        .expect("exposed_count has no FnContract in ProofIR");
+    let RecursionContract::Fuel { fuel_metric } = contract
+        .recursion
+        .as_ref()
+        .expect("contract has no recursion")
+    else {
+        panic!(
+            "exposed_count contract must be Fuel, got: {:?}",
+            contract.recursion
+        );
+    };
+
+    let FuelMetric::NatAbsPlusOne { param } = fuel_metric else {
+        panic!("fuel metric must be NatAbsPlusOne, got: {:?}", fuel_metric);
+    };
+
+    // Sanity: the bound param matches the legacy plan's chosen index.
+    let fd = ctx
+        .items
+        .iter()
+        .find_map(|item| match item {
+            aver::ast::TopLevel::FnDef(fd) if fd.name == "exposed_count" => Some(fd),
+            _ => None,
+        })
+        .expect("exposed_count FnDef");
+    assert_eq!(param, &fd.params[*legacy_idx].0);
 }

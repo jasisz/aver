@@ -236,6 +236,32 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         .collect();
 
     for (fn_name, plan) in &plans {
+        let Some(fd) = all_fns.iter().find(|fd| fd.name == *fn_name) else {
+            continue;
+        };
+
+        // IntCountdown — fuel-encoded countdown on a single Int param.
+        // Distinct from IntCountdownGuarded: external callers may pass
+        // negatives (the classifier rejected closed-world status), so
+        // backends emit a fuel helper with `n.natAbs + 1` initial fuel
+        // rather than a native def with a precondition.
+        if let RecursionPlan::IntCountdown { param_index } = plan {
+            if let Some((param_name, _)) = fd.params.get(*param_index) {
+                ir.fn_contracts.insert(
+                    fn_name.clone(),
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::Fuel {
+                            fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne {
+                                param: param_name.clone(),
+                            },
+                        }),
+                    },
+                );
+            }
+            continue;
+        }
+
         let RecursionPlan::IntCountdownGuarded {
             param_index,
             base_arm_literal,
@@ -244,9 +270,6 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             precondition,
         } = plan
         else {
-            continue;
-        };
-        let Some(fd) = all_fns.iter().find(|fd| fd.name == *fn_name) else {
             continue;
         };
         let Some((countdown_param_name, _)) = fd.params.get(*param_index) else {
