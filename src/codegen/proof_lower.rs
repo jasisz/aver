@@ -582,6 +582,17 @@ fn classify_law_strategy(
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
+    // Structural induction runs first — when any given binds a
+    // recursive ADT, induction over its variants is the canonical
+    // proof. Reflexive could also fire on `f(t) = f(t)` for `t: Tree`
+    // but induction subsumes (one trivial case per variant) and is
+    // the legacy chain's first pick. `when` clauses block induction
+    // — the case-split would lose the premise binding.
+    if law.when.is_none()
+        && let Some(param) = detect_induction_target(law, inputs)
+    {
+        return ProofStrategy::Induction { param };
+    }
     if law.lhs == law.rhs {
         return ProofStrategy::Reflexive;
     }
@@ -984,6 +995,81 @@ fn arms_match_bool_ok_err(arms: &[crate::ast::MatchArm]) -> bool {
         }
     }
     saw_true_ok && saw_false_err
+}
+
+/// Detect a `given` that binds a recursive sum-typed ADT — the
+/// induction target. Returns the given's source name on first
+/// match, or `None` when no given fits.
+///
+/// "Recursive" means at least one variant references the type
+/// itself in its field list (either bare `Tree` or wrapped like
+/// `List<Tree>` / `Tree, Tree`). Indirect-via-other-types rec
+/// shapes are rejected here — the backend's emit can't handle
+/// them and would fail at lake-build time; better to fall through
+/// to `BackendDispatch` than pin a bad strategy.
+fn detect_induction_target(
+    law: &crate::ast::VerifyLaw,
+    inputs: &ProofLowerInputs,
+) -> Option<String> {
+    use crate::ast::TypeDef;
+    for given in &law.givens {
+        let Some(TypeDef::Sum {
+            name: type_name,
+            variants,
+            ..
+        }) = inputs.find_type_def(&given.type_name)
+        else {
+            continue;
+        };
+        // Require at least one variant to reference the type
+        // itself — that's the recursion the induction case-split
+        // pivots on.
+        let direct_rec = variants.iter().any(|variant| {
+            variant.fields.iter().any(|field| {
+                let f = field.trim();
+                f == type_name
+                    || f.contains(&format!("<{}", type_name))
+                    || f.contains(&format!("{}>", type_name))
+                    || f.contains(&format!(", {}", type_name))
+                    || f.contains(&format!("{},", type_name))
+            })
+        });
+        if !direct_rec {
+            continue;
+        }
+        // Reject indirect-recursion (e.g. via Option<Self> in a
+        // way the backend can't case-split cleanly).
+        if has_indirect_rec_variants(variants, type_name) {
+            continue;
+        }
+        return Some(given.name.clone());
+    }
+    None
+}
+
+/// Mirror of `lean::law_auto::induction::has_indirect_variants` —
+/// when a variant's field carries the type wrapped inside another
+/// generic in a shape the per-variant emit can't decompose
+/// (e.g. `Some(List<Self>)` past the simple direct-rec case),
+/// the backend rejects. Replicated here so the lowerer's pin
+/// matches what the backend would accept.
+fn has_indirect_rec_variants(variants: &[crate::ast::TypeVariant], type_name: &str) -> bool {
+    for variant in variants {
+        for field in &variant.fields {
+            let f = field.trim();
+            // Direct match — that's the recursion we want, not "indirect".
+            if f == type_name {
+                continue;
+            }
+            // Bare `List<Tree>` / `Vec<Tree>` is fine (direct list
+            // recursion); deeper nesting we conservatively reject.
+            let opens = f.matches('<').count();
+            if opens > 1 && f.contains(type_name) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Return `Some(op)` iff `fn_name` resolves to a 2-arg Int wrapper

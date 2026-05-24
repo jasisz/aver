@@ -1067,3 +1067,39 @@ fn linear_arithmetic_pinned_with_lifted_for_refinement_law() {
     assert!(wrapper_return, "add returns Result, wrapper");
     assert!(lifted, "givens used as Natural carriers — lifted=true");
 }
+
+#[test]
+fn induction_pinned_on_recursive_adt_given() {
+    // Sum type `Tree` with direct recursion via `Node(Tree, Tree)`.
+    // A law over `Tree` gets pinned `Induction { param }` — the
+    // case-split shape the backend's `emit_structural_induction_
+    // law` consumes. Reflexive would also fit `f(t) = f(t)` but
+    // induction's chain priority wins (matches legacy behaviour).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         type Tree\n\
+         \x20   Leaf\n\
+         \x20   Node(Tree, Tree)\n\
+         \n\
+         fn id(t: Tree) -> Tree\n\
+         \x20   t\n\
+         \n\
+         verify id law identity\n\
+         \x20   given t: Tree = [Tree.Leaf]\n\
+         \x20   id(t) => t\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "id" && t.law_name == "identity")
+        .expect("id::identity law theorem missing");
+    let aver::ir::ProofStrategy::Induction { ref param } = theorem.strategy else {
+        panic!(
+            "expected Induction {{ param }}, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(param, "t");
+}
