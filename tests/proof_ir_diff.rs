@@ -1231,3 +1231,40 @@ fn map_update_postcondition_pinned_get_after_with_helper_unfolds() {
         "GetAfter should carry the helper-fn unfold set (outer fn excluded)"
     );
 }
+
+#[test]
+fn map_key_tracked_increment_pinned_on_defaulted_get_plus_one() {
+    // `Option.withDefault(Map.get(incCount(m, k), k), 0) ==
+    // Option.withDefault(Map.get(m, k), 0) + 1` — the canonical
+    // tracked-counter increment law. Outer fn body is the specific
+    // `Some(n) -> n + 1 / None -> 1` template. Step 34 pins
+    // `MapKeyTrackedIncrement { outer_fn: "incCount", … }`.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>\n\
+         \x20   current = Map.get(counts, word)\n\
+         \x20   match current\n\
+         \x20       Option.Some(n) -> Map.set(counts, word, n + 1)\n\
+         \x20       Option.None -> Map.set(counts, word, 1)\n\
+         \n\
+         verify incCount law trackedCountStepsByOne\n\
+         \x20   given counts: Map<String, Int> = [{}]\n\
+         \x20   given word: String = [\"a\"]\n\
+         \x20   Option.withDefault(Map.get(incCount(counts, word), word), 0) => Option.withDefault(Map.get(counts, word), 0) + 1\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "incCount" && t.law_name == "trackedCountStepsByOne")
+        .expect("incCount::trackedCountStepsByOne law theorem missing");
+    let aver::ir::ProofStrategy::MapKeyTrackedIncrement { ref outer_fn, .. } = theorem.strategy
+    else {
+        panic!(
+            "expected MapKeyTrackedIncrement, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(outer_fn, "incCount");
+}

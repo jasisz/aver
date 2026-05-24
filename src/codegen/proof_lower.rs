@@ -635,6 +635,16 @@ fn classify_law_strategy(
     if let Some((axiom, args)) = detect_map_set_axiom(law) {
         return ProofStrategy::LibraryAxiom { axiom, args };
     }
+    // Tracked-counter increment: specialised body template + `+ 1`
+    // rhs. Checked before the more general MapUpdatePostcondition so
+    // the tighter strategy wins for this shape.
+    if let Some(inc) = detect_map_key_tracked_increment(law, fn_name, inputs) {
+        return ProofStrategy::MapKeyTrackedIncrement {
+            outer_fn: inc.outer_fn,
+            map_arg: inc.map_arg,
+            key_arg: inc.key_arg,
+        };
+    }
     // Post-condition of an inline-defined map-update fn — case-split
     // over `Map.get m k` and apply the `Map.set` axioms.
     if let Some(post) = detect_map_update_postcondition(law, fn_name, inputs) {
@@ -1279,6 +1289,177 @@ fn is_map_set_of_params(
     args.len() == 3
         && matches_ident_expr(&args[0], map_param)
         && matches_ident_expr(&args[1], key_param)
+}
+
+struct MapKeyTrackedIncrementPlan {
+    outer_fn: String,
+    map_arg: Spanned<crate::ast::Expr>,
+    key_arg: Spanned<crate::ast::Expr>,
+}
+
+/// Detect the canonical tracked-counter increment law:
+/// `Option.withDefault(Map.get(outer(m, k), k), 0) ==
+/// Option.withDefault(Map.get(m, k), 0) + 1`, where `outer` follows
+/// the increment-by-one body template (see
+/// [`outer_fn_map_increment_shape`]).
+fn detect_map_key_tracked_increment(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<MapKeyTrackedIncrementPlan> {
+    use crate::ast::{BinOp, Expr};
+
+    outer_fn_map_increment_shape(fn_name, inputs)?;
+
+    let side = |after: &Spanned<crate::ast::Expr>,
+                rhs: &Spanned<crate::ast::Expr>|
+     -> Option<MapKeyTrackedIncrementPlan> {
+        let (map_arg, key_arg, default_arg) = defaulted_map_get_after_fn_call(after, fn_name)?;
+        if !is_int_lit(default_arg, 0) {
+            return None;
+        }
+        let Expr::BinOp(BinOp::Add, base, one) = &rhs.node else {
+            return None;
+        };
+        if !is_int_lit(one, 1) {
+            return None;
+        }
+        let (base_map, base_key, base_default) = defaulted_map_get(base)?;
+        if map_arg.node != base_map.node
+            || key_arg.node != base_key.node
+            || default_arg.node != base_default.node
+        {
+            return None;
+        }
+        Some(MapKeyTrackedIncrementPlan {
+            outer_fn: fn_name.to_string(),
+            map_arg: map_arg.clone(),
+            key_arg: key_arg.clone(),
+        })
+    };
+    side(&law.lhs, &law.rhs).or_else(|| side(&law.rhs, &law.lhs))
+}
+
+/// Validate `outer(m, k)` follows the canonical tracked-counter
+/// increment body:
+///
+/// ```text
+/// let v = Map.get m k
+/// match v {
+///   Some(n) -> Map.set m k (n + 1)
+///   None    -> Map.set m k 1
+/// }
+/// ```
+fn outer_fn_map_increment_shape(fn_name: &str, inputs: &ProofLowerInputs) -> Option<()> {
+    use crate::ast::{BinOp, Expr, Pattern, Stmt};
+
+    let fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if fd.params.len() != 2 {
+        return None;
+    }
+    let map_param = fd.params[0].0.as_str();
+    let key_param = fd.params[1].0.as_str();
+    let stmts = fd.body.stmts();
+    if stmts.len() != 2 {
+        return None;
+    }
+    let Stmt::Binding(current, _, bound_expr) = &stmts[0] else {
+        return None;
+    };
+    if !is_map_get_of_params(bound_expr, map_param, key_param) {
+        return None;
+    }
+    let Stmt::Expr(last_expr) = &stmts[1] else {
+        return None;
+    };
+    let Expr::Match { subject, arms, .. } = &last_expr.node else {
+        return None;
+    };
+    if !matches_ident_expr(subject, current) || arms.len() != 2 {
+        return None;
+    }
+
+    let some_arm = arms.iter().find_map(|arm| match &arm.pattern {
+        Pattern::Constructor(name, vars) if name == "Option.Some" && vars.len() == 1 => {
+            Some((vars[0].as_str(), arm.body.as_ref()))
+        }
+        _ => None,
+    })?;
+    let none_arm = arms.iter().find_map(|arm| match &arm.pattern {
+        Pattern::Constructor(name, vars) if name == "Option.None" && vars.is_empty() => {
+            Some(arm.body.as_ref())
+        }
+        _ => None,
+    })?;
+
+    let (some_bound, some_body) = some_arm;
+    let some_set = call_named_args(some_body, "Map.set")?;
+    let none_set = call_named_args(none_arm, "Map.set")?;
+    if some_set.len() != 3 || none_set.len() != 3 {
+        return None;
+    }
+    if !matches_ident_expr(&some_set[0], map_param)
+        || !matches_ident_expr(&some_set[1], key_param)
+        || !matches_ident_expr(&none_set[0], map_param)
+        || !matches_ident_expr(&none_set[1], key_param)
+    {
+        return None;
+    }
+    let Expr::BinOp(BinOp::Add, add_left, add_right) = &some_set[2].node else {
+        return None;
+    };
+    if !matches_ident_expr(add_left, some_bound) || !is_int_lit(add_right, 1) {
+        return None;
+    }
+    if !is_int_lit(&none_set[2], 1) {
+        return None;
+    }
+    Some(())
+}
+
+/// `Option.withDefault(Map.get(outer(m, k), k), d)` — extract (m, k,
+/// d) when the outer call matches `fn_name` and the lookup uses the
+/// same key as the outer call's key arg.
+fn defaulted_map_get_after_fn_call<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+    fn_name: &str,
+) -> Option<(
+    &'a Spanned<crate::ast::Expr>,
+    &'a Spanned<crate::ast::Expr>,
+    &'a Spanned<crate::ast::Expr>,
+)> {
+    let (inner, default) = option_with_default_args(expr)?;
+    let (map_arg, key_arg) = map_get_after_fn_call(inner, fn_name)?;
+    Some((map_arg, key_arg, default))
+}
+
+/// `Option.withDefault(Map.get(m, k), d)` — extract (m, k, d) for the
+/// bare lookup form (no surrounding outer call).
+fn defaulted_map_get(
+    expr: &Spanned<crate::ast::Expr>,
+) -> Option<(
+    &Spanned<crate::ast::Expr>,
+    &Spanned<crate::ast::Expr>,
+    &Spanned<crate::ast::Expr>,
+)> {
+    let (inner, default) = option_with_default_args(expr)?;
+    let get_args = call_named_args(inner, "Map.get")?;
+    if get_args.len() != 2 {
+        return None;
+    }
+    Some((&get_args[0], &get_args[1], default))
+}
+
+fn option_with_default_args<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+) -> Option<(&'a Spanned<crate::ast::Expr>, &'a Spanned<crate::ast::Expr>)> {
+    let args = call_named_args(expr, "Option.withDefault")?;
+    (args.len() == 2).then_some((&args[0], &args[1]))
+}
+
+fn is_int_lit(expr: &Spanned<crate::ast::Expr>, n: i64) -> bool {
+    use crate::ast::{Expr, Literal};
+    matches!(&expr.node, Expr::Literal(Literal::Int(m)) if *m == n)
 }
 
 /// `Map.has(outer(m, k), k)` — pick out the (m, k) from the inner

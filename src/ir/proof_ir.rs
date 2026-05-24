@@ -465,6 +465,32 @@ pub enum ProofStrategy {
         /// backends translate to their lemma vocabulary.
         extra_unfolds: Vec<String>,
     },
+    /// Counter-increment specialisation of [`MapUpdatePostcondition`].
+    /// The outer fn `outer(m, k)` is the canonical "tracked counter"
+    /// shape:
+    ///
+    /// ```text
+    /// let v = Map.get m k
+    /// match v {
+    ///   Some(n) -> Map.set m k (n + 1)
+    ///   None    -> Map.set m k 1
+    /// }
+    /// ```
+    ///
+    /// The law states the algebraic content:
+    /// `Option.withDefault(Map.get(outer(m, k), k), 0) ==
+    /// Option.withDefault(Map.get(m, k), 0) + 1` — get-or-default
+    /// after the increment equals the prior get-or-default plus 1.
+    /// Tighter than [`MapUpdatePostcondition`] because both the body
+    /// template AND the rhs `+ 1` shape are pinned.
+    MapKeyTrackedIncrement {
+        /// Source name of the outer increment fn.
+        outer_fn: String,
+        /// The map argument as it appears at the law's call site.
+        map_arg: Spanned<crate::ast::Expr>,
+        /// The key argument as it appears at the law's call site.
+        key_arg: Spanned<crate::ast::Expr>,
+    },
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
