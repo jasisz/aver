@@ -329,85 +329,85 @@ pub enum QuantifierType {
     OracleSubtype(String),
 }
 
-/// Auto-proof strategy the lowerer chose for the universal theorem.
-/// Backends translate to their tactic vocabulary (Lean: `simp;
-/// omega`, Dafny: empty body, etc.).
+/// Algebraic / proof-theoretic shape of a verify-law theorem.
+///
+/// **Naming rule**: variants describe **what the law says**, not
+/// **how a backend proves it**. The IR is target-agnostic — Lean
+/// maps `Commutative { op: Add }` to `simp [fn, Int.add_comm]`,
+/// Dafny maps the same variant to its own lemma vocabulary, a Z3
+/// backend could ship a different tactic again. Tactic names
+/// (`SimpOverLemmas`, `simp+omega`) do not appear in variant names;
+/// `LinearArithmetic` is named for the semantic, not the tactic.
 #[derive(Debug, Clone)]
 pub enum ProofStrategy {
-    /// `rfl` / definitional equality.
+    /// `rfl` / definitional equality — `lhs ≡ rhs` syntactically.
     Reflexive,
     /// `simp` chain over named lemmas (e.g. `[Int.add_comm,
-    /// Int.mul_comm]`).
+    /// Int.mul_comm]`). Legacy draft variant; not yet emitted by
+    /// the lowerer — kept for future use when a strategy wants to
+    /// hand the backend a specific lemma list.
     SimpOverLemmas(Vec<String>),
-    /// Commutative law over a 2-arg Int-Int wrapper:
-    /// `wrapper(a, b) => wrapper(b, a)`. Backend renders as
-    /// `simp [<wrapper_name>, <op-comm-lemma>]` where the lemma
-    /// is derived from `op` (`Add → Int.add_comm`, `Mul → Int.
-    /// mul_comm`). Op stays in IR so backends pick their own
-    /// lemma vocabulary (Dafny would use a different incantation).
-    WrapperCommutative { op: crate::ast::BinOp },
-    /// Associative law over the same shape:
-    /// `wrapper(wrapper(a,b),c) => wrapper(a,wrapper(b,c))`.
-    WrapperAssociative { op: crate::ast::BinOp },
-    /// Identity-element law (`wrapper(a, 0) => a` for `Add`,
-    /// `wrapper(a, 1) => a` for `Mul`). The identity literal is
-    /// determined by `op` — backends compute it directly.
-    WrapperIdentity { op: crate::ast::BinOp },
-    /// Right-identity over a 2-arg Sub wrapper: `sub(a, 0) => a`.
-    /// Sub-specific because subtraction's identity is one-sided —
-    /// the symmetric `0 - a` is `-a`, not `a`, so it doesn't fit
-    /// `WrapperIdentity`.
-    WrapperSubRightIdentity,
-    /// Anti-commutative law over a 2-arg Sub wrapper:
-    /// `sub(a, b) => -sub(b, a)` or the swapped arrangement.
-    /// `neg_on_rhs` records which side carries the negation —
-    /// drives the `.symm` flip on backends that prove via
-    /// `Int.neg_sub`.
-    WrapperSubAntiCommutative {
-        /// `true` for `sub(a, b) => -sub(b, a)`, `false` for the
-        /// swapped form `-sub(b, a) => sub(a, b)`.
+    /// `∀ a b, f(a, b) = f(b, a)` — commutativity of the law's fn,
+    /// whose body reduces to `a <op> b`. The `op` tag lets backends
+    /// pick their own lemma vocabulary (Lean: `Int.add_comm`,
+    /// Dafny: built-in arithmetic axioms).
+    Commutative { op: crate::ast::BinOp },
+    /// `∀ a b c, f(f(a,b),c) = f(a,f(b,c))` — associativity of `f`.
+    Associative { op: crate::ast::BinOp },
+    /// `∀ a, f(a, e) = a` (or the swapped `f(e, a) = a`) — the
+    /// identity-element law for the underlying op (`e` = `0` for
+    /// Add / Sub, `1` for Mul). Backends emit `simp [fn]` (the
+    /// wrapper's body unfolds to the identity equation, which simp
+    /// closes); the variant doesn't need a `side` field because
+    /// the emit is symmetric — Sub is naturally one-sided (only
+    /// right-identity), Add/Mul accept either side. The lowerer
+    /// guarantees the law's actual shape matches the op's identity
+    /// behaviour before pinning.
+    IdentityElement { op: crate::ast::BinOp },
+    /// `∀ a b, f(a, b) = -f(b, a)` (or the swapped negation).
+    /// `neg_on_rhs` records which side carries the `-` wrap so
+    /// backends with directional lemmas (Lean's `Int.neg_sub b a :
+    /// -(b - a) = a - b`) can flip via `.symm` correctly.
+    AntiCommutative {
+        op: crate::ast::BinOp,
+        /// `true` for `f(a, b) = -f(b, a)` (negation on rhs);
+        /// `false` for the swapped arrangement.
         neg_on_rhs: bool,
     },
-    /// Equivalence between a unary wrapper and a binary wrapper
-    /// over the same op, e.g. `fn addOne(a) -> a + 1` plus
-    /// `verify addOne law identityViaAdd ... addOne(a) => add(a, 1)`.
-    /// The IR captures the inner binary fn name so the backend
-    /// renders `simp [<outer>, <inner>]` without re-scanning the
-    /// AST for the equivalent.
-    WrapperUnaryEquivalence {
-        /// Source-level name of the inner binary wrapper the unary
-        /// fn equals (the law's "other side" calls this).
+    /// `∀ a, g(a) = f(a, c)` or `f(c, a)` — the unary fn `g` is
+    /// the binary fn `f` with one argument bound to constant `c`.
+    /// Backends unfold both fns to expose the underlying op; the
+    /// IR carries `inner_fn` (the binary's source name) so the
+    /// unfold list is unambiguous.
+    UnaryEqualsBinary {
+        /// Source-level name of the binary fn the unary one equals.
         inner_fn: String,
     },
-    /// `simp + omega` over an unfolded fn chain — the generic
-    /// catch-all for Int laws whose lhs/rhs reduce to flat linear
-    /// arithmetic once every reachable fn is unfolded. Triggers when
-    /// every given is `Int` and the transitive fn-call closure of
-    /// the law's two sides is non-recursive. The backend emits a
-    /// `simp only [<unfold_fns>] <;> omega` chain, optionally
-    /// wrapped in `by_cases` when a refinement smart constructor
-    /// sits in the chain (its guard goes on top so omega doesn't
-    /// face an `Except.ok` / `Except.err` split).
-    SimpOmegaUnfold {
-        /// Ordered fn unfold list. Top-level law fn comes first —
-        /// Lean's `unfold` resolves left-to-right and the call
-        /// layer the tactic peels at each step must match the goal
-        /// shape.
+    /// "Linear arithmetic over an unfold chain" — the law's two
+    /// sides reduce to a flat linear equation on Int once every
+    /// reachable user fn is unfolded. Generic catch-all for Int
+    /// laws that don't fit a named algebraic property. The IR
+    /// captures the unfold list + wrapper-return signal +
+    /// refinement smart-constructor guard; backends translate to
+    /// their decision procedure (Lean: `simp + omega`, Dafny: Z3
+    /// linear int prover). Named for the **semantic** ("linear
+    /// arithmetic"), not the Lean tactic.
+    LinearArithmetic {
+        /// Ordered fn unfold list. Top-level law fn first — Lean's
+        /// `unfold` resolves left-to-right and the call layer the
+        /// tactic peels at each step must match the goal shape.
         unfold_fns: Vec<String>,
         /// `true` when at least one fn in `unfold_fns` returns a
-        /// wrapper (Result, Option, …). Drives the by_cases branch
-        /// in the emit — `omega` is a linear-arithmetic decision
-        /// procedure that can't close constructor-equality goals,
-        /// so the wrapper case splits on the smart-constructor
-        /// guard predicate first.
+        /// wrapper (Result, Option, …). Drives extra case-split
+        /// machinery in the emit — pure linear-arithmetic provers
+        /// can't close constructor-equality goals, so the wrapper
+        /// case splits on the smart-constructor guard first.
         wrapper_return: bool,
-        /// Smart-constructor guard pulled from the first refinement
+        /// Smart-constructor guard pulled from a refinement
         /// `fromX(p: Int) -> Result<X, _>` in the unfold chain.
-        /// `Some` when one was found; `None` falls back to the
-        /// conservative `(n ≥ 0)` predicate on the wrapper-return
-        /// path. The pair carries the smart constructor's parameter
-        /// name (so the law-quantified var can be substituted in)
-        /// and the Bool subject of the constructor's `match`.
+        /// `Some` when one was found; `None` falls back to a
+        /// conservative `(n ≥ 0)` default when `wrapper_return`
+        /// forces case-splitting.
         smart_guard: Option<SmartGuard>,
     },
     /// Structural induction on a recursive ADT parameter.

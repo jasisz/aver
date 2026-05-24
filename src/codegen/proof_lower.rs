@@ -558,18 +558,22 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 
 /// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.
 ///
-/// Decision order (later steps fold in more shapes):
-/// 1. `Reflexive` — `law.lhs == law.rhs` syntactically.
-/// 2. `WrapperCommutative { op }` — 2-arg Int wrapper whose body
-///    is `BinOp::Add` / `BinOp::Mul` (commutator-lemma-bearing
-///    ops), claim matches `f(a,b) = f(b,a)`.
-/// 3. `WrapperAssociative { op }` — same wrapper shape, 3 givens,
-///    claim matches `f(f(a,b),c) = f(a,f(b,c))`.
-/// 4. `WrapperIdentity { op }` — 1 given, claim matches
-///    `f(a, identity_of(op)) = a` (`0` for Add, `1` for Mul).
-/// 5. `BackendDispatch` — fall through to the backend chain
-///    (sub variants, unary-equivalence, induction, simp+omega,
-///    etc. — Step 26+ pins more).
+/// Decision order — specific algebraic properties first, then
+/// generic linear-arithmetic catch-all, then `BackendDispatch`:
+/// 1. `Reflexive` — `law.lhs ≡ law.rhs` syntactically.
+/// 2. `Commutative { op }` — fn body is `a <op> b`, claim is
+///    `f(a, b) = f(b, a)` (op restricted to commutative ones).
+/// 3. `Associative { op }` — same body, 3 givens, assoc claim.
+/// 4. `IdentityElement { op }` — `f(a, e) = a` (or `f(e, a) = a`),
+///    where `e` is the op's identity. Covers Add/Mul both-sided
+///    plus Sub right-sided.
+/// 5. `AntiCommutative { op: Sub, neg_on_rhs }` — `f(a, b) =
+///    -f(b, a)` form. Sub-only (Mul has no anti-commutative law).
+/// 6. `UnaryEqualsBinary { inner_fn }` — outer fn is unary, claim
+///    binds it to the inner binary fn at a constant.
+/// 7. `LinearArithmetic { unfold_fns, ... }` — catch-all when the
+///    law reduces to linear arith after unfolding the call chain.
+/// 8. `BackendDispatch` — backend's ad-hoc chain decides.
 fn classify_law_strategy(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
@@ -581,45 +585,43 @@ fn classify_law_strategy(
         return ProofStrategy::Reflexive;
     }
     // Binary-wrapper-shaped laws first. `wrapper_binop` returns
-    // `None` for non-binary fns — unary wrappers (Step 27 below)
-    // are tried after this block falls through.
+    // `None` for non-binary fns — unary wrappers are tried after
+    // this block falls through.
     if let Some(op) = wrapper_binop(fn_name, inputs) {
         if detect_wrapper_commutative(law, fn_name, op) {
-            return ProofStrategy::WrapperCommutative { op };
+            return ProofStrategy::Commutative { op };
         }
         if detect_wrapper_associative(law, fn_name, op) {
-            return ProofStrategy::WrapperAssociative { op };
+            return ProofStrategy::Associative { op };
         }
         if detect_wrapper_identity(law, fn_name, op) {
-            return ProofStrategy::WrapperIdentity { op };
+            return ProofStrategy::IdentityElement { op };
         }
-        // Sub-specific shapes (right identity + anti-commutative).
-        // Add/Mul wrappers can't fit these — Sub's negation
-        // behaviour is structurally different, and Mul has no
-        // anti-commutative law (commutative).
-        if matches!(op, crate::ast::BinOp::Sub) {
-            if detect_wrapper_sub_right_identity(law, fn_name) {
-                return ProofStrategy::WrapperSubRightIdentity;
-            }
-            if let Some(neg_on_rhs) = detect_wrapper_sub_anti_commutative(law, fn_name) {
-                return ProofStrategy::WrapperSubAntiCommutative { neg_on_rhs };
-            }
+        // Sub right-identity collapses into IdentityElement —
+        // same emit (`simp [fn]`), different lhs/rhs shape. The
+        // detector validates the right-side `f(a, 0) = a` form
+        // (`f(0, a) = -a` doesn't equal `a`, so Sub is one-sided).
+        if matches!(op, crate::ast::BinOp::Sub) && detect_wrapper_sub_right_identity(law, fn_name) {
+            return ProofStrategy::IdentityElement { op };
+        }
+        // Anti-commutative is Sub-specific (Add/Mul are
+        // commutative, no anti-commutativity). The op tag keeps
+        // it parameterised even though only Sub currently fires.
+        if matches!(op, crate::ast::BinOp::Sub)
+            && let Some(neg_on_rhs) = detect_wrapper_sub_anti_commutative(law, fn_name)
+        {
+            return ProofStrategy::AntiCommutative { op, neg_on_rhs };
         }
     }
-    // Unary↔binary wrapper equivalence — `fn_name` is the OUTER
-    // (unary) wrapper, the law's other side calls an inner binary
-    // wrapper with the unary's constant baked in. Independent of
-    // the binary-wrapper branch above (a unary `addOne(a) = a + 1`
-    // fails `wrapper_binop` because it has only one param).
+    // Unary fn equal to binary fn at a constant — `fn_name` is the
+    // unary outer; the binary fn name is captured for backends.
     if let Some(inner_fn) = detect_wrapper_unary_equivalence(law, fn_name, inputs) {
-        return ProofStrategy::WrapperUnaryEquivalence { inner_fn };
+        return ProofStrategy::UnaryEqualsBinary { inner_fn };
     }
-    // `simp + omega` over an unfolded fn chain — generic catch-all
-    // for Int laws whose two sides reduce to flat arithmetic once
-    // every reachable fn is unfolded. Runs last so the more-
-    // specific wrapper strategies pin their shapes first.
+    // Linear arithmetic over an unfold chain — generic catch-all.
+    // Named for the semantic, not the backend tactic.
     if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs) {
-        return ProofStrategy::SimpOmegaUnfold {
+        return ProofStrategy::LinearArithmetic {
             unfold_fns: plan.unfold_fns,
             wrapper_return: plan.wrapper_return,
             smart_guard: plan.smart_guard,
