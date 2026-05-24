@@ -1715,13 +1715,21 @@ fn emit_verify_law_block(
     // against a `RandomIntInBounds` parameter and Lean would reject
     // the type mismatch.
     let when_template = law.when.as_ref().map(|expr| {
-        let projected = crate::codegen::common::rewrite_effectful_calls_in_law(
+        let oracle_projected = crate::codegen::common::rewrite_effectful_calls_in_law(
             expr,
             law,
             ctx,
             crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
         );
-        emit_expr(&projected, ctx)
+        // Refinement lift: bare references to lifted-given idents
+        // inside `when`'s comparator BinOps need `.val` projection
+        // because the quantifier is now over the Subtype carrier,
+        // not the underlying Int. Without this `when a >= 10` over
+        // `a : Natural` emits as `a >= 10` and fails to synthesize
+        // `LE Natural` / `OfNat Natural 10` in Lean.
+        let val_projected =
+            crate::codegen::common::project_lifted_idents_to_val(&oracle_projected, &lifted_vars);
+        emit_expr(&val_projected, ctx)
     });
     let quant_params = law
         .givens

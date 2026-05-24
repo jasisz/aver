@@ -447,6 +447,22 @@ pub(crate) fn int_countdown_native_arms(
     let (literal_value, literal_arm_body) = literal_arm?;
     let wildcard_arm_body = wildcard_arm_body?;
 
+    // Lean native emit assumes the default `(h_dom : p ≥ 0)`
+    // precondition; under that, the wildcard arm constraint `p ≠ L`
+    // combined with `p ≥ 0` must imply `p ≥ 1` so the recursive call
+    // `f(p - 1)` lands in-domain. That holds only when `L == 0`. A
+    // shape like `match n { 5 -> base; _ -> f(n - 1) }` would let
+    // `n = 0` reach the wildcard arm, recurse with `n - 1 = -1`, and
+    // break the precondition — `omega` rightly rejects this at lake
+    // build. Generalising to arbitrary literals needs a proper
+    // preservation check over (precondition ∧ arm-constraint ⊢
+    // f-args-in-domain) and a non-default precondition derived from
+    // the caller's guards; until that's in, restrict native emit to
+    // the literal-zero shape and fall back to fuel otherwise.
+    if literal_value != 0 {
+        return None;
+    }
+
     let mut lit_calls = Vec::new();
     collect_calls_from_expr(&literal_arm_body, &mut lit_calls);
     if lit_calls.iter().any(|(n, _)| call_matches(n, &fd.name)) {

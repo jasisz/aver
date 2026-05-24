@@ -299,6 +299,83 @@ fn search_refinement_wrapper<'a>(
 /// given` decides the lift: theorem body talks about `g : Natural`
 /// directly, so the `Natural(value = g)` wrapper that aver source
 /// wrote becomes redundant noise.
+/// Rewrite bare references to refinement-lifted given variables
+/// (`a` → `a.val`) inside scalar / arithmetic contexts so the emitted
+/// Lean expression typechecks against the Subtype carrier.
+///
+/// Background: a `verify ... law` with `given a: Int` whose body
+/// wraps `a` in `Natural(value = a)` lifts the quantifier from
+/// `∀ (a : Int)` to `∀ (a : Natural)`. The law's `when` clause stays
+/// in the user's variable space — `when a >= 10` references the bare
+/// `a`, which in Lean is now the Subtype `Natural := { v : Int //
+/// v ≥ 0 }`, NOT the underlying Int. `a >= 10` then fails to
+/// synthesize an `LE Natural` / `OfNat Natural 10` instance.
+///
+/// Transform projects bare lifted-var Idents to `.val` ONLY inside
+/// `BinOp` comparators and the `Bool.and` / `Bool.or` chains the
+/// parser builds for multi-`when` lines. Lifted-var refs in function
+/// arguments (e.g. `add(a, b)` over `a, b : Natural`) stay bare —
+/// those positions DO expect the Subtype carrier, not the underlying
+/// Int. The two cases mirror `strip_refinement_wrappers`'s
+/// counterpart (stripping `Natural(value = a)` → `a` in
+/// function-arg positions).
+pub fn project_lifted_idents_to_val(
+    expr: &Spanned<Expr>,
+    lifted_vars: &std::collections::HashMap<String, String>,
+) -> Spanned<Expr> {
+    if lifted_vars.is_empty() {
+        return expr.clone();
+    }
+    let new_node = match &expr.node {
+        Expr::BinOp(op, l, r) if is_comparator_binop(*op) => {
+            let l_proj = project_lifted_ident_leaf(l, lifted_vars);
+            let r_proj = project_lifted_ident_leaf(r, lifted_vars);
+            Expr::BinOp(*op, Box::new(l_proj), Box::new(r_proj))
+        }
+        Expr::FnCall(callee, args) => {
+            let name = expr_to_dotted_name(&callee.node);
+            if matches!(name.as_deref(), Some("Bool.and") | Some("Bool.or")) {
+                Expr::FnCall(
+                    callee.clone(),
+                    args.iter()
+                        .map(|a| project_lifted_idents_to_val(a, lifted_vars))
+                        .collect(),
+                )
+            } else {
+                return expr.clone();
+            }
+        }
+        _ => return expr.clone(),
+    };
+    Spanned::new(new_node, expr.line)
+}
+
+fn is_comparator_binop(op: crate::ast::BinOp) -> bool {
+    use crate::ast::BinOp::*;
+    matches!(op, Lt | Gt | Lte | Gte | Eq | Neq)
+}
+
+fn project_lifted_ident_leaf(
+    expr: &Spanned<Expr>,
+    lifted_vars: &std::collections::HashMap<String, String>,
+) -> Spanned<Expr> {
+    let target_name = match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n,
+        _ => return expr.clone(),
+    };
+    if lifted_vars.contains_key(target_name) {
+        Spanned::new(
+            Expr::Attr(
+                Box::new(Spanned::new(Expr::Ident(target_name.clone()), expr.line)),
+                "val".to_string(),
+            ),
+            expr.line,
+        )
+    } else {
+        expr.clone()
+    }
+}
+
 pub fn strip_refinement_wrappers(
     expr: &Spanned<Expr>,
     lifted_vars: &std::collections::HashMap<String, String>,
