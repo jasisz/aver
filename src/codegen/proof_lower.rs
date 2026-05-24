@@ -136,10 +136,10 @@ impl<'a> ProofLowerInputs<'a> {
     }
 }
 
-/// Walk every type definition in the inputs (entry items + dependent
-/// modules), classify the refinement-via-opaque ones, and build a
-/// `ProofIR` carrying their decided shapes. Pure function — never
-/// reads side effects, never mutates inputs.
+/// Run both proof-export lowerings in one shot — convenience for
+/// callers that want a fully-populated ProofIR. The pipeline uses
+/// `populate_refined_types` and `populate_fn_contracts` directly
+/// because the two are independent stages there (Step 7h split).
 pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
     let mut ir = ProofIR::default();
     populate_refined_types(inputs, &mut ir);
@@ -147,7 +147,12 @@ pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
     ir
 }
 
-fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
+/// Refinement-via-opaque lift. Walks every type definition (entry +
+/// dep modules), classifies the records that pair a single carrier
+/// field with a validating smart constructor, and emits
+/// `RefinedTypeDecl` entries into `ir.refined_types`. Backends
+/// (Lean → Subtype, Dafny → subset type) render these directly.
+pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // Walk entry items first, then dep modules. Both feed into the
     // same map keyed by bare type name — consumers (Lean / Dafny
     // emit paths) always query by bare name because that's what
@@ -218,7 +223,7 @@ fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// diff test (`tests/proof_ir_diff.rs`) asserts both sides agree on
 /// the fibTR flagship, and once every variant is covered we delete
 /// the consumer-side `RecursionPlan` reads in a later Step.
-fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
+pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let (plans, _issues) = analyze_plans(inputs);
     let all_fns: Vec<&FnDef> = inputs
         .dep_modules

@@ -2417,7 +2417,8 @@ fn build_codegen_context(
     guest_entry: Option<&str>,
     with_self_host_support: bool,
     apply_traversal_lowering: bool,
-    run_proof_lower: bool,
+    run_refinement_lower: bool,
+    run_contract_lower: bool,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -2481,7 +2482,8 @@ fn build_codegen_context(
             typecheck: Some(typecheck_mode),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
-            run_proof_lower,
+            run_refinement_lower,
+            run_contract_lower,
             dep_modules: &modules,
             ..Default::default()
         },
@@ -2527,7 +2529,7 @@ fn build_codegen_context(
     // Build codegen context. `entry_analysis` carries `mutual_tco_members`,
     // `recursive_fns`, and per-fn `FnAnalysis` from the analyze stage; codegen
     // unions these with each `module.analysis` to build a global view.
-    // ProofIR (when run_proof_lower was on) comes pre-computed from the
+    // ProofIR (when proof stages ran) comes pre-computed from the
     // pipeline; pull it across before assembly so build_context doesn't
     // redundantly recompute it.
     let prebuilt_proof_ir = pipeline_result.proof_ir;
@@ -3053,13 +3055,14 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
         "escape" => Some(PipelineStage::Escape),
-        "proof_lower" => Some(PipelineStage::ProofLower),
+        "refinement_lower" => Some(PipelineStage::RefinementLower),
+        "contract_lower" => Some(PipelineStage::ContractLower),
         other => {
             eprintln!(
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, proof_lower",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, refinement_lower, contract_lower",
                     other
                 )
                 .red()
@@ -3097,13 +3100,15 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     let captured = std::cell::RefCell::new(None::<Vec<aver::ast::TopLevel>>);
     let target = target_stage.unwrap();
     let neutral_policy = aver::ir::NeutralAllocPolicy;
-    let run_proof_lower = target == PipelineStage::ProofLower;
-    // ProofLower walks both entry items and dep modules. Pre-load deps
-    // when targeting that stage so the dump reflects what production
-    // (`aver proof`) sees. Other stages don't need the dep modules
-    // through the pipeline interface — keep empty for them to match
-    // the pre-7e diagnostic shape.
-    let dep_modules = if run_proof_lower {
+    let run_refinement_lower = target == PipelineStage::RefinementLower;
+    let run_contract_lower = target == PipelineStage::ContractLower;
+    let proof_target = run_refinement_lower || run_contract_lower;
+    // Proof stages walk both entry items and dep modules. Pre-load
+    // deps when targeting one of them so the dump reflects what
+    // production (`aver proof`) sees. Other stages don't need the
+    // dep modules through the pipeline interface — keep empty for
+    // them to match the pre-7e diagnostic shape.
+    let dep_modules = if proof_target {
         load_compile_deps(&items, &module_root, false, false, false)
     } else {
         Vec::new()
@@ -3119,7 +3124,8 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             // VM/WASM baseline. Codegen pipelines should pass their
             // backend-specific policy when consuming the analysis.
             alloc_policy: Some(&neutral_policy),
-            run_proof_lower,
+            run_refinement_lower,
+            run_contract_lower,
             dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage, items_after| {
                 if stage == target {
@@ -3136,15 +3142,20 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         process::exit(1);
     }
 
-    // ProofLower doesn't transform items — it produces a side artifact.
-    // Render the lowered ProofIR instead of the (unchanged) items list.
-    if target == PipelineStage::ProofLower {
+    // Proof stages don't transform items — they produce a side
+    // artifact. Render the lowered ProofIR (whichever fields the
+    // selected stage populated) instead of the (unchanged) items list.
+    if proof_target {
         match pipeline_result.proof_ir {
             Some(ir) => print!("{}", render_proof_ir_dump(&ir)),
             None => {
                 eprintln!(
                     "{}",
-                    "stage 'proof_lower' did not run (likely skipped after typecheck errors)".red()
+                    format!(
+                        "stage '{}' did not run (likely skipped after typecheck errors)",
+                        stage_name
+                    )
+                    .red(),
                 );
                 process::exit(1);
             }
@@ -3289,7 +3300,8 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
-            run_proof_lower: true,
+            run_refinement_lower: true,
+            run_contract_lower: true,
             dep_modules: &dep_modules,
             ..Default::default()
         },
@@ -3442,13 +3454,13 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     ));
                 }
             }
-            PassReport::ProofLower {
-                refined_types,
-                fn_contracts,
-            } => {
+            PassReport::RefinementLower { refined_types } => {
                 out.push_str(&format!(
-                    "{label} {refined_types} refined type(s) lifted, {fn_contracts} fn contract(s) decided\n"
+                    "{label} {refined_types} refined type(s) lifted to subtype/subset\n"
                 ));
+            }
+            PassReport::ContractLower { fn_contracts } => {
+                out.push_str(&format!("{label} {fn_contracts} fn contract(s) decided\n"));
             }
         }
         out.push('\n');
@@ -3604,14 +3616,11 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             PassReport::Escape { rewrites } => {
                 out.push_str(&format!("{{\"rewrites\":{}}}", rewrites));
             }
-            PassReport::ProofLower {
-                refined_types,
-                fn_contracts,
-            } => {
-                out.push_str(&format!(
-                    "{{\"refined_types\":{},\"fn_contracts\":{}}}",
-                    refined_types, fn_contracts
-                ));
+            PassReport::RefinementLower { refined_types } => {
+                out.push_str(&format!("{{\"refined_types\":{}}}", refined_types));
+            }
+            PassReport::ContractLower { fn_contracts } => {
+                out.push_str(&format!("{{\"fn_contracts\":{}}}", fn_contracts));
             }
         }
         out.push('}');
@@ -3724,7 +3733,8 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         guest_entry,
         with_self_host_support,
         true,  // apply_traversal_lowering — Rust target wants the optimized form
-        false, // run_proof_lower — runtime backend, doesn't need ProofIR
+        false, // run_refinement_lower — runtime backend, doesn't need ProofIR
+        false, // run_contract_lower — same
     );
     if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
         eprintln!("{}", err.red());
@@ -4360,7 +4370,8 @@ pub(super) fn cmd_proof(
         None,
         false,
         false, // apply_traversal_lowering — proof export wants source-level IR
-        true,  // run_proof_lower — proof backends need ProofIR populated
+        true,  // run_refinement_lower — proof backends need ProofIR
+        true,  // run_contract_lower — same
     );
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the

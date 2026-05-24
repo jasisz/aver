@@ -405,14 +405,15 @@ pub fn build_context(
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
     };
-    // ProofIR no longer populated here. Pipeline owns the lowering
-    // (`PipelineStage::ProofLower`); proof backends opt in via
-    // `PipelineConfig.run_proof_lower` and read `pipeline_result.
-    // proof_ir` back. Runtime backends (VM / WASM / Rust) leave it
-    // off and skip the work. Tests that bypass the pipeline assemble
-    // the ctx by hand and call `refresh_facts()` to populate the
-    // field — the field stays `default()` here for those callers
-    // until they explicitly refresh.
+    // ProofIR no longer populated here. Pipeline owns the lowerings
+    // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
+    // proof backends opt in via `PipelineConfig.run_refinement_lower` /
+    // `run_contract_lower` and read `pipeline_result.proof_ir` back.
+    // Runtime backends (VM / WASM / Rust) leave both off and skip the
+    // work. Tests that bypass the pipeline assemble the ctx by hand
+    // and call `refresh_facts()` to populate the field — the field
+    // stays `default()` here for those callers until they explicitly
+    // refresh.
     ctx
 }
 

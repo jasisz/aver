@@ -279,7 +279,8 @@ fn build_ctx(
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
-            run_proof_lower: proof_target,
+            run_refinement_lower: proof_target,
+            run_contract_lower: proof_target,
             ..Default::default()
         },
     );
