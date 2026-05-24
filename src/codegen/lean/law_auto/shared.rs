@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::super::expr::aver_name_to_lean;
-use crate::ast::{Expr, FnBody, FnDef, Literal, Spanned, Stmt, VerifyBlock, VerifyLaw};
+use crate::ast::{Expr, FnBody, FnDef, Spanned, Stmt, VerifyBlock, VerifyLaw};
 use crate::ast_rewrite::rewrite_idents_scoped;
 use crate::codegen::CodegenContext;
 
@@ -186,146 +186,9 @@ pub(super) fn expr_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
     }
 }
 
-pub(super) fn matches_ident(expr: &Spanned<Expr>, name: &str) -> bool {
-    matches!(&expr.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == name)
-}
-
 pub(super) fn callee_matches_name(expr: &Spanned<Expr>, target: &str) -> bool {
     let Some(name) = expr_dotted_name(expr) else {
         return false;
     };
     name == target || name.rsplit('.').next() == Some(target)
-}
-
-pub(super) fn call2_args<'a>(
-    expr: &'a Spanned<Expr>,
-    fn_name: &str,
-) -> Option<(&'a Spanned<Expr>, &'a Spanned<Expr>)> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    if args.len() != 2 || !callee_matches_name(callee, fn_name) {
-        return None;
-    }
-    Some((&args[0], &args[1]))
-}
-
-pub(super) fn matches_binary_call(expr: &Spanned<Expr>, fn_name: &str, a: &str, b: &str) -> bool {
-    let Some((x, y)) = call2_args(expr, fn_name) else {
-        return false;
-    };
-    matches_ident(x, a) && matches_ident(y, b)
-}
-
-pub(super) fn matches_unary_call(expr: &Spanned<Expr>, fn_name: &str, arg: &str) -> bool {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return false;
-    };
-    args.len() == 1 && callee_matches_name(callee, fn_name) && matches_ident(&args[0], arg)
-}
-
-pub(super) fn binary_call_var_const(
-    expr: &Spanned<Expr>,
-    var_name: &str,
-) -> Option<(String, bool, i64)> {
-    let Expr::FnCall(callee, args) = &expr.node else {
-        return None;
-    };
-    if args.len() != 2 {
-        return None;
-    }
-    let callee_name = expr_dotted_name(callee)?;
-    match (&args[0].node, &args[1].node) {
-        (Expr::Ident(v) | Expr::Resolved { name: v, .. }, Expr::Literal(Literal::Int(n)))
-            if v == var_name =>
-        {
-            Some((callee_name, true, *n))
-        }
-        (Expr::Literal(Literal::Int(n)), Expr::Ident(v) | Expr::Resolved { name: v, .. })
-            if v == var_name =>
-        {
-            Some((callee_name, false, *n))
-        }
-        _ => None,
-    }
-}
-
-pub(super) fn matches_assoc_nested(
-    expr: &Spanned<Expr>,
-    fn_name: &str,
-    a: &str,
-    b: &str,
-    c: &str,
-) -> bool {
-    let Some((ab, z)) = call2_args(expr, fn_name) else {
-        return false;
-    };
-    let Some((x, y)) = call2_args(ab, fn_name) else {
-        return false;
-    };
-    matches_ident(x, a) && matches_ident(y, b) && matches_ident(z, c)
-}
-
-pub(super) fn matches_assoc_flat(
-    expr: &Spanned<Expr>,
-    fn_name: &str,
-    a: &str,
-    b: &str,
-    c: &str,
-) -> bool {
-    let Some((x, bc)) = call2_args(expr, fn_name) else {
-        return false;
-    };
-    let Some((y, z)) = call2_args(bc, fn_name) else {
-        return false;
-    };
-    matches_ident(x, a) && matches_ident(y, b) && matches_ident(z, c)
-}
-
-pub(super) fn matches_identity_side(
-    call_side: &Spanned<Expr>,
-    ident_side: &Spanned<Expr>,
-    fn_name: &str,
-    given_name: &str,
-    identity: i64,
-) -> bool {
-    if !matches_ident(ident_side, given_name) {
-        return false;
-    }
-    let Some((x, y)) = call2_args(call_side, fn_name) else {
-        return false;
-    };
-    (matches_ident(x, given_name) && matches_int_lit(y, identity))
-        || (matches_int_lit(x, identity) && matches_ident(y, given_name))
-}
-
-pub(super) fn matches_sub_right_identity_side(
-    call_side: &Spanned<Expr>,
-    ident_side: &Spanned<Expr>,
-    fn_name: &str,
-    given_name: &str,
-) -> bool {
-    if !matches_ident(ident_side, given_name) {
-        return false;
-    }
-    let Some((x, y)) = call2_args(call_side, fn_name) else {
-        return false;
-    };
-    matches_ident(x, given_name) && matches_int_lit(y, 0)
-}
-
-pub(super) fn matches_neg_binary_call(
-    expr: &Spanned<Expr>,
-    fn_name: &str,
-    a: &str,
-    b: &str,
-) -> bool {
-    match &expr.node {
-        Expr::Neg(inner) => matches_binary_call(inner, fn_name, a, b),
-        _ => false,
-    }
-}
-
-pub(super) fn matches_int_lit(expr: &Spanned<Expr>, expected: i64) -> bool {
-    matches!(&expr.node, Expr::Literal(Literal::Int(n)) if *n == expected)
 }

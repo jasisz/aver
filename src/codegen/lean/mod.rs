@@ -1888,6 +1888,7 @@ verify addOne
     #[test]
     fn transpile_emits_named_theorems_for_verify_law() {
         let mut ctx = empty_ctx_with_verify_law();
+        populate_proof_ir(&mut ctx);
         let out = transpile(&mut ctx);
         let lean = out
             .files
@@ -2228,6 +2229,7 @@ verify square law squareSpec
             trace: false,
             cases_givens: vec![],
         }));
+        populate_proof_ir(&mut ctx);
         let out = transpile(&mut ctx);
         let lean = out
             .files
@@ -2335,6 +2337,7 @@ verify square law squareSpec
             trace: false,
             cases_givens: vec![],
         }));
+        populate_proof_ir(&mut ctx);
         let out = transpile(&mut ctx);
         let lean = out
             .files
@@ -2473,6 +2476,7 @@ verify square law squareSpec
             cases_givens: vec![],
         }));
 
+        populate_proof_ir(&mut ctx);
         let out = transpile(&mut ctx);
         let lean = out
             .files
@@ -2570,6 +2574,7 @@ verify square law squareSpec
             trace: false,
             cases_givens: vec![],
         }));
+        populate_proof_ir(&mut ctx);
         let out = transpile(&mut ctx);
         let lean = out
             .files
@@ -3152,6 +3157,7 @@ verify mirror law involutive
             cases_givens: vec![],
         }));
 
+        populate_proof_ir(&mut ctx);
         let out = transpile(&mut ctx);
         let lean = out
             .files
