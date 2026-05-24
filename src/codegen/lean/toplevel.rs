@@ -8,7 +8,7 @@ use super::recurrence::{
 };
 use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
-use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
+use super::{VerifyEmitMode, sizeof_measure_param_indices};
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::codegen::recursion::{native_aux_name, rewrite_recursive_calls_body};
@@ -862,18 +862,39 @@ fn emit_fuelized_sizeof_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
     .join("\n")
 }
 
-fn emit_fuelized_mutual_string_pos_group(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &HashMap<String, RecursionPlan>,
-) -> String {
+/// Read the rank component of a `Fuel { Lex { .., rank } }` contract.
+/// Returns `None` when the fn has no contract or the contract isn't
+/// a Lex shape (non-mutual variant or non-recursive).
+fn contract_lex_rank(ctx: &CodegenContext, fn_name: &str) -> Option<usize> {
+    contract_lex_params_rank(ctx, fn_name).map(|(_, rank)| rank)
+}
+
+/// Read both the params Vec and rank of a `Fuel { Lex { params, rank } }`
+/// contract. Returns `None` for non-Lex / non-recursive / missing
+/// contracts. Used by mutual-SCC dispatchers to distinguish:
+///
+/// - `MutualIntCountdown`: `params.len() == 1`, rank == 0
+/// - `MutualStringPosAdvance`: `params.len() == 2`
+/// - `MutualSizeOfRanked`: `params.is_empty()`
+fn contract_lex_params_rank<'a>(
+    ctx: &'a CodegenContext,
+    fn_name: &str,
+) -> Option<(&'a [String], usize)> {
+    let contract = ctx.proof_ir.fn_contracts.get(fn_name)?;
+    let crate::ir::RecursionContract::Fuel {
+        fuel_metric: crate::ir::FuelMetric::Lex { params, rank },
+    } = contract.recursion.as_ref()?
+    else {
+        return None;
+    };
+    Some((params.as_slice(), *rank))
+}
+
+fn emit_fuelized_mutual_string_pos_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
     let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
     let max_rank = fns
         .iter()
-        .filter_map(|fd| match plans.get(&fd.name) {
-            Some(RecursionPlan::MutualStringPosAdvance { rank }) => Some(*rank),
-            _ => None,
-        })
+        .filter_map(|fd| contract_lex_rank(ctx, &fd.name))
         .max()
         .unwrap_or(1);
 
@@ -1015,19 +1036,18 @@ fn emit_native_termination_measure(fd: &FnDef) -> Option<String> {
 /// - Any member has no inferable sizeOf measure
 /// - Growing-accumulator pattern detected (tail-rec `[x] + acc`
 ///   shapes won't decrease the lex tuple)
-fn emit_native_mutual_sizeof_group(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &HashMap<String, RecursionPlan>,
-) -> Option<String> {
+fn emit_native_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<String> {
     let mut ranks: HashMap<String, usize> = HashMap::new();
     for fd in fns {
         if !is_pure_fn(fd) {
             return None;
         }
-        match plans.get(&fd.name)? {
-            RecursionPlan::MutualSizeOfRanked { rank } => {
-                ranks.insert(fd.name.clone(), *rank);
+        // MutualSizeOfRanked carries `params: vec![]` + rank>=1; any
+        // other Lex shape (single-param mutual int-countdown, two-
+        // param string-pos) fails this group's pre-conditions.
+        match contract_lex_params_rank(ctx, &fd.name) {
+            Some((params, rank)) if params.is_empty() => {
+                ranks.insert(fd.name.clone(), rank);
             }
             _ => return None,
         }
@@ -1080,11 +1100,7 @@ fn emit_native_mutual_sizeof_group(
     Some(lines.join("\n"))
 }
 
-fn emit_fuelized_mutual_sizeof_group(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &HashMap<String, RecursionPlan>,
-) -> String {
+fn emit_fuelized_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
     let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
     let recursive_types: HashSet<String> = ctx
         .modules
@@ -1096,10 +1112,7 @@ fn emit_fuelized_mutual_sizeof_group(
         .collect();
     let rank_budget = fns
         .iter()
-        .filter_map(|fd| match plans.get(&fd.name) {
-            Some(RecursionPlan::MutualSizeOfRanked { rank }) => Some(*rank),
-            _ => None,
-        })
+        .filter_map(|fd| contract_lex_rank(ctx, &fd.name))
         .max()
         .unwrap_or(1)
         + 1;
@@ -2256,37 +2269,42 @@ pub fn emit_mutual_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
 }
 
 /// Proof-mode mutual recursion emission with optional group-level termination.
-pub fn emit_mutual_group_proof(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &std::collections::HashMap<String, RecursionPlan>,
-) -> String {
-    if fns
-        .iter()
-        .all(|fd| matches!(plans.get(&fd.name), Some(RecursionPlan::MutualIntCountdown)))
-    {
+pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
+    // Distinguish mutual SCC shapes by the Lex params vector:
+    //   `[p]` rank 0  → MutualIntCountdown
+    //   `[s, pos]`    → MutualStringPosAdvance
+    //   `[]` rank >=1 → MutualSizeOfRanked
+    let all_int_countdown = fns.iter().all(|fd| {
+        matches!(
+            contract_lex_params_rank(ctx, &fd.name),
+            Some((params, 0)) if params.len() == 1
+        )
+    });
+    if all_int_countdown {
         return emit_fuelized_mutual_int_countdown_group(fns, ctx);
     }
 
-    if fns.iter().all(|fd| {
+    let all_string_pos = fns.iter().all(|fd| {
         matches!(
-            plans.get(&fd.name),
-            Some(RecursionPlan::MutualStringPosAdvance { .. })
+            contract_lex_params_rank(ctx, &fd.name),
+            Some((params, _)) if params.len() == 2
         )
-    }) {
-        return emit_fuelized_mutual_string_pos_group(fns, ctx, plans);
+    });
+    if all_string_pos {
+        return emit_fuelized_mutual_string_pos_group(fns, ctx);
     }
 
-    if fns.iter().all(|fd| {
+    let all_sizeof = fns.iter().all(|fd| {
         matches!(
-            plans.get(&fd.name),
-            Some(RecursionPlan::MutualSizeOfRanked { .. })
+            contract_lex_params_rank(ctx, &fd.name),
+            Some((params, _)) if params.is_empty()
         )
-    }) {
-        if let Some(code) = emit_native_mutual_sizeof_group(fns, ctx, plans) {
+    });
+    if all_sizeof {
+        if let Some(code) = emit_native_mutual_sizeof_group(fns, ctx) {
             return code;
         }
-        return emit_fuelized_mutual_sizeof_group(fns, ctx, plans);
+        return emit_fuelized_mutual_sizeof_group(fns, ctx);
     }
 
     let mut lines = Vec::new();
@@ -2310,30 +2328,32 @@ pub fn emit_mutual_group_proof(
         for line in body.lines() {
             lines.push(format!("  {}", line));
         }
-        match plans.get(&fd.name).cloned() {
-            Some(RecursionPlan::MutualIntCountdown) => {
-                if let Some((first_name, _)) = fd.params.first() {
-                    let lean_first = aver_name_to_lean(first_name);
-                    lines.push(format!("  termination_by Int.natAbs {}", lean_first));
-                    lines.push("  decreasing_by".to_string());
-                    lines.push("    omega".to_string());
-                }
+        match contract_lex_params_rank(ctx, &fd.name) {
+            Some((params, 0)) if params.len() == 1 => {
+                // MutualIntCountdown — every member counts down the
+                // shared first-Int param. (The IR's param name is
+                // canonical; we don't fall back to fd.params here.)
+                let lean_first = aver_name_to_lean(&params[0]);
+                lines.push(format!("  termination_by Int.natAbs {}", lean_first));
+                lines.push("  decreasing_by".to_string());
+                lines.push("    omega".to_string());
             }
-            Some(RecursionPlan::MutualStringPosAdvance { rank }) => {
-                if let Some((s_name, _)) = fd.params.first()
-                    && let Some((pos_name, _)) = fd.params.get(1)
-                {
-                    let lean_s = aver_name_to_lean(s_name);
-                    let lean_pos = aver_name_to_lean(pos_name);
-                    lines.push(format!(
-                        "  termination_by (({}.data.length) - ({}.toNat), {})",
-                        lean_s, lean_pos, rank
-                    ));
-                    lines.push("  decreasing_by".to_string());
-                    lines.push("    simp_wf".to_string());
-                }
+            Some((params, rank)) if params.len() == 2 => {
+                // MutualStringPosAdvance — (s, pos) shape; rank
+                // distinguishes SCC members.
+                let lean_s = aver_name_to_lean(&params[0]);
+                let lean_pos = aver_name_to_lean(&params[1]);
+                lines.push(format!(
+                    "  termination_by (({}.data.length) - ({}.toNat), {})",
+                    lean_s, lean_pos, rank
+                ));
+                lines.push("  decreasing_by".to_string());
+                lines.push("    simp_wf".to_string());
             }
-            Some(RecursionPlan::MutualSizeOfRanked { .. }) => {}
+            Some((params, _)) if params.is_empty() => {
+                // MutualSizeOfRanked — handled inside the SCC's
+                // dedicated emitter; no termination_by suffix here.
+            }
             _ => {}
         }
         lines.push(String::new());

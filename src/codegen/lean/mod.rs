@@ -1222,9 +1222,11 @@ fn transpile_unified(
             if comp.len() > 1 {
                 let code = match emit_mode {
                     LeanEmitMode::Proof => {
-                        let all_supported = comp.iter().all(|fd| plans.contains_key(&fd.name));
+                        let all_supported = comp
+                            .iter()
+                            .all(|fd| ctx.proof_ir.fn_contracts.contains_key(&fd.name));
                         if all_supported {
-                            toplevel::emit_mutual_group_proof(comp, ctx, &plans)
+                            toplevel::emit_mutual_group_proof(comp, ctx)
                         } else {
                             toplevel::emit_mutual_group(comp, ctx)
                         }
