@@ -940,3 +940,38 @@ fn wrapper_sub_anti_commutative_pinned_with_neg_direction() {
         theorem.strategy,
     );
 }
+
+#[test]
+fn wrapper_unary_equivalence_pinned_with_inner_fn_name() {
+    // `addOne(a) => add(a, 1)` over `fn addOne(a) -> a + 1` and
+    // `fn add(a, b) -> a + b` — Step 27 pins
+    // `WrapperUnaryEquivalence { inner_fn: "add" }`. The inner fn
+    // name lives in the IR so the backend renders
+    // `simp [addOne, add]` without rescanning.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn add(a: Int, b: Int) -> Int\n\
+         \x20   a + b\n\
+         \n\
+         fn addOne(a: Int) -> Int\n\
+         \x20   a + 1\n\
+         \n\
+         verify addOne law identityViaAdd\n\
+         \x20   given a: Int = -2..2\n\
+         \x20   addOne(a) => add(a, 1)\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "addOne" && t.law_name == "identityViaAdd")
+        .expect("addOne::identityViaAdd law theorem missing");
+    let aver::ir::ProofStrategy::WrapperUnaryEquivalence { ref inner_fn } = theorem.strategy else {
+        panic!(
+            "expected WrapperUnaryEquivalence, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(inner_fn, "add");
+}

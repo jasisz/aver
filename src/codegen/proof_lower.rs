@@ -580,29 +580,39 @@ fn classify_law_strategy(
     if law.lhs == law.rhs {
         return ProofStrategy::Reflexive;
     }
-    let Some(op) = wrapper_binop(fn_name, inputs) else {
-        return ProofStrategy::BackendDispatch;
-    };
-    if detect_wrapper_commutative(law, fn_name, op) {
-        return ProofStrategy::WrapperCommutative { op };
-    }
-    if detect_wrapper_associative(law, fn_name, op) {
-        return ProofStrategy::WrapperAssociative { op };
-    }
-    if detect_wrapper_identity(law, fn_name, op) {
-        return ProofStrategy::WrapperIdentity { op };
-    }
-    // Sub-specific shapes (right identity + anti-commutative). The
-    // Add/Mul wrappers can't fit these — Sub's negation behaviour
-    // is structurally different, and Mul has no anti-commutative
-    // law (commutative). Gated on `op == Sub`.
-    if matches!(op, crate::ast::BinOp::Sub) {
-        if detect_wrapper_sub_right_identity(law, fn_name) {
-            return ProofStrategy::WrapperSubRightIdentity;
+    // Binary-wrapper-shaped laws first. `wrapper_binop` returns
+    // `None` for non-binary fns — unary wrappers (Step 27 below)
+    // are tried after this block falls through.
+    if let Some(op) = wrapper_binop(fn_name, inputs) {
+        if detect_wrapper_commutative(law, fn_name, op) {
+            return ProofStrategy::WrapperCommutative { op };
         }
-        if let Some(neg_on_rhs) = detect_wrapper_sub_anti_commutative(law, fn_name) {
-            return ProofStrategy::WrapperSubAntiCommutative { neg_on_rhs };
+        if detect_wrapper_associative(law, fn_name, op) {
+            return ProofStrategy::WrapperAssociative { op };
         }
+        if detect_wrapper_identity(law, fn_name, op) {
+            return ProofStrategy::WrapperIdentity { op };
+        }
+        // Sub-specific shapes (right identity + anti-commutative).
+        // Add/Mul wrappers can't fit these — Sub's negation
+        // behaviour is structurally different, and Mul has no
+        // anti-commutative law (commutative).
+        if matches!(op, crate::ast::BinOp::Sub) {
+            if detect_wrapper_sub_right_identity(law, fn_name) {
+                return ProofStrategy::WrapperSubRightIdentity;
+            }
+            if let Some(neg_on_rhs) = detect_wrapper_sub_anti_commutative(law, fn_name) {
+                return ProofStrategy::WrapperSubAntiCommutative { neg_on_rhs };
+            }
+        }
+    }
+    // Unary↔binary wrapper equivalence — `fn_name` is the OUTER
+    // (unary) wrapper, the law's other side calls an inner binary
+    // wrapper with the unary's constant baked in. Independent of
+    // the binary-wrapper branch above (a unary `addOne(a) = a + 1`
+    // fails `wrapper_binop` because it has only one param).
+    if let Some(inner_fn) = detect_wrapper_unary_equivalence(law, fn_name, inputs) {
+        return ProofStrategy::WrapperUnaryEquivalence { inner_fn };
     }
     ProofStrategy::BackendDispatch
 }
@@ -663,6 +673,127 @@ fn detect_wrapper_associative(
     let nested = |side| matches_assoc_nested(side, fn_name, a, b, c);
     let flat = |side| matches_assoc_flat(side, fn_name, a, b, c);
     (nested(&law.lhs) && flat(&law.rhs)) || (nested(&law.rhs) && flat(&law.lhs))
+}
+
+/// Detect a unary↔binary wrapper equivalence shape:
+/// outer side: `outer(g)` where `fn outer(p) -> p <op> K`
+/// other side: `inner(g, K)` or `inner(K, g)` where `fn inner(a, b) -> a <op> b`
+/// Both sides must agree on op + constant + var-position.
+/// Returns the inner fn's source name, or `None` if no match.
+fn detect_wrapper_unary_equivalence(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<String> {
+    if law.givens.len() != 1 || law.givens[0].type_name != "Int" {
+        return None;
+    }
+    let unary = unary_int_wrapper(fn_name, inputs)?;
+    let g = &law.givens[0].name;
+
+    let try_side = |call_side: &Spanned<crate::ast::Expr>,
+                    other_side: &Spanned<crate::ast::Expr>|
+     -> Option<String> {
+        if !matches_unary_call(call_side, fn_name, g) {
+            return None;
+        }
+        let (callee_name, var_first, lit) = binary_call_var_const(other_side, g)?;
+        if lit != unary.constant || var_first != unary.var_first {
+            return None;
+        }
+        let inner_op = wrapper_binop(&callee_name, inputs)?;
+        if inner_op != unary.op {
+            return None;
+        }
+        Some(callee_name)
+    };
+    try_side(&law.lhs, &law.rhs).or_else(|| try_side(&law.rhs, &law.lhs))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UnaryIntWrapper {
+    op: crate::ast::BinOp,
+    constant: i64,
+    var_first: bool,
+}
+
+/// Resolve `fn outer(p: Int) -> Int :- p <op> K` or `K <op> p`.
+/// Returns the op + literal + which side carries the param.
+fn unary_int_wrapper(fn_name: &str, inputs: &ProofLowerInputs) -> Option<UnaryIntWrapper> {
+    use crate::ast::{Expr, Literal};
+
+    let fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if fd.params.len() != 1 || fd.return_type != "Int" {
+        return None;
+    }
+    let (param, param_ty) = &fd.params[0];
+    if param_ty != "Int" {
+        return None;
+    }
+    let expr = body_terminal_expr(fd.body.as_ref())?;
+    let Expr::BinOp(op, left, right) = &expr.node else {
+        return None;
+    };
+    let lit_of = |e: &Spanned<Expr>| -> Option<i64> {
+        match &e.node {
+            Expr::Literal(Literal::Int(n)) => Some(*n),
+            _ => None,
+        }
+    };
+    if matches_ident_expr(left, param) {
+        let n = lit_of(right)?;
+        return Some(UnaryIntWrapper {
+            op: *op,
+            constant: n,
+            var_first: true,
+        });
+    }
+    if matches_ident_expr(right, param) {
+        let n = lit_of(left)?;
+        return Some(UnaryIntWrapper {
+            op: *op,
+            constant: n,
+            var_first: false,
+        });
+    }
+    None
+}
+
+fn matches_unary_call(expr: &Spanned<crate::ast::Expr>, fn_name: &str, arg: &str) -> bool {
+    use crate::ast::Expr;
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return false;
+    };
+    args.len() == 1 && callee_matches_name(callee, fn_name) && matches_ident_expr(&args[0], arg)
+}
+
+/// `inner(var, K)` or `inner(K, var)` shape. Returns
+/// `(callee_name, var_first, K)` on match.
+fn binary_call_var_const(
+    expr: &Spanned<crate::ast::Expr>,
+    var_name: &str,
+) -> Option<(String, bool, i64)> {
+    use crate::ast::{Expr, Literal};
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    if args.len() != 2 {
+        return None;
+    }
+    let callee_name = expr_to_dotted_name(&callee.node)?;
+    match (&args[0].node, &args[1].node) {
+        (Expr::Ident(v) | Expr::Resolved { name: v, .. }, Expr::Literal(Literal::Int(n)))
+            if v == var_name =>
+        {
+            Some((callee_name, true, *n))
+        }
+        (Expr::Literal(Literal::Int(n)), Expr::Ident(v) | Expr::Resolved { name: v, .. })
+            if v == var_name =>
+        {
+            Some((callee_name, false, *n))
+        }
+        _ => None,
+    }
 }
 
 fn detect_wrapper_sub_right_identity(law: &crate::ast::VerifyLaw, fn_name: &str) -> bool {
