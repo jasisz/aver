@@ -1033,7 +1033,7 @@ fn detect_map_set_axiom(
      -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
         let (m, k, v) = map_get_set_parts(side)?;
         let some_v = option_some_arg(other)?;
-        if &some_v.node != &v.node {
+        if some_v.node != v.node {
             return None;
         }
         Some((
