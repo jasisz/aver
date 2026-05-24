@@ -122,6 +122,26 @@ impl<'a> ProofLowerInputs<'a> {
             .collect()
     }
 
+    /// Find a fn def by name across entry + deps. Falls back to the
+    /// last segment of a dotted call (e.g. `Module.fn` resolves to
+    /// `fn` when no exact-match candidate exists).
+    pub fn find_fn_def_by_call_name(&self, call_name: &str) -> Option<&'a FnDef> {
+        let find_exact = |name: &str| -> Option<&'a FnDef> {
+            self.dep_modules
+                .iter()
+                .flat_map(|m| m.fn_defs.iter())
+                .chain(self.entry_items.iter().filter_map(|item| match item {
+                    TopLevel::FnDef(fd) => Some(fd),
+                    _ => None,
+                }))
+                .find(|fd| fd.name == name)
+        };
+        find_exact(call_name).or_else(|| {
+            let short = call_name.rsplit('.').next()?;
+            find_exact(short)
+        })
+    }
+
     /// Find a type def by bare name across entry + deps. None on miss
     /// or when the name resolves to a non-Product / non-Sum shape.
     pub fn find_type_def(&self, type_name: &str) -> Option<&'a TypeDef> {
@@ -488,7 +508,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// concrete strategy decisions into the lowerer, one shape at a time.
 pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     use crate::ast::{TopLevel, VerifyKind};
-    use crate::ir::{LawTheorem, Predicate, ProofStrategy, Quantifier, QuantifierType};
+    use crate::ir::{LawTheorem, Predicate, Quantifier, QuantifierType};
 
     let entry_verifies = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::Verify(vb) => Some(vb),
@@ -522,20 +542,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             None => Vec::new(),
         };
 
-        // Pin `Reflexive` when the claim's two sides are
-        // syntactically identical (e.g. `x => x`, `add(b, a) =>
-        // add(b, a)`). Backends emit `rfl` for this case — no
-        // simp, no induction, no strategy chain walk. PartialEq on
-        // Spanned<Expr> compares the wrapped node + line, so two
-        // distinct source positions of the same identifier won't
-        // collide here; this is `lhs.node` structural equality
-        // through the derived PartialEq. Future steps will pin
-        // SimpOverLemmas / Induction / etc. on the remaining shapes.
-        let strategy = if law.lhs == law.rhs {
-            ProofStrategy::Reflexive
-        } else {
-            ProofStrategy::BackendDispatch
-        };
+        let strategy = classify_law_strategy(law, &vb.fn_name, inputs);
 
         ir.law_theorems.push(LawTheorem {
             fn_name: vb.fn_name.clone(),
@@ -547,6 +554,223 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             strategy,
         });
     }
+}
+
+/// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.
+///
+/// Decision order (later steps fold in more shapes):
+/// 1. `Reflexive` — `law.lhs == law.rhs` syntactically.
+/// 2. `WrapperCommutative { op }` — 2-arg Int wrapper whose body
+///    is `BinOp::Add` / `BinOp::Mul` (commutator-lemma-bearing
+///    ops), claim matches `f(a,b) = f(b,a)`.
+/// 3. `WrapperAssociative { op }` — same wrapper shape, 3 givens,
+///    claim matches `f(f(a,b),c) = f(a,f(b,c))`.
+/// 4. `WrapperIdentity { op }` — 1 given, claim matches
+///    `f(a, identity_of(op)) = a` (`0` for Add, `1` for Mul).
+/// 5. `BackendDispatch` — fall through to the backend chain
+///    (sub variants, unary-equivalence, induction, simp+omega,
+///    etc. — Step 26+ pins more).
+fn classify_law_strategy(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> crate::ir::ProofStrategy {
+    use crate::ir::ProofStrategy;
+
+    if law.lhs == law.rhs {
+        return ProofStrategy::Reflexive;
+    }
+    let Some(op) = wrapper_binop(fn_name, inputs) else {
+        return ProofStrategy::BackendDispatch;
+    };
+    if detect_wrapper_commutative(law, fn_name, op) {
+        return ProofStrategy::WrapperCommutative { op };
+    }
+    if detect_wrapper_associative(law, fn_name, op) {
+        return ProofStrategy::WrapperAssociative { op };
+    }
+    if detect_wrapper_identity(law, fn_name, op) {
+        return ProofStrategy::WrapperIdentity { op };
+    }
+    ProofStrategy::BackendDispatch
+}
+
+/// Return `Some(op)` iff `fn_name` resolves to a 2-arg Int wrapper
+/// `fn f(p1: Int, p2: Int) -> Int :- p1 <op> p2`. The op family is
+/// restricted to those with commutative/associative lemmas
+/// (`Add`, `Mul`); other binary wrappers (e.g. `Sub`) lower through
+/// the backend chain (Step 26+ pins sub anti-commutative).
+fn wrapper_binop(fn_name: &str, inputs: &ProofLowerInputs) -> Option<crate::ast::BinOp> {
+    use crate::ast::{BinOp, Expr};
+
+    let fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if fd.params.len() != 2 || fd.return_type != "Int" {
+        return None;
+    }
+    let (p1, t1) = &fd.params[0];
+    let (p2, t2) = &fd.params[1];
+    if t1 != "Int" || t2 != "Int" {
+        return None;
+    }
+    let expr = body_terminal_expr(fd.body.as_ref())?;
+    let Expr::BinOp(op, left, right) = &expr.node else {
+        return None;
+    };
+    if !matches_ident_expr(left, p1) || !matches_ident_expr(right, p2) {
+        return None;
+    }
+    matches!(op, BinOp::Add | BinOp::Mul).then_some(*op)
+}
+
+fn detect_wrapper_commutative(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    _op: crate::ast::BinOp,
+) -> bool {
+    if law.givens.len() != 2 || law.givens.iter().any(|g| g.type_name != "Int") {
+        return false;
+    }
+    let a = &law.givens[0].name;
+    let b = &law.givens[1].name;
+    matches_binary_call(&law.lhs, fn_name, a, b) && matches_binary_call(&law.rhs, fn_name, b, a)
+        || matches_binary_call(&law.lhs, fn_name, b, a)
+            && matches_binary_call(&law.rhs, fn_name, a, b)
+}
+
+fn detect_wrapper_associative(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    _op: crate::ast::BinOp,
+) -> bool {
+    if law.givens.len() != 3 || law.givens.iter().any(|g| g.type_name != "Int") {
+        return false;
+    }
+    let a = &law.givens[0].name;
+    let b = &law.givens[1].name;
+    let c = &law.givens[2].name;
+    let nested = |side| matches_assoc_nested(side, fn_name, a, b, c);
+    let flat = |side| matches_assoc_flat(side, fn_name, a, b, c);
+    (nested(&law.lhs) && flat(&law.rhs)) || (nested(&law.rhs) && flat(&law.lhs))
+}
+
+fn detect_wrapper_identity(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    op: crate::ast::BinOp,
+) -> bool {
+    if law.givens.len() != 1 || law.givens[0].type_name != "Int" {
+        return false;
+    }
+    let identity = match op {
+        crate::ast::BinOp::Add => 0,
+        crate::ast::BinOp::Mul => 1,
+        _ => return false,
+    };
+    let g = &law.givens[0].name;
+    matches_identity_side(&law.lhs, &law.rhs, fn_name, g, identity)
+        || matches_identity_side(&law.rhs, &law.lhs, fn_name, g, identity)
+}
+
+// ── AST matchers — ported from `lean::law_auto::shared` ─────────
+//
+// Kept private to proof_lower to preserve layering (proof_lower
+// must not reach into lean codegen). The shapes are backend-neutral
+// — pure AST pattern matching — so the duplication is local-cost
+// only. A future cleanup could consolidate these into a shared
+// `codegen::ast_match` module.
+
+fn body_terminal_expr(body: &crate::ast::FnBody) -> Option<&Spanned<crate::ast::Expr>> {
+    use crate::ast::Stmt;
+    match body.stmts() {
+        [Stmt::Expr(expr)] => Some(expr),
+        _ => None,
+    }
+}
+
+fn matches_ident_expr(expr: &Spanned<crate::ast::Expr>, name: &str) -> bool {
+    use crate::ast::Expr;
+    matches!(&expr.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == name)
+}
+
+fn callee_matches_name(expr: &Spanned<crate::ast::Expr>, target: &str) -> bool {
+    let Some(name) = expr_to_dotted_name(&expr.node) else {
+        return false;
+    };
+    name == target || name.rsplit('.').next() == Some(target)
+}
+
+fn call2_args<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+    fn_name: &str,
+) -> Option<(&'a Spanned<crate::ast::Expr>, &'a Spanned<crate::ast::Expr>)> {
+    use crate::ast::Expr;
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    if args.len() != 2 || !callee_matches_name(callee, fn_name) {
+        return None;
+    }
+    Some((&args[0], &args[1]))
+}
+
+fn matches_binary_call(expr: &Spanned<crate::ast::Expr>, fn_name: &str, a: &str, b: &str) -> bool {
+    let Some((x, y)) = call2_args(expr, fn_name) else {
+        return false;
+    };
+    matches_ident_expr(x, a) && matches_ident_expr(y, b)
+}
+
+fn matches_assoc_nested(
+    expr: &Spanned<crate::ast::Expr>,
+    fn_name: &str,
+    a: &str,
+    b: &str,
+    c: &str,
+) -> bool {
+    let Some((ab, z)) = call2_args(expr, fn_name) else {
+        return false;
+    };
+    let Some((x, y)) = call2_args(ab, fn_name) else {
+        return false;
+    };
+    matches_ident_expr(x, a) && matches_ident_expr(y, b) && matches_ident_expr(z, c)
+}
+
+fn matches_assoc_flat(
+    expr: &Spanned<crate::ast::Expr>,
+    fn_name: &str,
+    a: &str,
+    b: &str,
+    c: &str,
+) -> bool {
+    let Some((x, bc)) = call2_args(expr, fn_name) else {
+        return false;
+    };
+    let Some((y, z)) = call2_args(bc, fn_name) else {
+        return false;
+    };
+    matches_ident_expr(x, a) && matches_ident_expr(y, b) && matches_ident_expr(z, c)
+}
+
+fn matches_identity_side(
+    call_side: &Spanned<crate::ast::Expr>,
+    ident_side: &Spanned<crate::ast::Expr>,
+    fn_name: &str,
+    given_name: &str,
+    identity: i64,
+) -> bool {
+    use crate::ast::{Expr, Literal};
+    if !matches_ident_expr(ident_side, given_name) {
+        return false;
+    }
+    let Some((x, y)) = call2_args(call_side, fn_name) else {
+        return false;
+    };
+    let is_int_lit = |e: &Spanned<Expr>, n: i64| -> bool {
+        matches!(&e.node, Expr::Literal(Literal::Int(m)) if *m == n)
+    };
+    (matches_ident_expr(x, given_name) && is_int_lit(y, identity))
+        || (is_int_lit(x, identity) && matches_ident_expr(y, given_name))
 }
 
 /// Pick an inhabitation witness: a literal value of the carrier type

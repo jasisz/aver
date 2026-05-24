@@ -72,22 +72,42 @@ pub fn emit_verify_law_forall_auto_proof(
         return Some(proof);
     }
 
-    // Reflexive strategy — `lhs.node` ≡ `rhs.node` (`x => x`,
-    // `add(b, a) => add(b, a)`). The lowerer pinned this on
-    // `ProofIR.law_theorems[*].strategy = Reflexive`; backend
-    // honours that decision instead of running the syntactic
-    // equality check ad-hoc. Falls through to the strategy chain
-    // when the contract isn't Reflexive (BackendDispatch or any
-    // future variant).
-    if matches!(
-        law_strategy_for(ctx, &vb.fn_name, &law.name),
-        Some(crate::ir::ProofStrategy::Reflexive)
-    ) {
-        return Some(AutoProof {
-            support_lines: Vec::new(),
-            proof_lines: intro_then(&proof_intro_names, vec!["rfl".to_string()]),
-            replaces_theorem: false,
-        });
+    // IR-pinned strategies. The lowerer's decision wins over the
+    // ad-hoc detection chain that follows; backend just renders the
+    // tactic the IR selected. Each variant has a fixed Lean shape;
+    // the IR's `BinOp` payload maps to a specific lemma name here.
+    if let Some(strategy) = law_strategy_for(ctx, &vb.fn_name, &law.name) {
+        use crate::ast::BinOp;
+        use crate::ir::ProofStrategy;
+        let fn_lean = aver_name_to_lean(&vb.fn_name);
+        let proof_lines = match strategy {
+            ProofStrategy::Reflexive => Some(vec!["rfl".to_string()]),
+            ProofStrategy::WrapperCommutative { op } => match op {
+                BinOp::Add => Some(vec![format!("simp [{}, Int.add_comm]", fn_lean)]),
+                BinOp::Mul => Some(vec![format!("simp [{}, Int.mul_comm]", fn_lean)]),
+                _ => None,
+            },
+            ProofStrategy::WrapperAssociative { op } => match op {
+                BinOp::Add => Some(vec![format!("simp [{}, Int.add_assoc]", fn_lean)]),
+                BinOp::Mul => Some(vec![format!("simp [{}, Int.mul_assoc]", fn_lean)]),
+                _ => None,
+            },
+            ProofStrategy::WrapperIdentity { .. } => {
+                // Add → `simp [fn]` collapses `a + 0` / `0 + a`;
+                // Mul → same against `a * 1` / `1 * a`. The IR's
+                // op tag is implicit in the wrapper fn body Lean
+                // unfolds.
+                Some(vec![format!("simp [{}]", fn_lean)])
+            }
+            _ => None,
+        };
+        if let Some(lines) = proof_lines {
+            return Some(AutoProof {
+                support_lines: Vec::new(),
+                proof_lines: intro_then(&proof_intro_names, lines),
+                replaces_theorem: false,
+            });
+        }
     }
 
     arithmetic::emit_binary_wrapper_law(vb, law, ctx, &proof_intro_names)
