@@ -19,6 +19,10 @@
 use aver::ast::{Spanned, TopLevel, TypeDef};
 use aver::codegen::CodegenContext;
 use aver::codegen::common::refinement_info_for;
+use aver::codegen::recursion::{RecursionPlan, analyze_plans};
+use aver::ir::proof_ir::{
+    DecreaseProof, Measure, PreservationProof, QuantifierType, RecursionContract,
+};
 use aver::source::parse_source;
 use std::collections::HashSet;
 
@@ -190,5 +194,101 @@ fn inhabitation_witness_matches_legacy_for_each_example() {
             "Inhabitation witness mismatch for {}",
             name
         );
+    }
+}
+
+#[test]
+fn fib_tr_native_contract_matches_legacy_recursion_plan() {
+    // fibTR is the canonical IntCountdownGuarded shape:
+    //   match n { 0 -> a; _ -> fibTR(n - 1, b, a + b) }
+    // The legacy classifier emits `IntCountdownGuarded` with whatever
+    // precondition it derives from the single external caller (or
+    // empty if no caller is visible in the artifact). ProofIR's
+    // FnContract::Native must agree on:
+    //  - the bound countdown param name (drives the measure binder)
+    //  - precondition arity + per-clause AST (caller-derived
+    //    conjuncts in callee variable space)
+    //  - PreservationProof::IntCountdownLiteralZero + DecreaseProof::
+    //    NatAbsCountdown markers (only valid combo for this shape).
+    let src = include_str!("../examples/data/fibonacci.av");
+    let ctx = build_ctx(src);
+    let (plans, _) = analyze_plans(&ctx);
+
+    let RecursionPlan::IntCountdownGuarded {
+        param_index,
+        precondition: legacy_precondition,
+        ..
+    } = plans
+        .get("fibTR")
+        .unwrap_or_else(|| panic!("fibTR has no classified plan"))
+    else {
+        panic!(
+            "fibTR plan is not IntCountdownGuarded: {:?}",
+            plans.get("fibTR")
+        );
+    };
+
+    let contract = ctx
+        .proof_ir
+        .fn_contracts
+        .get("fibTR")
+        .unwrap_or_else(|| panic!("fibTR has no FnContract in ProofIR"));
+    let RecursionContract::Native {
+        precondition,
+        measure,
+        preservation,
+        decrease,
+    } = contract
+        .recursion
+        .as_ref()
+        .unwrap_or_else(|| panic!("fibTR FnContract has no recursion"))
+    else {
+        panic!("fibTR recursion is not Native: {:?}", contract.recursion);
+    };
+
+    let fd = ctx
+        .items
+        .iter()
+        .find_map(|item| match item {
+            TopLevel::FnDef(fd) if fd.name == "fibTR" => Some(fd),
+            _ => None,
+        })
+        .expect("fibTR FnDef");
+    let countdown_param = &fd.params[*param_index].0;
+
+    assert!(
+        matches!(measure, Measure::NatAbsInt { param } if param == countdown_param),
+        "measure must bind the countdown param, got {:?}",
+        measure
+    );
+    assert!(
+        matches!(preservation, PreservationProof::IntCountdownLiteralZero),
+        "preservation proof must be IntCountdownLiteralZero, got {:?}",
+        preservation
+    );
+    assert!(
+        matches!(decrease, DecreaseProof::NatAbsCountdown),
+        "decrease proof must be NatAbsCountdown, got {:?}",
+        decrease
+    );
+    assert_eq!(
+        precondition.len(),
+        legacy_precondition.len(),
+        "precondition arity mismatch with legacy plan"
+    );
+    for (lifted, legacy) in precondition.iter().zip(legacy_precondition.iter()) {
+        assert_eq!(
+            spanned_repr(&lifted.expr),
+            spanned_repr(legacy),
+            "precondition clause AST diverges from legacy"
+        );
+        assert_eq!(
+            lifted.free_vars.len(),
+            1,
+            "precondition clauses bind exactly the countdown param"
+        );
+        let (var_name, var_ty) = &lifted.free_vars[0];
+        assert_eq!(var_name, countdown_param);
+        assert!(matches!(var_ty, QuantifierType::Plain(t) if t == "Int"));
     }
 }

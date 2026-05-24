@@ -138,7 +138,13 @@ pub enum RecursionContract {
     /// both `preservation` (rec args stay in domain) and `decrease`
     /// (measure strictly drops) before constructing this variant.
     Native {
-        precondition: Predicate,
+        /// Conjunction of precondition clauses, kept as a vector so
+        /// backends can render one `requires` per clause (Dafny) or
+        /// fold into a single `&&` chain (Lean). Empty means "no
+        /// caller-derived precondition" — the lowerer leaves the
+        /// fibTR-style default (`param ≥ 0`) synthesis to the
+        /// backend for now; Step 6+ moves that into the lowerer.
+        precondition: Vec<Predicate>,
         /// Symbolic measure (e.g. `natAbs(n)`). Backends render per
         /// target language (`Int.natAbs n` on Lean, `n` with a
         /// `requires n >= 0` clause on Dafny).

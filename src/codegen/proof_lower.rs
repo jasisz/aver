@@ -22,10 +22,14 @@
 //! example — once the test is stable the legacy walkers become dead
 //! code in their consumers (Step 3 / Step 4 deletes them).
 
-use crate::ast::{Expr, Literal, Spanned, TopLevel, TypeDef};
+use crate::ast::{Expr, FnDef, Literal, Spanned, TopLevel, TypeDef};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::{expr_to_dotted_name, refinement_info_for};
-use crate::ir::proof_ir::{Predicate, ProofIR, RefinedTypeDecl};
+use crate::codegen::recursion::{RecursionPlan, analyze_plans};
+use crate::ir::proof_ir::{
+    DecreaseProof, FnContract, Measure, Predicate, PreservationProof, ProofIR, QuantifierType,
+    RecursionContract, RefinedTypeDecl,
+};
 
 /// Walk every type definition in `ctx` (entry items + dependent
 /// modules), classify the refinement-via-opaque ones, and build a
@@ -34,6 +38,7 @@ use crate::ir::proof_ir::{Predicate, ProofIR, RefinedTypeDecl};
 pub fn lower(ctx: &CodegenContext) -> ProofIR {
     let mut ir = ProofIR::default();
     populate_refined_types(ctx, &mut ir);
+    populate_fn_contracts(ctx, &mut ir);
     ir
 }
 
@@ -86,6 +91,80 @@ fn populate_refined_types(ctx: &CodegenContext, ir: &mut ProofIR) {
                 predicate_param: info.param_name.to_string(),
                 invariant,
                 witness,
+            },
+        );
+    }
+}
+
+/// Walk `analyze_plans(ctx)` and populate `ProofIR.fn_contracts`.
+///
+/// **Step 5 scope**: only `IntCountdownGuarded` plans translate to
+/// a `FnContract`. It's the most proof-heavy variant — caller-
+/// derived precondition + preservation + decrease — so it sets the
+/// pattern for the rest. All other `RecursionPlan` variants (Fuel-
+/// emitted shapes, `LinearRecurrence2`, `Mutual*`) are skipped here
+/// and continue going through the legacy `RecursionPlan` path
+/// directly on the consumer side. Subsequent Steps add one variant
+/// per commit, with their own diff tests.
+///
+/// The lowering is intentionally a **translation pass** over the
+/// existing classifier output, not a re-implementation: backends
+/// keep reading `RecursionPlan` during the migration window, the
+/// diff test (`tests/proof_ir_diff.rs`) asserts both sides agree on
+/// the fibTR flagship, and once every variant is covered we delete
+/// the consumer-side `RecursionPlan` reads in a later Step.
+fn populate_fn_contracts(ctx: &CodegenContext, ir: &mut ProofIR) {
+    let (plans, _issues) = analyze_plans(ctx);
+    let all_fns: Vec<&FnDef> = ctx
+        .modules
+        .iter()
+        .flat_map(|m| m.fn_defs.iter())
+        .chain(ctx.fn_defs.iter())
+        .chain(ctx.items.iter().filter_map(|item| match item {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        }))
+        .collect();
+
+    for (fn_name, plan) in &plans {
+        let RecursionPlan::IntCountdownGuarded {
+            param_index,
+            precondition,
+            ..
+        } = plan
+        else {
+            continue;
+        };
+        let Some(fd) = all_fns.iter().find(|fd| fd.name == *fn_name) else {
+            continue;
+        };
+        let Some((countdown_param_name, _)) = fd.params.get(*param_index) else {
+            continue;
+        };
+
+        let precondition_predicates: Vec<Predicate> = precondition
+            .iter()
+            .map(|clause| Predicate {
+                free_vars: vec![(
+                    countdown_param_name.clone(),
+                    QuantifierType::Plain("Int".to_string()),
+                )],
+                expr: clause.clone(),
+            })
+            .collect();
+
+        ir.fn_contracts.insert(
+            fn_name.clone(),
+            FnContract {
+                source_name: fn_name.clone(),
+                recursion: Some(RecursionContract::Native {
+                    precondition: precondition_predicates,
+                    measure: Measure::NatAbsInt {
+                        param: countdown_param_name.clone(),
+                    },
+                    preservation: PreservationProof::IntCountdownLiteralZero,
+                    decrease: DecreaseProof::NatAbsCountdown,
+                }),
             },
         );
     }
