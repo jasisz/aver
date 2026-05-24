@@ -1,0 +1,253 @@
+//! Proof intermediate representation.
+//!
+//! Single decision substrate the Lean and Dafny proof exporters
+//! consume. Backends render text from a fully-resolved `ProofIR` —
+//! they do not classify shapes, do not derive contracts, do not
+//! decide between native and fuel emit. Every decision happens once
+//! in the `proof_lower` pipeline stage; both backends see the same
+//! decision and either render it consistently or fail consistently.
+//!
+//! The architectural goal: replace the ad-hoc "guess and emit"
+//! pattern that grew across `src/codegen/{common,recursion,lean,
+//! dafny}` during 0.22.0 with a single typed model. Each variant
+//! that says "emit native" or "lift to subtype" carries inside its
+//! payload everything the backend needs and everything the
+//! classifier proved — the type system makes it impossible to
+//! produce a "native" decision without also producing the side-
+//! conditions that justify it.
+//!
+//! **Status**: skeleton. Step 1 (this file) defines the types. Step
+//! 2 wires `proof_lower` to populate `ProofIR.refined_types` for
+//! refinement-via-opaque records; backends still go through the old
+//! `codegen::common::refinement_info_for` path and tests verify
+//! both paths produce equivalent decisions. Steps 3+ migrate one
+//! backend at a time, then extend coverage to recursion contracts
+//! and law theorems.
+
+use std::collections::HashMap;
+
+use crate::ast::Spanned;
+
+/// Output of the `proof_lower` pipeline stage. Every decision the
+/// proof backends will make is materialised here; backends become
+/// pure renderers.
+///
+/// `ProofIR` is intentionally NOT a closed superset of the AST — it
+/// only carries facts that proof export needs. Source-faithful
+/// emission of plain fns / verify cases still flows through the
+/// untyped AST path, same as runtime backends (VM, Rust, WASM).
+#[derive(Debug, Clone, Default)]
+pub struct ProofIR {
+    /// Every refinement-lifted user type, keyed by canonical type
+    /// name (`Module.Natural` or bare `Natural` when no enclosing
+    /// module). Includes types declared in the entry items and in
+    /// dependent modules — the lowerer normalises both into the
+    /// same map so backends don't have to walk two corpora.
+    pub refined_types: HashMap<String, RefinedTypeDecl>,
+    /// Per-pure-fn contract describing what proof artifact the fn
+    /// lowers to. Currently a stub (empty); Step 5+ populates it
+    /// when migrating the `RecursionPlan` machinery.
+    pub fn_contracts: HashMap<String, FnContract>,
+    /// Per-verify-law theorem decomposed into quantifiers, premises,
+    /// and claim with all wrapper-strip / val-projection / drop-vs-
+    /// keep decisions baked in. Currently empty; populated when
+    /// migrating the law emit path.
+    pub law_theorems: Vec<LawTheorem>,
+}
+
+/// A refinement-lifted user type — opaque record with a single
+/// carrier field, paired with a validating smart constructor. The
+/// presence of this decl in `ProofIR.refined_types` is the
+/// decision: "emit this as a subtype on Lean and a subset type on
+/// Dafny". Backends never re-decide.
+#[derive(Debug, Clone)]
+pub struct RefinedTypeDecl {
+    /// Source-level type name (e.g. `"Natural"`). NOT canonicalised
+    /// — backends emit using the source name; canonical form is the
+    /// map key.
+    pub name: String,
+    /// Carrier annotation from the record's single field (typically
+    /// `"Int"`). Drives the Lean Subtype underlying type and the
+    /// Dafny subset type's base.
+    pub carrier_type: String,
+    /// Carrier-field source name (e.g. `"value"`). Lean uses `.val`
+    /// to project Subtype values regardless of source name; Dafny's
+    /// subset binds the source name in its predicate.
+    pub carrier_field: String,
+    /// Smart constructor's input parameter name (e.g. `"n"`) — the
+    /// invariant predicate's free variable.
+    pub predicate_param: String,
+    /// Bool predicate that every value of the refined type must
+    /// satisfy, in terms of `predicate_param`. Comes from the smart
+    /// constructor's `match <pred> { true -> Ok(...); false -> Err(...)
+    /// }` subject.
+    pub invariant: Predicate,
+    /// Witness for Dafny's `type T = ... witness W`. Resolved by
+    /// the lowerer: first tries the smart constructor's verify
+    /// block (`fromX(K) => Ok(...)` for some literal K), then
+    /// evaluates the predicate against small candidates. `None`
+    /// when no satisfier was found — backends use type-default `0`
+    /// and pray (or emit `witness *` for Dafny's auto-pick).
+    pub dafny_witness: Option<String>,
+}
+
+/// Per-pure-fn proof contract. Placeholder shape — Step 5+ fills
+/// this in with recursion plan migration.
+#[derive(Debug, Clone)]
+pub struct FnContract {
+    pub source_name: String,
+    /// `None` means non-recursive (plain emit). `Some` says native /
+    /// fuel / structural / whatever the lowerer decided, with all
+    /// side-conditions inlined.
+    pub recursion: Option<RecursionContract>,
+}
+
+/// Recursion-shape decision. Each variant carries everything its
+/// emit needs AND the side-conditions the lowerer proved to choose
+/// it. The variants intentionally cannot be constructed without
+/// their side-conditions — backends cannot render `Native` without
+/// the lowerer having proved preservation + decrease.
+#[derive(Debug, Clone)]
+pub enum RecursionContract {
+    /// Fuel-encoded fallback. No side-conditions to prove; works
+    /// for any shape the classifier accepted as recursive.
+    Fuel {
+        /// Symbolic measure feeding the wrapper (`natAbs n + 1`,
+        /// `|xs| + 1`, etc.). Backends translate per target.
+        fuel_metric: FuelMetric,
+    },
+    /// Native recursion with explicit precondition. Lowerer proved
+    /// both `preservation` (rec args stay in domain) and `decrease`
+    /// (measure strictly drops) before constructing this variant.
+    Native {
+        precondition: Predicate,
+        /// Symbolic measure (e.g. `natAbs(n)`). Backends render per
+        /// target language (`Int.natAbs n` on Lean, `n` with a
+        /// `requires n >= 0` clause on Dafny).
+        measure: Measure,
+        /// Side-condition tag: lowerer attests the recursive args
+        /// preserve the precondition. Empty enum payload — its
+        /// existence in the type is the proof, not its content.
+        preservation: PreservationProof,
+        /// Same for the decreasing measure.
+        decrease: DecreaseProof,
+    },
+}
+
+/// Fuel metric for the fallback fuel-encoded emit path.
+#[derive(Debug, Clone)]
+pub enum FuelMetric {
+    NatAbsPlusOne { param: String },
+    SeqLenPlusOne { param: String },
+    Lex { params: Vec<String>, rank: usize },
+}
+
+/// Symbolic termination measure. Backend-agnostic.
+#[derive(Debug, Clone)]
+pub enum Measure {
+    NatAbsInt { param: String },
+    SeqLen { param: String },
+    Lex(Vec<Measure>),
+}
+
+/// Marker that the lowerer constructed a proof of preservation
+/// (recursive args stay in the precondition's domain). The variants
+/// describe HOW the proof was constructed so future maintainers can
+/// trace why a given shape was accepted as native.
+#[derive(Debug, Clone)]
+pub enum PreservationProof {
+    /// `match p { 0 -> base; _ -> rec(p-1, ...) }` under `p ≥ 0`
+    /// precondition. Wildcard arm gives `p ≠ 0`, combined with
+    /// `p ≥ 0` yields `p ≥ 1`, so `p - 1 ≥ 0`.
+    IntCountdownLiteralZero,
+}
+
+/// Symmetric marker for the decreasing measure.
+#[derive(Debug, Clone)]
+pub enum DecreaseProof {
+    /// `natAbs(p - 1) < natAbs(p)` under `p ≥ 0 ∧ p ≠ 0`.
+    NatAbsCountdown,
+}
+
+/// Lowered verify-law theorem. All projection decisions (`.val`
+/// vs bare ident, wrapper strip, when-keep vs when-drop) are
+/// already baked into the fields below; backends render directly.
+#[derive(Debug, Clone)]
+pub struct LawTheorem {
+    pub fn_name: String,
+    pub law_name: String,
+    pub quantifiers: Vec<Quantifier>,
+    /// Premises in order. Already includes `when` if it carries
+    /// information beyond the refinement invariants (the lowerer
+    /// performs the bijective syntactic equivalence check).
+    pub premises: Vec<Predicate>,
+    /// LHS = RHS claim. Wrapper-stripped, lifted-var-aware (bare
+    /// idents for arg positions, `.val` projections inside
+    /// comparator BinOps if the lowerer determined this is needed).
+    pub claim_lhs: Spanned<crate::ast::Expr>,
+    pub claim_rhs: Spanned<crate::ast::Expr>,
+    pub strategy: ProofStrategy,
+}
+
+/// A universally-quantified variable in a law theorem. Carries
+/// enough type info for backends to render the binder correctly
+/// (`(a : Natural)` for refined Int, `(a : Int)` for plain int,
+/// `(rng : RandomIntInBounds)` for oracle).
+#[derive(Debug, Clone)]
+pub struct Quantifier {
+    pub name: String,
+    pub binder_type: QuantifierType,
+}
+
+#[derive(Debug, Clone)]
+pub enum QuantifierType {
+    /// Plain Aver type, rendered as-is on each backend.
+    Plain(String),
+    /// Refinement-lifted: source declared `given a: Int`, body used
+    /// `Natural(value = a)`, so the quantifier binds at the refined
+    /// type. The carried `refined_type` key looks up in
+    /// `ProofIR.refined_types`.
+    RefinedTo { refined_type: String },
+    /// Oracle subtype: classified Generative-shape effect-givens
+    /// bind oracles wrapped in a subtype carrier
+    /// (`RandomIntInBounds`, `RandomFloatInUnit`,
+    /// `TimeUnixMsNonneg`).
+    OracleSubtype(String),
+}
+
+/// Auto-proof strategy the lowerer chose for the universal theorem.
+/// Backends translate to their tactic vocabulary (Lean: `simp;
+/// omega`, Dafny: empty body, etc.).
+#[derive(Debug, Clone)]
+pub enum ProofStrategy {
+    /// `rfl` / definitional equality.
+    Reflexive,
+    /// `simp` chain over named lemmas (e.g. `[Int.add_comm,
+    /// Int.mul_comm]`).
+    SimpOverLemmas(Vec<String>),
+    /// Structural induction on a recursive ADT parameter.
+    Induction { param: String },
+    /// Bounded universal: case-split over the declared `given`
+    /// domain, dispatch each case to a per-sample lemma.
+    BoundedUniversal,
+    /// No automated strategy — emit with `sorry` (Lean) / `assume
+    /// {:axiom}` (Dafny). User fills in manually.
+    Sorry,
+}
+
+/// A bool predicate with explicit free-variable context. Stays in
+/// `Spanned<Expr>` form so backends can route through their
+/// existing `emit_expr` paths; the context is what gives backends
+/// the information they need to project (e.g. `.val`) without
+/// re-walking the AST.
+#[derive(Debug, Clone)]
+pub struct Predicate {
+    /// Variables the predicate may reference, in declaration order.
+    /// Each entry tells the backend what type the var has in the
+    /// target language — same logic as `Quantifier.binder_type`.
+    pub free_vars: Vec<(String, QuantifierType)>,
+    /// The expression. Already in the target variable space (e.g.
+    /// caller-derived predicates have had caller-arg names
+    /// substituted to callee-param names).
+    pub expr: Spanned<crate::ast::Expr>,
+}
