@@ -27,11 +27,13 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // Refinement-via-opaque records emit as Lean `Subtype`,
             // so the carrier field projects through `.val` instead
             // of the source-named `.carrier_field`. Detect by the
-            // typechecker stamp on the host expression.
+            // typechecker stamp on the host expression, then look
+            // up the lifted-type decision the lowerer already made
+            // in `ctx.proof_ir.refined_types`.
             if let Some(crate::types::Type::Named(t_name)) = obj.ty()
-                && let Some(info) = crate::codegen::common::refinement_info_for(t_name, ctx)
-                && info.carrier_type == "Int"
-                && field == info.carrier_field
+                && let Some(decl) = ctx.proof_ir.refined_types.get(t_name)
+                && decl.carrier_type == "Int"
+                && field == &decl.carrier_field
             {
                 let obj_str = emit_expr(obj, ctx);
                 let needs_parens = !matches!(&obj.node, Expr::Ident(_) | Expr::Resolved { .. });
@@ -166,8 +168,8 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // structure shape and a plain `{ value := … }` record
             // literal, so this fast-path is gated on the carrier
             // matching.
-            if let Some(info) = crate::codegen::common::refinement_info_for(type_name, ctx)
-                && info.carrier_type == "Int"
+            if let Some(decl) = ctx.proof_ir.refined_types.get(type_name)
+                && decl.carrier_type == "Int"
                 && fields.len() == 1
             {
                 let (_, value_expr) = &fields[0];
@@ -484,11 +486,12 @@ fn emit_match(
 /// cond then …`.
 fn true_body_uses_refinement_subtype(expr: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
     match &expr.node {
-        Expr::RecordCreate { type_name, .. } => {
-            crate::codegen::common::refinement_info_for(type_name, ctx)
-                .map(|info| info.carrier_type == "Int")
-                .unwrap_or(false)
-        }
+        Expr::RecordCreate { type_name, .. } => ctx
+            .proof_ir
+            .refined_types
+            .get(type_name)
+            .map(|decl| decl.carrier_type == "Int")
+            .unwrap_or(false),
         Expr::FnCall(callee, args) => {
             true_body_uses_refinement_subtype(callee, ctx)
                 || args

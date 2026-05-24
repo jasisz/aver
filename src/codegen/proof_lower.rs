@@ -38,20 +38,32 @@ pub fn lower(ctx: &CodegenContext) -> ProofIR {
 }
 
 fn populate_refined_types(ctx: &CodegenContext, ir: &mut ProofIR) {
+    // Walk entry items first, then dep modules. Both feed into the
+    // same map keyed by bare type name — consumers (Lean / Dafny
+    // emit paths) always query by bare name because that's what
+    // they see in the AST nodes (`Expr::RecordCreate { type_name:
+    // "Natural", ... }`, `TypeDef::Product { name: "Natural", ... }`).
+    // Aver's module DAG invariant + typechecker's duplicate-type
+    // rejection (PR #89) make name collisions a compile error, so
+    // bare-name keying is safe.
     let entry_typedefs = ctx.items.iter().filter_map(|item| match item {
-        TopLevel::TypeDef(td) => Some((td, None)),
+        TopLevel::TypeDef(td) => Some(td),
         _ => None,
     });
-    let module_typedefs = ctx
-        .modules
-        .iter()
-        .flat_map(|m| m.type_defs.iter().map(move |td| (td, Some(m.prefix.as_str()))));
+    let module_typedefs = ctx.modules.iter().flat_map(|m| m.type_defs.iter());
 
-    for (td, module_prefix) in entry_typedefs.chain(module_typedefs) {
+    for td in entry_typedefs.chain(module_typedefs) {
         let TypeDef::Product { name, fields, .. } = td else {
             continue;
         };
         if fields.len() != 1 {
+            continue;
+        }
+        if ir.refined_types.contains_key(name) {
+            // Already classified via another path (typically the
+            // entry walk picked it up first); skip the dep-module
+            // duplicate so we don't overwrite a verified-witness
+            // entry with a predicate-eval fallback witness.
             continue;
         }
         let Some(info) = refinement_info_for(name, ctx) else {
@@ -65,12 +77,8 @@ fn populate_refined_types(ctx: &CodegenContext, ir: &mut ProofIR) {
             expr: info.predicate.clone(),
         };
         let dafny_witness = pick_dafny_witness(name, ctx, info.predicate, info.param_name);
-        let canonical_key = match module_prefix {
-            Some(prefix) => format!("{}.{}", prefix, name),
-            None => name.clone(),
-        };
         ir.refined_types.insert(
-            canonical_key,
+            name.clone(),
             RefinedTypeDecl {
                 name: name.clone(),
                 carrier_type: info.carrier_type.to_string(),

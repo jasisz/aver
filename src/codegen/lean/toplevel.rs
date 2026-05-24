@@ -88,12 +88,12 @@ fn emit_product_type(name: &str, fields: &[(String, String)], ctx: &CodegenConte
     // existing sample-based path covers them: domain values come
     // from `given a: Float = […]`, and proofs are sample-by-sample
     // via native_decide.
-    if let Some(info) = crate::codegen::common::refinement_info_for(name, ctx)
-        && info.carrier_type == "Int"
+    if let Some(decl) = ctx.proof_ir.refined_types.get(name)
+        && decl.carrier_type == "Int"
     {
-        let carrier_ty = type_annotation_to_lean(info.carrier_type);
-        let param = aver_name_to_lean(info.param_name);
-        let predicate = super::expr::emit_expr(info.predicate, ctx);
+        let carrier_ty = type_annotation_to_lean(&decl.carrier_type);
+        let param = aver_name_to_lean(&decl.predicate_param);
+        let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
         return format!("abbrev {name} := {{ {param} : {carrier_ty} // {predicate} }}");
     }
 
