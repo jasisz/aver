@@ -1,20 +1,20 @@
-//! Step 2 safety net: ProofIR refined_types vs legacy walker.
+//! ProofIR producer regression tests.
 //!
-//! The Proof IR migration moves backend decisions from ad-hoc
-//! shape walkers (`refinement_info_for`, `refinement_witness_for`)
-//! to a single `proof_lower` producer. The risk during the
-//! transition: a divergence between what the producer fills into
-//! `ProofIR.refined_types` and what the legacy walkers return when
-//! a backend asks for the same type. Either side missing a type,
-//! or assigning a different carrier / predicate / witness, would
-//! show up as a behavioural regression once Steps 3 / 4 migrate
-//! the consumers.
+//! `proof_lower::populate_refined_types` + `populate_fn_contracts`
+//! are the single source of truth — both Lean and Dafny exporters
+//! read `ctx.proof_ir.*` instead of re-classifying. The tests here
+//! pin the producer's output shape: for each canonical source
+//! pattern, they assert the resulting `RefinedTypeDecl` /
+//! `FnContract` carries the expected carrier / predicate / fuel
+//! metric / preservation marker / body decomposition.
 //!
-//! This test parses every flagship refinement example, runs the
-//! legacy walker for each refined type it expects, and compares
-//! field-by-field against the new `ProofIR` decl. Equivalence is
-//! the gate; once the test is stable through Steps 3 / 4 the
-//! legacy walkers' call sites can be deleted.
+//! Historical context: through Steps 2-13 these tests cross-checked
+//! the new ProofIR producer against the legacy `refinement_info_for`
+//! / `analyze_plans` walkers, asserting the producer agreed with the
+//! classifier. After Step 18 / 20 retired the consumer-side
+//! `analyze_plans` calls the cross-check became a producer-output
+//! pin: if the classifier itself changes shape, ProofIR follows, and
+//! these tests catch a divergence between the two halves.
 
 use aver::ast::{Spanned, TopLevel, TypeDef};
 use aver::codegen::CodegenContext;

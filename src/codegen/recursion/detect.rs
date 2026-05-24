@@ -1522,9 +1522,19 @@ fn walk_caller_collect_callsite_guards(
     }
 }
 
-/// Classify every recursive pure fn in `ctx`. The returned map assigns
-/// each supported function a [`RecursionPlan`]; anything that falls
-/// outside the recognised shapes becomes a [`ProofModeIssue`].
+/// Classify every recursive pure fn in `inputs`. The returned map
+/// assigns each supported function a [`RecursionPlan`]; anything
+/// that falls outside the recognised shapes becomes a
+/// [`ProofModeIssue`].
+///
+/// **Consumers should not call this directly.** After Step 18 / 20
+/// the only caller is `proof_lower::populate_fn_contracts`, which
+/// translates the output into `ProofIR.fn_contracts` and
+/// `ProofIR.unclassified_fns`. Backends read those fields instead.
+/// The fn stays `pub` only because the diff test
+/// (`tests/proof_ir_diff.rs`) cross-checks ProofIR against the
+/// legacy classifier output — that test is itself slated for
+/// rationalisation once the migration is fully bedded down.
 pub fn analyze_plans(
     inputs: &ProofLowerInputs,
 ) -> (HashMap<String, RecursionPlan>, Vec<ProofModeIssue>) {
