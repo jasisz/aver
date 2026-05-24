@@ -1240,7 +1240,7 @@ fn transpile_unified(
                         if is_recursive && !plans.contains_key(&fd.name) {
                             toplevel::emit_fn_def(fd, &recursive_names, ctx)
                         } else {
-                            toplevel::emit_fn_def_proof(fd, plans.get(&fd.name).cloned(), ctx)
+                            toplevel::emit_fn_def_proof(fd, ctx)
                         }
                     }
                     LeanEmitMode::Standard => toplevel::emit_fn_def(fd, &recursive_fns, ctx),

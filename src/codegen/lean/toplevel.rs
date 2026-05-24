@@ -1208,13 +1208,12 @@ pub fn emit_fn_def(
     Some(lines.join("\n"))
 }
 
-/// Proof-mode function emission:
-/// recursive functions use explicit `termination_by` based on analyzed recursion plan.
-pub fn emit_fn_def_proof(
-    fd: &FnDef,
-    recursion_plan: Option<RecursionPlan>,
-    ctx: &CodegenContext,
-) -> Option<String> {
+/// Proof-mode function emission. Reads the contract decision from
+/// `ctx.proof_ir.fn_contracts` and dispatches to the matching emit fn
+/// (native guarded, fuel-encoded, pair-state Nat worker, etc.). Falls
+/// back to plain `def` emission when no contract is present (non-
+/// recursive fn).
+pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     if !is_pure_fn(fd) {
         return None;
     }
@@ -1345,34 +1344,34 @@ pub fn emit_fn_def_proof(
         .unwrap_or(fd.body.as_ref());
     lines.push(emit_fn_body_for(fd, body, ctx));
 
-    if let Some(plan) = recursion_plan {
-        match plan {
-            RecursionPlan::LinearRecurrence2 => {}
-            RecursionPlan::IntCountdown { .. } => {}
-            RecursionPlan::IntCountdownGuarded { .. } => {}
-            RecursionPlan::IntAscending { .. } => {}
-            RecursionPlan::MutualIntCountdown => {
-                let Some((param_name, _)) = fd.params.first() else {
-                    return Some(lines.join("\n"));
-                };
-                let lean_param = aver_name_to_lean(param_name);
+    // termination_by/decreasing_by suffix for the few contract shapes
+    // that need explicit Lean termination hints (rest are no-ops —
+    // their emit fns already wrote them, or Lean's elaborator infers).
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name) {
+        match contract.recursion.as_ref() {
+            Some(crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::Lex { params, rank: 0 },
+            }) if params.len() == 1 => {
+                // MutualIntCountdown — every member counts down the
+                // shared first-Int param.
+                let lean_param = aver_name_to_lean(&params[0]);
                 lines.push(format!("termination_by Int.natAbs {}", lean_param));
                 lines.push("decreasing_by".to_string());
                 lines.push("  omega".to_string());
             }
-            RecursionPlan::ListStructural { param_index } => {
-                let Some((param_name, _)) = fd.params.get(param_index) else {
-                    return Some(lines.join("\n"));
-                };
-                let lean_param = aver_name_to_lean(param_name);
+            Some(crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::SeqLenPlusOne { param },
+            }) => {
+                // ListStructural — Lean structural recursion on
+                // `<param>.length`. The `+1` framing in the IR is
+                // ignored here; Lean's elaborator wants the bare
+                // length measure.
+                let lean_param = aver_name_to_lean(param);
                 lines.push(format!("termination_by {}.length", lean_param));
                 lines.push("decreasing_by".to_string());
                 lines.push("  decreasing_tactic".to_string());
             }
-            RecursionPlan::SizeOfStructural => {}
-            RecursionPlan::StringPosAdvance => {}
-            RecursionPlan::MutualStringPosAdvance { .. }
-            | RecursionPlan::MutualSizeOfRanked { .. } => {}
+            _ => {}
         }
     }
 
