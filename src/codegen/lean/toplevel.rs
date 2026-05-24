@@ -1656,13 +1656,13 @@ fn emit_verify_trace_block_proofs(
         let lhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
             &fn_call,
             &synthetic_law,
-            ctx,
+            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
             mode.clone(),
         );
         let rhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
             right,
             &synthetic_law,
-            ctx,
+            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
             mode,
         );
 
@@ -1724,13 +1724,13 @@ fn emit_verify_law_block(
     let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law(
         &law.lhs,
         law,
-        ctx,
+        |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
     );
     let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law(
         &law.rhs,
         law,
-        ctx,
+        |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
     );
     // Refinement quantifier lift: when a given Int variable shows up
@@ -1777,7 +1777,7 @@ fn emit_verify_law_block(
         let oracle_projected = crate::codegen::common::rewrite_effectful_calls_in_law(
             expr,
             law,
-            ctx,
+            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
             crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
         );
         // Refinement lift: bare references to lifted-given idents
@@ -1942,11 +1942,15 @@ fn emit_verify_law_block(
                 let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
                     left,
                     law,
-                    ctx,
+                    |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
                     mode.clone(),
                 );
-                let right_rw =
-                    crate::codegen::common::rewrite_effectful_calls_in_law(right, law, ctx, mode);
+                let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+                    right,
+                    law,
+                    |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                    mode,
+                );
                 let left_str = emit_expr(&left_rw, ctx);
                 let right_str = emit_expr(&right_rw, ctx);
                 if let Some(guard) = law.sample_guards.get(idx) {
@@ -2004,10 +2008,18 @@ fn emit_verify_law_block(
         // `impl(…, a) = spec(…, b)` pairs.
         let case_bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
         let mode = crate::codegen::common::OracleInjectionMode::SampleCaseBinding(case_bindings);
-        let left_rw =
-            crate::codegen::common::rewrite_effectful_calls_in_law(left, law, ctx, mode.clone());
-        let right_rw =
-            crate::codegen::common::rewrite_effectful_calls_in_law(right, law, ctx, mode);
+        let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+            left,
+            law,
+            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+            mode.clone(),
+        );
+        let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
+            right,
+            law,
+            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+            mode,
+        );
         let left_str = emit_expr(&left_rw, ctx);
         let right_str = emit_expr(&right_rw, ctx);
         let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
