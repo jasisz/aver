@@ -767,13 +767,17 @@ fn law_lower_populates_theorems_from_verify_law_blocks() {
         "no `when` clause → no premises, got: {:?}",
         theorem.premises
     );
-    // `add(a, b) => add(b, a)` — distinct LHS/RHS, falls through
-    // to BackendDispatch (Step 24+ pins Reflexive only when sides
-    // are syntactically identical; SimpOverLemmas, Induction, etc.
-    // come later).
+    // `add(a, b) => add(b, a)` — Step 25 pins
+    // `WrapperCommutative { op: Add }` for this shape (2-arg Int
+    // wrapper around `BinOp::Add`).
     assert!(
-        matches!(theorem.strategy, aver::ir::ProofStrategy::BackendDispatch),
-        "commutative falls through to BackendDispatch, got: {:?}",
+        matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::WrapperCommutative {
+                op: aver::ast::BinOp::Add
+            }
+        ),
+        "commutative on Add-wrapper must pin WrapperCommutative, got: {:?}",
         theorem.strategy,
     );
 }
@@ -803,6 +807,73 @@ fn reflexive_law_pinned_when_lhs_equals_rhs() {
     assert!(
         matches!(theorem.strategy, aver::ir::ProofStrategy::Reflexive),
         "x => x must pin Reflexive, got: {:?}",
+        theorem.strategy,
+    );
+}
+
+#[test]
+fn wrapper_associative_pinned_on_three_int_givens_assoc_shape() {
+    // `add(add(a,b),c) => add(a,add(b,c))` over `fn add(a,b) -> a+b`
+    // — Step 25 pins `WrapperAssociative { op: Add }`.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn add(a: Int, b: Int) -> Int\n\
+         \x20   a + b\n\
+         \n\
+         verify add law associative\n\
+         \x20   given a: Int = -1..1\n\
+         \x20   given b: Int = -1..1\n\
+         \x20   given c: Int = -1..1\n\
+         \x20   add(add(a, b), c) => add(a, add(b, c))\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "add" && t.law_name == "associative")
+        .expect("add::associative law theorem missing");
+    assert!(
+        matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::WrapperAssociative {
+                op: aver::ast::BinOp::Add
+            }
+        ),
+        "expected WrapperAssociative, got: {:?}",
+        theorem.strategy,
+    );
+}
+
+#[test]
+fn wrapper_identity_pinned_on_add_with_zero_rhs() {
+    // `add(a, 0) => a` over `fn add(a,b) -> a+b` — pins
+    // `WrapperIdentity { op: Add }`. The identity literal is
+    // implicit (`0` for Add; `1` for Mul).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn add(a: Int, b: Int) -> Int\n\
+         \x20   a + b\n\
+         \n\
+         verify add law identityZero\n\
+         \x20   given a: Int = -3..3\n\
+         \x20   add(a, 0) => a\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "add" && t.law_name == "identityZero")
+        .expect("add::identityZero law theorem missing");
+    assert!(
+        matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::WrapperIdentity {
+                op: aver::ast::BinOp::Add
+            }
+        ),
+        "expected WrapperIdentity, got: {:?}",
         theorem.strategy,
     );
 }

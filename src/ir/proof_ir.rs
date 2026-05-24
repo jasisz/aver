@@ -327,6 +327,20 @@ pub enum ProofStrategy {
     /// `simp` chain over named lemmas (e.g. `[Int.add_comm,
     /// Int.mul_comm]`).
     SimpOverLemmas(Vec<String>),
+    /// Commutative law over a 2-arg Int-Int wrapper:
+    /// `wrapper(a, b) => wrapper(b, a)`. Backend renders as
+    /// `simp [<wrapper_name>, <op-comm-lemma>]` where the lemma
+    /// is derived from `op` (`Add → Int.add_comm`, `Mul → Int.
+    /// mul_comm`). Op stays in IR so backends pick their own
+    /// lemma vocabulary (Dafny would use a different incantation).
+    WrapperCommutative { op: crate::ast::BinOp },
+    /// Associative law over the same shape:
+    /// `wrapper(wrapper(a,b),c) => wrapper(a,wrapper(b,c))`.
+    WrapperAssociative { op: crate::ast::BinOp },
+    /// Identity-element law (`wrapper(a, 0) => a` for `Add`,
+    /// `wrapper(a, 1) => a` for `Mul`). The identity literal is
+    /// determined by `op` — backends compute it directly.
+    WrapperIdentity { op: crate::ast::BinOp },
     /// Structural induction on a recursive ADT parameter.
     Induction { param: String },
     /// Bounded universal: case-split over the declared `given`
