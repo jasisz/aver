@@ -3103,7 +3103,15 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     let captured = std::cell::RefCell::new(None::<Vec<aver::ast::TopLevel>>);
     let target = target_stage.unwrap();
     let neutral_policy = aver::ir::NeutralAllocPolicy;
-    let run_refinement_lower = target == PipelineStage::RefinementLower;
+    // Law lowering reads `proof_ir.refined_types` to detect
+    // refinement-lifted shapes — RefinementLower is a transitive
+    // dependency when targeting LawLower. Without it the lifted
+    // detection always returns false and the diagnostic
+    // misrepresents the law's actual classification.
+    let run_refinement_lower = matches!(
+        target,
+        PipelineStage::RefinementLower | PipelineStage::LawLower
+    );
     let run_contract_lower = target == PipelineStage::ContractLower;
     let run_law_lower = target == PipelineStage::LawLower;
     let proof_target = run_refinement_lower || run_contract_lower || run_law_lower;

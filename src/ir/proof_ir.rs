@@ -409,6 +409,14 @@ pub enum ProofStrategy {
         /// conservative `(n ≥ 0)` default when `wrapper_return`
         /// forces case-splitting.
         smart_guard: Option<SmartGuard>,
+        /// `true` when at least one law given is lifted to a
+        /// refinement type (`given a: Int` used as `Refined(value
+        /// = a)` in the law body). The Subtype/subset lift carries
+        /// the invariant in the type, so the by_cases case-split
+        /// that `wrapper_return` would otherwise force is
+        /// unnecessary — backends emit a plain unfold + simp
+        /// against arithmetic lemmas.
+        lifted: bool,
     },
     /// Structural induction on a recursive ADT parameter.
     Induction { param: String },
