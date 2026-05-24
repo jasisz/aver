@@ -22,27 +22,88 @@
 //! example — once the test is stable the legacy walkers become dead
 //! code in their consumers (Step 3 / Step 4 deletes them).
 
+use std::collections::HashSet;
+
 use crate::ast::{Expr, FnDef, Literal, Spanned, TopLevel, TypeDef};
-use crate::codegen::CodegenContext;
 use crate::codegen::common::{expr_to_dotted_name, refinement_info_for};
 use crate::codegen::recursion::{RecursionPlan, analyze_plans};
+use crate::codegen::{CodegenContext, ModuleInfo};
 use crate::ir::proof_ir::{
     DecreaseProof, FnContract, Measure, NativeIntCountdownBody, Predicate, PreservationProof,
     ProofIR, QuantifierType, RecursionContract, RefinedTypeDecl,
 };
 
-/// Walk every type definition in `ctx` (entry items + dependent
+/// Backend-neutral view of the data `proof_lower` needs. Built once
+/// per lowering call; lets the pipeline pass it through without
+/// requiring a fully-assembled `CodegenContext` (which only exists
+/// after `build_context` runs). Legacy callers still build the view
+/// from `&CodegenContext` via [`ProofLowerInputs::from_ctx`].
+///
+/// All fields are borrows — the struct never owns memory; the pipeline
+/// and `build_context` both already own the data and just lend it.
+///
+/// Forward-looking design: the inner helpers (`refinement_info_for`,
+/// `analyze_plans`, the `detect.rs` shape checkers) will migrate to
+/// take `&ProofLowerInputs` instead of `&CodegenContext` in Step 7b /
+/// 7c. Until then, the view's `legacy_ctx` field carries an optional
+/// `&CodegenContext` so the helpers that haven't migrated yet can
+/// keep working without a parallel API.
+pub struct ProofLowerInputs<'a> {
+    /// Entry-file top-level items, post-pipeline (TCO etc. applied).
+    pub entry_items: &'a [TopLevel],
+    /// Dependent modules already split into type/fn defs.
+    pub dep_modules: &'a [ModuleInfo],
+    /// Set of dep module prefix strings (e.g. `"Models.User"`).
+    pub module_prefixes: &'a HashSet<String>,
+    /// Recursive fn names from the `analyze` pipeline stage. Used by
+    /// `analyze_plans` to short-circuit non-recursive fns.
+    pub recursive_fns: &'a HashSet<String>,
+    /// Optional legacy context handle. Helpers that still take
+    /// `&CodegenContext` reach through this until they're migrated.
+    /// The pipeline-driven entry point sets this to `None`; the
+    /// `from_ctx` constructor sets it to the source ctx so legacy
+    /// helpers can keep working transparently during the migration.
+    pub legacy_ctx: Option<&'a CodegenContext>,
+}
+
+impl<'a> ProofLowerInputs<'a> {
+    /// Build a view from a fully-assembled `CodegenContext`. Used by
+    /// `refresh_facts` (test helper) and by the migration-window
+    /// `build_context` path before Step 7e moves lowering into the
+    /// pipeline. Sets `legacy_ctx = Some(ctx)` so internal helpers
+    /// that haven't migrated yet (`refinement_info_for`,
+    /// `analyze_plans`, the `detect.rs` shape checkers) keep working.
+    pub fn from_ctx(ctx: &'a CodegenContext) -> Self {
+        Self {
+            entry_items: &ctx.items,
+            dep_modules: &ctx.modules,
+            module_prefixes: &ctx.module_prefixes,
+            recursive_fns: &ctx.recursive_fns,
+            legacy_ctx: Some(ctx),
+        }
+    }
+}
+
+/// Walk every type definition in the inputs (entry items + dependent
 /// modules), classify the refinement-via-opaque ones, and build a
 /// `ProofIR` carrying their decided shapes. Pure function — never
-/// reads side effects, never mutates `ctx`.
-pub fn lower(ctx: &CodegenContext) -> ProofIR {
+/// reads side effects, never mutates inputs.
+pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
     let mut ir = ProofIR::default();
-    populate_refined_types(ctx, &mut ir);
-    populate_fn_contracts(ctx, &mut ir);
+    populate_refined_types(inputs, &mut ir);
+    populate_fn_contracts(inputs, &mut ir);
     ir
 }
 
-fn populate_refined_types(ctx: &CodegenContext, ir: &mut ProofIR) {
+fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
+    // Legacy helpers still take &CodegenContext. Until Step 7c
+    // migrates `refinement_info_for`, reach through `legacy_ctx`. The
+    // pipeline-driven entry sets this to None which will skip the
+    // refined-types walk entirely until 7c. Same fall-through pattern
+    // applies to `populate_fn_contracts` below for `analyze_plans`.
+    let Some(ctx) = inputs.legacy_ctx else {
+        return;
+    };
     // Walk entry items first, then dep modules. Both feed into the
     // same map keyed by bare type name — consumers (Lean / Dafny
     // emit paths) always query by bare name because that's what
@@ -51,11 +112,11 @@ fn populate_refined_types(ctx: &CodegenContext, ir: &mut ProofIR) {
     // Aver's module DAG invariant + typechecker's duplicate-type
     // rejection (PR #89) make name collisions a compile error, so
     // bare-name keying is safe.
-    let entry_typedefs = ctx.items.iter().filter_map(|item| match item {
+    let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::TypeDef(td) => Some(td),
         _ => None,
     });
-    let module_typedefs = ctx.modules.iter().flat_map(|m| m.type_defs.iter());
+    let module_typedefs = inputs.dep_modules.iter().flat_map(|m| m.type_defs.iter());
 
     for td in entry_typedefs.chain(module_typedefs) {
         let TypeDef::Product { name, fields, .. } = td else {
@@ -113,14 +174,18 @@ fn populate_refined_types(ctx: &CodegenContext, ir: &mut ProofIR) {
 /// diff test (`tests/proof_ir_diff.rs`) asserts both sides agree on
 /// the fibTR flagship, and once every variant is covered we delete
 /// the consumer-side `RecursionPlan` reads in a later Step.
-fn populate_fn_contracts(ctx: &CodegenContext, ir: &mut ProofIR) {
+fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
+    // analyze_plans still takes &CodegenContext (migrates in Step 7b);
+    // skip when the pipeline-driven path provides no legacy ctx.
+    let Some(ctx) = inputs.legacy_ctx else {
+        return;
+    };
     let (plans, _issues) = analyze_plans(ctx);
-    let all_fns: Vec<&FnDef> = ctx
-        .modules
+    let all_fns: Vec<&FnDef> = inputs
+        .dep_modules
         .iter()
         .flat_map(|m| m.fn_defs.iter())
-        .chain(ctx.fn_defs.iter())
-        .chain(ctx.items.iter().filter_map(|item| match item {
+        .chain(inputs.entry_items.iter().filter_map(|item| match item {
             TopLevel::FnDef(fd) => Some(fd),
             _ => None,
         }))

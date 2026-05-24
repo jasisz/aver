@@ -405,12 +405,14 @@ pub fn build_context(
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
     };
-    // Populate ProofIR after the ctx is otherwise built so the
-    // lowerer can read all fields it needs (items, modules, etc.).
-    // Step 2 only fills `refined_types`; subsequent steps extend.
+    // Populate ProofIR through the ProofLowerInputs view. Step 7a
+    // introduced the view; subsequent sub-steps migrate the internal
+    // helpers to take it directly. Pipeline integration (Step 7e)
+    // moves this invocation out of `build_context` entirely.
     #[cfg(feature = "runtime")]
     {
-        ctx.proof_ir = crate::codegen::proof_lower::lower(&ctx);
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+        ctx.proof_ir = crate::codegen::proof_lower::lower(&inputs);
     }
     ctx
 }
@@ -466,6 +468,7 @@ impl CodegenContext {
         // helpers that build the context piecewise and call
         // `refresh_facts` rely on this to see the same proof decisions
         // the production pipeline would emit.
-        self.proof_ir = crate::codegen::proof_lower::lower(self);
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(self);
+        self.proof_ir = crate::codegen::proof_lower::lower(&inputs);
     }
 }
