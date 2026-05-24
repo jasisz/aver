@@ -226,6 +226,63 @@ pub fn emit_verify_law_forall_auto_proof(
             })
         })
         .or_else(|| {
+            // IR-pinned `MapUpdatePostcondition` — the lowerer
+            // validated the outer fn's "inspect get, set in every
+            // arm" body shape and captured the law's (map, key)
+            // args + the helper-fn unfold set. Backend renders the
+            // 2-line `simp [outer (, extras)] ; cases h : AverMap.get
+            // m k <;> simp [AverMap.<axiom> (, extras)]` tactic.
+            if let Some(crate::ir::ProofStrategy::MapUpdatePostcondition {
+                ref outer_fn,
+                kind,
+                ref map_arg,
+                ref key_arg,
+                ref extra_unfolds,
+            }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+            {
+                let outer_lean = aver_name_to_lean(outer_fn);
+                let extras_lean: Vec<String> =
+                    extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
+                let atom_render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
+                    let rendered = emit_expr(e, ctx);
+                    if rendered.contains(' ') && !rendered.starts_with('(') {
+                        format!("({rendered})")
+                    } else {
+                        rendered
+                    }
+                };
+                let (axiom_lemma, prefix_extras): (&str, Vec<String>) = match kind {
+                    crate::ir::MapUpdatePostconditionKind::HasAfter => {
+                        ("AverMap.has_set_self", Vec::new())
+                    }
+                    crate::ir::MapUpdatePostconditionKind::GetAfter => {
+                        ("AverMap.get_set_self", extras_lean.clone())
+                    }
+                };
+                let simp_first: String = {
+                    let mut items = vec![outer_lean.clone()];
+                    items.extend(prefix_extras);
+                    format!("simp [{}]", items.join(", "))
+                };
+                let simp_second: String = {
+                    let mut items = vec![axiom_lemma.to_string()];
+                    if matches!(kind, crate::ir::MapUpdatePostconditionKind::GetAfter) {
+                        items.push(outer_lean.clone());
+                        items.extend(extras_lean.iter().cloned());
+                    }
+                    format!(
+                        "cases h : AverMap.get {} {} <;> simp [{}]",
+                        atom_render(map_arg),
+                        atom_render(key_arg),
+                        items.join(", ")
+                    )
+                };
+                return Some(AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines: intro_then(&proof_intro_names, vec![simp_first, simp_second]),
+                    replaces_theorem: false,
+                });
+            }
             maps::emit_map_update_law(vb, law, ctx, &proof_intro_names).map(|proof_lines| {
                 AutoProof {
                     support_lines: Vec::new(),

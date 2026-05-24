@@ -21,9 +21,9 @@ pub use pipeline::{
     PipelineStage, TypecheckMode,
 };
 pub use proof_ir::{
-    DecreaseProof, FnContract, FuelMetric, LawTheorem, Measure, NativeIntCountdownBody, Predicate,
-    PreservationProof, ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract,
-    RefinedTypeDecl, SmartGuard, UnclassifiedFn,
+    DecreaseProof, FnContract, FuelMetric, LawTheorem, MapUpdatePostconditionKind, Measure,
+    NativeIntCountdownBody, Predicate, PreservationProof, ProofIR, ProofStrategy, Quantifier,
+    QuantifierType, RecursionContract, RefinedTypeDecl, SmartGuard, UnclassifiedFn,
 };
 
 pub use alloc_info::{

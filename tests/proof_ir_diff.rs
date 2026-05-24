@@ -1137,3 +1137,97 @@ fn library_axiom_pinned_on_map_has_set_self() {
     assert_eq!(axiom, "Map.has_set_self");
     assert_eq!(args.len(), 3, "args should be [m, k, v]");
 }
+
+#[test]
+fn map_update_postcondition_pinned_has_after() {
+    // `Map.has(incCount(counts, word), word) => true` — `incCount`'s
+    // body inspects `Map.get(counts, word)` and `Map.set`s on every
+    // arm. Step 33 pins `MapUpdatePostcondition { kind: HasAfter,
+    // outer_fn: "incCount", … }`.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>\n\
+         \x20   current = Map.get(counts, word)\n\
+         \x20   match current\n\
+         \x20       Option.Some(n) -> Map.set(counts, word, n + 1)\n\
+         \x20       Option.None -> Map.set(counts, word, 1)\n\
+         \n\
+         verify incCount law keyPresent\n\
+         \x20   given counts: Map<String, Int> = [{}]\n\
+         \x20   given word: String = [\"a\"]\n\
+         \x20   Map.has(incCount(counts, word), word) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "incCount" && t.law_name == "keyPresent")
+        .expect("incCount::keyPresent law theorem missing");
+    let aver::ir::ProofStrategy::MapUpdatePostcondition {
+        ref outer_fn,
+        kind,
+        ref extra_unfolds,
+        ..
+    } = theorem.strategy
+    else {
+        panic!(
+            "expected MapUpdatePostcondition, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(outer_fn, "incCount");
+    assert_eq!(kind, aver::ir::MapUpdatePostconditionKind::HasAfter);
+    assert!(
+        extra_unfolds.is_empty(),
+        "HasAfter shouldn't carry helper unfolds, got: {extra_unfolds:?}"
+    );
+}
+
+#[test]
+fn map_update_postcondition_pinned_get_after_with_helper_unfolds() {
+    // `Map.get(incCount(counts, "a"), "a") => Option.Some(addOne(...))`
+    // — same `incCount` body shape, GetAfter variant pulls helper
+    // fns (`addOne`) into the IR's `extra_unfolds` set.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn addOne(n: Int) -> Int\n\
+         \x20   n + 1\n\
+         \n\
+         fn incCount(counts: Map<String, Int>, word: String) -> Map<String, Int>\n\
+         \x20   current = Map.get(counts, word)\n\
+         \x20   match current\n\
+         \x20       Option.Some(n) -> Map.set(counts, word, n + 1)\n\
+         \x20       Option.None -> Map.set(counts, word, 1)\n\
+         \n\
+         verify incCount law existingKeyIncrements\n\
+         \x20   given counts: Map<String, Int> = [{\"a\" => 1}]\n\
+         \x20   Map.get(incCount(counts, \"a\"), \"a\") => Option.Some(addOne(Option.withDefault(Map.get(counts, \"a\"), 0)))\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "incCount" && t.law_name == "existingKeyIncrements")
+        .expect("incCount::existingKeyIncrements law theorem missing");
+    let aver::ir::ProofStrategy::MapUpdatePostcondition {
+        ref outer_fn,
+        kind,
+        ref extra_unfolds,
+        ..
+    } = theorem.strategy
+    else {
+        panic!(
+            "expected MapUpdatePostcondition, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(outer_fn, "incCount");
+    assert_eq!(kind, aver::ir::MapUpdatePostconditionKind::GetAfter);
+    assert_eq!(
+        extra_unfolds,
+        &vec!["addOne".to_string()],
+        "GetAfter should carry the helper-fn unfold set (outer fn excluded)"
+    );
+}

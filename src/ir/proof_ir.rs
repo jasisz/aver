@@ -437,6 +437,34 @@ pub enum ProofStrategy {
         /// reasons about).
         args: Vec<Spanned<crate::ast::Expr>>,
     },
+    /// Post-condition of an inline-defined map-update fn. The outer
+    /// fn `outer(m, k)` has body shape `let v = Map.get m k; match v
+    /// { Some(_) -> Map.set m k _; None -> Map.set m k _ }` — i.e. it
+    /// inspects the existing value and writes some new value at key
+    /// `k` in every arm. The law asserts a post-condition on that
+    /// update:
+    ///   - `Map.has(outer(m, k), k) == true`              (`HasAfter`)
+    ///   - `Map.get(outer(m, k), k) == Option.Some(...)`  (`GetAfter`)
+    /// Backends emit a 2-step proof: unfold the outer fn, case-split
+    /// on `Map.get m k` (the same value `outer` inspected), apply the
+    /// `Map.set`-axioms on each branch. Named after the law's
+    /// algebraic content, not the Lean tactic.
+    MapUpdatePostcondition {
+        /// Source name of the outer update fn.
+        outer_fn: String,
+        /// Which post-condition the law asserts.
+        kind: MapUpdatePostconditionKind,
+        /// The map argument as it appears at the law's call site.
+        map_arg: Spanned<crate::ast::Expr>,
+        /// The key argument as it appears at the law's call site.
+        key_arg: Spanned<crate::ast::Expr>,
+        /// Additional helper-fn source names to unfold on top of
+        /// `outer_fn` — only used for `GetAfter`, where the rhs's
+        /// `Option.Some(...)` typically wraps the prior value via a
+        /// pure user helper (e.g. `addOne(...)`). Source names;
+        /// backends translate to their lemma vocabulary.
+        extra_unfolds: Vec<String>,
+    },
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
@@ -451,6 +479,15 @@ pub enum ProofStrategy {
     /// backend treats `BackendDispatch` as "fall through to ad-hoc
     /// strategy chain", same behaviour as pre-migration.
     BackendDispatch,
+}
+
+/// Discriminator for [`ProofStrategy::MapUpdatePostcondition`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapUpdatePostconditionKind {
+    /// Law shape: `Map.has(outer(m, k), k) == true`.
+    HasAfter,
+    /// Law shape: `Map.get(outer(m, k), k) == Option.Some(...)`.
+    GetAfter,
 }
 
 /// A bool predicate with explicit free-variable context. Stays in
