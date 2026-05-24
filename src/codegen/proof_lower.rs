@@ -1450,9 +1450,9 @@ fn defaulted_map_get(
     Some((&get_args[0], &get_args[1], default))
 }
 
-fn option_with_default_args<'a>(
-    expr: &'a Spanned<crate::ast::Expr>,
-) -> Option<(&'a Spanned<crate::ast::Expr>, &'a Spanned<crate::ast::Expr>)> {
+fn option_with_default_args(
+    expr: &Spanned<crate::ast::Expr>,
+) -> Option<(&Spanned<crate::ast::Expr>, &Spanned<crate::ast::Expr>)> {
     let args = call_named_args(expr, "Option.withDefault")?;
     (args.len() == 2).then_some((&args[0], &args[1]))
 }
