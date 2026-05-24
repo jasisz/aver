@@ -1066,9 +1066,8 @@ struct MapUpdatePostconditionPlan {
 }
 
 /// Detect a post-condition law on an inline map-update fn `outer(m,
-/// k)`. Two shapes:
-///   - `Map.has(outer(m, k), k) == true`             (`HasAfter`)
-///   - `Map.get(outer(m, k), k) == Option.Some(...)` (`GetAfter`)
+/// k)`. Two shapes: `Map.has(outer(m, k), k) == true` (`HasAfter`),
+/// or `Map.get(outer(m, k), k) == Option.Some(...)` (`GetAfter`).
 /// Both require `outer`'s body to follow the "inspect get, set in
 /// every arm" template (see `outer_fn_map_update_shape`).
 fn detect_map_update_postcondition(

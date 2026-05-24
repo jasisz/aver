@@ -442,9 +442,9 @@ pub enum ProofStrategy {
     /// { Some(_) -> Map.set m k _; None -> Map.set m k _ }` — i.e. it
     /// inspects the existing value and writes some new value at key
     /// `k` in every arm. The law asserts a post-condition on that
-    /// update:
-    ///   - `Map.has(outer(m, k), k) == true`              (`HasAfter`)
-    ///   - `Map.get(outer(m, k), k) == Option.Some(...)`  (`GetAfter`)
+    /// update — `Map.has(outer(m, k), k) == true` (`HasAfter`), or
+    /// `Map.get(outer(m, k), k) == Option.Some(...)` (`GetAfter`).
+    ///
     /// Backends emit a 2-step proof: unfold the outer fn, case-split
     /// on `Map.get m k` (the same value `outer` inspected), apply the
     /// `Map.set`-axioms on each branch. Named after the law's
