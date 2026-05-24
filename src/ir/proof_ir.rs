@@ -420,6 +420,23 @@ pub enum ProofStrategy {
     },
     /// Structural induction on a recursive ADT parameter.
     Induction { param: String },
+    /// Library axiom instance — the law instantiates a named
+    /// data-structure axiom (e.g. AverMap's `has_set_self` or
+    /// `get_set_self`). Backends map the axiom name to their
+    /// lemma vocabulary (Lean: `AverMap.has_set_self`; Dafny:
+    /// its own set/lookup axioms; Z3: built-in array theory).
+    /// Args carry the call-site expressions the axiom applies to.
+    LibraryAxiom {
+        /// Canonical axiom name. Recognised values today:
+        /// `"Map.has_set_self"`, `"Map.get_set_self"`. Open string
+        /// so future axioms (List, Set, Array, …) extend without
+        /// enum churn.
+        axiom: String,
+        /// Arguments in the order the axiom expects. For Map
+        /// axioms: `[m, k, v]` (the map, key, value the axiom
+        /// reasons about).
+        args: Vec<Spanned<crate::ast::Expr>>,
+    },
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
