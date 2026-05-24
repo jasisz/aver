@@ -1006,11 +1006,64 @@ fn simp_omega_unfold_pinned_on_sub_anti_comm_via_zero() {
         ref unfold_fns,
         wrapper_return,
         ref smart_guard,
+        lifted,
     } = theorem.strategy
     else {
         panic!("expected LinearArithmetic, got: {:?}", theorem.strategy);
     };
     assert!(unfold_fns.contains(&"sub".to_string()));
     assert!(!wrapper_return, "sub returns Int, not a wrapper");
+    assert!(!lifted, "no refinement lift in plain Int law");
     assert!(smart_guard.is_none(), "no refinement in chain");
+}
+
+#[test]
+fn linear_arithmetic_pinned_with_lifted_for_refinement_law() {
+    // Refinement-lifted law: givens are Int but used as
+    // `Natural(value = a)` carriers in the law body. The outer fn
+    // takes Natural params; the legacy backend bypassed the
+    // strategy chain via `refinement_auto_proof` in toplevel.rs.
+    // Step 30 routes these through `LinearArithmetic { lifted:
+    // true }` — backend skips by_cases (Subtype carries the
+    // invariant) and emits the unfold + simp tactic directly.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         record Natural\n\
+         \x20   value: Int\n\
+         \n\
+         fn fromInt(n: Int) -> Result<Natural, String>\n\
+         \x20   match n >= 0\n\
+         \x20       true -> Result.Ok(Natural(value = n))\n\
+         \x20       false -> Result.Err(\"negative\")\n\
+         \n\
+         fn add(a: Natural, b: Natural) -> Result<Natural, String>\n\
+         \x20   fromInt(a.value + b.value)\n\
+         \n\
+         verify add law commutative\n\
+         \x20   given a: Int = [0, 1, 7]\n\
+         \x20   given b: Int = [0, 1, 7]\n\
+         \x20   when a >= 0\n\
+         \x20   when b >= 0\n\
+         \x20   add(Natural(value = a), Natural(value = b)) => add(Natural(value = b), Natural(value = a))\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "add" && t.law_name == "commutative")
+        .expect("add::commutative law theorem missing");
+    let aver::ir::ProofStrategy::LinearArithmetic {
+        wrapper_return,
+        lifted,
+        ..
+    } = theorem.strategy
+    else {
+        panic!(
+            "expected LinearArithmetic for refinement-lifted law, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert!(wrapper_return, "add returns Result, wrapper");
+    assert!(lifted, "givens used as Natural carriers — lifted=true");
 }

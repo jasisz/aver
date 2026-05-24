@@ -192,15 +192,28 @@ pub fn emit_verify_law_forall_auto_proof(
                 ref unfold_fns,
                 wrapper_return,
                 ref smart_guard,
+                lifted,
             }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
             {
+                // Lifted laws use base intro names — the Subtype
+                // lift incorporates the `when` premise into the
+                // theorem's quantifier types, so the user-side
+                // hypotheses (`h_a`, `h_b`, `h_when`) aren't
+                // available in the proof goal. Non-lifted paths
+                // keep premise expansion for by_cases hypotheses.
+                let chosen_intro: &[String] = if lifted {
+                    &intro_names
+                } else {
+                    &proof_intro_names
+                };
                 return Some(AutoProof {
                     support_lines: Vec::new(),
                     proof_lines: emit_simp_omega_from_ir(
                         unfold_fns,
                         wrapper_return,
                         smart_guard.as_ref(),
-                        &proof_intro_names,
+                        lifted,
+                        chosen_intro,
                         ctx,
                     ),
                     replaces_theorem: false,
@@ -234,11 +247,26 @@ fn emit_simp_omega_from_ir(
     unfold_fns: &[String],
     wrapper_return: bool,
     smart_guard: Option<&crate::ir::SmartGuard>,
+    lifted: bool,
     intro_names: &[String],
     ctx: &CodegenContext,
 ) -> Vec<String> {
     let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
-    if wrapper_return {
+    if lifted && wrapper_return {
+        // Subtype/subset lift carries the smart-constructor
+        // invariant in the type — the law-quantified vars are
+        // already `Natural` (etc.) in the theorem statement, so
+        // by_cases case-split is unnecessary. Plain unfold + simp
+        // with arithmetic lemmas closes via Lean's built-in
+        // commutativity normalisation.
+        intro_then(
+            intro_names,
+            vec![
+                format!("unfold {}", lean_names.join(" ")),
+                "simp [Int.add_comm, Int.mul_comm]".to_string(),
+            ],
+        )
+    } else if wrapper_return {
         let by_cases_clauses: Vec<String> = intro_names
             .iter()
             .map(|n| {

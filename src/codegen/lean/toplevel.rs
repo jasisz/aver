@@ -1879,77 +1879,14 @@ fn emit_verify_law_block(
             rhs: law_rhs.clone(),
             sample_guards: law.sample_guards.clone(),
         };
-        // Refinement-lifted theorem (∀ a b : Natural, …) closes
-        // through a trivial unfold + `Int.add_comm` / `Int.mul_comm`
-        // rewrite — the Subtype invariant is in the type, so no
-        // by_cases or `simp [hyp]` machinery is needed. Emit
-        // directly here, skipping the auto_proof chain whose
-        // wrapper-return tactic was the last consumer of the
-        // by_cases heuristic.
-        let refinement_auto_proof = if !lifted_vars.is_empty()
-            && matches!(verify_mode, VerifyEmitMode::NativeDecide)
-        {
-            let intro_names: Vec<String> = law
-                .givens
-                .iter()
-                .map(|g| aver_name_to_lean(&g.name))
-                .collect();
-            let mut fn_names = std::collections::BTreeSet::new();
-            collect_user_fn_calls(&law_lhs, &mut fn_names);
-            collect_user_fn_calls(&law_rhs, &mut fn_names);
-            fn_names.insert(vb.fn_name.clone());
-            // Transitively expand so the unfold list reaches every
-            // user fn the law's body walks through (same expansion
-            // strategy as `emit_simp_omega_law` in `law_auto.rs`).
-            loop {
-                let before = fn_names.len();
-                let snapshot: Vec<String> = fn_names.iter().cloned().collect();
-                for item in &ctx.items {
-                    if let crate::ast::TopLevel::FnDef(fd) = item
-                        && snapshot.contains(&fd.name)
-                    {
-                        for stmt in fd.body.stmts() {
-                            let (crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e)) =
-                                stmt;
-                            collect_user_fn_calls(e, &mut fn_names);
-                        }
-                    }
-                }
-                if fn_names.len() == before {
-                    break;
-                }
-            }
-            // Top-level law fn first so `unfold` sees it in the
-            // goal before transitively-reached callees.
-            let mut ordered: Vec<String> = Vec::new();
-            if fn_names.contains(&vb.fn_name) {
-                ordered.push(vb.fn_name.clone());
-            }
-            for n in &fn_names {
-                if n != &vb.fn_name {
-                    ordered.push(n.clone());
-                }
-            }
-            let lean_names: Vec<String> = ordered.iter().map(|n| aver_name_to_lean(n)).collect();
-            let intro_clause = if intro_names.is_empty() {
-                String::new()
-            } else {
-                format!("  intro {}\n", intro_names.join(" "))
-            };
-            let proof_body = format!(
-                "{intro_clause}  unfold {}\n  simp [Int.add_comm, Int.mul_comm]",
-                lean_names.join(" ")
-            );
-            Some(proof_body)
-        } else {
-            None
-        };
-        if let Some(proof_body) = refinement_auto_proof {
-            lines.push(format!(
-                "theorem {} : ∀ {}, {} := by\n{}",
-                theorem_base, quant_params, theorem_prop, proof_body
-            ));
-        } else if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
+        // (Removed: refinement_auto_proof — Aver-specific bypass.
+        // Refinement-lifted laws now flow through law_auto via the
+        // IR-pinned `ProofStrategy::LinearArithmetic { lifted: true }`.
+        // The lowerer detects the `Refined(value = given)` carrier
+        // shape and pins the strategy; emit_simp_omega_from_ir
+        // skips by_cases when lifted=true. Step 30 retired this
+        // separate code path so all laws go through one dispatch.)
+        if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
             vb,
             &law_for_auto_proof,
             ctx,
@@ -2361,49 +2298,4 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
 
     lines.push("end".to_string());
     lines.join("\n")
-}
-
-/// Collect user-defined fn names referenced anywhere in `expr`,
-/// following the same last-segment-lowercase filter
-/// `law_auto::collect_fn_calls` uses (skip built-in namespace
-/// handles like `List.len`, keep cross-module `Modules.X.Y.fn`
-/// because their leaf segment starts lower-case).
-fn collect_user_fn_calls(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet<String>) {
-    match &expr.node {
-        Expr::FnCall(callee, args) => {
-            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&callee.node) {
-                let last = name.rsplit('.').next().unwrap_or(&name);
-                if last.chars().next().is_some_and(|c| c.is_lowercase()) {
-                    out.insert(name);
-                }
-            }
-            for a in args {
-                collect_user_fn_calls(a, out);
-            }
-        }
-        Expr::BinOp(_, l, r) => {
-            collect_user_fn_calls(l, out);
-            collect_user_fn_calls(r, out);
-        }
-        Expr::Attr(o, _) => collect_user_fn_calls(o, out),
-        Expr::Neg(i) | Expr::ErrorProp(i) => collect_user_fn_calls(i, out),
-        Expr::Match { subject, arms } => {
-            collect_user_fn_calls(subject, out);
-            for arm in arms {
-                collect_user_fn_calls(&arm.body, out);
-            }
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for it in items {
-                collect_user_fn_calls(it, out);
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, v) in fields {
-                collect_user_fn_calls(v, out);
-            }
-        }
-        Expr::Constructor(_, Some(arg)) => collect_user_fn_calls(arg, out),
-        _ => {}
-    }
 }

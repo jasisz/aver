@@ -542,7 +542,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             None => Vec::new(),
         };
 
-        let strategy = classify_law_strategy(law, &vb.fn_name, inputs);
+        let strategy = classify_law_strategy(law, &vb.fn_name, inputs, &ir.refined_types);
 
         ir.law_theorems.push(LawTheorem {
             fn_name: vb.fn_name.clone(),
@@ -578,6 +578,7 @@ fn classify_law_strategy(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
     inputs: &ProofLowerInputs,
+    refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
@@ -620,11 +621,12 @@ fn classify_law_strategy(
     }
     // Linear arithmetic over an unfold chain — generic catch-all.
     // Named for the semantic, not the backend tactic.
-    if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs) {
+    if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs, refined_types) {
         return ProofStrategy::LinearArithmetic {
             unfold_fns: plan.unfold_fns,
             wrapper_return: plan.wrapper_return,
             smart_guard: plan.smart_guard,
+            lifted: plan.lifted,
         };
     }
     ProofStrategy::BackendDispatch
@@ -637,23 +639,36 @@ struct SimpOmegaPlan {
     unfold_fns: Vec<String>,
     wrapper_return: bool,
     smart_guard: Option<crate::ir::SmartGuard>,
+    /// `true` when at least one law given is used as a refinement
+    /// carrier in the law body (e.g. `given a: Int` used as
+    /// `Natural(value = a)`). Subtype/subset lift carries the
+    /// invariant in the type, so wrapper case-split is unnecessary.
+    lifted: bool,
 }
 
 fn detect_simp_omega_unfold(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
     inputs: &ProofLowerInputs,
+    refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
 ) -> Option<SimpOmegaPlan> {
     use std::collections::BTreeSet;
 
-    // Outer fn must take only Int params — `simp + omega` works on
-    // linear arithmetic, not on opaque wrapper types.
     let outer_fd = inputs.find_fn_def_by_call_name(fn_name)?;
-    if outer_fd.params.iter().any(|(_, t)| t != "Int") {
-        return None;
-    }
     // All law givens Int.
     if law.givens.is_empty() || law.givens.iter().any(|g| g.type_name != "Int") {
+        return None;
+    }
+    // Detect refinement lifts — when any given is used as a
+    // `Refined(value = given)` carrier in the law body, the outer
+    // fn may legitimately take the refined type (`fn add(a:
+    // Natural, b: Natural)`) and unfold through the smart
+    // constructor to Int arithmetic. Skip the outer-Int rejection
+    // for lifted laws.
+    let lifted = law.givens.iter().any(|g| {
+        refinement_lift_for_given_ir(&g.name, &law.lhs, &law.rhs, refined_types).is_some()
+    });
+    if !lifted && outer_fd.params.iter().any(|(_, t)| t != "Int") {
         return None;
     }
 
@@ -703,9 +718,10 @@ fn detect_simp_omega_unfold(
         if body_calls_any_of_inputs(&fd.body, &self_only) {
             return None;
         }
-        // Int-only check only for the outer law fn — cross-module
-        // callees may take refined types.
-        if fd.name == fn_name && fd.params.iter().any(|(_, t)| t != "Int") {
+        // Int-only check for the outer law fn — but skip when the
+        // law is refinement-lifted (outer fn takes the refined
+        // type, body unfolds through the smart constructor).
+        if fd.name == fn_name && !lifted && fd.params.iter().any(|(_, t)| t != "Int") {
             return None;
         }
         let ret = fd.return_type.as_str();
@@ -733,7 +749,81 @@ fn detect_simp_omega_unfold(
         unfold_fns: ordered,
         wrapper_return,
         smart_guard,
+        lifted,
     })
+}
+
+/// Backend-neutral analogue of `codegen::common::refinement_lift_
+/// for_given`. Walks `lhs` / `rhs` looking for a `RecordCreate {
+/// type_name, fields: [(_, Ident(given))] }` shape where `type_
+/// name` is a refined type whose carrier matches the given's
+/// declared type. Returns the refined type name on first match.
+///
+/// The legacy version (common.rs) takes `&CodegenContext` and
+/// borrows the type name from `ctx.items`. The lowerer reads
+/// `refined_types` directly off the in-progress `ProofIR`
+/// (populated by `populate_refined_types`, which runs before
+/// `populate_law_theorems` in `lower(...)`).
+fn refinement_lift_for_given_ir(
+    given_name: &str,
+    lhs: &Spanned<crate::ast::Expr>,
+    rhs: &Spanned<crate::ast::Expr>,
+    refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
+) -> Option<String> {
+    let mut result: Option<String> = None;
+    walk_for_refinement_carrier(lhs, given_name, refined_types, &mut result);
+    walk_for_refinement_carrier(rhs, given_name, refined_types, &mut result);
+    result
+}
+
+fn walk_for_refinement_carrier(
+    expr: &Spanned<crate::ast::Expr>,
+    given_name: &str,
+    refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
+    result: &mut Option<String>,
+) {
+    use crate::ast::Expr;
+    if result.is_some() {
+        return;
+    }
+    match &expr.node {
+        Expr::RecordCreate { type_name, fields } if fields.len() == 1 => {
+            let (_, fvalue) = &fields[0];
+            let matches_var = matches!(
+                &fvalue.node,
+                Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
+            );
+            if matches_var && let Some(decl) = refined_types.get(type_name) {
+                *result = Some(decl.name.clone());
+                return;
+            }
+            // Even non-matching RecordCreate may contain nested
+            // refinement carriers (e.g. `Foo(value = Bar(value = a))`).
+            for (_, v) in fields {
+                walk_for_refinement_carrier(v, given_name, refined_types, result);
+            }
+        }
+        Expr::FnCall(callee, args) => {
+            walk_for_refinement_carrier(callee, given_name, refined_types, result);
+            for a in args {
+                walk_for_refinement_carrier(a, given_name, refined_types, result);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            walk_for_refinement_carrier(l, given_name, refined_types, result);
+            walk_for_refinement_carrier(r, given_name, refined_types, result);
+        }
+        Expr::Match { subject, arms, .. } => {
+            walk_for_refinement_carrier(subject, given_name, refined_types, result);
+            for arm in arms {
+                walk_for_refinement_carrier(&arm.body, given_name, refined_types, result);
+            }
+        }
+        Expr::Attr(obj, _) => {
+            walk_for_refinement_carrier(obj, given_name, refined_types, result);
+        }
+        _ => {}
+    }
 }
 
 fn iter_all_fn_defs<'a>(inputs: &'a ProofLowerInputs<'a>) -> impl Iterator<Item = &'a FnDef> {
