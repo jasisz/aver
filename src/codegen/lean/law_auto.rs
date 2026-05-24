@@ -24,6 +24,21 @@ pub struct AutoProof {
     pub replaces_theorem: bool,
 }
 
+/// Look up the strategy `proof_lower::populate_law_theorems` pinned
+/// on `(fn_name, law_name)`. Returns `None` when no contract was
+/// lowered (LawLower disabled or the verify block wasn't a Law).
+fn law_strategy_for(
+    ctx: &CodegenContext,
+    fn_name: &str,
+    law_name: &str,
+) -> Option<crate::ir::ProofStrategy> {
+    ctx.proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == fn_name && t.law_name == law_name)
+        .map(|t| t.strategy.clone())
+}
+
 pub fn emit_verify_law_forall_auto_proof(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -57,7 +72,17 @@ pub fn emit_verify_law_forall_auto_proof(
         return Some(proof);
     }
 
-    if law.lhs == law.rhs {
+    // Reflexive strategy — `lhs.node` ≡ `rhs.node` (`x => x`,
+    // `add(b, a) => add(b, a)`). The lowerer pinned this on
+    // `ProofIR.law_theorems[*].strategy = Reflexive`; backend
+    // honours that decision instead of running the syntactic
+    // equality check ad-hoc. Falls through to the strategy chain
+    // when the contract isn't Reflexive (BackendDispatch or any
+    // future variant).
+    if matches!(
+        law_strategy_for(ctx, &vb.fn_name, &law.name),
+        Some(crate::ir::ProofStrategy::Reflexive)
+    ) {
         return Some(AutoProof {
             support_lines: Vec::new(),
             proof_lines: intro_then(&proof_intro_names, vec!["rfl".to_string()]),

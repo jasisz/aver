@@ -522,6 +522,21 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             None => Vec::new(),
         };
 
+        // Pin `Reflexive` when the claim's two sides are
+        // syntactically identical (e.g. `x => x`, `add(b, a) =>
+        // add(b, a)`). Backends emit `rfl` for this case — no
+        // simp, no induction, no strategy chain walk. PartialEq on
+        // Spanned<Expr> compares the wrapped node + line, so two
+        // distinct source positions of the same identifier won't
+        // collide here; this is `lhs.node` structural equality
+        // through the derived PartialEq. Future steps will pin
+        // SimpOverLemmas / Induction / etc. on the remaining shapes.
+        let strategy = if law.lhs == law.rhs {
+            ProofStrategy::Reflexive
+        } else {
+            ProofStrategy::BackendDispatch
+        };
+
         ir.law_theorems.push(LawTheorem {
             fn_name: vb.fn_name.clone(),
             law_name: law.name.clone(),
@@ -529,7 +544,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             premises,
             claim_lhs: law.lhs.clone(),
             claim_rhs: law.rhs.clone(),
-            strategy: ProofStrategy::BackendDispatch,
+            strategy,
         });
     }
 }

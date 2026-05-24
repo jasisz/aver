@@ -2158,6 +2158,11 @@ verify square law squareSpec
             trace: false,
             cases_givens: vec![],
         }));
+        // Synthetic-AST test bypasses the parser + pipeline, so the
+        // LawLower stage hasn't run. refresh_facts populates
+        // ProofIR.law_theorems with Reflexive on `x => x` — backend's
+        // Step-24 reader checks the IR to emit rfl.
+        ctx.refresh_facts();
         let out = transpile(&mut ctx);
         let lean = out
             .files
