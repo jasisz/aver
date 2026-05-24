@@ -59,7 +59,31 @@ pub fn emit_verify_law_forall_auto_proof(
         .collect();
     let proof_intro_names = extend_intro_names_with_premises(law, &intro_names);
 
-    // Strategy 1: Structural induction on recursive sum types.
+    // Structural induction — IR-pinned `ProofStrategy::Induction`
+    // wins first. The legacy chain ran induction at this position
+    // unconditionally; the IR-pin path keeps that priority while
+    // making the decision visible in `proof_ir.law_theorems`.
+    // Falls through to the legacy emit_structural_induction_law
+    // (still called for BackendDispatch laws that the lowerer
+    // hasn't classified — shouldn't trigger for canonical recursive-
+    // ADT shapes after Step 31).
+    if matches!(
+        law_strategy_for(ctx, &vb.fn_name, &law.name),
+        Some(crate::ir::ProofStrategy::Induction { .. })
+    ) && let Some(proof) = induction::emit_structural_induction_law(
+        vb,
+        law,
+        ctx,
+        &intro_names,
+        theorem_base,
+        quant_params,
+        theorem_prop,
+    ) {
+        return Some(proof);
+    }
+    // Fallback for BackendDispatch laws — same emit, just sourced
+    // from the legacy detector. Step 32 retires this once every
+    // induction-eligible shape pins through the IR.
     if let Some(proof) = induction::emit_structural_induction_law(
         vb,
         law,
