@@ -42,12 +42,10 @@ use crate::ir::proof_ir::{
 /// All fields are borrows — the struct never owns memory; the pipeline
 /// and `build_context` both already own the data and just lend it.
 ///
-/// Forward-looking design: the inner helpers (`refinement_info_for`,
-/// `analyze_plans`, the `detect.rs` shape checkers) will migrate to
-/// take `&ProofLowerInputs` instead of `&CodegenContext` in Step 7b /
-/// 7c. Until then, the view's `legacy_ctx` field carries an optional
-/// `&CodegenContext` so the helpers that haven't migrated yet can
-/// keep working without a parallel API.
+/// Post-Step-7c: every helper the lowerer touches
+/// (`refinement_info_for`, `analyze_plans`, the `detect.rs` shape
+/// checkers) reads its inputs through this view. No more
+/// `&CodegenContext` reach-through — the struct stands on its own.
 pub struct ProofLowerInputs<'a> {
     /// Entry-file top-level items, post-pipeline (TCO etc. applied).
     pub entry_items: &'a [TopLevel],
@@ -58,28 +56,19 @@ pub struct ProofLowerInputs<'a> {
     /// Recursive fn names from the `analyze` pipeline stage. Used by
     /// `analyze_plans` to short-circuit non-recursive fns.
     pub recursive_fns: &'a HashSet<String>,
-    /// Optional legacy context handle. Helpers that still take
-    /// `&CodegenContext` reach through this until they're migrated.
-    /// The pipeline-driven entry point sets this to `None`; the
-    /// `from_ctx` constructor sets it to the source ctx so legacy
-    /// helpers can keep working transparently during the migration.
-    pub legacy_ctx: Option<&'a CodegenContext>,
 }
 
 impl<'a> ProofLowerInputs<'a> {
     /// Build a view from a fully-assembled `CodegenContext`. Used by
     /// `refresh_facts` (test helper) and by the migration-window
     /// `build_context` path before Step 7e moves lowering into the
-    /// pipeline. Sets `legacy_ctx = Some(ctx)` so internal helpers
-    /// that haven't migrated yet (`refinement_info_for`,
-    /// `analyze_plans`, the `detect.rs` shape checkers) keep working.
+    /// pipeline. Reads only the fields the lowerer actually needs.
     pub fn from_ctx(ctx: &'a CodegenContext) -> Self {
         Self {
             entry_items: &ctx.items,
             dep_modules: &ctx.modules,
             module_prefixes: &ctx.module_prefixes,
             recursive_fns: &ctx.recursive_fns,
-            legacy_ctx: Some(ctx),
         }
     }
 
@@ -154,14 +143,6 @@ pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
 }
 
 fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
-    // Legacy helpers still take &CodegenContext. Until Step 7c
-    // migrates `refinement_info_for`, reach through `legacy_ctx`. The
-    // pipeline-driven entry sets this to None which will skip the
-    // refined-types walk entirely until 7c. Same fall-through pattern
-    // applies to `populate_fn_contracts` below for `analyze_plans`.
-    let Some(ctx) = inputs.legacy_ctx else {
-        return;
-    };
     // Walk entry items first, then dep modules. Both feed into the
     // same map keyed by bare type name — consumers (Lean / Dafny
     // emit paths) always query by bare name because that's what
@@ -190,7 +171,7 @@ fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             // entry with a predicate-eval fallback witness.
             continue;
         }
-        let Some(info) = refinement_info_for(name, ctx) else {
+        let Some(info) = refinement_info_for(name, inputs) else {
             continue;
         };
         let invariant = Predicate {
@@ -200,7 +181,7 @@ fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             )],
             expr: info.predicate.clone(),
         };
-        let witness = pick_witness(name, ctx, info.predicate, info.param_name);
+        let witness = pick_witness(name, inputs, info.predicate, info.param_name);
         ir.refined_types.insert(
             name.clone(),
             RefinedTypeDecl {
@@ -304,11 +285,11 @@ fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// `[0, 1, -1]` and returning the first satisfier.
 fn pick_witness(
     type_name: &str,
-    ctx: &CodegenContext,
+    inputs: &ProofLowerInputs,
     predicate: &Spanned<Expr>,
     param_name: &str,
 ) -> Option<String> {
-    let smart_ctor_name = ctx.items.iter().find_map(|item| match item {
+    let smart_ctor_name = inputs.entry_items.iter().find_map(|item| match item {
         TopLevel::FnDef(fd)
             if fd.return_type.starts_with("Result<")
                 && fd.return_type[7..].starts_with(type_name)
@@ -319,7 +300,7 @@ fn pick_witness(
         _ => None,
     });
     if let Some(smart_ctor_name) = smart_ctor_name {
-        for item in &ctx.items {
+        for item in inputs.entry_items {
             let TopLevel::Verify(vb) = item else {
                 continue;
             };

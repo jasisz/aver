@@ -36,7 +36,8 @@ fn build_ctx(src: &str) -> CodegenContext {
 }
 
 fn legacy_decision(ctx: &CodegenContext, type_name: &str) -> Option<LegacyDecl> {
-    let info = refinement_info_for(type_name, ctx)?;
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let info = refinement_info_for(type_name, &inputs)?;
     Some(LegacyDecl {
         carrier_type: info.carrier_type.to_string(),
         carrier_field: info.carrier_field.to_string(),
@@ -142,7 +143,8 @@ fn non_refinement_records_dont_appear_in_proof_ir() {
         ctx.proof_ir.refined_types.keys().collect::<Vec<_>>()
     );
     // Sanity: legacy walker also rejects.
-    assert!(refinement_info_for("Point", &ctx).is_none());
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    assert!(refinement_info_for("Point", &inputs).is_none());
     // Don't trigger unused-import warnings on the TypeDef / TopLevel
     // imports — they're carried for readers cross-referencing
     // proof_lower internals.
