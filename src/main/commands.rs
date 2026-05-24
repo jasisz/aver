@@ -2417,6 +2417,7 @@ fn build_codegen_context(
     guest_entry: Option<&str>,
     with_self_host_support: bool,
     apply_traversal_lowering: bool,
+    run_proof_lower: bool,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -2460,12 +2461,28 @@ fn build_codegen_context(
             base_dir: Some(&module_root),
         }
     };
+    // Load dep modules BEFORE the entry pipeline runs — needed because
+    // the proof-lower pipeline stage walks both entry items and dep
+    // module type/fn defs in one sweep (cross-module refinement records,
+    // module-spanning call graphs). load_compile_deps only reads
+    // `TopLevel::Module(m).depends`, which TCO never touches, so it's
+    // safe to run pre-pipeline.
+    let modules = load_compile_deps(
+        &items,
+        &module_root,
+        apply_traversal_lowering, // run_interp_lower
+        apply_traversal_lowering, // run_buffer_build
+        with_self_host_support,   // self_host_mode → bypass opaque in dep modules
+    );
+
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(typecheck_mode),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            run_proof_lower,
+            dep_modules: &modules,
             ..Default::default()
         },
     );
@@ -2490,20 +2507,6 @@ fn build_codegen_context(
             .to_string()
     });
 
-    // Load dependent modules for codegen. Dep modules run the same pipeline
-    // shape as the entry — per-stage flags are forwarded so proof exporters
-    // get source-level IR end-to-end (without this, dep modules would
-    // always run interp_lower + buffer_build even when the entry skipped
-    // them, leaking synthesized `__buffered` variants into Lean/Dafny
-    // codegen).
-    let modules = load_compile_deps(
-        &items,
-        &module_root,
-        apply_traversal_lowering, // run_interp_lower
-        apply_traversal_lowering, // run_buffer_build
-        with_self_host_support,   // self_host_mode → bypass opaque in dep modules
-    );
-
     let use_runtime_policy = matches!(policy_mode, super::cli::CompilePolicyMode::Runtime);
     let use_scoped_runtime = with_replay || use_runtime_policy;
 
@@ -2524,6 +2527,10 @@ fn build_codegen_context(
     // Build codegen context. `entry_analysis` carries `mutual_tco_members`,
     // `recursive_fns`, and per-fn `FnAnalysis` from the analyze stage; codegen
     // unions these with each `module.analysis` to build a global view.
+    // ProofIR (when run_proof_lower was on) comes pre-computed from the
+    // pipeline; pull it across before assembly so build_context doesn't
+    // redundantly recompute it.
+    let prebuilt_proof_ir = pipeline_result.proof_ir;
     let mut ctx = codegen::build_context(
         items,
         &tc_result,
@@ -2532,6 +2539,12 @@ fn build_codegen_context(
         name,
         modules,
     );
+    #[cfg(feature = "runtime")]
+    if let Some(ir) = prebuilt_proof_ir {
+        ctx.proof_ir = ir;
+    }
+    #[cfg(not(feature = "runtime"))]
+    let _ = prebuilt_proof_ir;
     ctx.policy = policy;
     ctx.emit_replay_runtime = use_scoped_runtime;
     ctx.runtime_policy_from_env = use_runtime_policy;
@@ -3598,7 +3611,8 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         policy_mode,
         guest_entry,
         with_self_host_support,
-        true, // apply_traversal_lowering — Rust target wants the optimized form
+        true,  // apply_traversal_lowering — Rust target wants the optimized form
+        false, // run_proof_lower — runtime backend, doesn't need ProofIR
     );
     if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
         eprintln!("{}", err.red());
@@ -4234,6 +4248,7 @@ pub(super) fn cmd_proof(
         None,
         false,
         false, // apply_traversal_lowering — proof export wants source-level IR
+        true,  // run_proof_lower — proof backends need ProofIR populated
     );
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
