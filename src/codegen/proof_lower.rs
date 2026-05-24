@@ -635,6 +635,17 @@ fn classify_law_strategy(
     if let Some((axiom, args)) = detect_map_set_axiom(law) {
         return ProofStrategy::LibraryAxiom { axiom, args };
     }
+    // Post-condition of an inline-defined map-update fn — case-split
+    // over `Map.get m k` and apply the `Map.set` axioms.
+    if let Some(post) = detect_map_update_postcondition(law, fn_name, inputs) {
+        return ProofStrategy::MapUpdatePostcondition {
+            outer_fn: post.outer_fn,
+            kind: post.kind,
+            map_arg: post.map_arg,
+            key_arg: post.key_arg,
+            extra_unfolds: post.extra_unfolds,
+        };
+    }
     // Linear arithmetic over an unfold chain — generic catch-all.
     // Named for the semantic, not the backend tactic.
     if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs, refined_types) {
@@ -1042,6 +1053,279 @@ fn detect_map_set_axiom(
         ))
     };
     get_side(&law.lhs, &law.rhs).or_else(|| get_side(&law.rhs, &law.lhs))
+}
+
+/// Internal scratch carrier — mirrors the IR variant but lives in
+/// the lowerer so callers can build incrementally.
+struct MapUpdatePostconditionPlan {
+    outer_fn: String,
+    kind: crate::ir::MapUpdatePostconditionKind,
+    map_arg: Spanned<crate::ast::Expr>,
+    key_arg: Spanned<crate::ast::Expr>,
+    extra_unfolds: Vec<String>,
+}
+
+/// Detect a post-condition law on an inline map-update fn `outer(m,
+/// k)`. Two shapes: `Map.has(outer(m, k), k) == true` (`HasAfter`),
+/// or `Map.get(outer(m, k), k) == Option.Some(...)` (`GetAfter`).
+/// Both require `outer`'s body to follow the "inspect get, set in
+/// every arm" template (see `outer_fn_map_update_shape`).
+fn detect_map_update_postcondition(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<MapUpdatePostconditionPlan> {
+    use crate::ir::MapUpdatePostconditionKind;
+
+    outer_fn_map_update_shape(fn_name, inputs)?;
+
+    let has_side = |side: &Spanned<crate::ast::Expr>,
+                    other: &Spanned<crate::ast::Expr>|
+     -> Option<MapUpdatePostconditionPlan> {
+        if !is_bool_true(other) {
+            return None;
+        }
+        let (map_arg, key_arg) = map_has_after_fn_call(side, fn_name)?;
+        Some(MapUpdatePostconditionPlan {
+            outer_fn: fn_name.to_string(),
+            kind: MapUpdatePostconditionKind::HasAfter,
+            map_arg: map_arg.clone(),
+            key_arg: key_arg.clone(),
+            extra_unfolds: Vec::new(),
+        })
+    };
+    if let Some(plan) = has_side(&law.lhs, &law.rhs).or_else(|| has_side(&law.rhs, &law.lhs)) {
+        return Some(plan);
+    }
+
+    let get_side = |side: &Spanned<crate::ast::Expr>,
+                    other: &Spanned<crate::ast::Expr>|
+     -> Option<MapUpdatePostconditionPlan> {
+        option_some_arg(other)?;
+        let (map_arg, key_arg) = map_get_after_fn_call(side, fn_name)?;
+        let extra_unfolds = law_helper_unfolds(law, fn_name, inputs);
+        Some(MapUpdatePostconditionPlan {
+            outer_fn: fn_name.to_string(),
+            kind: MapUpdatePostconditionKind::GetAfter,
+            map_arg: map_arg.clone(),
+            key_arg: key_arg.clone(),
+            extra_unfolds,
+        })
+    };
+    get_side(&law.lhs, &law.rhs).or_else(|| get_side(&law.rhs, &law.lhs))
+}
+
+/// Collect user helper-fn source names referenced from the law's
+/// lhs/rhs/when, expanded transitively through pure (effect-free,
+/// non-main) fn bodies. The outer fn is excluded — it's carried in
+/// the IR variant separately. Filters out stdlib / namespace calls
+/// (`Map.get`, `Option.withDefault`, …) by requiring each name to
+/// resolve to a user fn def. Sorted for deterministic emit.
+fn law_helper_unfolds(
+    law: &crate::ast::VerifyLaw,
+    outer_fn: &str,
+    inputs: &ProofLowerInputs,
+) -> Vec<String> {
+    use std::collections::BTreeSet;
+
+    let resolve_user_fn = |name: &str| -> Option<&FnDef> {
+        let fd = inputs.find_fn_def_by_call_name(name)?;
+        if !fd.effects.is_empty() || fd.name == "main" {
+            return None;
+        }
+        Some(fd)
+    };
+
+    // Seed from law sides, immediately filtering to user-fn names.
+    let mut raw: BTreeSet<String> = BTreeSet::new();
+    collect_fn_calls_expr(&law.lhs, &mut raw);
+    collect_fn_calls_expr(&law.rhs, &mut raw);
+    if let Some(when_expr) = &law.when {
+        collect_fn_calls_expr(when_expr, &mut raw);
+    }
+    let mut names: BTreeSet<String> = raw
+        .into_iter()
+        .filter_map(|n| resolve_user_fn(&n).map(|fd| fd.name.clone()))
+        .collect();
+
+    // Transitive expansion through pure user fn bodies.
+    loop {
+        let before = names.len();
+        let snapshot: Vec<String> = names.iter().cloned().collect();
+        for name in snapshot {
+            let Some(fd) = resolve_user_fn(&name) else {
+                continue;
+            };
+            let mut called: BTreeSet<String> = BTreeSet::new();
+            for stmt in fd.body.stmts() {
+                match stmt {
+                    crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                        collect_fn_calls_expr(e, &mut called);
+                    }
+                }
+            }
+            for c in called {
+                if let Some(callee_fd) = resolve_user_fn(&c) {
+                    names.insert(callee_fd.name.clone());
+                }
+            }
+        }
+        if names.len() == before {
+            break;
+        }
+    }
+    names.remove(outer_fn);
+    names.into_iter().collect()
+}
+
+/// Validate the outer fn's body matches the "inspect get, set in
+/// every arm" template:
+///
+/// ```text
+/// fn outer(m: Map<K, V>, k: K) -> Map<K, V>
+///   [v = Map.get(m, k);]?
+///   match (v | Map.get(m, k)) {
+///     _ -> Map.set(m, k, _)
+///     _ -> Map.set(m, k, _)
+///     ...
+///   }
+/// ```
+///
+/// Returns `Some(())` on match. The map/key params are positional —
+/// position 0 is the map, position 1 is the key.
+fn outer_fn_map_update_shape(fn_name: &str, inputs: &ProofLowerInputs) -> Option<()> {
+    let fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if fd.params.len() != 2 {
+        return None;
+    }
+    let map_param = fd.params[0].0.as_str();
+    let key_param = fd.params[1].0.as_str();
+    map_update_body_matches(fd.body.stmts(), map_param, key_param).then_some(())
+}
+
+fn map_update_body_matches(stmts: &[crate::ast::Stmt], map_param: &str, key_param: &str) -> bool {
+    use crate::ast::Stmt;
+    if stmts.len() < 2 {
+        // Even the no-let variant requires the match to be the last
+        // stmt — but a single-stmt body is too short to be this shape.
+        return matches!(stmts.first(), Some(Stmt::Expr(e)) if map_update_match_expr(e, map_param, key_param, None));
+    }
+    let Some(last) = stmts.last() else {
+        return false;
+    };
+    let mut bound_name: Option<&str> = None;
+    for stmt in &stmts[..stmts.len() - 1] {
+        match stmt {
+            Stmt::Binding(name, _, expr) => {
+                if !is_map_get_of_params(expr, map_param, key_param) {
+                    return false;
+                }
+                bound_name = Some(name);
+            }
+            Stmt::Expr(_) => return false,
+        }
+    }
+    match last {
+        Stmt::Expr(expr) => map_update_match_expr(expr, map_param, key_param, bound_name),
+        Stmt::Binding(_, _, _) => false,
+    }
+}
+
+fn map_update_match_expr(
+    expr: &Spanned<crate::ast::Expr>,
+    map_param: &str,
+    key_param: &str,
+    bound_name: Option<&str>,
+) -> bool {
+    use crate::ast::Expr;
+    let Expr::Match { subject, arms } = &expr.node else {
+        return false;
+    };
+    if arms.len() < 2 {
+        return false;
+    }
+    let subject_ok = match bound_name {
+        Some(name) => matches_ident_expr(subject, name),
+        None => is_map_get_of_params(subject, map_param, key_param),
+    };
+    if !subject_ok {
+        return false;
+    }
+    arms.iter()
+        .all(|arm| is_map_set_of_params(&arm.body, map_param, key_param))
+}
+
+fn is_map_get_of_params(
+    expr: &Spanned<crate::ast::Expr>,
+    map_param: &str,
+    key_param: &str,
+) -> bool {
+    let Some(args) = call_named_args(expr, "Map.get") else {
+        return false;
+    };
+    args.len() == 2
+        && matches_ident_expr(&args[0], map_param)
+        && matches_ident_expr(&args[1], key_param)
+}
+
+fn is_map_set_of_params(
+    expr: &Spanned<crate::ast::Expr>,
+    map_param: &str,
+    key_param: &str,
+) -> bool {
+    let Some(args) = call_named_args(expr, "Map.set") else {
+        return false;
+    };
+    args.len() == 3
+        && matches_ident_expr(&args[0], map_param)
+        && matches_ident_expr(&args[1], key_param)
+}
+
+/// `Map.has(outer(m, k), k)` — pick out the (m, k) from the inner
+/// outer-fn call when the two key positions agree. Returns `None`
+/// when the outer call doesn't match `fn_name` or shape is off.
+fn map_has_after_fn_call<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+    fn_name: &str,
+) -> Option<(&'a Spanned<crate::ast::Expr>, &'a Spanned<crate::ast::Expr>)> {
+    use crate::ast::Expr;
+    let has_args = call_named_args(expr, "Map.has")?;
+    if has_args.len() != 2 {
+        return None;
+    }
+    let Expr::FnCall(callee, fn_args) = &has_args[0].node else {
+        return None;
+    };
+    if fn_args.len() != 2
+        || !callee_matches_name(callee, fn_name)
+        || fn_args[1].node != has_args[1].node
+    {
+        return None;
+    }
+    Some((&fn_args[0], &fn_args[1]))
+}
+
+/// `Map.get(outer(m, k), k)` — pick out the (m, k) from the inner
+/// outer-fn call when the two key positions agree.
+fn map_get_after_fn_call<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+    fn_name: &str,
+) -> Option<(&'a Spanned<crate::ast::Expr>, &'a Spanned<crate::ast::Expr>)> {
+    use crate::ast::Expr;
+    let get_args = call_named_args(expr, "Map.get")?;
+    if get_args.len() != 2 {
+        return None;
+    }
+    let Expr::FnCall(callee, fn_args) = &get_args[0].node else {
+        return None;
+    };
+    if fn_args.len() != 2
+        || !callee_matches_name(callee, fn_name)
+        || fn_args[1].node != get_args[1].node
+    {
+        return None;
+    }
+    Some((&fn_args[0], &fn_args[1]))
 }
 
 fn map_has_set_parts(
