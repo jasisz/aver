@@ -630,6 +630,11 @@ fn classify_law_strategy(
     if let Some(inner_fn) = detect_wrapper_unary_equivalence(law, fn_name, inputs) {
         return ProofStrategy::UnaryEqualsBinary { inner_fn };
     }
+    // Library axiom instances — Map.has-after-set, Map.get-after-set.
+    // Specific shape, single-line `simpa using axiom` emit on Lean.
+    if let Some((axiom, args)) = detect_map_set_axiom(law) {
+        return ProofStrategy::LibraryAxiom { axiom, args };
+    }
     // Linear arithmetic over an unfold chain — generic catch-all.
     // Named for the semantic, not the backend tactic.
     if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs, refined_types) {
@@ -995,6 +1000,116 @@ fn arms_match_bool_ok_err(arms: &[crate::ast::MatchArm]) -> bool {
         }
     }
     saw_true_ok && saw_false_err
+}
+
+/// Detect a Map library axiom instance:
+///   `Map.has(Map.set(m, k, v), k) => true`        → `Map.has_set_self`
+///   `Map.get(Map.set(m, k, v), k) => Option.Some(v)` → `Map.get_set_self`
+/// Returns `(axiom_name, [m, k, v])` on match, either side
+/// orientation. Both axioms use the same `[m, k, v]` arg order.
+fn detect_map_set_axiom(
+    law: &crate::ast::VerifyLaw,
+) -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
+    // `Map.has(Map.set(m, k, v), k) => true`
+    let has_side = |side: &Spanned<crate::ast::Expr>,
+                    other: &Spanned<crate::ast::Expr>|
+     -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
+        let (m, k, v) = map_has_set_parts(side)?;
+        if !is_bool_true(other) {
+            return None;
+        }
+        Some((
+            "Map.has_set_self".to_string(),
+            vec![m.clone(), k.clone(), v.clone()],
+        ))
+    };
+    if let Some(found) = has_side(&law.lhs, &law.rhs).or_else(|| has_side(&law.rhs, &law.lhs)) {
+        return Some(found);
+    }
+
+    // `Map.get(Map.set(m, k, v), k) => Option.Some(v)`
+    let get_side = |side: &Spanned<crate::ast::Expr>,
+                    other: &Spanned<crate::ast::Expr>|
+     -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
+        let (m, k, v) = map_get_set_parts(side)?;
+        let some_v = option_some_arg(other)?;
+        if &some_v.node != &v.node {
+            return None;
+        }
+        Some((
+            "Map.get_set_self".to_string(),
+            vec![m.clone(), k.clone(), v.clone()],
+        ))
+    };
+    get_side(&law.lhs, &law.rhs).or_else(|| get_side(&law.rhs, &law.lhs))
+}
+
+fn map_has_set_parts(
+    expr: &Spanned<crate::ast::Expr>,
+) -> Option<(
+    &Spanned<crate::ast::Expr>,
+    &Spanned<crate::ast::Expr>,
+    &Spanned<crate::ast::Expr>,
+)> {
+    let has_args = call_named_args(expr, "Map.has")?;
+    if has_args.len() != 2 {
+        return None;
+    }
+    let set_args = call_named_args(&has_args[0], "Map.set")?;
+    if set_args.len() != 3 {
+        return None;
+    }
+    if set_args[1].node != has_args[1].node {
+        return None;
+    }
+    Some((&set_args[0], &set_args[1], &set_args[2]))
+}
+
+fn map_get_set_parts(
+    expr: &Spanned<crate::ast::Expr>,
+) -> Option<(
+    &Spanned<crate::ast::Expr>,
+    &Spanned<crate::ast::Expr>,
+    &Spanned<crate::ast::Expr>,
+)> {
+    let get_args = call_named_args(expr, "Map.get")?;
+    if get_args.len() != 2 {
+        return None;
+    }
+    let set_args = call_named_args(&get_args[0], "Map.set")?;
+    if set_args.len() != 3 {
+        return None;
+    }
+    if set_args[1].node != get_args[1].node {
+        return None;
+    }
+    Some((&set_args[0], &set_args[1], &set_args[2]))
+}
+
+fn option_some_arg(expr: &Spanned<crate::ast::Expr>) -> Option<&Spanned<crate::ast::Expr>> {
+    let args = call_named_args(expr, "Option.Some")?;
+    (args.len() == 1).then_some(&args[0])
+}
+
+fn call_named_args<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+    full_name: &str,
+) -> Option<&'a [Spanned<crate::ast::Expr>]> {
+    use crate::ast::Expr;
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    let callee_name = expr_to_dotted_name(&callee.node)?;
+    if callee_name == full_name {
+        Some(args.as_slice())
+    } else {
+        None
+    }
+}
+
+fn is_bool_true(expr: &Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::{Expr, Literal};
+    matches!(&expr.node, Expr::Literal(Literal::Bool(true)))
 }
 
 /// Detect a `given` that binds a recursive sum-typed ADT — the

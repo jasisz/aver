@@ -179,6 +179,44 @@ pub fn emit_verify_law_forall_auto_proof(
         })
         .or_else(|| spec::emit_spec_function_equivalence_law(vb, law, ctx, &proof_intro_names))
         .or_else(|| {
+            // IR-pinned Map library axiom (has_set_self / get_set_self).
+            // The lowerer detected the canonical shape and captured the
+            // (m, k, v) args; backend just renders the Lean simpa.
+            if let Some(crate::ir::ProofStrategy::LibraryAxiom {
+                ref axiom,
+                ref args,
+            }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+                && matches!(axiom.as_str(), "Map.has_set_self" | "Map.get_set_self")
+                && args.len() == 3
+            {
+                let lemma = match axiom.as_str() {
+                    "Map.has_set_self" => "AverMap.has_set_self",
+                    "Map.get_set_self" => "AverMap.get_set_self",
+                    _ => unreachable!(),
+                };
+                let atom_arg = |e: &crate::ast::Spanned<crate::ast::Expr>| {
+                    let rendered = emit_expr(e, ctx);
+                    if rendered.contains(' ') && !rendered.starts_with('(') {
+                        format!("({rendered})")
+                    } else {
+                        rendered
+                    }
+                };
+                return Some(AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines: intro_then(
+                        &proof_intro_names,
+                        vec![format!(
+                            "simpa using {} {} {} {}",
+                            lemma,
+                            atom_arg(&args[0]),
+                            atom_arg(&args[1]),
+                            atom_arg(&args[2]),
+                        )],
+                    ),
+                    replaces_theorem: false,
+                });
+            }
             maps::emit_direct_map_set_law(law, ctx, &proof_intro_names).map(|proof_lines| {
                 AutoProof {
                     support_lines: Vec::new(),

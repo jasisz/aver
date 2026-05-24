@@ -1103,3 +1103,37 @@ fn induction_pinned_on_recursive_adt_given() {
     };
     assert_eq!(param, "t");
 }
+
+#[test]
+fn library_axiom_pinned_on_map_has_set_self() {
+    // `Map.has(Map.set(m, k, v), k) => true` — canonical
+    // has-after-set axiom. Step 32 pins
+    // `LibraryAxiom { axiom: "Map.has_set_self", args: [m, k, v] }`.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn touch(m: Map<String, Int>, k: String, v: Int) -> Map<String, Int>\n\
+         \x20   Map.set(m, k, v)\n\
+         \n\
+         verify touch law hasAfterSet\n\
+         \x20   given m: Map<String, Int> = [{}]\n\
+         \x20   given k: String = [\"x\"]\n\
+         \x20   given v: Int = [1]\n\
+         \x20   Map.has(Map.set(m, k, v), k) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "touch" && t.law_name == "hasAfterSet")
+        .expect("touch::hasAfterSet law theorem missing");
+    let aver::ir::ProofStrategy::LibraryAxiom {
+        ref axiom,
+        ref args,
+    } = theorem.strategy
+    else {
+        panic!("expected LibraryAxiom, got: {:?}", theorem.strategy);
+    };
+    assert_eq!(axiom, "Map.has_set_self");
+    assert_eq!(args.len(), 3, "args should be [m, k, v]");
+}
