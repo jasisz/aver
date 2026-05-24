@@ -292,6 +292,42 @@ pub fn emit_verify_law_forall_auto_proof(
             })
         })
         .or_else(|| {
+            // IR-pinned `MapKeyTrackedIncrement` — the lowerer
+            // validated the outer fn's "tracked counter" body
+            // template (Some(n) -> n + 1, None -> 1) and matched the
+            // law against the `Option.withDefault`-defaulted shape.
+            // Backend renders the 2-line `simp [outer] ; cases h :
+            // AverMap.get m k <;> simp [AverMap.get_set_self, h]`
+            // tactic.
+            if let Some(crate::ir::ProofStrategy::MapKeyTrackedIncrement {
+                ref outer_fn,
+                ref map_arg,
+                ref key_arg,
+            }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+            {
+                let outer_lean = aver_name_to_lean(outer_fn);
+                let atom_render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
+                    let rendered = emit_expr(e, ctx);
+                    if rendered.contains(' ') && !rendered.starts_with('(') {
+                        format!("({rendered})")
+                    } else {
+                        rendered
+                    }
+                };
+                let lines = vec![
+                    format!("simp [{}]", outer_lean),
+                    format!(
+                        "cases h : AverMap.get {} {} <;> simp [AverMap.get_set_self, h]",
+                        atom_render(map_arg),
+                        atom_render(key_arg),
+                    ),
+                ];
+                return Some(AutoProof {
+                    support_lines: Vec::new(),
+                    proof_lines: intro_then(&proof_intro_names, lines),
+                    replaces_theorem: false,
+                });
+            }
             maps::emit_map_increment_tracked_count_law(vb, law, ctx, &proof_intro_names).map(
                 |proof_lines| AutoProof {
                     support_lines: Vec::new(),
