@@ -3053,12 +3053,13 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
         "escape" => Some(PipelineStage::Escape),
+        "proof_lower" => Some(PipelineStage::ProofLower),
         other => {
             eprintln!(
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, proof_lower",
                     other
                 )
                 .red()
@@ -3096,6 +3097,17 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     let captured = std::cell::RefCell::new(None::<Vec<aver::ast::TopLevel>>);
     let target = target_stage.unwrap();
     let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let run_proof_lower = target == PipelineStage::ProofLower;
+    // ProofLower walks both entry items and dep modules. Pre-load deps
+    // when targeting that stage so the dump reflects what production
+    // (`aver proof`) sees. Other stages don't need the dep modules
+    // through the pipeline interface — keep empty for them to match
+    // the pre-7e diagnostic shape.
+    let dep_modules = if run_proof_lower {
+        load_compile_deps(&items, &module_root, false, false, false)
+    } else {
+        Vec::new()
+    };
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
@@ -3107,6 +3119,8 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             // VM/WASM baseline. Codegen pipelines should pass their
             // backend-specific policy when consuming the analysis.
             alloc_policy: Some(&neutral_policy),
+            run_proof_lower,
+            dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage, items_after| {
                 if stage == target {
                     *captured.borrow_mut() = Some(items_after.to_vec());
@@ -3120,6 +3134,22 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     {
         eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
         process::exit(1);
+    }
+
+    // ProofLower doesn't transform items — it produces a side artifact.
+    // Render the lowered ProofIR instead of the (unchanged) items list.
+    if target == PipelineStage::ProofLower {
+        match pipeline_result.proof_ir {
+            Some(ir) => print!("{}", render_proof_ir_dump(&ir)),
+            None => {
+                eprintln!(
+                    "{}",
+                    "stage 'proof_lower' did not run (likely skipped after typecheck errors)".red()
+                );
+                process::exit(1);
+            }
+        }
+        return;
     }
 
     match captured.into_inner() {
@@ -3143,6 +3173,81 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             process::exit(1);
         }
     }
+}
+
+/// Backend-neutral textual dump of a lowered `ProofIR`. Drives
+/// `aver compile FILE --emit-ir-after=proof_lower` — same lens any
+/// other pipeline stage gets, scoped to the proof artifact a proof
+/// exporter (Lean / Dafny) would consume. Useful for debugging
+/// "why did this fn get Fuel vs Native?", "what precondition did
+/// the lowerer derive?", "did this type lift to a subtype?".
+fn render_proof_ir_dump(ir: &aver::ir::ProofIR) -> String {
+    use aver::ir::{Measure, RecursionContract};
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    writeln!(out, "# ProofIR").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "## refined_types ({})", ir.refined_types.len()).unwrap();
+    let mut refined: Vec<_> = ir.refined_types.values().collect();
+    refined.sort_by(|a, b| a.name.cmp(&b.name));
+    for decl in refined {
+        let witness = decl.witness.as_deref().unwrap_or("<none>");
+        writeln!(
+            out,
+            "- {} : {{ {} : {} // <predicate> }} witness {}",
+            decl.name, decl.predicate_param, decl.carrier_type, witness,
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    carrier_field: {}    predicate: {:?}",
+            decl.carrier_field, decl.invariant.expr.node,
+        )
+        .unwrap();
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "## fn_contracts ({})", ir.fn_contracts.len()).unwrap();
+    let mut contracts: Vec<_> = ir.fn_contracts.values().collect();
+    contracts.sort_by(|a, b| a.source_name.cmp(&b.source_name));
+    for contract in contracts {
+        write!(out, "- {} ", contract.source_name).unwrap();
+        match &contract.recursion {
+            None => writeln!(out, "(non-recursive)").unwrap(),
+            Some(RecursionContract::Fuel { fuel_metric }) => {
+                writeln!(out, "Fuel {{ {:?} }}", fuel_metric).unwrap();
+            }
+            Some(RecursionContract::Native {
+                precondition,
+                measure,
+                preservation,
+                decrease,
+                body,
+            }) => {
+                let Measure::NatAbsInt { param } = measure else {
+                    writeln!(out, "Native {{ measure: {:?} }}", measure).unwrap();
+                    continue;
+                };
+                writeln!(
+                    out,
+                    "Native {{ measure: natAbs({}), preservation: {:?}, decrease: {:?} }}",
+                    param, preservation, decrease,
+                )
+                .unwrap();
+                if precondition.is_empty() {
+                    writeln!(out, "    precondition: <none — default p ≥ 0>").unwrap();
+                } else {
+                    writeln!(out, "    precondition ({} clauses):", precondition.len()).unwrap();
+                    for (i, clause) in precondition.iter().enumerate() {
+                        writeln!(out, "      [{i}] {:?}", clause.expr.node).unwrap();
+                    }
+                }
+                writeln!(out, "    body.base_arm_literal: {}", body.base_arm_literal).unwrap();
+            }
+        }
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "## law_theorems ({})", ir.law_theorems.len()).unwrap();
+    out
 }
 
 /// `aver compile FILE --explain-passes` — runs the canonical pipeline
@@ -3172,6 +3277,11 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     };
 
     let neutral_policy = aver::ir::NeutralAllocPolicy;
+    // `--explain-passes` is a diagnostic over the FULL pipeline shape,
+    // including stages a runtime backend would skip (proof_lower).
+    // Pre-load dep modules so proof_lower has the data to walk; without
+    // them the stage would only see entry-file refinement records.
+    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
@@ -3179,6 +3289,8 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
+            run_proof_lower: true,
+            dep_modules: &dep_modules,
             ..Default::default()
         },
     );
