@@ -267,12 +267,19 @@ fn build_ctx(
     apply_traversal_lowering: bool,
 ) -> Result<codegen::CodegenContext, String> {
     let mut items = parse_source(source)?;
+    // Proof exporters (Lean / Dafny) consume source-level IR (no
+    // traversal lowering) AND need ProofIR populated. Rust target
+    // wants the deforested form AND skips proof_lower. The two
+    // requirements always co-vary in the playground, so the same
+    // flag drives both.
+    let proof_target = !apply_traversal_lowering;
     let pipeline_result = crate::ir::pipeline::run(
         &mut items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::Full { base_dir: None }),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            run_proof_lower: proof_target,
             ..Default::default()
         },
     );
@@ -280,14 +287,19 @@ fn build_ctx(
     if !tc_result.errors.is_empty() {
         return Err(format_tc_errors(&tc_result.errors));
     }
-    Ok(codegen::build_context(
+    let proof_ir = pipeline_result.proof_ir;
+    let mut ctx = codegen::build_context(
         items,
         &tc_result,
         pipeline_result.analysis.as_ref(),
         HashSet::new(),
         "playground".to_string(),
         vec![],
-    ))
+    );
+    if let Some(ir) = proof_ir {
+        ctx.proof_ir = ir;
+    }
+    Ok(ctx)
 }
 
 /// Single-file Aver source → Lean 4 project files.

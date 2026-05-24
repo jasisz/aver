@@ -28,11 +28,41 @@ use std::collections::HashSet;
 
 fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
-    aver::ir::pipeline::tco(&mut items);
-    let tc =
-        aver::ir::pipeline::typecheck(&items, &aver::ir::TypecheckMode::Full { base_dir: None });
+    // Proof-mode minimal pipeline: rewrite stages off (would alter
+    // source-level recursion shapes the classifier matches against).
+    let pipeline_result = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            run_tco: true,
+            typecheck: Some(aver::ir::TypecheckMode::Full { base_dir: None }),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            run_resolve: false,
+            run_last_use: false,
+            run_analyze: true,
+            run_escape: false,
+            run_proof_lower: true,
+            dep_modules: &[],
+            alloc_policy: None,
+            call_ctx: None,
+            on_after_pass: None,
+        },
+    );
+    let tc = pipeline_result.typecheck.expect("typecheck requested");
     assert!(tc.errors.is_empty(), "source typechecks: {:?}", tc.errors);
-    aver::codegen::build_context(items, &tc, None, HashSet::new(), "diff".to_string(), vec![])
+    let proof_ir = pipeline_result.proof_ir;
+    let mut ctx = aver::codegen::build_context(
+        items,
+        &tc,
+        pipeline_result.analysis.as_ref(),
+        HashSet::new(),
+        "diff".to_string(),
+        vec![],
+    );
+    if let Some(ir) = proof_ir {
+        ctx.proof_ir = ir;
+    }
+    ctx
 }
 
 fn legacy_decision(ctx: &CodegenContext, type_name: &str) -> Option<LegacyDecl> {

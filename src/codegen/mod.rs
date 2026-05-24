@@ -379,7 +379,7 @@ pub fn build_context(
         );
     }
 
-    let mut ctx = CodegenContext {
+    let ctx = CodegenContext {
         items,
         fn_sigs,
         memo_fns,
@@ -405,26 +405,28 @@ pub fn build_context(
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
     };
-    // Populate ProofIR through the ProofLowerInputs view. Step 7a
-    // introduced the view; subsequent sub-steps migrate the internal
-    // helpers to take it directly. Pipeline integration (Step 7e)
-    // moves this invocation out of `build_context` entirely.
-    #[cfg(feature = "runtime")]
-    {
-        let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-        ctx.proof_ir = crate::codegen::proof_lower::lower(&inputs);
-    }
+    // ProofIR no longer populated here. Pipeline owns the lowering
+    // (`PipelineStage::ProofLower`); proof backends opt in via
+    // `PipelineConfig.run_proof_lower` and read `pipeline_result.
+    // proof_ir` back. Runtime backends (VM / WASM / Rust) leave it
+    // off and skip the work. Tests that bypass the pipeline assemble
+    // the ctx by hand and call `refresh_facts()` to populate the
+    // field — the field stays `default()` here for those callers
+    // until they explicitly refresh.
     ctx
 }
 
 impl CodegenContext {
-    /// Recompute `mutual_tco_members` and `recursive_fns` from current
-    /// `items` + `modules`. Used by test helpers that build the context
-    /// piecewise (push items in-place, bypass `build_context`) so the
-    /// derived sets stay in sync. Idempotent — production callers go
-    /// through `build_context`, where these are already populated from
-    /// the analyze stage; calling `refresh_facts` again is a no-op for
-    /// them (computes the same answer).
+    /// Test-only bridge: recompute every derived fact (`mutual_tco_
+    /// members`, `recursive_fns`, `proof_ir`) from the current `items`
+    /// + `modules`. Used exclusively by unit tests that construct a
+    /// `CodegenContext` piecewise — pushing synthetic `FnDef`s
+    /// straight into the items list rather than going through the
+    /// parser + pipeline. Production code never needs this: every
+    /// derived fact is populated by the pipeline stages (analyze,
+    /// proof_lower) and propagated through `build_context`. Calling
+    /// `refresh_facts` on a production-built ctx is redundant work
+    /// that produces the same answer — leave it off the hot path.
     pub fn refresh_facts(&mut self) {
         let entry_fn_refs: Vec<&FnDef> =
             self.fn_defs.iter().filter(|fd| fd.name != "main").collect();

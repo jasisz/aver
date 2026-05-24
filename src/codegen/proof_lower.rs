@@ -77,13 +77,18 @@ impl<'a> ProofLowerInputs<'a> {
     /// Lean toplevel module today; pure_fns reaches there since the
     /// pure-ness criterion is the same for every proof backend.
     pub fn pure_fns(&self) -> Vec<&'a FnDef> {
-        self.entry_items
+        // Order matches the legacy `lean::pure_fns(ctx)`: deps first,
+        // entry last. `call_graph::ordered_fn_components` is order-
+        // sensitive (SCC discovery order changes which member is
+        // chosen as the representative); flipping the order shifted
+        // some classifications between fuel and "outside subset".
+        self.dep_modules
             .iter()
-            .filter_map(|item| match item {
+            .flat_map(|m| m.fn_defs.iter())
+            .chain(self.entry_items.iter().filter_map(|item| match item {
                 TopLevel::FnDef(fd) => Some(fd),
                 _ => None,
-            })
-            .chain(self.dep_modules.iter().flat_map(|m| m.fn_defs.iter()))
+            }))
             .filter(|fd| crate::codegen::common::is_pure_fn(fd))
             .collect()
     }

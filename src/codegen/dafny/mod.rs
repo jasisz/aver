@@ -652,24 +652,48 @@ mod tests {
 
     fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {
         let mut items = parse_source(src).expect("parse");
-        crate::ir::pipeline::tco(&mut items);
-        let tc = crate::ir::pipeline::typecheck(
-            &items,
-            &crate::ir::TypecheckMode::Full { base_dir: None },
+        // Proof-mode minimal pipeline — same shape as `lean::tests::
+        // ctx_from_source`; see that for why every rewriting stage is
+        // off (resolve / escape / interp_lower / buffer_build / last_use
+        // would alter source-level recursion shapes the classifier
+        // matches against).
+        let pipeline_result = crate::ir::pipeline::run(
+            &mut items,
+            crate::ir::PipelineConfig {
+                run_tco: true,
+                typecheck: Some(crate::ir::TypecheckMode::Full { base_dir: None }),
+                run_interp_lower: false,
+                run_buffer_build: false,
+                run_resolve: false,
+                run_last_use: false,
+                run_analyze: true,
+                run_escape: false,
+                run_proof_lower: true,
+                dep_modules: &[],
+                alloc_policy: None,
+                call_ctx: None,
+                on_after_pass: None,
+            },
         );
+        let tc = pipeline_result.typecheck.expect("typecheck requested");
         assert!(
             tc.errors.is_empty(),
             "source should typecheck: {:?}",
             tc.errors
         );
-        build_context(
+        let proof_ir = pipeline_result.proof_ir;
+        let mut ctx = build_context(
             items,
             &tc,
-            None,
+            pipeline_result.analysis.as_ref(),
             HashSet::new(),
             project_name.to_string(),
             vec![],
-        )
+        );
+        if let Some(ir) = proof_ir {
+            ctx.proof_ir = ir;
+        }
+        ctx
     }
 
     /// Concatenate every emitted `.dfy` source. The unified emitter

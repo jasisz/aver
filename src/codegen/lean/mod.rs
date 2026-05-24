@@ -849,7 +849,11 @@ pub fn transpile_for_proof_mode(
     ctx: &mut CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
-    ctx.refresh_facts();
+    // No refresh_facts call here: production callers go through
+    // build_codegen_context → pipeline, which populates every derived
+    // fact (recursive_fns, mutual_tco_members, proof_ir) once.
+    // Synthetic-AST tests that bypass the pipeline call refresh_facts
+    // themselves before reaching this fn.
     transpile_unified(ctx, verify_mode, LeanEmitMode::Proof)
 }
 
@@ -862,7 +866,9 @@ pub fn transpile_with_verify_mode(
     ctx: &mut CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
-    ctx.refresh_facts();
+    // No refresh_facts call here — same reasoning as
+    // `transpile_for_proof_mode`. Synthetic-AST tests refresh
+    // themselves; production paths come pre-populated.
     transpile_unified(ctx, verify_mode, LeanEmitMode::Standard)
 }
 
@@ -1520,24 +1526,51 @@ mod tests {
 
     fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
         let mut items = parse_source(source).expect("source should parse");
-        crate::ir::pipeline::tco(&mut items);
-        let tc = crate::ir::pipeline::typecheck(
-            &items,
-            &crate::ir::TypecheckMode::Full { base_dir: None },
+        // Proof-mode minimal pipeline: only the stages a proof
+        // exporter actually consumes. Resolve / last_use / escape /
+        // interp_lower / buffer_build all rewrite item shapes in
+        // ways that break the recursion classifier's source-level
+        // pattern matching (e.g. escape inlines a record into the
+        // caller, dropping the recursive call's structural shape).
+        // Analyze stays on — `recursive_fns` is what `proof_lower`
+        // reads to decide which fns to classify.
+        let pipeline_result = crate::ir::pipeline::run(
+            &mut items,
+            crate::ir::PipelineConfig {
+                run_tco: true,
+                typecheck: Some(crate::ir::TypecheckMode::Full { base_dir: None }),
+                run_interp_lower: false,
+                run_buffer_build: false,
+                run_resolve: false,
+                run_last_use: false,
+                run_analyze: true,
+                run_escape: false,
+                run_proof_lower: true,
+                dep_modules: &[],
+                alloc_policy: None,
+                call_ctx: None,
+                on_after_pass: None,
+            },
         );
+        let tc = pipeline_result.typecheck.expect("typecheck requested");
         assert!(
             tc.errors.is_empty(),
             "source should typecheck without errors: {:?}",
             tc.errors
         );
-        build_context(
+        let proof_ir = pipeline_result.proof_ir;
+        let mut ctx = build_context(
             items,
             &tc,
-            None,
+            pipeline_result.analysis.as_ref(),
             HashSet::new(),
             project_name.to_string(),
             vec![],
-        )
+        );
+        if let Some(ir) = proof_ir {
+            ctx.proof_ir = ir;
+        }
+        ctx
     }
 
     /// Concatenate every emitted `.lean` source (entry + per-module +
