@@ -12,12 +12,18 @@ mod leaf;
 mod matches;
 mod pass_diag;
 pub mod pipeline;
+pub mod proof_ir;
 pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
 pub use pipeline::{
     FnCountChange, NonTailEntry, PassDiagnostic, PassReport, PipelineConfig, PipelineResult,
     PipelineStage, TypecheckMode,
+};
+pub use proof_ir::{
+    DecreaseProof, FnContract, FuelMetric, LawTheorem, Measure, NativeIntCountdownBody, Predicate,
+    PreservationProof, ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract,
+    RefinedTypeDecl, UnclassifiedFn,
 };
 
 pub use alloc_info::{

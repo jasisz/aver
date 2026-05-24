@@ -2417,6 +2417,9 @@ fn build_codegen_context(
     guest_entry: Option<&str>,
     with_self_host_support: bool,
     apply_traversal_lowering: bool,
+    run_refinement_lower: bool,
+    run_contract_lower: bool,
+    run_law_lower: bool,
 ) -> (codegen::CodegenContext, String) {
     let module_root = resolve_module_root(module_root_override);
     let source = match read_file(file) {
@@ -2460,12 +2463,30 @@ fn build_codegen_context(
             base_dir: Some(&module_root),
         }
     };
+    // Load dep modules BEFORE the entry pipeline runs — needed because
+    // the proof-lower pipeline stage walks both entry items and dep
+    // module type/fn defs in one sweep (cross-module refinement records,
+    // module-spanning call graphs). load_compile_deps only reads
+    // `TopLevel::Module(m).depends`, which TCO never touches, so it's
+    // safe to run pre-pipeline.
+    let modules = load_compile_deps(
+        &items,
+        &module_root,
+        apply_traversal_lowering, // run_interp_lower
+        apply_traversal_lowering, // run_buffer_build
+        with_self_host_support,   // self_host_mode → bypass opaque in dep modules
+    );
+
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(typecheck_mode),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            run_refinement_lower,
+            run_contract_lower,
+            run_law_lower,
+            dep_modules: &modules,
             ..Default::default()
         },
     );
@@ -2490,20 +2511,6 @@ fn build_codegen_context(
             .to_string()
     });
 
-    // Load dependent modules for codegen. Dep modules run the same pipeline
-    // shape as the entry — per-stage flags are forwarded so proof exporters
-    // get source-level IR end-to-end (without this, dep modules would
-    // always run interp_lower + buffer_build even when the entry skipped
-    // them, leaking synthesized `__buffered` variants into Lean/Dafny
-    // codegen).
-    let modules = load_compile_deps(
-        &items,
-        &module_root,
-        apply_traversal_lowering, // run_interp_lower
-        apply_traversal_lowering, // run_buffer_build
-        with_self_host_support,   // self_host_mode → bypass opaque in dep modules
-    );
-
     let use_runtime_policy = matches!(policy_mode, super::cli::CompilePolicyMode::Runtime);
     let use_scoped_runtime = with_replay || use_runtime_policy;
 
@@ -2524,6 +2531,10 @@ fn build_codegen_context(
     // Build codegen context. `entry_analysis` carries `mutual_tco_members`,
     // `recursive_fns`, and per-fn `FnAnalysis` from the analyze stage; codegen
     // unions these with each `module.analysis` to build a global view.
+    // ProofIR (when proof stages ran) comes pre-computed from the
+    // pipeline; pull it across before assembly so build_context doesn't
+    // redundantly recompute it.
+    let prebuilt_proof_ir = pipeline_result.proof_ir;
     let mut ctx = codegen::build_context(
         items,
         &tc_result,
@@ -2532,6 +2543,12 @@ fn build_codegen_context(
         name,
         modules,
     );
+    #[cfg(feature = "runtime")]
+    if let Some(ir) = prebuilt_proof_ir {
+        ctx.proof_ir = ir;
+    }
+    #[cfg(not(feature = "runtime"))]
+    let _ = prebuilt_proof_ir;
     ctx.policy = policy;
     ctx.emit_replay_runtime = use_scoped_runtime;
     ctx.runtime_policy_from_env = use_runtime_policy;
@@ -3040,12 +3057,15 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
         "escape" => Some(PipelineStage::Escape),
+        "refinement_lower" => Some(PipelineStage::RefinementLower),
+        "contract_lower" => Some(PipelineStage::ContractLower),
+        "law_lower" => Some(PipelineStage::LawLower),
         other => {
             eprintln!(
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, refinement_lower, contract_lower, law_lower",
                     other
                 )
                 .red()
@@ -3083,6 +3103,20 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     let captured = std::cell::RefCell::new(None::<Vec<aver::ast::TopLevel>>);
     let target = target_stage.unwrap();
     let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let run_refinement_lower = target == PipelineStage::RefinementLower;
+    let run_contract_lower = target == PipelineStage::ContractLower;
+    let run_law_lower = target == PipelineStage::LawLower;
+    let proof_target = run_refinement_lower || run_contract_lower || run_law_lower;
+    // Proof stages walk both entry items and dep modules. Pre-load
+    // deps when targeting one of them so the dump reflects what
+    // production (`aver proof`) sees. Other stages don't need the
+    // dep modules through the pipeline interface — keep empty for
+    // them to match the pre-7e diagnostic shape.
+    let dep_modules = if proof_target {
+        load_compile_deps(&items, &module_root, false, false, false)
+    } else {
+        Vec::new()
+    };
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
@@ -3094,6 +3128,10 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             // VM/WASM baseline. Codegen pipelines should pass their
             // backend-specific policy when consuming the analysis.
             alloc_policy: Some(&neutral_policy),
+            run_refinement_lower,
+            run_contract_lower,
+            run_law_lower,
+            dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage, items_after| {
                 if stage == target {
                     *captured.borrow_mut() = Some(items_after.to_vec());
@@ -3107,6 +3145,27 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     {
         eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
         process::exit(1);
+    }
+
+    // Proof stages don't transform items — they produce a side
+    // artifact. Render the lowered ProofIR (whichever fields the
+    // selected stage populated) instead of the (unchanged) items list.
+    if proof_target {
+        match pipeline_result.proof_ir {
+            Some(ir) => print!("{}", render_proof_ir_dump(&ir)),
+            None => {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "stage '{}' did not run (likely skipped after typecheck errors)",
+                        stage_name
+                    )
+                    .red(),
+                );
+                process::exit(1);
+            }
+        }
+        return;
     }
 
     match captured.into_inner() {
@@ -3130,6 +3189,98 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             process::exit(1);
         }
     }
+}
+
+/// Backend-neutral textual dump of a lowered `ProofIR`. Drives
+/// `aver compile FILE --emit-ir-after=proof_lower` — same lens any
+/// other pipeline stage gets, scoped to the proof artifact a proof
+/// exporter (Lean / Dafny) would consume. Useful for debugging
+/// "why did this fn get Fuel vs Native?", "what precondition did
+/// the lowerer derive?", "did this type lift to a subtype?".
+fn render_proof_ir_dump(ir: &aver::ir::ProofIR) -> String {
+    use aver::ir::{Measure, RecursionContract};
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    writeln!(out, "# ProofIR").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "## refined_types ({})", ir.refined_types.len()).unwrap();
+    let mut refined: Vec<_> = ir.refined_types.values().collect();
+    refined.sort_by(|a, b| a.name.cmp(&b.name));
+    for decl in refined {
+        let witness = decl.witness.as_deref().unwrap_or("<none>");
+        writeln!(
+            out,
+            "- {} : {{ {} : {} // <predicate> }} witness {}",
+            decl.name, decl.predicate_param, decl.carrier_type, witness,
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    carrier_field: {}    predicate: {:?}",
+            decl.carrier_field, decl.invariant.expr.node,
+        )
+        .unwrap();
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "## fn_contracts ({})", ir.fn_contracts.len()).unwrap();
+    let mut contracts: Vec<_> = ir.fn_contracts.values().collect();
+    contracts.sort_by(|a, b| a.source_name.cmp(&b.source_name));
+    for contract in contracts {
+        write!(out, "- {} ", contract.source_name).unwrap();
+        match &contract.recursion {
+            None => writeln!(out, "(non-recursive)").unwrap(),
+            Some(RecursionContract::Fuel { fuel_metric }) => {
+                writeln!(out, "Fuel {{ {:?} }}", fuel_metric).unwrap();
+            }
+            Some(RecursionContract::LinearRecurrence2) => {
+                writeln!(out, "LinearRecurrence2 (pair-state Nat worker)").unwrap();
+            }
+            Some(RecursionContract::Native {
+                precondition,
+                measure,
+                preservation,
+                decrease,
+                body,
+            }) => {
+                let Measure::NatAbsInt { param } = measure else {
+                    writeln!(out, "Native {{ measure: {:?} }}", measure).unwrap();
+                    continue;
+                };
+                writeln!(
+                    out,
+                    "Native {{ measure: natAbs({}), preservation: {:?}, decrease: {:?} }}",
+                    param, preservation, decrease,
+                )
+                .unwrap();
+                if precondition.is_empty() {
+                    writeln!(out, "    precondition: <none — default p ≥ 0>").unwrap();
+                } else {
+                    writeln!(out, "    precondition ({} clauses):", precondition.len()).unwrap();
+                    for (i, clause) in precondition.iter().enumerate() {
+                        writeln!(out, "      [{i}] {:?}", clause.expr.node).unwrap();
+                    }
+                }
+                writeln!(out, "    body.base_arm_literal: {}", body.base_arm_literal).unwrap();
+            }
+        }
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "## law_theorems ({})", ir.law_theorems.len()).unwrap();
+    let mut laws: Vec<_> = ir.law_theorems.iter().collect();
+    laws.sort_by(|a, b| (&a.fn_name, &a.law_name).cmp(&(&b.fn_name, &b.law_name)));
+    for theorem in laws {
+        writeln!(
+            out,
+            "- {}::{} ({:?}, {} quantifier(s), {} premise(s))",
+            theorem.fn_name,
+            theorem.law_name,
+            theorem.strategy,
+            theorem.quantifiers.len(),
+            theorem.premises.len(),
+        )
+        .unwrap();
+    }
+    out
 }
 
 /// `aver compile FILE --explain-passes` — runs the canonical pipeline
@@ -3159,6 +3310,11 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     };
 
     let neutral_policy = aver::ir::NeutralAllocPolicy;
+    // `--explain-passes` is a diagnostic over the FULL pipeline shape,
+    // including stages a runtime backend would skip (proof_lower).
+    // Pre-load dep modules so proof_lower has the data to walk; without
+    // them the stage would only see entry-file refinement records.
+    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
     let result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
@@ -3166,6 +3322,10 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
                 base_dir: Some(&module_root),
             }),
             alloc_policy: Some(&neutral_policy),
+            run_refinement_lower: true,
+            run_contract_lower: true,
+            run_law_lower: true,
+            dep_modules: &dep_modules,
             ..Default::default()
         },
     );
@@ -3316,6 +3476,19 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                         "{label} {rewrites} call site(s) rewritten — record/variant alloc eliminated\n"
                     ));
                 }
+            }
+            PassReport::RefinementLower { refined_types } => {
+                out.push_str(&format!(
+                    "{label} {refined_types} refined type(s) lifted to subtype/subset\n"
+                ));
+            }
+            PassReport::ContractLower { fn_contracts } => {
+                out.push_str(&format!("{label} {fn_contracts} fn contract(s) decided\n"));
+            }
+            PassReport::LawLower { law_theorems } => {
+                out.push_str(&format!(
+                    "{label} {law_theorems} verify-law theorem(s) lowered\n"
+                ));
             }
         }
         out.push('\n');
@@ -3471,6 +3644,15 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             PassReport::Escape { rewrites } => {
                 out.push_str(&format!("{{\"rewrites\":{}}}", rewrites));
             }
+            PassReport::RefinementLower { refined_types } => {
+                out.push_str(&format!("{{\"refined_types\":{}}}", refined_types));
+            }
+            PassReport::ContractLower { fn_contracts } => {
+                out.push_str(&format!("{{\"fn_contracts\":{}}}", fn_contracts));
+            }
+            PassReport::LawLower { law_theorems } => {
+                out.push_str(&format!("{{\"law_theorems\":{}}}", law_theorems));
+            }
         }
         out.push('}');
     }
@@ -3581,7 +3763,10 @@ pub(super) fn cmd_compile(opts: CompileOptions<'_>) {
         policy_mode,
         guest_entry,
         with_self_host_support,
-        true, // apply_traversal_lowering — Rust target wants the optimized form
+        true,  // apply_traversal_lowering — Rust target wants the optimized form
+        false, // run_refinement_lower — runtime backend, doesn't need ProofIR
+        false, // run_contract_lower — same
+        false, // run_law_lower — same
     );
     if let Err(err) = validate_self_host_guest_entry_contract(&ctx) {
         eprintln!("{}", err.red());
@@ -4217,6 +4402,9 @@ pub(super) fn cmd_proof(
         None,
         false,
         false, // apply_traversal_lowering — proof export wants source-level IR
+        true,  // run_refinement_lower — proof backends need ProofIR
+        true,  // run_contract_lower — same
+        true,  // run_law_lower — same
     );
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
@@ -4583,6 +4771,7 @@ mod tests {
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
+            proof_ir: aver::ir::ProofIR::default(),
         }
     }
 

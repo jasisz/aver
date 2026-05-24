@@ -18,10 +18,7 @@ use crate::ast::{
     BinOp, Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TailCallData, TopLevel, TypeDef,
 };
 use crate::call_graph;
-use crate::codegen::CodegenContext;
-use crate::codegen::lean::{
-    find_type_def, pure_fns, recursive_pure_fn_names, recursive_type_names,
-};
+use crate::codegen::proof_lower::ProofLowerInputs;
 
 use super::{ProofModeIssue, RecursionPlan};
 
@@ -375,9 +372,9 @@ pub(crate) fn collect_recursive_subterm_binders(
     fd: &FnDef,
     param_name: &str,
     param_type: &str,
-    ctx: &CodegenContext,
+    inputs: &ProofLowerInputs,
 ) -> HashSet<String> {
-    let Some(td) = find_type_def(ctx, param_type) else {
+    let Some(td) = inputs.find_type_def(param_type) else {
         return HashSet::new();
     };
     let mut tracked: HashSet<String> = HashSet::from([param_name.to_string()]);
@@ -630,7 +627,7 @@ pub(crate) fn extract_equality_bound_expr(fd: &FnDef, param_name: &str) -> Optio
     Some((**right).clone())
 }
 
-pub(crate) fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext) -> bool {
+pub(crate) fn supports_single_sizeof_structural(fd: &FnDef, inputs: &ProofLowerInputs) -> bool {
     let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
         .into_iter()
         .filter(|(name, _)| call_matches(name, &fd.name))
@@ -649,10 +646,10 @@ pub(crate) fn supports_single_sizeof_structural(fd: &FnDef, ctx: &CodegenContext
         .iter()
         .filter_map(|idx| {
             let (param_name, param_type) = fd.params.get(*idx)?;
-            recursive_type_names(ctx).contains(param_type).then(|| {
+            inputs.recursive_type_names().contains(param_type).then(|| {
                 (
                     *idx,
-                    collect_recursive_subterm_binders(fd, param_name, param_type, ctx),
+                    collect_recursive_subterm_binders(fd, param_name, param_type, inputs),
                 )
             })
         })
@@ -1203,13 +1200,13 @@ pub(crate) fn supports_mutual_sizeof_ranked(
 /// added. Practically this matches the issue-84 scope: per-file
 /// proof targets (fibonacci.av) where the analyzed fn is in the
 /// entry module.
-pub(crate) fn is_closed_world_pure_fn(fn_name: &str, ctx: &CodegenContext) -> bool {
-    let entry_module = ctx.items.iter().find_map(|item| match item {
+pub(crate) fn is_closed_world_pure_fn(fn_name: &str, inputs: &ProofLowerInputs) -> bool {
+    let entry_module = inputs.entry_items.iter().find_map(|item| match item {
         TopLevel::Module(m) => Some(m),
         _ => None,
     });
-    let entry_fn_names: std::collections::HashSet<&str> = ctx
-        .items
+    let entry_fn_names: std::collections::HashSet<&str> = inputs
+        .entry_items
         .iter()
         .filter_map(|item| match item {
             TopLevel::FnDef(fd) => Some(fd.name.as_str()),
@@ -1256,17 +1253,18 @@ pub(crate) fn find_single_external_caller_predicate(
     target_fn: &str,
     target_param_index: usize,
     callee_param_name: &str,
-    ctx: &CodegenContext,
+    inputs: &ProofLowerInputs,
 ) -> Option<Vec<Spanned<Expr>>> {
-    let all_callers: Vec<&FnDef> = ctx
-        .items
+    let all_callers: Vec<&FnDef> = inputs
+        .entry_items
         .iter()
         .filter_map(|item| match item {
             TopLevel::FnDef(fd) if fd.name != target_fn => Some(fd),
             _ => None,
         })
         .chain(
-            ctx.modules
+            inputs
+                .dep_modules
                 .iter()
                 .flat_map(|m| m.fn_defs.iter().filter(|fd| fd.name != target_fn)),
         )
@@ -1524,18 +1522,28 @@ fn walk_caller_collect_callsite_guards(
     }
 }
 
-/// Classify every recursive pure fn in `ctx`. The returned map assigns
-/// each supported function a [`RecursionPlan`]; anything that falls
-/// outside the recognised shapes becomes a [`ProofModeIssue`].
+/// Classify every recursive pure fn in `inputs`. The returned map
+/// assigns each supported function a [`RecursionPlan`]; anything
+/// that falls outside the recognised shapes becomes a
+/// [`ProofModeIssue`].
+///
+/// **Consumers should not call this directly.** After Step 18 / 20
+/// the only caller is `proof_lower::populate_fn_contracts`, which
+/// translates the output into `ProofIR.fn_contracts` and
+/// `ProofIR.unclassified_fns`. Backends read those fields instead.
+/// The fn stays `pub` only because the diff test
+/// (`tests/proof_ir_diff.rs`) cross-checks ProofIR against the
+/// legacy classifier output — that test is itself slated for
+/// rationalisation once the migration is fully bedded down.
 pub fn analyze_plans(
-    ctx: &CodegenContext,
+    inputs: &ProofLowerInputs,
 ) -> (HashMap<String, RecursionPlan>, Vec<ProofModeIssue>) {
     let mut plans = HashMap::new();
     let mut issues = Vec::new();
 
-    let all_pure = pure_fns(ctx);
-    let recursive_names = recursive_pure_fn_names(ctx);
-    let components = call_graph::ordered_fn_components(&all_pure, &ctx.module_prefixes);
+    let all_pure = inputs.pure_fns();
+    let recursive_names = inputs.recursive_pure_fn_names();
+    let components = call_graph::ordered_fn_components(&all_pure, inputs.module_prefixes);
 
     for component in components {
         if component.is_empty() {
@@ -1602,7 +1610,7 @@ pub fn analyze_plans(
             // def with `(h : p ≥ 0)` precondition + termination on
             // `p.natAbs`. Falls back to the fuel-encoded IntCountdown
             // plan when either condition fails.
-            if is_closed_world_pure_fn(&fd.name, ctx)
+            if is_closed_world_pure_fn(&fd.name, inputs)
                 && let Some((base_arm_literal, base_arm_body, wildcard_arm_body)) =
                     int_countdown_native_arms(fd, param_index)
                 && let Some((callee_param_name, _)) = fd.params.get(param_index)
@@ -1615,7 +1623,7 @@ pub fn analyze_plans(
                     &fd.name,
                     param_index,
                     callee_param_name,
-                    ctx,
+                    inputs,
                 )
                 .unwrap_or_default();
                 plans.insert(
@@ -1631,7 +1639,7 @@ pub fn analyze_plans(
             } else {
                 plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
             }
-        } else if supports_single_sizeof_structural(fd, ctx) {
+        } else if supports_single_sizeof_structural(fd, inputs) {
             plans.insert(fd.name.clone(), RecursionPlan::SizeOfStructural);
         } else if let Some(param_index) = single_list_structural_param_index(fd) {
             plans.insert(

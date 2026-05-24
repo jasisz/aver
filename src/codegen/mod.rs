@@ -11,6 +11,8 @@ pub mod dafny;
 #[cfg(feature = "runtime")]
 pub mod lean;
 #[cfg(feature = "runtime")]
+pub mod proof_lower;
+#[cfg(feature = "runtime")]
 pub mod recursion;
 #[cfg(feature = "runtime")]
 pub mod rust;
@@ -109,6 +111,16 @@ pub struct CodegenContext {
     /// pipeline (TCO / no-alloc / mutual-recursion all apply
     /// identically). Empty when no sinks are detected.
     pub synthesized_buffered_fns: Vec<FnDef>,
+    /// Proof-export decision IR populated by `proof_lower::lower`
+    /// during `build_context`. Backends (Lean, Dafny) read from
+    /// here to decide refinement-record lift, recursion contracts,
+    /// law-theorem shape, etc. Single source of truth — both
+    /// backends see the same decisions so cross-backend drift
+    /// becomes impossible at the shape level. Step 2: only
+    /// `refined_types` is populated; backends still consume legacy
+    /// `refinement_info_for` for now. Step 3+ migrates backends.
+    #[cfg(feature = "runtime")]
+    pub proof_ir: crate::ir::ProofIR,
 }
 
 /// Output files from a codegen backend.
@@ -367,7 +379,7 @@ pub fn build_context(
         );
     }
 
-    CodegenContext {
+    let ctx = CodegenContext {
         items,
         fn_sigs,
         memo_fns,
@@ -390,17 +402,32 @@ pub fn build_context(
         buffer_build_sinks,
         buffer_fusion_sites,
         synthesized_buffered_fns,
-    }
+        #[cfg(feature = "runtime")]
+        proof_ir: crate::ir::ProofIR::default(),
+    };
+    // ProofIR no longer populated here. Pipeline owns the lowerings
+    // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
+    // proof backends opt in via `PipelineConfig.run_refinement_lower` /
+    // `run_contract_lower` and read `pipeline_result.proof_ir` back.
+    // Runtime backends (VM / WASM / Rust) leave both off and skip the
+    // work. Tests that bypass the pipeline assemble the ctx by hand
+    // and call `refresh_facts()` to populate the field — the field
+    // stays `default()` here for those callers until they explicitly
+    // refresh.
+    ctx
 }
 
 impl CodegenContext {
-    /// Recompute `mutual_tco_members` and `recursive_fns` from current
-    /// `items` + `modules`. Used by test helpers that build the context
-    /// piecewise (push items in-place, bypass `build_context`) so the
-    /// derived sets stay in sync. Idempotent — production callers go
-    /// through `build_context`, where these are already populated from
-    /// the analyze stage; calling `refresh_facts` again is a no-op for
-    /// them (computes the same answer).
+    /// Test-only bridge: recompute every derived fact
+    /// (`mutual_tco_members`, `recursive_fns`, `proof_ir`) from the
+    /// current `items` and `modules`. Used exclusively by unit tests
+    /// that construct a `CodegenContext` piecewise — pushing synthetic
+    /// `FnDef`s straight into the items list rather than going through
+    /// the parser and pipeline. Production code never needs this:
+    /// every derived fact is populated by the pipeline stages
+    /// (analyze, proof_lower) and propagated through `build_context`.
+    /// Calling `refresh_facts` on a production-built ctx is redundant
+    /// work that produces the same answer — leave it off the hot path.
     pub fn refresh_facts(&mut self) {
         let entry_fn_refs: Vec<&FnDef> =
             self.fn_defs.iter().filter(|fd| fd.name != "main").collect();
@@ -437,5 +464,14 @@ impl CodegenContext {
             recursive_fns.extend(crate::call_graph::find_recursive_fns(&mod_items));
         }
         self.recursive_fns = recursive_fns;
+
+        // ProofIR's `fn_contracts` / `refined_types` are derived from
+        // the just-recomputed item set + the recursion classifier, so
+        // they must stay in step with the rest of the facts. Test
+        // helpers that build the context piecewise and call
+        // `refresh_facts` rely on this to see the same proof decisions
+        // the production pipeline would emit.
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(self);
+        self.proof_ir = crate::codegen::proof_lower::lower(&inputs);
     }
 }

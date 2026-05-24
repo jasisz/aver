@@ -39,23 +39,23 @@ pub struct RefinementInfo<'a> {
     pub predicate: &'a Spanned<Expr>,
 }
 
-/// Inspect `ctx` for a refinement-via-opaque record by `type_name`.
+/// Inspect inputs for a refinement-via-opaque record by `type_name`.
 /// Returns `Some(info)` iff there's exactly one matching smart
 /// constructor and the record has a single carrier field.
 pub fn refinement_info_for<'a>(
     type_name: &str,
-    ctx: &'a CodegenContext,
+    inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
 ) -> Option<RefinementInfo<'a>> {
-    // Refinement records may live in the entry file (`ctx.items`) or
-    // in a dependent module (`ctx.modules[i].type_defs`). Same for
-    // the smart constructor. Walk both so cross-module compilations
-    // (`aver proof natural_app.av` depending on a `Natural` module)
-    // produce the same lifted shape as the standalone module file.
-    let entry_typedefs = ctx.items.iter().filter_map(|item| match item {
+    // Refinement records may live in the entry file or in a
+    // dependent module. Same for the smart constructor. Walk both
+    // so cross-module compilations (`aver proof natural_app.av`
+    // depending on a `Natural` module) produce the same lifted
+    // shape as the standalone module file.
+    let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::TypeDef(td) => Some(td),
         _ => None,
     });
-    let module_typedefs = ctx.modules.iter().flat_map(|m| m.type_defs.iter());
+    let module_typedefs = inputs.dep_modules.iter().flat_map(|m| m.type_defs.iter());
     let (carrier_field, carrier_type) =
         entry_typedefs
             .chain(module_typedefs)
@@ -67,11 +67,11 @@ pub fn refinement_info_for<'a>(
                 _ => None,
             })?;
 
-    let entry_fns = ctx.items.iter().filter_map(|item| match item {
+    let entry_fns = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::FnDef(fd) => Some(fd),
         _ => None,
     });
-    let module_fns = ctx.modules.iter().flat_map(|m| m.fn_defs.iter());
+    let module_fns = inputs.dep_modules.iter().flat_map(|m| m.fn_defs.iter());
     for fd in entry_fns.chain(module_fns) {
         if !fd.return_type.starts_with("Result<") {
             continue;
@@ -234,8 +234,9 @@ fn search_refinement_wrapper<'a>(
                 &fvalue.node,
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
             );
+            let inputs_local = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
             if matches_var
-                && let Some(info) = refinement_info_for(type_name, ctx)
+                && let Some(info) = refinement_info_for(type_name, &inputs_local)
                 && info.carrier_type == given_type
             {
                 // Need a stable reference into ctx for the returned
@@ -644,9 +645,10 @@ pub fn when_is_redundant_with_refinement_lifts(
     // walk) would length-mismatch and keep the now-redundant
     // premise. Same flatten on both sides keeps natural / positive
     // / int_range behavior identical to pre-fix.
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let mut lifted_predicates: Vec<Spanned<Expr>> = Vec::new();
     for (given_name, refined_type) in lifted_vars {
-        let Some(info) = refinement_info_for(refined_type, ctx) else {
+        let Some(info) = refinement_info_for(refined_type, &inputs) else {
             return false;
         };
         let substituted = substitute_ident_in_expr(info.predicate, info.param_name, given_name);

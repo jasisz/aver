@@ -86,141 +86,11 @@ fn type_to_dafny(ty: &Type) -> String {
     }
 }
 
-/// Find a literal Int witness for a refinement subset type. First tries
-/// the smart constructor's verify block (`fromX(K) => Result.Ok(...)` —
-/// the first such `K` satisfies the predicate by definition). Falls
-/// back to evaluating the refinement's bool predicate on small
-/// candidates (`[0, 1, -1]`); the first candidate that satisfies the
-/// predicate is a valid Dafny `witness`. Cross-module refinement
-/// records sit in `ctx.modules[i].fn_defs` whose verify blocks are
-/// not surfaced through `ModuleInfo`, so the predicate-eval fallback
-/// is what keeps `type Positive = n: int | (n > 0) witness 1`
-/// emitting correctly when `Positive` is imported as a dependency.
-fn refinement_witness_for(type_name: &str, ctx: &CodegenContext) -> Option<String> {
-    // Entry-module verify-block scan (preserves existing behaviour).
-    let smart_ctor_name = ctx.items.iter().find_map(|item| match item {
-        TopLevel::FnDef(fd)
-            if fd.return_type.starts_with("Result<")
-                && fd.return_type[7..].starts_with(type_name)
-                && fd.params.len() == 1 =>
-        {
-            Some(fd.name.clone())
-        }
-        _ => None,
-    });
-    if let Some(smart_ctor_name) = smart_ctor_name {
-        for item in &ctx.items {
-            let TopLevel::Verify(vb) = item else {
-                continue;
-            };
-            if vb.fn_name != smart_ctor_name {
-                continue;
-            }
-            for (lhs, rhs) in &vb.cases {
-                if !is_result_ok(&rhs.node) {
-                    continue;
-                }
-                let Expr::FnCall(_, args) = &lhs.node else {
-                    continue;
-                };
-                if args.len() != 1 {
-                    continue;
-                }
-                if let Some(lit) = literal_int_value(&args[0]) {
-                    return Some(lit);
-                }
-            }
-        }
-    }
-    // Predicate-eval fallback. Cross-module refinement records can't
-    // surface their verify blocks via `ModuleInfo`, and even the
-    // entry-module path misses types whose smart constructor has no
-    // verify samples. Walk the refinement's bool predicate AST and
-    // pick the first candidate from `[0, 1, -1]` that satisfies it.
-    let info = crate::codegen::common::refinement_info_for(type_name, ctx)?;
-    for candidate in [0i64, 1, -1] {
-        if eval_int_bool_predicate(info.predicate, info.param_name, candidate) == Some(true) {
-            return Some(candidate.to_string());
-        }
-    }
-    None
-}
-
-/// Evaluate a simple Bool predicate AST with `param_name` bound to
-/// `value`. Supports comparator BinOps over int arithmetic, `Bool.and`
-/// / `Bool.or`, and bool literals — covers every refinement predicate
-/// shape that `refinement_info_for` accepts today. Returns `None`
-/// when the predicate uses a shape the evaluator can't reduce (e.g. a
-/// fn call to something other than `Bool.and`/`Bool.or`); witness
-/// emission then falls back to `0`.
-fn eval_int_bool_predicate(expr: &Spanned<Expr>, param_name: &str, value: i64) -> Option<bool> {
-    match &expr.node {
-        Expr::Literal(Literal::Bool(b)) => Some(*b),
-        Expr::BinOp(op, l, r) => {
-            use crate::ast::BinOp::*;
-            let li = eval_int_arith(l, param_name, value)?;
-            let ri = eval_int_arith(r, param_name, value)?;
-            Some(match op {
-                Lt => li < ri,
-                Gt => li > ri,
-                Lte => li <= ri,
-                Gte => li >= ri,
-                Eq => li == ri,
-                Neq => li != ri,
-                _ => return None,
-            })
-        }
-        Expr::FnCall(callee, args) if args.len() == 2 => {
-            let name = crate::codegen::common::expr_to_dotted_name(&callee.node)?;
-            match name.as_str() {
-                "Bool.and" => Some(
-                    eval_int_bool_predicate(&args[0], param_name, value)?
-                        && eval_int_bool_predicate(&args[1], param_name, value)?,
-                ),
-                "Bool.or" => Some(
-                    eval_int_bool_predicate(&args[0], param_name, value)?
-                        || eval_int_bool_predicate(&args[1], param_name, value)?,
-                ),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
-fn eval_int_arith(expr: &Spanned<Expr>, param_name: &str, value: i64) -> Option<i64> {
-    match &expr.node {
-        Expr::Literal(Literal::Int(n)) => Some(*n),
-        Expr::Ident(name) | Expr::Resolved { name, .. } if name == param_name => Some(value),
-        Expr::BinOp(op, l, r) => {
-            use crate::ast::BinOp::*;
-            let li = eval_int_arith(l, param_name, value)?;
-            let ri = eval_int_arith(r, param_name, value)?;
-            match op {
-                Add => Some(li.checked_add(ri)?),
-                Sub => Some(li.checked_sub(ri)?),
-                Mul => Some(li.checked_mul(ri)?),
-                Div => Some(li.checked_div(ri)?),
-                _ => None,
-            }
-        }
-        Expr::Neg(inner) => Some(-eval_int_arith(inner, param_name, value)?),
-        _ => None,
-    }
-}
-
-fn is_result_ok(expr: &Expr) -> bool {
-    match expr {
-        Expr::Constructor(name, _) => name == "Result.Ok",
-        Expr::FnCall(callee, _) => matches!(
-            &callee.node,
-            Expr::Attr(obj, field)
-                if field == "Ok" && matches!(&obj.node, Expr::Ident(n) if n == "Result")
-        ),
-        _ => false,
-    }
-}
-
+// Refinement witness picking + predicate evaluation moved to
+// `codegen::proof_lower` — Dafny now reads `decl.witness` off
+// `ctx.proof_ir.refined_types` instead of re-running the walk per
+// emit. The `literal_int_value` helper stays — it's also used by
+// bounded-∀ universal-lemma emission elsewhere in this file.
 fn literal_int_value(expr: &Spanned<Expr>) -> Option<String> {
     match &expr.node {
         Expr::Literal(Literal::Int(n)) => Some(n.to_string()),
@@ -270,12 +140,12 @@ pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> Option<String> {
             ))
         }
         TypeDef::Product { name, fields, .. } => {
-            if let Some(info) = crate::codegen::common::refinement_info_for(name, ctx)
-                && info.carrier_type == "Int"
+            if let Some(decl) = ctx.proof_ir.refined_types.get(name)
+                && decl.carrier_type == "Int"
             {
-                let predicate = super::expr::emit_expr(info.predicate, ctx);
-                let bind = aver_name_to_dafny(info.param_name);
-                let witness = refinement_witness_for(name, ctx).unwrap_or_else(|| "0".to_string());
+                let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
+                let bind = aver_name_to_dafny(&decl.predicate_param);
+                let witness = decl.witness.clone().unwrap_or_else(|| "0".to_string());
                 return Some(format!(
                     "type {name} = {bind}: int | {predicate} witness {witness}\n"
                 ));

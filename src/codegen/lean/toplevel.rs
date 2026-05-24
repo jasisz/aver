@@ -8,7 +8,7 @@ use super::recurrence::{
 };
 use super::shared::to_lower_first;
 use super::types::type_annotation_to_lean;
-use super::{RecursionPlan, VerifyEmitMode, sizeof_measure_param_indices};
+use super::{VerifyEmitMode, sizeof_measure_param_indices};
 use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::codegen::recursion::{native_aux_name, rewrite_recursive_calls_body};
@@ -88,12 +88,12 @@ fn emit_product_type(name: &str, fields: &[(String, String)], ctx: &CodegenConte
     // existing sample-based path covers them: domain values come
     // from `given a: Float = […]`, and proofs are sample-by-sample
     // via native_decide.
-    if let Some(info) = crate::codegen::common::refinement_info_for(name, ctx)
-        && info.carrier_type == "Int"
+    if let Some(decl) = ctx.proof_ir.refined_types.get(name)
+        && decl.carrier_type == "Int"
     {
-        let carrier_ty = type_annotation_to_lean(info.carrier_type);
-        let param = aver_name_to_lean(info.param_name);
-        let predicate = super::expr::emit_expr(info.predicate, ctx);
+        let carrier_ty = type_annotation_to_lean(&decl.carrier_type);
+        let param = aver_name_to_lean(&decl.predicate_param);
+        let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
         return format!("abbrev {name} := {{ {param} : {carrier_ty} // {predicate} }}");
     }
 
@@ -862,18 +862,39 @@ fn emit_fuelized_sizeof_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
     .join("\n")
 }
 
-fn emit_fuelized_mutual_string_pos_group(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &HashMap<String, RecursionPlan>,
-) -> String {
+/// Read the rank component of a `Fuel { Lex { .., rank } }` contract.
+/// Returns `None` when the fn has no contract or the contract isn't
+/// a Lex shape (non-mutual variant or non-recursive).
+fn contract_lex_rank(ctx: &CodegenContext, fn_name: &str) -> Option<usize> {
+    contract_lex_params_rank(ctx, fn_name).map(|(_, rank)| rank)
+}
+
+/// Read both the params Vec and rank of a `Fuel { Lex { params, rank } }`
+/// contract. Returns `None` for non-Lex / non-recursive / missing
+/// contracts. Used by mutual-SCC dispatchers to distinguish:
+///
+/// - `MutualIntCountdown`: `params.len() == 1`, rank == 0
+/// - `MutualStringPosAdvance`: `params.len() == 2`
+/// - `MutualSizeOfRanked`: `params.is_empty()`
+fn contract_lex_params_rank<'a>(
+    ctx: &'a CodegenContext,
+    fn_name: &str,
+) -> Option<(&'a [String], usize)> {
+    let contract = ctx.proof_ir.fn_contracts.get(fn_name)?;
+    let crate::ir::RecursionContract::Fuel {
+        fuel_metric: crate::ir::FuelMetric::Lex { params, rank },
+    } = contract.recursion.as_ref()?
+    else {
+        return None;
+    };
+    Some((params.as_slice(), *rank))
+}
+
+fn emit_fuelized_mutual_string_pos_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
     let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
     let max_rank = fns
         .iter()
-        .filter_map(|fd| match plans.get(&fd.name) {
-            Some(RecursionPlan::MutualStringPosAdvance { rank }) => Some(*rank),
-            _ => None,
-        })
+        .filter_map(|fd| contract_lex_rank(ctx, &fd.name))
         .max()
         .unwrap_or(1);
 
@@ -1015,19 +1036,18 @@ fn emit_native_termination_measure(fd: &FnDef) -> Option<String> {
 /// - Any member has no inferable sizeOf measure
 /// - Growing-accumulator pattern detected (tail-rec `[x] + acc`
 ///   shapes won't decrease the lex tuple)
-fn emit_native_mutual_sizeof_group(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &HashMap<String, RecursionPlan>,
-) -> Option<String> {
+fn emit_native_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> Option<String> {
     let mut ranks: HashMap<String, usize> = HashMap::new();
     for fd in fns {
         if !is_pure_fn(fd) {
             return None;
         }
-        match plans.get(&fd.name)? {
-            RecursionPlan::MutualSizeOfRanked { rank } => {
-                ranks.insert(fd.name.clone(), *rank);
+        // MutualSizeOfRanked carries `params: vec![]` + rank>=1; any
+        // other Lex shape (single-param mutual int-countdown, two-
+        // param string-pos) fails this group's pre-conditions.
+        match contract_lex_params_rank(ctx, &fd.name) {
+            Some(([], rank)) => {
+                ranks.insert(fd.name.clone(), rank);
             }
             _ => return None,
         }
@@ -1080,11 +1100,7 @@ fn emit_native_mutual_sizeof_group(
     Some(lines.join("\n"))
 }
 
-fn emit_fuelized_mutual_sizeof_group(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &HashMap<String, RecursionPlan>,
-) -> String {
+fn emit_fuelized_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
     let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
     let recursive_types: HashSet<String> = ctx
         .modules
@@ -1096,10 +1112,7 @@ fn emit_fuelized_mutual_sizeof_group(
         .collect();
     let rank_budget = fns
         .iter()
-        .filter_map(|fd| match plans.get(&fd.name) {
-            Some(RecursionPlan::MutualSizeOfRanked { rank }) => Some(*rank),
-            _ => None,
-        })
+        .filter_map(|fd| contract_lex_rank(ctx, &fd.name))
         .max()
         .unwrap_or(1)
         + 1;
@@ -1208,58 +1221,85 @@ pub fn emit_fn_def(
     Some(lines.join("\n"))
 }
 
-/// Proof-mode function emission:
-/// recursive functions use explicit `termination_by` based on analyzed recursion plan.
-pub fn emit_fn_def_proof(
-    fd: &FnDef,
-    recursion_plan: Option<RecursionPlan>,
-    ctx: &CodegenContext,
-) -> Option<String> {
+/// Proof-mode function emission. Reads the contract decision from
+/// `ctx.proof_ir.fn_contracts` and dispatches to the matching emit fn
+/// (native guarded, fuel-encoded, pair-state Nat worker, etc.). Falls
+/// back to plain `def` emission when no contract is present (non-
+/// recursive fn).
+pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     if !is_pure_fn(fd) {
         return None;
     }
 
-    if matches!(recursion_plan, Some(RecursionPlan::LinearRecurrence2))
+    // LinearRecurrence2 — dedicated `RecursionContract::LinearRecurrence2`
+    // marker. Backend still calls `detect_second_order_int_linear_
+    // recurrence` to extract base cases + coefficients; the contract
+    // just signals "this fn lowers as pair-state Nat worker, not fuel".
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && matches!(
+            contract.recursion,
+            Some(crate::ir::RecursionContract::LinearRecurrence2)
+        )
         && let Some(shape) = detect_second_order_int_linear_recurrence(fd)
     {
         return Some(emit_nat_linear_recurrence_fn(fd, &shape, ctx));
     }
 
-    if let Some(RecursionPlan::IntCountdown { param_index }) = recursion_plan {
-        // IntCountdown stays on fuel encoding — native
-        // `termination_by n.natAbs` would require proving
-        // `(n - 1).natAbs < n.natAbs`, which only holds for `n > 0`.
-        // Aver bodies don't always have a `match n { 0 -> base; _ ->
-        // rec(n-1) }` shape that clamps `n` to non-negative before
-        // the recursive call (fibonacci's `fibTR` recurses without
-        // an `n < 0` guard, relying on its caller to never pass a
-        // negative). Fuel encoding sidesteps the issue.
+    // IntCountdown now reads through ProofIR's `Fuel { NatAbsPlusOne }`
+    // contract. Fuel encoding stays — native `termination_by n.natAbs`
+    // would require `(n - 1).natAbs < n.natAbs` which only holds for
+    // `n > 0`; Aver bodies don't always clamp to non-negative before
+    // recursing (fibTR sans-guard relies on its caller). Fuel
+    // sidesteps the issue.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && let Some(crate::ir::RecursionContract::Fuel {
+            fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne { param },
+        }) = contract.recursion.as_ref()
+        && let Some(param_index) = fd.params.iter().position(|(n, _)| n == param)
+    {
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
     }
 
-    if let Some(RecursionPlan::IntCountdownGuarded {
-        param_index,
-        base_arm_literal,
-        ref base_arm_body,
-        ref wildcard_arm_body,
-        ref precondition,
-    }) = recursion_plan
-    {
-        return Some(emit_native_guarded_int_countdown_fn(
-            fd,
-            ctx,
-            param_index,
-            base_arm_literal,
-            base_arm_body,
-            wildcard_arm_body,
+    // IntCountdownGuarded now reads through ProofIR — the lowerer
+    // populates `ctx.proof_ir.fn_contracts` with a `Native` contract
+    // whose `precondition` + `body` carry everything the emit needs.
+    // Other RecursionPlan variants still flow through `recursion_plan`
+    // directly; Step 7+ migrates them one shape at a time.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && let Some(crate::ir::RecursionContract::Native {
             precondition,
-        ));
+            measure: crate::ir::Measure::NatAbsInt { param },
+            body,
+            ..
+        }) = contract.recursion.as_ref()
+    {
+        // Measure binds the countdown param by name; map back to the
+        // arg-position index the emit fn expects. Falls through if the
+        // param somehow vanished (shouldn't happen — populator just
+        // pulled it from fd.params).
+        if let Some(param_index) = fd.params.iter().position(|(n, _)| n == param) {
+            let precondition_clauses: Vec<crate::ast::Spanned<crate::ast::Expr>> =
+                precondition.iter().map(|p| p.expr.clone()).collect();
+            return Some(emit_native_guarded_int_countdown_fn(
+                fd,
+                ctx,
+                param_index,
+                body.base_arm_literal,
+                &body.base_arm_body,
+                &body.wildcard_arm_body,
+                &precondition_clauses,
+            ));
+        }
     }
 
-    if let Some(RecursionPlan::IntAscending {
-        param_index,
-        ref bound,
-    }) = recursion_plan
+    // IntAscending reads `Fuel { BoundMinusParamNatAbsPlusOne }`.
+    // The bound stays as `Spanned<Expr>` in the contract; backend
+    // renders it through `bound_expr_to_lean` here.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && let Some(crate::ir::RecursionContract::Fuel {
+            fuel_metric: crate::ir::FuelMetric::BoundMinusParamNatAbsPlusOne { param, bound },
+        }) = contract.recursion.as_ref()
+        && let Some(param_index) = fd.params.iter().position(|(n, _)| n == param)
     {
         let bound_lean = super::bound_expr_to_lean(bound);
         return Some(emit_fuelized_int_ascending_fn(
@@ -1270,11 +1310,30 @@ pub fn emit_fn_def_proof(
         ));
     }
 
-    if matches!(recursion_plan, Some(RecursionPlan::SizeOfStructural)) {
+    // SizeOfStructural — `Fuel { SizeOfPlusOne }`. No params bound;
+    // sizeOf walks the whole call frame.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && matches!(
+            contract.recursion,
+            Some(crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::SizeOfPlusOne,
+            })
+        )
+    {
         return Some(emit_fuelized_sizeof_fn(fd, ctx));
     }
 
-    if matches!(recursion_plan, Some(RecursionPlan::StringPosAdvance)) {
+    // StringPosAdvance — `Fuel { StringLenMinusPos { string, pos } }`.
+    // Lean's emit reads the params from fd.params directly so the
+    // contract just acts as the dispatch signal.
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name)
+        && matches!(
+            contract.recursion,
+            Some(crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::StringLenMinusPos { .. },
+            })
+        )
+    {
         return Some(emit_fuelized_string_pos_fn(fd, ctx));
     }
 
@@ -1298,34 +1357,34 @@ pub fn emit_fn_def_proof(
         .unwrap_or(fd.body.as_ref());
     lines.push(emit_fn_body_for(fd, body, ctx));
 
-    if let Some(plan) = recursion_plan {
-        match plan {
-            RecursionPlan::LinearRecurrence2 => {}
-            RecursionPlan::IntCountdown { .. } => {}
-            RecursionPlan::IntCountdownGuarded { .. } => {}
-            RecursionPlan::IntAscending { .. } => {}
-            RecursionPlan::MutualIntCountdown => {
-                let Some((param_name, _)) = fd.params.first() else {
-                    return Some(lines.join("\n"));
-                };
-                let lean_param = aver_name_to_lean(param_name);
+    // termination_by/decreasing_by suffix for the few contract shapes
+    // that need explicit Lean termination hints (rest are no-ops —
+    // their emit fns already wrote them, or Lean's elaborator infers).
+    if let Some(contract) = ctx.proof_ir.fn_contracts.get(&fd.name) {
+        match contract.recursion.as_ref() {
+            Some(crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::Lex { params, rank: 0 },
+            }) if params.len() == 1 => {
+                // MutualIntCountdown — every member counts down the
+                // shared first-Int param.
+                let lean_param = aver_name_to_lean(&params[0]);
                 lines.push(format!("termination_by Int.natAbs {}", lean_param));
                 lines.push("decreasing_by".to_string());
                 lines.push("  omega".to_string());
             }
-            RecursionPlan::ListStructural { param_index } => {
-                let Some((param_name, _)) = fd.params.get(param_index) else {
-                    return Some(lines.join("\n"));
-                };
-                let lean_param = aver_name_to_lean(param_name);
+            Some(crate::ir::RecursionContract::Fuel {
+                fuel_metric: crate::ir::FuelMetric::SeqLenPlusOne { param },
+            }) => {
+                // ListStructural — Lean structural recursion on
+                // `<param>.length`. The `+1` framing in the IR is
+                // ignored here; Lean's elaborator wants the bare
+                // length measure.
+                let lean_param = aver_name_to_lean(param);
                 lines.push(format!("termination_by {}.length", lean_param));
                 lines.push("decreasing_by".to_string());
                 lines.push("  decreasing_tactic".to_string());
             }
-            RecursionPlan::SizeOfStructural => {}
-            RecursionPlan::StringPosAdvance => {}
-            RecursionPlan::MutualStringPosAdvance { .. }
-            | RecursionPlan::MutualSizeOfRanked { .. } => {}
+            _ => {}
         }
     }
 
@@ -2210,37 +2269,42 @@ pub fn emit_mutual_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
 }
 
 /// Proof-mode mutual recursion emission with optional group-level termination.
-pub fn emit_mutual_group_proof(
-    fns: &[&FnDef],
-    ctx: &CodegenContext,
-    plans: &std::collections::HashMap<String, RecursionPlan>,
-) -> String {
-    if fns
-        .iter()
-        .all(|fd| matches!(plans.get(&fd.name), Some(RecursionPlan::MutualIntCountdown)))
-    {
+pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
+    // Distinguish mutual SCC shapes by the Lex params vector:
+    //   `[p]` rank 0  → MutualIntCountdown
+    //   `[s, pos]`    → MutualStringPosAdvance
+    //   `[]` rank >=1 → MutualSizeOfRanked
+    let all_int_countdown = fns.iter().all(|fd| {
+        matches!(
+            contract_lex_params_rank(ctx, &fd.name),
+            Some((params, 0)) if params.len() == 1
+        )
+    });
+    if all_int_countdown {
         return emit_fuelized_mutual_int_countdown_group(fns, ctx);
     }
 
-    if fns.iter().all(|fd| {
+    let all_string_pos = fns.iter().all(|fd| {
         matches!(
-            plans.get(&fd.name),
-            Some(RecursionPlan::MutualStringPosAdvance { .. })
+            contract_lex_params_rank(ctx, &fd.name),
+            Some((params, _)) if params.len() == 2
         )
-    }) {
-        return emit_fuelized_mutual_string_pos_group(fns, ctx, plans);
+    });
+    if all_string_pos {
+        return emit_fuelized_mutual_string_pos_group(fns, ctx);
     }
 
-    if fns.iter().all(|fd| {
+    let all_sizeof = fns.iter().all(|fd| {
         matches!(
-            plans.get(&fd.name),
-            Some(RecursionPlan::MutualSizeOfRanked { .. })
+            contract_lex_params_rank(ctx, &fd.name),
+            Some((params, _)) if params.is_empty()
         )
-    }) {
-        if let Some(code) = emit_native_mutual_sizeof_group(fns, ctx, plans) {
+    });
+    if all_sizeof {
+        if let Some(code) = emit_native_mutual_sizeof_group(fns, ctx) {
             return code;
         }
-        return emit_fuelized_mutual_sizeof_group(fns, ctx, plans);
+        return emit_fuelized_mutual_sizeof_group(fns, ctx);
     }
 
     let mut lines = Vec::new();
@@ -2264,30 +2328,32 @@ pub fn emit_mutual_group_proof(
         for line in body.lines() {
             lines.push(format!("  {}", line));
         }
-        match plans.get(&fd.name).cloned() {
-            Some(RecursionPlan::MutualIntCountdown) => {
-                if let Some((first_name, _)) = fd.params.first() {
-                    let lean_first = aver_name_to_lean(first_name);
-                    lines.push(format!("  termination_by Int.natAbs {}", lean_first));
-                    lines.push("  decreasing_by".to_string());
-                    lines.push("    omega".to_string());
-                }
+        match contract_lex_params_rank(ctx, &fd.name) {
+            Some((params, 0)) if params.len() == 1 => {
+                // MutualIntCountdown — every member counts down the
+                // shared first-Int param. (The IR's param name is
+                // canonical; we don't fall back to fd.params here.)
+                let lean_first = aver_name_to_lean(&params[0]);
+                lines.push(format!("  termination_by Int.natAbs {}", lean_first));
+                lines.push("  decreasing_by".to_string());
+                lines.push("    omega".to_string());
             }
-            Some(RecursionPlan::MutualStringPosAdvance { rank }) => {
-                if let Some((s_name, _)) = fd.params.first()
-                    && let Some((pos_name, _)) = fd.params.get(1)
-                {
-                    let lean_s = aver_name_to_lean(s_name);
-                    let lean_pos = aver_name_to_lean(pos_name);
-                    lines.push(format!(
-                        "  termination_by (({}.data.length) - ({}.toNat), {})",
-                        lean_s, lean_pos, rank
-                    ));
-                    lines.push("  decreasing_by".to_string());
-                    lines.push("    simp_wf".to_string());
-                }
+            Some((params, rank)) if params.len() == 2 => {
+                // MutualStringPosAdvance — (s, pos) shape; rank
+                // distinguishes SCC members.
+                let lean_s = aver_name_to_lean(&params[0]);
+                let lean_pos = aver_name_to_lean(&params[1]);
+                lines.push(format!(
+                    "  termination_by (({}.data.length) - ({}.toNat), {})",
+                    lean_s, lean_pos, rank
+                ));
+                lines.push("  decreasing_by".to_string());
+                lines.push("    simp_wf".to_string());
             }
-            Some(RecursionPlan::MutualSizeOfRanked { .. }) => {}
+            Some(([], _)) => {
+                // MutualSizeOfRanked — handled inside the SCC's
+                // dedicated emitter; no termination_by suffix here.
+            }
             _ => {}
         }
         lines.push(String::new());

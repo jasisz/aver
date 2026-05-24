@@ -14,7 +14,7 @@ mod types;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnDef, Spanned, TopLevel, TypeDef, VerifyKind};
+use crate::ast::{Expr, FnDef, Spanned, TopLevel, VerifyKind};
 use crate::codegen::{CodegenContext, ProjectOutput};
 
 /// How verify blocks should be emitted in generated Lean.
@@ -781,14 +781,6 @@ fn lean_project_name(ctx: &CodegenContext) -> String {
     crate::codegen::common::entry_basename(ctx)
 }
 
-pub(crate) fn find_type_def<'a>(ctx: &'a CodegenContext, type_name: &str) -> Option<&'a TypeDef> {
-    ctx.modules
-        .iter()
-        .flat_map(|m| m.type_defs.iter())
-        .chain(ctx.type_defs.iter())
-        .find(|td| toplevel::type_def_name(td) == type_name)
-}
-
 pub(super) fn bound_expr_to_lean(expr: &Spanned<Expr>) -> String {
     match &expr.node {
         Expr::Literal(crate::ast::Literal::Int(n)) => format!("{}", n),
@@ -825,8 +817,17 @@ pub(crate) use crate::codegen::recursion::detect::sizeof_measure_param_indices;
 /// Returns human-readable notices for recursive shapes that still fall back to
 /// regular `partial` Lean defs instead of total proof-mode emission.
 pub fn proof_mode_findings(ctx: &CodegenContext) -> Vec<ProofModeIssue> {
-    let (_plans, issues) = crate::codegen::recursion::analyze_plans(ctx);
-    issues
+    // ProofIR carries `unclassified_fns` populated by the ContractLower
+    // pipeline stage — same data analyze_plans used to return, just
+    // read off the IR instead of re-running the classifier.
+    ctx.proof_ir
+        .unclassified_fns
+        .iter()
+        .map(|uf| ProofModeIssue {
+            line: uf.line,
+            message: uf.message.clone(),
+        })
+        .collect()
 }
 
 pub fn proof_mode_issues(ctx: &CodegenContext) -> Vec<String> {
@@ -856,7 +857,11 @@ pub fn transpile_for_proof_mode(
     ctx: &mut CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
-    ctx.refresh_facts();
+    // No refresh_facts call here: production callers go through
+    // build_codegen_context → pipeline, which populates every derived
+    // fact (recursive_fns, mutual_tco_members, proof_ir) once.
+    // Synthetic-AST tests that bypass the pipeline call refresh_facts
+    // themselves before reaching this fn.
     transpile_unified(ctx, verify_mode, LeanEmitMode::Proof)
 }
 
@@ -869,7 +874,9 @@ pub fn transpile_with_verify_mode(
     ctx: &mut CodegenContext,
     verify_mode: VerifyEmitMode,
 ) -> ProjectOutput {
-    ctx.refresh_facts();
+    // No refresh_facts call here — same reasoning as
+    // `transpile_for_proof_mode`. Synthetic-AST tests refresh
+    // themselves; production paths come pre-populated.
     transpile_unified(ctx, verify_mode, LeanEmitMode::Standard)
 }
 
@@ -1197,17 +1204,11 @@ fn transpile_unified(
     verify_mode: VerifyEmitMode,
     emit_mode: LeanEmitMode,
 ) -> ProjectOutput {
-    use crate::codegen::recursion::RecursionPlan;
-
     // Read recursion fact from `ctx.recursive_fns` — populated upstream
     // by `refresh_facts()` (test stubs) or `build_context` (production).
     let recursive_fns: HashSet<String> = ctx.recursive_fns.clone();
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
-    let (plans, _proof_issues) = match emit_mode {
-        LeanEmitMode::Proof => crate::codegen::recursion::analyze_plans(ctx),
-        LeanEmitMode::Standard => (HashMap::<String, RecursionPlan>::new(), Vec::new()),
-    };
 
     // Pure fns are SCC-routed per scope (per dependent module + entry)
     // independently — shared `route_pure_components_per_scope` handles
@@ -1221,9 +1222,11 @@ fn transpile_unified(
             if comp.len() > 1 {
                 let code = match emit_mode {
                     LeanEmitMode::Proof => {
-                        let all_supported = comp.iter().all(|fd| plans.contains_key(&fd.name));
+                        let all_supported = comp
+                            .iter()
+                            .all(|fd| ctx.proof_ir.fn_contracts.contains_key(&fd.name));
                         if all_supported {
-                            toplevel::emit_mutual_group_proof(comp, ctx, &plans)
+                            toplevel::emit_mutual_group_proof(comp, ctx)
                         } else {
                             toplevel::emit_mutual_group(comp, ctx)
                         }
@@ -1236,10 +1239,15 @@ fn transpile_unified(
                 let emitted = match emit_mode {
                     LeanEmitMode::Proof => {
                         let is_recursive = recursive_names.contains(&fd.name);
-                        if is_recursive && !plans.contains_key(&fd.name) {
+                        // ProofIR's `fn_contracts` holds an entry only for
+                        // recursive fns the ContractLower stage could
+                        // classify. Recursive fns without a contract land
+                        // in `unclassified_fns` and fall through to the
+                        // partial/non-recursive emit.
+                        if is_recursive && !ctx.proof_ir.fn_contracts.contains_key(&fd.name) {
                             toplevel::emit_fn_def(fd, &recursive_names, ctx)
                         } else {
-                            toplevel::emit_fn_def_proof(fd, plans.get(&fd.name).cloned(), ctx)
+                            toplevel::emit_fn_def_proof(fd, ctx)
                         }
                     }
                     LeanEmitMode::Standard => toplevel::emit_fn_def(fd, &recursive_fns, ctx),
@@ -1519,29 +1527,59 @@ mod tests {
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
+            proof_ir: crate::ir::ProofIR::default(),
         }
     }
 
     fn ctx_from_source(source: &str, project_name: &str) -> CodegenContext {
         let mut items = parse_source(source).expect("source should parse");
-        crate::ir::pipeline::tco(&mut items);
-        let tc = crate::ir::pipeline::typecheck(
-            &items,
-            &crate::ir::TypecheckMode::Full { base_dir: None },
+        // Proof-mode minimal pipeline: only the stages a proof
+        // exporter actually consumes. Resolve / last_use / escape /
+        // interp_lower / buffer_build all rewrite item shapes in
+        // ways that break the recursion classifier's source-level
+        // pattern matching (e.g. escape inlines a record into the
+        // caller, dropping the recursive call's structural shape).
+        // Analyze stays on — `recursive_fns` is what `proof_lower`
+        // reads to decide which fns to classify.
+        let pipeline_result = crate::ir::pipeline::run(
+            &mut items,
+            crate::ir::PipelineConfig {
+                run_tco: true,
+                typecheck: Some(crate::ir::TypecheckMode::Full { base_dir: None }),
+                run_interp_lower: false,
+                run_buffer_build: false,
+                run_resolve: false,
+                run_last_use: false,
+                run_analyze: true,
+                run_escape: false,
+                run_refinement_lower: true,
+                run_contract_lower: true,
+                run_law_lower: true,
+                dep_modules: &[],
+                alloc_policy: None,
+                call_ctx: None,
+                on_after_pass: None,
+            },
         );
+        let tc = pipeline_result.typecheck.expect("typecheck requested");
         assert!(
             tc.errors.is_empty(),
             "source should typecheck without errors: {:?}",
             tc.errors
         );
-        build_context(
+        let proof_ir = pipeline_result.proof_ir;
+        let mut ctx = build_context(
             items,
             &tc,
-            None,
+            pipeline_result.analysis.as_ref(),
             HashSet::new(),
             project_name.to_string(),
             vec![],
-        )
+        );
+        if let Some(ir) = proof_ir {
+            ctx.proof_ir = ir;
+        }
+        ctx
     }
 
     /// Concatenate every emitted `.lean` source (entry + per-module +

@@ -102,9 +102,11 @@ pub enum RecursionPlan {
     MutualSizeOfRanked { rank: usize },
 }
 
-/// A diagnostic surfaced when a recursive fn falls outside the supported
-/// patterns. Proof backends translate this into a warning and emit the
-/// fn through a partial/axiom fallback (or skip it entirely).
+/// Classifier-side diagnostic: a recursive fn whose shape falls
+/// outside every supported pattern. `proof_lower::populate_fn_
+/// contracts` translates these into `ProofIR.unclassified_fns` —
+/// consumers should read `ctx.proof_ir.unclassified_fns` (typed
+/// `Vec<UnclassifiedFn>`) instead of reaching for this type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProofModeIssue {
     pub line: usize,
