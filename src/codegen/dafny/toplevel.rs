@@ -87,7 +87,7 @@ fn type_to_dafny(ty: &Type) -> String {
 }
 
 // Refinement witness picking + predicate evaluation moved to
-// `codegen::proof_lower` — Dafny now reads `decl.dafny_witness` off
+// `codegen::proof_lower` — Dafny now reads `decl.witness` off
 // `ctx.proof_ir.refined_types` instead of re-running the walk per
 // emit. The `literal_int_value` helper stays — it's also used by
 // bounded-∀ universal-lemma emission elsewhere in this file.
@@ -145,10 +145,7 @@ pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> Option<String> {
             {
                 let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
                 let bind = aver_name_to_dafny(&decl.predicate_param);
-                let witness = decl
-                    .dafny_witness
-                    .clone()
-                    .unwrap_or_else(|| "0".to_string());
+                let witness = decl.witness.clone().unwrap_or_else(|| "0".to_string());
                 return Some(format!(
                     "type {name} = {bind}: int | {predicate} witness {witness}\n"
                 ));

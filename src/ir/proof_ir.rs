@@ -82,13 +82,31 @@ pub struct RefinedTypeDecl {
     /// constructor's `match <pred> { true -> Ok(...); false -> Err(...)
     /// }` subject.
     pub invariant: Predicate,
-    /// Witness for Dafny's `type T = ... witness W`. Resolved by
-    /// the lowerer: first tries the smart constructor's verify
-    /// block (`fromX(K) => Ok(...)` for some literal K), then
-    /// evaluates the predicate against small candidates. `None`
-    /// when no satisfier was found — backends use type-default `0`
-    /// and pray (or emit `witness *` for Dafny's auto-pick).
-    pub dafny_witness: Option<String>,
+    /// Inhabitation witness: a literal value of `carrier_type` that
+    /// the lowerer verified satisfies `invariant`. Resolved by first
+    /// trying the smart constructor's verify block (`fromX(K) =>
+    /// Ok(...)` for some literal K — verified by the user via
+    /// `aver verify`), then evaluating the predicate against small
+    /// candidates as a fallback.
+    ///
+    /// Why the IR carries this even though only Dafny's subset type
+    /// strictly *requires* a non-emptiness witness: it's a fact
+    /// about the type (∃ v : carrier, invariant(v) holds), not a
+    /// Dafny-specific syntactic obligation. Backends use it as they
+    /// see fit:
+    ///
+    /// - Dafny: emits `type X = v: int | P v witness <W>`. Required
+    ///   for the subset type to be inhabited and elaborable.
+    /// - Lean: currently unused — propositional `Subtype` may be
+    ///   empty, so `{ v : Int // P v }` elaborates regardless. Step
+    ///   N+1 could emit a `def sample_X : X := ⟨W, by decide⟩` for
+    ///   roundtrip / test convenience.
+    /// - Future Z3 / Coq / etc.: same fact, rendered per target.
+    ///
+    /// `None` when no satisfier was found. Backends that require a
+    /// witness must either reject the type or fall back to a target-
+    /// default (Dafny picks `0` and crosses fingers).
+    pub witness: Option<String>,
 }
 
 /// Per-pure-fn proof contract. Placeholder shape — Step 5+ fills

@@ -149,7 +149,7 @@ fn non_refinement_records_dont_appear_in_proof_ir() {
 }
 
 #[test]
-fn dafny_witness_matches_legacy_for_each_example() {
+fn inhabitation_witness_matches_legacy_for_each_example() {
     // The legacy witness picker lives in `dafny/toplevel.rs::
     // refinement_witness_for` and isn't pub-exported. Mirror its
     // expected output for each flagship example so a divergence
@@ -185,9 +185,9 @@ fn dafny_witness_matches_legacy_for_each_example() {
             .find(|d| d.name == *name)
             .unwrap_or_else(|| panic!("{} not lifted in ProofIR", name));
         assert_eq!(
-            decl.dafny_witness.as_deref(),
+            decl.witness.as_deref(),
             Some(*expected_witness),
-            "Dafny witness mismatch for {}",
+            "Inhabitation witness mismatch for {}",
             name
         );
     }

@@ -76,7 +76,7 @@ fn populate_refined_types(ctx: &CodegenContext, ir: &mut ProofIR) {
             )],
             expr: info.predicate.clone(),
         };
-        let dafny_witness = pick_dafny_witness(name, ctx, info.predicate, info.param_name);
+        let witness = pick_witness(name, ctx, info.predicate, info.param_name);
         ir.refined_types.insert(
             name.clone(),
             RefinedTypeDecl {
@@ -85,20 +85,20 @@ fn populate_refined_types(ctx: &CodegenContext, ir: &mut ProofIR) {
                 carrier_field: info.carrier_field.to_string(),
                 predicate_param: info.param_name.to_string(),
                 invariant,
-                dafny_witness,
+                witness,
             },
         );
     }
 }
 
-/// Pick a Dafny `witness` value that provably satisfies the
-/// refinement predicate. First tries the smart constructor's
-/// verify-block samples (entry-module only — `ModuleInfo` doesn't
-/// surface verify blocks); falls back to evaluating the predicate
-/// against `[0, 1, -1]` and returning the first satisfier.
-/// Mirrors the existing logic in `dafny/toplevel.rs::refinement_
-/// witness_for`; Step 4 will retire that copy.
-fn pick_dafny_witness(
+/// Pick an inhabitation witness: a literal value of the carrier type
+/// that satisfies the refinement predicate. Backend-neutral output —
+/// Dafny consumes it as `witness <W>`, Lean may later use it for a
+/// `sample_X` helper. First tries the smart constructor's verify-
+/// block samples (entry-module only — `ModuleInfo` doesn't surface
+/// verify blocks); falls back to evaluating the predicate against
+/// `[0, 1, -1]` and returning the first satisfier.
+fn pick_witness(
     type_name: &str,
     ctx: &CodegenContext,
     predicate: &Spanned<Expr>,
