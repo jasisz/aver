@@ -84,6 +84,9 @@ fn main() -> Int
             "analyze",
             "escape",
             "last_use",
+            "refinement_lower",
+            "contract_lower",
+            "law_lower",
         ]
     );
 }
