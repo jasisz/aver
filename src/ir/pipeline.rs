@@ -41,6 +41,12 @@ pub enum PipelineStage {
     LastUse,
     Analyze,
     Escape,
+    /// Backend-neutral proof-export decision IR (refinement-record
+    /// subtype lifts, recursion contracts). Opt-in via
+    /// `PipelineConfig.run_proof_lower`; consumed by `aver proof`
+    /// (Lean / Dafny exporters). Runtime backends (VM / WASM / Rust)
+    /// leave it off and skip the lowering work entirely.
+    ProofLower,
 }
 
 impl PipelineStage {
@@ -54,6 +60,7 @@ impl PipelineStage {
             Self::LastUse => "last_use",
             Self::Analyze => "analyze",
             Self::Escape => "escape",
+            Self::ProofLower => "proof_lower",
         }
     }
 }
@@ -108,6 +115,22 @@ pub struct PipelineConfig<'a> {
     /// Proof exporters (Lean / Dafny) want the source-level shape
     /// preserved and skip this stage.
     pub run_escape: bool,
+    /// Whether to run the proof-export lowering pass. Builds a
+    /// `ProofIR` (`refined_types`, `fn_contracts`, eventually
+    /// `law_theorems`) from items + `dep_modules`. Opt-in: every
+    /// runtime backend leaves it off; only `aver proof` enables it.
+    /// Requires `dep_modules` to be populated when the entry pulls
+    /// in `depends [...]` modules — otherwise the lowering only sees
+    /// entry-file refinement records / fn contracts.
+    pub run_proof_lower: bool,
+    /// Pre-loaded dependent modules. Carried alongside items so the
+    /// proof-lower pass can walk both the entry and dep type/fn defs
+    /// (refinement records live in either; cross-module recursion is
+    /// classified together). Caller pre-loads via
+    /// `load_compile_deps` / `loaded_to_module_info` before running
+    /// the pipeline. Empty slice when the source is single-file or
+    /// when no dep needs proof-side analysis.
+    pub dep_modules: &'a [crate::codegen::ModuleInfo],
     /// Allocation policy used by `analyze`. `None` skips the alloc-info
     /// computation; every other analysis fact is still produced.
     /// Backends should pass their own policy (`VmAllocPolicy`,
@@ -135,6 +158,8 @@ impl<'a> Default for PipelineConfig<'a> {
             run_last_use: true,
             run_analyze: true,
             run_escape: true,
+            run_proof_lower: false,
+            dep_modules: &[],
             alloc_policy: None,
             call_ctx: None,
             on_after_pass: None,
@@ -203,6 +228,14 @@ pub enum PassReport {
         /// pass rewrote into the inlined-and-substituted body.
         rewrites: usize,
     },
+    ProofLower {
+        /// User types lifted into refinement subtypes.
+        refined_types: usize,
+        /// Pure fns with a non-trivial `RecursionContract`. Currently
+        /// only covers the IntCountdownGuarded shape; extends as more
+        /// `RecursionPlan` variants migrate into ProofIR.
+        fn_contracts: usize,
+    },
 }
 
 /// Per-fn counter delta — used by `Tco` and `InterpLower` reports to
@@ -245,6 +278,10 @@ pub struct PipelineResult {
     /// IR-level analysis facts (per-fn body shape, thin kind, alloc info)
     /// when `run_analyze` was on. `None` when the stage was disabled.
     pub analysis: Option<AnalysisResult>,
+    /// Backend-neutral proof-export decisions when `run_proof_lower`
+    /// was on. `None` when the stage was disabled (every runtime
+    /// backend leaves it off).
+    pub proof_ir: Option<crate::ir::ProofIR>,
     /// Per-stage diagnostic records — one per pass that actually ran.
     /// Drives `aver compile --explain-passes`; consumed by the future
     /// CI failable-invariant checks.
@@ -410,6 +447,33 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         crate::ir::alias::annotate_program_alias_slots(items);
     }
 
+    // ProofLower runs last — needs the post-resolve, post-last_use
+    // items + the analysis stage's `recursive_fns`. Builds a backend-
+    // neutral ProofIR; consumed by `aver proof` (Lean / Dafny). Opt-in:
+    // every runtime backend leaves `run_proof_lower = false` and skips
+    // the work.
+    if cfg.run_proof_lower {
+        let recursive_fns_owned: std::collections::HashSet<String> = result
+            .analysis
+            .as_ref()
+            .map(|a| a.recursive_fns.iter().cloned().collect())
+            .unwrap_or_default();
+        let module_prefixes: std::collections::HashSet<String> =
+            cfg.dep_modules.iter().map(|m| m.prefix.clone()).collect();
+        let inputs = crate::codegen::proof_lower::ProofLowerInputs {
+            entry_items: items,
+            dep_modules: cfg.dep_modules,
+            module_prefixes: &module_prefixes,
+            recursive_fns: &recursive_fns_owned,
+        };
+        let proof_ir = crate::codegen::proof_lower::lower(&inputs);
+        result
+            .pass_diagnostics
+            .push(diag_for_proof_lower(&proof_ir));
+        result.proof_ir = Some(proof_ir);
+        fire(&mut cfg, PipelineStage::ProofLower, items);
+    }
+
     result
 }
 
@@ -572,6 +636,16 @@ fn diag_for_escape(rewrites: usize) -> PassDiagnostic {
     PassDiagnostic {
         stage: PipelineStage::Escape,
         report: PassReport::Escape { rewrites },
+    }
+}
+
+fn diag_for_proof_lower(ir: &crate::ir::ProofIR) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::ProofLower,
+        report: PassReport::ProofLower {
+            refined_types: ir.refined_types.len(),
+            fn_contracts: ir.fn_contracts.len(),
+        },
     }
 }
 

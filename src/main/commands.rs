@@ -3317,6 +3317,14 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     ));
                 }
             }
+            PassReport::ProofLower {
+                refined_types,
+                fn_contracts,
+            } => {
+                out.push_str(&format!(
+                    "{label} {refined_types} refined type(s) lifted, {fn_contracts} fn contract(s) decided\n"
+                ));
+            }
         }
         out.push('\n');
     }
@@ -3470,6 +3478,15 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             }
             PassReport::Escape { rewrites } => {
                 out.push_str(&format!("{{\"rewrites\":{}}}", rewrites));
+            }
+            PassReport::ProofLower {
+                refined_types,
+                fn_contracts,
+            } => {
+                out.push_str(&format!(
+                    "{{\"refined_types\":{},\"fn_contracts\":{}}}",
+                    refined_types, fn_contracts
+                ));
             }
         }
         out.push('}');
