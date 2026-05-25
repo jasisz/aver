@@ -2004,6 +2004,115 @@ fn proof_dafny_verifies_date_when_dafny_is_available() {
 }
 
 #[test]
+fn proof_export_cross_module_refined_types_keep_distinct_predicates() {
+    // Review findings 2 + 3 (round 2): two modules each declaring a
+    // refined `Natural` (different predicates) must each carry its
+    // own predicate into the Lean / Dafny export. Pre-fix
+    // `populate_refined_types` keyed `refined_types` by bare name
+    // and called the unscoped `refinement_info_for` — both `A` and
+    // `B` ended up sharing whichever predicate walked first. The
+    // canonical-key + scoped-info path gives each module its own
+    // slot; `find_refined_type_scoped` then resolves bare lookups
+    // inside each module's emit pass to the local entry.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-cross-module-refined");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    std::fs::write(
+        root.join("AAA.av"),
+        "module AAA\n\
+         \x20   exposes [fromInt]\n\
+         \x20   exposes opaque [Natural]\n\
+         \x20   intent = \"Module AAA's Natural — non-negative.\"\n\
+         \x20   effects []\n\
+         \n\
+         record Natural\n\
+         \x20   value: Int\n\
+         \n\
+         fn fromInt(n: Int) -> Result<Natural, String>\n\
+         \x20   ? \"Smart constructor — non-negative.\"\n\
+         \x20   match n >= 0\n\
+         \x20       true  -> Result.Ok(Natural(value = n))\n\
+         \x20       false -> Result.Err(\"AAA: must be non-negative\")\n",
+    )
+    .expect("write AAA.av");
+
+    std::fs::write(
+        root.join("BBB.av"),
+        "module BBB\n\
+         \x20   exposes [fromInt]\n\
+         \x20   exposes opaque [Natural]\n\
+         \x20   intent = \"Module BBB's Natural — at least 10.\"\n\
+         \x20   effects []\n\
+         \n\
+         record Natural\n\
+         \x20   value: Int\n\
+         \n\
+         fn fromInt(n: Int) -> Result<Natural, String>\n\
+         \x20   ? \"Smart constructor — at least 10.\"\n\
+         \x20   match n >= 10\n\
+         \x20       true  -> Result.Ok(Natural(value = n))\n\
+         \x20       false -> Result.Err(\"BBB: must be >= 10\")\n",
+    )
+    .expect("write BBB.av");
+
+    std::fs::write(
+        root.join("entry.av"),
+        "module Entry\n\
+         \x20   depends [AAA, BBB]\n\
+         \x20   intent = \"Touches both Naturals so both surface in the proof IR.\"\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   0\n",
+    )
+    .expect("write entry.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let aaa_lean = std::fs::read_to_string(out_dir.join("AAA.lean")).expect("read AAA.lean");
+    let bbb_lean = std::fs::read_to_string(out_dir.join("BBB.lean")).expect("read BBB.lean");
+
+    // AAA's Natural carries `>= 0`; BBB's carries `>= 10`. Each
+    // module's emit pass must resolve its own predicate, not the
+    // other's. Before the scope fix, populate kept only the first
+    // walked predicate under bare key `Natural` and both modules
+    // emitted the same subtype.
+    assert!(
+        aaa_lean.contains("abbrev Natural") && aaa_lean.contains(">= 0"),
+        "AAA.lean must abbrev Natural with `>= 0`; got:\n{aaa_lean}"
+    );
+    assert!(
+        bbb_lean.contains("abbrev Natural") && bbb_lean.contains(">= 10"),
+        "BBB.lean must abbrev Natural with `>= 10`; got:\n{bbb_lean}"
+    );
+    // Defense in depth: AAA's emit must not carry BBB's predicate
+    // or vice versa.
+    assert!(
+        !aaa_lean.contains(">= 10"),
+        "AAA.lean leaked BBB's predicate; got:\n{aaa_lean}"
+    );
+    assert!(
+        !bbb_lean.contains("n >= 0 "),
+        "BBB.lean leaked AAA's predicate; got:\n{bbb_lean}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
     // Issue #128: red_black_tree.av carried 44 lake errors after the
     // #123 path-shadow / `.val` fixes. The diagnosis in the issue

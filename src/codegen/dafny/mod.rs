@@ -195,7 +195,9 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     for module in &ctx.modules {
         let mut sections: Vec<String> = Vec::new();
         for td in &module.type_defs {
-            if let Some(code) = toplevel::emit_type_def(td, ctx) {
+            if let Some(code) =
+                toplevel::emit_type_def_in_scope(td, ctx, Some(module.prefix.as_str()))
+            {
                 sections.push(code);
             }
         }
