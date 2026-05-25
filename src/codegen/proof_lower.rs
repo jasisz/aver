@@ -230,7 +230,7 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             )],
             expr: info.predicate.clone(),
         };
-        let witness = pick_witness(name, inputs, info.predicate, info.param_name);
+        let witness = pick_witness(name, inputs, info.predicate, info.param_name, module_prefix);
         ir.refined_types.insert(
             canonical_key,
             RefinedTypeDecl {
@@ -2685,47 +2685,85 @@ fn pick_witness(
     inputs: &ProofLowerInputs,
     predicate: &Spanned<Expr>,
     param_name: &str,
+    scope: Option<&str>,
 ) -> Option<String> {
-    let smart_ctor_name = inputs.entry_items.iter().find_map(|item| match item {
-        TopLevel::FnDef(fd)
-            if fd.return_type.starts_with("Result<")
-                && fd.return_type[7..].starts_with(type_name)
-                && fd.params.len() == 1 =>
-        {
-            Some(fd.name.clone())
-        }
-        _ => None,
-    });
+    // Smart-constructor + verify-block walk, scoped to the same
+    // module the type lives in. Refinement-via-opaque keeps record
+    // and constructor in the same module (the carrier field is
+    // opaque from outside), so this mirrors that constraint. Without
+    // the scope a module-B `Natural` with predicate `n >= 10` would
+    // pick up entry's `fromInt(0)` verify case, silently breaking
+    // the witness invariant.
+    let smart_ctor_name: Option<String> = match scope {
+        None => inputs.entry_items.iter().find_map(|item| match item {
+            TopLevel::FnDef(fd) if smart_ctor_matches(fd, type_name) => Some(fd.name.clone()),
+            _ => None,
+        }),
+        Some(prefix) => inputs
+            .dep_modules
+            .iter()
+            .find(|m| m.prefix == prefix)
+            .and_then(|m| {
+                m.fn_defs
+                    .iter()
+                    .find(|fd| smart_ctor_matches(fd, type_name))
+                    .map(|fd| fd.name.clone())
+            }),
+    };
     if let Some(smart_ctor_name) = smart_ctor_name {
-        for item in inputs.entry_items {
-            let TopLevel::Verify(vb) = item else {
-                continue;
-            };
-            if vb.fn_name != smart_ctor_name {
-                continue;
-            }
-            for (lhs, rhs) in &vb.cases {
-                if !is_result_ok(&rhs.node) {
-                    continue;
-                }
-                let Expr::FnCall(_, args) = &lhs.node else {
+        // Verify blocks live on `inputs.entry_items` only — `ModuleInfo`
+        // doesn't surface verify cases. Scoped verify-block walk would
+        // need a separate plumb that's not in `ProofLowerInputs` today.
+        // Restrict the verify-sample fast path to entry scope; module
+        // scopes fall through to the predicate-evaluation fallback,
+        // which now sweeps a wider range so non-trivial predicates
+        // (`n >= 10`) still get a real witness.
+        if scope.is_none() {
+            for item in inputs.entry_items {
+                let TopLevel::Verify(vb) = item else {
                     continue;
                 };
-                if args.len() != 1 {
+                if vb.fn_name != smart_ctor_name {
                     continue;
                 }
-                if let Some(lit) = literal_int_value(&args[0]) {
-                    return Some(lit);
+                for (lhs, rhs) in &vb.cases {
+                    if !is_result_ok(&rhs.node) {
+                        continue;
+                    }
+                    let Expr::FnCall(_, args) = &lhs.node else {
+                        continue;
+                    };
+                    if args.len() != 1 {
+                        continue;
+                    }
+                    if let Some(lit) = literal_int_value(&args[0]) {
+                        return Some(lit);
+                    }
                 }
             }
         }
     }
-    for candidate in [0i64, 1, -1] {
+    // Predicate-evaluation fallback. Sweep small magnitudes first
+    // (covers `n >= 0`, `n > 0`, `n != 0`) then climb in powers of
+    // ten to catch shapes like `n >= 10`, `n >= 100`, …; the latter
+    // are common refinement invariants (Positive-with-floor,
+    // ID-format bounds). Cap at 10^6 — below the i64 wrap-around
+    // cliff so eval stays exact, above any realistic refinement
+    // floor. Without the wider sweep, Dafny's `witness 0` fallback
+    // silently violates the predicate and the verify run fails on
+    // the type definition itself.
+    for candidate in [0i64, 1, -1, 10, 100, 1_000, 10_000, 100_000, 1_000_000] {
         if eval_int_bool_predicate(predicate, param_name, candidate) == Some(true) {
             return Some(candidate.to_string());
         }
     }
     None
+}
+
+fn smart_ctor_matches(fd: &FnDef, type_name: &str) -> bool {
+    fd.return_type.starts_with("Result<")
+        && fd.return_type[7..].starts_with(type_name)
+        && fd.params.len() == 1
 }
 
 fn is_result_ok(expr: &Expr) -> bool {

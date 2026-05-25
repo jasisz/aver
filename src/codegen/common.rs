@@ -309,10 +309,18 @@ fn search_refinement_wrapper<'a>(
                 &fvalue.node,
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
             );
-            let inputs_local = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+            // Round-3 finding 3: route through the canonical IR
+            // decision instead of re-walking entry + every module
+            // via `refinement_info_for`. The unscoped re-walk
+            // returned whichever refined record walked first when
+            // two modules carried the same bare name, then the
+            // returned `name` was used downstream as if it identified
+            // a unique decl. `find_refined_type` resolves against
+            // `proof_ir.refined_types` which `populate_refined_types`
+            // already keyed by canonical `Module.Name`.
             if matches_var
-                && let Some(info) = refinement_info_for(type_name, &inputs_local)
-                && info.carrier_type == given_type
+                && let Some(decl) = find_refined_type(ctx, type_name)
+                && decl.carrier_type == given_type
             {
                 // Need a stable reference into ctx for the returned
                 // &str. `refinement_info_for` returns refs into ctx
@@ -720,13 +728,22 @@ pub fn when_is_redundant_with_refinement_lifts(
     // walk) would length-mismatch and keep the now-redundant
     // premise. Same flatten on both sides keeps natural / positive
     // / int_range behavior identical to pre-fix.
-    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    // Round-3 finding 3: same canonical-IR routing as
+    // `search_refinement_wrapper`. The legacy `refinement_info_for`
+    // walks every module looking for a same-bare-name record, so
+    // two modules with distinct predicates would share whichever
+    // walked first. `find_refined_type` reads from
+    // `proof_ir.refined_types` keyed by canonical `Module.Name`.
     let mut lifted_predicates: Vec<Spanned<Expr>> = Vec::new();
     for (given_name, refined_type) in lifted_vars {
-        let Some(info) = refinement_info_for(refined_type, &inputs) else {
+        let Some(decl) = find_refined_type(ctx, refined_type) else {
             return false;
         };
-        let substituted = substitute_ident_in_expr(info.predicate, info.param_name, given_name);
+        let substituted = substitute_ident_in_expr(
+            &decl.invariant.expr,
+            decl.predicate_param.as_str(),
+            given_name,
+        );
         lifted_predicates.extend(flatten_bool_and_conjuncts(&substituted));
     }
     if when_conjuncts.len() != lifted_predicates.len() {
@@ -808,24 +825,31 @@ pub fn find_refined_type<'a>(
 /// inside module B's emit pick up `B.Natural`, not whichever module
 /// happened to populate first.
 ///
-/// Resolution order:
-///   1. Direct lookup (covers exact-canonical hits + bare-entry).
-///   2. If `scope = Some(prefix)`, try `prefix.bare`.
+/// Resolution order (revised after review round 3):
+///   1. If `scope = Some(prefix)` AND `name` is bare, try
+///      `prefix.bare` FIRST — without this an entry-level
+///      refined record with the same bare name would shadow the
+///      module's own slot from inside that module's emit pass.
+///   2. Direct lookup of `name` as written (covers exact-canonical
+///      hits + bare-entry from entry-scope callers).
 ///   3. Walk modules to find owners and try each canonical key.
 pub fn find_refined_type_scoped<'a>(
     ctx: &'a CodegenContext,
     name: &str,
     scope: Option<&str>,
 ) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
-    if let Some(decl) = ctx.proof_ir.refined_types.get(name) {
-        return Some(decl);
-    }
     let bare = name.rsplit('.').next().unwrap_or(name);
-    if let Some(prefix) = scope {
+    let name_is_already_qualified = name.contains('.');
+    if let Some(prefix) = scope
+        && !name_is_already_qualified
+    {
         let scoped = format!("{}.{}", prefix, bare);
         if let Some(decl) = ctx.proof_ir.refined_types.get(&scoped) {
             return Some(decl);
         }
+    }
+    if let Some(decl) = ctx.proof_ir.refined_types.get(name) {
+        return Some(decl);
     }
     for m in &ctx.modules {
         for td in &m.type_defs {
@@ -2177,5 +2201,89 @@ mod tests {
         // No-module-owner lookup misses — i.e. a bare name that
         // wasn't declared in any module is None, not "first in map".
         assert!(resolve_refined_type_in(&refined_types, &modules, "Unrelated").is_none());
+    }
+
+    #[test]
+    fn find_refined_type_scoped_prefers_current_module_over_entry_collision() {
+        // Review finding 2 (round 3): when entry AND a dep module
+        // both declare a refined record of the same bare name, the
+        // module's emit pass (passing `scope = Some(prefix)` and a
+        // bare reference) must resolve to its OWN slot, not entry's.
+        // The pre-fix order tried direct `refined_types.get(name)`
+        // first, which matched entry's bare-keyed slot and the
+        // scope-prefix lookup never ran.
+        use crate::ast::TypeDef;
+        use crate::codegen::{CodegenContext, ModuleInfo};
+        use crate::ir::proof_ir::{Predicate, QuantifierType, RefinedTypeDecl};
+        use std::collections::{HashMap, HashSet};
+
+        let module = ModuleInfo {
+            prefix: "Mod".to_string(),
+            depends: Vec::new(),
+            type_defs: vec![TypeDef::Product {
+                name: "Natural".to_string(),
+                fields: vec![("value".to_string(), "Int".to_string())],
+                line: 1,
+            }],
+            fn_defs: Vec::new(),
+            analysis: None,
+        };
+
+        let make_decl = |param: &str, witness: &str| RefinedTypeDecl {
+            name: "Natural".to_string(),
+            carrier_type: "Int".to_string(),
+            carrier_field: "value".to_string(),
+            predicate_param: param.to_string(),
+            invariant: Predicate {
+                free_vars: vec![(param.to_string(), QuantifierType::Plain("Int".to_string()))],
+                expr: sb(Expr::Literal(Literal::Bool(true))),
+            },
+            witness: Some(witness.to_string()),
+        };
+
+        let mut ctx = CodegenContext {
+            items: Vec::new(),
+            fn_sigs: HashMap::new(),
+            memo_fns: HashSet::new(),
+            memo_safe_types: HashSet::new(),
+            type_defs: Vec::new(),
+            fn_defs: Vec::new(),
+            project_name: "scope-test".to_string(),
+            modules: vec![module],
+            module_prefixes: HashSet::new(),
+            #[cfg(feature = "runtime")]
+            policy: None,
+            emit_replay_runtime: false,
+            runtime_policy_from_env: false,
+            guest_entry: None,
+            emit_self_host_support: false,
+            extra_fn_defs: Vec::new(),
+            mutual_tco_members: HashSet::new(),
+            recursive_fns: HashSet::new(),
+            fn_analyses: HashMap::new(),
+            buffer_build_sinks: HashMap::new(),
+            buffer_fusion_sites: Vec::new(),
+            synthesized_buffered_fns: Vec::new(),
+            proof_ir: crate::ir::ProofIR::default(),
+        };
+        ctx.proof_ir
+            .refined_types
+            .insert("Natural".to_string(), make_decl("entry_n", "0"));
+        ctx.proof_ir
+            .refined_types
+            .insert("Mod.Natural".to_string(), make_decl("mod_n", "10"));
+
+        let from_module = find_refined_type_scoped(&ctx, "Natural", Some("Mod"))
+            .expect("Mod-scoped Natural lookup");
+        assert_eq!(
+            from_module.predicate_param, "mod_n",
+            "scope=Some(\"Mod\") + bare `Natural` must resolve to Mod.Natural, \
+             not entry's bare-keyed slot"
+        );
+
+        // Entry scope still resolves to entry's slot.
+        let from_entry =
+            find_refined_type_scoped(&ctx, "Natural", None).expect("entry Natural lookup");
+        assert_eq!(from_entry.predicate_param, "entry_n");
     }
 }
