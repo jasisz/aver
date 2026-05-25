@@ -269,13 +269,13 @@ fn is_ok_constructor_with_identity(
 /// constructor predicate has to be discharged from `a`'s `when`
 /// clause inside the theorem type — which is exactly what the
 /// previous heuristic-laden auto-proof had to work around.
-pub fn refinement_lift_for_given<'a>(
+pub fn refinement_lift_for_given(
     given_name: &str,
     given_type: &str,
     lhs: &Spanned<Expr>,
     rhs: &Spanned<Expr>,
-    ctx: &'a CodegenContext,
-) -> Option<&'a str> {
+    ctx: &CodegenContext,
+) -> Option<String> {
     // Float carriers don't get lifted: `Int.add_comm` exists and is
     // universally provable in Lean's `Int` model, but `Float.add_
     // comm` doesn't hold across IEEE 754 — `NaN ≠ NaN` blows up
@@ -286,18 +286,25 @@ pub fn refinement_lift_for_given<'a>(
     if given_type == "Float" {
         return None;
     }
-    let mut result: Option<&'a str> = None;
+    // Round-4 finding 2: return the *canonical key* the IR uses
+    // (e.g. `AAA.Natural` for module-owned, bare `Natural` for
+    // entry), not the bare `TypeDef.name`. Downstream
+    // `strip_refinement_wrappers` / `when_is_redundant` / backend
+    // emit all key off this same identifier, so two modules with
+    // distinct refined `Natural` records can no longer merge under
+    // a single bare name.
+    let mut result: Option<String> = None;
     search_refinement_wrapper(lhs, given_name, given_type, ctx, &mut result);
     search_refinement_wrapper(rhs, given_name, given_type, ctx, &mut result);
     result
 }
 
-fn search_refinement_wrapper<'a>(
+fn search_refinement_wrapper(
     expr: &Spanned<Expr>,
     given_name: &str,
     given_type: &str,
-    ctx: &'a CodegenContext,
-    result: &mut Option<&'a str>,
+    ctx: &CodegenContext,
+    result: &mut Option<String>,
 ) {
     if result.is_some() {
         return;
@@ -309,37 +316,12 @@ fn search_refinement_wrapper<'a>(
                 &fvalue.node,
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
             );
-            // Round-3 finding 3: route through the canonical IR
-            // decision instead of re-walking entry + every module
-            // via `refinement_info_for`. The unscoped re-walk
-            // returned whichever refined record walked first when
-            // two modules carried the same bare name, then the
-            // returned `name` was used downstream as if it identified
-            // a unique decl. `find_refined_type` resolves against
-            // `proof_ir.refined_types` which `populate_refined_types`
-            // already keyed by canonical `Module.Name`.
             if matches_var
-                && let Some(decl) = find_refined_type(ctx, type_name)
+                && let Some((canonical_key, decl)) = find_refined_type_with_key(ctx, type_name)
                 && decl.carrier_type == given_type
             {
-                // Need a stable reference into ctx for the returned
-                // &str. `refinement_info_for` returns refs into ctx
-                // already, but we want the *type name* itself; the
-                // name may live in `ctx.items` (standalone build) or
-                // in a dependent module's `type_defs` (cross-module).
-                let entry_tds = ctx.items.iter().filter_map(|i| match i {
-                    TopLevel::TypeDef(td) => Some(td),
-                    _ => None,
-                });
-                let module_tds = ctx.modules.iter().flat_map(|m| m.type_defs.iter());
-                for td in entry_tds.chain(module_tds) {
-                    if let TypeDef::Product { name, .. } = td
-                        && name == type_name
-                    {
-                        *result = Some(name.as_str());
-                        return;
-                    }
-                }
+                *result = Some(canonical_key);
+                return;
             }
             for (_, v) in fields {
                 search_refinement_wrapper(v, given_name, given_type, ctx, result);
@@ -463,6 +445,7 @@ fn project_lifted_ident_leaf(
 pub fn strip_refinement_wrappers(
     expr: &Spanned<Expr>,
     lifted_vars: &std::collections::HashMap<String, String>,
+    ctx: &CodegenContext,
 ) -> Spanned<Expr> {
     let new_node = match &expr.node {
         Expr::RecordCreate { type_name, fields } if fields.len() == 1 => {
@@ -471,15 +454,22 @@ pub fn strip_refinement_wrappers(
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.clone()),
                 _ => None,
             };
+            // Round-4 finding 2: `lifted_vars[name]` holds the
+            // *canonical key* (`AAA.Natural` for module-owned, bare
+            // for entry). Canonicalise the AST's `type_name` against
+            // the same resolver so a bare `Natural` written inside a
+            // dep module strips against `AAA.Natural`, not the
+            // unrelated entry-bare slot of the same name.
+            let canonical_for_ast = find_refined_type_with_key(ctx, type_name).map(|(k, _)| k);
             if let Some(name) = var_name
                 && let Some(refined) = lifted_vars.get(&name)
-                && refined == type_name
+                && canonical_for_ast.as_deref() == Some(refined.as_str())
             {
                 return Spanned::new(Expr::Ident(name), expr.line);
             }
             let new_fields: Vec<(String, Spanned<Expr>)> = fields
                 .iter()
-                .map(|(n, v)| (n.clone(), strip_refinement_wrappers(v, lifted_vars)))
+                .map(|(n, v)| (n.clone(), strip_refinement_wrappers(v, lifted_vars, ctx)))
                 .collect();
             Expr::RecordCreate {
                 type_name: type_name.clone(),
@@ -487,22 +477,24 @@ pub fn strip_refinement_wrappers(
             }
         }
         Expr::FnCall(callee, args) => Expr::FnCall(
-            Box::new(strip_refinement_wrappers(callee, lifted_vars)),
+            Box::new(strip_refinement_wrappers(callee, lifted_vars, ctx)),
             args.iter()
-                .map(|a| strip_refinement_wrappers(a, lifted_vars))
+                .map(|a| strip_refinement_wrappers(a, lifted_vars, ctx))
                 .collect(),
         ),
         Expr::BinOp(op, l, r) => Expr::BinOp(
             *op,
-            Box::new(strip_refinement_wrappers(l, lifted_vars)),
-            Box::new(strip_refinement_wrappers(r, lifted_vars)),
+            Box::new(strip_refinement_wrappers(l, lifted_vars, ctx)),
+            Box::new(strip_refinement_wrappers(r, lifted_vars, ctx)),
         ),
         Expr::Attr(o, f) => Expr::Attr(
-            Box::new(strip_refinement_wrappers(o, lifted_vars)),
+            Box::new(strip_refinement_wrappers(o, lifted_vars, ctx)),
             f.clone(),
         ),
-        Expr::Neg(i) => Expr::Neg(Box::new(strip_refinement_wrappers(i, lifted_vars))),
-        Expr::ErrorProp(i) => Expr::ErrorProp(Box::new(strip_refinement_wrappers(i, lifted_vars))),
+        Expr::Neg(i) => Expr::Neg(Box::new(strip_refinement_wrappers(i, lifted_vars, ctx))),
+        Expr::ErrorProp(i) => {
+            Expr::ErrorProp(Box::new(strip_refinement_wrappers(i, lifted_vars, ctx)))
+        }
         _ => expr.node.clone(),
     };
     Spanned::new(new_node, expr.line)
@@ -813,7 +805,18 @@ pub fn find_refined_type<'a>(
     ctx: &'a CodegenContext,
     name: &str,
 ) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
-    find_refined_type_scoped(ctx, name, None)
+    find_refined_type_with_key_scoped(ctx, name, None).map(|(_, d)| d)
+}
+
+/// Canonical-key-aware resolver — returns `(canonical_key, decl)`
+/// so consumers thread one stable identifier through refinement
+/// lift / strip-wrappers / when-redundancy / backend emit instead
+/// of recomputing identity from bare AST names.
+pub fn find_refined_type_with_key<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+) -> Option<(String, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
+    find_refined_type_with_key_scoped(ctx, name, None)
 }
 
 /// Module-scope-aware variant of [`find_refined_type`]. When the
@@ -838,6 +841,18 @@ pub fn find_refined_type_scoped<'a>(
     name: &str,
     scope: Option<&str>,
 ) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
+    find_refined_type_with_key_scoped(ctx, name, scope).map(|(_, d)| d)
+}
+
+/// Round-4 central canonical resolver. Both `find_refined_type` and
+/// `find_refined_type_scoped` reduce to this. Returns the exact
+/// `(canonical_key, &decl)` pair stored in `ProofIR.refined_types`
+/// so downstream code can re-key safely (no string heuristics).
+pub fn find_refined_type_with_key_scoped<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+    scope: Option<&str>,
+) -> Option<(String, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
     let bare = name.rsplit('.').next().unwrap_or(name);
     let name_is_already_qualified = name.contains('.');
     if let Some(prefix) = scope
@@ -845,18 +860,18 @@ pub fn find_refined_type_scoped<'a>(
     {
         let scoped = format!("{}.{}", prefix, bare);
         if let Some(decl) = ctx.proof_ir.refined_types.get(&scoped) {
-            return Some(decl);
+            return Some((scoped, decl));
         }
     }
     if let Some(decl) = ctx.proof_ir.refined_types.get(name) {
-        return Some(decl);
+        return Some((name.to_string(), decl));
     }
     for m in &ctx.modules {
         for td in &m.type_defs {
             if type_def_name(td) == bare {
                 let canonical = format!("{}.{}", m.prefix, bare);
                 if let Some(decl) = ctx.proof_ir.refined_types.get(&canonical) {
-                    return Some(decl);
+                    return Some((canonical, decl));
                 }
             }
         }

@@ -1366,7 +1366,18 @@ pub fn emit_verify_law(
         .iter()
         .map(|g| {
             if let Some(refined) = lifted_vars.get(&g.name) {
-                return format!("{}: {}", aver_name_to_dafny(&g.name), refined);
+                // `refined` is a canonical key — bare for entry
+                // types, `Module.Name` for module-owned. Translate
+                // the module prefix to Dafny's `Aver_Module.Name`
+                // form so the lemma signature picks up the actual
+                // module-emitted subset type.
+                let display = match refined.rsplit_once('.') {
+                    Some((prefix, bare)) => {
+                        format!("{}.{}", super::dafny_module_name(prefix), bare)
+                    }
+                    None => refined.clone(),
+                };
+                return format!("{}: {}", aver_name_to_dafny(&g.name), display);
             }
             // Oracle v1: if the given's "type" is a classified effect
             // reference (`Random.int`, `Http.get`, etc.), the param is
@@ -1411,8 +1422,8 @@ pub fn emit_verify_law(
         (law_lhs, law_rhs)
     } else {
         (
-            crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars),
-            crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars),
+            crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars, ctx),
+            crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars, ctx),
         )
     };
 

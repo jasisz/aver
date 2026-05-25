@@ -1797,12 +1797,12 @@ fn emit_verify_law_block(
     let law_lhs = if lifted_vars.is_empty() {
         law_lhs
     } else {
-        crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars)
+        crate::codegen::common::strip_refinement_wrappers(&law_lhs, &lifted_vars, ctx)
     };
     let law_rhs = if lifted_vars.is_empty() {
         law_rhs
     } else {
-        crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars)
+        crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars, ctx)
     };
     let lhs_template = emit_expr(&law_lhs, ctx);
     let rhs_template = emit_expr(&law_rhs, ctx);
