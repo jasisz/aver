@@ -661,6 +661,13 @@ fn classify_law_strategy(
     if let Some(extra_unfolds) = detect_spec_equivalence(law, fn_name, inputs) {
         return ProofStrategy::SpecEquivalence { extra_unfolds };
     }
+    // Broader spec equivalence — bodies differ syntactically but
+    // normalize to same under substitution + arithmetic identity
+    // folding. Runs after the strict `SpecEquivalence` so the
+    // tighter detector wins when both would match.
+    if let Some(extra_unfolds) = detect_simp_normalized_spec_equivalence(law, fn_name, inputs) {
+        return ProofStrategy::SpecEquivalenceSimpNormalized { extra_unfolds };
+    }
     // Effectful counterpart — Oracle Lift normalises both sides
     // (oracle args injected into impl call) and the lowerer matches
     // the canonical `impl(args) == spec(args)` shape on the
@@ -1266,6 +1273,138 @@ fn detect_spec_equivalence(
     // Build the unfold set: impl + spec + transitively-reached user
     // helpers from law sides. Mirrors the legacy `law_simp_defs`
     // semantic but uses inputs (not CodegenContext).
+    let resolve_user_fn = |name: &str| -> Option<&FnDef> {
+        let fd = inputs.find_fn_def_by_call_name(name)?;
+        if !fd.effects.is_empty() || fd.name == "main" {
+            return None;
+        }
+        Some(fd)
+    };
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    names.insert(fn_name.to_string());
+    names.insert(spec_fn_name.clone());
+    let mut seed: BTreeSet<String> = BTreeSet::new();
+    collect_fn_calls_expr(&law.lhs, &mut seed);
+    collect_fn_calls_expr(&law.rhs, &mut seed);
+    if let Some(when_expr) = &law.when {
+        collect_fn_calls_expr(when_expr, &mut seed);
+    }
+    for n in seed {
+        if let Some(fd) = resolve_user_fn(&n) {
+            names.insert(fd.name.clone());
+        }
+    }
+    loop {
+        let before = names.len();
+        let snapshot: Vec<String> = names.iter().cloned().collect();
+        for name in snapshot {
+            let Some(fd) = resolve_user_fn(&name) else {
+                continue;
+            };
+            let mut called: BTreeSet<String> = BTreeSet::new();
+            for stmt in fd.body.stmts() {
+                match stmt {
+                    crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                        collect_fn_calls_expr(e, &mut called);
+                    }
+                }
+            }
+            for c in called {
+                if let Some(callee_fd) = resolve_user_fn(&c) {
+                    names.insert(callee_fd.name.clone());
+                }
+            }
+        }
+        if names.len() == before {
+            break;
+        }
+    }
+    Some(names.into_iter().collect())
+}
+
+/// Detect functional equivalence in the broader "simp-normalized"
+/// shape: same canonical impl/spec call structure as
+/// [`detect_spec_equivalence`], but bodies are equivalent only
+/// after arg substitution + arithmetic identity folding (drop
+/// `+ 0`, `- 0`, `* 1`, fold `* 0 → 0`). Returns the unfold list
+/// on match.
+fn detect_simp_normalized_spec_equivalence(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<Vec<String>> {
+    use crate::ast::Expr;
+    use std::collections::BTreeSet;
+
+    let spec_fn_name = &law.name;
+    if spec_fn_name == fn_name {
+        return None;
+    }
+    let spec_fd = inputs.find_fn_def_by_call_name(spec_fn_name)?;
+    if !spec_fd.effects.is_empty() || spec_fd.name == "main" {
+        return None;
+    }
+    let impl_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+
+    let direct_call =
+        |expr: &Spanned<crate::ast::Expr>| -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
+            let Expr::FnCall(callee, args) = &expr.node else {
+                return None;
+            };
+            let name = match &callee.node {
+                Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
+                _ => return None,
+            };
+            Some((name, args.clone()))
+        };
+    let canonical_shape_args = |lhs: &Spanned<crate::ast::Expr>,
+                                rhs: &Spanned<crate::ast::Expr>|
+     -> Option<Vec<Spanned<crate::ast::Expr>>> {
+        let (l_name, l_args) = direct_call(lhs)?;
+        let (r_name, r_args) = direct_call(rhs)?;
+        if l_name != fn_name || r_name != *spec_fn_name || l_args != r_args {
+            return None;
+        }
+        if l_args.len() != impl_fd.params.len() || r_args.len() != spec_fd.params.len() {
+            return None;
+        }
+        Some(l_args)
+    };
+    let call_args = canonical_shape_args(&law.lhs, &law.rhs)
+        .or_else(|| canonical_shape_args(&law.rhs, &law.lhs))?;
+
+    let impl_body = body_terminal_expr(impl_fd.body.as_ref())?;
+    let spec_body = body_terminal_expr(spec_fd.body.as_ref())?;
+    // Reject the body-identical case — that's covered by the
+    // strict `SpecEquivalence` detector running before this one.
+    if impl_body.node == spec_body.node {
+        return None;
+    }
+    let impl_subst: std::collections::HashMap<String, Spanned<crate::ast::Expr>> = impl_fd
+        .params
+        .iter()
+        .zip(call_args.iter())
+        .map(|((n, _), arg)| (n.clone(), arg.clone()))
+        .collect();
+    let spec_subst: std::collections::HashMap<String, Spanned<crate::ast::Expr>> = spec_fd
+        .params
+        .iter()
+        .zip(call_args.iter())
+        .map(|((n, _), arg)| (n.clone(), arg.clone()))
+        .collect();
+    let impl_normalised = simplify_identity_expr(&crate::ast_rewrite::rewrite_idents_scoped(
+        impl_body,
+        |name| impl_subst.get(name).cloned(),
+    ));
+    let spec_normalised = simplify_identity_expr(&crate::ast_rewrite::rewrite_idents_scoped(
+        spec_body,
+        |name| spec_subst.get(name).cloned(),
+    ));
+    if impl_normalised.node != spec_normalised.node {
+        return None;
+    }
+
+    // Same unfold-set walk as `detect_spec_equivalence`.
     let resolve_user_fn = |name: &str| -> Option<&FnDef> {
         let fd = inputs.find_fn_def_by_call_name(name)?;
         if !fd.effects.is_empty() || fd.name == "main" {
@@ -2099,6 +2238,81 @@ fn body_terminal_expr(body: &crate::ast::FnBody) -> Option<&Spanned<crate::ast::
         [Stmt::Expr(expr)] => Some(expr),
         _ => None,
     }
+}
+
+/// Fold the algebraic identities that survive a body-substitution
+/// pass with a literal-int arg: `a + 0 == a`, `0 + a == a`,
+/// `a - 0 == a`, `a * 1 == a`, `1 * a == a`, `a * 0 == 0`,
+/// `0 * a == 0`. Recursive over BinOp / Neg / Attr / FnCall. Used
+/// by `detect_spec_equivalence` so impl bodies like `n + 0` and
+/// spec bodies like `n` are recognised as equivalent under arg
+/// substitution. Matches the legacy `simp_normalized` shape.
+fn simplify_identity_expr(expr: &Spanned<crate::ast::Expr>) -> Spanned<crate::ast::Expr> {
+    use crate::ast::{BinOp, Expr, Literal};
+    let line = expr.line;
+    let int_lit = |e: &Expr| -> Option<i64> {
+        match e {
+            Expr::Literal(Literal::Int(n)) => Some(*n),
+            _ => None,
+        }
+    };
+    let new_node = match &expr.node {
+        Expr::BinOp(op, left, right) => {
+            let left = simplify_identity_expr(left);
+            let right = simplify_identity_expr(right);
+            match op {
+                BinOp::Add => {
+                    if int_lit(&left.node) == Some(0) {
+                        return right;
+                    } else if int_lit(&right.node) == Some(0) {
+                        return left;
+                    } else {
+                        Expr::BinOp(*op, Box::new(left), Box::new(right))
+                    }
+                }
+                BinOp::Sub => {
+                    if int_lit(&right.node) == Some(0) {
+                        return left;
+                    } else {
+                        Expr::BinOp(*op, Box::new(left), Box::new(right))
+                    }
+                }
+                BinOp::Mul => {
+                    if int_lit(&left.node) == Some(0) || int_lit(&right.node) == Some(0) {
+                        Expr::Literal(Literal::Int(0))
+                    } else if int_lit(&left.node) == Some(1) {
+                        return right;
+                    } else if int_lit(&right.node) == Some(1) {
+                        return left;
+                    } else {
+                        Expr::BinOp(*op, Box::new(left), Box::new(right))
+                    }
+                }
+                _ => Expr::BinOp(*op, Box::new(left), Box::new(right)),
+            }
+        }
+        Expr::Neg(inner) => Expr::Neg(Box::new(simplify_identity_expr(inner))),
+        Expr::Attr(base, field) => {
+            Expr::Attr(Box::new(simplify_identity_expr(base)), field.clone())
+        }
+        Expr::FnCall(callee, args) => Expr::FnCall(
+            Box::new(simplify_identity_expr(callee)),
+            args.iter().map(simplify_identity_expr).collect(),
+        ),
+        Expr::Match { subject, arms } => Expr::Match {
+            subject: Box::new(simplify_identity_expr(subject)),
+            arms: arms
+                .iter()
+                .map(|arm| crate::ast::MatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: Box::new(simplify_identity_expr(&arm.body)),
+                    binding_slots: arm.binding_slots.clone(),
+                })
+                .collect(),
+        },
+        other => other.clone(),
+    };
+    Spanned::new(new_node, line)
 }
 
 fn matches_ident_expr(expr: &Spanned<crate::ast::Expr>, name: &str) -> bool {
