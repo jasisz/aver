@@ -2001,3 +2001,113 @@ fn proof_dafny_verifies_date_when_dafny_is_available() {
     // there's no range obligation to discharge in the caller.
     assert_dafny_verifies("examples/data/date.av", "aver-dafny-date");
 }
+
+#[test]
+fn proof_export_gates_trace_projection_law_lhs_as_runtime_only() {
+    // Issue #127: a `verify fn trace law` whose LHS projects through
+    // `.trace.{event,group,branch}` references the runtime trace
+    // buffer, not the lifted fn's return. The lifted Lean / Dafny fn
+    // has no `.trace` field — emitting `fn().trace.event 0` as a
+    // theorem (universal or sample) produces invalid-field-notation
+    // errors. Backends now emit a `runtime-only` comment instead and
+    // skip the universal/sample theorem. The `aver verify` runtime
+    // path still exercises the law under its stubs.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let lean_dir = temp_output_dir("aver-proof-issue127-lean");
+    let proof = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/formal/hostile_order_axis.av")
+        .arg("-o")
+        .arg(&lean_dir)
+        .output()
+        .expect("expected `aver proof` to run");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let entry_text = std::fs::read_to_string(lean_dir.join("HostileOrderAxis.lean"))
+        .expect("read HostileOrderAxis.lean");
+
+    assert!(
+        entry_text.contains(
+            "-- verify law rollPair.firstEventOfFirstBranch: \
+             trace-projection LHS is runtime-only"
+        ),
+        "expected runtime-only gate marker for firstEventOfFirstBranch in \
+         entry Lean; got:\n{entry_text}"
+    );
+    assert!(
+        entry_text.contains(
+            "-- verify law rollPair.firstEventOfSecondBranch: \
+             trace-projection LHS is runtime-only"
+        ),
+        "expected runtime-only gate marker for firstEventOfSecondBranch in \
+         entry Lean; got:\n{entry_text}"
+    );
+    // Defense in depth: the universal/sample theorems must not slip
+    // back in — their LHS triggers Lean's invalid-field-notation
+    // diagnostic on the bare `(Int × Int)` return.
+    assert!(
+        !entry_text.contains("rollPair_law_firstEventOfFirstBranch"),
+        "universal theorem leaked through the trace-projection gate; \
+         got:\n{entry_text}"
+    );
+    assert!(
+        !entry_text.contains(").event 0"),
+        "trace projection chain leaked into elaborated Lean; got:\n{entry_text}"
+    );
+    assert!(
+        !entry_text.contains("EffectEvent"),
+        "EffectEvent literal leaked into elaborated Lean (gate should \
+         keep it out entirely); got:\n{entry_text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&lean_dir);
+
+    let dafny_dir = temp_output_dir("aver-proof-issue127-dafny");
+    let proof = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/formal/hostile_order_axis.av")
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&dafny_dir)
+        .output()
+        .expect("expected `aver proof --backend dafny` to run");
+    assert!(
+        proof.status.success(),
+        "`aver proof --backend dafny` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let dafny_entry = std::fs::read_to_string(dafny_dir.join("HostileOrderAxis.dfy"))
+        .expect("read HostileOrderAxis.dfy");
+
+    assert!(
+        dafny_entry.contains(
+            "// Law rollPair.firstEventOfFirstBranch: trace-projection LHS is runtime-only"
+        ),
+        "expected Dafny runtime-only gate marker; got:\n{dafny_entry}"
+    );
+    assert!(
+        !dafny_entry.contains("lemma {:fuel rollPair, 5} rollPair_firstEventOfFirstBranch"),
+        "universal lemma leaked through the trace-projection gate; got:\n{dafny_entry}"
+    );
+    assert!(
+        !dafny_entry.contains(".trace.group"),
+        "trace projection chain leaked into elaborated Dafny; got:\n{dafny_entry}"
+    );
+    assert!(
+        !dafny_entry.contains("EffectEvent"),
+        "EffectEvent literal leaked into elaborated Dafny (gate should \
+         keep it out entirely); got:\n{dafny_entry}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dafny_dir);
+}

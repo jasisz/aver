@@ -849,6 +849,15 @@ pub fn emit_law_samples(
         return None;
     }
 
+    // Issue #127: skip samples whose LHS projects through `.trace.*`.
+    // The lifted Dafny fn returns the bare value, no trace buffer —
+    // every per-sample `assert lhs.trace.event(K) == ...` would fail
+    // on missing-field. `emit_verify_law` emits the runtime-only
+    // marker for the law itself; sample lemmas follow the same gate.
+    if crate::codegen::common::law_lhs_has_trace_projection(&law.lhs) {
+        return None;
+    }
+
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
 
@@ -1241,6 +1250,17 @@ pub fn emit_verify_law(
 ) -> String {
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
+
+    // Issue #127: trace-projection LHS has no proof-side shape — the
+    // lifted Dafny fn returns the bare value, no `.trace` field. Emit
+    // a comment marker; `aver verify` still runs the law under stubs.
+    // Mirror of the Lean gate in `emit_verify_law_block`.
+    if crate::codegen::common::law_lhs_has_trace_projection(&law.lhs) {
+        return format!(
+            "// Law {}.{}{}: trace-projection LHS is runtime-only (see docs/oracle.md)",
+            fn_name, law_name, suffix,
+        );
+    }
 
     // IR-pinned `LinearRecurrence2SpecEquivalence` — emit a full
     // support-theorem stack (Nat helper + worker_nat_shift +

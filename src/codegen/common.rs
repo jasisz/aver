@@ -691,6 +691,44 @@ pub fn is_pure_fn(fd: &FnDef) -> bool {
     fd.effects.is_empty() && fd.name != "main"
 }
 
+/// Oracle v1: does the LHS of a verify-law project through `.trace`?
+///
+/// Trace-buffer projections (`fn().trace.event(k)`,
+/// `.trace.group(N).branch(M).event(K)`, `.trace.length()`,
+/// `.trace.contains(...)`) are observable only at runtime — the lifted
+/// proof-side fn returns the bare value, with no `.trace` field. The
+/// Lean / Dafny universal theorem for such a law has no provable
+/// shape, so backends emit a runtime-only comment instead. Sample
+/// assertions share the same projection chain and are gated the same
+/// way; the runtime `aver verify` path still exercises them under
+/// the law's stubs.
+pub fn law_lhs_has_trace_projection(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Attr(inner, field) => {
+            field == "trace" || law_lhs_has_trace_projection(inner)
+        }
+        Expr::FnCall(callee, args) => {
+            law_lhs_has_trace_projection(callee)
+                || args.iter().any(law_lhs_has_trace_projection)
+        }
+        Expr::BinOp(_, l, r) => {
+            law_lhs_has_trace_projection(l) || law_lhs_has_trace_projection(r)
+        }
+        Expr::Match { subject, arms } => {
+            law_lhs_has_trace_projection(subject)
+                || arms.iter().any(|a| law_lhs_has_trace_projection(&a.body))
+        }
+        Expr::ErrorProp(inner) => law_lhs_has_trace_projection(inner),
+        Expr::Constructor(_, Some(arg)) => law_lhs_has_trace_projection(arg),
+        Expr::List(items)
+        | Expr::Tuple(items)
+        | Expr::IndependentProduct(items, _) => {
+            items.iter().any(law_lhs_has_trace_projection)
+        }
+        _ => false,
+    }
+}
+
 /// True when the type definition mentions its own name somewhere in a
 /// field or variant payload (recursive ADT).
 pub fn is_recursive_type_def(td: &TypeDef) -> bool {

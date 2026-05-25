@@ -1707,6 +1707,30 @@ fn emit_verify_law_block(
     let mut lines = Vec::new();
     let fn_name = aver_name_to_lean(&vb.fn_name);
     let law_name = aver_name_to_lean(&law.name);
+    // Oracle v1 — issue #127: a verify-trace-law's LHS that projects
+    // through `.trace.{event,group,branch,length,contains}` describes
+    // the runtime trace buffer, not the lifted fn's return. The lifted
+    // Lean form has no `.trace` field — emitting `fn().trace.event 0`
+    // as a theorem produces invalid-field-notation errors against the
+    // bare return tuple, and the universal `∀ rnd, …` form is the
+    // wrong shape anyway (the trace isn't a function of the oracle
+    // alone, it's a function of the trace recorder). Emit only a
+    // runtime-only marker — matches the cases-form trace block
+    // behavior in `emit_verify_trace_block_proofs`. The `aver verify`
+    // runtime path still exercises the law under the given stubs.
+    if crate::codegen::common::law_lhs_has_trace_projection(&law.lhs) {
+        let header = match canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs) {
+            Some(spec_ref) => format!(
+                "-- verify law {}.spec {}: trace-projection LHS is runtime-only (see docs/oracle.md)",
+                fn_name, spec_ref.spec_fn_name,
+            ),
+            None => format!(
+                "-- verify law {}.{}: trace-projection LHS is runtime-only (see docs/oracle.md)",
+                fn_name, law_name,
+            ),
+        };
+        return (header, case_index_start + vb.cases.len());
+    }
     let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs);
     let theorem_base = match &spec_ref {
         Some(spec_ref) => format!(
