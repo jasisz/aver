@@ -1,26 +1,22 @@
 //! Build `ProofIR` from a `CodegenContext`.
 //!
-//! The lowering producer side of the Step 1 / Step 2 split: types
-//! live in `src/ir/proof_ir.rs`, the function that fills them in
-//! from a typechecked + analysed codegen context lives here. Output
-//! lands in `CodegenContext.proof_ir`; both proof backends read
-//! from the same field, so any classifier-side decision flows
-//! consistently to Lean and Dafny without each backend re-running
-//! shape detection.
+//! The lowering producer: types live in `src/ir/proof_ir.rs`, this
+//! file fills them in from a typechecked + analysed codegen
+//! context. Output lands in `CodegenContext.proof_ir`; both proof
+//! backends read from the same field, so any classifier-side
+//! decision flows consistently to Lean and Dafny without each
+//! backend re-running shape detection.
 //!
-//! **Step 2 scope**: this commit only populates
-//! `ProofIR.refined_types` — refinement-via-opaque records lifted
-//! to subtype on Lean / subset type on Dafny. `fn_contracts` and
-//! `law_theorems` are intentionally left empty; backends still go
-//! through the legacy `codegen::recursion::RecursionPlan` and the
-//! ad-hoc law-lowering path in `lean::toplevel`. Step 3 onwards
-//! migrates backends to read from ProofIR one feature at a time.
+//! Populates three IR sections: `refined_types` (refinement-via-
+//! opaque records → Lean Subtype / Dafny subset type),
+//! `fn_contracts` (per-pure-fn recursion shape: native /
+//! sized-fuel / linear recurrence), and `law_theorems` (per-verify-
+//! law strategy + quantifier decomposition + claim shape, with
+//! Oracle-Lift'd impl-spec calls for effectful equivalence).
 //!
-//! A diff test (`tests/proof_ir_diff.rs`) asserts the new producer
-//! agrees with the legacy `refinement_info_for` + Dafny
-//! `refinement_witness_for` walk on every flagship refinement
-//! example — once the test is stable the legacy walkers become dead
-//! code in their consumers (Step 3 / Step 4 deletes them).
+//! `tests/proof_ir_diff.rs` pins the producer's output for each
+//! canonical source pattern — divergence between the classifier and
+//! the IR populator surfaces there.
 
 use std::collections::HashSet;
 
@@ -59,10 +55,10 @@ pub struct ProofLowerInputs<'a> {
 }
 
 impl<'a> ProofLowerInputs<'a> {
-    /// Build a view from a fully-assembled `CodegenContext`. Used by
-    /// `refresh_facts` (test helper) and by the migration-window
-    /// `build_context` path before Step 7e moves lowering into the
-    /// pipeline. Reads only the fields the lowerer actually needs.
+    /// Build a view from a fully-assembled `CodegenContext` — used
+    /// by `refresh_facts` (test helper) and by any caller that
+    /// already owns a built context. Reads only the fields the
+    /// lowerer actually needs.
     pub fn from_ctx(ctx: &'a CodegenContext) -> Self {
         Self {
             entry_items: &ctx.items,
@@ -156,10 +152,10 @@ impl<'a> ProofLowerInputs<'a> {
     }
 }
 
-/// Run both proof-export lowerings in one shot — convenience for
-/// callers that want a fully-populated ProofIR. The pipeline uses
-/// `populate_refined_types` and `populate_fn_contracts` directly
-/// because the two are independent stages there (Step 7h split).
+/// Run every proof-export lowering in one shot — convenience for
+/// callers that want a fully-populated ProofIR. The pipeline calls
+/// the three `populate_*` fns directly so it can run them as
+/// independent stages and short-circuit on typecheck failure.
 pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
     let mut ir = ProofIR::default();
     populate_refined_types(inputs, &mut ir);
@@ -227,23 +223,17 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     }
 }
 
-/// Walk `analyze_plans(ctx)` and populate `ProofIR.fn_contracts`.
+/// Walk `analyze_plans(inputs)` and populate `ProofIR.fn_contracts`.
 ///
-/// **Step 5 scope**: only `IntCountdownGuarded` plans translate to
-/// a `FnContract`. It's the most proof-heavy variant — caller-
-/// derived precondition + preservation + decrease — so it sets the
-/// pattern for the rest. All other `RecursionPlan` variants (Fuel-
-/// emitted shapes, `LinearRecurrence2`, `Mutual*`) are skipped here
-/// and continue going through the legacy `RecursionPlan` path
-/// directly on the consumer side. Subsequent Steps add one variant
-/// per commit, with their own diff tests.
-///
-/// The lowering is intentionally a **translation pass** over the
-/// existing classifier output, not a re-implementation: backends
-/// keep reading `RecursionPlan` during the migration window, the
-/// diff test (`tests/proof_ir_diff.rs`) asserts both sides agree on
-/// the fibTR flagship, and once every variant is covered we delete
-/// the consumer-side `RecursionPlan` reads in a later Step.
+/// Translation pass over the classifier output (`RecursionPlan`) —
+/// no re-implementation. The diff test (`tests/proof_ir_diff.rs`)
+/// pins what each `RecursionPlan` variant lowers to so divergence
+/// between the classifier and the IR populator surfaces there.
+/// Coverage today: `IntCountdownGuarded`, `LinearRecurrence2`,
+/// `Sized*` (length / sizeOf / string-pos / int-ascending). Fuel-
+/// only and Mutual* plans don't materialise as `FnContract` (their
+/// recursion shape doesn't need IR-level pre-decisions; backends
+/// emit fuel scaffolding inline).
 pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     let (plans, issues) = analyze_plans(inputs);
     ir.unclassified_fns
@@ -499,13 +489,18 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// Walk every verify block, lift `VerifyKind::Law` entries into
 /// `ProofIR.law_theorems`.
 ///
-/// **Step 23 scope**: extract the law's shape — quantifiers from
-/// `givens`, premises from `when` (when non-empty), the claim from
-/// `lhs == rhs`. Strategy stays `ProofStrategy::BackendDispatch`; the
-/// backend's existing ad-hoc chain (rfl / induction / arithmetic
-/// wrapper / spec equiv / map laws / simp+omega / guarded domain)
-/// still decides which proof tactic emits. Subsequent Steps move
-/// concrete strategy decisions into the lowerer, one shape at a time.
+/// Extracts the law's shape (quantifiers from `givens`, premises
+/// from `when`, claim from `lhs == rhs`) and pins a `ProofStrategy`
+/// via [`classify_law_strategy`]. Covered strategies: Reflexive,
+/// Commutative / Associative / IdentityElement / AntiCommutative /
+/// UnaryEqualsBinary (arithmetic wrappers), Induction (recursive
+/// ADTs), LibraryAxiom (Map set/get), MapUpdatePostcondition,
+/// MapKeyTrackedIncrement, SpecEquivalence{,SimpNormalized},
+/// LinearIntSpecEquivalence, EffectfulSpecEquivalence (with Oracle
+/// Lift), LinearArithmetic (catch-all over an unfold chain).
+/// Unmatched shapes pin `BackendDispatch` and fall through to the
+/// backend's residual chain (linear_recurrence2 emit + sampled /
+/// guarded-domain fallback).
 pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     use crate::ast::{TopLevel, VerifyKind};
     use crate::ir::{LawTheorem, Predicate, Quantifier, QuantifierType};
@@ -2111,10 +2106,10 @@ fn has_indirect_rec_variants(variants: &[crate::ast::TypeVariant], type_name: &s
 }
 
 /// Return `Some(op)` iff `fn_name` resolves to a 2-arg Int wrapper
-/// `fn f(p1: Int, p2: Int) -> Int :- p1 <op> p2`. The op family is
-/// restricted to those with commutative/associative lemmas
-/// (`Add`, `Mul`); other binary wrappers (e.g. `Sub`) lower through
-/// the backend chain (Step 26+ pins sub anti-commutative).
+/// `fn f(p1: Int, p2: Int) -> Int :- p1 <op> p2`. The op family
+/// covers `Add` / `Mul` (commutative + associative lemmas) and
+/// `Sub` (anti-commutative + right-identity); other ops fall back
+/// to `BackendDispatch`.
 fn wrapper_binop(fn_name: &str, inputs: &ProofLowerInputs) -> Option<crate::ast::BinOp> {
     use crate::ast::{BinOp, Expr};
 

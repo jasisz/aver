@@ -7,22 +7,17 @@
 //! in the `proof_lower` pipeline stage; both backends see the same
 //! decision and either render it consistently or fail consistently.
 //!
-//! The architectural goal: replace the ad-hoc "guess and emit"
-//! pattern that grew across `src/codegen/{common,recursion,lean,
-//! dafny}` during 0.22.0 with a single typed model. Each variant
-//! that says "emit native" or "lift to subtype" carries inside its
-//! payload everything the backend needs and everything the
-//! classifier proved — the type system makes it impossible to
-//! produce a "native" decision without also producing the side-
-//! conditions that justify it.
+//! Replaces the ad-hoc "guess and emit" pattern that grew across
+//! `src/codegen/{common,recursion,lean,dafny}` during 0.22.0 with a
+//! single typed model. Each variant that says "emit native" or
+//! "lift to subtype" carries inside its payload everything the
+//! backend needs and everything the classifier proved — the type
+//! system makes it impossible to produce a "native" decision
+//! without also producing the side-conditions that justify it.
 //!
-//! **Status**: skeleton. Step 1 (this file) defines the types. Step
-//! 2 wires `proof_lower` to populate `ProofIR.refined_types` for
-//! refinement-via-opaque records; backends still go through the old
-//! `codegen::common::refinement_info_for` path and tests verify
-//! both paths produce equivalent decisions. Steps 3+ migrate one
-//! backend at a time, then extend coverage to recursion contracts
-//! and law theorems.
+//! Coverage today: `refined_types` (refinement-via-opaque records),
+//! `fn_contracts` (per-pure-fn recursion shape), `law_theorems`
+//! (per-verify-law strategy + quantifier + claim decomposition).
 
 use std::collections::HashMap;
 
@@ -45,13 +40,11 @@ pub struct ProofIR {
     /// same map so backends don't have to walk two corpora.
     pub refined_types: HashMap<String, RefinedTypeDecl>,
     /// Per-pure-fn contract describing what proof artifact the fn
-    /// lowers to. Currently a stub (empty); Step 5+ populates it
-    /// when migrating the `RecursionPlan` machinery.
+    /// lowers to (native / fuel / structural / linear recurrence).
     pub fn_contracts: HashMap<String, FnContract>,
     /// Per-verify-law theorem decomposed into quantifiers, premises,
     /// and claim with all wrapper-strip / val-projection / drop-vs-
-    /// keep decisions baked in. Currently empty; populated when
-    /// migrating the law emit path.
+    /// keep decisions baked in, plus the pinned proof strategy.
     pub law_theorems: Vec<LawTheorem>,
     /// Recursive pure fns whose shape fell outside every recognised
     /// pattern. Surfaced as diagnostics ("recursive function 'foo'
@@ -138,8 +131,8 @@ pub struct RefinedTypeDecl {
     pub witness: Option<String>,
 }
 
-/// Per-pure-fn proof contract. Placeholder shape — Step 5+ fills
-/// this in with recursion plan migration.
+/// Per-pure-fn proof contract — what recursion shape (if any) the
+/// lowerer pinned for emit.
 #[derive(Debug, Clone)]
 pub struct FnContract {
     pub source_name: String,
@@ -183,9 +176,8 @@ pub enum RecursionContract {
         /// Conjunction of precondition clauses, kept as a vector so
         /// backends can render one `requires` per clause (Dafny) or
         /// fold into a single `&&` chain (Lean). Empty means "no
-        /// caller-derived precondition" — the lowerer leaves the
-        /// fibTR-style default (`param ≥ 0`) synthesis to the
-        /// backend for now; Step 6+ moves that into the lowerer.
+        /// caller-derived precondition" — the backend synthesises a
+        /// fibTR-style default (`param ≥ 0`) at emit time.
         precondition: Vec<Predicate>,
         /// Symbolic measure (e.g. `natAbs(n)`). Backends render per
         /// target language (`Int.natAbs n` on Lean, `n` with a
@@ -558,13 +550,13 @@ pub enum ProofStrategy {
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,
-    /// Lowerer has not pinned a strategy yet; the backend's
-    /// existing `or_else` chain decides. Placeholder during the
-    /// Step 23+ migration — every law theorem starts here, and
-    /// subsequent Steps move concrete strategies (Reflexive,
-    /// Induction, …) into the lowerer one shape at a time. The
-    /// backend treats `BackendDispatch` as "fall through to ad-hoc
-    /// strategy chain", same behaviour as pre-migration.
+    /// Lowerer has not pinned a strategy for this law; the backend's
+    /// `or_else` chain decides. Today reached by linear-recurrence-
+    /// spec equivalence (Lean-specific, ~50-line support theorems
+    /// stay in the backend) and the sampled / guarded-domain
+    /// fallback. The backend treats `BackendDispatch` as "fall
+    /// through to ad-hoc strategy chain"; pinned variants above
+    /// short-circuit to a known emit.
     BackendDispatch,
 }
 
