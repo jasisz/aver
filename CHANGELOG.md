@@ -45,6 +45,14 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **A new `examples/refinement/` directory collects the canonical refinement-via-opaque demos.**
   `Natural` (Int + `>= 0`), `Positive` (Int + `>= 1`), `IntRange` (Int with the compound `0 <= n <= 100`), `NonNegFloat` (Float carrier, structure path), `Email` (String carrier, structure path), and `BigInt` (digits-of-base-10⁹ as `List<Int>`, arbitrary-precision arithmetic in pure Aver). Each example exercises a different point in the refinement design space, so the pattern is documented by code rather than prose.
 
+### Law strategy substrate
+
+- **Both proof backends now read every verify-law strategy from a single classifier.**
+  Each `verify <fn> law` lowers to one of thirteen algebraic shapes (`Reflexive`, `Commutative`/`Associative`/`IdentityElement`/`AntiCommutative`, `UnaryEqualsBinary`, `Induction`, `LibraryAxiom`, `MapUpdatePostcondition`, `MapKeyTrackedIncrement`, `LinearArithmetic`, four flavours of spec-equivalence) before Lean or Dafny emits anything. The Lean output is byte-identical to the prior ad-hoc dispatch on every flagship example; Dafny inherits the same classification without per-shape backend code. The benefit is visible in `aver compile --emit-ir-after law_lower`: every law now shows up with the strategy that proves it, instead of "the backend will figure it out."
+
+- **Effectful impl-vs-spec laws (Oracle v1) classify on the canonical post-lift shape.**
+  Laws like `pickPair() => pairSpec(BranchPath.Root, rnd)` previously needed a backend to perform Oracle Lift (inject `BranchPath.Root` + the oracle given into the impl call) before deciding the proof tactic. The lift now runs once in the classifier; both backends see the canonical `impl(args) == spec(args)` form and the matching strategy gets pinned in the IR.
+
 ## 0.21.1 — 2026-05-21
 
 ### Verify
