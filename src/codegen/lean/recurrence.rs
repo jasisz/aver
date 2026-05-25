@@ -88,8 +88,11 @@ pub(crate) fn recurrence_nat_helper_name(fn_name: &str) -> String {
     format!("{}__nat", aver_name_to_lean(fn_name))
 }
 
-pub(crate) fn fuel_helper_name(fn_name: &str) -> String {
-    format!("{}__fuel", aver_name_to_lean(fn_name))
+/// Lean-side native-emit aux name. Sized-recursion plans (e.g.
+/// `fibTR`) emit this form — the helper carries the explicit
+/// `(h : p ≥ 0)` precondition arg and recurses on `Int.natAbs n`.
+pub(crate) fn native_aux_helper_name(fn_name: &str) -> String {
+    format!("{}__aux", aver_name_to_lean(fn_name))
 }
 
 pub(crate) fn render_affine_pair_expr(expr: AffinePairExpr, prev2: &str, prev1: &str) -> String {
@@ -130,7 +133,7 @@ pub(crate) fn detect_second_order_int_linear_recurrence(
     else {
         return None;
     };
-    if !matches!(&inner_subject.node, Expr::Ident(name) if name == param_name) {
+    if ident_name(&inner_subject.node) != Some(param_name.as_str()) {
         return None;
     }
 
@@ -167,18 +170,18 @@ pub(crate) fn detect_tailrec_int_linear_pair_worker(
     let Expr::Match { subject, arms, .. } = &body.node else {
         return None;
     };
-    if !matches!(&subject.node, Expr::Ident(name) if name == count_param_name) {
+    if ident_name(&subject.node) != Some(count_param_name.as_str()) {
         return None;
     }
 
     let zero_branch = match_arm_body_for_int(arms, 0)?;
-    if !matches!(&zero_branch.node, Expr::Ident(name) if name == prev_param_name) {
+    if ident_name(&zero_branch.node) != Some(prev_param_name.as_str()) {
         return None;
     }
 
     let recursive_branch = match_arm_body_for_wildcard(arms)?;
     let args: &[Spanned<Expr>] = match &recursive_branch.node {
-        Expr::FnCall(callee, args) if matches!(&callee.node, Expr::Ident(name) if name == &fd.name) => {
+        Expr::FnCall(callee, args) if ident_name(&callee.node) == Some(fd.name.as_str()) => {
             args.as_slice()
         }
         Expr::TailCall(call) if call.target == fd.name => call.args.as_slice(),
@@ -188,7 +191,7 @@ pub(crate) fn detect_tailrec_int_linear_pair_worker(
         return None;
     }
     if !matches_int_sub_positive(&args[0].node, count_param_name, 1)
-        || !matches!(&args[1].node, Expr::Ident(name) if name == curr_param_name.as_str())
+        || ident_name(&args[1].node) != Some(curr_param_name.as_str())
     {
         return None;
     }
@@ -217,20 +220,18 @@ pub(crate) fn detect_tailrec_int_linear_pair_wrapper(
     let Expr::FnCall(callee, args) = nonnegative_branch else {
         return None;
     };
-    let Expr::Ident(helper_fn_name) = &callee.node else {
-        return None;
-    };
+    let helper_fn_name = ident_name(&callee.node)?.to_string();
     let [count_arg, seed_prev, seed_curr] = args.as_slice() else {
         return None;
     };
-    if !matches!(&count_arg.node, Expr::Ident(name) if name == param_name) {
+    if ident_name(&count_arg.node) != Some(param_name.as_str()) {
         return None;
     }
 
     Some(TailrecIntLinearPairWrapperShape {
         param_name: param_name.clone(),
         negative_branch: negative_branch.clone(),
-        helper_fn_name: helper_fn_name.clone(),
+        helper_fn_name,
         seed_prev: seed_prev.clone(),
         seed_curr: seed_curr.clone(),
     })
@@ -246,7 +247,7 @@ fn split_negative_guard<'a>(
     let Expr::BinOp(BinOp::Lt, left, right) = &subject.node else {
         return None;
     };
-    if !matches!(&left.node, Expr::Ident(name) if name == param_name)
+    if ident_name(&left.node) != Some(param_name)
         || !matches!(&right.node, Expr::Literal(Literal::Int(0)))
     {
         return None;
@@ -283,7 +284,7 @@ fn parse_recurrence_affine(expr: &Expr, fn_name: &str, param_name: &str) -> Opti
     match expr {
         Expr::Literal(Literal::Int(value)) => Some(AffinePairExpr::constant(*value)),
         Expr::FnCall(callee, args) => {
-            if !matches!(&callee.node, Expr::Ident(name) if name == fn_name) || args.len() != 1 {
+            if ident_name(&callee.node) != Some(fn_name) || args.len() != 1 {
                 return None;
             }
             let offset = int_sub_positive_offset(&args[0].node, param_name)?;
@@ -325,8 +326,8 @@ fn parse_recurrence_affine(expr: &Expr, fn_name: &str, param_name: &str) -> Opti
 fn parse_affine_expr(expr: &Expr, prev2_name: &str, prev1_name: &str) -> Option<AffinePairExpr> {
     match expr {
         Expr::Literal(Literal::Int(value)) => Some(AffinePairExpr::constant(*value)),
-        Expr::Ident(name) if name == prev2_name => Some(AffinePairExpr::prev2()),
-        Expr::Ident(name) if name == prev1_name => Some(AffinePairExpr::prev1()),
+        e if ident_name(e) == Some(prev2_name) => Some(AffinePairExpr::prev2()),
+        e if ident_name(e) == Some(prev1_name) => Some(AffinePairExpr::prev1()),
         Expr::BinOp(BinOp::Add, left, right) => Some(
             parse_affine_expr(&left.node, prev2_name, prev1_name)?.add(parse_affine_expr(
                 &right.node,
@@ -354,6 +355,14 @@ fn parse_affine_expr(expr: &Expr, prev2_name: &str, prev1_name: &str) -> Option<
     }
 }
 
+/// Bare-ident name regardless of pipeline-resolve state.
+fn ident_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => Some(name.as_str()),
+        _ => None,
+    }
+}
+
 fn int_literal(expr: &Expr) -> Option<i64> {
     match expr {
         Expr::Literal(Literal::Int(value)) => Some(*value),
@@ -369,7 +378,7 @@ fn int_sub_positive_offset(expr: &Expr, param_name: &str) -> Option<i64> {
     let Expr::BinOp(BinOp::Sub, left, right) = expr else {
         return None;
     };
-    if !matches!(&left.node, Expr::Ident(name) if name == param_name) {
+    if ident_name(&left.node) != Some(param_name) {
         return None;
     }
     let value = int_literal(&right.node)?;
