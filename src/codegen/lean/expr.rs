@@ -31,7 +31,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // up the lifted-type decision the lowerer already made
             // in `ctx.proof_ir.refined_types`.
             if let Some(crate::types::Type::Named(t_name)) = obj.ty()
-                && let Some(decl) = ctx.proof_ir.refined_types.get(t_name)
+                && let Some(decl) = crate::codegen::common::find_refined_type(ctx, t_name)
                 && decl.carrier_type == "Int"
                 && field == &decl.carrier_field
             {
@@ -168,7 +168,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // structure shape and a plain `{ value := … }` record
             // literal, so this fast-path is gated on the carrier
             // matching.
-            if let Some(decl) = ctx.proof_ir.refined_types.get(type_name)
+            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
                 && decl.carrier_type == "Int"
                 && fields.len() == 1
             {

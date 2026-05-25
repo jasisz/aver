@@ -140,7 +140,7 @@ pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> Option<String> {
             ))
         }
         TypeDef::Product { name, fields, .. } => {
-            if let Some(decl) = ctx.proof_ir.refined_types.get(name)
+            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, name)
                 && decl.carrier_type == "Int"
             {
                 let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
