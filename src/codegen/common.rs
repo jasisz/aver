@@ -753,10 +753,15 @@ pub fn law_calls_unclassified_fn(
 fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
     match &expr.node {
         Expr::FnCall(callee, args) => {
-            let direct = match &callee.node {
-                Expr::Ident(name) | Expr::Resolved { name, .. } => names.contains(name),
-                _ => false,
-            };
+            // Resolve the callee through the same path other emitters use —
+            // covers bare (`size`), dotted (`Dep.toSorted`), and resolved
+            // module-qualified (`Models.User.size`) shapes. Without this,
+            // a law calling `Dep.toSorted(xs)` slipped past the gate and
+            // emitted a non-closing `induction t with …` against a
+            // fuel-bounded helper.
+            let direct = expr_to_dotted_name(&callee.node)
+                .map(|n| names.contains(n.as_str()))
+                .unwrap_or(false);
             direct
                 || expr_calls_named(callee, names)
                 || args.iter().any(|a| expr_calls_named(a, names))
@@ -856,32 +861,69 @@ fn expr_references_any_ident(expr: &Spanned<Expr>, names: &HashSet<&str>) -> boo
     }
 }
 
-/// Oracle v1: does the LHS of a verify-law project through `.trace`?
+/// Oracle v1: does the LHS of a verify-law project through Oracle's
+/// runtime trace buffer?
 ///
 /// Trace-buffer projections (`fn().trace.event(k)`,
 /// `.trace.group(N).branch(M).event(K)`, `.trace.length()`,
 /// `.trace.contains(...)`) are observable only at runtime — the lifted
-/// proof-side fn returns the bare value, with no `.trace` field. The
-/// Lean / Dafny universal theorem for such a law has no provable
-/// shape, so backends emit a runtime-only comment instead. Sample
-/// assertions share the same projection chain and are gated the same
-/// way; the runtime `aver verify` path still exercises them under
-/// the law's stubs.
+/// proof-side fn returns the bare value, with no `.trace` field.
+///
+/// The detection requires *both* signals:
+///   (a) an `Attr(_, "trace")` somewhere in the expression — the
+///       projection lands on the trace buffer, and
+///   (b) a method call from Oracle's trace API (`.event`, `.group`,
+///       `.branch`, `.length`, `.contains`) on the result of (a).
+///
+/// Requiring both rules out a false positive where a user-defined
+/// record happens to have a `trace` field (`record Log { trace:
+/// String, ... }`) — `log.trace` matches (a) but not (b), so the
+/// universal proof stays in normal emit. The cases-form trace block
+/// emitter (`emit_verify_trace_block_proofs`) already commented out
+/// the same shape; this is the law-form mirror.
 pub fn law_lhs_has_trace_projection(expr: &Spanned<Expr>) -> bool {
+    expr_has_trace_field(expr) && expr_has_trace_api_call(expr)
+}
+
+fn expr_has_trace_field(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
-        Expr::Attr(inner, field) => field == "trace" || law_lhs_has_trace_projection(inner),
+        Expr::Attr(inner, field) => field == "trace" || expr_has_trace_field(inner),
         Expr::FnCall(callee, args) => {
-            law_lhs_has_trace_projection(callee) || args.iter().any(law_lhs_has_trace_projection)
+            expr_has_trace_field(callee) || args.iter().any(expr_has_trace_field)
         }
-        Expr::BinOp(_, l, r) => law_lhs_has_trace_projection(l) || law_lhs_has_trace_projection(r),
+        Expr::BinOp(_, l, r) => expr_has_trace_field(l) || expr_has_trace_field(r),
         Expr::Match { subject, arms } => {
-            law_lhs_has_trace_projection(subject)
-                || arms.iter().any(|a| law_lhs_has_trace_projection(&a.body))
+            expr_has_trace_field(subject) || arms.iter().any(|a| expr_has_trace_field(&a.body))
         }
-        Expr::ErrorProp(inner) => law_lhs_has_trace_projection(inner),
-        Expr::Constructor(_, Some(arg)) => law_lhs_has_trace_projection(arg),
+        Expr::ErrorProp(inner) => expr_has_trace_field(inner),
+        Expr::Constructor(_, Some(arg)) => expr_has_trace_field(arg),
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(law_lhs_has_trace_projection)
+            items.iter().any(expr_has_trace_field)
+        }
+        _ => false,
+    }
+}
+
+const TRACE_API_METHODS: &[&str] = &["event", "group", "branch", "length", "contains"];
+
+fn expr_has_trace_api_call(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            let direct = matches!(
+                &callee.node,
+                Expr::Attr(_, method) if TRACE_API_METHODS.contains(&method.as_str())
+            );
+            direct || expr_has_trace_api_call(callee) || args.iter().any(expr_has_trace_api_call)
+        }
+        Expr::Attr(inner, _) | Expr::ErrorProp(inner) => expr_has_trace_api_call(inner),
+        Expr::BinOp(_, l, r) => expr_has_trace_api_call(l) || expr_has_trace_api_call(r),
+        Expr::Match { subject, arms } => {
+            expr_has_trace_api_call(subject)
+                || arms.iter().any(|a| expr_has_trace_api_call(&a.body))
+        }
+        Expr::Constructor(_, Some(arg)) => expr_has_trace_api_call(arg),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(expr_has_trace_api_call)
         }
         _ => false,
     }
@@ -1770,4 +1812,96 @@ where
     process(entry_pure, String::new(), &mut by_scope);
 
     PerScopeSections { by_scope }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{Literal, VerifyGiven, VerifyGivenDomain, VerifyLaw};
+
+    fn sb(node: Expr) -> Spanned<Expr> {
+        Spanned::new(node, 1)
+    }
+
+    fn bsb(node: Expr) -> Box<Spanned<Expr>> {
+        Box::new(sb(node))
+    }
+
+    fn law_with(lhs: Spanned<Expr>, rhs: Spanned<Expr>) -> VerifyLaw {
+        VerifyLaw {
+            name: "test".to_string(),
+            givens: vec![VerifyGiven {
+                name: "xs".to_string(),
+                type_name: "List<String>".to_string(),
+                domain: VerifyGivenDomain::Explicit(vec![sb(Expr::List(vec![]))]),
+            }],
+            when: None,
+            lhs,
+            rhs,
+            sample_guards: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn law_calls_unclassified_fn_detects_dotted_callee() {
+        // Review finding 1: a law calling `Dep.toSorted(xs)` (where
+        // `toSorted` is on the unclassified list) used to slip past
+        // the gate because `expr_calls_named` only matched bare
+        // `Expr::Ident` callees. With `expr_to_dotted_name`-based
+        // resolution the dotted form is detected too.
+        let lhs = sb(Expr::FnCall(
+            bsb(Expr::Attr(
+                bsb(Expr::Ident("Dep".to_string())),
+                "toSorted".to_string(),
+            )),
+            vec![sb(Expr::Ident("xs".to_string()))],
+        ));
+        let rhs = sb(Expr::Ident("xs".to_string()));
+        let law = law_with(lhs, rhs);
+
+        let mut unclassified = HashSet::new();
+        unclassified.insert("Dep.toSorted".to_string());
+        assert!(law_calls_unclassified_fn(&law, &unclassified));
+
+        // Same lhs, but the unclassified set names only the bare
+        // form — confirms the dotted name resolved through.
+        let mut bare_only = HashSet::new();
+        bare_only.insert("toSorted".to_string());
+        assert!(!law_calls_unclassified_fn(&law, &bare_only));
+    }
+
+    #[test]
+    fn law_lhs_has_trace_projection_skips_user_record_field() {
+        // Review finding 4: a user-defined record with a `trace`
+        // field (`record Log { trace: String, ... }`) used to trigger
+        // the gate as soon as `log.trace` appeared in the LHS. The
+        // detection now requires BOTH a `.trace` field projection
+        // AND a trace-API method call (`.event`, `.group`, `.branch`,
+        // `.length`, `.contains`) — a bare `log.trace` is just a
+        // record access and stays in normal emit.
+        let user_field_lhs = sb(Expr::Attr(
+            bsb(Expr::Ident("log".to_string())),
+            "trace".to_string(),
+        ));
+        assert!(
+            !law_lhs_has_trace_projection(&user_field_lhs),
+            "bare user-record `.trace` field must not trigger the gate"
+        );
+
+        // Real Oracle trace projection: `fn().trace.event(0)`.
+        let runtime_trace_lhs = sb(Expr::FnCall(
+            bsb(Expr::Attr(
+                bsb(Expr::Attr(
+                    bsb(Expr::FnCall(bsb(Expr::Ident("fn".to_string())), vec![])),
+                    "trace".to_string(),
+                )),
+                "event".to_string(),
+            )),
+            vec![sb(Expr::Literal(Literal::Int(0)))],
+        ));
+        assert!(
+            law_lhs_has_trace_projection(&runtime_trace_lhs),
+            "Oracle `.trace.event(0)` projection must trigger the gate"
+        );
+    }
 }
