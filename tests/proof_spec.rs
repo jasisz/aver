@@ -1824,3 +1824,76 @@ fn proof_dafny_verifies_oracle_independent_products_when_dafny_is_available() {
 fn proof_dafny_verifies_map_when_dafny_is_available() {
     assert_dafny_verifies("examples/data/map.av", "aver-dafny-map");
 }
+
+// --- expanded coverage (post-IR-migration audit, 0.22.0) ---
+
+#[test]
+fn proof_export_builds_clock_as_data_when_lake_is_available() {
+    assert_proof_builds("examples/formal/clock_as_data.av", "aver-proof-clock");
+}
+
+#[test]
+fn proof_dafny_verifies_clock_as_data_when_dafny_is_available() {
+    assert_dafny_verifies("examples/formal/clock_as_data.av", "aver-dafny-clock");
+}
+
+#[test]
+fn proof_export_builds_file_store_pure_core_when_lake_is_available() {
+    assert_proof_builds(
+        "examples/formal/file_store_pure_core.av",
+        "aver-proof-file-store-pure",
+    );
+}
+
+#[test]
+fn proof_dafny_verifies_file_store_pure_core_when_dafny_is_available() {
+    assert_dafny_verifies(
+        "examples/formal/file_store_pure_core.av",
+        "aver-dafny-file-store-pure",
+    );
+}
+
+#[test]
+fn proof_export_builds_oracle_trace_when_lake_is_available() {
+    assert_proof_builds("examples/formal/oracle_trace.av", "aver-proof-oracle-trace");
+}
+
+#[test]
+fn proof_dafny_verifies_oracle_trace_when_dafny_is_available() {
+    assert_dafny_verifies("examples/formal/oracle_trace.av", "aver-dafny-oracle-trace");
+}
+
+#[test]
+fn proof_export_builds_terminal_size_snapshot_when_lake_is_available() {
+    assert_proof_builds(
+        "examples/formal/terminal_size_snapshot.av",
+        "aver-proof-terminal-size",
+    );
+}
+
+#[test]
+fn proof_dafny_verifies_terminal_size_snapshot_when_dafny_is_available() {
+    assert_dafny_verifies(
+        "examples/formal/terminal_size_snapshot.av",
+        "aver-dafny-terminal-size",
+    );
+}
+
+#[test]
+fn proof_export_builds_trust_check_when_lake_is_available() {
+    assert_proof_builds("examples/formal/trust_check.av", "aver-proof-trust-check");
+}
+
+#[test]
+fn proof_dafny_verifies_trust_check_when_dafny_is_available() {
+    assert_dafny_verifies("examples/formal/trust_check.av", "aver-dafny-trust-check");
+}
+
+#[test]
+fn proof_export_builds_date_when_lake_is_available() {
+    // Lean-only — Dafny side has `parseIntSlice(s, from, to)` whose
+    // `s[from..to]` slice can't be range-proved without a `requires`
+    // clause we don't auto-emit yet. Real-example gap tracked
+    // alongside the umbrella Dafny issue.
+    assert_proof_builds("examples/data/date.av", "aver-proof-date");
+}
