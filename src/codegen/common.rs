@@ -776,12 +776,9 @@ fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
         Expr::MapLiteral(entries) => entries
             .iter()
             .any(|(k, v)| expr_calls_named(k, names) || expr_calls_named(v, names)),
-        Expr::RecordCreate { fields, .. } => {
-            fields.iter().any(|(_, v)| expr_calls_named(v, names))
-        }
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, v)| expr_calls_named(v, names)),
         Expr::RecordUpdate { base, updates, .. } => {
-            expr_calls_named(base, names)
-                || updates.iter().any(|(_, v)| expr_calls_named(v, names))
+            expr_calls_named(base, names) || updates.iter().any(|(_, v)| expr_calls_named(v, names))
         }
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
             crate::ast::StrPart::Parsed(inner) => expr_calls_named(inner, names),
@@ -827,21 +824,25 @@ fn expr_references_any_ident(expr: &Spanned<Expr>, names: &HashSet<&str>) -> boo
         }
         Expr::Match { subject, arms } => {
             expr_references_any_ident(subject, names)
-                || arms.iter().any(|a| expr_references_any_ident(&a.body, names))
+                || arms
+                    .iter()
+                    .any(|a| expr_references_any_ident(&a.body, names))
         }
         Expr::Constructor(_, Some(arg)) => expr_references_any_ident(arg, names),
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(|i| expr_references_any_ident(i, names))
         }
-        Expr::MapLiteral(entries) => entries
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_references_any_ident(k, names) || expr_references_any_ident(v, names)
+        }),
+        Expr::RecordCreate { fields, .. } => fields
             .iter()
-            .any(|(k, v)| expr_references_any_ident(k, names) || expr_references_any_ident(v, names)),
-        Expr::RecordCreate { fields, .. } => {
-            fields.iter().any(|(_, v)| expr_references_any_ident(v, names))
-        }
+            .any(|(_, v)| expr_references_any_ident(v, names)),
         Expr::RecordUpdate { base, updates, .. } => {
             expr_references_any_ident(base, names)
-                || updates.iter().any(|(_, v)| expr_references_any_ident(v, names))
+                || updates
+                    .iter()
+                    .any(|(_, v)| expr_references_any_ident(v, names))
         }
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
             crate::ast::StrPart::Parsed(inner) => expr_references_any_ident(inner, names),
@@ -868,25 +869,18 @@ fn expr_references_any_ident(expr: &Spanned<Expr>, names: &HashSet<&str>) -> boo
 /// the law's stubs.
 pub fn law_lhs_has_trace_projection(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
-        Expr::Attr(inner, field) => {
-            field == "trace" || law_lhs_has_trace_projection(inner)
-        }
+        Expr::Attr(inner, field) => field == "trace" || law_lhs_has_trace_projection(inner),
         Expr::FnCall(callee, args) => {
-            law_lhs_has_trace_projection(callee)
-                || args.iter().any(law_lhs_has_trace_projection)
+            law_lhs_has_trace_projection(callee) || args.iter().any(law_lhs_has_trace_projection)
         }
-        Expr::BinOp(_, l, r) => {
-            law_lhs_has_trace_projection(l) || law_lhs_has_trace_projection(r)
-        }
+        Expr::BinOp(_, l, r) => law_lhs_has_trace_projection(l) || law_lhs_has_trace_projection(r),
         Expr::Match { subject, arms } => {
             law_lhs_has_trace_projection(subject)
                 || arms.iter().any(|a| law_lhs_has_trace_projection(&a.body))
         }
         Expr::ErrorProp(inner) => law_lhs_has_trace_projection(inner),
         Expr::Constructor(_, Some(arg)) => law_lhs_has_trace_projection(arg),
-        Expr::List(items)
-        | Expr::Tuple(items)
-        | Expr::IndependentProduct(items, _) => {
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
             items.iter().any(law_lhs_has_trace_projection)
         }
         _ => false,
@@ -1400,9 +1394,7 @@ where
         let oracle_names: std::collections::HashSet<String> = law
             .givens
             .iter()
-            .filter(|g| {
-                crate::types::checker::oracle_subtypes::has_bounded_subtype(&g.type_name)
-            })
+            .filter(|g| crate::types::checker::oracle_subtypes::has_bounded_subtype(&g.type_name))
             .map(|g| g.name.clone())
             .collect();
         if !oracle_names.is_empty() {

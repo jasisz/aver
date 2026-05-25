@@ -188,7 +188,8 @@ fn assert_dafny_verifies_with_error_budget(
             )
         });
         assert_eq!(
-            actual, expected_errors,
+            actual,
+            expected_errors,
             "{}: dafny error count drift (expected {}, got {}). \
              If the count dropped, lower the budget. If it grew, a new shape regressed — \
              investigate before raising the budget.\n{}",
@@ -305,11 +306,7 @@ fn proof_dafny_verifies_json_when_dafny_is_available() {
     // closing this cleanly is probably out of scope for a single
     // fix per issue #114, and would need a different proof
     // strategy entirely.
-    assert_dafny_verifies_with_error_budget(
-        "examples/data/json.av",
-        "aver-dafny-json",
-        89,
-    );
+    assert_dafny_verifies_with_error_budget("examples/data/json.av", "aver-dafny-json", 89);
 }
 
 #[test]
@@ -2027,7 +2024,10 @@ fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
     // Both gated at the universal emit step; sample / checked_domain
     // lemmas remain (concrete inputs stay decidable). Lake build
     // succeeds; `aver verify` runtime hits every declared case.
-    assert_proof_builds("examples/data/red_black_tree.av", "aver-proof-red-black-tree");
+    assert_proof_builds(
+        "examples/data/red_black_tree.av",
+        "aver-proof-red-black-tree",
+    );
 }
 
 #[test]

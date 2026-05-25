@@ -1907,8 +1907,7 @@ fn emit_verify_law_block(
     // inputs) and stay decidable — skip the universal instead of
     // shipping `induction` tactics that don't close.
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
-    let calls_fuel_bounded =
-        crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
+    let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
     let skip_universal = singleton_const_rhs || calls_fuel_bounded;
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(

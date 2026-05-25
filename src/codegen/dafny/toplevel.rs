@@ -1291,8 +1291,7 @@ pub fn emit_verify_law(
     // `__fuel`-style wrapper hides the structural decrease. Sample
     // assertions still cover the declared domain.
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
-    let calls_fuel_bounded =
-        crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
+    let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
     if singleton_const_rhs || calls_fuel_bounded {
         let reason = if singleton_const_rhs {
             "singleton-domain givens with constant RHS"
@@ -1604,9 +1603,11 @@ pub fn emit_verify_law(
             }
             lines.push("  }".to_string());
         }
-    } else if let Some(list_given_idx) = law.givens.iter().position(|g| {
-        g.type_name.starts_with("List<") || g.type_name == "String"
-    }) {
+    } else if let Some(list_given_idx) = law
+        .givens
+        .iter()
+        .position(|g| g.type_name.starts_with("List<") || g.type_name == "String")
+    {
         // Inductive hint for `List<T>` / `String`-parameterised laws —
         // both lower to Dafny `seq`, so `|s| == 0` / `s[1..]` works for
         // either. Case-split `[] / [head, ..tail]` and recurse on the

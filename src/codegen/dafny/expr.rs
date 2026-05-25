@@ -177,9 +177,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // obligation on every caller and breaks proofs whose
             // domain analysis depends on a downstream postcondition
             // (e.g. `goldenApprox` needing `fib(n) >= 1` for n >= 1).
-            if matches!(op, BinOp::Div)
-                && matches!(left.ty(), Some(crate::types::Type::Float))
-            {
+            if matches!(op, BinOp::Div) && matches!(left.ty(), Some(crate::types::Type::Float)) {
                 return format!("FloatDiv({}, {})", l, r);
             }
             let op_str = match op {
