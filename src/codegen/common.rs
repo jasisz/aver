@@ -1186,18 +1186,20 @@ where
     // classified Generative-shape given. Other modes leave the body
     // alone.
     if matches!(mode, OracleInjectionMode::LemmaBindingProjected) {
+        // Only givens whose effect has a bounded-subtype carrier
+        // (`RandomIntInBounds` / `RandomFloatInUnit` /
+        // `TimeUnixMsNonneg`) get `.val` projection. `EffectDimension::
+        // Generative*` covers more effects than that — e.g.
+        // `Disk.writeText` is `GenerativeOutput` but the quant param
+        // stays a plain function in both Lean and Dafny because there's
+        // no bound to encode. Projecting `.val` on a plain function
+        // emits `write.val` on something with no `val` field and the
+        // proof rejects it.
         let oracle_names: std::collections::HashSet<String> = law
             .givens
             .iter()
             .filter(|g| {
-                matches!(
-                    crate::types::checker::effect_classification::classify(&g.type_name)
-                        .map(|c| c.dimension),
-                    Some(crate::types::checker::effect_classification::EffectDimension::Generative)
-                        | Some(
-                            crate::types::checker::effect_classification::EffectDimension::GenerativeOutput
-                        )
-                )
+                crate::types::checker::oracle_subtypes::has_bounded_subtype(&g.type_name)
             })
             .map(|g| g.name.clone())
             .collect();

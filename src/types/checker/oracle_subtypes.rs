@@ -35,6 +35,16 @@
 
 use crate::codegen::common::DeclaredEffects;
 
+/// True when the effect has a bounded-subtype carrier in the proof
+/// export (`RandomIntInBounds`, `RandomFloatInUnit`, `TimeUnixMsNonneg`).
+/// Used by `rewrite_effectful_calls_in_law` to decide which oracle
+/// givens need `.val` projection on call sites. Keep in sync with
+/// [`lean_subtypes`] / [`dafny_subtype_predicates`] and with the
+/// per-backend `bounded_oracle_subtype_for` helpers.
+pub fn has_bounded_subtype(effect: &str) -> bool {
+    matches!(effect, "Random.int" | "Random.float" | "Time.unixMs")
+}
+
 /// Lean 4 helper type definitions for every classified effect declared
 /// in the program. Empty when the program declares no relevant effects.
 pub(crate) fn lean_subtypes(declared: &DeclaredEffects) -> String {

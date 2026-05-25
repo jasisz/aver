@@ -791,6 +791,30 @@ pub fn oracle_params_for_effects(
     Ok(out)
 }
 
+/// Choose the synth BranchPath param name. Defaults to `path` (the
+/// name every stub and example writes); falls back to the first
+/// collision-free `branch_path` / `__branch_path__N` only when the
+/// user function already binds `path` itself.
+fn pick_unique_path_name(user_params: &[(String, String)]) -> String {
+    let user_names: std::collections::HashSet<&str> =
+        user_params.iter().map(|(n, _)| n.as_str()).collect();
+    for candidate in ["path", "branch_path", "__branch_path__"] {
+        if !user_names.contains(candidate) {
+            return candidate.to_string();
+        }
+    }
+    // Pathological: all three reserved candidates are taken. Walk
+    // an explicit suffix series rather than panicking — the lift is
+    // still correct as long as the chosen name is unique.
+    for k in 0u32.. {
+        let candidate = format!("__branch_path_{}__", k);
+        if !user_names.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+    unreachable!("u32 exhausted while picking a fresh BranchPath param name")
+}
+
 /// Deterministic default oracle binding name from an effect method.
 /// `Random.int` → `rnd_Random_int`; `Args.get` → `cap_Args_get`.
 /// Callers that use `given name: E.m = [...]` override these by passing
@@ -958,7 +982,14 @@ pub fn lift_fn_def_with_helpers(
         )
     });
 
-    let path_name = "path".to_string();
+    // Synth `BranchPath` param uses `"path"` by default — that's the
+    // name every example and stub in the codebase writes. If the user
+    // function already has a param named `path` (e.g. `persistEntry
+    // (path: String, body: String)`), the synth `path: BranchPath`
+    // would shadow it on the Lean/Dafny side and the effect stub
+    // would receive a `String` where it expects a `BranchPath`. Pick
+    // a collision-free fallback only when the source forces it.
+    let path_name = pick_unique_path_name(&fd.params);
     let mut new_params: Vec<(String, String)> = Vec::new();
     if needs_path {
         new_params.push((path_name.clone(), "BranchPath".to_string()));
