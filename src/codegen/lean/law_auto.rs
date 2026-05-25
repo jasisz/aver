@@ -164,6 +164,26 @@ pub fn emit_verify_law_forall_auto_proof(
         });
     }
 
+    // IR-pinned `SpecEquivalenceSimpNormalized` — Step 39 broaden:
+    // impl and spec bodies aren't syntactically identical but
+    // normalize to the same expression under arg substitution +
+    // algebraic identity folding (`a + 0`, `a * 1`, `a * 0`).
+    // Backend closes via `simp [<unfolds>]`; the simp normalization
+    // discharges the residual arithmetic identities.
+    if let Some(crate::ir::ProofStrategy::SpecEquivalenceSimpNormalized { ref extra_unfolds }) =
+        law_strategy_for(ctx, &vb.fn_name, &law.name)
+    {
+        let lean_names: Vec<String> = extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines: intro_then(
+                &proof_intro_names,
+                vec![format!("simp [{}]", lean_names.join(", "))],
+            ),
+            replaces_theorem: false,
+        });
+    }
+
     // IR-pinned `EffectfulSpecEquivalence` — Oracle Lift normalised
     // both sides; lowerer matched the canonical `impl(args) ==
     // spec(args)` shape post-rewrite. Backend emits `simp [impl,

@@ -1352,3 +1352,44 @@ fn effectful_spec_equivalence_pinned_post_oracle_lift() {
     assert_eq!(impl_fn, "pickPair");
     assert_eq!(spec_fn, "pairSpec");
 }
+
+#[test]
+fn simp_normalized_spec_equivalence_pinned_on_arithmetic_identity_gap() {
+    // `square(x) = x * x` vs `squareSpec(x) = x * x + 0`. Bodies
+    // differ syntactically; after arg substitution + dropping the
+    // redundant `+ 0` they normalize to the same `x * x`. Step 39
+    // pins `SpecEquivalenceSimpNormalized` — distinct from Step 37's
+    // strict `SpecEquivalence` (which requires identical raw bodies).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn square(x: Int) -> Int\n\
+         \x20   x * x\n\
+         \n\
+         fn squareSpec(x: Int) -> Int\n\
+         \x20   x * x + 0\n\
+         \n\
+         verify square law squareSpec\n\
+         \x20   given x: Int = [0]\n\
+         \x20   square(x) => squareSpec(x)\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "square" && t.law_name == "squareSpec")
+        .expect("square::squareSpec law theorem missing");
+    let aver::ir::ProofStrategy::SpecEquivalenceSimpNormalized { ref extra_unfolds } =
+        theorem.strategy
+    else {
+        panic!(
+            "expected SpecEquivalenceSimpNormalized, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(
+        extra_unfolds,
+        &vec!["square".to_string(), "squareSpec".to_string()],
+        "extra_unfolds should be the impl + spec pair (sorted)"
+    );
+}

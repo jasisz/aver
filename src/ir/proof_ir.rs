@@ -506,6 +506,18 @@ pub enum ProofStrategy {
         /// names; backends translate to their lemma vocabulary.
         extra_unfolds: Vec<String>,
     },
+    /// Broader [`SpecEquivalence`] for cases where impl and spec
+    /// bodies are NOT syntactically identical but normalize to the
+    /// same expression under arg substitution + simp arithmetic
+    /// identity folding (`a + 0 == a`, `a * 1 == a`, `a * 0 ==
+    /// 0`). Backends close via `simp` (no `simpa` — there's no
+    /// trivial-rfl goal to discharge; simp normalisation does the
+    /// closing). Same `extra_unfolds` payload as `SpecEquivalence`.
+    SpecEquivalenceSimpNormalized {
+        /// All user fn source names to unfold — impl + spec + any
+        /// transitively-reached helpers from law sides.
+        extra_unfolds: Vec<String>,
+    },
     /// Functional equivalence between an effectful impl fn and a
     /// spec fn. Same "claim states `impl(args) == spec(args)`"
     /// content as [`SpecEquivalence`], but the law's source-level
