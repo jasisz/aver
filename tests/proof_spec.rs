@@ -290,7 +290,11 @@ fn proof_export_builds_json_when_lake_is_available() {
     // new shape lost a strategy and broke the law; if it drops,
     // someone gave one of these a real strategy and the budget
     // should be tightened.
-    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 13);
+    // Issue #128: dropped from 13 to 9 — the new singleton-given +
+    // constant-RHS gate elides 4 universal-with-sorry shapes whose
+    // ∀ form was vacuous (or false). Per-sample lemmas still cover
+    // the declared domain.
+    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 9);
 }
 
 #[test]
@@ -2000,6 +2004,30 @@ fn proof_dafny_verifies_date_when_dafny_is_available() {
     // slice carries Aver's clamp-to-empty semantics into Dafny and
     // there's no range obligation to discharge in the caller.
     assert_dafny_verifies("examples/data/date.av", "aver-dafny-date");
+}
+
+#[test]
+fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
+    // Issue #128: red_black_tree.av carried 44 lake errors after the
+    // #123 path-shadow / `.val` fixes. The diagnosis in the issue
+    // text (anonymous `{...}` constructor notation) didn't match the
+    // real output — match arms already used qualified positional
+    // syntax. The actual failure was two coupled emit shapes:
+    //
+    //   1. Laws with singleton-domain givens and a RHS that didn't
+    //      reference any given (`checkRight L V R = Tree.Black Empty
+    //      1 Empty`) emit a `∀ L V R, …` universal that's vacuous or
+    //      outright false. The `induction L with …` fallback chose
+    //      by the auto-proof matcher then failed to close.
+    //   2. Laws calling fuel-bounded fns that the proof-mode
+    //      classifier rejected (`size`, `toSorted`) emit
+    //      `induction t with …` against `__fuel`-wrapped helpers
+    //      whose recursive shape `simp` can't drive.
+    //
+    // Both gated at the universal emit step; sample / checked_domain
+    // lemmas remain (concrete inputs stay decidable). Lake build
+    // succeeds; `aver verify` runtime hits every declared case.
+    assert_proof_builds("examples/data/red_black_tree.av", "aver-proof-red-black-tree");
 }
 
 #[test]

@@ -691,6 +691,170 @@ pub fn is_pure_fn(fd: &FnDef) -> bool {
     fd.effects.is_empty() && fd.name != "main"
 }
 
+/// Issue #128: do all of a law's givens carry a singleton domain?
+///
+/// A `verify fn law … given a: T = [v]` with one value per given binds
+/// the law to a single concrete point. Combined with
+/// [`law_rhs_is_independent_of_givens`] this is the "sample-only"
+/// shape — the universal form is vacuous (RHS is a constant,
+/// LHS-with-one-input doesn't span anything). Asociative-style laws
+/// also have singleton givens but their RHS *uses* the bound names
+/// (`add a (add b c)`), so the universal form there is genuinely
+/// the asociativity statement and stays.
+pub fn all_givens_are_singletons(law: &crate::ast::VerifyLaw) -> bool {
+    !law.givens.is_empty()
+        && law.givens.iter().all(|g| match &g.domain {
+            VerifyGivenDomain::Explicit(values) => values.len() == 1,
+            VerifyGivenDomain::IntRange { start, end } => start == end,
+        })
+}
+
+/// Issue #128: extract fn names from `proof_ir.unclassified_fns`
+/// messages. The diagnostic prose is the source of truth (the
+/// `UnclassifiedFn` struct doesn't carry a separate `name` field
+/// today); each message starts `recursive function 'NAME' is outside
+/// proof subset (...)`. Extract the quoted name so the law gate has
+/// a `HashSet<String>` to test fn-call expressions against.
+pub fn unclassified_fn_names(ctx: &CodegenContext) -> HashSet<String> {
+    ctx.proof_ir
+        .unclassified_fns
+        .iter()
+        .filter_map(|uf| {
+            let s = &uf.message;
+            let start = s.find('\'')?;
+            let rest = &s[start + 1..];
+            let end = rest.find('\'')?;
+            Some(rest[..end].to_string())
+        })
+        .collect()
+}
+
+/// Issue #128: does the law call any fn the proof-mode classifier
+/// rejected as "outside proof subset"?
+///
+/// `size`, `toSorted`, `blackDepth` and friends compile to
+/// fuel-bounded helpers (`size__fuel` / `toSorted__fuel`) that the
+/// `induction` tactic can't drive — even when the universal claim is
+/// mathematically true (`∀ t, size t = (toSorted t).length`). The
+/// auto-proof matcher emits an `induction t with …` chain that
+/// leaves the goal under fuel, lake fails. Skip the universal on
+/// this shape; the expanded `_sample_N` lemmas remain decidable
+/// (concrete inputs unfold fuel finitely).
+pub fn law_calls_unclassified_fn(
+    law: &crate::ast::VerifyLaw,
+    unclassified: &HashSet<String>,
+) -> bool {
+    if unclassified.is_empty() {
+        return false;
+    }
+    expr_calls_named(&law.lhs, unclassified) || expr_calls_named(&law.rhs, unclassified)
+}
+
+fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            let direct = match &callee.node {
+                Expr::Ident(name) | Expr::Resolved { name, .. } => names.contains(name),
+                _ => false,
+            };
+            direct
+                || expr_calls_named(callee, names)
+                || args.iter().any(|a| expr_calls_named(a, names))
+        }
+        Expr::Attr(inner, _) | Expr::ErrorProp(inner) | Expr::Neg(inner) => {
+            expr_calls_named(inner, names)
+        }
+        Expr::BinOp(_, l, r) => expr_calls_named(l, names) || expr_calls_named(r, names),
+        Expr::Match { subject, arms } => {
+            expr_calls_named(subject, names)
+                || arms.iter().any(|a| expr_calls_named(&a.body, names))
+        }
+        Expr::Constructor(_, Some(arg)) => expr_calls_named(arg, names),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(|i| expr_calls_named(i, names))
+        }
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_calls_named(k, names) || expr_calls_named(v, names)),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, v)| expr_calls_named(v, names))
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_calls_named(base, names)
+                || updates.iter().any(|(_, v)| expr_calls_named(v, names))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ast::StrPart::Parsed(inner) => expr_calls_named(inner, names),
+            crate::ast::StrPart::Literal(_) => false,
+        }),
+        Expr::TailCall(boxed) => {
+            let crate::ast::TailCallData { target, args, .. } = boxed.as_ref();
+            names.contains(target) || args.iter().any(|a| expr_calls_named(a, names))
+        }
+        _ => false,
+    }
+}
+
+/// Issue #128: is the law's RHS independent of every given identifier?
+///
+/// `checkRight L V R => Tree.Black Empty 1 Empty` — RHS mentions no
+/// given. The `∀ L V R, checkRight L V R = Tree.Black Empty 1 Empty`
+/// universal is then either trivially false (`checkRight` is not a
+/// constant) or vacuous; either way the per-sample lemma is the only
+/// meaningful claim.
+/// `add a (add b c) => add (add a b) c` — RHS uses `a`, `b`, `c`,
+/// so the universal is the real asociativity theorem and is kept.
+pub fn law_rhs_is_independent_of_givens(law: &crate::ast::VerifyLaw) -> bool {
+    let given_names: HashSet<&str> = law.givens.iter().map(|g| g.name.as_str()).collect();
+    if given_names.is_empty() {
+        return true;
+    }
+    !expr_references_any_ident(&law.rhs, &given_names)
+}
+
+fn expr_references_any_ident(expr: &Spanned<Expr>, names: &HashSet<&str>) -> bool {
+    match &expr.node {
+        Expr::Ident(name) | Expr::Resolved { name, .. } => names.contains(name.as_str()),
+        Expr::Attr(inner, _) | Expr::ErrorProp(inner) | Expr::Neg(inner) => {
+            expr_references_any_ident(inner, names)
+        }
+        Expr::FnCall(callee, args) => {
+            expr_references_any_ident(callee, names)
+                || args.iter().any(|a| expr_references_any_ident(a, names))
+        }
+        Expr::BinOp(_, l, r) => {
+            expr_references_any_ident(l, names) || expr_references_any_ident(r, names)
+        }
+        Expr::Match { subject, arms } => {
+            expr_references_any_ident(subject, names)
+                || arms.iter().any(|a| expr_references_any_ident(&a.body, names))
+        }
+        Expr::Constructor(_, Some(arg)) => expr_references_any_ident(arg, names),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(|i| expr_references_any_ident(i, names))
+        }
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_references_any_ident(k, names) || expr_references_any_ident(v, names)),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, v)| expr_references_any_ident(v, names))
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_references_any_ident(base, names)
+                || updates.iter().any(|(_, v)| expr_references_any_ident(v, names))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ast::StrPart::Parsed(inner) => expr_references_any_ident(inner, names),
+            crate::ast::StrPart::Literal(_) => false,
+        }),
+        Expr::TailCall(boxed) => {
+            let crate::ast::TailCallData { args, .. } = boxed.as_ref();
+            args.iter().any(|a| expr_references_any_ident(a, names))
+        }
+        _ => false,
+    }
+}
+
 /// Oracle v1: does the LHS of a verify-law project through `.trace`?
 ///
 /// Trace-buffer projections (`fn().trace.event(k)`,

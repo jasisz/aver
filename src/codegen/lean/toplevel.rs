@@ -1873,7 +1873,44 @@ fn emit_verify_law_block(
     if let Some(when_expr) = &law.when {
         lines.push(format!("-- when {}", emit_expr(when_expr, ctx)));
     }
-    if !quant_params.is_empty() {
+    // Issue #128: singleton-domain givens + RHS that references no
+    // given + IR didn't pin a strategy that closes the constant-RHS
+    // shape ⇒ the universal is vacuous or false (e.g.
+    // `checkRight L V R = Tree.Black Empty 1 Empty`) and the
+    // structural-induction fallback can't close it. Skip; sample +
+    // checked_domain cover the point. Strategies that DO close
+    // constant-RHS shapes (Reflexive, Commutative, Associative,
+    // MapUpdatePostcondition, …) stay in the keep-set; Induction
+    // / BackendDispatch / Sorry don't.
+    let ir_strategy_closes_const_rhs = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == vb.fn_name && t.law_name == law.name)
+        .is_some_and(|t| {
+            !matches!(
+                t.strategy,
+                crate::ir::ProofStrategy::Induction { .. }
+                    | crate::ir::ProofStrategy::BackendDispatch
+                    | crate::ir::ProofStrategy::Sorry
+            )
+        });
+    let singleton_const_rhs = !ir_strategy_closes_const_rhs
+        && crate::codegen::common::all_givens_are_singletons(law)
+        && crate::codegen::common::law_rhs_is_independent_of_givens(law);
+    // Issue #128: a law that calls a fuel-bounded helper (a recursive
+    // fn the proof-mode classifier rejected — `size`, `toSorted`,
+    // `blackDepth`, …) can't be closed by the auto-proof matcher's
+    // `induction t with …` chain: the goal stays under
+    // `<fn>__fuel ((averMeasure _) * 3) …` which `simp` can't drive.
+    // The expanded per-sample lemmas unfold fuel finitely (concrete
+    // inputs) and stay decidable — skip the universal instead of
+    // shipping `induction` tactics that don't close.
+    let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
+    let calls_fuel_bounded =
+        crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
+    let skip_universal = singleton_const_rhs || calls_fuel_bounded;
+    if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,
             law,

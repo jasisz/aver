@@ -1262,6 +1262,49 @@ pub fn emit_verify_law(
         );
     }
 
+    // Issue #128: singleton-domain givens + constant RHS + IR didn't
+    // pin a strategy that closes the constant-RHS shape ⇒ universal
+    // lemma is vacuous or outright false. Sample assertions in
+    // `emit_law_samples` cover the actual point. Induction /
+    // BackendDispatch / Sorry don't close constant-RHS shapes;
+    // anything else (Reflexive, Associative, MapUpdatePostcondition,
+    // …) does and stays. Mirror of the Lean gate.
+    let ir_strategy_closes_const_rhs = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == vb.fn_name && t.law_name == law.name)
+        .is_some_and(|t| {
+            !matches!(
+                t.strategy,
+                crate::ir::ProofStrategy::Induction { .. }
+                    | crate::ir::ProofStrategy::BackendDispatch
+                    | crate::ir::ProofStrategy::Sorry
+            )
+        });
+    let singleton_const_rhs = !ir_strategy_closes_const_rhs
+        && crate::codegen::common::all_givens_are_singletons(law)
+        && crate::codegen::common::law_rhs_is_independent_of_givens(law);
+    // Issue #128: same fuel-bounded gate as Lean — laws calling fns
+    // the classifier rejected (`size`, `toSorted`, …) can't be
+    // closed by Dafny's `decreases`-driven induction either; the
+    // `__fuel`-style wrapper hides the structural decrease. Sample
+    // assertions still cover the declared domain.
+    let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
+    let calls_fuel_bounded =
+        crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
+    if singleton_const_rhs || calls_fuel_bounded {
+        let reason = if singleton_const_rhs {
+            "singleton-domain givens with constant RHS"
+        } else {
+            "calls a fuel-bounded fn outside the proof subset"
+        };
+        return format!(
+            "// Law {}.{}{}: {}, sample-only (universal lemma omitted)",
+            fn_name, law_name, suffix, reason,
+        );
+    }
+
     // IR-pinned `LinearRecurrence2SpecEquivalence` — emit a full
     // support-theorem stack (Nat helper + worker_nat_shift +
     // helper_nat + helper_seed + spec_nat_bridge + main lemma)
