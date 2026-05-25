@@ -668,6 +668,16 @@ fn classify_law_strategy(
     if let Some(extra_unfolds) = detect_simp_normalized_spec_equivalence(law, fn_name, inputs) {
         return ProofStrategy::SpecEquivalenceSimpNormalized { extra_unfolds };
     }
+    // Linear-Int spec equivalence — substituted bodies are pure
+    // linear arithmetic over Int givens; decided by `omega` / LIA.
+    if let Some((unfolded_impl, unfolded_spec)) =
+        detect_linear_int_spec_equivalence(law, fn_name, inputs)
+    {
+        return ProofStrategy::LinearIntSpecEquivalence {
+            unfolded_impl,
+            unfolded_spec,
+        };
+    }
     // Effectful counterpart — Oracle Lift normalises both sides
     // (oracle args injected into impl call) and the lowerer matches
     // the canonical `impl(args) == spec(args)` shape on the
@@ -1452,6 +1462,111 @@ fn detect_simp_normalized_spec_equivalence(
         }
     }
     Some(names.into_iter().collect())
+}
+
+/// Detect "linear Int" spec equivalence: same canonical impl/spec
+/// call shape as the other spec detectors, all givens are `Int`,
+/// both impl and spec return `Int`, and the substituted bodies are
+/// purely linear arithmetic expressions over the law-quantified
+/// givens (only `Int` literals, given idents, `Add`, `Sub`). On
+/// match returns the two substituted bodies — backends rewrite to
+/// `change <impl> = <spec>` and close via their linear-arithmetic
+/// decision procedure (`omega` on Lean, Z3 LIA on Dafny).
+fn detect_linear_int_spec_equivalence(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<(Spanned<crate::ast::Expr>, Spanned<crate::ast::Expr>)> {
+    use crate::ast::Expr;
+    use std::collections::HashSet;
+
+    if law.givens.is_empty() || !law.givens.iter().all(|g| g.type_name == "Int") {
+        return None;
+    }
+    let spec_fn_name = &law.name;
+    if spec_fn_name == fn_name {
+        return None;
+    }
+    let spec_fd = inputs.find_fn_def_by_call_name(spec_fn_name)?;
+    if !spec_fd.effects.is_empty() || spec_fd.name == "main" {
+        return None;
+    }
+    let impl_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if impl_fd.return_type != "Int" || spec_fd.return_type != "Int" {
+        return None;
+    }
+
+    let direct_call =
+        |expr: &Spanned<crate::ast::Expr>| -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
+            let Expr::FnCall(callee, args) = &expr.node else {
+                return None;
+            };
+            let name = match &callee.node {
+                Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
+                _ => return None,
+            };
+            Some((name, args.clone()))
+        };
+    let canonical_shape_args = |lhs: &Spanned<crate::ast::Expr>,
+                                rhs: &Spanned<crate::ast::Expr>|
+     -> Option<Vec<Spanned<crate::ast::Expr>>> {
+        let (l_name, l_args) = direct_call(lhs)?;
+        let (r_name, r_args) = direct_call(rhs)?;
+        if l_name != fn_name || r_name != *spec_fn_name || l_args != r_args {
+            return None;
+        }
+        if l_args.len() != impl_fd.params.len() || r_args.len() != spec_fd.params.len() {
+            return None;
+        }
+        Some(l_args)
+    };
+    let call_args = canonical_shape_args(&law.lhs, &law.rhs)
+        .or_else(|| canonical_shape_args(&law.rhs, &law.lhs))?;
+
+    let impl_body = body_terminal_expr(impl_fd.body.as_ref())?;
+    let spec_body = body_terminal_expr(spec_fd.body.as_ref())?;
+    let impl_subst: std::collections::HashMap<String, Spanned<crate::ast::Expr>> = impl_fd
+        .params
+        .iter()
+        .zip(call_args.iter())
+        .map(|((n, _), arg)| (n.clone(), arg.clone()))
+        .collect();
+    let spec_subst: std::collections::HashMap<String, Spanned<crate::ast::Expr>> = spec_fd
+        .params
+        .iter()
+        .zip(call_args.iter())
+        .map(|((n, _), arg)| (n.clone(), arg.clone()))
+        .collect();
+    let unfolded_impl =
+        crate::ast_rewrite::rewrite_idents_scoped(impl_body, |name| impl_subst.get(name).cloned());
+    let unfolded_spec =
+        crate::ast_rewrite::rewrite_idents_scoped(spec_body, |name| spec_subst.get(name).cloned());
+
+    let allowed_idents: HashSet<&str> = law.givens.iter().map(|g| g.name.as_str()).collect();
+    if !is_linear_int_expr(&unfolded_impl, &allowed_idents)
+        || !is_linear_int_expr(&unfolded_spec, &allowed_idents)
+    {
+        return None;
+    }
+    Some((unfolded_impl, unfolded_spec))
+}
+
+/// Check whether `expr` is purely linear arithmetic over `allowed_
+/// idents`: only `Int` literals, allowed idents, and `Add`/`Sub`
+/// BinOps. Mirrors legacy `spec::linear_int::is_linear_int_expr`.
+fn is_linear_int_expr(
+    expr: &Spanned<crate::ast::Expr>,
+    allowed_idents: &std::collections::HashSet<&str>,
+) -> bool {
+    use crate::ast::{BinOp, Expr, Literal};
+    match &expr.node {
+        Expr::Literal(Literal::Int(_)) => true,
+        Expr::Ident(name) | Expr::Resolved { name, .. } => allowed_idents.contains(name.as_str()),
+        Expr::BinOp(BinOp::Add | BinOp::Sub, left, right) => {
+            is_linear_int_expr(left, allowed_idents) && is_linear_int_expr(right, allowed_idents)
+        }
+        _ => false,
+    }
 }
 
 /// Detect functional equivalence between an effectful impl fn and

@@ -1393,3 +1393,56 @@ fn simp_normalized_spec_equivalence_pinned_on_arithmetic_identity_gap() {
         "extra_unfolds should be the impl + spec pair (sorted)"
     );
 }
+
+#[test]
+fn linear_int_spec_equivalence_pinned_on_commutative_addition() {
+    // `addOne(n) = n + 1` vs `addOneSpec(n) = 1 + n`. Bodies differ
+    // (operand order), substitute n into both → `n + 1` and `1 + n`
+    // — pure linear-int arithmetic over the given `n`. Step 40 pins
+    // `LinearIntSpecEquivalence { unfolded_impl, unfolded_spec }`.
+    // Distinct from `SpecEquivalenceSimpNormalized` because the
+    // `simplify_identity_expr` pass doesn't rewrite `1 + n` to
+    // `n + 1` (no commutativity normalisation), so the body-match
+    // check there fails and falls through to this detector.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn addOne(n: Int) -> Int\n\
+         \x20   n + 1\n\
+         \n\
+         fn addOneSpec(n: Int) -> Int\n\
+         \x20   1 + n\n\
+         \n\
+         verify addOne law addOneSpec\n\
+         \x20   given n: Int = [0]\n\
+         \x20   addOne(n) => addOneSpec(n)\n";
+    let ctx = build_ctx(src);
+    let theorem = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == "addOne" && t.law_name == "addOneSpec")
+        .expect("addOne::addOneSpec law theorem missing");
+    let aver::ir::ProofStrategy::LinearIntSpecEquivalence {
+        ref unfolded_impl,
+        ref unfolded_spec,
+    } = theorem.strategy
+    else {
+        panic!(
+            "expected LinearIntSpecEquivalence, got: {:?}",
+            theorem.strategy
+        );
+    };
+    // Asserting full Spanned AST equality is brittle (carries
+    // OnceLock type cells); just check the shape stripped to Debug.
+    let impl_repr = format!("{:?}", unfolded_impl.node);
+    let spec_repr = format!("{:?}", unfolded_spec.node);
+    assert!(
+        impl_repr.contains("Ident(\"n\")") && impl_repr.contains("Int(1)"),
+        "unfolded_impl should reference n and literal 1, got: {impl_repr}"
+    );
+    assert!(
+        spec_repr.contains("Ident(\"n\")") && spec_repr.contains("Int(1)"),
+        "unfolded_spec should reference n and literal 1, got: {spec_repr}"
+    );
+}
