@@ -2,7 +2,7 @@ use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::codegen::lean::recurrence::{
     detect_second_order_int_linear_recurrence, detect_tailrec_int_linear_pair_worker,
-    detect_tailrec_int_linear_pair_wrapper, fuel_helper_name, recurrence_nat_helper_name,
+    detect_tailrec_int_linear_pair_wrapper, native_aux_helper_name, recurrence_nat_helper_name,
     render_affine_pair_expr,
 };
 use crate::verify_law::canonical_spec_ref;
@@ -38,7 +38,7 @@ pub(super) fn emit_second_order_linear_recurrence_spec_equivalence_law(
     let impl_lean = aver_name_to_lean(&vb.fn_name);
     let spec_lean = aver_name_to_lean(&spec_ref.spec_fn_name);
     let helper_lean = aver_name_to_lean(&impl_shape.helper_fn_name);
-    let helper_fuel_lean = fuel_helper_name(&impl_shape.helper_fn_name);
+    let helper_aux_lean = native_aux_helper_name(&impl_shape.helper_fn_name);
     let spec_nat_lean = recurrence_nat_helper_name(&spec_ref.spec_fn_name);
     let worker_nat_lean = recurrence_nat_helper_name(&impl_shape.helper_fn_name);
     let theorem_base = format!("{impl_lean}_eq_{spec_lean}");
@@ -94,18 +94,32 @@ pub(super) fn emit_second_order_linear_recurrence_spec_equivalence_law(
             "| zero =>".to_string(),
             format!(
                 "    simp [{}, {}, {}]",
-                helper_lean, helper_fuel_lean, worker_nat_lean
+                helper_lean, helper_aux_lean, worker_nat_lean
             ),
             "| succ k ih =>".to_string(),
-            "    have hk : Int.ofNat (Nat.succ k) ≠ 0 := by".to_string(),
-            "      simp [Nat.succ_eq_add_one]".to_string(),
-            "      omega".to_string(),
-            "    have hk' : Int.ofNat (Nat.succ k) - 1 = Int.ofNat k := by".to_string(),
-            "      simpa [Nat.succ_eq_add_one]".to_string(),
+            "    have h_nn : (Int.ofNat (k + 1) : Int) >= 0 := by".to_string(),
+            "      show ((k + 1 : Nat) : Int) >= 0; exact_mod_cast Nat.zero_le _".to_string(),
+            "    have hk : ¬ (Int.ofNat (k + 1) : Int) = 0 := by".to_string(),
+            "      show ((k + 1 : Nat) : Int) ≠ 0; exact_mod_cast Nat.succ_ne_zero k".to_string(),
+            "    have hk' : (Int.ofNat (k + 1) : Int) - 1 = Int.ofNat k := by".to_string(),
+            "      show ((k + 1 : Nat) : Int) - 1 = ((k : Nat) : Int); push_cast; omega"
+                .to_string(),
+            "    have h_k_nn : (Int.ofNat k : Int) >= 0 := Int.ofNat_nonneg k".to_string(),
+            "    have h_ih := ih b (a + b)".to_string(),
             format!(
-                "    simpa [{}, {}, {}, hk, hk'] using (ih b (a + b))",
-                helper_lean, helper_fuel_lean, worker_nat_lean
+                "    rw [show {} (Int.ofNat (k + 1)) a b = {} (Int.ofNat (k + 1)) a b h_nn from dif_pos h_nn]",
+                helper_lean, helper_aux_lean
             ),
+            format!(
+                "    rw [show {} (Int.ofNat (k + 1)) a b h_nn = {} (Int.ofNat k) b (a + b) h_k_nn by rw [{}.eq_def]; rw [dif_neg hk]; congr 1]",
+                helper_aux_lean, helper_aux_lean, helper_aux_lean
+            ),
+            format!(
+                "    rw [show {} (Int.ofNat k) b (a + b) h_k_nn = {} (Int.ofNat k) b (a + b) from (dif_pos h_k_nn).symm]",
+                helper_aux_lean, helper_lean
+            ),
+            "    rw [h_ih]".to_string(),
+            "    rfl".to_string(),
         ],
         2,
     ));
