@@ -42,37 +42,112 @@ pub struct RefinementInfo<'a> {
 /// Inspect inputs for a refinement-via-opaque record by `type_name`.
 /// Returns `Some(info)` iff there's exactly one matching smart
 /// constructor and the record has a single carrier field.
+///
+/// Defaults to "any scope" — walks entry + every dep module's
+/// type_defs and fn_defs to find the record + smart constructor.
+/// Use [`refinement_info_for_in_scope`] when two modules declare a
+/// refined record of the same bare name (`A.Natural` vs `B.Natural`)
+/// and you need each scope's *own* predicate; the unscoped form
+/// returns whichever record walked first.
 pub fn refinement_info_for<'a>(
     type_name: &str,
     inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
 ) -> Option<RefinementInfo<'a>> {
-    // Refinement records may live in the entry file or in a
-    // dependent module. Same for the smart constructor. Walk both
-    // so cross-module compilations (`aver proof natural_app.av`
-    // depending on a `Natural` module) produce the same lifted
-    // shape as the standalone module file.
-    let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
-        TopLevel::TypeDef(td) => Some(td),
-        _ => None,
-    });
-    let module_typedefs = inputs.dep_modules.iter().flat_map(|m| m.type_defs.iter());
-    let (carrier_field, carrier_type) =
-        entry_typedefs
-            .chain(module_typedefs)
-            .find_map(|td| match td {
-                TypeDef::Product { name, fields, .. } if name == type_name && fields.len() == 1 => {
-                    let (fname, ftype) = &fields[0];
-                    Some((fname.as_str(), ftype.as_str()))
-                }
-                _ => None,
-            })?;
+    refinement_info_for_walk(type_name, inputs, None)
+}
 
-    let entry_fns = inputs.entry_items.iter().filter_map(|item| match item {
-        TopLevel::FnDef(fd) => Some(fd),
+/// Module-scoped variant of [`refinement_info_for`]. `scope =
+/// None` means "look in entry items only"; `scope = Some(prefix)`
+/// means "look in the dep module whose `prefix` matches".
+///
+/// Refinement-via-opaque is a single-module pattern: the record is
+/// declared `exposes opaque [X]` and the smart constructor lives in
+/// the same module (the carrier field isn't reachable from outside,
+/// so the constructor can't reside elsewhere). Scoping the search
+/// to one module gives each scope its own predicate, which is what
+/// `populate_refined_types` needs so canonical `A.Natural` and
+/// `B.Natural` slots don't share a predicate from whichever module
+/// happened to walk first.
+pub fn refinement_info_for_in_scope<'a>(
+    type_name: &str,
+    inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
+    scope: Option<&str>,
+) -> Option<RefinementInfo<'a>> {
+    refinement_info_for_walk(type_name, inputs, Some(scope))
+}
+
+fn refinement_info_for_walk<'a>(
+    type_name: &str,
+    inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
+    // Outer Option: None = "any scope" (legacy); Some(inner) =
+    // module-scoped. Inner Option: None = entry, Some(prefix) =
+    // module by prefix.
+    scope_filter: Option<Option<&str>>,
+) -> Option<RefinementInfo<'a>> {
+    let entry_only = matches!(scope_filter, Some(None));
+    let module_only_prefix = match scope_filter {
+        Some(Some(p)) => Some(p),
         _ => None,
-    });
-    let module_fns = inputs.dep_modules.iter().flat_map(|m| m.fn_defs.iter());
-    for fd in entry_fns.chain(module_fns) {
+    };
+    let allow_entry = scope_filter.is_none() || entry_only;
+    let entry_typedefs: Vec<&'a TypeDef> = if allow_entry {
+        inputs
+            .entry_items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::TypeDef(td) => Some(td),
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let module_typedefs: Vec<&'a TypeDef> = inputs
+        .dep_modules
+        .iter()
+        .filter(|m| match (scope_filter, module_only_prefix) {
+            (None, _) => true,
+            (Some(None), _) => false,
+            (Some(Some(_)), Some(p)) => m.prefix == p,
+            _ => false,
+        })
+        .flat_map(|m| m.type_defs.iter())
+        .collect();
+    let (carrier_field, carrier_type) = entry_typedefs
+        .into_iter()
+        .chain(module_typedefs)
+        .find_map(|td| match td {
+            TypeDef::Product { name, fields, .. } if name == type_name && fields.len() == 1 => {
+                let (fname, ftype) = &fields[0];
+                Some((fname.as_str(), ftype.as_str()))
+            }
+            _ => None,
+        })?;
+
+    let entry_fns: Vec<&'a FnDef> = if allow_entry {
+        inputs
+            .entry_items
+            .iter()
+            .filter_map(|item| match item {
+                TopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let module_fns: Vec<&'a FnDef> = inputs
+        .dep_modules
+        .iter()
+        .filter(|m| match (scope_filter, module_only_prefix) {
+            (None, _) => true,
+            (Some(None), _) => false,
+            (Some(Some(_)), Some(p)) => m.prefix == p,
+            _ => false,
+        })
+        .flat_map(|m| m.fn_defs.iter())
+        .collect();
+    for fd in entry_fns.into_iter().chain(module_fns) {
         if !fd.return_type.starts_with("Result<") {
             continue;
         }
@@ -721,7 +796,48 @@ pub fn find_refined_type<'a>(
     ctx: &'a CodegenContext,
     name: &str,
 ) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
-    resolve_refined_type_in(&ctx.proof_ir.refined_types, &ctx.modules, name)
+    find_refined_type_scoped(ctx, name, None)
+}
+
+/// Module-scope-aware variant of [`find_refined_type`]. When the
+/// caller knows which module's emit-pass is in flight (`scope =
+/// Some(module.prefix)`), the resolver tries `Module.Name` *before*
+/// falling back to module-walk ordering. Two modules with same-bare
+/// refined records (`A.Natural` + `B.Natural`, distinct predicates)
+/// then resolve to the *current scope*'s entry — bare references
+/// inside module B's emit pick up `B.Natural`, not whichever module
+/// happened to populate first.
+///
+/// Resolution order:
+///   1. Direct lookup (covers exact-canonical hits + bare-entry).
+///   2. If `scope = Some(prefix)`, try `prefix.bare`.
+///   3. Walk modules to find owners and try each canonical key.
+pub fn find_refined_type_scoped<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+    scope: Option<&str>,
+) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
+    if let Some(decl) = ctx.proof_ir.refined_types.get(name) {
+        return Some(decl);
+    }
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    if let Some(prefix) = scope {
+        let scoped = format!("{}.{}", prefix, bare);
+        if let Some(decl) = ctx.proof_ir.refined_types.get(&scoped) {
+            return Some(decl);
+        }
+    }
+    for m in &ctx.modules {
+        for td in &m.type_defs {
+            if type_def_name(td) == bare {
+                let canonical = format!("{}.{}", m.prefix, bare);
+                if let Some(decl) = ctx.proof_ir.refined_types.get(&canonical) {
+                    return Some(decl);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Same resolution shape as [`find_refined_type`] but driven by the
@@ -811,12 +927,19 @@ fn expr_calls_named(expr: &Spanned<Expr>, names: &HashSet<String>) -> bool {
         Expr::FnCall(callee, args) => {
             // Resolve the callee through the same path other emitters use —
             // covers bare (`size`), dotted (`Dep.toSorted`), and resolved
-            // module-qualified (`Models.User.size`) shapes. Without this,
-            // a law calling `Dep.toSorted(xs)` slipped past the gate and
-            // emitted a non-closing `induction t with …` against a
-            // fuel-bounded helper.
+            // module-qualified shapes. The unclassified set is populated
+            // from the recursion classifier's diagnostics, which today
+            // emit the local `fd.name` (bare) regardless of which module
+            // the fn lives in (see `recursion::detect`'s issue messages).
+            // Match BOTH the resolved canonical name and its bare suffix
+            // so `Dep.toSorted(xs)` lands on the gate when the set holds
+            // just `toSorted` — and so a future migration to qualified
+            // diagnostic names keeps working.
             let direct = expr_to_dotted_name(&callee.node)
-                .map(|n| names.contains(n.as_str()))
+                .map(|n| {
+                    let bare = n.rsplit('.').next().unwrap_or(n.as_str());
+                    names.contains(n.as_str()) || names.contains(bare)
+                })
                 .unwrap_or(false);
             direct
                 || expr_calls_named(callee, names)
@@ -960,7 +1083,11 @@ fn expr_has_trace_field(expr: &Spanned<Expr>) -> bool {
     }
 }
 
-const TRACE_API_METHODS: &[&str] = &["event", "group", "branch", "length", "contains"];
+/// Oracle's trace-buffer API surface. Every method that
+/// `infer_trace_method` in the typechecker recognises as a
+/// trace-only call. Keep in sync with
+/// `src/types/checker/infer/expr.rs::infer_trace_method`.
+const TRACE_API_METHODS: &[&str] = &["event", "group", "branch", "length", "contains", "count"];
 
 fn expr_has_trace_api_call(expr: &Spanned<Expr>) -> bool {
     match &expr.node {
@@ -1900,11 +2027,16 @@ mod tests {
 
     #[test]
     fn law_calls_unclassified_fn_detects_dotted_callee() {
-        // Review finding 1: a law calling `Dep.toSorted(xs)` (where
-        // `toSorted` is on the unclassified list) used to slip past
-        // the gate because `expr_calls_named` only matched bare
-        // `Expr::Ident` callees. With `expr_to_dotted_name`-based
-        // resolution the dotted form is detected too.
+        // Review finding 1 (round 2): the recursion classifier emits
+        // `UnclassifiedFn` messages keyed by bare `fd.name`, so the
+        // unclassified set the gate consults holds BARE names even
+        // for fns living in a dep module. A law calling
+        // `Dep.toSorted(xs)` against a bare-`toSorted` unclassified
+        // set has to match on the bare suffix too — otherwise the
+        // gate doesn't fire and the backend emits a non-closing
+        // `induction t with …`. Also accepts a fully-qualified entry
+        // for forward compat with a future classifier that emits
+        // canonical names.
         let lhs = sb(Expr::FnCall(
             bsb(Expr::Attr(
                 bsb(Expr::Ident("Dep".to_string())),
@@ -1915,15 +2047,26 @@ mod tests {
         let rhs = sb(Expr::Ident("xs".to_string()));
         let law = law_with(lhs, rhs);
 
-        let mut unclassified = HashSet::new();
-        unclassified.insert("Dep.toSorted".to_string());
-        assert!(law_calls_unclassified_fn(&law, &unclassified));
+        // Forward-compat: a fully-qualified entry matches a dotted
+        // callee directly.
+        let mut canonical = HashSet::new();
+        canonical.insert("Dep.toSorted".to_string());
+        assert!(law_calls_unclassified_fn(&law, &canonical));
 
-        // Same lhs, but the unclassified set names only the bare
-        // form — confirms the dotted name resolved through.
+        // Real production shape today: classifier emits bare names;
+        // the gate must still catch the dotted callsite.
         let mut bare_only = HashSet::new();
         bare_only.insert("toSorted".to_string());
-        assert!(!law_calls_unclassified_fn(&law, &bare_only));
+        assert!(
+            law_calls_unclassified_fn(&law, &bare_only),
+            "bare unclassified name must catch a dotted callsite via suffix match"
+        );
+
+        // Negative control: an unrelated bare name in the set does
+        // not match the dotted callsite.
+        let mut unrelated = HashSet::new();
+        unrelated.insert("somethingElse".to_string());
+        assert!(!law_calls_unclassified_fn(&law, &unrelated));
     }
 
     #[test]

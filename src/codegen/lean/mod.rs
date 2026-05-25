@@ -1297,7 +1297,11 @@ fn transpile_unified(
     for module in &ctx.modules {
         let mut body_sections: Vec<String> = Vec::new();
         for td in &module.type_defs {
-            body_sections.push(toplevel::emit_type_def(td, ctx));
+            body_sections.push(toplevel::emit_type_def_in_scope(
+                td,
+                ctx,
+                Some(module.prefix.as_str()),
+            ));
             if toplevel::is_recursive_type_def(td) {
                 body_sections.push(toplevel::emit_recursive_decidable_eq(
                     toplevel::type_def_name(td),

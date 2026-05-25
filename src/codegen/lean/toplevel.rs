@@ -29,9 +29,18 @@ fn bounded_oracle_subtype_for(method: &str) -> Option<&'static str> {
 }
 
 pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
+    emit_type_def_in_scope(td, ctx, None)
+}
+
+/// Module-scoped emit: `scope` carries the prefix of the module
+/// whose typedefs we're currently rendering (or `None` for entry
+/// items). Drives [`find_refined_type_scoped`] so a refined record
+/// with a bare name resolves to the current module's canonical
+/// entry instead of whichever module populated first.
+pub fn emit_type_def_in_scope(td: &TypeDef, ctx: &CodegenContext, scope: Option<&str>) -> String {
     match td {
         TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants),
-        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, ctx),
+        TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, ctx, scope),
     }
 }
 
@@ -78,7 +87,12 @@ fn emit_sum_type(name: &str, variants: &[TypeVariant]) -> String {
     lines.join("\n")
 }
 
-fn emit_product_type(name: &str, fields: &[(String, String)], ctx: &CodegenContext) -> String {
+fn emit_product_type(
+    name: &str,
+    fields: &[(String, String)],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
     // Refinement-via-opaque records emit as Lean `Subtype` only
     // when the carrier is `Int`. Float-carrier records (NonNegFloat,
     // Discount, …) stay as plain `structure`, because Lean's `Float`
@@ -88,7 +102,7 @@ fn emit_product_type(name: &str, fields: &[(String, String)], ctx: &CodegenConte
     // existing sample-based path covers them: domain values come
     // from `given a: Float = […]`, and proofs are sample-by-sample
     // via native_decide.
-    if let Some(decl) = crate::codegen::common::find_refined_type(ctx, name)
+    if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope)
         && decl.carrier_type == "Int"
     {
         let carrier_ty = type_annotation_to_lean(&decl.carrier_type);

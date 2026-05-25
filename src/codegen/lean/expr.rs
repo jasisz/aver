@@ -486,12 +486,11 @@ fn emit_match(
 /// cond then …`.
 fn true_body_uses_refinement_subtype(expr: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
     match &expr.node {
-        Expr::RecordCreate { type_name, .. } => ctx
-            .proof_ir
-            .refined_types
-            .get(type_name)
-            .map(|decl| decl.carrier_type == "Int")
-            .unwrap_or(false),
+        Expr::RecordCreate { type_name, .. } => {
+            crate::codegen::common::find_refined_type(ctx, type_name)
+                .map(|decl| decl.carrier_type == "Int")
+                .unwrap_or(false)
+        }
         Expr::FnCall(callee, args) => {
             true_body_uses_refinement_subtype(callee, ctx)
                 || args

@@ -21,7 +21,7 @@
 use std::collections::HashSet;
 
 use crate::ast::{Expr, FnDef, Literal, Spanned, TopLevel, TypeDef};
-use crate::codegen::common::{expr_to_dotted_name, refinement_info_for};
+use crate::codegen::common::expr_to_dotted_name;
 use crate::codegen::recursion::{RecursionPlan, analyze_plans};
 use crate::codegen::{CodegenContext, ModuleInfo};
 use crate::ir::proof_ir::{
@@ -211,7 +211,16 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             // predicate-eval fallback witness.
             continue;
         }
-        let Some(info) = refinement_info_for(name, inputs) else {
+        // Scope the smart-constructor lookup to the same module the
+        // record lives in. Refinement-via-opaque keeps the record
+        // opaque (`exposes opaque [X]`); a smart constructor in any
+        // other module couldn't reach the carrier field anyway.
+        // Without the scope, two modules each declaring a `Natural`
+        // with different predicates would both pick up whichever
+        // smart constructor walked first.
+        let Some(info) =
+            crate::codegen::common::refinement_info_for_in_scope(name, inputs, module_prefix)
+        else {
             continue;
         };
         let invariant = Predicate {

@@ -112,6 +112,18 @@ fn literal_int_value(expr: &Spanned<Expr>) -> Option<String> {
 /// poorly automated, and multi-field needs a `predicate` over the
 /// product which the smart-constructor pattern doesn't supply.
 pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> Option<String> {
+    emit_type_def_in_scope(td, ctx, None)
+}
+
+/// Module-scoped emit: `scope` carries the prefix of the module
+/// whose typedefs we're rendering (or `None` for entry items).
+/// Drives [`find_refined_type_scoped`] so a refined record with a
+/// bare name resolves to the current module's slot.
+pub fn emit_type_def_in_scope(
+    td: &TypeDef,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> Option<String> {
     match td {
         TypeDef::Sum { name, variants, .. } => {
             let variant_strs: Vec<String> = variants
@@ -140,7 +152,7 @@ pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> Option<String> {
             ))
         }
         TypeDef::Product { name, fields, .. } => {
-            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, name)
+            if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope)
                 && decl.carrier_type == "Int"
             {
                 let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
