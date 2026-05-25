@@ -85,6 +85,7 @@ pub const BUILTIN_HELPERS: &[BuiltinHelper] = &[
             "containsSubstr ",
             "StringCharAt(",
             "StringChars(",
+            "StringSlice(",
             "StringJoin(",
             "StringSplit(",
             "StringContains(",

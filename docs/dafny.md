@@ -203,8 +203,7 @@ When a law's lemma comes out with an empty body, see [transpilation.md → Debug
 | `examples/data/fibonacci.av` | 1 |
 | `examples/data/rle.av` | 4 |
 | `examples/data/quicksort.av` | 5 |
-| `examples/data/date.av` | 2 |
-| `examples/data/json.av` | 113 |
+| `examples/data/json.av` | 89 |
 
 The budgets are not a target; they are a regression net. The umbrella issue for closing them is [#114](https://github.com/jasisz/lumen-rs/issues/114).
 

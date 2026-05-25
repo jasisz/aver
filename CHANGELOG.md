@@ -21,6 +21,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Dafny verifier improvements
 
 - **`dafny verify` closes 25 more proofs across the flagship suite (160 errors → 135).** Smarter `infer_decreases` picks the actually-moving recursion measure across self-call sites (catches `repeat(char_, n - 1)` and `scanExpTail(s, pos + 1, start)`). List-induction hints case-split `|xs| == 0` and recurse on `xs[1..]`, detecting recursive fns nested under `Map.*` / `Option.*` helpers. `examples/data/map.av` verifies clean; `fibonacci`, `rle`, `quicksort`, `json`, `grok_s_language` all improve without regression.
+- **`String.slice` lowers via a clamp-to-empty helper instead of raw `s[from..to]`.** Aver's runtime semantics — negative or out-of-range indices collapse to an empty slice — now travel into the Dafny export. `examples/data/date.av` verifies clean (the `parseIntSlice(s, from, to)` shape no longer leaves uncloseable range obligations on every caller); `examples/data/json.av` closes 24 more proofs at the same time (113 → 89 errors), entirely from the parser's slice-heavy lookahead. Source-compatible — no Aver-side change, the helper is emitted only when `String.slice` actually appears.
 
 ### Tooling
 

@@ -597,6 +597,13 @@ function StringChars(s: string): seq<string> {
   seq(|s|, (i: int) requires 0 <= i < |s| => [s[i]])
 }
 
+function StringSlice(s: string, from_: int, to_: int): string
+{
+  var lo := if from_ < 0 then 0 else if from_ > |s| then |s| else from_;
+  var hi := if to_ < 0 then 0 else if to_ > |s| then |s| else to_;
+  if lo >= hi then "" else s[lo..hi]
+}
+
 function StringJoin(sep: string, parts: seq<string>): string
   decreases |parts|
 {

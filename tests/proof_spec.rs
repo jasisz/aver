@@ -307,7 +307,7 @@ fn proof_dafny_verifies_json_when_dafny_is_available() {
     assert_dafny_verifies_with_error_budget(
         "examples/data/json.av",
         "aver-dafny-json",
-        113,
+        89,
     );
 }
 
@@ -1993,19 +1993,14 @@ fn proof_dafny_verifies_trust_check_when_dafny_is_available() {
 
 #[test]
 fn proof_export_builds_date_when_lake_is_available() {
-    // Lean-only — Dafny side has `parseIntSlice(s, from, to)` whose
-    // `s[from..to]` slice can't be range-proved without a `requires`
-    // clause we don't auto-emit yet. Real-example gap tracked
-    // alongside the umbrella Dafny issue.
     assert_proof_builds("examples/data/date.av", "aver-proof-date");
 }
 
 #[test]
 fn proof_dafny_verifies_date_when_dafny_is_available() {
-    // `parseIntSlice(s, from, to)` slices via `s[from..to]`; without
-    // an emitted `requires 0 <= from <= to <= |s|` Dafny can't bound
-    // the slice. Two errors (lower / upper bound). Tracked alongside
-    // issue #114 — closes once the lowerer emits range obligations
-    // for string-slice helpers.
-    assert_dafny_verifies_with_error_budget("examples/data/date.av", "aver-dafny-date", 2);
+    // `parseIntSlice(s, from, to)` is emitted via the safe
+    // `StringSlice` helper instead of raw `s[from..to]`, so the
+    // slice carries Aver's clamp-to-empty semantics into Dafny and
+    // there's no range obligation to discharge in the caller.
+    assert_dafny_verifies("examples/data/date.av", "aver-dafny-date");
 }

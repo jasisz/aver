@@ -393,7 +393,7 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         StringLen => format!("|{}|", a[0]),
         StringCharAt => format!("StringCharAt({}, {})", a[0], a[1]),
         StringChars => format!("StringChars({})", a[0]),
-        StringSlice => format!("{}[{}..{}]", a[0], a[1], a[2]),
+        StringSlice => format!("StringSlice({}, {}, {})", a[0], a[1], a[2]),
         StringContains => format!("StringContains({}, {})", a[0], a[1]),
         StringStartsWith => format!("StringStartsWith({}, {})", a[0], a[1]),
         StringEndsWith => format!("StringEndsWith({}, {})", a[0], a[1]),
