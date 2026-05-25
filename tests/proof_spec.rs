@@ -20,6 +20,21 @@ fn format_output(output: &std::process::Output) -> String {
 }
 
 fn assert_proof_builds(example_path: &str, prefix: &str) {
+    assert_proof_builds_with_sorry_budget(example_path, prefix, 0);
+}
+
+/// `assert_proof_builds`, but tolerate `expected_sorries` occurrences
+/// of `sorry` in the generated Lean output. `lake build` accepts
+/// `sorry` so it stays green forever once one slips in; gating on the
+/// count catches *new* regressions while letting existing budgets
+/// (e.g. `json`'s 13 sampled-domain laws) ride until their underlying
+/// shape gets a real proof strategy. A drop below the budget fails
+/// loudly too — that's the cue to tighten it.
+fn assert_proof_builds_with_sorry_budget(
+    example_path: &str,
+    prefix: &str,
+    expected_sorries: usize,
+) {
     if Command::new("lake").arg("--version").output().is_err() {
         eprintln!("skipping proof smoke test: `lake` not available");
         return;
@@ -44,6 +59,38 @@ fn assert_proof_builds(example_path: &str, prefix: &str) {
         "`aver proof` failed:\n{}",
         format_output(&proof)
     );
+
+    // Count `sorry` tokens in the entry Lean file (skip `AverCommon.
+    // lean`, which carries prelude lemmas that legitimately use
+    // `sorry` for runtime-only obligations). The match is whole-word
+    // to avoid counting identifiers like `sorry_substring`.
+    let entry_lean = std::fs::read_dir(&output_dir)
+        .expect("read output_dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.extension().is_some_and(|x| x == "lean")
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n != "AverCommon.lean" && n != "lakefile.lean")
+        });
+    if let Some(path) = entry_lean {
+        let text = std::fs::read_to_string(&path).expect("read entry .lean");
+        let actual = text
+            .lines()
+            .filter(|line| {
+                line.split_whitespace().any(|tok| tok == "sorry")
+                    && !line.trim_start().starts_with("--")
+            })
+            .count();
+        assert_eq!(
+            actual, expected_sorries,
+            "{}: sorry count drift (expected {}, got {}). \
+             If the count dropped, lower the budget. If it grew, a new shape regressed — \
+             investigate before raising the budget.",
+            example_path, expected_sorries, actual
+        );
+    }
 
     let build = Command::new("lake")
         .current_dir(&output_dir)
@@ -131,17 +178,35 @@ fn proof_export_builds_fibonacci_when_lake_is_available() {
 
 #[test]
 fn proof_export_builds_rle_when_lake_is_available() {
-    assert_proof_builds("examples/data/rle.av", "aver-proof-rle");
+    // Two sampled-domain laws (encodeString / decodeString roundtrip
+    // shapes) hit the universal-not-auto-proved fallback. Same gate
+    // semantics as `json` below — drop the budget when a real
+    // strategy lands.
+    assert_proof_builds_with_sorry_budget("examples/data/rle.av", "aver-proof-rle", 2);
 }
 
 #[test]
 fn proof_export_builds_quicksort_when_lake_is_available() {
-    assert_proof_builds("examples/data/quicksort.av", "aver-proof-quicksort");
+    // Two sampled-domain laws (`sort.resultOrdered` /
+    // `sort.lengthPreserved`) emit the sorry fallback — the
+    // universal closure needs a real induction strategy on the
+    // pivot-partition shape. Per-sample `_sample_N` theorems still
+    // verify mechanically.
+    assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 2);
 }
 
 #[test]
 fn proof_export_builds_json_when_lake_is_available() {
-    assert_proof_builds("examples/data/json.av", "aver-proof-json");
+    // 13 sampled-domain laws (parseString / parseLiteral / escape
+    // roundtrips) hit the universal-not-auto-proved fallback in
+    // `lean::toplevel` and emit `theorem ... := by sorry`. The
+    // per-sample `_sample_N` theorems below them still verify the
+    // claim on the declared domain — those are the meaningful
+    // coverage. Budget gates regressions: if the count climbs, a
+    // new shape lost a strategy and broke the law; if it drops,
+    // someone gave one of these a real strategy and the budget
+    // should be tightened.
+    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 13);
 }
 
 #[test]
