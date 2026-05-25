@@ -232,6 +232,26 @@ pub fn emit_verify_law_forall_auto_proof(
         });
     }
 
+    // IR-pinned `LinearRecurrence2SpecEquivalence` — lowerer
+    // validated impl as tail-rec wrapper, spec as direct second-order
+    // recurrence, helper as their shared affine worker. Dispatches
+    // to the existing emit which renders the Nat-helper + shift
+    // lemma + helper-seed bridge (heavy ~50-line support_lines stay
+    // in the legacy module). The IR pin makes the algebraic decision
+    // observable in `proof_ir.law_theorems` and provides the integration
+    // point for a future Dafny consumer (issue #116).
+    if matches!(
+        law_strategy_for(ctx, &vb.fn_name, &law.name),
+        Some(crate::ir::ProofStrategy::LinearRecurrence2SpecEquivalence { .. })
+    ) && let Some(proof) = spec::emit_second_order_linear_recurrence_spec_equivalence_law(
+        vb,
+        law,
+        ctx,
+        &proof_intro_names,
+    ) {
+        return Some(proof);
+    }
+
     spec::emit_spec_function_equivalence_law(vb, law, ctx, &proof_intro_names)
         .or_else(|| {
             // IR-pinned Map library axiom (has_set_self / get_set_self).

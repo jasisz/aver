@@ -684,6 +684,22 @@ fn classify_law_strategy(
             spec_fn,
         };
     }
+    // Second-order linear recurrence (fib / fibSpec shape). Detector
+    // validates impl as tail-rec wrapper, spec as direct second-order
+    // recurrence, helper as their shared affine worker — all three
+    // shapes pinned in `lean::recurrence`. Backends consume the
+    // (impl_fn, spec_fn, helper_fn) names from IR; the proof template
+    // differs per target (Lean Nat-helper + induction; Dafny still
+    // pending — issue #116).
+    if let Some((spec_fn, helper_fn)) =
+        detect_linear_recurrence2_spec_equivalence(law, fn_name, inputs)
+    {
+        return ProofStrategy::LinearRecurrence2SpecEquivalence {
+            impl_fn: fn_name.to_string(),
+            spec_fn,
+            helper_fn,
+        };
+    }
     // Linear arithmetic over an unfold chain — generic catch-all.
     // Named for the semantic, not the backend tactic.
     if let Some(plan) = detect_simp_omega_unfold(law, fn_name, inputs, refined_types) {
@@ -1639,6 +1655,79 @@ fn detect_effectful_spec_equivalence(
         Some(r_name)
     };
     try_side(&rewritten_lhs, &rewritten_rhs).or_else(|| try_side(&rewritten_rhs, &rewritten_lhs))
+}
+
+/// Detect second-order linear recurrence spec equivalence (fib /
+/// fibSpec pattern). impl_fn is a tail-rec wrapper dispatching on
+/// `n < 0` and calling a 3-arg helper with seed pair; spec_fn is a
+/// direct recurrence with `match n { 0 / 1 / _ }` arms. The shared
+/// affine recurrence must match between the helper's worker and the
+/// spec's `_` arm. Returns `(spec_fn_name, helper_fn_name)` on
+/// match. Detection lives behind the `lean::recurrence::detect_*`
+/// helpers because their AST patterns were specced there originally;
+/// the data they extract is backend-neutral.
+fn detect_linear_recurrence2_spec_equivalence(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<(String, String)> {
+    use crate::codegen::lean::recurrence::{
+        detect_second_order_int_linear_recurrence, detect_tailrec_int_linear_pair_worker,
+        detect_tailrec_int_linear_pair_wrapper,
+    };
+
+    let spec_fn_name = &law.name;
+    if spec_fn_name == fn_name {
+        return None;
+    }
+    if !law_references_fn(&law.lhs, spec_fn_name) && !law_references_fn(&law.rhs, spec_fn_name) {
+        return None;
+    }
+
+    let impl_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    let spec_fd = inputs.find_fn_def_by_call_name(spec_fn_name)?;
+    let impl_shape = detect_tailrec_int_linear_pair_wrapper(impl_fd)?;
+    let spec_shape = detect_second_order_int_linear_recurrence(spec_fd)?;
+
+    // AST-strict cross-check: negative branch + seed values must
+    // match across impl wrapper and spec direct recurrence.
+    if impl_shape.negative_branch.node != spec_shape.negative_branch.node
+        || impl_shape.seed_prev.node != spec_shape.base0.node
+        || impl_shape.seed_curr.node != spec_shape.base1.node
+    {
+        return None;
+    }
+
+    let helper_fd = inputs.find_fn_def_by_call_name(&impl_shape.helper_fn_name)?;
+    let helper_shape = detect_tailrec_int_linear_pair_worker(helper_fd)?;
+    if helper_shape.recurrence != spec_shape.recurrence {
+        return None;
+    }
+
+    Some((spec_fn_name.clone(), impl_shape.helper_fn_name))
+}
+
+fn law_references_fn(expr: &Spanned<crate::ast::Expr>, target: &str) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            let name = match &callee.node {
+                Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.as_str()),
+                _ => None,
+            };
+            if name == Some(target) {
+                return true;
+            }
+            args.iter().any(|a| law_references_fn(a, target))
+        }
+        Expr::BinOp(_, l, r) => law_references_fn(l, target) || law_references_fn(r, target),
+        Expr::Attr(base, _) => law_references_fn(base, target),
+        Expr::Match { subject, arms } => {
+            law_references_fn(subject, target)
+                || arms.iter().any(|arm| law_references_fn(&arm.body, target))
+        }
+        _ => false,
+    }
 }
 
 /// Validate the outer fn's body matches the "inspect get, set in

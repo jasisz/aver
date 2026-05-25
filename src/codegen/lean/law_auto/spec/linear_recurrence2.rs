@@ -11,7 +11,7 @@ use super::super::super::expr::{aver_name_to_lean, emit_expr};
 use super::super::shared::find_fn_def;
 use super::super::{AutoProof, indent_lines};
 
-pub(super) fn emit_second_order_linear_recurrence_spec_equivalence_law(
+pub(in super::super) fn emit_second_order_linear_recurrence_spec_equivalence_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,

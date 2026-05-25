@@ -2,6 +2,8 @@ mod linear_int;
 mod linear_recurrence2;
 mod simp_normalized;
 
+pub(super) use linear_recurrence2::emit_second_order_linear_recurrence_spec_equivalence_law;
+
 use crate::ast::{Expr, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
