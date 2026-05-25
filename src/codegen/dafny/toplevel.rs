@@ -610,11 +610,15 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
 }
 
 /// True when the Aver body opens with a guard that explicitly handles
-/// `<pname> < 0` (or equivalent) before any recursive call — i.e. the
-/// author took care of the negative case themselves. Only a top-level
-/// shape check: `match pname < 0` with a base arm for `true`, or an
-/// initial stmt of the same shape. Anything deeper is conservative
-/// (defaults to "doesn't handle", which emits a `requires`).
+/// the negative case for `pname` before any recursive call — i.e. the
+/// author took care of it themselves. Only a top-level shape check:
+/// `match pname <op> <lit> { true -> base; false -> recur }` where
+/// the `true` arm covers every value `< 0`. Recognised shapes:
+/// `pname < 0`, `pname <= 0`, `pname < 1` (each pins `pname > 0` —
+/// or `pname >= 0` for `< 0` — in the recursive arm, which is what
+/// `decreases if pname >= 0 then pname else 0` needs to step). Anything
+/// deeper is conservative (defaults to "doesn't handle", which emits a
+/// `requires`).
 fn fn_handles_negative_first(fd: &FnDef, pname: &str) -> bool {
     let Some(first) = fd.body.stmts().first() else {
         return false;
@@ -623,9 +627,9 @@ fn fn_handles_negative_first(fd: &FnDef, pname: &str) -> bool {
         Stmt::Expr(e) => e,
         Stmt::Binding(_, _, _) => return false,
     };
-    // `match pname < 0 { true -> …; false -> … }` elaborates to a
-    // Match with a BinOp(Lt, pname, Literal::Int(0)) subject. The
-    // resolver rewrites `Ident(pname)` to `Resolved { name: pname }`
+    // `match pname <op> <lit> { true -> …; false -> … }` elaborates
+    // to a Match with a BinOp(op, pname, Literal::Int(lit)) subject.
+    // The resolver rewrites `Ident(pname)` to `Resolved { name }`
     // before codegen, so accept both shapes.
     let Expr::Match { subject, .. } = &expr.node else {
         return false;
@@ -633,9 +637,6 @@ fn fn_handles_negative_first(fd: &FnDef, pname: &str) -> bool {
     let Expr::BinOp(op, lhs, rhs) = &subject.node else {
         return false;
     };
-    if !matches!(op, crate::ast::BinOp::Lt) {
-        return false;
-    }
     let lhs_name = match &lhs.node {
         Expr::Ident(n) | Expr::Resolved { name: n, .. } => n,
         _ => return false,
@@ -643,7 +644,14 @@ fn fn_handles_negative_first(fd: &FnDef, pname: &str) -> bool {
     if lhs_name != pname {
         return false;
     }
-    matches!(&rhs.node, Expr::Literal(crate::ast::Literal::Int(0)))
+    let Expr::Literal(crate::ast::Literal::Int(rhs_val)) = &rhs.node else {
+        return false;
+    };
+    use crate::ast::BinOp;
+    matches!(
+        (op, *rhs_val),
+        (BinOp::Lt, 0) | (BinOp::Lte, 0) | (BinOp::Lt, 1)
+    )
 }
 
 /// Collect all function names called in an expression (top-level only).

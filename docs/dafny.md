@@ -200,8 +200,7 @@ When a law's lemma comes out with an empty body, see [transpilation.md → Debug
 
 | Example | Error budget |
 |---|---|
-| `examples/data/fibonacci.av` | 1 |
-| `examples/data/rle.av` | 4 |
+| `examples/data/rle.av` | 3 |
 | `examples/data/quicksort.av` | 5 |
 | `examples/data/json.av` | 89 |
 

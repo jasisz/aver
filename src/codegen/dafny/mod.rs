@@ -640,6 +640,11 @@ function FloatToInt(r: real): int
 function FloatSin(r: real): real
 function FloatCos(r: real): real
 function FloatAtan2(y: real, x: real): real
+
+function FloatDiv(a: real, b: real): real
+{
+  if b == 0.0 then 0.0 else a / b
+}
 "#;
 
 const DAFNY_HELPER_CHAR_BYTE: &str = r#"

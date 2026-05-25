@@ -229,16 +229,12 @@ fn proof_export_builds_fibonacci_when_lake_is_available() {
 
 #[test]
 fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
-    // `fibRatio` postcondition: ratio bound on the recursive fib
-    // pair. Z3 needs a richer induction tactic than the empty lemma
-    // body the lowerer emits today. Tracked in issue #114; drop the
-    // budget when a real strategy lands for the linear-recurrence
-    // ratio shape.
-    assert_dafny_verifies_with_error_budget(
-        "examples/data/fibonacci.av",
-        "aver-dafny-fibonacci",
-        1,
-    );
+    // `goldenApprox(n)` divides `Float.fromInt(fib(n + 1))` by
+    // `Float.fromInt(fib(n))`. Float `/` lowers via the `FloatDiv`
+    // helper which mirrors Aver's IEEE-754 "no crash, b == 0 yields
+    // a defined value" semantics, so there's no division-by-zero
+    // obligation on the caller — the rest of the proof closes.
+    assert_dafny_verifies("examples/data/fibonacci.av", "aver-dafny-fibonacci");
 }
 
 #[test]
@@ -252,11 +248,12 @@ fn proof_export_builds_rle_when_lake_is_available() {
 
 #[test]
 fn proof_dafny_verifies_rle_when_dafny_is_available() {
-    // Encode/decode roundtrip + termination obligations on the
-    // list-recursive shape. Z3 can't auto-discharge the universal
-    // postcondition; needs a list-induction tactic the lowerer
-    // doesn't emit yet. Tracked in issue #114.
-    assert_dafny_verifies_with_error_budget("examples/data/rle.av", "aver-dafny-rle", 4);
+    // Three postcondition gaps on the encode/decode roundtrip shape
+    // (one universal lemma, one sample assertion, one
+    // `decodeString` universal). Z3 can't auto-discharge them
+    // without a richer list-induction tactic the lowerer doesn't
+    // emit yet. Tracked in issue #114.
+    assert_dafny_verifies_with_error_budget("examples/data/rle.av", "aver-dafny-rle", 3);
 }
 
 #[test]

@@ -170,6 +170,18 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
         Expr::BinOp(op, left, right) => {
             let l = emit_expr(left, ctx);
             let r = emit_expr(right, ctx);
+            // Float `/` lowers via `FloatDiv` so Aver's IEEE-754
+            // "no runtime crash, divide-by-zero yields a defined
+            // value" semantics carry into Dafny's exact-rational
+            // `real`. Without the helper Dafny imposes a `b != 0`
+            // obligation on every caller and breaks proofs whose
+            // domain analysis depends on a downstream postcondition
+            // (e.g. `goldenApprox` needing `fib(n) >= 1` for n >= 1).
+            if matches!(op, BinOp::Div)
+                && matches!(left.ty(), Some(crate::types::Type::Float))
+            {
+                return format!("FloatDiv({}, {})", l, r);
+            }
             let op_str = match op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",
