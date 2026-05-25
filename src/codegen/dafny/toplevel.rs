@@ -1541,22 +1541,28 @@ pub fn emit_verify_law(
             }
             lines.push("  }".to_string());
         }
-    } else if let Some(list_given_idx) = law
-        .givens
-        .iter()
-        .position(|g| g.type_name.starts_with("List<"))
-    {
-        // Inductive hint for `List<T>`-parameterised laws — case-split
-        // on `[] / [head, ..tail]` and recurse on the tail. Fires when
-        // any fn called from either side (top-level OR nested) is
-        // directly recursive — broader than the Int-given branch
-        // which only inspects the top-level fn, because `List<T>` laws
-        // often wrap the recursive fn under a Map / Option helper
-        // (e.g. `Map.has(countWords(words), word)` — countWords is
-        // recursive but `Map.has` is the top fn).
+    } else if let Some(list_given_idx) = law.givens.iter().position(|g| {
+        g.type_name.starts_with("List<") || g.type_name == "String"
+    }) {
+        // Inductive hint for `List<T>` / `String`-parameterised laws —
+        // both lower to Dafny `seq`, so `|s| == 0` / `s[1..]` works for
+        // either. Case-split `[] / [head, ..tail]` and recurse on the
+        // tail. Fires when any fn called from either side (top-level
+        // OR nested transitively) is directly recursive — broader than
+        // the Int-given branch which only inspects the top-level fn,
+        // because these laws often wrap the recursive fn under a
+        // Map / Option helper (e.g. `Map.has(countWords(words), word)`
+        // — countWords is recursive but `Map.has` is the top fn), or
+        // behind a thin facade (`decodeString = String.join(decode(...))`
+        // — `decode` is recursive but `decodeString` isn't).
         let mut called: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         collect_called_fns(&law.lhs, &mut called);
         collect_called_fns(&law.rhs, &mut called);
+        for f in called.clone() {
+            if let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == f) {
+                collect_called_fns_in_body(&fd.body, &mut called);
+            }
+        }
         let any_recursive = called.iter().any(|f| is_directly_recursive(f, ctx));
         if any_recursive {
             let list_param = aver_name_to_dafny(&law.givens[list_given_idx].name);
