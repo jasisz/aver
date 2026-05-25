@@ -164,6 +164,31 @@ pub fn emit_verify_law_forall_auto_proof(
         });
     }
 
+    // IR-pinned `LinearIntSpecEquivalence` — Step 40: lowerer
+    // validated substituted bodies are pure linear arithmetic over
+    // Int givens. Backend emits `change <impl> = <spec> ; omega`.
+    if let Some(crate::ir::ProofStrategy::LinearIntSpecEquivalence {
+        ref unfolded_impl,
+        ref unfolded_spec,
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+    {
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines: intro_then(
+                &proof_intro_names,
+                vec![
+                    format!(
+                        "change {} = {}",
+                        emit_expr(unfolded_impl, ctx),
+                        emit_expr(unfolded_spec, ctx)
+                    ),
+                    "omega".to_string(),
+                ],
+            ),
+            replaces_theorem: false,
+        });
+    }
+
     // IR-pinned `SpecEquivalenceSimpNormalized` — Step 39 broaden:
     // impl and spec bodies aren't syntactically identical but
     // normalize to the same expression under arg substitution +

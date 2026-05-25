@@ -518,6 +518,24 @@ pub enum ProofStrategy {
         /// transitively-reached helpers from law sides.
         extra_unfolds: Vec<String>,
     },
+    /// Linear-Int spec equivalence — impl and spec bodies are both
+    /// linear arithmetic expressions over Int givens (only
+    /// `Literal::Int`, given idents, `Add`, `Sub`) after arg
+    /// substitution. Bodies may differ syntactically but the
+    /// equivalence is decidable by a linear-arithmetic solver
+    /// (Presburger / `omega` / Z3 LIA). Backends emit a `change
+    /// <impl_unfolded> = <spec_unfolded>` rewrite then close via
+    /// their decision procedure; the IR carries the substituted
+    /// expressions so the backend can render them via its own
+    /// `emit_expr`.
+    LinearIntSpecEquivalence {
+        /// Impl body with formal params substituted by call-site
+        /// args. Linear-arithmetic-only after substitution.
+        unfolded_impl: Spanned<crate::ast::Expr>,
+        /// Spec body with formal params substituted by call-site
+        /// args. Linear-arithmetic-only after substitution.
+        unfolded_spec: Spanned<crate::ast::Expr>,
+    },
     /// Functional equivalence between an effectful impl fn and a
     /// spec fn. Same "claim states `impl(args) == spec(args)`"
     /// content as [`SpecEquivalence`], but the law's source-level
