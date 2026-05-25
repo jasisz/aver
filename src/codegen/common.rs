@@ -693,6 +693,62 @@ pub fn is_pure_fn(fd: &FnDef) -> bool {
 
 /// Issue #128: do all of a law's givens carry a singleton domain?
 ///
+/// Resolve a (possibly bare) type name to its [`RefinedTypeDecl`]
+/// in `ctx.proof_ir.refined_types`. The IR is keyed by canonical
+/// name (bare for entry types, `Module.Name` for module types);
+/// callers see whatever the AST node carried (`Expr::RecordCreate
+/// { type_name: "Natural" }` is bare, `obj.ty()` on a stamped
+/// expression can be either).
+///
+/// Resolution order:
+///   1. Direct lookup (covers exact-canonical hits and bare entry
+///      types).
+///   2. If no direct hit, walk `ctx.modules` for a type def with
+///      this bare name and try `Module.Name` keys until one
+///      resolves.
+///
+/// Returns `None` if no match — consistent with the previous
+/// `HashMap::get` semantics. Two modules declaring the same bare
+/// name (`A.Natural` + `B.Natural` with distinct predicates) each
+/// get their own canonical slot now; a direct-canonical-key lookup
+/// disambiguates correctly, and a bare-name lookup resolves to the
+/// first module that owns the name (typechecker's
+/// `cross_module_same_named_types_do_not_merge` rejects mixed
+/// usage upstream, so the order-dependence is observed only when a
+/// project carries one such refined type as actually-used and the
+/// other as dead-code in deps).
+pub fn find_refined_type<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
+    resolve_refined_type_in(&ctx.proof_ir.refined_types, &ctx.modules, name)
+}
+
+/// Same resolution shape as [`find_refined_type`] but driven by the
+/// in-flight `refined_types` map plus dep-module list — used inside
+/// `proof_lower` where there is no `CodegenContext` yet.
+pub fn resolve_refined_type_in<'a>(
+    refined_types: &'a std::collections::HashMap<String, crate::ir::proof_ir::RefinedTypeDecl>,
+    modules: &[crate::codegen::ModuleInfo],
+    name: &str,
+) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
+    if let Some(decl) = refined_types.get(name) {
+        return Some(decl);
+    }
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    for m in modules {
+        for td in &m.type_defs {
+            if type_def_name(td) == bare {
+                let canonical = format!("{}.{}", m.prefix, bare);
+                if let Some(decl) = refined_types.get(&canonical) {
+                    return Some(decl);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// A `verify fn law … given a: T = [v]` with one value per given binds
 /// the law to a single concrete point. Combined with
 /// [`law_rhs_is_independent_of_givens`] this is the "sample-only"
@@ -1903,5 +1959,80 @@ mod tests {
             law_lhs_has_trace_projection(&runtime_trace_lhs),
             "Oracle `.trace.event(0)` projection must trigger the gate"
         );
+    }
+
+    #[test]
+    fn resolve_refined_type_disambiguates_cross_module_same_bare_name() {
+        // Review finding 3: two modules each declaring a refined
+        // `Natural` (different predicates) used to silently collide
+        // under bare keying — `populate_refined_types` skipped the
+        // second one via `contains_key`, and the backend lookup
+        // returned whichever predicate landed first. With canonical
+        // keying (`A.Natural` / `B.Natural`) the slots are separate;
+        // a fully-qualified lookup matches exactly, a bare lookup
+        // resolves through module-walk ordering.
+        use crate::ast::{TypeDef, TypeVariant};
+        use crate::codegen::ModuleInfo;
+        use crate::ir::proof_ir::{Predicate, QuantifierType, RefinedTypeDecl};
+        use std::collections::HashMap;
+        let _ = TypeVariant {
+            name: String::new(),
+            fields: Vec::new(),
+        }; // make sure TypeVariant import resolves under all features
+
+        let make_module = |prefix: &str| ModuleInfo {
+            prefix: prefix.to_string(),
+            depends: Vec::new(),
+            type_defs: vec![TypeDef::Product {
+                name: "Natural".to_string(),
+                fields: vec![("value".to_string(), "Int".to_string())],
+                line: 1,
+            }],
+            fn_defs: Vec::new(),
+            analysis: None,
+        };
+        let modules = vec![make_module("A"), make_module("B")];
+
+        let make_decl = |predicate_param: &str, witness: i64| RefinedTypeDecl {
+            name: "Natural".to_string(),
+            carrier_type: "Int".to_string(),
+            carrier_field: "value".to_string(),
+            predicate_param: predicate_param.to_string(),
+            invariant: Predicate {
+                free_vars: vec![(
+                    predicate_param.to_string(),
+                    QuantifierType::Plain("Int".to_string()),
+                )],
+                expr: sb(Expr::Literal(Literal::Bool(true))),
+            },
+            witness: Some(witness.to_string()),
+        };
+        let mut refined_types: HashMap<String, RefinedTypeDecl> = HashMap::new();
+        refined_types.insert("A.Natural".to_string(), make_decl("a", 0));
+        refined_types.insert("B.Natural".to_string(), make_decl("b", 10));
+
+        // Fully-qualified lookups hit the exact slot.
+        let a = resolve_refined_type_in(&refined_types, &modules, "A.Natural")
+            .expect("A.Natural canonical lookup");
+        assert_eq!(a.predicate_param, "a");
+        assert_eq!(a.witness.as_deref(), Some("0"));
+        let b = resolve_refined_type_in(&refined_types, &modules, "B.Natural")
+            .expect("B.Natural canonical lookup");
+        assert_eq!(b.predicate_param, "b");
+        assert_eq!(b.witness.as_deref(), Some("10"));
+
+        // Bare lookup finds *something* (module-walk first match) —
+        // the typechecker prevents mixed usage upstream, so the
+        // observed ordering is the order modules walk.
+        let bare = resolve_refined_type_in(&refined_types, &modules, "Natural")
+            .expect("bare Natural resolves via module walk");
+        assert!(
+            bare.predicate_param == "a" || bare.predicate_param == "b",
+            "bare Natural must resolve to one of the canonical decls"
+        );
+
+        // No-module-owner lookup misses — i.e. a bare name that
+        // wasn't declared in any module is None, not "first in map".
+        assert!(resolve_refined_type_in(&refined_types, &modules, "Unrelated").is_none());
     }
 }

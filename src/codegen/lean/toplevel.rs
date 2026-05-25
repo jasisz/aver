@@ -88,7 +88,7 @@ fn emit_product_type(name: &str, fields: &[(String, String)], ctx: &CodegenConte
     // existing sample-based path covers them: domain values come
     // from `given a: Float = […]`, and proofs are sample-by-sample
     // via native_decide.
-    if let Some(decl) = ctx.proof_ir.refined_types.get(name)
+    if let Some(decl) = crate::codegen::common::find_refined_type(ctx, name)
         && decl.carrier_type == "Int"
     {
         let carrier_ty = type_annotation_to_lean(&decl.carrier_type);

@@ -170,32 +170,45 @@ pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
 /// `RefinedTypeDecl` entries into `ir.refined_types`. Backends
 /// (Lean → Subtype, Dafny → subset type) render these directly.
 pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
-    // Walk entry items first, then dep modules. Both feed into the
-    // same map keyed by bare type name — consumers (Lean / Dafny
-    // emit paths) always query by bare name because that's what
-    // they see in the AST nodes (`Expr::RecordCreate { type_name:
-    // "Natural", ... }`, `TypeDef::Product { name: "Natural", ... }`).
-    // Aver's module DAG invariant + typechecker's duplicate-type
-    // rejection (PR #89) make name collisions a compile error, so
-    // bare-name keying is safe.
+    // Walk entry items first, then dep modules. The map is keyed by
+    // *canonical* name: bare for entry types, `Module.Name` for
+    // module-owned types. Bare keying was insufficient — the
+    // typechecker explicitly permits two modules to expose
+    // distinct types of the same bare name (`A.Shape` vs
+    // `B.Shape`; see `tests/typechecker_spec::cross_module_same_named_
+    // types_do_not_merge`). If a project depends on two modules
+    // each declaring a refined `Natural` with different predicates,
+    // bare keying picked whichever one walked first and silently
+    // applied its predicate at every call site referring to the
+    // other. Canonical keying gives each declaration its own slot;
+    // [`find_refined_type`] does the lookup-side resolution from
+    // bare references back through `ctx.modules`.
     let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
-        TopLevel::TypeDef(td) => Some(td),
+        TopLevel::TypeDef(td) => Some((None::<&str>, td)),
         _ => None,
     });
-    let module_typedefs = inputs.dep_modules.iter().flat_map(|m| m.type_defs.iter());
+    let module_typedefs = inputs.dep_modules.iter().flat_map(|m| {
+        m.type_defs
+            .iter()
+            .map(move |td| (Some(m.prefix.as_str()), td))
+    });
 
-    for td in entry_typedefs.chain(module_typedefs) {
+    for (module_prefix, td) in entry_typedefs.chain(module_typedefs) {
         let TypeDef::Product { name, fields, .. } = td else {
             continue;
         };
         if fields.len() != 1 {
             continue;
         }
-        if ir.refined_types.contains_key(name) {
-            // Already classified via another path (typically the
-            // entry walk picked it up first); skip the dep-module
-            // duplicate so we don't overwrite a verified-witness
-            // entry with a predicate-eval fallback witness.
+        let canonical_key = match module_prefix {
+            Some(prefix) => format!("{}.{}", prefix, name),
+            None => name.clone(),
+        };
+        if ir.refined_types.contains_key(&canonical_key) {
+            // Same canonical key already populated — possible if a
+            // module is walked twice through dep aliasing. Skip so
+            // we don't overwrite a verified-witness entry with a
+            // predicate-eval fallback witness.
             continue;
         }
         let Some(info) = refinement_info_for(name, inputs) else {
@@ -210,7 +223,7 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         };
         let witness = pick_witness(name, inputs, info.predicate, info.param_name);
         ir.refined_types.insert(
-            name.clone(),
+            canonical_key,
             RefinedTypeDecl {
                 name: name.clone(),
                 carrier_type: info.carrier_type.to_string(),
@@ -747,7 +760,14 @@ fn detect_simp_omega_unfold(
     // constructor to Int arithmetic. Skip the outer-Int rejection
     // for lifted laws.
     let lifted = law.givens.iter().any(|g| {
-        refinement_lift_for_given_ir(&g.name, &law.lhs, &law.rhs, refined_types).is_some()
+        refinement_lift_for_given_ir(
+            &g.name,
+            &law.lhs,
+            &law.rhs,
+            refined_types,
+            inputs.dep_modules,
+        )
+        .is_some()
     });
     if !lifted && outer_fd.params.iter().any(|(_, t)| t != "Int") {
         return None;
@@ -850,10 +870,11 @@ fn refinement_lift_for_given_ir(
     lhs: &Spanned<crate::ast::Expr>,
     rhs: &Spanned<crate::ast::Expr>,
     refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
+    dep_modules: &[crate::codegen::ModuleInfo],
 ) -> Option<String> {
     let mut result: Option<String> = None;
-    walk_for_refinement_carrier(lhs, given_name, refined_types, &mut result);
-    walk_for_refinement_carrier(rhs, given_name, refined_types, &mut result);
+    walk_for_refinement_carrier(lhs, given_name, refined_types, dep_modules, &mut result);
+    walk_for_refinement_carrier(rhs, given_name, refined_types, dep_modules, &mut result);
     result
 }
 
@@ -861,6 +882,7 @@ fn walk_for_refinement_carrier(
     expr: &Spanned<crate::ast::Expr>,
     given_name: &str,
     refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
+    dep_modules: &[crate::codegen::ModuleInfo],
     result: &mut Option<String>,
 ) {
     use crate::ast::Expr;
@@ -874,34 +896,46 @@ fn walk_for_refinement_carrier(
                 &fvalue.node,
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
             );
-            if matches_var && let Some(decl) = refined_types.get(type_name) {
+            if matches_var
+                && let Some(decl) = crate::codegen::common::resolve_refined_type_in(
+                    refined_types,
+                    dep_modules,
+                    type_name,
+                )
+            {
                 *result = Some(decl.name.clone());
                 return;
             }
             // Even non-matching RecordCreate may contain nested
             // refinement carriers (e.g. `Foo(value = Bar(value = a))`).
             for (_, v) in fields {
-                walk_for_refinement_carrier(v, given_name, refined_types, result);
+                walk_for_refinement_carrier(v, given_name, refined_types, dep_modules, result);
             }
         }
         Expr::FnCall(callee, args) => {
-            walk_for_refinement_carrier(callee, given_name, refined_types, result);
+            walk_for_refinement_carrier(callee, given_name, refined_types, dep_modules, result);
             for a in args {
-                walk_for_refinement_carrier(a, given_name, refined_types, result);
+                walk_for_refinement_carrier(a, given_name, refined_types, dep_modules, result);
             }
         }
         Expr::BinOp(_, l, r) => {
-            walk_for_refinement_carrier(l, given_name, refined_types, result);
-            walk_for_refinement_carrier(r, given_name, refined_types, result);
+            walk_for_refinement_carrier(l, given_name, refined_types, dep_modules, result);
+            walk_for_refinement_carrier(r, given_name, refined_types, dep_modules, result);
         }
         Expr::Match { subject, arms, .. } => {
-            walk_for_refinement_carrier(subject, given_name, refined_types, result);
+            walk_for_refinement_carrier(subject, given_name, refined_types, dep_modules, result);
             for arm in arms {
-                walk_for_refinement_carrier(&arm.body, given_name, refined_types, result);
+                walk_for_refinement_carrier(
+                    &arm.body,
+                    given_name,
+                    refined_types,
+                    dep_modules,
+                    result,
+                );
             }
         }
         Expr::Attr(obj, _) => {
-            walk_for_refinement_carrier(obj, given_name, refined_types, result);
+            walk_for_refinement_carrier(obj, given_name, refined_types, dep_modules, result);
         }
         _ => {}
     }

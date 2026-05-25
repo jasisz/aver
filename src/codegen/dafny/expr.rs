@@ -116,7 +116,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // so projecting the carrier field is the identity (the
             // value *is* the underlying `int`).
             if let Some(crate::types::Type::Named(t_name)) = obj.ty()
-                && let Some(decl) = ctx.proof_ir.refined_types.get(t_name)
+                && let Some(decl) = crate::codegen::common::find_refined_type(ctx, t_name)
                 && decl.carrier_type == "Int"
                 && field == &decl.carrier_field
             {
@@ -246,7 +246,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // to just `k` — the value already inhabits the subset.
             // Dafny narrowing (via `if pred then ... else ...`) is
             // what closes the refinement obligation at the call site.
-            if let Some(decl) = ctx.proof_ir.refined_types.get(type_name)
+            if let Some(decl) = crate::codegen::common::find_refined_type(ctx, type_name)
                 && decl.carrier_type == "Int"
                 && fields.len() == 1
             {
