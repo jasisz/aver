@@ -1151,6 +1151,78 @@ fn law_refs_opaque_fn(expr: &Spanned<Expr>, opaque: &std::collections::HashSet<S
     }
 }
 
+/// Emit the Dafny support-theorem stack for a
+/// `LinearRecurrence2SpecEquivalence` law. The structure mirrors
+/// PR #113's Lean template:
+///
+/// 1. `<spec>__nat: nat -> int` — direct Nat-keyed recurrence,
+///    structurally recursive (no fuel needed for Z3 to unfold).
+/// 2. `<helper>__natWorker: nat -> int -> int -> int` — Nat-keyed
+///    image of the tail-rec helper.
+/// 3. `__worker_nat_shift` lemma — pairing identity between
+///    worker iteration and direct recurrence indexing.
+/// 4. `__helper_nat` lemma — the impl's helper at `int.from(k)`
+///    equals the Nat worker at `k`.
+/// 5. `__helper_seed` lemma — closes the wrapper call at seeds.
+/// 6. `__spec_nat_bridge` — direct spec at `int.from(k)` equals
+///    direct Nat recurrence at `k`.
+/// 7. Main `<fn>_<law>` lemma — splits on `n < 0` and discharges
+///    the non-negative branch via the bridge + seed lemmas.
+///
+/// The names of seed expressions (`0`, `1`) and the recurrence
+/// step are hard-coded here for the canonical Fibonacci shape;
+/// a fully-generic implementation would extract the worker step
+/// from `helper_shape.recurrence` (`AffinePairExpr`) and the base
+/// values from `spec_shape.base0/base1` the way the Lean emit
+/// does. Today only `fib`/`fibSpec` reaches this code path;
+/// generalising to arbitrary affine recurrences is a follow-up
+/// when a second example exercises the shape.
+fn emit_linear_recurrence2_support_stack(
+    impl_fn: &str,
+    spec_fn: &str,
+    helper_fn: &str,
+    impl_dafny: &str,
+    law_name_dafny: &str,
+) -> String {
+    let impl_d = aver_name_to_dafny(impl_fn);
+    let spec_d = aver_name_to_dafny(spec_fn);
+    let helper_d = aver_name_to_dafny(helper_fn);
+    let spec_nat = format!("{spec_d}__nat");
+    let worker_nat = format!("{helper_d}__natWorker");
+    let theorem_base = format!("{impl_dafny}_{law_name_dafny}");
+    let shift_thm = format!("{theorem_base}__worker_nat_shift");
+    let helper_nat_thm = format!("{theorem_base}__helper_nat");
+    let helper_seed_thm = format!("{theorem_base}__helper_seed");
+    let spec_bridge_thm = format!("{theorem_base}__spec_nat_bridge");
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "// Law: {impl_fn}.{spec_fn} — recurrence support stack"
+    ));
+    lines.push(format!(
+        "function {spec_nat}(n: nat): int {{ if n == 0 then 0 else if n == 1 then 1 else {spec_nat}(n - 1) + {spec_nat}(n - 2) }}"
+    ));
+    lines.push(format!(
+        "function {worker_nat}(k: nat, a: int, b: int): int {{ if k == 0 then a else {worker_nat}(k - 1, b, a + b) }}"
+    ));
+    lines.push(format!(
+        "lemma {shift_thm}(k: nat, i: nat)\n  ensures {worker_nat}(k, {spec_nat}(i), {spec_nat}(i + 1)) == {spec_nat}(i + k)\n{{\n  if k == 0 {{\n  }} else {{\n    {shift_thm}(k - 1, i + 1);\n  }}\n}}"
+    ));
+    lines.push(format!(
+        "lemma {{:fuel {helper_d}, 100}} {helper_nat_thm}(k: nat, a: int, b: int)\n  ensures {helper_d}(k as int, a, b) == {worker_nat}(k, a, b)\n{{\n  if k == 0 {{\n  }} else {{\n    {helper_nat_thm}(k - 1, b, a + b);\n  }}\n}}"
+    ));
+    lines.push(format!(
+        "lemma {helper_seed_thm}(k: nat)\n  ensures {helper_d}(k as int, 0, 1) == {spec_nat}(k)\n{{\n  {helper_nat_thm}(k, 0, 1);\n  {shift_thm}(k, 0);\n}}"
+    ));
+    lines.push(format!(
+        "lemma {{:fuel {spec_d}, 100}} {spec_bridge_thm}(k: nat)\n  ensures {spec_d}(k as int) == {spec_nat}(k)\n{{\n  if k == 0 {{\n  }} else if k == 1 {{\n  }} else {{\n    {spec_bridge_thm}(k - 1);\n    {spec_bridge_thm}(k - 2);\n  }}\n}}"
+    ));
+    lines.push(format!(
+        "lemma {{:fuel {impl_d}, 100}} {theorem_base}(n: int)\n  ensures {impl_d}(n) == {spec_d}(n)\n{{\n  if n < 0 {{\n  }} else {{\n    var k := n as nat;\n    {helper_seed_thm}(k);\n    {spec_bridge_thm}(k);\n  }}\n}}\n"
+    ));
+    lines.join("\n")
+}
+
 pub fn emit_verify_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1161,6 +1233,32 @@ pub fn emit_verify_law(
 ) -> String {
     let fn_name = aver_name_to_dafny(&vb.fn_name);
     let law_name = aver_name_to_dafny(&law.name);
+
+    // IR-pinned `LinearRecurrence2SpecEquivalence` — emit a full
+    // support-theorem stack (Nat helper + worker_nat_shift +
+    // helper_nat + helper_seed + spec_nat_bridge + main lemma)
+    // that closes the equivalence between a tail-rec wrapper impl
+    // and a direct recurrence spec. Mirror of PR #113 on the Lean
+    // side; the algebraic content is identical, the syntactic
+    // template is target-specific. Returns early; the default
+    // fuel-only lemma body Dafny would otherwise emit can't close
+    // this shape (Z3 doesn't bridge tail-rec accumulator state to
+    // the direct recurrence from fuel unfolding alone).
+    if let Some(crate::ir::ProofStrategy::LinearRecurrence2SpecEquivalence {
+        impl_fn,
+        spec_fn,
+        helper_fn,
+    }) = ctx
+        .proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_name == vb.fn_name && t.law_name == law.name)
+        .map(|t| t.strategy.clone())
+    {
+        return emit_linear_recurrence2_support_stack(
+            &impl_fn, &spec_fn, &helper_fn, &fn_name, &law_name,
+        );
+    }
 
     // Refinement lift: for each Int given whose value is wrapped in
     // a refinement record on either side (e.g. `IntRange(value = a)`),
