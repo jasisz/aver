@@ -143,6 +143,8 @@ That combination means:
 - recursive pure code inside the supported proof subset is emitted as total Lean defs
 - unsupported recursive pure functions are called out explicitly and emitted with `partial` fallback
 
+When a law lands on the `sorry` fallback and you want to know why, see [transpilation.md → Debugging a law that didn't auto-prove](transpilation.md#debugging-a-law-that-didnt-auto-prove) for the `--emit-ir-after=law_lower` workflow.
+
 The current proof export supports:
 - single-function `Int` countdown on an `Int` parameter (`n -> n - 1`). Closed-world fns (no `exposes` clause, or absent from the list) with the canonical `match p { L -> base; _ -> rec(p-1, ...) }` body emit as a native aux def carrying a precondition extracted from the unique external caller's surrounding `match`/`if` guards — `(h_dom : n ≥ 0)` from `fib`'s `match (n < 0) { false -> ... }` arm, or compound predicates like `(h_dom : n > 2 ∧ n < 500)` from nested caller guards. The aux is wrapped by a thin public def preserving the original signature. `Lean omega` closes the per-callsite preservation obligation and the `Int.natAbs n` decrease automatically. Other countdown shapes (exposed fns, multi-caller fns, leading let-bindings) fall back to fuel-encoded helpers.
 - single-function second-order affine `Int` recurrences with `n < 0` guard, `0/1` case split, and a matching pair-state tail worker, emitted via a private `Nat` helper

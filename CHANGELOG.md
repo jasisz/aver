@@ -4,7 +4,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.22.0 "Lift" — UNRELEASED
 
-> _Aver source stays ordinary: records, guards, and private workers. The proof export recovers the stronger mathematical shape and carries the invariant into Lean/Dafny — standalone or across module boundaries._
+> _Aver source stays ordinary. The proof export lifts it to the backend's native mathematical shape — refinements become subtypes, mutual recursion becomes a structural block, every verify-law passes through one classifier, and Dafny closes more obligations on its own._
 
 ### Refinement recovery
 
@@ -24,7 +24,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Tooling
 
-- **`tests/proof_spec` gates `dafny verify` on the IR-clean examples and tracks per-example `sorry` budgets on the Lean side.** Three examples carry honest budgets (`json.av` 13 sampled-domain laws, `rle.av` 2, `quicksort.av` 2); drift either way fails the test. `aver compile --emit-ir-after={refinement_lower,contract_lower,law_lower}` exposes the three new proof-lower stages — when a law falls through to `sorry`/empty-body, `law_lower` shows whether the lowerer pinned a strategy or fell back to `BackendDispatch`.
+- **`tests/proof_spec` gates `dafny verify` on the IR-clean examples and tracks per-example `sorry` and Dafny-error budgets across both backends.** Lean: three examples carry honest `sorry` budgets (`json.av` 13 sampled-domain laws, `rle.av` 2, `quicksort.av` 2). Dafny: the flagship examples whose proofs Dafny still can't auto-discharge — `fibonacci` (1), `rle` (4), `quicksort` (5), `date` (2), `json` (113) — are now gated by an error-count budget instead of being silently unverified. Drift either way fails the test, so a new shape regressing or an old gap closing both surface in CI. `aver compile --emit-ir-after={refinement_lower,contract_lower,law_lower}` exposes the three new proof-lower stages — when a law falls through to `sorry`/empty-body, `law_lower` shows whether the lowerer pinned a strategy or fell back to `BackendDispatch`.
 
 ### Examples
 

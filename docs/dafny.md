@@ -192,6 +192,22 @@ lemma fib_fibSpec(n: int)
 - **Opaque builtins**: `IntToString`, `FloatFromString`, `CharToCode` etc. are declared without bodies — Z3 knows their signatures but can't reason about their implementation
 - **Complex laws**: laws involving indirect recursion, accumulator patterns, or multi-function chains may not be provable by Z3 alone
 
+When a law's lemma comes out with an empty body, see [transpilation.md → Debugging a law that didn't auto-prove](transpilation.md#debugging-a-law-that-didnt-auto-prove) for the `--emit-ir-after=law_lower` workflow that tells you whether the classifier matched a strategy or fell through to backend dispatch.
+
+## End-to-end smoke tests
+
+`tests/proof_spec.rs` gates `dafny verify` on every IR-clean example end-to-end. The flagship examples that still carry pre-IR-migration gaps are tracked with an explicit error budget — drift either way (more errors = regression, fewer = a closed gap waiting on a lower budget) fails the test:
+
+| Example | Error budget |
+|---|---|
+| `examples/data/fibonacci.av` | 1 |
+| `examples/data/rle.av` | 4 |
+| `examples/data/quicksort.av` | 5 |
+| `examples/data/date.av` | 2 |
+| `examples/data/json.av` | 113 |
+
+The budgets are not a target; they are a regression net. The umbrella issue for closing them is [#114](https://github.com/jasisz/lumen-rs/issues/114).
+
 ## Comparison with Lean
 
 See [docs/transpilation.md](transpilation.md) for a side-by-side comparison.

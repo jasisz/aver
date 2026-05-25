@@ -89,6 +89,23 @@ Options:
       --verify-mode <VERIFY_MODE>  Lean only: auto | sorry | theorem-skeleton
 ```
 
+### Debugging a law that didn't auto-prove
+
+When a `verify <fn> law` emits `sorry` (Lean) or empty-body (Dafny), the question is always: did the lowerer fail to classify the shape, or did it classify and the backend's auto-proof fell short?
+
+The proof pipeline runs three IR transforms before codegen — `refinement_lower`, `contract_lower`, `law_lower` — and `--emit-ir-after` dumps `ProofIR` at each stage. The decisive snapshot is `law_lower`:
+
+```bash
+aver compile examples/data/quicksort.av --emit-ir-after=law_lower
+```
+
+Each `verify <fn> law` shows up with the strategy the classifier pinned. Read the result:
+
+- A concrete strategy (`Commutative { op: Add }`, `Induction { measure: List, ... }`, `MapUpdatePostcondition { kind: HasAfter, ... }`, `LinearRecurrence2SpecEquivalence { impl_fn, spec_fn, helper_fn }`, …) means the lowerer recognized the shape. If the backend then emits `sorry`/empty-body, the gap is in the backend's tactic emission for that strategy — open an issue against the proof backend, not the law.
+- `BackendDispatch` means the classifier had no shape match and punted to the backend's generic fallback. The fix is either a new strategy in the classifier or a source-level rewrite into a shape the classifier already knows.
+
+Pair with `--emit-ir-after=refinement_lower` when the law quantifies over a refinement type (e.g. `Natural`) and you want to confirm the predicate rode through to the law's quantifier. Pair with `--emit-ir-after=contract_lower` when a `when` clause is supposed to become a theorem premise.
+
 ## Quick routing
 
 Use Rust when you want:

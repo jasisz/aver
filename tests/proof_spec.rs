@@ -109,12 +109,27 @@ fn assert_proof_builds_with_sorry_budget(
 /// `dafny verify` smoke test. Mirrors `assert_proof_builds` but runs
 /// the Dafny backend through the full verifier (not just the parser /
 /// compile front-end). `lake build` accepts `sorry`-bearing proofs;
-/// `dafny verify` actually closes the goal. Three examples currently
-/// verify cleanly through both backends and pin the IR-migrated
-/// strategy coverage (Steps 24-40 of the proof-IR migration); the
-/// remaining flagship examples (`fibonacci`, `rle`, `quicksort`,
-/// `json`) carry pre-IR-migration Dafny gaps tracked in issue #114.
+/// `dafny verify` actually closes the goal. Several examples verify
+/// cleanly and pin the IR-migrated strategy coverage (Steps 24-40 of
+/// the proof-IR migration); the remaining flagship examples
+/// (`fibonacci`, `rle`, `quicksort`, `date`, `json`) carry
+/// pre-IR-migration Dafny gaps tracked in issue #114 and are gated
+/// via [`assert_dafny_verifies_with_error_budget`].
 fn assert_dafny_verifies(example_path: &str, prefix: &str) {
+    assert_dafny_verifies_with_error_budget(example_path, prefix, 0);
+}
+
+/// `assert_dafny_verifies`, but tolerate `expected_errors` Dafny
+/// verification errors. Mirror of the Lean-side
+/// `assert_proof_builds_with_sorry_budget`: a drop below the budget
+/// fails (cue to tighten), a climb above it fails (regression — a
+/// new shape lost its strategy). Parses Dafny's "Dafny program
+/// verifier finished with X verified, Y errors" tail line.
+fn assert_dafny_verifies_with_error_budget(
+    example_path: &str,
+    prefix: &str,
+    expected_errors: usize,
+) {
     if Command::new("dafny").arg("--version").output().is_err() {
         eprintln!("skipping dafny verify smoke test: `dafny` not available");
         return;
@@ -157,13 +172,49 @@ fn assert_dafny_verifies(example_path: &str, prefix: &str) {
         .arg(&dfy)
         .output()
         .expect("expected `dafny verify` to run");
-    assert!(
-        verify.status.success(),
-        "`dafny verify` failed:\n{}",
-        format_output(&verify)
-    );
+
+    if expected_errors == 0 {
+        assert!(
+            verify.status.success(),
+            "`dafny verify` failed:\n{}",
+            format_output(&verify)
+        );
+    } else {
+        let stdout = String::from_utf8_lossy(&verify.stdout);
+        let actual = parse_dafny_error_count(&stdout).unwrap_or_else(|| {
+            panic!(
+                "could not parse Dafny verifier summary from output:\n{}",
+                format_output(&verify)
+            )
+        });
+        assert_eq!(
+            actual, expected_errors,
+            "{}: dafny error count drift (expected {}, got {}). \
+             If the count dropped, lower the budget. If it grew, a new shape regressed — \
+             investigate before raising the budget.\n{}",
+            example_path,
+            expected_errors,
+            actual,
+            format_output(&verify)
+        );
+    }
 
     let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Extract the trailing error count from a Dafny verifier run.
+///
+/// Dafny prints `Dafny program verifier finished with N verified, M
+/// error(s)` (singular `error` when M == 1). Returns `M` or `None`
+/// if the summary line is missing.
+fn parse_dafny_error_count(stdout: &str) -> Option<usize> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.contains("Dafny program verifier finished with"))?;
+    let after = line.split(", ").nth(1)?;
+    let n: usize = after.split_whitespace().next()?.parse().ok()?;
+    Some(n)
 }
 
 #[test]
@@ -177,12 +228,35 @@ fn proof_export_builds_fibonacci_when_lake_is_available() {
 }
 
 #[test]
+fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
+    // `fibRatio` postcondition: ratio bound on the recursive fib
+    // pair. Z3 needs a richer induction tactic than the empty lemma
+    // body the lowerer emits today. Tracked in issue #114; drop the
+    // budget when a real strategy lands for the linear-recurrence
+    // ratio shape.
+    assert_dafny_verifies_with_error_budget(
+        "examples/data/fibonacci.av",
+        "aver-dafny-fibonacci",
+        1,
+    );
+}
+
+#[test]
 fn proof_export_builds_rle_when_lake_is_available() {
     // Two sampled-domain laws (encodeString / decodeString roundtrip
     // shapes) hit the universal-not-auto-proved fallback. Same gate
     // semantics as `json` below — drop the budget when a real
     // strategy lands.
     assert_proof_builds_with_sorry_budget("examples/data/rle.av", "aver-proof-rle", 2);
+}
+
+#[test]
+fn proof_dafny_verifies_rle_when_dafny_is_available() {
+    // Encode/decode roundtrip + termination obligations on the
+    // list-recursive shape. Z3 can't auto-discharge the universal
+    // postcondition; needs a list-induction tactic the lowerer
+    // doesn't emit yet. Tracked in issue #114.
+    assert_dafny_verifies_with_error_budget("examples/data/rle.av", "aver-dafny-rle", 4);
 }
 
 #[test]
@@ -193,6 +267,19 @@ fn proof_export_builds_quicksort_when_lake_is_available() {
     // pivot-partition shape. Per-sample `_sample_N` theorems still
     // verify mechanically.
     assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 2);
+}
+
+#[test]
+fn proof_dafny_verifies_quicksort_when_dafny_is_available() {
+    // Recursive postcondition gaps on `sort.resultOrdered` /
+    // `sort.lengthPreserved` shape. Sample-domain theorems still
+    // hold; universal closure needs the pivot-partition induction
+    // tactic. Tracked in issue #114.
+    assert_dafny_verifies_with_error_budget(
+        "examples/data/quicksort.av",
+        "aver-dafny-quicksort",
+        5,
+    );
 }
 
 #[test]
@@ -207,6 +294,21 @@ fn proof_export_builds_json_when_lake_is_available() {
     // someone gave one of these a real strategy and the budget
     // should be tightened.
     assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 13);
+}
+
+#[test]
+fn proof_dafny_verifies_json_when_dafny_is_available() {
+    // Structural shape limits: deeply-nested ADT roundtrip
+    // postconditions blow past what Dafny can auto-discharge. The
+    // large budget exists so a regression *upward* is still caught;
+    // closing this cleanly is probably out of scope for a single
+    // fix per issue #114, and would need a different proof
+    // strategy entirely.
+    assert_dafny_verifies_with_error_budget(
+        "examples/data/json.av",
+        "aver-dafny-json",
+        113,
+    );
 }
 
 #[test]
@@ -1896,4 +1998,14 @@ fn proof_export_builds_date_when_lake_is_available() {
     // clause we don't auto-emit yet. Real-example gap tracked
     // alongside the umbrella Dafny issue.
     assert_proof_builds("examples/data/date.av", "aver-proof-date");
+}
+
+#[test]
+fn proof_dafny_verifies_date_when_dafny_is_available() {
+    // `parseIntSlice(s, from, to)` slices via `s[from..to]`; without
+    // an emitted `requires 0 <= from <= to <= |s|` Dafny can't bound
+    // the slice. Two errors (lower / upper bound). Tracked alongside
+    // issue #114 — closes once the lowerer emits range obligations
+    // for string-slice helpers.
+    assert_dafny_verifies_with_error_budget("examples/data/date.av", "aver-dafny-date", 2);
 }
