@@ -544,6 +544,24 @@ pub enum ProofStrategy {
         /// Source name of the spec fn (the other side of the law).
         spec_fn: String,
     },
+    /// Second-order linear recurrence spec equivalence — impl is a
+    /// tail-recursive Int linear-pair wrapper (e.g. `fib` dispatching
+    /// on `n < 0` and calling a 3-arg `fibTR(n, 0, 1)` helper) and
+    /// spec is a direct second-order recurrence (`match n { 0 -> b0;
+    /// 1 -> b1; _ -> recurrence(spec(n-1), spec(n-2)) }`). The
+    /// impl's helper implements the same affine recurrence as the
+    /// spec's `_` arm. Both Lean and Dafny render via a Nat-keyed
+    /// helper + shift lemma + helper-seed bridge; the algebraic
+    /// content (a fixed-point of the recurrence) is the same in both
+    /// targets but the syntactic proof template differs per backend.
+    LinearRecurrence2SpecEquivalence {
+        /// Source name of the impl (tail-recursive wrapper) fn.
+        impl_fn: String,
+        /// Source name of the spec (direct recurrence) fn.
+        spec_fn: String,
+        /// Source name of the worker fn called by `impl_fn`.
+        helper_fn: String,
+    },
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
