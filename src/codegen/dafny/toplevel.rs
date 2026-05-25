@@ -317,6 +317,151 @@ fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
     }
 }
 
+/// Per-param self-call summary used by `infer_decreases` to pick a
+/// `decreases` clause that actually decreases. For each formal
+/// param, classify how every self-call site passes that position:
+///   * `preserved_to(p)` — every self-call passes `p` unchanged at
+///     position `i`. Picking `|p|` (or `p`) for `decreases` would
+///     emit a clause Dafny rejects.
+///   * `incremented(p)` — every self-call passes `p + k` (k > 0).
+///     Identifies the moving index in functions of the shape
+///     `fn(s: String, pos: Int, start: Int)` where `start` is
+///     fixed and `pos` is the iterator.
+struct SelfCallChanges {
+    preserved: std::collections::HashSet<String>,
+    incremented: std::collections::HashSet<String>,
+    /// True when we observed at least one self-call site (so the
+    /// `preserved`/`incremented` sets are meaningful — without any
+    /// call observed everything would default to "preserved").
+    saw_call: bool,
+}
+
+impl SelfCallChanges {
+    fn preserved_to(&self, name: &str) -> bool {
+        self.saw_call && self.preserved.contains(name)
+    }
+    fn incremented(&self, name: &str) -> bool {
+        self.saw_call && self.incremented.contains(name)
+    }
+}
+
+fn analyse_self_call_args(fd: &FnDef) -> SelfCallChanges {
+    let mut state = SelfCallChanges {
+        preserved: fd.params.iter().map(|(n, _)| n.clone()).collect(),
+        incremented: fd.params.iter().map(|(n, _)| n.clone()).collect(),
+        saw_call: false,
+    };
+    let formals: Vec<(String, String)> = fd.params.clone();
+    walk_self_call_args(fd.body.as_ref(), &fd.name, &formals, &mut state);
+    state
+}
+
+fn walk_self_call_args(
+    body: &FnBody,
+    fn_name: &str,
+    formals: &[(String, String)],
+    state: &mut SelfCallChanges,
+) {
+    let FnBody::Block(stmts) = body;
+    for stmt in stmts {
+        match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                walk_self_call_args_expr(expr, fn_name, formals, state);
+            }
+        }
+    }
+}
+
+fn walk_self_call_args_expr(
+    expr: &Spanned<Expr>,
+    fn_name: &str,
+    formals: &[(String, String)],
+    state: &mut SelfCallChanges,
+) {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            let is_self = matches!(&callee.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == fn_name);
+            if is_self && args.len() == formals.len() {
+                record_self_call(args, formals, state);
+            }
+            walk_self_call_args_expr(callee, fn_name, formals, state);
+            for a in args {
+                walk_self_call_args_expr(a, fn_name, formals, state);
+            }
+        }
+        Expr::TailCall(call) if call.target == fn_name && call.args.len() == formals.len() => {
+            record_self_call(&call.args, formals, state);
+            for a in &call.args {
+                walk_self_call_args_expr(a, fn_name, formals, state);
+            }
+        }
+        Expr::TailCall(call) => {
+            for a in &call.args {
+                walk_self_call_args_expr(a, fn_name, formals, state);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            walk_self_call_args_expr(l, fn_name, formals, state);
+            walk_self_call_args_expr(r, fn_name, formals, state);
+        }
+        Expr::Attr(b, _) | Expr::Neg(b) | Expr::ErrorProp(b) => {
+            walk_self_call_args_expr(b, fn_name, formals, state);
+        }
+        Expr::Match { subject, arms } => {
+            walk_self_call_args_expr(subject, fn_name, formals, state);
+            for arm in arms {
+                walk_self_call_args_expr(&arm.body, fn_name, formals, state);
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for it in items {
+                walk_self_call_args_expr(it, fn_name, formals, state);
+            }
+        }
+        Expr::Constructor(_, Some(inner)) => {
+            walk_self_call_args_expr(inner, fn_name, formals, state);
+        }
+        _ => {}
+    }
+}
+
+fn record_self_call(
+    args: &[Spanned<Expr>],
+    formals: &[(String, String)],
+    state: &mut SelfCallChanges,
+) {
+    state.saw_call = true;
+    for (i, (pname, _)) in formals.iter().enumerate() {
+        let arg = &args[i].node;
+        // Preserved iff arg is `Ident(p)` referencing the same param.
+        let preserved_here = matches!(
+            arg,
+            Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == pname
+        );
+        if !preserved_here {
+            state.preserved.remove(pname);
+        }
+        // Incremented iff arg is `BinOp(Add, Ident(p), Literal(k))` or
+        // `BinOp(Add, Literal(k), Ident(p))` with k > 0.
+        let incremented_here = match arg {
+            Expr::BinOp(BinOp::Add, l, r) => {
+                is_param_plus_positive_lit(&l.node, &r.node, pname)
+                    || is_param_plus_positive_lit(&r.node, &l.node, pname)
+            }
+            _ => false,
+        };
+        if !incremented_here {
+            state.incremented.remove(pname);
+        }
+    }
+}
+
+fn is_param_plus_positive_lit(maybe_param: &Expr, maybe_lit: &Expr, pname: &str) -> bool {
+    let same = matches!(maybe_param, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == pname);
+    let positive = matches!(maybe_lit, Expr::Literal(Literal::Int(k)) if *k > 0);
+    same && positive
+}
+
 /// Check if a function body contains a recursive call to itself.
 fn body_has_recursive_call(body: &FnBody, fn_name: &str) -> bool {
     match body {
@@ -377,36 +522,48 @@ struct DecreasesInfo {
 
 /// Try to infer a `decreases` clause from the function signature.
 fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
-    // Index-based pattern: last param is Int, there is also a List/String param
-    // earlier, and the Int is not the first param → decreases |collection| - index.
-    let list_param = fd
+    // Walk the body to learn which params actually change across
+    // self-calls. The plain type-priority pick (`prefer List/String,
+    // fall back to Int`) emits clauses Dafny rejects when the chosen
+    // param is constant across the recursion (`decreases |char_|` on
+    // `repeat(char_, n)` where `char_` is preserved). It also picks
+    // the wrong Int when there are two — naively taking the last
+    // gives `|s| - start` on `scanExpTail(s, pos, start)` where
+    // `start` is the fixed reference and `pos` is the moving index.
+    let changes = analyse_self_call_args(fd);
+
+    // Index-based pattern: pick the Int that strictly increments
+    // across self-calls (the moving index) and pair it with a
+    // collection param. The collection itself can be preserved —
+    // `|s|` is the upper bound, `|s| - n` decreases when `n` grows.
+    // Earlier code picked the LAST Int as the index unconditionally,
+    // which gave nonsense like `|s| - start` on
+    // `scanExpTail(s, pos, start)` where `start` is the fixed
+    // reference and `pos` is the moving iterator.
+    let collection_param_any = fd
         .params
         .iter()
         .find(|(_, t)| t.starts_with("List<") || t == "String");
-    let last_int = fd.params.iter().rposition(|(_, t)| t == "Int");
-    let first_int = fd.params.iter().position(|(_, t)| t == "Int");
-    if let (Some((list_name, _)), Some(last_idx)) = (list_param, last_int)
-        && let Some(first_idx) = first_int
-        && last_idx != first_idx
-    // multiple Int params → last is likely index
-    {
+    let incrementing_int = fd
+        .params
+        .iter()
+        .find(|(name, t)| t == "Int" && changes.incremented(name));
+    if let (Some((list_name, _)), Some((int_name, _))) = (collection_param_any, incrementing_int) {
         let dlist = aver_name_to_dafny(list_name);
-        let dint = aver_name_to_dafny(&fd.params[last_idx].0);
+        let dint = aver_name_to_dafny(int_name);
         return Some(DecreasesInfo {
             expr: format!("|{}| - {}", dlist, dint),
             requires: vec![],
         });
     }
 
-    // Prefer structural recursion over a List/String param — it
-    // matches the common "walk the collection" shape. An Int that
-    // isn't an explicit index/countdown is usually a passive
-    // argument (pivot, bound, threshold), so picking it for
-    // `decreases` emits nonsense like `decreases pivot` on a fn
-    // that actually iterates over the list. Fall back to Int only
-    // when there's no collection param.
+    // Structural recursion: pick the FIRST List/String param whose
+    // self-call argument is tail-stripped (`xs[1..]` or pattern
+    // destructure that recurses on `rest`). Falls back to skipping
+    // preserved params — emitting `|p|` on a constant `p` would
+    // produce a clause Dafny rejects.
     for (pname, ptype) in &fd.params {
-        if ptype.starts_with("List<") {
+        if ptype.starts_with("List<") && !changes.preserved_to(pname) {
             return Some(DecreasesInfo {
                 expr: format!("|{}|", aver_name_to_dafny(pname)),
                 requires: vec![],
@@ -414,7 +571,7 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
         }
     }
     for (pname, ptype) in &fd.params {
-        if ptype == "String" {
+        if ptype == "String" && !changes.preserved_to(pname) {
             return Some(DecreasesInfo {
                 expr: format!("|{}|", aver_name_to_dafny(pname)),
                 requires: vec![],
