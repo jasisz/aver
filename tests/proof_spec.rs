@@ -2109,6 +2109,50 @@ fn proof_export_cross_module_refined_types_keep_distinct_predicates() {
         "BBB.lean leaked AAA's predicate; got:\n{bbb_lean}"
     );
 
+    // Round-3 finding 1: the prior round only checked Lean. `pick_
+    // witness` was un-scoped and tried only `[0, 1, -1]` candidates,
+    // so `BBB.Natural`'s `n >= 10` got `witness = None` and Dafny
+    // silently fell back to `witness 0` — which violates the
+    // predicate. The scoped picker now (a) scopes the smart-ctor
+    // walk to the same module and (b) sweeps higher candidates.
+    let dafny_out = root.join("out-dafny");
+    let dafny_proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&dafny_out)
+        .output()
+        .expect("aver proof --backend dafny");
+    assert!(
+        dafny_proof.status.success(),
+        "`aver proof --backend dafny` failed:\n{}",
+        format_output(&dafny_proof)
+    );
+
+    let aaa_dfy = std::fs::read_to_string(dafny_out.join("AAA.dfy")).expect("read AAA.dfy");
+    let bbb_dfy = std::fs::read_to_string(dafny_out.join("BBB.dfy")).expect("read BBB.dfy");
+
+    assert!(
+        aaa_dfy.contains("type Natural") && aaa_dfy.contains("n >= 0"),
+        "AAA.dfy must declare `type Natural` with `n >= 0`; got:\n{aaa_dfy}"
+    );
+    assert!(
+        bbb_dfy.contains("type Natural") && bbb_dfy.contains("n >= 10"),
+        "BBB.dfy must declare `type Natural` with `n >= 10`; got:\n{bbb_dfy}"
+    );
+    let bbb_witness_line = bbb_dfy
+        .lines()
+        .find(|l| l.contains("type Natural"))
+        .expect("BBB.dfy must declare `type Natural`");
+    assert!(
+        !bbb_witness_line.contains("witness 0"),
+        "BBB.Natural with `n >= 10` must NOT fall back to `witness 0`; \
+         got line:\n{bbb_witness_line}"
+    );
+
     let _ = std::fs::remove_dir_all(&root);
 }
 
