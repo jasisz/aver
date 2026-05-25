@@ -1278,6 +1278,43 @@ pub fn emit_verify_law(
             }
             lines.push("  }".to_string());
         }
+    } else if let Some(list_given_idx) = law
+        .givens
+        .iter()
+        .position(|g| g.type_name.starts_with("List<"))
+    {
+        // Inductive hint for `List<T>`-parameterised laws — case-split
+        // on `[] / [head, ..tail]` and recurse on the tail. Fires when
+        // any fn called from either side (top-level OR nested) is
+        // directly recursive — broader than the Int-given branch
+        // which only inspects the top-level fn, because `List<T>` laws
+        // often wrap the recursive fn under a Map / Option helper
+        // (e.g. `Map.has(countWords(words), word)` — countWords is
+        // recursive but `Map.has` is the top fn).
+        let mut called: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        collect_called_fns(&law.lhs, &mut called);
+        collect_called_fns(&law.rhs, &mut called);
+        let any_recursive = called.iter().any(|f| is_directly_recursive(f, ctx));
+        if any_recursive {
+            let list_param = aver_name_to_dafny(&law.givens[list_given_idx].name);
+            let lemma_name = format!("{}_{}", fn_name, law_name);
+            let other_args: Vec<String> = law
+                .givens
+                .iter()
+                .enumerate()
+                .map(|(i, g)| {
+                    if i == list_given_idx {
+                        format!("{}[1..]", list_param)
+                    } else {
+                        aver_name_to_dafny(&g.name)
+                    }
+                })
+                .collect();
+            lines.push(format!("  if |{}| == 0 {{", list_param));
+            lines.push("  } else {".to_string());
+            lines.push(format!("    {}({});", lemma_name, other_args.join(", ")));
+            lines.push("  }".to_string());
+        }
     }
 
     lines.push("}\n".to_string());

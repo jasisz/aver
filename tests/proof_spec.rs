@@ -59,6 +59,66 @@ fn assert_proof_builds(example_path: &str, prefix: &str) {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
+/// `dafny verify` smoke test. Mirrors `assert_proof_builds` but runs
+/// the Dafny backend through the full verifier (not just the parser /
+/// compile front-end). `lake build` accepts `sorry`-bearing proofs;
+/// `dafny verify` actually closes the goal. Three examples currently
+/// verify cleanly through both backends and pin the IR-migrated
+/// strategy coverage (Steps 24-40 of the proof-IR migration); the
+/// remaining flagship examples (`fibonacci`, `rle`, `quicksort`,
+/// `json`) carry pre-IR-migration Dafny gaps tracked in issue #114.
+fn assert_dafny_verifies(example_path: &str, prefix: &str) {
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny verify smoke test: `dafny` not available");
+        return;
+    }
+
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = temp_output_dir(prefix);
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let proof = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(example_path)
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof --backend dafny` to run");
+    assert!(
+        proof.status.success(),
+        "`aver proof --backend dafny` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let dfy = std::fs::read_dir(&output_dir)
+        .expect("read output_dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.extension().is_some_and(|x| x == "dfy")
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n != "common.dfy")
+        })
+        .expect("expected a non-`common.dfy` Dafny file in output");
+    let verify = Command::new("dafny")
+        .current_dir(&output_dir)
+        .arg("verify")
+        .arg(&dfy)
+        .output()
+        .expect("expected `dafny verify` to run");
+    assert!(
+        verify.status.success(),
+        "`dafny verify` failed:\n{}",
+        format_output(&verify)
+    );
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
 #[test]
 fn proof_export_builds_law_auto_when_lake_is_available() {
     assert_proof_builds("examples/formal/law_auto.av", "aver-proof-smoke");
@@ -1675,4 +1735,27 @@ fn proof_accepts_complete_independence_mode() {
         stderr
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn proof_dafny_verifies_law_auto_when_dafny_is_available() {
+    assert_dafny_verifies("examples/formal/law_auto.av", "aver-dafny-law-auto");
+}
+
+#[test]
+fn proof_dafny_verifies_spec_laws_when_dafny_is_available() {
+    assert_dafny_verifies("examples/formal/spec_laws.av", "aver-dafny-spec-laws");
+}
+
+#[test]
+fn proof_dafny_verifies_oracle_independent_products_when_dafny_is_available() {
+    assert_dafny_verifies(
+        "examples/formal/oracle_independent_products.av",
+        "aver-dafny-oracle-products",
+    );
+}
+
+#[test]
+fn proof_dafny_verifies_map_when_dafny_is_available() {
+    assert_dafny_verifies("examples/data/map.av", "aver-dafny-map");
 }
