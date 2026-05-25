@@ -231,6 +231,17 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             expr: info.predicate.clone(),
         };
         let witness = pick_witness(name, inputs, info.predicate, info.param_name, module_prefix);
+        // Round-4 finding 1: a `None` witness means we couldn't
+        // exhibit any inhabitant satisfying the predicate. Inserting
+        // the slot anyway makes Dafny silently fall back to
+        // `witness 0` even when the predicate excludes 0 — producing
+        // an unsound subset type. Skip the lift entirely: the
+        // backend will emit a plain `datatype` instead, which is
+        // honest about the missing invariant. The pure-fn / law
+        // paths still typecheck against the plain record.
+        let Some(witness) = witness else {
+            continue;
+        };
         ir.refined_types.insert(
             canonical_key,
             RefinedTypeDecl {
@@ -239,7 +250,7 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 carrier_field: info.carrier_field.to_string(),
                 predicate_param: info.param_name.to_string(),
                 invariant,
-                witness,
+                witness: Some(witness),
             },
         );
     }
@@ -2743,16 +2754,34 @@ fn pick_witness(
             }
         }
     }
-    // Predicate-evaluation fallback. Sweep small magnitudes first
-    // (covers `n >= 0`, `n > 0`, `n != 0`) then climb in powers of
-    // ten to catch shapes like `n >= 10`, `n >= 100`, …; the latter
-    // are common refinement invariants (Positive-with-floor,
-    // ID-format bounds). Cap at 10^6 — below the i64 wrap-around
-    // cliff so eval stays exact, above any realistic refinement
-    // floor. Without the wider sweep, Dafny's `witness 0` fallback
-    // silently violates the predicate and the verify run fails on
-    // the type definition itself.
-    for candidate in [0i64, 1, -1, 10, 100, 1_000, 10_000, 100_000, 1_000_000] {
+    // Predicate-evaluation. Two-stage: first sweep candidates
+    // *extracted from the predicate AST itself* (any `Literal::Int`
+    // reachable through `BinOp` / `FnCall` chains, plus the
+    // neighbours `K`, `K-1`, `K+1` so `n == 5` / `n > 5` / `n < 5`
+    // all land their witness). Then fall back to a fixed magnitude
+    // sweep for shapes that don't mention concrete numbers
+    // (`n != 0`, `Bool.and(n >= 0, n <= max())`, …). Returning
+    // `None` here is intentional and `populate_refined_types`
+    // skips the slot — the alternative was Dafny silently emitting
+    // `witness 0` against a predicate the witness didn't satisfy.
+    let mut tried = std::collections::HashSet::<i64>::new();
+    let mut candidates: Vec<i64> = Vec::new();
+    let mut from_ast: Vec<i64> = Vec::new();
+    collect_int_literals(predicate, &mut from_ast);
+    for k in from_ast {
+        for delta in &[0_i64, 1, -1] {
+            if let Some(c) = k.checked_add(*delta) {
+                candidates.push(c);
+            }
+        }
+    }
+    candidates.extend_from_slice(&[
+        0, 1, -1, 2, -2, 10, -10, 100, 1_000, 10_000, 100_000, 1_000_000,
+    ]);
+    for candidate in candidates {
+        if !tried.insert(candidate) {
+            continue;
+        }
         if eval_int_bool_predicate(predicate, param_name, candidate) == Some(true) {
             return Some(candidate.to_string());
         }
@@ -2760,10 +2789,50 @@ fn pick_witness(
     None
 }
 
+fn collect_int_literals(expr: &Spanned<Expr>, out: &mut Vec<i64>) {
+    match &expr.node {
+        Expr::Literal(Literal::Int(n)) => out.push(*n),
+        Expr::Neg(inner) => {
+            if let Expr::Literal(Literal::Int(n)) = &inner.node {
+                out.push(-n);
+            } else {
+                collect_int_literals(inner, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_int_literals(l, out);
+            collect_int_literals(r, out);
+        }
+        Expr::FnCall(callee, args) => {
+            collect_int_literals(callee, out);
+            for a in args {
+                collect_int_literals(a, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            collect_int_literals(subject, out);
+            for arm in arms {
+                collect_int_literals(&arm.body, out);
+            }
+        }
+        Expr::Attr(o, _) | Expr::ErrorProp(o) => collect_int_literals(o, out),
+        _ => {}
+    }
+}
+
 fn smart_ctor_matches(fd: &FnDef, type_name: &str) -> bool {
-    fd.return_type.starts_with("Result<")
-        && fd.return_type[7..].starts_with(type_name)
-        && fd.params.len() == 1
+    // Parse the return type instead of `starts_with`-matching its
+    // textual form — `Result<Nat, E>` would otherwise also match a
+    // type_name of `Natural` or any other `Nat*` prefix because the
+    // raw text starts with the same characters.
+    if fd.params.len() != 1 {
+        return false;
+    }
+    let parsed = crate::types::parse_type_str(&fd.return_type);
+    matches!(
+        parsed,
+        crate::types::Type::Result(ok, _) if matches!(&*ok, crate::types::Type::Named(n) if n == type_name)
+    )
 }
 
 fn is_result_ok(expr: &Expr) -> bool {

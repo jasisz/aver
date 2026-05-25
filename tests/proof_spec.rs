@@ -2153,6 +2153,27 @@ fn proof_export_cross_module_refined_types_keep_distinct_predicates() {
          got line:\n{bbb_witness_line}"
     );
 
+    // Round-4 finding 3: text checks aren't enough — the witness
+    // must actually satisfy the predicate or Dafny rejects the
+    // subset type at verify time. Run `dafny verify` on the
+    // generated project to catch unsound witnesses going forward.
+    // Skipped silently when dafny isn't on PATH (matches the
+    // pattern used by `assert_dafny_verifies`).
+    if Command::new("dafny").arg("--version").output().is_ok() {
+        let verify = Command::new("dafny")
+            .current_dir(&dafny_out)
+            .arg("verify")
+            .arg("Entry.dfy")
+            .output()
+            .expect("dafny verify");
+        assert!(
+            verify.status.success(),
+            "`dafny verify` rejected the cross-module refinement output \
+             — most likely a witness violates its predicate:\n{}",
+            format_output(&verify)
+        );
+    }
+
     let _ = std::fs::remove_dir_all(&root);
 }
 
