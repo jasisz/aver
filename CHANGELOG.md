@@ -8,50 +8,27 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Refinement recovery
 
-- **Aver now recovers proof-language refinements from ordinary validated code shapes.**
-  A source program does not need refinement-type syntax for the proof backend to see a refinement. If the program establishes an invariant at a boundary — through a validating smart constructor, or through a guard before entering a private worker — the exporter can preserve that fact in the generated Lean/Dafny surface.
-
-- **Single-field `Int` records with validating smart constructors lift to native refinement/subset types.**
-  A record like `Natural { v: Int }`, paired with a constructor that guards `v >= 0`, now exports as a native proof-language refinement: Lean emits a subtype shape (`{ v : Int // P v }`), and Dafny emits a subset type (`type X = v: int | P v witness W`). The predicate from the constructor travels with the type.
-
-- **Guarded public functions can refine the domain of private workers.**
-  A public function may accept a plain `Int`, reject invalid inputs at the boundary, and call a private recursive worker only under a stronger invariant such as `n >= 0`. The proof export now keeps that invariant in the generated theorem/definition shape instead of treating the worker as operating over an unconstrained `Int`.
-
-- **Universal laws over recovered refinements now close in the backend's natural proof shape.**
-  Laws like `add_commutative(a: Natural, b: Natural)` no longer need hand-written `by_cases`, unfolding, or per-law tactic plumbing. Lean reduces them to the underlying integer law; Dafny can discharge the corresponding subset-type proof directly.
-
-- **The lift is conservative and source-compatible.**
-  No new Aver annotation is required. 0.22 recognizes safe `Int`-based patterns first: validated single-field carriers and guarded domains. Other carriers keep the previous wrapper shape until their proof story is explicit enough to lift safely.
-
-- **Recovered refinements survive module boundaries.**
-  A `Natural` declared in its own module emits the lifted subtype/subset shape whether you prove that module directly or import it as a dependency. Pre-0.22 cross-module export could fall back to the wrapper representation and lose the one-line proof shape.
-
-- **User `when` clauses are preserved exactly as written, not silently absorbed by recovery.**
-  A `when` clause attached to a law over a refinement-lifted given used to be dropped on the assumption it repeated the type invariant. If the user's predicate was actually stronger, the universal claim would silently change. The exporter now keeps `when` as a theorem premise unless it is provably equivalent to the recovered invariant.
+- **Aver recovers proof-language refinements from ordinary validated code.** A single-field `Int` record with a validating smart constructor (e.g. `Natural { v: Int }` with `v >= 0`) now exports as a native subtype on Lean (`{ v : Int // P v }`) and subset type on Dafny (`type X = v: int | P v witness W`); the predicate travels with the type. A public function that guards `n >= 0` before calling a private worker similarly refines that worker's domain in the export. Universal laws like `add_commutative(a: Natural, b: Natural)` close in the backend's natural proof shape, no per-law tactic plumbing. Conservative and source-compatible — no new Aver annotation, and `when` clauses stronger than the recovered invariant are kept as theorem premises rather than silently dropped. Recovered refinements survive module boundaries.
 
 ### Mutual recursion in proof export
 
-- **Mutual-recursion SCCs over `List` / `Vector` / `String` parameters export natively in both backends.**
-  Lean emits a single `mutual ... termination_by ... end` block keyed off the structural measure; Dafny emits a `decreases <size_measure>, <rank>` tuple on each member. The fuel-bounded helper-and-wrapper indirection is gone for these groups, and Z3 / Lean can unfold the SCC to ground terms during proof obligations. SCCs without a measurable structural parameter still go through the fuel encoding.
-
-- **Bounded-∀ universal laws over mutual recursion verify as real proofs.**
-  A `verify <fn> law` with bounded integer givens over a mutual-rec SCC now emits a bounded universal that case-splits across the declared domain and dispatches each pair to its per-sample lemma. BigInt's `add_commutative` moves from `assume {:axiom}` on trust to a verified theorem over the declared domain on Dafny, with Lean parity via `rcases` + `native_decide` per case.
-
-- **Mutual-recursion sample assertions no longer hit Lean's synthesis budget.**
-  Programs whose smart constructor matched a compound boolean predicate could exhaust the default synth budget on per-sample `native_decide`; the budget is no longer the bottleneck for these shapes.
-
-### Examples
-
-- **A new `examples/refinement/` directory collects the canonical refinement-via-opaque demos.**
-  `Natural` (Int + `>= 0`), `Positive` (Int + `>= 1`), `IntRange` (Int with the compound `0 <= n <= 100`), `NonNegFloat` (Float carrier, structure path), `Email` (String carrier, structure path), and `BigInt` (digits-of-base-10⁹ as `List<Int>`, arbitrary-precision arithmetic in pure Aver). Each example exercises a different point in the refinement design space, so the pattern is documented by code rather than prose.
+- **Mutual-recursion SCCs over `List` / `Vector` / `String` parameters export natively.** Lean emits a single `mutual ... termination_by ... end` block keyed off the structural measure; Dafny emits a `decreases <measure>, <rank>` tuple per member. The fuel-bounded helper-and-wrapper indirection is gone for these groups. Bounded-∀ universal laws over the SCC verify as real proofs (BigInt's `add_commutative` moves from `assume {:axiom}` on trust to a real theorem). Sample assertions no longer exhaust Lean's synth budget on compound predicates.
 
 ### Law strategy substrate
 
-- **Both proof backends now read every verify-law strategy from a single classifier.**
-  Each `verify <fn> law` lowers to one of thirteen algebraic shapes (`Reflexive`, `Commutative`/`Associative`/`IdentityElement`/`AntiCommutative`, `UnaryEqualsBinary`, `Induction`, `LibraryAxiom`, `MapUpdatePostcondition`, `MapKeyTrackedIncrement`, `LinearArithmetic`, four flavours of spec-equivalence) before Lean or Dafny emits anything. The Lean output is byte-identical to the prior ad-hoc dispatch on every flagship example; Dafny inherits the same classification without per-shape backend code. The benefit is visible in `aver compile --emit-ir-after law_lower`: every law now shows up with the strategy that proves it, instead of "the backend will figure it out."
+- **Both proof backends read every verify-law strategy from one classifier.** Each `verify <fn> law` lowers to one of fourteen algebraic shapes (commutative / associative / identity / induction / library axiom / map update / linear arithmetic / four spec-equivalence flavours / linear recurrence) before Lean or Dafny emits anything. Visible via `aver compile --emit-ir-after law_lower`. Effectful impl-vs-spec laws classify on the canonical post-Oracle-Lift shape; `fib(n) == fibSpec(n)` closes as a real proof on both backends (Nat-helper bridge + worker-shift lemma) where prior releases emitted `sorry` / empty-body.
 
-- **Effectful impl-vs-spec laws (Oracle v1) classify on the canonical post-lift shape.**
-  Laws like `pickPair() => pairSpec(BranchPath.Root, rnd)` previously needed a backend to perform Oracle Lift (inject `BranchPath.Root` + the oracle given into the impl call) before deciding the proof tactic. The lift now runs once in the classifier; both backends see the canonical `impl(args) == spec(args)` form and the matching strategy gets pinned in the IR.
+### Dafny verifier improvements
+
+- **`dafny verify` closes 25 more proofs across the flagship suite (160 errors → 135).** Smarter `infer_decreases` picks the actually-moving recursion measure across self-call sites (catches `repeat(char_, n - 1)` and `scanExpTail(s, pos + 1, start)`). List-induction hints case-split `|xs| == 0` and recurse on `xs[1..]`, detecting recursive fns nested under `Map.*` / `Option.*` helpers. `examples/data/map.av` verifies clean; `fibonacci`, `rle`, `quicksort`, `json`, `grok_s_language` all improve without regression.
+
+### Tooling
+
+- **`tests/proof_spec` gates `dafny verify` on the IR-clean examples and tracks per-example `sorry` budgets on the Lean side.** Three examples carry honest budgets (`json.av` 13 sampled-domain laws, `rle.av` 2, `quicksort.av` 2); drift either way fails the test. `aver compile --emit-ir-after={refinement_lower,contract_lower,law_lower}` exposes the three new proof-lower stages — when a law falls through to `sorry`/empty-body, `law_lower` shows whether the lowerer pinned a strategy or fell back to `BackendDispatch`.
+
+### Examples
+
+- **New `examples/refinement/`** collects the canonical refinement-via-opaque demos: `Natural`, `Positive`, `IntRange`, `NonNegFloat`, `Email`, `BigInt`. Each exercises a different point in the design space.
 
 ## 0.21.1 — 2026-05-21
 
