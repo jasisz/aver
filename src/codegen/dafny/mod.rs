@@ -77,22 +77,22 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     // SCC members are exactly the fns whose contract is `Fuel { Lex }`
     // — that's the unifying shape MutualIntCountdown /
     // MutualStringPosAdvance / MutualSizeOfRanked all lower to.
-    let mutual_planned: HashSet<String> = ctx
-        .proof_ir
-        .fn_contracts
-        .iter()
-        .filter(|(_, contract)| {
+    //
+    // Round-6: `fn_contracts` is keyed by canonical `Module.fn` after
+    // round-5. The earlier `mutual_planned.contains(&fd.name)` filter
+    // (bare) misses every module-owned mutual-recursive SCC. Resolve
+    // per-`&FnDef` via pointer-eq scope so module-owned mutual fuel
+    // groups land in `mutual_fns_all` correctly.
+    let is_mutual_lex = |fd: &FnDef| -> bool {
+        crate::codegen::common::find_fn_contract_for_fn(ctx, fd).is_some_and(|c| {
             matches!(
-                contract.recursion,
+                c.recursion,
                 Some(crate::ir::RecursionContract::Fuel {
                     fuel_metric: crate::ir::FuelMetric::Lex { .. },
                 })
             )
         })
-        .map(|(name, _)| name.clone())
-        .collect();
-
-    let fn_scope = crate::codegen::common::fn_owning_scope(ctx);
+    };
 
     let mutual_fns_all: Vec<&FnDef> = ctx
         .items
@@ -105,7 +105,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             }
         })
         .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
-        .filter(|fd| mutual_planned.contains(&fd.name))
+        .filter(|fd| is_mutual_lex(fd))
         .collect();
     let mutual_components =
         crate::call_graph::ordered_fn_components(&mutual_fns_all, &ctx.module_prefixes);
@@ -117,10 +117,14 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
 
     for component in &mutual_components {
         let scc_fns: Vec<&FnDef> = component.iter().map(|fd| &**fd).collect();
+        // Round-6: pointer-eq resolution avoids the bare-name
+        // collision in the legacy `fn_owning_scope` helper —
+        // `&fd_from_module_A` and `&fd_from_module_B` with the same
+        // `fd.name` route to their own scopes here.
         let scope = scc_fns
             .first()
-            .and_then(|fd| fn_scope.get(&fd.name))
-            .cloned()
+            .and_then(|fd| crate::codegen::common::fn_owning_scope_for(ctx, fd))
+            .map(|s| s.to_string())
             .unwrap_or_default();
         // Try native `decreases` tuple first — when every member has a
         // sizeOf-measurable parameter and a classifier rank, the SCC

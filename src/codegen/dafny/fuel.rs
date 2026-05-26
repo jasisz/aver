@@ -142,7 +142,7 @@ pub fn emit_mutual_native_decreases_group(fns: &[&FnDef], ctx: &CodegenContext) 
     // mutual int-countdown, two-param string-pos) fails this group.
     let mut ranks: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for fd in fns {
-        let contract = crate::codegen::common::find_fn_contract(ctx, &fd.name)?;
+        let contract = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)?;
         match contract.recursion.as_ref()? {
             crate::ir::RecursionContract::Fuel {
                 fuel_metric: crate::ir::FuelMetric::Lex { params, rank },
@@ -265,7 +265,7 @@ fn emit_fuel_metric(fd: &FnDef, ctx: &CodegenContext, scc_size: usize) -> String
     // - `[p]` rank 0  → MutualIntCountdown: `natAbs(n) + 1`
     // - `[s, pos]`    → MutualStringPosAdvance: `(|s| + 1) * (rank * scc_size + 1)`
     // - `[]`          → MutualSizeOfRanked: `(|first_seq| + 1) * (rank * scc_size + 1)`
-    let Some(contract) = crate::codegen::common::find_fn_contract(ctx, &fd.name) else {
+    let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd) else {
         return "1".to_string();
     };
     let Some(crate::ir::RecursionContract::Fuel {

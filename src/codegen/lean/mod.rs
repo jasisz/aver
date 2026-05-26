@@ -1224,7 +1224,7 @@ fn transpile_unified(
                     LeanEmitMode::Proof => {
                         let all_supported = comp
                             .iter()
-                            .all(|fd| crate::codegen::common::fn_contract_exists(ctx, &fd.name));
+                            .all(|fd| crate::codegen::common::fn_contract_exists_for_fn(ctx, fd));
                         if all_supported {
                             toplevel::emit_mutual_group_proof(comp, ctx)
                         } else {
@@ -1245,7 +1245,7 @@ fn transpile_unified(
                         // in `unclassified_fns` and fall through to the
                         // partial/non-recursive emit.
                         if is_recursive
-                            && !crate::codegen::common::fn_contract_exists(ctx, &fd.name)
+                            && !crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
                         {
                             toplevel::emit_fn_def(fd, &recursive_names, ctx)
                         } else {

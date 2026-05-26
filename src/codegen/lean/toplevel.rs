@@ -1249,7 +1249,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // marker. Backend still calls `detect_second_order_int_linear_
     // recurrence` to extract base cases + coefficients; the contract
     // just signals "this fn lowers as pair-state Nat worker, not fuel".
-    if let Some(contract) = crate::codegen::common::find_fn_contract(ctx, &fd.name)
+    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && matches!(
             contract.recursion,
             Some(crate::ir::RecursionContract::LinearRecurrence2)
@@ -1265,7 +1265,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // `n > 0`; Aver bodies don't always clamp to non-negative before
     // recursing (fibTR sans-guard relies on its caller). Fuel
     // sidesteps the issue.
-    if let Some(contract) = crate::codegen::common::find_fn_contract(ctx, &fd.name)
+    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && let Some(crate::ir::RecursionContract::Fuel {
             fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne { param },
         }) = contract.recursion.as_ref()
@@ -1279,7 +1279,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // whose `precondition` + `body` carry everything the emit needs.
     // Other RecursionPlan variants still flow through `recursion_plan`
     // directly; Step 7+ migrates them one shape at a time.
-    if let Some(contract) = crate::codegen::common::find_fn_contract(ctx, &fd.name)
+    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && let Some(crate::ir::RecursionContract::Native {
             precondition,
             measure: crate::ir::Measure::NatAbsInt { param },
@@ -1309,7 +1309,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // IntAscending reads `Fuel { BoundMinusParamNatAbsPlusOne }`.
     // The bound stays as `Spanned<Expr>` in the contract; backend
     // renders it through `bound_expr_to_lean` here.
-    if let Some(contract) = crate::codegen::common::find_fn_contract(ctx, &fd.name)
+    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && let Some(crate::ir::RecursionContract::Fuel {
             fuel_metric: crate::ir::FuelMetric::BoundMinusParamNatAbsPlusOne { param, bound },
         }) = contract.recursion.as_ref()
@@ -1326,7 +1326,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
 
     // SizeOfStructural — `Fuel { SizeOfPlusOne }`. No params bound;
     // sizeOf walks the whole call frame.
-    if let Some(contract) = crate::codegen::common::find_fn_contract(ctx, &fd.name)
+    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && matches!(
             contract.recursion,
             Some(crate::ir::RecursionContract::Fuel {
@@ -1340,7 +1340,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // StringPosAdvance — `Fuel { StringLenMinusPos { string, pos } }`.
     // Lean's emit reads the params from fd.params directly so the
     // contract just acts as the dispatch signal.
-    if let Some(contract) = crate::codegen::common::find_fn_contract(ctx, &fd.name)
+    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && matches!(
             contract.recursion,
             Some(crate::ir::RecursionContract::Fuel {
@@ -1374,7 +1374,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     // termination_by/decreasing_by suffix for the few contract shapes
     // that need explicit Lean termination hints (rest are no-ops —
     // their emit fns already wrote them, or Lean's elaborator infers).
-    if let Some(contract) = crate::codegen::common::find_fn_contract(ctx, &fd.name) {
+    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd) {
         match contract.recursion.as_ref() {
             Some(crate::ir::RecursionContract::Fuel {
                 fuel_metric: crate::ir::FuelMetric::Lex { params, rank: 0 },

@@ -2105,6 +2105,117 @@ fn proof_export_cross_module_recursive_fns_get_per_module_fn_contracts() {
 }
 
 #[test]
+fn proof_export_cross_module_differentiated_recursion_shapes_emit_per_module() {
+    // Round-6 finding (audit of round 5): the prior test had both
+    // modules use the SAME recursion shape (IntCountdown), so even
+    // a buggy scope-naive lookup could "accidentally pass" by
+    // returning whichever module's identical contract walked first.
+    // This test wires module A's `walker(n)` as IntCountdown and
+    // module B's `walker(xs)` as ListStructural — different param
+    // types AND different fuel metrics. With scope-naive lookup
+    // (`find_fn_contract(ctx, "walker")` → first-walked module's
+    // contract) the second module's emit would either use the
+    // wrong shape or fall back to `partial def`. With pointer-eq
+    // scope resolution each module's `walker` lands its OWN
+    // classification.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-cross-module-shapes");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    std::fs::write(
+        root.join("WalkerA.av"),
+        "module WalkerA\n\
+         \x20   exposes [walker]\n\
+         \x20   intent = \"Int countdown shape.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn walker(n: Int) -> Int\n\
+         \x20   ? \"Countdown to 0.\"\n\
+         \x20   match n <= 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> walker(n - 1)\n",
+    )
+    .expect("write WalkerA.av");
+    std::fs::write(
+        root.join("WalkerB.av"),
+        "module WalkerB\n\
+         \x20   exposes [walker]\n\
+         \x20   intent = \"List structural shape.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn walker(xs: List<Int>) -> Int\n\
+         \x20   ? \"Sum elements.\"\n\
+         \x20   match xs\n\
+         \x20       [] -> 0\n\
+         \x20       [x, ..rest] -> x + walker(rest)\n",
+    )
+    .expect("write WalkerB.av");
+    std::fs::write(
+        root.join("entry.av"),
+        "module Entry\n\
+         \x20   depends [WalkerA, WalkerB]\n\
+         \x20   intent = \"Touch both walker modules.\"\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   0\n",
+    )
+    .expect("write entry.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let a_lean = std::fs::read_to_string(out_dir.join("WalkerA.lean")).expect("read WalkerA.lean");
+    let b_lean = std::fs::read_to_string(out_dir.join("WalkerB.lean")).expect("read WalkerB.lean");
+
+    // WalkerA is IntCountdown → fuel-encoded `def walker__fuel
+    // (fuel : Nat) (n : Int) : Int`.
+    assert!(
+        a_lean.contains("def walker__fuel"),
+        "WalkerA.walker (IntCountdown) must emit fuel-encoded def:\n{a_lean}"
+    );
+    assert!(
+        a_lean.contains("(n : Int)"),
+        "WalkerA.walker fuel sig must carry Int param `n`:\n{a_lean}"
+    );
+
+    // WalkerB is ListStructural → backend may emit either a
+    // structural-recursion `def walker (xs : List Int)` or a
+    // fuel-encoded variant depending on classifier path. Either is
+    // fine; the wrong-shape failure mode would be either (a)
+    // landing the Int sig from WalkerA, or (b) emitting
+    // `partial def walker` because the scope-naive lookup hit the
+    // wrong contract and the emit fell through.
+    assert!(
+        b_lean.contains("walker") && (b_lean.contains("List Int") || b_lean.contains("(xs :")),
+        "WalkerB.walker must carry the List<Int> signature, not WalkerA's Int sig:\n{b_lean}"
+    );
+    assert!(
+        !b_lean.contains("partial def walker"),
+        "WalkerB.walker must not regress to `partial def` — scope-naive lookup \
+         leaked the wrong contract:\n{b_lean}"
+    );
+    // Defence: WalkerA must not pick up WalkerB's List signature.
+    assert!(
+        !a_lean.contains("List Int"),
+        "WalkerA.walker leaked WalkerB's List signature:\n{a_lean}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn proof_export_cross_module_refined_types_keep_distinct_predicates() {
     // Review findings 2 + 3 (round 2): two modules each declaring a
     // refined `Natural` (different predicates) must each carry its
