@@ -571,7 +571,7 @@ pub(super) fn emit_expr(
 fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
     let ty = operand.ty()?;
     match ty {
-        crate::types::Type::Named(name) => {
+        crate::types::Type::Named { name, .. } => {
             // Newtypes already lower to their underlying primitive —
             // no helper needed (the default i64/f64 eq handles them).
             if ctx.registry.newtype_underlying(name).is_some() {

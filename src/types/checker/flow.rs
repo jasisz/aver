@@ -206,6 +206,12 @@ impl TypeChecker {
                             let ty = if let Some(ann_src) = type_ann {
                                 match crate::types::parse_type_str_strict(ann_src) {
                                     Ok(annotated) => {
+                                        let annotated = self.canonicalize_named(annotated);
+                                        self.report_ambiguous_named(
+                                            &annotated,
+                                            expr.line,
+                                            &format!("Binding '{}' annotation", name),
+                                        );
                                         if !self.compatible(&inferred, &annotated) {
                                             self.error(format!(
                                                 "Binding '{}': expression has type {}, annotation says {}",
@@ -267,8 +273,7 @@ impl TypeChecker {
                 // Oracle v1: classify the verified function's effects to
                 // decide whether this verify block is in the proof subset.
                 let fn_effects: Vec<String> = self
-                    .fn_sigs
-                    .get(&vb.fn_name)
+                    .find_fn_sig(&vb.fn_name)
                     .map(|sig| sig.effects.clone())
                     .unwrap_or_default();
                 let classified_effects: Vec<String> = fn_effects
@@ -479,8 +484,7 @@ impl TypeChecker {
                 // Inherit effects from the tested function so verify blocks
                 // can call effectful functions without declaring effects.
                 let inherited_effects: Vec<String> = self
-                    .fn_sigs
-                    .get(&vb.fn_name)
+                    .find_fn_sig(&vb.fn_name)
                     .map(|sig| sig.effects.clone())
                     .unwrap_or_default();
                 let caller = format!("<verify:{}>", vb.fn_name);
@@ -603,7 +607,8 @@ impl TypeChecker {
                         // annotation rather than stamping `Unknown`.
                         let parsed_ann = type_ann
                             .as_ref()
-                            .and_then(|src| crate::types::parse_type_str_strict(src).ok());
+                            .and_then(|src| crate::types::parse_type_str_strict(src).ok())
+                            .map(|ty| self.canonicalize_named(ty));
                         let inferred = self.infer_type_with_expected(expr, parsed_ann.as_ref());
                         // Mirror the top-level rejection above — fn refs
                         // aren't supported as local bindings, period. See
@@ -617,6 +622,12 @@ impl TypeChecker {
                         let ty = if let Some(ann_src) = type_ann {
                             match crate::types::parse_type_str_strict(ann_src) {
                                 Ok(annotated) => {
+                                    let annotated = self.canonicalize_named(annotated);
+                                    self.report_ambiguous_named(
+                                        &annotated,
+                                        expr.line,
+                                        &format!("Binding '{}' annotation", name),
+                                    );
                                     if !self.compatible(&inferred, &annotated) {
                                         self.error(format!(
                                             "Binding '{}': expression has type {}, annotation says {}",

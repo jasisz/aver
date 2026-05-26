@@ -585,7 +585,7 @@ fn needs_named_type(ctx: &CodegenContext, wanted: &str) -> bool {
 
 fn type_contains_named(ty: &Type, wanted: &str) -> bool {
     match ty {
-        Type::Named(name) => name == wanted,
+        Type::Named { name, .. } => name == wanted,
         Type::Result(ok, err) => {
             type_contains_named(ok, wanted) || type_contains_named(err, wanted)
         }

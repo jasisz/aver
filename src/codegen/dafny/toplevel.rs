@@ -71,7 +71,7 @@ fn type_to_dafny(ty: &Type) -> String {
         // the dependent module; already-qualified user types
         // (`Level.Room`) need the module-segment prefixed with `Aver_`
         // so the qualifier matches the renamed Dafny module.
-        Type::Named(name) => {
+        Type::Named { name, .. } => {
             if crate::codegen::builtin_records::find(name).is_some() {
                 name.replace('.', "_")
             } else if let Some(dot) = name.rfind('.') {

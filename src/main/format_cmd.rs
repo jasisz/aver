@@ -375,7 +375,7 @@ fn format_type_for_source(ty: &Type) -> String {
         }
         Type::Var(name) => name.clone(),
         Type::Invalid => "Invalid".to_string(),
-        Type::Named(name) => name.clone(),
+        Type::Named { name, .. } => name.clone(),
     }
 }
 

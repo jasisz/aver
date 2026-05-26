@@ -108,7 +108,7 @@ pub fn parse_type_str_strict(s: &str) -> Result<Type, String> {
                 && s.chars()
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
             {
-                return Ok(Type::Named(s.to_string()));
+                return Ok(Type::named(s));
             }
 
             Err(s.to_string())
@@ -179,7 +179,7 @@ pub fn parse_type_str(s: &str) -> Type {
                     .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
                 && s != "Any"
             {
-                return Type::Named(s.to_string());
+                return Type::named(s);
             }
             // Invalid — internal recovery fallback
             Type::Invalid
@@ -427,7 +427,7 @@ mod tests {
         // Capitalized identifiers are now parsed as user-defined Named types
         assert_eq!(
             parse_type_str("SomeUnknownType"),
-            Type::Named("SomeUnknownType".to_string())
+            Type::named("SomeUnknownType")
         );
         // Lowercase non-keyword identifiers and empty strings become invalid recovery.
         assert_eq!(parse_type_str(""), Type::Invalid);
@@ -527,18 +527,15 @@ mod tests {
         // Capitalized identifiers are accepted as user-defined Named types
         assert_eq!(
             parse_type_str_strict("Result<MyError, String>").unwrap(),
-            Type::Result(
-                Box::new(Type::Named("MyError".to_string())),
-                Box::new(Type::Str)
-            )
+            Type::Result(Box::new(Type::named("MyError")), Box::new(Type::Str))
         );
         assert_eq!(
             parse_type_str_strict("Option<Shape>").unwrap(),
-            Type::Option(Box::new(Type::Named("Shape".to_string())))
+            Type::Option(Box::new(Type::named("Shape")))
         );
         assert_eq!(
             parse_type_str_strict("List<User>").unwrap(),
-            Type::List(Box::new(Type::Named("User".to_string())))
+            Type::List(Box::new(Type::named("User")))
         );
         // Lowercase unknown types still fail
         assert!(parse_type_str_strict("integ").is_err());
@@ -548,18 +545,15 @@ mod tests {
     fn test_dotted_named_type() {
         assert_eq!(
             parse_type_str("Tcp.Connection"),
-            Type::Named("Tcp.Connection".to_string())
+            Type::named("Tcp.Connection")
         );
         assert_eq!(
             parse_type_str_strict("Tcp.Connection").unwrap(),
-            Type::Named("Tcp.Connection".to_string())
+            Type::named("Tcp.Connection")
         );
         assert_eq!(
             parse_type_str_strict("Result<Tcp.Connection, String>").unwrap(),
-            Type::Result(
-                Box::new(Type::Named("Tcp.Connection".to_string())),
-                Box::new(Type::Str)
-            )
+            Type::Result(Box::new(Type::named("Tcp.Connection")), Box::new(Type::Str))
         );
     }
 

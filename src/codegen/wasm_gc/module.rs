@@ -4462,7 +4462,7 @@ fn register_nominal_in_type(
 ) {
     let canonical: String = t.display().chars().filter(|c| !c.is_whitespace()).collect();
     match t {
-        AverType::Named(name) => {
+        AverType::Named { name, .. } => {
             if type_registry.record_fields.contains_key(name) {
                 eq_helpers.register_transitive(name, EqKind::Record, type_registry);
             } else if type_registry
@@ -4570,7 +4570,7 @@ fn discover_builtins_in_expr(
             use crate::ast::BinOp as Op;
             if matches!(op, Op::Eq | Op::Neq)
                 && let Some(t) = l.ty()
-                && let AverType::Named(name) = t
+                && let AverType::Named { name, .. } = t
             {
                 if type_registry.record_fields.contains_key(name) {
                     eq_helpers.register_transitive(name, EqKind::Record, type_registry);

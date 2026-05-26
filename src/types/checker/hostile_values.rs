@@ -65,7 +65,7 @@ pub fn boundary_values(ty: &Type) -> Vec<Literal> {
         // Named (user records / sum types) and Unknown: no literal
         // representation available without checking the project's type
         // table. Caller should leave these alone.
-        Type::Named(_) | Type::Var(_) | Type::Invalid => Vec::new(),
+        Type::Named { .. } | Type::Var(_) | Type::Invalid => Vec::new(),
     }
 }
 
@@ -144,7 +144,7 @@ pub fn boundary_exprs(ty: &Type) -> Vec<Spanned<Expr>> {
         // syntax for boundary inputs), Fn / Named / Unknown require
         // user-defined witnesses that hostile mode cannot invent.
         Type::Map(_, _) | Type::Vector(_) | Type::Fn(_, _, _) => Vec::new(),
-        Type::Named(_) | Type::Var(_) | Type::Invalid => Vec::new(),
+        Type::Named { .. } | Type::Var(_) | Type::Invalid => Vec::new(),
     }
 }
 
@@ -235,7 +235,7 @@ mod tests {
     fn named_and_unknown_return_empty() {
         // No literal representation — domain expansion should not invent
         // values for user-defined types in 0.13.
-        assert!(boundary_values(&Type::Named("Shape".to_string())).is_empty());
+        assert!(boundary_values(&Type::named("Shape")).is_empty());
         assert!(boundary_values(&Type::Invalid).is_empty());
     }
 
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn boundary_exprs_named_returns_empty() {
-        assert!(boundary_exprs(&Type::Named("MyShape".to_string())).is_empty());
+        assert!(boundary_exprs(&Type::named("MyShape")).is_empty());
     }
 
     #[test]

@@ -78,7 +78,7 @@ impl TypeChecker {
             Type::Map(_, _) | Type::Fn(_, _, _) | Type::Unit | Type::Var(_) => {
                 return;
             }
-            Type::Named(name) if !self.type_variants.contains_key(name) => return, // records
+            Type::Named { name, .. } if !self.has_variants_for(name) => return, // records
             _ => {}
         }
 
@@ -137,7 +137,7 @@ impl TypeChecker {
 
         // Track how deeply we've expanded each Named type to prevent
         // exponential branching on recursive sum types.
-        let named_key = if let Type::Named(name) = head_ty {
+        let named_key = if let Type::Named { name, .. } = head_ty {
             let d = type_depth.entry(name.clone()).or_insert(0);
             *d += 1;
             if *d > RECURSIVE_TYPE_MAX_DEPTH {
@@ -251,8 +251,8 @@ impl TypeChecker {
                 arg_types: items.clone(),
             }]),
             Type::Vector(_) => None, // Vector is not exhaustively matchable
-            Type::Named(name) => {
-                let variants = self.type_variants.get(name)?;
+            Type::Named { name, .. } => {
+                let variants = self.variants_for(name)?;
                 let mut out = Vec::new();
                 for variant in variants {
                     out.push(CtorSpec {

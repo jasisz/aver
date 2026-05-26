@@ -36,7 +36,7 @@ pub fn type_to_rust(ty: &Type) -> String {
                  This indicates unresolved typing leaked into codegen."
             )
         }
-        Type::Named(name) => {
+        Type::Named { name, .. } => {
             // Dotted names like Tcp.Connection → not supported in transpilation
             if name.contains('.') {
                 name.replace('.', "_")

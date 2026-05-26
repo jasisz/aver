@@ -858,16 +858,16 @@ fn error_record_creation_field_type_mismatch() {
 fn named_types_are_compatible_with_same_name() {
     // Two Named("Shape") values should be compatible
     use aver::types::Type;
-    let a = Type::Named("Shape".to_string());
-    let b = Type::Named("Shape".to_string());
+    let a = Type::named("Shape");
+    let b = Type::named("Shape");
     assert!(a.compatible(&b));
 }
 
 #[test]
 fn named_types_are_incompatible_with_different_names() {
     use aver::types::Type;
-    let a = Type::Named("Shape".to_string());
-    let b = Type::Named("User".to_string());
+    let a = Type::named("Shape");
+    let b = Type::named("User");
     assert!(!a.compatible(&b));
 }
 
@@ -878,7 +878,7 @@ fn named_type_is_compatible_with_invalid_recovery() {
     // into a cascade of `expected X, got Invalid` diagnostics. Pre-A4
     // this test asserted the opposite direction.
     use aver::types::Type;
-    let named = Type::Named("Shape".to_string());
+    let named = Type::named("Shape");
     assert!(named.compatible(&Type::Invalid));
     assert!(Type::Invalid.compatible(&named));
 }
@@ -2633,6 +2633,717 @@ fn pick() -> Int
         errs.is_empty(),
         "expected single-module qualified usage to typecheck, got:\n  {}",
         errs.join("\n  ")
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review #148): when two dep modules each
+/// expose the same bare type name (`A.Shape` *and* `B.Shape` both
+/// exposed as `Shape`), the bare alias resolution must NOT silently
+/// pick one. The pre-review code last-write-won an arbitrary
+/// `TypeId`; that's the same bug class typed identity is supposed to
+/// eliminate. Verify the bare reference is rejected so callers are
+/// forced to qualify.
+#[test]
+fn cross_module_same_bare_type_name_bare_reference_is_ambiguous() {
+    let root = temp_module_root("bare_ambiguous_type");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "Module A's Shape."
+
+type Shape
+    Circle(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape]
+    intent = "Module B's Shape."
+
+type Shape
+    Triangle(Float)
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Bare reference to Shape must be ambiguous."
+
+fn takesShape(s: Shape) -> Float
+    0.0
+
+fn callsWithA() -> Float
+    takesShape(A.Shape.Circle(1.0))
+
+fn callsWithB() -> Float
+    takesShape(B.Shape.Triangle(2.0))
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    // The param annotation `s: Shape` cannot resolve — both
+    // `A.Shape` and `B.Shape` are exposed, so the bare alias is
+    // `Ambiguous` and `resolve_type_id` deliberately refuses it.
+    // Each call site then surfaces a typed-identity mismatch: the
+    // caller's `A.Shape.Circle(...)` / `B.Shape.Triangle(...)` stamps
+    // a `Type::Named { id: Some(_), name: "Shape" }` value, the
+    // param is `Type::Named { id: None, name: "Shape" }`, and the
+    // matcher refuses the mixed-id case for ambiguous-by-design
+    // names. Without that refusal the old name-equality fallback
+    // would let both calls go through and silently agree on
+    // whichever `Shape` happened to win the global alias slot.
+    // Both call sites are equally unsound (one passes A.Shape, the
+    // other B.Shape against an ambiguous bare param), so both must
+    // surface. Asserting exact count catches an asymmetric regression
+    // where one side gets rejected because the bare alias secretly
+    // resolved to the other module's identity.
+    let call_mismatches: Vec<&String> = errs
+        .iter()
+        .filter(|e| e.contains("Argument 1 of 'takesShape'"))
+        .collect();
+    assert_eq!(
+        call_mismatches.len(),
+        2,
+        "expected exactly 2 argument-mismatch diagnostics on `takesShape(...)` calls when `Shape` is ambiguous, got: {errs:?}"
+    );
+    // Explicit ambiguity diagnostic on the param annotation itself —
+    // surfaces the underlying cause instead of just two
+    // type-mismatch errors that read `expected Shape, got Shape`.
+    assert!(
+        errs.iter().any(|e| {
+            e.contains("Ambiguous type name 'Shape'")
+                && e.contains("A.Shape")
+                && e.contains("B.Shape")
+        }),
+        "expected an 'Ambiguous type name Shape; use A.Shape or B.Shape' diagnostic, got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 7): `canonicalize_named` must
+/// treat an existing `Some(TypeId)` as sacred. Pre-fix, the
+/// canonicaliser overwrote any `id` by whatever `resolve_type_id`
+/// returned in the *current* checker context — so a value coming
+/// back from `C.make()` correctly stamped with `Some(C.Shape)`
+/// would get re-stamped to `Some(A.Shape)` when `infer_type` re-
+/// canonicalised it in the importer's context (A's `Shape` is the
+/// only visible bare alias). Soundness collapsed: `A.consume(C.make())`
+/// silently typechecked.
+///
+/// Fix: canonicaliser only fills in `id: None`. Once a stamp has
+/// `id: Some(_)`, no later context can override it.
+#[test]
+fn canonicalize_named_does_not_overwrite_existing_typeid() {
+    let root = temp_module_root("canonicalize_preserves_id");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape, consume]
+    intent = "Public A.Shape + consumer."
+
+type Shape
+    Circle(Float)
+
+fn consume(s: Shape) -> Float
+    match s
+        Shape.Circle(r) -> r
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [make]
+    intent = "Private C.Shape (only `make` exposed)."
+
+type Shape
+    Hexagon(Float)
+
+fn make() -> Shape
+    Shape.Hexagon(1.0)
+"#,
+    )
+    .expect("write C.av failed");
+
+    let src = r#"module Main
+    depends [A, C]
+    intent = "Tries to feed C.make() into A.consume — distinct types, must reject."
+
+fn caller() -> Float
+    A.consume(C.make())
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Argument 1 of 'A.consume'")
+                || e.contains("Argument 1 of 'consume'")),
+        "expected an argument-type mismatch on `A.consume(C.make())` (A.Shape != C.Shape); got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 6): an exported `fn` in module
+/// B that references a type by bare name must resolve in B's own
+/// resolver context — B's own types + B's actual `depends` transitive
+/// exports — NOT against arbitrary siblings the entry module happens
+/// to also pull in.
+///
+/// Repro: B depends on A and re-uses `A.Shape` as bare `Shape` in
+/// its own signature. Main depends on B and C (C exposes an
+/// unrelated `Shape`). Pre-fix, when Main's checker canonicalised
+/// B's exported sig, the bare `Shape` resolved against the
+/// importer's bare alias map — which was ambiguous between
+/// `A.Shape` and `C.Shape` — and the typed-id never got populated.
+/// `takeA(B.pass(A.make()))` then failed with the cross-module
+/// collapse. Fix: per-owner resolver knows B's own `depends [A]`,
+/// resolves `Shape` to `A.Shape`, ignoring siblings.
+#[test]
+fn dep_module_resolver_uses_owner_depends_not_importer_siblings() {
+    let root = temp_module_root("owner_depends_resolver");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape, make]
+    intent = "A.Shape + factory."
+
+type Shape
+    Circle(Float)
+
+fn make() -> Shape
+    Shape.Circle(1.0)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    depends [A]
+    exposes [pass]
+    intent = "Re-exports an A.Shape passthrough; uses bare `Shape`."
+
+fn pass(s: Shape) -> Shape
+    s
+"#,
+    )
+    .expect("write B.av failed");
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [Shape]
+    intent = "Unrelated sibling Shape that must NOT leak into B's scope."
+
+type Shape
+    Triangle(Float)
+"#,
+    )
+    .expect("write C.av failed");
+
+    let src = r#"module Main
+    depends [B, C]
+    intent = "Plumbs A.make through B.pass; C is just an unrelated sibling."
+
+fn takeA(s: A.Shape) -> Float
+    match s
+        A.Shape.Circle(r) -> r
+
+fn caller() -> Float
+    takeA(B.pass(A.make()))
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected B's bare `Shape` to resolve to A.Shape via B's own depends; got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 6 part 2): a dep module B's
+/// bare `Shape` must NOT fall back to a `Shape` declared in the
+/// entry module. Entry-scope types don't belong to dep modules'
+/// resolver contexts. `B.id(s: Shape)` with no `Shape` in B's scope
+/// (and Main defining one) should fail to resolve, not silently bind
+/// B's parameter to Main's type.
+#[test]
+fn dep_module_resolver_does_not_fall_back_to_entry_types() {
+    let root = temp_module_root("dep_resolver_no_entry_fallback");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [id]
+    intent = "Has no `Shape`; uses bare `Shape` in its signature."
+
+fn id(s: Shape) -> Shape
+    s
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [B]
+    intent = "Defines its own Shape; B must NOT pick it up."
+
+type Shape
+    Circle(Float)
+
+fn caller() -> Float
+    match B.id(Shape.Circle(1.0))
+        Shape.Circle(r) -> r
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    // B's signature contains an unresolved `Shape` — B has neither
+    // its own nor any dep providing one. The pre-fix entry-fallback
+    // let this silently bind to Main's `Shape`, smuggling Main's
+    // type into B's signature. Either B's sig fails to typecheck
+    // (B can't resolve `Shape`) or Main's call surfaces the
+    // identity mismatch; both are acceptable, but a quiet `✓ types`
+    // is the regression we're guarding against.
+    assert!(
+        !errs.is_empty(),
+        "expected B's `s: Shape` to fail to silently bind to Main.Shape via entry-fallback; got no errors"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 5 F1): the type stamp on
+/// a dep module's exported fn signature must resolve in the dep's
+/// own scope, not the importer's. Pre-fix
+/// `integrate_registry` called the regular `canonicalize_named`,
+/// which uses the importer's `current_module_prefix` + bare alias
+/// map — so `B.make() -> Shape` (where `Shape` is B's own type) lost
+/// its `TypeId` whenever `Shape` was ambiguous or unresolvable in
+/// `Main`. The user-visible failure was
+/// `expected B.Shape, got Shape` on every cross-module call.
+#[test]
+fn dep_module_exported_sig_resolves_in_owner_scope() {
+    let root = temp_module_root("owner_aware_canonicalize");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "A.Shape."
+
+type Shape
+    Circle(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape, make]
+    intent = "B.Shape + factory."
+
+type Shape
+    Triangle(Float)
+
+fn make() -> Shape
+    Shape.Triangle(2.0)
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Forwards B.make() into a B.Shape consumer."
+
+fn takeB(s: B.Shape) -> Float
+    match s
+        B.Shape.Triangle(r) -> r
+
+fn caller() -> Float
+    takeB(B.make())
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected `takeB(B.make())` to typecheck cleanly when B.make's return is B.Shape; got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 5 F1, soundness counterpart):
+/// even when both dep modules hide their own `Shape` from `exposes`,
+/// the typechecker must still distinguish `C.Shape` from `D.Shape`
+/// at the matcher boundary so `D.consume(C.make())` is rejected.
+/// Pre-fix the registry-side canonicalisation left both signatures'
+/// `Shape` references unresolved (`id: None`), the matcher's
+/// `(None, None)` branch compared by name, and the call silently
+/// passed. With owner-aware canonicalisation each side carries its
+/// own real `TypeId` (still treated as opaque to the importer
+/// because neither type is exposed) and the matcher rejects.
+#[test]
+fn private_exported_sig_types_do_not_collapse_across_modules() {
+    let root = temp_module_root("private_exported_sigs_distinct");
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [make]
+    intent = "C's Shape is private but appears in exported make."
+
+type Shape
+    Hexagon(Float)
+
+fn make() -> Shape
+    Shape.Hexagon(1.0)
+"#,
+    )
+    .expect("write C.av failed");
+    std::fs::write(
+        root.join("D.av"),
+        r#"module D
+    exposes [consume]
+    intent = "D's Shape is private but appears in exported consume."
+
+type Shape
+    Circle(Float)
+
+fn consume(s: Shape) -> Float
+    match s
+        Shape.Circle(r) -> r
+"#,
+    )
+    .expect("write D.av failed");
+
+    let src = r#"module Main
+    depends [C, D]
+    intent = "Tries to feed C.make() into D.consume — distinct private types."
+
+fn main() -> Float
+    D.consume(C.make())
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Argument 1 of 'D.consume'")
+                || e.contains("Argument 1 of 'consume'")),
+        "expected an argument-type mismatch on `D.consume(C.make())` (C.Shape != D.Shape); got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 4 F1): a qualified
+/// `C.Shape` reference must NOT resolve when `C` doesn't expose
+/// `Shape`. Pre-fix `resolve_type_id` consulted the symbol table
+/// directly, which carries every dep type regardless of the
+/// `exposes` contract, so the qualified import bypassed visibility.
+/// Now `resolve_type_id` filters through `visible_type_ids`
+/// (populated only from `SymbolRegistry::from_modules` and own-
+/// module declarations); the qualified private import either fails
+/// to resolve, or — when picked up at a signature boundary — the
+/// explicit "private import" diagnostic surfaces.
+#[test]
+fn qualified_private_dep_type_does_not_resolve() {
+    let root = temp_module_root("qualified_private_import");
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [helper]
+    intent = "C.Shape declared but NOT exposed."
+
+type Shape
+    Hexagon(Float)
+
+fn helper() -> Int
+    0
+"#,
+    )
+    .expect("write C.av failed");
+
+    let src = r#"module Main
+    depends [C]
+    intent = "Tries to import C.Shape directly."
+
+fn takesPrivate(s: C.Shape) -> Float
+    0.0
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter().any(|e| {
+            (e.contains("private") || e.contains("not exposed") || e.contains("not visible"))
+                && e.contains("C.Shape")
+        }),
+        "expected a 'C.Shape is private / not exposed' diagnostic on `s: C.Shape`, got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 3 nit #1): the ambiguity
+/// diagnostic must NOT list a private (non-exposed) candidate even
+/// when it shares the bare name. `Resolution::Ambiguous(Vec<TypeId>)`
+/// carries the candidate IDs populated through visibility-exposed
+/// aliases — types that aren't exposed never reach the alias map, so
+/// `ambiguous_type_candidates` returns only the names the user can
+/// actually pick from.
+#[test]
+fn ambiguity_diagnostic_omits_private_dep_candidates() {
+    let root = temp_module_root("ambiguity_private_excluded");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "Public A.Shape."
+
+type Shape
+    Circle(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape]
+    intent = "Public B.Shape."
+
+type Shape
+    Triangle(Float)
+"#,
+    )
+    .expect("write B.av failed");
+    // C declares a `Shape` but does NOT expose it. (Non-empty
+    // `exposes [helper]` triggers the explicit-list rule, so `Shape`
+    // — absent from the list — stays private.) Pre-fix
+    // `ambiguous_type_candidates` would have scanned the full
+    // SymbolTable and listed `C.Shape` alongside `A.Shape` / `B.Shape`
+    // in the user-facing diagnostic, even though the user can't
+    // actually reference `C.Shape` from `Main`.
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [helper]
+    intent = "Private C.Shape (Shape NOT in exposes list)."
+
+type Shape
+    Hexagon(Float)
+
+fn helper() -> Int
+    0
+"#,
+    )
+    .expect("write C.av failed");
+
+    let src = r#"module Main
+    depends [A, B, C]
+    intent = "Bare Shape with one private dep candidate."
+
+fn takesShape(s: Shape) -> Float
+    0.0
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    let ambig = errs
+        .iter()
+        .find(|e| e.contains("Ambiguous type name 'Shape'"))
+        .expect("expected an ambiguity diagnostic");
+    assert!(ambig.contains("A.Shape"), "missing A.Shape: {ambig}");
+    assert!(ambig.contains("B.Shape"), "missing B.Shape: {ambig}");
+    assert!(
+        !ambig.contains("C.Shape"),
+        "private C.Shape leaked into diagnostic: {ambig}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 3 nit #2): the explicit
+/// ambiguity diagnostic now also fires on local binding annotations
+/// (`x: Shape = ...`), not just function param / return / record
+/// field positions. Without this hook the matcher still rejects the
+/// program — but the user got "expected Shape, got Shape" instead of
+/// the actionable "Ambiguous type name; use A.Shape or B.Shape".
+#[test]
+fn ambiguous_bare_name_in_binding_annotation_surfaces_explicit_diagnostic() {
+    let root = temp_module_root("ambiguous_binding_ann");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "A.Shape."
+
+type Shape
+    Circle(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape]
+    intent = "B.Shape."
+
+type Shape
+    Triangle(Float)
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Bare Shape annotation in a binding."
+
+fn pick() -> Float
+    s: Shape = A.Shape.Circle(1.0)
+    0.0
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter().any(|e| {
+            e.contains("Binding 's' annotation")
+                && e.contains("Ambiguous type name 'Shape'")
+                && e.contains("A.Shape")
+                && e.contains("B.Shape")
+        }),
+        "expected an ambiguity diagnostic on the binding annotation, got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review #148): the exported `TypeCheckResult.fn_sigs`
+/// map must not silently bind a bare-name fn entry when two distinct
+/// dep modules both expose the same bare name. Rust codegen and
+/// other downstream consumers historically did
+/// `ctx.fn_sigs.get(&fd.name)` against a `HashMap<String, _>` whose
+/// global bare alias was last-write-wins — a real bug class where a
+/// `foo` lookup could pick up the wrong module's parameter list.
+/// After this PR the bare-name entry exists only when unambiguous;
+/// the canonical `"Module.foo"` key is always present.
+#[test]
+fn cross_module_same_bare_fn_name_drops_bare_alias_in_exported_map() {
+    use aver::source::parse_source;
+    use aver::types::checker::run_type_check_with_base;
+
+    let root = temp_module_root("bare_ambiguous_fn");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [doit]
+    intent = "Module A's doit."
+
+fn doit(a: Int) -> Int
+    a
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [doit]
+    intent = "Module B's doit (different param)."
+
+fn doit(b: String) -> Int
+    0
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Two `doit` fns, only the qualified form may resolve."
+
+fn caller() -> Int
+    A.doit(1)
+"#;
+    let items = parse_source(src).expect("parse failed");
+    let mut items = items;
+    aver::tco::transform_program(&mut items);
+    let _ = run_type_check_with_base(&items, root.to_str());
+    let result = aver::types::checker::run_type_check_full(&items, root.to_str());
+
+    // Both qualified canonicals are present.
+    assert!(
+        result.fn_sigs.contains_key("A.doit"),
+        "expected canonical A.doit, got keys: {:?}",
+        result.fn_sigs.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        result.fn_sigs.contains_key("B.doit"),
+        "expected canonical B.doit, got keys: {:?}",
+        result.fn_sigs.keys().collect::<Vec<_>>()
+    );
+    // The bare-name alias is suppressed because A.doit and B.doit
+    // disagree — last-write-wins would have left whichever module
+    // happened to iterate second silently winning the `doit` slot.
+    assert!(
+        !result.fn_sigs.contains_key("doit"),
+        "bare `doit` must not appear when two dep modules both expose it; keys: {:?}",
+        result.fn_sigs.keys().collect::<Vec<_>>()
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 2): when the entry module and a
+/// dep module both declare `doit`, source-level `doit()` inside the
+/// entry unambiguously means the entry's own fn. The exported
+/// `TypeCheckResult.fn_sigs` bare alias must therefore point at the
+/// entry fn rather than being suppressed as "ambiguous" — consumers
+/// (`verify_effects`, `diagnostics::context::callgraph`, intent
+/// checks) still look the entry's bodies up by `&fd.name` and need
+/// the local signature.
+#[test]
+fn entry_local_fn_shadows_dep_module_bare_alias() {
+    use aver::source::parse_source;
+
+    let root = temp_module_root("entry_shadows_dep_fn");
+    std::fs::write(
+        root.join("Helper.av"),
+        r#"module Helper
+    exposes [doit]
+    intent = "Dep `doit` returning a String."
+
+fn doit(n: Int) -> String
+    "from-helper"
+"#,
+    )
+    .expect("write Helper.av failed");
+
+    let src = r#"module Main
+    depends [Helper]
+    intent = "Local `doit` shadowing the imported one."
+
+fn doit(n: Int) -> Int
+    n
+
+fn caller() -> Int
+    doit(7)
+"#;
+    let items = parse_source(src).expect("parse failed");
+    let mut items = items;
+    aver::tco::transform_program(&mut items);
+    let result = aver::types::checker::run_type_check_full(&items, root.to_str());
+
+    // No errors — `doit(7)` resolves to the entry's own fn.
+    assert!(
+        result.errors.is_empty(),
+        "expected entry-local `doit` to resolve cleanly, got: {:?}",
+        result.errors
+    );
+    // Bare alias points at the entry's signature (returns `Int`),
+    // not at Helper's (returns `String`).
+    let (_, bare_ret, _) = result
+        .fn_sigs
+        .get("doit")
+        .expect("expected bare `doit` alias to be present (entry shadowing)");
+    assert!(
+        matches!(bare_ret, aver::ast::Type::Int),
+        "bare `doit` ret must be the entry fn's `Int`, not Helper.doit's `String`; got {:?}",
+        bare_ret
+    );
+    // Canonical Helper.doit is still reachable for callers that want it.
+    assert!(
+        result.fn_sigs.contains_key("Helper.doit"),
+        "expected canonical Helper.doit, got keys: {:?}",
+        result.fn_sigs.keys().collect::<Vec<_>>()
     );
 
     let _ = std::fs::remove_dir_all(&root);

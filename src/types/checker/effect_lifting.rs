@@ -840,7 +840,7 @@ pub fn type_to_annotation(ty: &Type) -> String {
         Type::Str => "String".to_string(),
         Type::Bool => "Bool".to_string(),
         Type::Unit => "Unit".to_string(),
-        Type::Named(n) => n.clone(),
+        Type::Named { name: n, .. } => n.clone(),
         Type::Option(inner) => format!("Option<{}>", type_to_annotation(inner)),
         Type::Result(ok, err) => format!(
             "Result<{}, {}>",

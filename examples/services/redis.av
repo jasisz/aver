@@ -3,7 +3,7 @@ module Redis
         "Minimal Redis client over raw TCP using the RESP protocol."
         "Demonstrates persistent Tcp connections: connect once, issue multiple"
         "commands on the same socket, close explicitly."
-    exposes [connect, disconnect, ping, set, get, del]
+    exposes [connect, disconnect, ping, set, get, del, RedisConfig]
     depends []
     effects [Console, Tcp]
 

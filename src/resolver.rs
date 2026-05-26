@@ -321,7 +321,7 @@ impl<'a> ResolverState<'a> {
             Pattern::Constructor(name, bindings) => {
                 let bare = name.rsplit('.').next().unwrap_or(name);
                 let parent_hint: Option<String> = match (subject_ty, name.split_once('.')) {
-                    (Some(Type::Named(parent)), _) => Some(parent.clone()),
+                    (Some(Type::Named { name: parent, .. }), _) => Some(parent.clone()),
                     (_, Some((parent, _))) => Some(parent.to_string()),
                     _ => self
                         .type_info

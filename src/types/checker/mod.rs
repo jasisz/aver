@@ -14,6 +14,7 @@ use super::{Type, parse_type_str_strict};
 use crate::ast::{
     BinOp, Expr, FnDef, Literal, Module, Pattern, Spanned, Stmt, TailCallData, TopLevel, TypeDef,
 };
+use crate::ir::{FnId, FnKey, SymbolTable, TypeId, TypeKey};
 
 mod builtins;
 pub mod effect_classification;
@@ -73,9 +74,67 @@ pub fn run_type_check_with_base(items: &[TopLevel], base_dir: Option<&str>) -> V
 }
 
 pub fn run_type_check_full(items: &[TopLevel], base_dir: Option<&str>) -> TypeCheckResult {
-    let mut checker = TypeChecker::new();
+    let mut checker = TypeChecker::new_with_symbols(build_symbols_for_items(items, base_dir));
     checker.check(items, base_dir);
     finalize_check_result(checker, items)
+}
+
+/// Build the `SymbolTable` for a typecheck entry point. Mirrors the
+/// dep-resolution path inside [`TypeChecker::check`] so the table
+/// covers both entry items and any modules the entry file depends on.
+/// Filesystem errors are silently dropped here — the checker rebuilds
+/// its own diagnostics during the actual check, so duplicating them at
+/// the symbol-table layer would only produce noise.
+fn build_symbols_for_items(items: &[TopLevel], base_dir: Option<&str>) -> SymbolTable {
+    let dep_modules = base_dir
+        .and_then(|base| {
+            TypeChecker::module_decl(items).and_then(|m| {
+                crate::source::load_module_tree(&m.depends, base)
+                    .ok()
+                    .map(|loaded| symbols_dep_modules_from_loaded(&loaded))
+            })
+        })
+        .unwrap_or_default();
+    SymbolTable::build(items, &dep_modules)
+}
+
+/// Pre-loaded variant of [`build_symbols_for_items`] for the
+/// `WithLoaded` typecheck driver (playground virtual FS).
+fn build_symbols_with_loaded(
+    items: &[TopLevel],
+    loaded: &[crate::source::LoadedModule],
+) -> SymbolTable {
+    let dep_modules = symbols_dep_modules_from_loaded(loaded);
+    SymbolTable::build(items, &dep_modules)
+}
+
+fn symbols_dep_modules_from_loaded(
+    loaded: &[crate::source::LoadedModule],
+) -> Vec<crate::codegen::ModuleInfo> {
+    loaded
+        .iter()
+        .map(|m| crate::codegen::ModuleInfo {
+            prefix: m.dep_name.clone(),
+            depends: Vec::new(),
+            type_defs: m
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::TypeDef(td) => Some(td.clone()),
+                    _ => None,
+                })
+                .collect(),
+            fn_defs: m
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::FnDef(fd) => Some(fd.clone()),
+                    _ => None,
+                })
+                .collect(),
+            analysis: None,
+        })
+        .collect()
 }
 
 /// Variant of [`run_type_check_full`] that uses pre-loaded dependency
@@ -86,7 +145,7 @@ pub fn run_type_check_with_loaded(
     items: &[TopLevel],
     loaded: &[crate::source::LoadedModule],
 ) -> TypeCheckResult {
-    let mut checker = TypeChecker::new();
+    let mut checker = TypeChecker::new_with_symbols(build_symbols_with_loaded(items, loaded));
     checker.check_with_loaded(items, loaded);
     finalize_check_result(checker, items)
 }
@@ -102,7 +161,7 @@ pub fn run_type_check_full_self_host(
     items: &[TopLevel],
     base_dir: Option<&str>,
 ) -> TypeCheckResult {
-    let mut checker = TypeChecker::new();
+    let mut checker = TypeChecker::new_with_symbols(build_symbols_for_items(items, base_dir));
     checker.self_host_mode = true;
     checker.check(items, base_dir);
     finalize_check_result(checker, items)
@@ -114,36 +173,104 @@ pub fn run_type_check_with_loaded_self_host(
     items: &[TopLevel],
     loaded: &[crate::source::LoadedModule],
 ) -> TypeCheckResult {
-    let mut checker = TypeChecker::new();
+    let mut checker = TypeChecker::new_with_symbols(build_symbols_with_loaded(items, loaded));
     checker.self_host_mode = true;
     checker.check_with_loaded(items, loaded);
     finalize_check_result(checker, items)
 }
 
 fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCheckResult {
-    // Internal `fn_sigs` is keyed by canonical "Module.name" (Iron — A3).
-    // The exported map preserves both forms so external consumers
-    // (`verify_effects`, Lean / Dafny codegen, the CLI summary) can
-    // continue to look entries up by the bare name the user wrote.
-    let mut fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = checker
-        .fn_sigs
-        .iter()
-        .map(|(k, v)| {
-            (
-                k.clone(),
-                (v.params.clone(), v.ret.clone(), v.effects.clone()),
-            )
-        })
-        .collect();
-    for (alias, canonical) in &checker.sig_aliases {
-        if !fn_sigs.contains_key(alias)
-            && let Some(sig) = checker.fn_sigs.get(canonical)
-        {
-            fn_sigs.insert(
-                alias.clone(),
-                (sig.params.clone(), sig.ret.clone(), sig.effects.clone()),
-            );
+    // Phase B (post peer-review #148): flatten the internal split
+    // (`fn_sigs` keyed by `FnId`, `extra_sigs` keyed by canonical
+    // string) into the exported `HashMap<String, _>` external
+    // consumers expect. The old bare-alias mirror was last-write-wins
+    // across modules: when two distinct dep modules each exposed `foo`,
+    // one would silently win the global `"foo"` slot and Rust codegen's
+    // `ctx.fn_sigs.get(&fd.name)` could pick up the wrong signature.
+    //
+    // Now bare aliases land only when unambiguous. Each canonical key
+    // is always present; bare-name keys land only when no other fn in
+    // the program shares that bare name. Consumers that previously
+    // relied on a non-deterministic global "foo" entry will see a miss
+    // and surface a clear "qualify the reference" error instead of
+    // mismatched parameters.
+    let entry_prefix = checker.current_module_prefix.clone();
+    let mut fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = HashMap::new();
+
+    // Iterate in `FnId` order for deterministic output (HashMap
+    // iteration order would otherwise leak non-determinism into the
+    // exported map and downstream diagnostics).
+    let mut ordered_user: Vec<(FnId, &FnSig)> =
+        checker.fn_sigs.iter().map(|(id, sig)| (*id, sig)).collect();
+    ordered_user.sort_by_key(|(id, _)| id.0);
+
+    // Tally bare-name owners. Phase B (peer review round 2): an
+    // entry-scope fn shadows any dep-module fn sharing the same bare
+    // name — source-level `doit()` inside `Main` unambiguously means
+    // `Main.doit`, even when a dep also exposes `doit`. We therefore
+    // suppress the bare alias only for dep-dep ambiguity (multiple
+    // dep modules share a bare name *and* the entry doesn't define
+    // one). When the entry owns the bare name, the bare alias points
+    // at the entry FnId; dep fns stay reachable only by qualified
+    // name.
+    let mut bare_entry_owner: HashMap<String, FnId> = HashMap::new();
+    let mut bare_dep_owners: HashMap<String, FnId> = HashMap::new();
+    let mut bare_dep_ambiguous: HashSet<String> = HashSet::new();
+    for (id, _) in &ordered_user {
+        let entry = checker.symbol_table.fn_entry(*id);
+        let bare = entry.key.name.as_str();
+        if entry.module.is_entry() {
+            bare_entry_owner.insert(bare.to_string(), *id);
+            continue;
         }
+        match bare_dep_owners.get(bare) {
+            None => {
+                bare_dep_owners.insert(bare.to_string(), *id);
+            }
+            Some(prior) if prior == id => {}
+            Some(_) => {
+                bare_dep_ambiguous.insert(bare.to_string());
+            }
+        }
+    }
+
+    for (id, sig) in &ordered_user {
+        let entry = checker.symbol_table.fn_entry(*id);
+        let canonical = if entry.module.is_entry() {
+            match entry_prefix.as_deref() {
+                Some(prefix) => crate::visibility::qualified_name(prefix, &entry.key.name),
+                None => entry.key.name.clone(),
+            }
+        } else {
+            entry.key.canonical()
+        };
+        let triple = (sig.params.clone(), sig.ret.clone(), sig.effects.clone());
+        fn_sigs.insert(canonical.clone(), triple.clone());
+        // Bare alias rules:
+        //  - entry-scope owner always wins (shadows any dep with the
+        //    same bare name);
+        //  - dep-scope fn gets the bare alias only when (a) the entry
+        //    doesn't own it and (b) no other dep module conflicts.
+        if entry.key.name == canonical {
+            continue;
+        }
+        let is_entry_owner = bare_entry_owner.get(&entry.key.name) == Some(id);
+        let mut emit_bare = false;
+        if entry.module.is_entry() {
+            emit_bare = is_entry_owner;
+        } else if !bare_entry_owner.contains_key(&entry.key.name)
+            && !bare_dep_ambiguous.contains(&entry.key.name)
+        {
+            emit_bare = true;
+        }
+        if emit_bare {
+            fn_sigs.entry(entry.key.name.clone()).or_insert(triple);
+        }
+    }
+    for (k, sig) in &checker.extra_sigs {
+        fn_sigs
+            .entry(k.clone())
+            .or_insert_with(|| (sig.params.clone(), sig.ret.clone(), sig.effects.clone()));
     }
 
     let memo_safe_types = checker.compute_memo_safe_types(items);
@@ -253,21 +380,139 @@ impl RecordFieldKey {
     }
 }
 
+/// Bare-name resolution result. Tracks ambiguity explicitly so
+/// `resolve_fn_id` / `resolve_type_id` can refuse the look-up when
+/// two distinct identities surface the same source name. The
+/// `Ambiguous` variant carries the actual candidate IDs (only those
+/// that made it through visibility, since that's the population
+/// path) so diagnostics can suggest exactly the names the user can
+/// actually pick from — never a private dep type that happens to
+/// share the bare name.
+#[derive(Debug, Clone)]
+enum Resolution<T> {
+    Single(T),
+    Ambiguous(Vec<T>),
+}
+
+impl<T: Copy + PartialEq> Resolution<T> {
+    /// Merge another candidate identity into an alias entry. Two
+    /// distinct identities for the same bare name produce
+    /// `Ambiguous`; a duplicate registration of the same identity is
+    /// a no-op (same module re-traversed by another path).
+    fn merge(&mut self, candidate: T) {
+        match self {
+            Resolution::Single(existing) if *existing == candidate => {}
+            Resolution::Single(existing) => {
+                let prior = *existing;
+                *self = Resolution::Ambiguous(vec![prior, candidate]);
+            }
+            Resolution::Ambiguous(seen) => {
+                if !seen.contains(&candidate) {
+                    seen.push(candidate);
+                }
+            }
+        }
+    }
+
+    fn unambiguous(&self) -> Option<T> {
+        match self {
+            Resolution::Single(v) => Some(*v),
+            Resolution::Ambiguous(_) => None,
+        }
+    }
+}
+
 struct TypeChecker {
-    fn_sigs: HashMap<String, FnSig>,
+    /// Resolved-identity table — phase B (#138). Populated by
+    /// [`TypeChecker::new_with_symbols`] from the program's `entry_items
+    /// + dep_modules` before any signature registration. Carries opaque
+    /// `FnId` / `TypeId` for every user-defined fn and type. The
+    /// checker resolves bare-name references through it instead of the
+    /// pre-phase-B `sig_aliases` string→string map.
+    symbol_table: SymbolTable,
+    /// User-defined function signatures, keyed by the opaque `FnId`
+    /// from `symbol_table`. Phase B (#138) migrated this away from
+    /// `HashMap<String, FnSig>` so that two modules each declaring `foo`
+    /// can't silently collide through bare-name keying.
+    ///
+    /// Built-in fn signatures (namespace methods like `Int.add`,
+    /// `Console.print`) and user constructors (variants of sum types,
+    /// product type constructors keyed by `"Module.Type.Variant"`)
+    /// don't have `FnId`s in the program symbol table — those live in
+    /// `extra_sigs` keyed by canonical string. `find_fn_sig` chains
+    /// the two for a unified bare-name → signature lookup.
+    fn_sigs: HashMap<FnId, FnSig>,
+    /// Builtin fn signatures + constructor signatures keyed by
+    /// canonical string. The non-`FnId` half of the split — entries
+    /// here either come from `register_builtins` (namespace methods)
+    /// or `register_type_def_sigs` (sum-type variant constructors,
+    /// product type "callable name" entries). Lookups against this
+    /// map use the canonical key directly; bare→canonical resolution
+    /// goes through `symbol_table.type_id_of` for type-derived keys.
+    extra_sigs: HashMap<String, FnSig>,
+    /// Bare → `FnId` aliases for cross-module imports. Populated
+    /// during `integrate_registry` from visibility-exposed aliases
+    /// (and during `build_signatures` for the current module's own
+    /// fns). The typed replacement for the pre-phase-B
+    /// `sig_aliases: HashMap<String, String>`: same bare-name routing
+    /// role, but the value side now carries opaque identity instead
+    /// of a string that needed re-resolution downstream.
+    ///
+    /// When two distinct modules each expose the same bare name
+    /// (`Pricing.percent` *and* `Math.percent` both surface a bare
+    /// `percent`), the entry switches to [`Resolution::Ambiguous`]
+    /// and `resolve_fn_id` refuses to silently pick one — the user
+    /// must qualify the reference. Avoids the
+    /// "global bare alias last-wins" bug class peer review #148
+    /// flagged.
+    bare_fn_aliases: HashMap<String, Resolution<FnId>>,
+    /// Bare → `TypeId` aliases. Same role as `bare_fn_aliases`
+    /// for the type-name dimension; consumed by `resolve_type_id`
+    /// and `canonical_type_name`.
+    bare_type_aliases: HashMap<String, Resolution<TypeId>>,
+    /// `FnId`s the current checker may legitimately resolve to.
+    /// Populated from `build_signatures` (the current module's own
+    /// fns — always visible from within the module) and from
+    /// `integrate_registry` (visibility-exposed entries from each
+    /// dep module — already filtered against the `exposes` contract
+    /// by `crate::visibility::SymbolRegistry::from_modules`).
+    ///
+    /// `resolve_fn_id` consults this set so a qualified
+    /// `C.helper()` reference fails when `helper` isn't exposed even
+    /// though the symbol table — which carries every fn from every
+    /// dep module regardless of visibility — has its `FnId`.
+    visible_fn_ids: HashSet<FnId>,
+    /// `TypeId`s the current checker may legitimately resolve to.
+    /// Same role as `visible_fn_ids` for the type-name dimension —
+    /// closes the qualified-private-import leak peer review round 4
+    /// flagged on `fn takes(s: C.Shape)` references against a `C`
+    /// whose `exposes` list didn't include `Shape`.
+    visible_type_ids: HashSet<TypeId>,
+    /// Per-module `depends` list, keyed by the dep module's
+    /// `dep_name`. Populated by `integrate_loaded_modules` so the
+    /// per-owner type resolver (`canonicalize_named_in_module`) can
+    /// walk an owner module's *own* depends when canonicalising its
+    /// exported signatures — not the entry module's or arbitrary
+    /// loaded siblings'. Round-6 peer review caught the leak: B
+    /// depends on A; Main depends on B, C; B's bare `Shape` was
+    /// resolving against `[A, C]` (Main's loaded tree) instead of
+    /// `[A]` (B's own depends), and `Shape` came back ambiguous.
+    module_depends: HashMap<String, Vec<String>>,
     value_members: HashMap<String, Type>,
     /// Field types for record types, keyed by `(type_name, field_name)`.
     /// Populated for both user-defined `record` types and built-in records
     /// (HttpResponse, Header). Single entry per (canonical type name, field);
-    /// lookup canonicalises `type_name` through `sig_aliases` at read time.
+    /// lookup canonicalises `type_name` through `SymbolTable` at read time.
     /// Enables checked dot-access on Named types.
     record_field_types: HashMap<RecordFieldKey, Type>,
-    /// Unqualified → qualified aliases for cross-module lookups.
-    /// E.g. "Shape.Circle" → "Data.Shape.Circle".
-    sig_aliases: HashMap<String, String>,
     /// Variant names for sum types: "Shape" → ["Circle", "Rect", "Point"].
     /// Pre-populated for Result and Option; extended by user-defined sum types.
     type_variants: HashMap<String, Vec<String>>,
+    /// Module prefix of the items currently being checked. `None`
+    /// while checking entry-scope items. Per-module sub-checkers
+    /// (`check_loaded_module_bodies`) set this to the dep module's
+    /// prefix so bare-name resolution finds the local type/fn first.
+    current_module_prefix: Option<String>,
     /// Top-level bindings visible from function bodies.
     globals: HashMap<String, Type>,
     /// Local bindings in the current function/scope.
@@ -309,7 +554,7 @@ struct TypeChecker {
 }
 
 impl TypeChecker {
-    fn new() -> Self {
+    fn new_with_symbols(symbol_table: SymbolTable) -> Self {
         let mut type_variants = HashMap::new();
         type_variants.insert(
             "Result".to_string(),
@@ -321,11 +566,18 @@ impl TypeChecker {
         );
 
         let mut tc = TypeChecker {
+            symbol_table,
             fn_sigs: HashMap::new(),
+            extra_sigs: HashMap::new(),
+            bare_fn_aliases: HashMap::new(),
+            bare_type_aliases: HashMap::new(),
+            visible_fn_ids: HashSet::new(),
+            visible_type_ids: HashSet::new(),
+            module_depends: HashMap::new(),
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
-            sig_aliases: HashMap::new(),
             type_variants,
+            current_module_prefix: None,
             globals: HashMap::new(),
             locals: HashMap::new(),
             errors: Vec::new(),
@@ -342,69 +594,504 @@ impl TypeChecker {
         tc
     }
 
-    // -- Alias-aware lookups ------------------------------------------------
+    // -- Identity resolution (phase B) -------------------------------------
+
+    /// Resolve a source-faithful function reference (`"foo"`,
+    /// `"Module.foo"`, `"Tcp.send"`) to a `FnId` via the symbol table.
+    /// Tries, in order: literal-as-qualified (split `"Module.foo"`
+    /// into `(Module, foo)`), current-module-scoped bare name, then
+    /// entry-scope bare name, then the typed bare-alias map.
+    ///
+    /// Misses for builtin namespace methods and constructors — those
+    /// don't live in the program symbol table; callers fall back to
+    /// the `extra_sigs` string-keyed half.
+    pub(crate) fn resolve_fn_id(&self, name: &str) -> Option<FnId> {
+        // Phase B (peer review round 4): every `SymbolTable`
+        // resolution path filters through `visible_fn_ids` so a
+        // qualified `C.helper()` reference can't reach into a dep
+        // module's private fn just because the symbol table
+        // unconditionally stores every dep entry. Bare-name lookup
+        // already went through `bare_fn_aliases`, which is itself
+        // populated only from visibility-exposed entries — that
+        // branch stays as-is.
+        if let Some((prefix, n)) = name.rsplit_once('.') {
+            if let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, n))
+                && self.visible_fn_ids.contains(&id)
+            {
+                return Some(id);
+            }
+            if self.current_module_prefix.as_deref() == Some(prefix)
+                && let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(n))
+                && self.visible_fn_ids.contains(&id)
+            {
+                return Some(id);
+            }
+        }
+        if let Some(prefix) = self.current_module_prefix.as_deref()
+            && let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, name))
+            && self.visible_fn_ids.contains(&id)
+        {
+            return Some(id);
+        }
+        if let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(name))
+            && self.visible_fn_ids.contains(&id)
+        {
+            return Some(id);
+        }
+        self.bare_fn_aliases
+            .get(name)
+            .and_then(Resolution::unambiguous)
+    }
+
+    /// `true` when the bare alias map has recorded multiple distinct
+    /// `TypeId`s for `name` (cross-module same-bare-name import).
+    /// Distinct from "name doesn't resolve at all" — used by the
+    /// matcher to decide whether a mixed (Some, None) typed/raw
+    /// comparison should fall back to name equality (only when the
+    /// `None` side is genuinely a builtin / external name, not when
+    /// it's ambiguous bare reference whose typed identity we
+    /// deliberately suppressed).
+    pub(crate) fn type_name_is_ambiguous(&self, name: &str) -> bool {
+        matches!(
+            self.bare_type_aliases.get(name),
+            Some(Resolution::Ambiguous(_))
+        )
+    }
+
+    /// List the canonical names of every type that the bare alias map
+    /// recorded as a candidate for `bare`. The `Resolution::Ambiguous`
+    /// variant carries the actual conflicting `TypeId`s populated
+    /// through visibility-exposed aliases — never scans the full
+    /// `symbol_table.types`, so a private (non-exposed) dep type that
+    /// happens to share a bare name never appears in the diagnostic.
+    pub(crate) fn ambiguous_type_candidates(&self, bare: &str) -> Vec<String> {
+        let Some(Resolution::Ambiguous(ids)) = self.bare_type_aliases.get(bare) else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = ids
+            .iter()
+            .map(|id| self.symbol_table.type_entry(*id).key.canonical())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Walk `ty` and emit diagnostics for every distinct unresolved
+    /// reason the typechecker deliberately blocked resolution.
+    /// Called from the signature-registration boundary
+    /// (`build_signatures`, `register_type_def_sigs`, flow's binding
+    /// annotations) so the user gets a clean explanation instead of
+    /// downstream `expected X, got X` cascades. Two reasons are
+    /// surfaced:
+    ///
+    ///   - Ambiguous bare reference: `Foo` matches multiple
+    ///     visibility-exposed `TypeId`s. Diagnostic suggests the
+    ///     qualified forms.
+    ///   - Private qualified import: `Module.Foo` exists in the
+    ///     symbol table but isn't on `Module`'s `exposes` list.
+    ///     Diagnostic names the dep + asks for the export.
+    pub(super) fn report_ambiguous_named(&mut self, ty: &Type, line: usize, source_ctx: &str) {
+        let mut seen_ambig: HashSet<String> = HashSet::new();
+        let mut seen_private: HashSet<String> = HashSet::new();
+        self.collect_unresolved_into(ty, &mut seen_ambig, &mut seen_private);
+        for name in seen_ambig {
+            let candidates = self.ambiguous_type_candidates(&name);
+            if candidates.is_empty() {
+                continue;
+            }
+            let suggestion = match candidates.as_slice() {
+                [a] => a.clone(),
+                [a, b] => format!("`{}` or `{}`", a, b),
+                more => {
+                    let last = more.last().expect("non-empty");
+                    let head = &more[..more.len() - 1];
+                    let joined = head
+                        .iter()
+                        .map(|c| format!("`{}`", c))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{}, or `{}`", joined, last)
+                }
+            };
+            self.error_at_line(
+                line,
+                format!(
+                    "{source_ctx}: Ambiguous type name '{name}'; use {suggestion} to disambiguate"
+                ),
+            );
+        }
+        for qualified in seen_private {
+            let (module, type_name) = qualified
+                .rsplit_once('.')
+                .map(|(m, t)| (m.to_string(), t.to_string()))
+                .expect("private qualified name always has a `.`");
+            self.error_at_line(
+                line,
+                format!(
+                    "{source_ctx}: Type '{qualified}' is not exposed by module '{module}' — add '{type_name}' to its `exposes` list to import it",
+                ),
+            );
+        }
+    }
+
+    fn collect_unresolved_into(
+        &self,
+        ty: &Type,
+        ambig: &mut HashSet<String>,
+        private: &mut HashSet<String>,
+    ) {
+        match ty {
+            Type::Named { id: None, name } => {
+                if self.type_name_is_ambiguous(name) {
+                    ambig.insert(name.clone());
+                } else if self.type_name_is_private_import(name) {
+                    private.insert(name.clone());
+                }
+            }
+            Type::Named { .. }
+            | Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => {}
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.collect_unresolved_into(inner, ambig, private);
+            }
+            Type::Result(ok, err) => {
+                self.collect_unresolved_into(ok, ambig, private);
+                self.collect_unresolved_into(err, ambig, private);
+            }
+            Type::Map(k, v) => {
+                self.collect_unresolved_into(k, ambig, private);
+                self.collect_unresolved_into(v, ambig, private);
+            }
+            Type::Tuple(items) => {
+                for item in items {
+                    self.collect_unresolved_into(item, ambig, private);
+                }
+            }
+            Type::Fn(params, ret, _) => {
+                for p in params {
+                    self.collect_unresolved_into(p, ambig, private);
+                }
+                self.collect_unresolved_into(ret, ambig, private);
+            }
+        }
+    }
+
+    /// Register a bare → `FnId` alias, marking it `Ambiguous` if a
+    /// different identity is already registered under the same bare
+    /// name. Duplicate registration of the same identity (e.g. an
+    /// item walked twice by `integrate_registry` + `build_signatures`)
+    /// is a no-op.
+    pub(super) fn merge_bare_fn_alias(&mut self, alias: String, id: FnId) {
+        self.bare_fn_aliases
+            .entry(alias)
+            .and_modify(|r| r.merge(id))
+            .or_insert(Resolution::Single(id));
+    }
+
+    pub(super) fn merge_bare_type_alias(&mut self, alias: String, id: TypeId) {
+        self.bare_type_aliases
+            .entry(alias)
+            .and_modify(|r| r.merge(id))
+            .or_insert(Resolution::Single(id));
+    }
+
+    /// Type-side equivalent of [`Self::resolve_fn_id`]. Same
+    /// visibility gating: `SymbolTable` look-ups are filtered through
+    /// `visible_type_ids` so a qualified `C.Shape` reference can't
+    /// resolve to a private (non-exposed) type even though the symbol
+    /// table holds every dep type unconditionally.
+    pub(crate) fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
+        if let Some((prefix, n)) = name.rsplit_once('.') {
+            if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n))
+                && self.visible_type_ids.contains(&id)
+            {
+                return Some(id);
+            }
+            if self.current_module_prefix.as_deref() == Some(prefix)
+                && let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(n))
+                && self.visible_type_ids.contains(&id)
+            {
+                return Some(id);
+            }
+        }
+        if let Some(prefix) = self.current_module_prefix.as_deref()
+            && let Some(id) = self
+                .symbol_table
+                .type_id_of(&TypeKey::in_module(prefix, name))
+            && self.visible_type_ids.contains(&id)
+        {
+            return Some(id);
+        }
+        if let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(name))
+            && self.visible_type_ids.contains(&id)
+        {
+            return Some(id);
+        }
+        self.bare_type_aliases
+            .get(name)
+            .and_then(Resolution::unambiguous)
+    }
+
+    /// `true` when `name` (qualified `Module.Type` form) resolves to
+    /// an existing `TypeId` in the symbol table but the typechecker
+    /// hasn't registered that ID as visible to the current scope.
+    /// Distinguishes "type doesn't exist anywhere" (silently miss →
+    /// downstream "unknown type" error) from "type exists but its
+    /// dep module doesn't expose it" (explicit private-import
+    /// diagnostic emitted by `report_named_visibility_errors`).
+    pub(crate) fn type_name_is_private_import(&self, name: &str) -> bool {
+        let Some((prefix, n)) = name.rsplit_once('.') else {
+            return false;
+        };
+        if self.current_module_prefix.as_deref() == Some(prefix) {
+            // Self-references like `Main.foo` inside `Main` always
+            // resolve through the entry-scope alias; never a privacy
+            // failure.
+            return false;
+        }
+        let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n)) else {
+            return false;
+        };
+        !self.visible_type_ids.contains(&id)
+    }
+
+    /// Canonical name (`"Module.Type"` or bare entry name) for a
+    /// source-faithful type reference. Resolves through the symbol
+    /// table; falls back to the input string for references the table
+    /// doesn't know about (builtins, opaque host types, in-flight
+    /// recovery from earlier errors).
+    ///
+    /// For entry-scope types in a checker that's currently processing
+    /// items with a `module X` declaration, the returned name includes
+    /// the `X.` prefix even though the symbol table itself stores
+    /// entry items without one. This preserves the pre-phase-B
+    /// canonical view the typechecker's internal maps
+    /// (`type_variants`, `record_field_types`, …) are keyed against.
+    pub(crate) fn canonical_type_name(&self, name: &str) -> String {
+        match self.resolve_type_id(name) {
+            Some(id) => {
+                let entry = self.symbol_table.type_entry(id);
+                if entry.module.is_entry()
+                    && let Some(prefix) = self.current_module_prefix.as_deref()
+                {
+                    crate::visibility::qualified_name(prefix, &entry.key.name)
+                } else {
+                    entry.key.canonical()
+                }
+            }
+            None => name.to_string(),
+        }
+    }
+
+    // -- Unified lookups ---------------------------------------------------
 
     fn find_fn_sig(&self, key: &str) -> Option<&FnSig> {
-        self.fn_sigs
-            .get(key)
-            .or_else(|| self.sig_aliases.get(key).and_then(|c| self.fn_sigs.get(c)))
+        // Phase B: user fns live in `fn_sigs` keyed by `FnId`; everything
+        // else (builtins + sum-type variant constructors) stays in
+        // `extra_sigs`. Direct hit on `extra_sigs` covers references that
+        // came in already-canonicalised; `resolve_fn_id` chains the
+        // symbol-table lookups for bare/qualified user-fn references.
+        if let Some(id) = self.resolve_fn_id(key)
+            && let Some(sig) = self.fn_sigs.get(&id)
+        {
+            return Some(sig);
+        }
+        if let Some(sig) = self.extra_sigs.get(key) {
+            return Some(sig);
+        }
+        // Try canonicalised form for type-derived keys
+        // (`"Module.Type.Variant"`).
+        let canonical = self.canonical_extra_key(key);
+        if canonical != key {
+            return self.extra_sigs.get(&canonical);
+        }
+        None
+    }
+
+    /// Take a bare-or-qualified key that may name a constructor or a
+    /// per-type member (`"Shape.Circle"`, `"Status.Open"`) and resolve
+    /// the leading type segment through `canonical_type_name`. Uses
+    /// the typechecker view of canonical names (which include the
+    /// entry module's prefix), matching what `register_type_def_sigs`
+    /// inserts into `extra_sigs`.
+    fn canonical_extra_key(&self, key: &str) -> String {
+        if let Some((head, tail)) = key.split_once('.') {
+            let canonical_type = self.canonical_type_name(head);
+            if canonical_type != head {
+                return format!("{}.{}", canonical_type, tail);
+            }
+        }
+        key.to_string()
     }
 
     fn find_value_member(&self, key: &str) -> Option<&Type> {
-        self.value_members.get(key).or_else(|| {
-            self.sig_aliases
-                .get(key)
-                .and_then(|c| self.value_members.get(c))
-        })
+        if let Some(v) = self.value_members.get(key) {
+            return Some(v);
+        }
+        let canonical = self.canonical_extra_key(key);
+        if canonical != key {
+            return self.value_members.get(&canonical);
+        }
+        None
     }
 
     fn find_record_field_type(&self, type_name: &str, field_name: &str) -> Option<&Type> {
-        // Iron — A5: lookup canonicalises the type-name dimension via
-        // `sig_aliases` before hashing. We only need to do that for
-        // the type-name part — field names are intra-type and stay
-        // verbatim.
         let direct = RecordFieldKey::new(type_name, field_name);
         if let Some(ty) = self.record_field_types.get(&direct) {
             return Some(ty);
         }
-        if let Some(canonical_type) = self.sig_aliases.get(type_name) {
+        let canonical_type = self.canonical_type_name(type_name);
+        if canonical_type != type_name {
             let canonical = RecordFieldKey::new(canonical_type, field_name);
             return self.record_field_types.get(&canonical);
         }
         None
     }
 
-    /// Iron — A5: list every `(field_name, field_type)` pair declared
-    /// for `type_name`. Resolves `type_name` through `sig_aliases`
-    /// so a bare reference in source matches a canonical entry; the
-    /// reverse direction (canonical reference hitting a bare entry)
-    /// is a no-op because A3 normalises stored keys to canonical
-    /// form whenever a module alias exists.
     fn fields_for_type(&self, type_name: &str) -> Vec<(String, Type)> {
-        let canonical = self
-            .sig_aliases
-            .get(type_name)
-            .map(String::as_str)
-            .unwrap_or(type_name);
+        let canonical = self.canonical_type_name(type_name);
+        let canonical_ref: &str = canonical.as_str();
         self.record_field_types
             .iter()
-            .filter(|(k, _)| k.type_name == canonical || k.type_name == type_name)
+            .filter(|(k, _)| k.type_name == canonical_ref || k.type_name == type_name)
             .map(|(k, v)| (k.field_name.clone(), v.clone()))
             .collect()
     }
 
-    /// Iron — A5: `true` if any field has been registered for
-    /// `type_name`. Drops the pre-A5 `record_field_types.keys().any(|k|
-    /// k.starts_with(&format!("{}.", type_name)))` substring probe.
     fn has_record_schema(&self, type_name: &str) -> bool {
-        let canonical = self
-            .sig_aliases
-            .get(type_name)
-            .map(String::as_str)
-            .unwrap_or(type_name);
+        let canonical = self.canonical_type_name(type_name);
+        let canonical_ref: &str = canonical.as_str();
         self.record_field_types
             .keys()
-            .any(|k| k.type_name == canonical || k.type_name == type_name)
+            .any(|k| k.type_name == canonical_ref || k.type_name == type_name)
+    }
+
+    /// Look up the variant list for a named sum type. Resolves
+    /// `name` through `canonical_type_name` so bare references find
+    /// the canonical "Module.Type" entry registered by
+    /// `register_type_def_sigs` / `integrate_registry`.
+    pub(crate) fn variants_for(&self, name: &str) -> Option<&Vec<String>> {
+        if let Some(v) = self.type_variants.get(name) {
+            return Some(v);
+        }
+        let canonical = self.canonical_type_name(name);
+        if canonical != name {
+            return self.type_variants.get(&canonical);
+        }
+        None
+    }
+
+    pub(crate) fn has_variants_for(&self, name: &str) -> bool {
+        self.variants_for(name).is_some()
+    }
+
+    /// Iterate every fn signature regardless of which storage half
+    /// holds it. Used by the namespace-prefix check and by
+    /// `finalize_check_result` to flatten for external export.
+    fn all_fn_sigs(&self) -> impl Iterator<Item = (String, &FnSig)> + '_ {
+        let from_user = self.fn_sigs.iter().map(|(id, sig)| {
+            let name = self.symbol_table.fn_entry(*id).key.canonical();
+            (name, sig)
+        });
+        let from_extra = self.extra_sigs.iter().map(|(k, sig)| (k.clone(), sig));
+        from_user.chain(from_extra)
+    }
+
+    fn fn_sig_contains_canonical(&self, canonical: &str) -> bool {
+        if let Some(id) = self.resolve_fn_id(canonical)
+            && self.fn_sigs.contains_key(&id)
+        {
+            return true;
+        }
+        if self.extra_sigs.contains_key(canonical) {
+            return true;
+        }
+        let canonical_form = self.canonical_extra_key(canonical);
+        canonical_form != canonical && self.extra_sigs.contains_key(&canonical_form)
+    }
+
+    /// Insert a fn signature under its canonical form. Routes to the
+    /// `FnId`-keyed user map when the name resolves through the
+    /// symbol table (i.e. it names a user fn declared in `items` or a
+    /// dep module); otherwise it lands in the `extra_sigs` half.
+    ///
+    /// Also marks the `FnId` as visible to the current scope — every
+    /// fn the checker's own `build_signatures` / `integrate_registry`
+    /// path inserts is by definition reachable from here (own module
+    /// items or visibility-exposed dep entries). The visibility
+    /// gating in `resolve_fn_id` then refuses look-ups against any
+    /// `FnId` that landed in the symbol table but not in this set —
+    /// a qualified `C.helper()` reference whose `helper` isn't on
+    /// `C`'s `exposes` list never gets inserted here and so never
+    /// resolves.
+    fn insert_fn_sig(&mut self, canonical: &str, sig: FnSig) {
+        match self.fn_id_for_canonical(canonical) {
+            Some(id) => {
+                self.fn_sigs.insert(id, sig);
+                self.visible_fn_ids.insert(id);
+            }
+            None => {
+                self.extra_sigs.insert(canonical.to_string(), sig);
+            }
+        }
+    }
+
+    /// `resolve_fn_id` minus the visibility filter — used by
+    /// `insert_fn_sig` (where the very point of the insert is to
+    /// register visibility) and by other boundary points that build
+    /// the visible set itself. Production look-ups must go through
+    /// `resolve_fn_id`.
+    fn fn_id_for_canonical(&self, name: &str) -> Option<FnId> {
+        if let Some((prefix, n)) = name.rsplit_once('.') {
+            if let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, n)) {
+                return Some(id);
+            }
+            if self.current_module_prefix.as_deref() == Some(prefix)
+                && let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(n))
+            {
+                return Some(id);
+            }
+        }
+        if let Some(prefix) = self.current_module_prefix.as_deref()
+            && let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, name))
+        {
+            return Some(id);
+        }
+        self.symbol_table.fn_id_of(&FnKey::entry(name))
+    }
+
+    /// Type-side equivalent of [`Self::fn_id_for_canonical`].
+    fn type_id_for_canonical(&self, name: &str) -> Option<TypeId> {
+        if let Some((prefix, n)) = name.rsplit_once('.') {
+            if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n)) {
+                return Some(id);
+            }
+            if self.current_module_prefix.as_deref() == Some(prefix)
+                && let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(n))
+            {
+                return Some(id);
+            }
+        }
+        if let Some(prefix) = self.current_module_prefix.as_deref()
+            && let Some(id) = self
+                .symbol_table
+                .type_id_of(&TypeKey::in_module(prefix, name))
+        {
+            return Some(id);
+        }
+        self.symbol_table.type_id_of(&TypeKey::entry(name))
+    }
+
+    /// Mark a `TypeId` as visible to the current scope. Called from
+    /// `register_type_def_sigs` (own module types) and
+    /// `integrate_registry` (visibility-exposed dep types).
+    fn mark_type_visible(&mut self, id: TypeId) {
+        self.visible_type_ids.insert(id);
     }
 
     // -- Helpers -----------------------------------------------------------
@@ -436,7 +1123,13 @@ impl TypeChecker {
     }
 
     fn insert_sig(&mut self, name: &str, params: &[Type], ret: Type, effects: &[&str]) {
-        self.fn_sigs.insert(
+        // Builtins (Int.add, Console.print, …) are not part of the
+        // user-program symbol table, so they always land in
+        // `extra_sigs`. The `insert_fn_sig` router would normally
+        // resolve user fns into `fn_sigs` — but no `register_builtins`
+        // caller could ever name a user fn, so we short-circuit here
+        // to avoid pointless symbol-table probes.
+        self.extra_sigs.insert(
             name.to_string(),
             FnSig {
                 params: params.to_vec(),
@@ -472,45 +1165,45 @@ impl TypeChecker {
             .cloned()
     }
 
-    /// Iron — A3: `&self`-bearing constraint check. Resolves bare
-    /// Named types through `sig_aliases` so source-faithful Spanned
-    /// stamps (often bare inside a module) match against
-    /// canonicalised fn signatures (always "Module.Type").
+    /// Phase B: `&self`-bearing constraint check. Resolves bare named
+    /// types against the `SymbolTable` (carried on `self`) so
+    /// source-faithful Spanned stamps still match against canonical fn
+    /// signatures. Replaces the pre-phase-B `sig_aliases` string→string
+    /// alias map with typed `TypeId` resolution.
     pub(super) fn compatible(&self, actual: &Type, expected: &Type) -> bool {
         let mut subst = HashMap::new();
-        Self::match_expected_type_inner(actual, expected, &mut subst, &self.sig_aliases)
+        Self::match_expected_type_inner(actual, expected, &mut subst, Some(self))
     }
 
-    /// Static-form matcher (no alias resolution). Tests use this
-    /// directly; production code should reach for `compatible`
+    /// Static-form matcher (no symbol-table resolution). Tests use
+    /// this directly; production code should reach for `compatible`
     /// instead.
     pub(super) fn match_expected_type(
         actual: &Type,
         expected: &Type,
         subst: &mut HashMap<String, Type>,
     ) -> bool {
-        Self::match_expected_type_inner(actual, expected, subst, &HashMap::new())
+        Self::match_expected_type_inner(actual, expected, subst, None)
     }
 
-    /// Iron — A3: `&self` matcher that lets the caller carry a
-    /// substitution (poly fn arg inference). The pure `compatible`
-    /// helper above hides `subst` for the common "no Type::Var
-    /// involved" callers; this method exposes it for the FnCall arg
-    /// loop in `infer/expr.rs`.
+    /// `&self` matcher that lets the caller carry a substitution
+    /// (poly fn arg inference). The pure `compatible` helper above
+    /// hides `subst` for the common "no `Type::Var` involved" callers;
+    /// this method exposes it for the FnCall arg loop in `infer/expr.rs`.
     pub(super) fn match_with(
         &self,
         actual: &Type,
         expected: &Type,
         subst: &mut HashMap<String, Type>,
     ) -> bool {
-        Self::match_expected_type_inner(actual, expected, subst, &self.sig_aliases)
+        Self::match_expected_type_inner(actual, expected, subst, Some(self))
     }
 
     fn match_expected_type_inner(
         actual: &Type,
         expected: &Type,
         subst: &mut HashMap<String, Type>,
-        aliases: &HashMap<String, String>,
+        checker: Option<&TypeChecker>,
     ) -> bool {
         // Iron — A4: `Type::Invalid` is the checker's "we already
         // reported an error here, don't compound it" sentinel.
@@ -533,61 +1226,107 @@ impl TypeChecker {
             Type::Str => matches!(actual, Type::Str),
             Type::Bool => matches!(actual, Type::Bool),
             Type::Unit => matches!(actual, Type::Unit),
-            Type::Named(expected_name) => match actual {
-                // Iron — A3: bare ↔ canonical resolves through
-                // `sig_aliases`. After A3, fn / record / variant
-                // signatures live under their "Module.Type" key and
-                // mirror a bare-name alias in `sig_aliases`; source
-                // expressions stamp Spanned.ty in whatever form the
-                // user wrote. Resolve both sides to the canonical
-                // form first, then compare strictly. Two distinct
-                // modules both exposing "Shape" still produce
-                // ambiguous aliases at registration time — that's
-                // surfaced upfront elsewhere; here we only need to
-                // know that whatever bare form survives in
-                // `sig_aliases` IS the unique canonical.
-                Type::Named(actual_name) => {
-                    let exp_canon = aliases
-                        .get(expected_name)
-                        .map(String::as_str)
-                        .unwrap_or(expected_name);
-                    let act_canon = aliases
-                        .get(actual_name)
-                        .map(String::as_str)
-                        .unwrap_or(actual_name);
-                    act_canon == exp_canon
+            Type::Named {
+                id: expected_id,
+                name: expected_name,
+            } => match actual {
+                // Phase B: typed-identity comparison. When both sides
+                // carry a `TypeId` (resolved against the symbol table)
+                // we compare IDs directly — two unrelated modules
+                // declaring `Shape` get distinct `TypeId`s by
+                // construction and so stay incompatible. When the
+                // checker is available we resolve either side's bare
+                // string through `resolve_type_id` to bring it into
+                // the typed identity domain; without the checker (or
+                // for references that don't resolve, like builtin
+                // `HttpResponse`) we fall back to canonical-name
+                // equality.
+                Type::Named {
+                    id: actual_id,
+                    name: actual_name,
+                } => {
+                    // Peer review round 6: do NOT auto-resolve an
+                    // unresolved side in the matcher's
+                    // (importer-context) symbol table. Upstream
+                    // signature/binding boundaries
+                    // (`canonicalize_named`,
+                    // `canonicalize_named_in_module`) are
+                    // responsible for stamping `id` in the correct
+                    // owner context. If a `Type::Named` reaches the
+                    // matcher with `id = None`, that's a deliberate
+                    // unresolved state — either a genuine builtin
+                    // (HttpResponse) or a resolution gap the matcher
+                    // must surface, not silently paper over by
+                    // re-resolving in the wrong scope.
+                    let exp_id = *expected_id;
+                    let act_id = *actual_id;
+                    // Phase B (peer review round 2): the typed-identity
+                    // comparison must reject mixed (Some, None) cases
+                    // for user-defined types — otherwise an ambiguous
+                    // bare reference (`Shape` when both `A.Shape` and
+                    // `B.Shape` are exposed) silently matches against
+                    // any specific `A.Shape` / `B.Shape` via the
+                    // string fallback below. Distinguish "ambiguous
+                    // bare reference, identity deliberately
+                    // suppressed" from "builtin name that has no
+                    // typed identity by design (`HttpResponse`,
+                    // `Buffer`, …)" by asking the checker whether the
+                    // unresolved side's name is recorded as
+                    // ambiguous; reject in that case, allow name
+                    // fallback otherwise.
+                    match (exp_id, act_id) {
+                        (Some(e), Some(a)) => e == a,
+                        // Peer review round 6 entry-fallback bug:
+                        // a dep module's unresolved bare `Shape` was
+                        // silently binding to the entry module's
+                        // `Shape` via name equality here. Reject all
+                        // mixed (Some, None) cases. Builtins always
+                        // exercise (None, None) below; user-source
+                        // typed/raw mixes are by definition a
+                        // resolution gap and must surface.
+                        (Some(_), None) | (None, Some(_)) => false,
+                        (None, None) => {
+                            let exp = checker
+                                .map(|c| c.canonical_type_name(expected_name))
+                                .unwrap_or_else(|| expected_name.clone());
+                            let act = checker
+                                .map(|c| c.canonical_type_name(actual_name))
+                                .unwrap_or_else(|| actual_name.clone());
+                            exp == act
+                        }
+                    }
                 }
                 _ => false,
             },
             Type::Option(expected_inner) => match actual {
                 Type::Option(actual_inner) => {
-                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, aliases)
+                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, checker)
                 }
                 _ => false,
             },
             Type::List(expected_inner) => match actual {
                 Type::List(actual_inner) => {
-                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, aliases)
+                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, checker)
                 }
                 _ => false,
             },
             Type::Vector(expected_inner) => match actual {
                 Type::Vector(actual_inner) => {
-                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, aliases)
+                    Self::match_expected_type_inner(actual_inner, expected_inner, subst, checker)
                 }
                 _ => false,
             },
             Type::Result(expected_ok, expected_err) => match actual {
                 Type::Result(actual_ok, actual_err) => {
-                    Self::match_expected_type_inner(actual_ok, expected_ok, subst, aliases)
-                        && Self::match_expected_type_inner(actual_err, expected_err, subst, aliases)
+                    Self::match_expected_type_inner(actual_ok, expected_ok, subst, checker)
+                        && Self::match_expected_type_inner(actual_err, expected_err, subst, checker)
                 }
                 _ => false,
             },
             Type::Map(expected_k, expected_v) => match actual {
                 Type::Map(actual_k, actual_v) => {
-                    Self::match_expected_type_inner(actual_k, expected_k, subst, aliases)
-                        && Self::match_expected_type_inner(actual_v, expected_v, subst, aliases)
+                    Self::match_expected_type_inner(actual_k, expected_k, subst, checker)
+                        && Self::match_expected_type_inner(actual_v, expected_v, subst, checker)
                 }
                 _ => false,
             },
@@ -599,7 +1338,7 @@ impl TypeChecker {
                                 actual_item,
                                 expected_item,
                                 subst,
-                                aliases,
+                                checker,
                             )
                         },
                     )
@@ -616,10 +1355,10 @@ impl TypeChecker {
                                 actual_param,
                                 expected_param,
                                 subst,
-                                aliases,
+                                checker,
                             )
                         },
-                    ) && Self::match_expected_type_inner(actual_ret, expected_ret, subst, aliases)
+                    ) && Self::match_expected_type_inner(actual_ret, expected_ret, subst, checker)
                         && actual_effects.iter().all(|actual| {
                             expected_effects
                                 .iter()
@@ -679,7 +1418,7 @@ impl TypeChecker {
             | Type::Bool
             | Type::Unit
             | Type::Invalid
-            | Type::Named(_) => false,
+            | Type::Named { .. } => false,
             Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
                 Self::type_contains_var(inner, name)
             }
@@ -729,7 +1468,7 @@ impl TypeChecker {
             | Type::Bool
             | Type::Unit
             | Type::Invalid
-            | Type::Named(_) => ty.clone(),
+            | Type::Named { .. } => ty.clone(),
         }
     }
 }

@@ -1115,10 +1115,7 @@ fn main() -> Int
         // The fix proper: symbol table is plumbed onto the multi-file
         // proof ctx (regression for the previous "build_context without
         // proof_ir / symbol_table" gap).
-        let symbols = ctx
-            .symbol_table
-            .as_ref()
-            .expect("symbol_table must be plumbed onto multi-file proof ctx");
+        let symbols = &ctx.symbol_table;
         let helper_down_id = symbols
             .fn_id_of(&crate::ir::FnKey::in_module("Helper".to_string(), "down"))
             .expect("SymbolTable must carry FnId for Helper.down");

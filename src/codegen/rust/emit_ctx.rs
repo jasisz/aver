@@ -145,7 +145,7 @@ pub fn should_borrow_param(ty: &Type) -> bool {
             | Type::Result(_, _)
             | Type::Option(_)
             | Type::Tuple(_)
-            | Type::Named(_)
+            | Type::Named { .. }
     )
 }
 
@@ -161,6 +161,6 @@ mod tests {
         assert!(is_copy_type(&Type::Unit));
         assert!(!is_copy_type(&Type::Str));
         assert!(!is_copy_type(&Type::List(Box::new(Type::Int))));
-        assert!(!is_copy_type(&Type::Named("Foo".to_string())));
+        assert!(!is_copy_type(&Type::named("Foo")));
     }
 }

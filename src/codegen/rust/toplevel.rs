@@ -104,7 +104,7 @@ fn rust_hash_eq_safe_type(
             .iter()
             .all(|item| rust_hash_eq_safe_type(item, ctx, visiting)),
         Type::Map(_, _) | Type::Fn(_, _, _) | Type::Var(_) | Type::Invalid => false,
-        Type::Named(name) => rust_hash_eq_safe_named(name, ctx, visiting),
+        Type::Named { name, .. } => rust_hash_eq_safe_named(name, ctx, visiting),
     }
 }
 
@@ -3191,7 +3191,7 @@ mod tests {
         ctx.type_defs.push(td);
         ctx.fn_sigs.insert(
             "member".to_string(),
-            (vec![Type::Named("Tree".to_string())], Type::Bool, vec![]),
+            (vec![Type::named("Tree")], Type::Bool, vec![]),
         );
 
         let emitted = emit_public_fn_def(&fd, true, &ctx);

@@ -563,7 +563,7 @@ pub fn is_memo_safe_type(ty: &crate::types::Type, safe_named: &HashSet<String>) 
         | Type::Invalid
         | Type::Var(_) => false,
         Type::Result(_, _) | Type::Option(_) => false,
-        Type::Named(name) => safe_named.contains(name),
+        Type::Named { name, .. } => safe_named.contains(name),
     }
 }
 
@@ -735,7 +735,7 @@ fn return_type_category(
         crate::types::Type::Option(_) => Some("option"),
         crate::types::Type::Bool => Some("bool"),
         crate::types::Type::List(_) => Some("list"),
-        crate::types::Type::Named(_) => Some("named"),
+        crate::types::Type::Named { .. } => Some("named"),
         _ => None,
     }
 }

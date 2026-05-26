@@ -99,20 +99,18 @@ impl RuntimeType {
                 Box::new(Type::List(Box::new(Type::Str))),
                 Box::new(Type::Str),
             ),
-            RuntimeType::HttpResponseResult => Type::Result(
-                Box::new(Type::Named("HttpResponse".to_string())),
-                Box::new(Type::Str),
-            ),
+            RuntimeType::HttpResponseResult => {
+                Type::Result(Box::new(Type::named("HttpResponse")), Box::new(Type::Str))
+            }
             RuntimeType::MapStrListStr => Type::Map(
                 Box::new(Type::Str),
                 Box::new(Type::List(Box::new(Type::Str))),
             ),
-            RuntimeType::TerminalSize => Type::Named("Terminal.Size".to_string()),
-            RuntimeType::TcpConnection => Type::Named("Tcp.Connection".to_string()),
-            RuntimeType::ResultTcpConnectionStr => Type::Result(
-                Box::new(Type::Named("Tcp.Connection".to_string())),
-                Box::new(Type::Str),
-            ),
+            RuntimeType::TerminalSize => Type::named("Terminal.Size"),
+            RuntimeType::TcpConnection => Type::named("Tcp.Connection"),
+            RuntimeType::ResultTcpConnectionStr => {
+                Type::Result(Box::new(Type::named("Tcp.Connection")), Box::new(Type::Str))
+            }
         }
     }
 }
@@ -463,7 +461,7 @@ pub fn oracle_signature(method: &str) -> Option<Type> {
             ))
         }
         EffectDimension::Generative | EffectDimension::GenerativeOutput => {
-            let mut params = vec![Type::Named(branch_path::TYPE_NAME.to_string()), Type::Int];
+            let mut params = vec![Type::named(branch_path::TYPE_NAME.to_string()), Type::Int];
             params.extend(c.runtime_params.iter().copied().map(runtime_type));
             Some(Type::Fn(
                 params,
@@ -539,7 +537,7 @@ mod tests {
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 4);
-                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert!(matches!(params[0], Type::Named { name: ref n, .. } if n == "BranchPath"));
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(params[2], Type::Int);
                 assert_eq!(params[3], Type::Int);
@@ -556,7 +554,7 @@ mod tests {
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 2);
-                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert!(matches!(params[0], Type::Named { name: ref n, .. } if n == "BranchPath"));
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(*ret, Type::Float);
             }
@@ -597,12 +595,14 @@ mod tests {
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 3);
-                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert!(matches!(params[0], Type::Named { name: ref n, .. } if n == "BranchPath"));
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(params[2], Type::Str);
                 match *ret {
                     Type::Result(ok, err) => {
-                        assert!(matches!(*ok, Type::Named(ref n) if n == "HttpResponse"));
+                        assert!(
+                            matches!(*ok, Type::Named { name: ref n, .. } if n == "HttpResponse")
+                        );
                         assert_eq!(*err, Type::Str);
                     }
                     other => panic!("expected Result, got {:?}", other),
@@ -619,7 +619,7 @@ mod tests {
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 2);
-                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert!(matches!(params[0], Type::Named { name: ref n, .. } if n == "BranchPath"));
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(*ret, Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
             }
@@ -634,7 +634,7 @@ mod tests {
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 3);
-                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert!(matches!(params[0], Type::Named { name: ref n, .. } if n == "BranchPath"));
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(params[2], Type::Str);
                 assert_eq!(
@@ -656,7 +656,7 @@ mod tests {
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 4);
-                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert!(matches!(params[0], Type::Named { name: ref n, .. } if n == "BranchPath"));
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(params[2], Type::Str);
                 assert_eq!(params[3], Type::Int);
@@ -676,7 +676,7 @@ mod tests {
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 4);
-                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert!(matches!(params[0], Type::Named { name: ref n, .. } if n == "BranchPath"));
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(params[2], Type::Str);
                 assert_eq!(params[3], Type::Str);
@@ -747,7 +747,7 @@ mod tests {
         match sig {
             Type::Fn(params, ret, _) => {
                 assert_eq!(params.len(), 6);
-                assert!(matches!(params[0], Type::Named(ref n) if n == "BranchPath"));
+                assert!(matches!(params[0], Type::Named { name: ref n, .. } if n == "BranchPath"));
                 assert_eq!(params[1], Type::Int);
                 assert_eq!(params[2], Type::Str);
                 assert_eq!(params[3], Type::Str);
@@ -764,7 +764,9 @@ mod tests {
                 }
                 match *ret {
                     Type::Result(ok, err) => {
-                        assert!(matches!(*ok, Type::Named(ref n) if n == "HttpResponse"));
+                        assert!(
+                            matches!(*ok, Type::Named { name: ref n, .. } if n == "HttpResponse")
+                        );
                         assert_eq!(*err, Type::Str);
                     }
                     other => panic!("expected Result, got {:?}", other),
@@ -818,7 +820,7 @@ mod tests {
         match sig {
             Type::Fn(params, ret, effects) => {
                 assert!(params.is_empty());
-                assert_eq!(*ret, Type::Named("Terminal.Size".to_string()));
+                assert_eq!(*ret, Type::named("Terminal.Size"));
                 assert!(effects.is_empty());
             }
             other => panic!("expected Fn, got {:?}", other),
