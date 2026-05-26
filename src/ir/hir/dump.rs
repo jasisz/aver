@@ -455,7 +455,10 @@ fn use_it() -> Int
     1
 "#,
         );
-        assert!(out.contains("type Tag"), "TypeDef should pass through: {out}");
+        assert!(
+            out.contains("type Tag"),
+            "TypeDef should pass through: {out}"
+        );
         assert!(out.contains("fn <fn:"), "FnDef should be promoted: {out}");
     }
 }
