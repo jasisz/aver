@@ -1026,22 +1026,36 @@ pub fn find_refined_type_scoped<'a>(
 
 /// Round-4 central canonical resolver. Both `find_refined_type` and
 /// `find_refined_type_scoped` reduce to this. Returns the exact
-/// `(canonical_key, &decl)` pair stored in `ProofIR.refined_types`
-/// so downstream code can re-key safely (no string heuristics).
+/// `(canonical_name, &decl)` pair stored in `ProofIR.refined_types`
+/// so downstream code can re-key safely (no string heuristics). The
+/// canonical name is the string form of the `TypeKey` the IR resolved
+/// the decl from (e.g. `AAA.Natural`) — even though the map itself is
+/// keyed by opaque `TypeId` after phase E2, consumers expect a
+/// human-readable identifier here for diagnostics and `defmt`-style
+/// canonical comparison.
+///
+/// Without `ctx.symbol_table` (synthetic legacy ctxs), returns
+/// `None` — the FnId/TypeId migration makes the table mandatory for
+/// proof IR lookup in production paths.
 pub fn find_refined_type_with_key_scoped<'a>(
     ctx: &'a CodegenContext,
     name: &str,
     scope: Option<&str>,
 ) -> Option<(String, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
+    let symbols = ctx.symbol_table.as_ref()?;
     let bare = name.rsplit('.').next().unwrap_or(name);
     let name_is_already_qualified = name.contains('.');
+    let try_key =
+        |key: crate::ir::TypeKey| -> Option<(String, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
+            let id = symbols.type_id_of(&key)?;
+            let decl = ctx.proof_ir.refined_types.get(&id)?;
+            Some((key.canonical(), decl))
+        };
     if let Some(prefix) = scope
         && !name_is_already_qualified
+        && let Some(hit) = try_key(crate::ir::TypeKey::in_module(prefix.to_string(), bare))
     {
-        let scoped_key = crate::ir::TypeKey::in_module(prefix.to_string(), bare);
-        if let Some(decl) = ctx.proof_ir.refined_types.get(&scoped_key) {
-            return Some((scoped_key.canonical(), decl));
-        }
+        return Some(hit);
     }
     let direct_key =
         if name_is_already_qualified && let Some((prefix, bare_part)) = name.rsplit_once('.') {
@@ -1049,16 +1063,15 @@ pub fn find_refined_type_with_key_scoped<'a>(
         } else {
             crate::ir::TypeKey::entry(name)
         };
-    if let Some(decl) = ctx.proof_ir.refined_types.get(&direct_key) {
-        return Some((direct_key.canonical(), decl));
+    if let Some(hit) = try_key(direct_key) {
+        return Some(hit);
     }
     for m in &ctx.modules {
         for td in &m.type_defs {
-            if type_def_name(td) == bare {
-                let canonical_key = crate::ir::TypeKey::in_module(m.prefix.clone(), bare);
-                if let Some(decl) = ctx.proof_ir.refined_types.get(&canonical_key) {
-                    return Some((canonical_key.canonical(), decl));
-                }
+            if type_def_name(td) == bare
+                && let Some(hit) = try_key(crate::ir::TypeKey::in_module(m.prefix.clone(), bare))
+            {
+                return Some(hit);
             }
         }
     }
@@ -1067,31 +1080,35 @@ pub fn find_refined_type_with_key_scoped<'a>(
 
 /// Same resolution shape as [`find_refined_type`] but driven by the
 /// in-flight `refined_types` map plus dep-module list — used inside
-/// `proof_lower` where there is no `CodegenContext` yet.
+/// `proof_lower` where there is no `CodegenContext` yet. Resolves
+/// `name` → `TypeKey` → opaque `TypeId` through the supplied symbol
+/// table, then looks up the decl by id.
 pub fn resolve_refined_type_in<'a>(
     refined_types: &'a std::collections::HashMap<
-        crate::ir::TypeKey,
+        crate::ir::TypeId,
         crate::ir::proof_ir::RefinedTypeDecl,
     >,
+    symbols: &crate::ir::SymbolTable,
     modules: &[crate::codegen::ModuleInfo],
     name: &str,
 ) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
-    resolve_refined_type_in_with_key(refined_types, modules, name).map(|(_, d)| d)
+    resolve_refined_type_in_with_key(refined_types, symbols, modules, name).map(|(_, d)| d)
 }
 
 /// Same as [`resolve_refined_type_in`] but returns the canonical
-/// `TypeKey` paired with the decl — used by IR-internal callers
+/// `TypeId` paired with the decl — used by IR-internal callers
 /// (the proof-lower side `walk_for_refinement_carrier`) so they
-/// thread the canonical identity through downstream comparisons
+/// thread the opaque identity through downstream comparisons
 /// without re-introducing bare-name heuristics.
 pub fn resolve_refined_type_in_with_key<'a>(
     refined_types: &'a std::collections::HashMap<
-        crate::ir::TypeKey,
+        crate::ir::TypeId,
         crate::ir::proof_ir::RefinedTypeDecl,
     >,
+    symbols: &crate::ir::SymbolTable,
     modules: &[crate::codegen::ModuleInfo],
     name: &str,
-) -> Option<(crate::ir::TypeKey, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
+) -> Option<(crate::ir::TypeId, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
     let bare = name.rsplit('.').next().unwrap_or(name);
     let name_is_already_qualified = name.contains('.');
     let direct_key =
@@ -1100,15 +1117,19 @@ pub fn resolve_refined_type_in_with_key<'a>(
         } else {
             crate::ir::TypeKey::entry(name)
         };
-    if let Some(decl) = refined_types.get(&direct_key) {
-        return Some((direct_key, decl));
+    if let Some(id) = symbols.type_id_of(&direct_key)
+        && let Some(decl) = refined_types.get(&id)
+    {
+        return Some((id, decl));
     }
     for m in modules {
         for td in &m.type_defs {
             if type_def_name(td) == bare {
                 let canonical = crate::ir::TypeKey::in_module(m.prefix.clone(), bare);
-                if let Some(decl) = refined_types.get(&canonical) {
-                    return Some((canonical, decl));
+                if let Some(id) = symbols.type_id_of(&canonical)
+                    && let Some(decl) = refined_types.get(&id)
+                {
+                    return Some((id, decl));
                 }
             }
         }
@@ -2393,22 +2414,24 @@ mod tests {
             },
             witness: Some(witness.to_string()),
         };
-        let mut refined_types: HashMap<crate::ir::TypeKey, RefinedTypeDecl> = HashMap::new();
-        refined_types.insert(
-            crate::ir::TypeKey::in_module("A", "Natural"),
-            make_decl("a", 0),
-        );
-        refined_types.insert(
-            crate::ir::TypeKey::in_module("B", "Natural"),
-            make_decl("b", 10),
-        );
+        let symbols = crate::ir::SymbolTable::build(&[], &modules);
+        let a_id = symbols
+            .type_id_of(&crate::ir::TypeKey::in_module("A", "Natural"))
+            .expect("A.Natural TypeId");
+        let b_id = symbols
+            .type_id_of(&crate::ir::TypeKey::in_module("B", "Natural"))
+            .expect("B.Natural TypeId");
+
+        let mut refined_types: HashMap<crate::ir::TypeId, RefinedTypeDecl> = HashMap::new();
+        refined_types.insert(a_id, make_decl("a", 0));
+        refined_types.insert(b_id, make_decl("b", 10));
 
         // Fully-qualified lookups hit the exact slot.
-        let a = resolve_refined_type_in(&refined_types, &modules, "A.Natural")
+        let a = resolve_refined_type_in(&refined_types, &symbols, &modules, "A.Natural")
             .expect("A.Natural canonical lookup");
         assert_eq!(a.predicate_param, "a");
         assert_eq!(a.witness.as_deref(), Some("0"));
-        let b = resolve_refined_type_in(&refined_types, &modules, "B.Natural")
+        let b = resolve_refined_type_in(&refined_types, &symbols, &modules, "B.Natural")
             .expect("B.Natural canonical lookup");
         assert_eq!(b.predicate_param, "b");
         assert_eq!(b.witness.as_deref(), Some("10"));
@@ -2416,7 +2439,7 @@ mod tests {
         // Bare lookup finds *something* (module-walk first match) —
         // the typechecker prevents mixed usage upstream, so the
         // observed ordering is the order modules walk.
-        let bare = resolve_refined_type_in(&refined_types, &modules, "Natural")
+        let bare = resolve_refined_type_in(&refined_types, &symbols, &modules, "Natural")
             .expect("bare Natural resolves via module walk");
         assert!(
             bare.predicate_param == "a" || bare.predicate_param == "b",
@@ -2425,7 +2448,7 @@ mod tests {
 
         // No-module-owner lookup misses — i.e. a bare name that
         // wasn't declared in any module is None, not "first in map".
-        assert!(resolve_refined_type_in(&refined_types, &modules, "Unrelated").is_none());
+        assert!(resolve_refined_type_in(&refined_types, &symbols, &modules, "Unrelated").is_none());
     }
 
     #[test]
@@ -2437,11 +2460,16 @@ mod tests {
         // The pre-fix order tried direct `refined_types.get(name)`
         // first, which matched entry's bare-keyed slot and the
         // scope-prefix lookup never ran.
-        use crate::ast::TypeDef;
+        use crate::ast::{TopLevel, TypeDef};
         use crate::codegen::{CodegenContext, ModuleInfo};
         use crate::ir::proof_ir::{Predicate, QuantifierType, RefinedTypeDecl};
         use std::collections::{HashMap, HashSet};
 
+        let entry_natural = TypeDef::Product {
+            name: "Natural".to_string(),
+            fields: vec![("value".to_string(), "Int".to_string())],
+            line: 1,
+        };
         let module = ModuleInfo {
             prefix: "Mod".to_string(),
             depends: Vec::new(),
@@ -2466,15 +2494,25 @@ mod tests {
             witness: Some(witness.to_string()),
         };
 
+        let items = vec![TopLevel::TypeDef(entry_natural)];
+        let modules = vec![module];
+        let symbol_table = crate::ir::SymbolTable::build(&items, &modules);
+        let entry_id = symbol_table
+            .type_id_of(&crate::ir::TypeKey::entry("Natural"))
+            .expect("entry Natural id");
+        let mod_id = symbol_table
+            .type_id_of(&crate::ir::TypeKey::in_module("Mod", "Natural"))
+            .expect("Mod.Natural id");
+
         let mut ctx = CodegenContext {
-            items: Vec::new(),
+            items,
             fn_sigs: HashMap::new(),
             memo_fns: HashSet::new(),
             memo_safe_types: HashSet::new(),
             type_defs: Vec::new(),
             fn_defs: Vec::new(),
             project_name: "scope-test".to_string(),
-            modules: vec![module],
+            modules,
             module_prefixes: HashSet::new(),
             #[cfg(feature = "runtime")]
             policy: None,
@@ -2490,16 +2528,14 @@ mod tests {
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
-            symbol_table: None,
+            symbol_table: Some(symbol_table),
         };
-        ctx.proof_ir.refined_types.insert(
-            crate::ir::TypeKey::entry("Natural"),
-            make_decl("entry_n", "0"),
-        );
-        ctx.proof_ir.refined_types.insert(
-            crate::ir::TypeKey::in_module("Mod", "Natural"),
-            make_decl("mod_n", "10"),
-        );
+        ctx.proof_ir
+            .refined_types
+            .insert(entry_id, make_decl("entry_n", "0"));
+        ctx.proof_ir
+            .refined_types
+            .insert(mod_id, make_decl("mod_n", "10"));
 
         let from_module = find_refined_type_scoped(&ctx, "Natural", Some("Mod"))
             .expect("Mod-scoped Natural lookup");

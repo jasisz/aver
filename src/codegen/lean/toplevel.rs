@@ -1896,12 +1896,16 @@ fn emit_verify_law_block(
     // constant-RHS shapes (Reflexive, Commutative, Associative,
     // MapUpdatePostcondition, …) stay in the keep-set; Induction
     // / BackendDispatch / Sorry don't.
-    let vb_fn_key = crate::ir::FnKey::entry(&vb.fn_name);
     let ir_strategy_closes_const_rhs = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == vb_fn_key && t.law_name == law.name)
+        .symbol_table
+        .as_ref()
+        .and_then(|s| s.fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name)))
+        .and_then(|fn_id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+        })
         .is_some_and(|t| {
             !matches!(
                 t.strategy,
