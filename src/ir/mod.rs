@@ -14,6 +14,7 @@ mod matches;
 mod pass_diag;
 pub mod pipeline;
 pub mod proof_ir;
+pub mod symbol_table;
 pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
@@ -26,6 +27,9 @@ pub use proof_ir::{
     DecreaseProof, FnContract, FuelMetric, LawTheorem, MapUpdatePostconditionKind, Measure,
     NativeIntCountdownBody, Predicate, PreservationProof, ProofIR, ProofStrategy, Quantifier,
     QuantifierType, RecursionContract, RefinedTypeDecl, SmartGuard, UnclassifiedFn,
+};
+pub use symbol_table::{
+    CtorEntry, CtorId, FnEntry, FnId, ModuleEntry, ModuleId, SymbolTable, TypeEntry, TypeId,
 };
 
 pub use alloc_info::{
