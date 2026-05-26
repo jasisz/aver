@@ -25,6 +25,7 @@ pub mod wasm_gc;
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{FnDef, TopLevel, TypeDef};
+use crate::source::LoadedModule;
 use crate::types::checker::TypeCheckResult;
 
 /// Information about a dependent module loaded for codegen.
@@ -44,6 +45,50 @@ pub struct ModuleInfo {
     /// analysis sufficient — see `project_aver_module_dag` memory and
     /// `src/ir/analyze.rs` for why cross-module SCCs are impossible.
     pub analysis: Option<crate::ir::AnalysisResult>,
+}
+
+impl ModuleInfo {
+    /// Build a [`ModuleInfo`] from a freshly-parsed [`LoadedModule`].
+    /// Skips the analyze stage — callers that need per-dep analysis
+    /// facts should run the pipeline themselves (see
+    /// `crate::main::commands::load_compile_deps` /
+    /// `playground::loaded_to_module_info`). Used by ad-hoc loaders
+    /// (`vm_profile`, the eval-spec test helpers) that just need the
+    /// dep's symbol layout to feed `SymbolTable::build` /
+    /// `pipeline::run`'s `dep_modules` slot.
+    pub fn from_loaded(loaded: &LoadedModule) -> Self {
+        let depends = loaded
+            .items
+            .iter()
+            .find_map(|i| match i {
+                TopLevel::Module(m) => Some(m.depends.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let type_defs = loaded
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                TopLevel::TypeDef(td) => Some(td.clone()),
+                _ => None,
+            })
+            .collect();
+        let fn_defs = loaded
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+                _ => None,
+            })
+            .collect();
+        Self {
+            prefix: loaded.dep_name.clone(),
+            depends,
+            type_defs,
+            fn_defs,
+            analysis: None,
+        }
+    }
 }
 
 /// Collected context from the Aver program, shared across all backends.

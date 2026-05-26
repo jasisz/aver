@@ -1020,12 +1020,22 @@ pub(super) fn cmd_run_vm(
     // Compiler pipeline: tco → typecheck → interp_lower → buffer_build → resolve.
     // Single source of truth lives in `aver::ir::pipeline`; see that module
     // for ordering invariants between stages.
+    //
+    // Pre-load dep modules so the entry pipeline's `SymbolTable` (and
+    // the resolved HIR derived from it) knows about every cross-module
+    // call. Without this the resolver classified `Module.fn(...)` as
+    // `ResolvedCallee::Unresolved`, leaning on the VM's
+    // `resolve_dotted_call_target` fallback — same dispatch outcome
+    // but a leaky `resolved_items` contract. PR 7.2 of #147 closes
+    // the gap by mirroring what `cmd_compile_aver` already does.
+    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         aver::ir::PipelineConfig {
             typecheck: Some(aver::ir::TypecheckMode::Full {
                 base_dir: Some(&module_root),
             }),
+            dep_modules: &dep_modules,
             ..Default::default()
         },
     );
@@ -1044,7 +1054,8 @@ pub(super) fn cmd_run_vm(
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
     let (code, globals) = match vm::compile_program_with_modules(
-        &items,
+        &pipeline_result.resolved_items,
+        &pipeline_result.symbol_table,
         &mut arena,
         Some(&module_root),
         file,
@@ -3125,16 +3136,14 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     let run_contract_lower = target == PipelineStage::ContractLower;
     let run_law_lower = target == PipelineStage::LawLower;
     let proof_target = run_refinement_lower || run_contract_lower || run_law_lower;
-    // Proof stages walk both entry items and dep modules. Pre-load
-    // deps when targeting one of them so the dump reflects what
-    // production (`aver proof`) sees. Other stages don't need the
-    // dep modules through the pipeline interface — keep empty for
-    // them to match the pre-7e diagnostic shape.
-    let dep_modules = if proof_target {
-        load_compile_deps(&items, &module_root, false, false, false)
-    } else {
-        Vec::new()
-    };
+    // Preload deps for every diagnostic target. After Phase E PR 7.2
+    // the resolved HIR contract is "well-typed ⇒ zero unresolved",
+    // and that only holds when the entry pipeline has seen the
+    // dep modules. Skipping deps here would make
+    // `--emit-ir-after=name_resolve` show stale `<unresolved:…>`
+    // markers that the production run path never emits.
+    let _ = proof_target; // kept for future per-target diagnostic shape switches
+    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {

@@ -6,12 +6,50 @@ use std::path::{Path, PathBuf};
 
 use aver::ast::TopLevel;
 use aver::config::ProjectConfig;
+use aver::ir::SymbolTable;
+use aver::ir::hir::{self, ResolvedTopLevel};
 use aver::lexer::Lexer;
 use aver::nan_value::{Arena, NanValue, NanValueConvert};
 use aver::parser::Parser;
 use aver::resolver;
 use aver::tco;
 use aver::vm;
+
+/// Build a `SymbolTable` for `items` and lift them into resolved HIR
+/// so the post-Phase-E VM compiler can consume them. Mirrors what
+/// `pipeline::run` does at its tail after `BuildSymbols` /
+/// `NameResolve`. The test helpers run `tco::transform_program` +
+/// `resolver::resolve_program` directly (no `pipeline::run`), so
+/// they need to do the resolved-HIR lift themselves.
+fn resolve_for_vm(items: &[TopLevel]) -> (Vec<ResolvedTopLevel>, SymbolTable) {
+    let symbols = SymbolTable::build(items, &[]);
+    let resolved = hir::resolve_program(&symbols, items);
+    (resolved, symbols)
+}
+
+/// Module-aware variant: preloads `depends [...]` modules from disk
+/// and folds them into the `SymbolTable`, so the resolved HIR
+/// references cross-module fns by `FnId` instead of leaking through
+/// `Unresolved` (which the VM's dep-loading path would catch but is
+/// architecturally a backend-side resolver).
+fn resolve_for_vm_with_deps(
+    items: &[TopLevel],
+    module_root: &str,
+) -> (Vec<ResolvedTopLevel>, SymbolTable) {
+    use aver::codegen::ModuleInfo;
+    let depends = items
+        .iter()
+        .find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.depends.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let loaded = aver::source::load_module_tree(&depends, module_root).expect("load dep tree");
+    let dep_modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();
+    let symbols = SymbolTable::build(items, &dep_modules);
+    let resolved = hir::resolve_program(&symbols, items);
+    (resolved, symbols)
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -32,7 +70,9 @@ fn vm_run(src: &str) -> NanValue {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
+    let (resolved, symbols) = resolve_for_vm(&items);
+    let (code, globals) =
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     machine.run().expect("VM execution failed")
 }
@@ -43,18 +83,13 @@ fn vm_run_with_module_root_and_arena(src: &str, module_root: &Path) -> (NanValue
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program_with_modules(
-        &items,
-        &mut arena,
-        Some(
-            module_root
-                .to_str()
-                .expect("module root must be valid UTF-8"),
-        ),
-        "",
-        None,
-    )
-    .expect("compile failed");
+    let root_str = module_root
+        .to_str()
+        .expect("module root must be valid UTF-8");
+    let (resolved, symbols) = resolve_for_vm_with_deps(&items, root_str);
+    let (code, globals) =
+        vm::compile_program_with_modules(&resolved, &symbols, &mut arena, Some(root_str), "", None)
+            .expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     let result = machine.run().expect("VM execution failed");
     let arena = std::mem::replace(&mut machine.arena, Arena::new());
@@ -68,7 +103,9 @@ fn vm_run_with_arena(src: &str) -> (NanValue, Arena) {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
+    let (resolved, symbols) = resolve_for_vm(&items);
+    let (code, globals) =
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     let result = machine.run().expect("VM execution failed");
     let arena = std::mem::replace(&mut machine.arena, Arena::new());
@@ -81,7 +118,9 @@ fn vm_machine(src: &str) -> vm::VM {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
+    let (resolved, symbols) = resolve_for_vm(&items);
+    let (code, globals) =
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
     vm::VM::new(code, globals, arena)
 }
 
@@ -91,7 +130,9 @@ fn vm_compile(src: &str) -> vm::CodeStore {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, _globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
+    let (resolved, symbols) = resolve_for_vm(&items);
+    let (code, _globals) =
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
     code
 }
 
@@ -1557,7 +1598,9 @@ fn vm_effect_violation() {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
+    let (resolved, symbols) = resolve_for_vm(&items);
+    let (code, globals) =
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     let result = machine.run();
     assert!(result.is_err(), "should fail with effect violation");
@@ -1585,8 +1628,10 @@ fn vm_respects_aver_toml_runtime_policy() {
     resolver::resolve_program(&mut items);
 
     let mut arena = Arena::new();
+    let (resolved, symbols) = resolve_for_vm(&items);
     let (code, globals) = vm::compile_program_with_modules(
-        &items,
+        &resolved,
+        &symbols,
         &mut arena,
         Some(
             module_root
@@ -1654,8 +1699,9 @@ fn main() -> Result<Unit, String>
         resolver::resolve_program(&mut items);
 
         let mut arena = Arena::new();
+        let (resolved, symbols) = resolve_for_vm(&items);
         let (code, globals) =
-            vm::compile_program(&items, &mut arena, None).expect("compile failed");
+            vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.set_runtime_policy(
             ProjectConfig::parse(&format!("[independence]\nmode = \"{mode}\"\n"))

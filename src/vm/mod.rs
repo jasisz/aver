@@ -8,8 +8,6 @@ pub mod runtime;
 mod symbol;
 mod types;
 
-pub(crate) use alloc_policy::VmAllocPolicy;
-
 pub use compiler::{
     compile_program, compile_program_with_loaded_modules, compile_program_with_modules,
 };

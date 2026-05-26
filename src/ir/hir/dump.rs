@@ -9,6 +9,7 @@
 //!   `<fn:N>(args)`         — `Call(ResolvedCallee::Fn(FnId(N)), …)`
 //!   `<slot:N>(args)`       — `Call(ResolvedCallee::LocalSlot { slot: N, … }, …)`
 //!   `<builtin:NS.method>`  — `Call(ResolvedCallee::Builtin("NS.method"), …)`
+//!   `<intrinsic:__name>`   — `Call(ResolvedCallee::Intrinsic(_), …)`
 //!   `<unresolved>(args)`   — `Call(ResolvedCallee::Unresolved { … }, …)`
 //!   `<ctor:M@type:K>name`  — `Ctor(ResolvedCtor::User { ctor_id: M, type_id: K, name })`
 //!   `Result.Ok` etc.       — `Ctor(ResolvedCtor::Builtin(BuiltinCtor::ResultOk))`
@@ -247,6 +248,7 @@ fn dump_resolved_callee(callee: &ResolvedCallee) -> String {
     match callee {
         ResolvedCallee::Fn(id) => format!("<fn:{}>", id.0),
         ResolvedCallee::Builtin(name) => format!("<builtin:{name}>"),
+        ResolvedCallee::Intrinsic(kind) => format!("<intrinsic:{}>", kind.name()),
         ResolvedCallee::LocalSlot { slot, name, .. } => format!("<slot:{slot}:{name}>"),
         ResolvedCallee::Unresolved { callee } => {
             format!("<unresolved:{}>", dump_resolved_expr(&callee.node))

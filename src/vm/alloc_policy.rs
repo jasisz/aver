@@ -10,6 +10,13 @@
 
 use crate::ir::AllocPolicy;
 
+/// VM allocation-policy snapshot. Mirrors `WasmAllocPolicy`'s
+/// non-allocating builtin whitelist. Kept for symmetry / future
+/// callers; the Phase E VM compile path consumes
+/// `PipelineResult.analysis.fn_analyses[name].allocates` instead of
+/// re-deriving alloc info, so no production caller instantiates
+/// this directly today.
+#[allow(dead_code)]
 pub struct VmAllocPolicy;
 
 impl AllocPolicy for VmAllocPolicy {
@@ -26,6 +33,7 @@ impl AllocPolicy for VmAllocPolicy {
     }
 }
 
+#[allow(dead_code)]
 fn is_pure_non_alloc_builtin(name: &str) -> bool {
     matches!(
         name,

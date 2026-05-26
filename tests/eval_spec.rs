@@ -5,6 +5,8 @@
 use std::sync::Arc as Rc;
 
 use aver::ast::{FnBody, FnDef, Stmt, TopLevel};
+use aver::ir::SymbolTable;
+use aver::ir::hir::{self, ResolvedTopLevel};
 use aver::lexer::Lexer;
 use aver::nan_value::{Arena, NanValue, NanValueConvert};
 use aver::parser::Parser;
@@ -12,6 +14,12 @@ use aver::resolver::resolve_program;
 use aver::tco;
 use aver::value::{Value, list_from_vec, list_to_vec};
 use aver::vm;
+
+fn resolve_for_vm(items: &[TopLevel]) -> (Vec<ResolvedTopLevel>, SymbolTable) {
+    let symbols = SymbolTable::build(items, &[]);
+    let resolved = hir::resolve_program(&symbols, items);
+    (resolved, symbols)
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -31,8 +39,9 @@ fn vm_compile(items: &[TopLevel]) -> vm::VM {
     resolve_program(&mut items);
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
+    let (resolved, symbols) = resolve_for_vm(&items);
     let (code, globals) =
-        vm::compile_program_with_modules(&items, &mut arena, None, "<test>", None)
+        vm::compile_program_with_modules(&resolved, &symbols, &mut arena, None, "<test>", None)
             .expect("VM compile failed");
     vm::VM::new(code, globals, arena)
 }
@@ -2273,7 +2282,12 @@ mod module_runtime_tests {
     }
 
     /// Build a VM from source with module_root for `depends` resolution.
+    ///
+    /// Mirrors `cmd_run_vm`: preload dep modules so the entry's
+    /// `SymbolTable` knows about every cross-module call before the
+    /// VM compiler resolves dep bodies against it.
     fn vm_build_with_modules(src: &str, module_root: &std::path::Path) -> vm::VM {
+        use aver::codegen::ModuleInfo;
         let mut items = parse(src);
         tco::transform_program(&mut items);
         resolve_program(&mut items);
@@ -2282,9 +2296,29 @@ mod module_runtime_tests {
         let root_str = module_root
             .to_str()
             .expect("module_root is not valid UTF-8");
-        let (code, globals) =
-            vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>", None)
-                .expect("VM compile failed");
+
+        // Preload deps so the unified SymbolTable covers them.
+        let depends = items
+            .iter()
+            .find_map(|i| match i {
+                aver::ast::TopLevel::Module(m) => Some(m.depends.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let loaded = aver::source::load_module_tree(&depends, root_str).expect("load dep tree");
+        let dep_modules: Vec<ModuleInfo> = loaded.iter().map(ModuleInfo::from_loaded).collect();
+
+        let symbols = SymbolTable::build(&items, &dep_modules);
+        let resolved = hir::resolve_program(&symbols, &items);
+        let (code, globals) = vm::compile_program_with_modules(
+            &resolved,
+            &symbols,
+            &mut arena,
+            Some(root_str),
+            "<test>",
+            None,
+        )
+        .expect("VM compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.run_top_level().expect("top-level failed");
         machine
@@ -2443,9 +2477,16 @@ fn startedAt() -> String
         let mut arena = Arena::new();
         vm::register_service_types(&mut arena);
         let root_str = root.to_str().expect("utf-8");
-        let (code, globals) =
-            vm::compile_program_with_modules(&items, &mut arena, Some(root_str), "<test>", None)
-                .expect("VM compile failed");
+        let (resolved, symbols) = super::resolve_for_vm(&items);
+        let (code, globals) = vm::compile_program_with_modules(
+            &resolved,
+            &symbols,
+            &mut arena,
+            Some(root_str),
+            "<test>",
+            None,
+        )
+        .expect("VM compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.run_top_level().expect("top-level failed");
         let out = machine

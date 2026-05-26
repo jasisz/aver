@@ -52,8 +52,9 @@ use std::sync::Arc;
 use crate::ast::{Expr, FnBody, FnDef, MatchArm, Pattern, Spanned, Stmt, TopLevel};
 use crate::ir::calls::{expr_to_dotted_name, is_builtin_namespace};
 use crate::ir::hir::{
-    BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnBody, ResolvedFnDef,
-    ResolvedMatchArm, ResolvedPattern, ResolvedStmt, ResolvedStrPart, ResolvedTopLevel,
+    BuiltinCtor, BuiltinIntrinsic, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnBody,
+    ResolvedFnDef, ResolvedMatchArm, ResolvedPattern, ResolvedStmt, ResolvedStrPart,
+    ResolvedTopLevel,
 };
 use crate::ir::identity::{FnId, FnKey, TypeId, TypeKey};
 use crate::ir::symbol_table::SymbolTable;
@@ -213,6 +214,16 @@ fn resolve_fn_body(ctx: &ResolveCtx<'_>, body: &FnBody) -> ResolvedFnBody {
             ResolvedFnBody::Block(stmts.iter().map(|s| resolve_stmt(ctx, s)).collect())
         }
     }
+}
+
+/// Resolve a single `Stmt` against a [`ResolveCtx`]. Exposed for
+/// callers that need to lift a free-standing statement into resolved
+/// HIR — top-level statements bypass the per-`FnDef` resolution path
+/// because they live in `TopLevel::Stmt` (which the program-level
+/// resolver leaves as `Passthrough` to avoid double-lifting them
+/// into a synthetic fn body).
+pub fn resolve_stmt_external(ctx: &ResolveCtx<'_>, stmt: &Stmt) -> ResolvedStmt {
+    resolve_stmt(ctx, stmt)
 }
 
 fn resolve_stmt(ctx: &ResolveCtx<'_>, stmt: &Stmt) -> ResolvedStmt {
@@ -409,10 +420,12 @@ fn resolve_pattern(ctx: &ResolveCtx<'_>, pat: &Pattern) -> ResolvedPattern {
     }
 }
 
-/// Classify a call's callee expression. Three branches:
+/// Classify a call's callee expression. Branches:
 /// `Fn(FnId)` for user fns the symbol table knows about;
 /// `Builtin(name)` for namespace methods like `Int.add` /
-/// `Console.print`; `LocalSlot` for first-class fn values; the
+/// `Console.print`; `Intrinsic(_)` for the synthesised
+/// `__buf_*` / `__to_str` shapes emitted by `interp_lower` /
+/// `buffer_build`; `LocalSlot` for first-class fn values; the
 /// `Unresolved` passthrough for anything else (typechecker already
 /// reported it).
 fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> ResolvedCallee {
@@ -426,12 +439,17 @@ fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> ResolvedCall
             name: name.clone(),
             last_use: *last_use,
         },
-        Expr::Ident(name) => match ctx.resolve_fn_id(name) {
-            Some(id) => ResolvedCallee::Fn(id),
-            None => ResolvedCallee::Unresolved {
-                callee: Box::new(resolve_spanned(ctx, callee)),
-            },
-        },
+        Expr::Ident(name) => {
+            if let Some(intrinsic) = BuiltinIntrinsic::from_name(name) {
+                return ResolvedCallee::Intrinsic(intrinsic);
+            }
+            match ctx.resolve_fn_id(name) {
+                Some(id) => ResolvedCallee::Fn(id),
+                None => ResolvedCallee::Unresolved {
+                    callee: Box::new(resolve_spanned(ctx, callee)),
+                },
+            }
+        }
         Expr::Attr(_, _) => {
             let Some(dotted) = expr_to_dotted_name(&callee.node) else {
                 return ResolvedCallee::Unresolved {
