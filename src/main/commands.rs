@@ -3275,12 +3275,14 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR) -> String {
     writeln!(out).unwrap();
     writeln!(out, "## law_theorems ({})", ir.law_theorems.len()).unwrap();
     let mut laws: Vec<_> = ir.law_theorems.iter().collect();
-    laws.sort_by(|a, b| (&a.fn_name, &a.law_name).cmp(&(&b.fn_name, &b.law_name)));
+    laws.sort_by(|a, b| {
+        (a.fn_key.canonical(), &a.law_name).cmp(&(b.fn_key.canonical(), &b.law_name))
+    });
     for theorem in laws {
         writeln!(
             out,
             "- {}::{} ({:?}, {} quantifier(s), {} premise(s))",
-            theorem.fn_name,
+            theorem.fn_key.canonical(),
             theorem.law_name,
             theorem.strategy,
             theorem.quantifiers.len(),
