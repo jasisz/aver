@@ -266,7 +266,7 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
     let contract = ctx
         .proof_ir
         .fn_contracts
-        .get("fibTR")
+        .get(&aver::ir::FnKey::entry("fibTR"))
         .unwrap_or_else(|| panic!("fibTR has no FnContract in ProofIR"));
     let RecursionContract::Native {
         precondition,
@@ -382,7 +382,7 @@ fn exposed_int_countdown_lowers_to_fuel_contract() {
     let contract = ctx
         .proof_ir
         .fn_contracts
-        .get("exposed_count")
+        .get(&aver::ir::FnKey::entry("exposed_count"))
         .expect("exposed_count has no FnContract in ProofIR");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
@@ -446,7 +446,7 @@ fn int_ascending_lowers_to_bound_fuel_contract() {
     let contract = ctx
         .proof_ir
         .fn_contracts
-        .get("climb")
+        .get(&aver::ir::FnKey::entry("climb"))
         .expect("climb has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
@@ -508,7 +508,7 @@ fn list_structural_lowers_to_seq_len_fuel_contract() {
     let contract = ctx
         .proof_ir
         .fn_contracts
-        .get("len")
+        .get(&aver::ir::FnKey::entry("len"))
         .expect("len has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
@@ -561,7 +561,7 @@ fn sizeof_structural_lowers_to_sizeof_fuel_contract() {
     let contract = ctx
         .proof_ir
         .fn_contracts
-        .get("count")
+        .get(&aver::ir::FnKey::entry("count"))
         .expect("count has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
@@ -601,7 +601,7 @@ fn string_pos_advance_lowers_to_string_pos_fuel_contract() {
     let contract = ctx
         .proof_ir
         .fn_contracts
-        .get("walk")
+        .get(&aver::ir::FnKey::entry("walk"))
         .expect("walk has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
@@ -666,7 +666,7 @@ fn mutual_int_countdown_lowers_to_lex_fuel_contract() {
         let contract = ctx
             .proof_ir
             .fn_contracts
-            .get(fn_name)
+            .get(&aver::ir::FnKey::entry(fn_name))
             .unwrap_or_else(|| panic!("{} has no FnContract", fn_name));
         let RecursionContract::Fuel { fuel_metric } = contract
             .recursion
@@ -715,7 +715,7 @@ fn linear_recurrence_lowers_to_dedicated_contract() {
     let contract = ctx
         .proof_ir
         .fn_contracts
-        .get("fib")
+        .get(&aver::ir::FnKey::entry("fib"))
         .expect("fib has no FnContract");
     assert!(
         matches!(

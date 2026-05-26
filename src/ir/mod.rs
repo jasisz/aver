@@ -6,6 +6,7 @@ mod buffer_build;
 mod calls;
 pub mod dump;
 pub mod escape;
+pub mod identity;
 mod interp_lower;
 pub mod last_use;
 mod leaf;
@@ -16,6 +17,7 @@ pub mod proof_ir;
 pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
+pub use identity::{FnKey, LawKey, TypeKey};
 pub use pipeline::{
     FnCountChange, NonTailEntry, PassDiagnostic, PassReport, PipelineConfig, PipelineResult,
     PipelineStage, TypecheckMode,

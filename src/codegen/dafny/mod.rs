@@ -111,6 +111,12 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         crate::call_graph::ordered_fn_components(&mutual_fns_all, &ctx.module_prefixes);
 
     let mut fuel_per_scope: HashMap<String, Vec<String>> = HashMap::new();
+    // Round-7 follow-up: these three sets still key by bare fn name.
+    // Verify laws are entry-only per current model, so cross-module
+    // same-bare-name collision can't actually arise here today — but
+    // when laws-in-modules lands, migrate these to `HashSet<FnKey>`
+    // alongside `transitive_opaque_closure` and `emit_law_samples`
+    // signatures. Tracked as deferred from the FnKey/TypeKey PR.
     let mut fuel_emitted: HashSet<String> = HashSet::new();
     let mut native_emitted: HashSet<String> = HashSet::new();
     let mut axiom_fn_names: HashSet<String> = HashSet::new();
