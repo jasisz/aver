@@ -868,6 +868,47 @@ pub fn fn_contract_exists_scoped(ctx: &CodegenContext, name: &str, scope: Option
     find_fn_contract_scoped(ctx, name, scope).is_some()
 }
 
+/// Round-6: resolve a `&FnDef`'s owning scope by pointer comparison
+/// against `ctx.modules[*].fn_defs`. The bare-keyed `fn_owning_scope`
+/// helper collides when two modules export same-named fns (last
+/// insert wins), so emit-time callers that hold a borrowed `&FnDef`
+/// from one module's `fn_defs` couldn't use it to canonically
+/// resolve their own scope. Pointer-eq sidesteps the bare-name
+/// collision — `&CountdownA.fn_defs[0]` and `&CountdownB.fn_defs[0]`
+/// are *distinct* addresses even with `fd.name = "countdown"` in
+/// both.
+///
+/// Returns `None` when the `fd` is not in any dep module — entry
+/// items, synthesized buffered variants, and `extra_fn_defs` all
+/// fall through. Callers treat `None` as "entry scope".
+pub fn fn_owning_scope_for<'a>(ctx: &'a CodegenContext, fd: &FnDef) -> Option<&'a str> {
+    for m in &ctx.modules {
+        for f in &m.fn_defs {
+            if std::ptr::eq(f, fd) {
+                return Some(m.prefix.as_str());
+            }
+        }
+    }
+    None
+}
+
+/// Convenience: [`find_fn_contract_scoped`] with the scope resolved
+/// by pointer-eq against `ctx.modules`. Use this from emit sites
+/// that have `&FnDef` in hand — never the bare-name variant — so a
+/// module-owned recursive fn always resolves to its OWN canonical
+/// slot, even if another module exports a same-bare-name fn.
+pub fn find_fn_contract_for_fn<'a>(
+    ctx: &'a CodegenContext,
+    fd: &FnDef,
+) -> Option<&'a crate::ir::proof_ir::FnContract> {
+    find_fn_contract_scoped(ctx, &fd.name, fn_owning_scope_for(ctx, fd))
+}
+
+/// Membership check counterpart of [`find_fn_contract_for_fn`].
+pub fn fn_contract_exists_for_fn(ctx: &CodegenContext, fd: &FnDef) -> bool {
+    find_fn_contract_for_fn(ctx, fd).is_some()
+}
+
 /// Canonical-key-aware resolver — returns `(canonical_key, decl)`
 /// so consumers thread one stable identifier through refinement
 /// lift / strip-wrappers / when-redundancy / backend emit instead
@@ -1389,22 +1430,14 @@ pub fn entry_basename(ctx: &CodegenContext) -> String {
         })
 }
 
-/// Map every fn name in the program to its owning scope: the dependent
-/// module's prefix, or `""` for the entry. Used by the multi-file Lean
-/// and Dafny paths to route SCC components and fuel groups to the right
-/// per-scope file.
-pub(crate) fn fn_owning_scope(ctx: &CodegenContext) -> std::collections::HashMap<String, String> {
-    let mut scope = std::collections::HashMap::new();
-    for m in &ctx.modules {
-        for fd in &m.fn_defs {
-            scope.insert(fd.name.clone(), m.prefix.clone());
-        }
-    }
-    for fd in &ctx.fn_defs {
-        scope.insert(fd.name.clone(), String::new());
-    }
-    scope
-}
+// Round-6 finding 3: the legacy `fn_owning_scope(ctx) ->
+// HashMap<String, String>` collided on bare names — two modules
+// declaring the same-named fn (`AAA.foo` + `BBB.foo`) lost one
+// scope to last-insert-wins. Replaced by [`fn_owning_scope_for`]
+// (pointer-eq lookup) at the only remaining callsite. The legacy
+// helper is removed; if a future caller needs a bulk pre-computed
+// map, build one keyed by `(prefix, name)` or by the canonical
+// `Module.fn` string rather than the bare `fd.name`.
 
 pub(crate) fn module_prefix_to_rust_path(prefix: &str) -> String {
     format!(
