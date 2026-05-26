@@ -215,6 +215,16 @@ fn resolve_fn_body(ctx: &ResolveCtx<'_>, body: &FnBody) -> ResolvedFnBody {
     }
 }
 
+/// Resolve a single `Stmt` against a [`ResolveCtx`]. Exposed for
+/// callers that need to lift a free-standing statement into resolved
+/// HIR — top-level statements bypass the per-`FnDef` resolution path
+/// because they live in `TopLevel::Stmt` (which the program-level
+/// resolver leaves as `Passthrough` to avoid double-lifting them
+/// into a synthetic fn body).
+pub fn resolve_stmt_external(ctx: &ResolveCtx<'_>, stmt: &Stmt) -> ResolvedStmt {
+    resolve_stmt(ctx, stmt)
+}
+
 fn resolve_stmt(ctx: &ResolveCtx<'_>, stmt: &Stmt) -> ResolvedStmt {
     match stmt {
         Stmt::Binding(name, ann, expr) => {

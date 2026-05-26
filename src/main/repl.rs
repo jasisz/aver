@@ -296,9 +296,17 @@ fn repl_execute(accumulated: &[TopLevel], new_items: &[TopLevel]) -> Result<(), 
     aver::ir::pipeline::resolve(&mut program);
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let (code, globals) =
-        vm::compile_program_with_modules(&program, &mut arena, None, "<repl>", None)
-            .map_err(|e| format!("VM compile error: {}", e))?;
+    let symbol_table = aver::ir::SymbolTable::build(&program, &[]);
+    let resolved_items = aver::ir::hir::resolve_program(&symbol_table, &program);
+    let (code, globals) = vm::compile_program_with_modules(
+        &resolved_items,
+        &symbol_table,
+        &mut arena,
+        None,
+        "<repl>",
+        None,
+    )
+    .map_err(|e| format!("VM compile error: {}", e))?;
     let mut machine = vm::VM::new(code, globals, arena);
     machine.run_top_level().map_err(|e| e.to_string())?;
 

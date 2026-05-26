@@ -1,10 +1,13 @@
+use super::resolved_classify::{
+    ResolvedBoolSubjectPlan, classify_bool_subject_plan_resolved,
+    classify_dispatch_pattern_resolved, classify_match_dispatch_plan_resolved,
+};
 use super::{CompileError, FnCompiler};
-use crate::ast::{Expr, Literal, MatchArm, Pattern, Spanned};
+use crate::ast::{Literal, Spanned};
+use crate::ir::hir::{BuiltinCtor, ResolvedCtor, ResolvedExpr, ResolvedMatchArm, ResolvedPattern};
 use crate::ir::{
-    BoolCompareOp, BoolMatchShape, BoolSubjectPlan, CallLowerCtx, DispatchArmPlan,
-    DispatchBindingPlan, DispatchLiteral, DispatchTableShape, MatchDispatchPlan,
-    SemanticConstructor, SemanticDispatchPattern, WrapperKind, classify_bool_subject_plan,
-    classify_dispatch_pattern, classify_match_dispatch_plan,
+    BoolCompareOp, BoolMatchShape, DispatchArmPlan, DispatchBindingPlan, DispatchLiteral,
+    DispatchTableShape, MatchDispatchPlan, SemanticDispatchPattern, WrapperKind,
 };
 use crate::nan_value::NanValue;
 use crate::vm::opcode::*;
@@ -43,57 +46,11 @@ struct DispatchableArm {
     arm_index: usize,
 }
 
-struct VmPatternCtx<'compiler, 'a> {
-    compiler: &'compiler FnCompiler<'a>,
-}
-
-impl CallLowerCtx for VmPatternCtx<'_, '_> {
-    fn is_local_value(&self, name: &str) -> bool {
-        self.compiler.local_slots.contains_key(name)
-    }
-
-    fn is_user_type(&self, name: &str) -> bool {
-        self.compiler.resolve_type_id(name).is_some()
-    }
-
-    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
-        let mut best = None;
-
-        for (dot_idx, _) in dotted.match_indices('.') {
-            let prefix = &dotted[..dot_idx];
-            let suffix = &dotted[dot_idx + 1..];
-            if suffix.is_empty()
-                || self
-                    .compiler
-                    .symbols
-                    .resolve_namespace_path(prefix)
-                    .is_none()
-            {
-                continue;
-            }
-
-            let is_module_ctor = suffix.rsplit_once('.').is_some_and(|(type_name, _)| {
-                self.compiler.resolve_type_id(type_name).is_some()
-                    || self
-                        .compiler
-                        .resolve_type_id(&format!("{prefix}.{type_name}"))
-                        .is_some()
-            });
-
-            if is_module_ctor {
-                best = Some((prefix, suffix));
-            }
-        }
-
-        best
-    }
-}
-
 impl<'a> FnCompiler<'a> {
     fn compile_unwrap_pattern(&mut self, kind: u8, binding: Option<&String>) -> Vec<usize> {
         self.emit_op(MATCH_UNWRAP);
         self.emit_u8(kind);
-        let fail_patch = self.code.len();
+        let fail_patch = self.code().len();
         self.emit_i16(0);
         if let Some(binding) = binding {
             self.dup_and_bind_top_to_local(binding);
@@ -104,7 +61,7 @@ impl<'a> FnCompiler<'a> {
     fn compile_extracted_subpattern<F>(
         &mut self,
         emit_subject: F,
-        pattern: &Pattern,
+        pattern: &ResolvedPattern,
     ) -> Result<Vec<usize>, CompileError>
     where
         F: FnOnce(&mut Self),
@@ -128,10 +85,13 @@ impl<'a> FnCompiler<'a> {
         Ok(vec![outer_fail])
     }
 
-    fn compile_tuple_pattern(&mut self, patterns: &[Pattern]) -> Result<Vec<usize>, CompileError> {
+    fn compile_tuple_pattern(
+        &mut self,
+        patterns: &[ResolvedPattern],
+    ) -> Result<Vec<usize>, CompileError> {
         self.emit_op(MATCH_TUPLE);
         self.emit_u8(patterns.len() as u8);
-        let tuple_fail = self.code.len();
+        let tuple_fail = self.code().len();
         self.emit_i16(0);
 
         let mut fail_patches = vec![tuple_fail];
@@ -151,11 +111,10 @@ impl<'a> FnCompiler<'a> {
     /// Try to classify a pattern for MATCH_DISPATCH.
     fn classify_dispatchable(
         &mut self,
-        pattern: &Pattern,
+        pattern: &ResolvedPattern,
         arm_index: usize,
     ) -> Option<DispatchableArm> {
-        let lower_ctx = VmPatternCtx { compiler: self };
-        match classify_dispatch_pattern(pattern, &lower_ctx)? {
+        match classify_dispatch_pattern_resolved(pattern)? {
             SemanticDispatchPattern::Literal(lit) => {
                 let (kind, bits) = match lit {
                     DispatchLiteral::Int(i) => {
@@ -214,9 +173,9 @@ impl<'a> FnCompiler<'a> {
     }
 
     /// Try to evaluate an expression to a compile-time constant NanValue.
-    fn try_const_expr(&mut self, expr: &Expr) -> Option<u64> {
+    fn try_const_expr(&mut self, expr: &ResolvedExpr) -> Option<u64> {
         match expr {
-            Expr::Literal(lit) => {
+            ResolvedExpr::Literal(lit) => {
                 let nv = match lit {
                     Literal::Int(i) => NanValue::new_int(*i, self.arena),
                     Literal::Float(f) => NanValue::new_float(*f),
@@ -235,20 +194,35 @@ impl<'a> FnCompiler<'a> {
     /// For user variants: extract fields + bind.
     fn emit_constructor_bindings_unconditional(
         &mut self,
-        name: &str,
+        ctor: &ResolvedCtor,
         bindings: &[String],
     ) -> Result<(), CompileError> {
-        match self.classify_constructor_semantics(name) {
-            SemanticConstructor::Wrapper(kind) if !bindings.is_empty() => {
+        match ctor {
+            ResolvedCtor::Builtin(BuiltinCtor::ResultOk) if !bindings.is_empty() => {
                 self.emit_op(MATCH_UNWRAP);
-                self.emit_u8(wrapper_tag_kind(kind));
+                self.emit_u8(wrapper_tag_kind(WrapperKind::ResultOk));
                 self.emit_i16(0); // no-fail (we know it matches)
                 self.dup_and_bind_top_to_local(&bindings[0]);
             }
-            SemanticConstructor::Wrapper(_) => {}
-            SemanticConstructor::NoneValue => {} // no bindings to extract
-            SemanticConstructor::TypeConstructor { .. } | SemanticConstructor::Unknown(_) => {
-                // User variant: extract fields unconditionally.
+            ResolvedCtor::Builtin(BuiltinCtor::ResultErr) if !bindings.is_empty() => {
+                self.emit_op(MATCH_UNWRAP);
+                self.emit_u8(wrapper_tag_kind(WrapperKind::ResultErr));
+                self.emit_i16(0);
+                self.dup_and_bind_top_to_local(&bindings[0]);
+            }
+            ResolvedCtor::Builtin(BuiltinCtor::OptionSome) if !bindings.is_empty() => {
+                self.emit_op(MATCH_UNWRAP);
+                self.emit_u8(wrapper_tag_kind(WrapperKind::OptionSome));
+                self.emit_i16(0);
+                self.dup_and_bind_top_to_local(&bindings[0]);
+            }
+            ResolvedCtor::Builtin(_) => {}
+            ResolvedCtor::User { .. } | ResolvedCtor::Unresolved { .. } => {
+                // User variant — or a cross-module ctor the resolver
+                // couldn't classify against the entry's symbol table
+                // (treated as a user variant on the arena fallback
+                // path). Extract fields unconditionally; the exhaustive
+                // match guarantee covers correctness.
                 for (i, b) in bindings.iter().enumerate() {
                     self.emit_op(EXTRACT_FIELD);
                     self.emit_u8(i as u8);
@@ -261,11 +235,10 @@ impl<'a> FnCompiler<'a> {
 
     pub(super) fn compile_match(
         &mut self,
-        subject: &Spanned<Expr>,
-        arms: &[MatchArm],
+        subject: &Spanned<ResolvedExpr>,
+        arms: &[ResolvedMatchArm],
     ) -> Result<(), CompileError> {
-        let lower_ctx = VmPatternCtx { compiler: self };
-        if let Some(plan) = classify_match_dispatch_plan(arms, &lower_ctx) {
+        if let Some(plan) = classify_match_dispatch_plan_resolved(arms) {
             match plan {
                 MatchDispatchPlan::Bool(shape) => {
                     self.compile_bool_match_with_shape(subject, arms, shape)?;
@@ -294,33 +267,36 @@ impl<'a> FnCompiler<'a> {
             // Match is exhaustive — last arm always matches, skip pattern check.
             let fail_patches = if is_last {
                 // Bind if needed (Ident pattern), otherwise treat as wildcard.
-                if let Pattern::Ident(name) = &arm.pattern {
-                    self.dup_and_bind_top_to_local(name);
-                } else if let Pattern::Constructor(name, bindings) = &arm.pattern {
-                    // Last arm constructor: bindings still need extracting.
-                    self.emit_constructor_bindings_unconditional(name, bindings)?;
-                } else if let Pattern::Cons(head, tail) = &arm.pattern {
-                    self.emit_op(DUP);
-                    self.emit_op(LIST_HEAD_TAIL);
-                    self.bind_top_to_local(head);
-                    self.bind_top_to_local(tail);
-                } else if let Pattern::Tuple(patterns) = &arm.pattern {
-                    // Last arm tuple: extract and bind each element.
-                    for (idx, pat) in patterns.iter().enumerate() {
-                        self.emit_op(EXTRACT_TUPLE_ITEM);
-                        self.emit_u8(idx as u8);
-                        if let Pattern::Ident(name) = pat {
-                            self.bind_top_to_local(name);
-                        } else {
-                            self.emit_op(POP);
+                match &arm.pattern {
+                    ResolvedPattern::Ident(name) => self.dup_and_bind_top_to_local(name),
+                    ResolvedPattern::Ctor(ctor, bindings) => {
+                        // Last arm constructor: bindings still need extracting.
+                        self.emit_constructor_bindings_unconditional(ctor, bindings)?;
+                    }
+                    ResolvedPattern::Cons(head, tail) => {
+                        self.emit_op(DUP);
+                        self.emit_op(LIST_HEAD_TAIL);
+                        self.bind_top_to_local(head);
+                        self.bind_top_to_local(tail);
+                    }
+                    ResolvedPattern::Tuple(patterns) => {
+                        for (idx, pat) in patterns.iter().enumerate() {
+                            self.emit_op(EXTRACT_TUPLE_ITEM);
+                            self.emit_u8(idx as u8);
+                            if let ResolvedPattern::Ident(name) = pat {
+                                self.bind_top_to_local(name);
+                            } else {
+                                self.emit_op(POP);
+                            }
                         }
                     }
+                    _ => {}
                 }
                 Vec::new()
             } else {
                 match &arm.pattern {
-                    Pattern::Wildcard => Vec::new(),
-                    Pattern::Ident(name) => {
+                    ResolvedPattern::Wildcard => Vec::new(),
+                    ResolvedPattern::Ident(name) => {
                         self.dup_and_bind_top_to_local(name);
                         Vec::new()
                     }
@@ -354,19 +330,19 @@ impl<'a> FnCompiler<'a> {
     /// Avoids MATCH_DISPATCH overhead for the most common Aver branch pattern.
     fn compile_bool_match_with_shape(
         &mut self,
-        subject: &Spanned<Expr>,
-        arms: &[MatchArm],
+        subject: &Spanned<ResolvedExpr>,
+        arms: &[ResolvedMatchArm],
         shape: BoolMatchShape,
     ) -> Result<(), CompileError> {
         let true_body = &arms[shape.true_arm_index].body;
         let false_body = &arms[shape.false_arm_index].body;
 
-        if let BoolSubjectPlan::Compare {
+        if let ResolvedBoolSubjectPlan::Compare {
             lhs,
             rhs,
             op,
             invert,
-        } = classify_bool_subject_plan(&subject.node)
+        } = classify_bool_subject_plan_resolved(&subject.node)
         {
             // Pick a typed compare opcode when both operands resolve
             // to the same primitive — bypasses `eq_in` / `compare_lt`
@@ -443,8 +419,8 @@ impl<'a> FnCompiler<'a> {
     /// Try to compile a match as a MATCH_DISPATCH table from a shared IR shape.
     fn try_compile_match_dispatch_with_shape(
         &mut self,
-        subject: &Spanned<Expr>,
-        arms: &[MatchArm],
+        subject: &Spanned<ResolvedExpr>,
+        arms: &[ResolvedMatchArm],
         shape: &DispatchTableShape,
     ) -> Result<Option<()>, CompileError> {
         if shape.entries.len() > 255 {
@@ -486,7 +462,7 @@ impl<'a> FnCompiler<'a> {
 
         self.emit_op(MATCH_DISPATCH);
         self.emit_u8(entries.len() as u8);
-        let default_offset_patch = self.code.len();
+        let default_offset_patch = self.code().len();
         self.emit_i16(0); // default_offset — patched later
 
         // Emit table entries with placeholder offsets.
@@ -494,7 +470,7 @@ impl<'a> FnCompiler<'a> {
         for entry in &entries {
             self.emit_u8(entry.kind);
             self.emit_u64(entry.expected);
-            entry_offset_patches.push(self.code.len());
+            entry_offset_patches.push(self.code().len());
             self.emit_i16(0); // offset — patched later
         }
 
@@ -511,8 +487,8 @@ impl<'a> FnCompiler<'a> {
             let arm_start = self.offset();
             let rel = (arm_start as isize - table_end as isize) as i16;
             let bytes = (rel as u16).to_be_bytes();
-            self.code[entry_offset_patches[table_idx]] = bytes[0];
-            self.code[entry_offset_patches[table_idx] + 1] = bytes[1];
+            self.code_mut()[entry_offset_patches[table_idx]] = bytes[0];
+            self.code_mut()[entry_offset_patches[table_idx] + 1] = bytes[1];
 
             let saved = self.install_arm_slots(arm);
 
@@ -531,8 +507,8 @@ impl<'a> FnCompiler<'a> {
         let default_start = self.offset();
         let default_rel = (default_start as isize - table_end as isize) as i16;
         let default_bytes = (default_rel as u16).to_be_bytes();
-        self.code[default_offset_patch] = default_bytes[0];
-        self.code[default_offset_patch + 1] = default_bytes[1];
+        self.code_mut()[default_offset_patch] = default_bytes[0];
+        self.code_mut()[default_offset_patch + 1] = default_bytes[1];
 
         if has_default {
             let default_plan = shape.default_arm.as_ref().unwrap();
@@ -559,8 +535,8 @@ impl<'a> FnCompiler<'a> {
     fn emit_match_dispatch_const(
         &mut self,
         entries: &[DispatchableArm],
-        arms: &[MatchArm],
-        subject: &Spanned<Expr>,
+        arms: &[ResolvedMatchArm],
+        subject: &Spanned<ResolvedExpr>,
         default_arm_index: Option<usize>,
     ) -> Result<Option<()>, CompileError> {
         self.compile_expr(subject)?;
@@ -568,7 +544,7 @@ impl<'a> FnCompiler<'a> {
 
         self.emit_op(MATCH_DISPATCH_CONST);
         self.emit_u8(entries.len() as u8);
-        let default_offset_patch = self.code.len();
+        let default_offset_patch = self.code().len();
         self.emit_i16(0); // default_offset — patched later
 
         // Emit table entries with inline results.
@@ -594,15 +570,15 @@ impl<'a> FnCompiler<'a> {
         let default_start = self.offset();
         let default_rel = (default_start as isize - table_end as isize) as i16;
         let default_bytes = (default_rel as u16).to_be_bytes();
-        self.code[default_offset_patch] = default_bytes[0];
-        self.code[default_offset_patch + 1] = default_bytes[1];
+        self.code_mut()[default_offset_patch] = default_bytes[0];
+        self.code_mut()[default_offset_patch + 1] = default_bytes[1];
 
         if has_default {
             // Default arm body — subject was popped by opcode on miss,
             // then pushed back. Compile normally.
             let default_arm = &arms[default_arm_index.unwrap()];
             let saved = self.install_arm_slots(default_arm);
-            if let Pattern::Ident(name) = &default_arm.pattern {
+            if let ResolvedPattern::Ident(name) = &default_arm.pattern {
                 self.dup_and_bind_top_to_local(name);
             }
             self.emit_op(POP);
@@ -620,14 +596,14 @@ impl<'a> FnCompiler<'a> {
 
     /// Compile a pattern. Subject is on top of stack (peeked, not consumed).
     /// Returns a Vec of fail-jump patch positions.
-    fn compile_pattern(&mut self, pattern: &Pattern) -> Result<Vec<usize>, CompileError> {
+    fn compile_pattern(&mut self, pattern: &ResolvedPattern) -> Result<Vec<usize>, CompileError> {
         match pattern {
-            Pattern::Wildcard => Ok(Vec::new()),
-            Pattern::Ident(name) => {
+            ResolvedPattern::Wildcard => Ok(Vec::new()),
+            ResolvedPattern::Ident(name) => {
                 self.dup_and_bind_top_to_local(name);
                 Ok(Vec::new())
             }
-            Pattern::Literal(lit) => {
+            ResolvedPattern::Literal(lit) => {
                 if let crate::ast::Literal::Int(v) = lit {
                     // Fused: peek + i64-compare + branch in one
                     // dispatch. Replaces DUP + LOAD_CONST + EQ +
@@ -638,7 +614,7 @@ impl<'a> FnCompiler<'a> {
                     // `match n { 0 -> …; _ -> … }` recursion shape.
                     self.emit_op(MATCH_INT_LITERAL);
                     self.emit_i64(*v);
-                    let patch = self.code.len();
+                    let patch = self.code().len();
                     self.emit_i16(0);
                     return Ok(vec![patch]);
                 }
@@ -648,15 +624,15 @@ impl<'a> FnCompiler<'a> {
                 let patch = self.emit_jump(JUMP_IF_FALSE);
                 Ok(vec![patch])
             }
-            Pattern::EmptyList => {
+            ResolvedPattern::EmptyList => {
                 self.emit_op(MATCH_NIL);
-                let patch = self.code.len();
+                let patch = self.code().len();
                 self.emit_i16(0);
                 Ok(vec![patch])
             }
-            Pattern::Cons(head, tail) => {
+            ResolvedPattern::Cons(head, tail) => {
                 self.emit_op(MATCH_CONS);
-                let fail_patch = self.code.len();
+                let fail_patch = self.code().len();
                 self.emit_i16(0);
 
                 self.emit_op(DUP);
@@ -666,23 +642,30 @@ impl<'a> FnCompiler<'a> {
 
                 Ok(vec![fail_patch])
             }
-            Pattern::Constructor(name, bindings) => {
-                self.compile_constructor_pattern(name, bindings)
+            ResolvedPattern::Ctor(ctor, bindings) => {
+                self.compile_constructor_pattern(ctor, bindings)
             }
-            Pattern::Tuple(patterns) => self.compile_tuple_pattern(patterns),
+            ResolvedPattern::Tuple(patterns) => self.compile_tuple_pattern(patterns),
         }
     }
 
     fn compile_constructor_pattern(
         &mut self,
-        name: &str,
+        ctor: &ResolvedCtor,
         bindings: &[String],
     ) -> Result<Vec<usize>, CompileError> {
-        match self.classify_constructor_semantics(name) {
-            SemanticConstructor::Wrapper(kind) => {
-                Ok(self.compile_unwrap_pattern(wrapper_tag_kind(kind), bindings.first()))
-            }
-            SemanticConstructor::NoneValue => {
+        match ctor {
+            ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => Ok(self
+                .compile_unwrap_pattern(wrapper_tag_kind(WrapperKind::ResultOk), bindings.first())),
+            ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => Ok(self.compile_unwrap_pattern(
+                wrapper_tag_kind(WrapperKind::ResultErr),
+                bindings.first(),
+            )),
+            ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => Ok(self.compile_unwrap_pattern(
+                wrapper_tag_kind(WrapperKind::OptionSome),
+                bindings.first(),
+            )),
+            ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => {
                 self.emit_op(DUP);
                 let none_const = self.add_constant(NanValue::NONE);
                 self.emit_op(LOAD_CONST);
@@ -691,23 +674,28 @@ impl<'a> FnCompiler<'a> {
                 let fail_patch = self.emit_jump(JUMP_IF_FALSE);
                 Ok(vec![fail_patch])
             }
-            SemanticConstructor::TypeConstructor {
-                qualified_type_name,
-                variant_name,
+            ResolvedCtor::User {
+                type_id,
+                name: variant,
+                ..
             } => {
-                if let Some(type_id) = self.resolve_type_id(&qualified_type_name)
-                    && let Some(variant_id) = self.arena.find_variant_id(type_id, &variant_name)
-                    && let Some(ctor_id) = self.arena.find_ctor_id(type_id, variant_id)
+                let qualified_type_name = self.canonical_type_name(*type_id)?;
+                if let Some(arena_type_id) = self.resolve_type_id(&qualified_type_name)
+                    && let Some(variant_id) = self.arena.find_variant_id(arena_type_id, variant)
+                    && let Some(ctor_id) = self.arena.find_ctor_id(arena_type_id, variant_id)
                 {
                     if ctor_id > u16::MAX as u32 {
                         return Err(CompileError {
-                            msg: format!("constructor id too large for VM pattern match: {}", name),
+                            msg: format!(
+                                "constructor id too large for VM pattern match: {}.{}",
+                                qualified_type_name, variant
+                            ),
                         });
                     }
                     let mut patches = Vec::new();
                     self.emit_op(MATCH_VARIANT);
                     self.emit_u16(ctor_id as u16);
-                    let variant_fail = self.code.len();
+                    let variant_fail = self.code().len();
                     self.emit_i16(0);
                     patches.push(variant_fail);
 
@@ -721,12 +709,48 @@ impl<'a> FnCompiler<'a> {
                 }
 
                 Err(CompileError {
+                    msg: format!(
+                        "unknown constructor pattern: {}.{}",
+                        qualified_type_name, variant
+                    ),
+                })
+            }
+            ResolvedCtor::Unresolved { name } => {
+                // Recovery / cross-module fallback — same shape as
+                // `compile_ctor`'s Unresolved branch. The resolver
+                // emits Unresolved for ctor names whose owning type
+                // isn't in the (entry-only) symbol table; the dep's
+                // qualified arena alias covers the dispatch.
+                if let Some((type_name, variant_name)) = name.rsplit_once('.')
+                    && let Some(arena_type_id) = self.resolve_type_id(type_name)
+                    && let Some(variant_id) =
+                        self.arena.find_variant_id(arena_type_id, variant_name)
+                    && let Some(ctor_id) = self.arena.find_ctor_id(arena_type_id, variant_id)
+                {
+                    if ctor_id > u16::MAX as u32 {
+                        return Err(CompileError {
+                            msg: format!("constructor id too large for VM pattern match: {}", name),
+                        });
+                    }
+                    let mut patches = Vec::new();
+                    self.emit_op(MATCH_VARIANT);
+                    self.emit_u16(ctor_id as u16);
+                    let variant_fail = self.code().len();
+                    self.emit_i16(0);
+                    patches.push(variant_fail);
+
+                    for (i, b) in bindings.iter().enumerate() {
+                        self.emit_op(EXTRACT_FIELD);
+                        self.emit_u8(i as u8);
+                        self.bind_top_to_local(b);
+                    }
+
+                    return Ok(patches);
+                }
+                Err(CompileError {
                     msg: format!("unknown constructor pattern: {}", name),
                 })
             }
-            SemanticConstructor::Unknown(_) => Err(CompileError {
-                msg: format!("unknown constructor pattern: {}", name),
-            }),
         }
     }
 }

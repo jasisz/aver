@@ -259,7 +259,8 @@ fn run_vm_command(
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
     let (code, globals) = vm::compile_program_with_modules(
-        &items,
+        &pipeline_result.resolved_items,
+        &pipeline_result.symbol_table,
         &mut arena,
         Some(module_root),
         file,

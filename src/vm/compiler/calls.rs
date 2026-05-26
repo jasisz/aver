@@ -1,14 +1,22 @@
-use super::{CallTarget, CompileError, FnCompiler};
-use crate::ast::{Expr, Literal, Spanned};
-use crate::ir::{
-    CallLowerCtx, CallPlan, ForwardArg, LeafOp, SemanticConstructor, TailCallPlan, WrapperKind,
-    classify_call_plan, classify_constructor_name, classify_forward_call_parts, classify_leaf_op,
-    classify_tail_call_plan,
+use super::resolved_classify::{
+    ForwardSlot, ResolvedLeafOp, classify_forward_call_resolved, classify_leaf_op_resolved,
+    resolved_to_dotted,
 };
+use super::{CallTarget, CompileError, FnCompiler};
+use crate::ast::{Literal, Spanned};
+use crate::ir::hir::{BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr};
+use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 use crate::vm::symbol::VmSymbolTable;
+
+type SpannedResolvedPair<'a> = (&'a Spanned<ResolvedExpr>, &'a Spanned<ResolvedExpr>);
+type SpannedResolvedTriple<'a> = (
+    &'a Spanned<ResolvedExpr>,
+    &'a Spanned<ResolvedExpr>,
+    &'a Spanned<ResolvedExpr>,
+);
 
 /// Map a synthesized deforestation intrinsic name to its VM opcode.
 /// Returns `None` for anything that isn't one of the four `__buf_*`
@@ -25,86 +33,61 @@ fn buffer_intrinsic_opcode(name: &str, argc: usize) -> Option<u8> {
     }
 }
 
-struct VmCallCtx<'compiler, 'a> {
-    compiler: &'compiler FnCompiler<'a>,
-}
-
-impl CallLowerCtx for VmCallCtx<'_, '_> {
-    fn is_local_value(&self, name: &str) -> bool {
-        self.compiler.local_slots.contains_key(name)
-    }
-
-    fn is_user_type(&self, name: &str) -> bool {
-        self.compiler.resolve_type_id(name).is_some()
-    }
-
-    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
-        let mut best = None;
-
-        for (dot_idx, _) in dotted.match_indices('.') {
-            let prefix = &dotted[..dot_idx];
-            let suffix = &dotted[dot_idx + 1..];
-            if suffix.is_empty()
-                || self
-                    .compiler
-                    .symbols
-                    .resolve_namespace_path(prefix)
-                    .is_none()
-            {
-                continue;
-            }
-
-            let is_module_function = self.compiler.resolve_fn_id(dotted).is_some();
-            let is_module_ctor = suffix.rsplit_once('.').is_some_and(|(type_name, _)| {
-                self.compiler.resolve_type_id(type_name).is_some()
-                    || self
-                        .compiler
-                        .resolve_type_id(&format!("{prefix}.{type_name}"))
-                        .is_some()
-            });
-
-            if is_module_function || is_module_ctor {
-                best = Some((prefix, suffix));
-            }
-        }
-
-        best
-    }
-}
-
 impl<'a> FnCompiler<'a> {
-    pub(super) fn try_compile_leaf_expr(&mut self, expr: &Expr) -> Result<bool, CompileError> {
-        let leaf = {
-            let call_ctx = VmCallCtx { compiler: self };
-            classify_leaf_op(expr, &call_ctx)
-        };
+    pub(super) fn try_compile_leaf_expr(
+        &mut self,
+        expr: &ResolvedExpr,
+    ) -> Result<bool, CompileError> {
+        // Snapshot the closure context the leaf classifier needs.
+        // The closure captures `self.arena` only via `find_type_id`,
+        // which can't run while `self` is mutably borrowed — pre-
+        // resolve the membership check up front and pass the result
+        // through the function pointer.
+        let is_user_type = |name: &str| self.arena.find_type_id(name).is_some();
+        let leaf_kind: Option<ResolvedLeafOpKind> =
+            classify_leaf_op_resolved(expr, &is_user_type).map(leaf_into_owned_kind);
 
-        match leaf {
-            Some(leaf) => {
-                self.compile_leaf_op(leaf)?;
-                Ok(true)
-            }
-            None => Ok(false),
+        if let Some(kind) = leaf_kind {
+            self.compile_leaf_op_kind(kind, expr)?;
+            return Ok(true);
         }
+        Ok(false)
     }
 
-    pub(super) fn classify_constructor_semantics(&self, name: &str) -> SemanticConstructor {
-        let call_ctx = VmCallCtx { compiler: self };
-        classify_constructor_name(name, &call_ctx)
-    }
-
-    fn resolve_builtin_target(&self, name: &str) -> Option<CallTarget> {
-        let symbol_id = self.symbols.find(name)?;
-        self.symbols
-            .resolve_builtin(symbol_id)
-            .map(CallTarget::Builtin)
-    }
-
-    fn flatten_path(&self, expr: &Spanned<Expr>) -> Option<String> {
-        match &expr.node {
-            Expr::Ident(name) => Some(name.clone()),
-            Expr::Attr(inner, field) => Some(format!("{}.{}", self.flatten_path(inner)?, field)),
-            _ => Option::None,
+    /// Convenience used by the Independent-Product lowering: push a
+    /// callable value (function chunk symbol, builtin symbol, or
+    /// local-slot fn ref) onto the stack as a single value. Used
+    /// before emitting `CALL_PAR` per branch.
+    pub(super) fn compile_callee_as_value(
+        &mut self,
+        callee: &ResolvedCallee,
+    ) -> Result<(), CompileError> {
+        match callee {
+            ResolvedCallee::Fn(fn_id) => {
+                let name = self.canonical_fn_name(*fn_id)?;
+                let symbol_id = self.symbols.find(&name).ok_or_else(|| CompileError {
+                    msg: format!("missing VM symbol for fn: {}", name),
+                })?;
+                let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+                self.emit_op(LOAD_CONST);
+                self.emit_u16(idx);
+                Ok(())
+            }
+            ResolvedCallee::Builtin(name) => {
+                let symbol_id = self.symbols.find(name).ok_or_else(|| CompileError {
+                    msg: format!("missing VM symbol for builtin: {}", name),
+                })?;
+                let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+                self.emit_op(LOAD_CONST);
+                self.emit_u16(idx);
+                Ok(())
+            }
+            ResolvedCallee::LocalSlot { slot, last_use, .. } => {
+                self.emit_op(if last_use.0 { MOVE_LOCAL } else { LOAD_LOCAL });
+                self.emit_u8(*slot as u8);
+                Ok(())
+            }
+            ResolvedCallee::Unresolved { callee } => self.compile_expr(callee),
         }
     }
 
@@ -112,77 +95,43 @@ impl<'a> FnCompiler<'a> {
         self.arena.find_type_id(name)
     }
 
-    fn resolve_fn_id(&self, name: &str) -> Option<u32> {
-        self.module_scope
+    fn resolve_fn_id_by_name(&self, name: &str) -> Option<u32> {
+        self.module_scope()
             .get(name)
             .copied()
             .or_else(|| self.code_store.find(name))
     }
 
-    pub(super) fn resolve_call_target(&self, expr: &Expr) -> Option<CallTarget> {
-        let call_ctx = VmCallCtx { compiler: self };
-        self.call_plan_to_target(classify_call_plan(expr, &call_ctx))
+    /// Look up the canonical source-level name for a resolved fn
+    /// identity. Mirrors what the pre-Phase-E `compile_call` did
+    /// implicitly via `expr_to_dotted_name(callee)` — same dotted
+    /// shape, but the input is opaque so the lookup goes through
+    /// the resolver's symbol table instead of re-walking strings.
+    pub(super) fn canonical_fn_name(&self, fn_id: FnId) -> Result<String, CompileError> {
+        let entry = self.symbol_table.fn_entry(fn_id);
+        Ok(canonical_name_from_key(&entry.key))
     }
 
-    fn call_plan_to_target(&self, plan: CallPlan) -> Option<CallTarget> {
-        match plan {
-            CallPlan::Dynamic => None,
-            CallPlan::Function(name) => {
-                self.resolve_fn_id(&name)
-                    .map(CallTarget::KnownFn)
-                    .or_else(|| {
-                        if name.contains('.') {
-                            Some(CallTarget::UnknownQualified(name))
-                        } else {
-                            None
-                        }
-                    })
-            }
-            CallPlan::Builtin(name) => self
-                .resolve_builtin_target(&name)
-                .or(Some(CallTarget::UnknownQualified(name))),
-            CallPlan::Wrapper(kind) => {
-                let wrap_kind = match kind {
-                    WrapperKind::ResultOk => 0,
-                    WrapperKind::ResultErr => 1,
-                    WrapperKind::OptionSome => 2,
-                };
-                Some(CallTarget::Wrapper(wrap_kind))
-            }
-            CallPlan::NoneValue => Some(CallTarget::None_),
-            CallPlan::TypeConstructor {
-                qualified_type_name,
-                variant_name,
-            } => {
-                let type_id = self.resolve_type_id(&qualified_type_name)?;
-                if let Some(variant_id) = self.arena.find_variant_id(type_id, &variant_name) {
-                    Some(CallTarget::Variant(type_id, variant_id))
-                } else {
-                    Some(CallTarget::UnknownQualified(format!(
-                        "{}.{}",
-                        qualified_type_name, variant_name
-                    )))
-                }
-            }
-        }
-    }
-
-    fn compile_forward_arg(&mut self, arg: ForwardArg) -> Result<(), CompileError> {
-        let ForwardArg::Local(name) = arg;
-        let Some(&slot) = self.local_slots.get(&name) else {
-            return Err(CompileError {
-                msg: format!("forwarded local '{}' is not a known slot", name),
-            });
-        };
-        self.emit_op(LOAD_LOCAL);
-        self.emit_u8(slot as u8);
-        Ok(())
+    /// Look up the canonical source-level name for a user-defined
+    /// type identity (record name or sum-type name). Used by ctor
+    /// emission and pattern matching to recover the qualified
+    /// `Module.Type` form the arena was registered with.
+    pub(super) fn canonical_type_name(
+        &self,
+        type_id: crate::ir::identity::TypeId,
+    ) -> Result<String, CompileError> {
+        let entry = self.symbol_table.type_entry(type_id);
+        let key = &entry.key;
+        Ok(match key.scope_str() {
+            Some(scope) => format!("{}.{}", scope, key.name),
+            None => key.name.clone(),
+        })
     }
 
     pub(super) fn compile_call(
         &mut self,
-        fn_expr: &Spanned<Expr>,
-        args: &[Spanned<Expr>],
+        callee: &ResolvedCallee,
+        args: &[Spanned<ResolvedExpr>],
     ) -> Result<(), CompileError> {
         // 0.15 Traversal: deforestation buffer intrinsics. The synth
         // pass replaces canonical `String.join(<fn>(args, []), sep)`
@@ -192,7 +141,9 @@ impl<'a> FnCompiler<'a> {
         // they only ever appear synthesized — so we recognise them
         // before regular builtin resolution and emit dedicated opcodes
         // backed by `vm.buffer_pool` (a host-side `Vec<Option<String>>`).
-        if let Expr::Ident(name) = &fn_expr.node {
+        if let ResolvedCallee::Unresolved { callee: inner } = callee
+            && let ResolvedExpr::Ident(name) = &inner.node
+        {
             if let Some(opcode) = buffer_intrinsic_opcode(name, args.len()) {
                 for arg in args {
                     self.compile_expr(arg)?;
@@ -217,29 +168,139 @@ impl<'a> FnCompiler<'a> {
             }
         }
 
-        let call_ctx = VmCallCtx { compiler: self };
-        if let Some(plan) = classify_forward_call_parts(&fn_expr.node, args, &call_ctx) {
-            let Some(target) = self.call_plan_to_target(plan.target.clone()) else {
-                return Err(CompileError {
-                    msg: "dynamic call cannot lower through ForwardCallPlan".to_string(),
-                });
-            };
-            for arg in plan.args {
-                self.compile_forward_arg(arg)?;
+        // Buffer-intrinsics on a Builtin callee (the buffer-build
+        // pass produces these as `__buf_*` "builtin"-class symbols
+        // via the standard `Builtin(name)` classification).
+        if let ResolvedCallee::Builtin(name) = callee
+            && let Some(opcode) = buffer_intrinsic_opcode(name, args.len())
+        {
+            for arg in args {
+                self.compile_expr(arg)?;
+            }
+            self.emit_op(opcode);
+            return Ok(());
+        }
+        if let ResolvedCallee::Builtin(name) = callee
+            && name == "__to_str"
+            && args.len() == 1
+        {
+            self.compile_expr(&args[0])?;
+            let empty_nv = NanValue::new_string_value("", self.arena);
+            let empty_const = self.add_constant(empty_nv);
+            self.emit_op(LOAD_CONST);
+            self.emit_u16(empty_const);
+            self.emit_op(CONCAT);
+            return Ok(());
+        }
+
+        if let Some(plan) = classify_forward_call_resolved(callee, args)
+            && let Some(target) = self.resolve_call_target(callee, args.len())?
+        {
+            for slot in plan.forward_slots {
+                let ForwardSlot::Local { slot } = slot;
+                self.emit_op(LOAD_LOCAL);
+                self.emit_u8(slot as u8);
             }
             return self.emit_resolved_call_after_loaded_args(target, args.len(), 0);
         }
 
-        if let Some(target) = self.resolve_call_target(&fn_expr.node) {
+        if let Some(target) = self.resolve_call_target(callee, args.len())? {
             return self.compile_resolved_call(target, args);
         }
-        self.compile_expr(fn_expr)?;
+        // Fallback: dynamic dispatch (LocalSlot / Unresolved / Wrapper
+        // mismatch). Push the callee, then args, then CALL_VALUE.
+        self.compile_callee_as_value(callee)?;
         for arg in args {
             self.compile_expr(arg)?;
         }
         self.emit_op(CALL_VALUE);
         self.emit_u8(args.len() as u8);
         Ok(())
+    }
+
+    /// Promote a [`ResolvedCallee`] to a [`CallTarget`] when the
+    /// callee shape can be lowered through a direct dispatch
+    /// opcode (CALL_KNOWN / WRAP / VARIANT_NEW / CALL_BUILTIN). Returns
+    /// `None` for dynamic shapes that have to go through CALL_VALUE.
+    fn resolve_call_target(
+        &self,
+        callee: &ResolvedCallee,
+        argc: usize,
+    ) -> Result<Option<CallTarget>, CompileError> {
+        match callee {
+            ResolvedCallee::Fn(fn_id) => {
+                let name = self.canonical_fn_name(*fn_id)?;
+                Ok(Some(match self.resolve_fn_id_by_name(&name) {
+                    Some(id) => CallTarget::KnownFn(id),
+                    None => CallTarget::UnknownQualified(name),
+                }))
+            }
+            ResolvedCallee::Builtin(name) => Ok(Some(
+                self.resolve_builtin_target(name)
+                    .unwrap_or_else(|| CallTarget::UnknownQualified(name.clone())),
+            )),
+            ResolvedCallee::LocalSlot { .. } => Ok(None),
+            ResolvedCallee::Unresolved { callee } => {
+                // Best-effort name reconstruction so a known-shape
+                // dispatch (`Module.Variant(arg)`, `Builtin.method`,
+                // user fn referenced by dotted path) still lands on
+                // a CALL_KNOWN-class opcode. The post-Phase-E zero-
+                // unresolved invariant means well-typed input never
+                // gets here, but the resolver still emits Unresolved
+                // for typecheck-error recovery so we keep the
+                // shape-aware fallback rather than blanket
+                // CALL_VALUE.
+                let dotted = match resolved_to_dotted(&callee.node) {
+                    Some(name) => name,
+                    None => return Ok(None),
+                };
+                Ok(self.resolve_dotted_call_target(&dotted, argc))
+            }
+        }
+    }
+
+    fn resolve_builtin_target(&self, name: &str) -> Option<CallTarget> {
+        let symbol_id = self.symbols.find(name)?;
+        self.symbols
+            .resolve_builtin(symbol_id)
+            .map(CallTarget::Builtin)
+    }
+
+    /// Last-resort path for `ResolvedCallee::Unresolved { Attr(Ident(M), n) }`:
+    /// reconstruct the dotted form and ask the existing name-based
+    /// dispatcher. Mirrors the pre-Phase-E `expr_to_dotted_name`-then-
+    /// `classify_call_plan` flow at the very edges of the resolver's
+    /// coverage (typecheck-error recovery only).
+    fn resolve_dotted_call_target(&self, dotted: &str, argc: usize) -> Option<CallTarget> {
+        // Wrapper / NoneValue / user variant ctor lookup via the
+        // shared classifier on raw names — the resolver already
+        // covers the well-typed case, this branch only runs on
+        // recovery shapes.
+        match dotted {
+            "Result.Ok" if argc == 1 => return Some(CallTarget::Wrapper(0)),
+            "Result.Err" if argc == 1 => return Some(CallTarget::Wrapper(1)),
+            "Option.Some" if argc == 1 => return Some(CallTarget::Wrapper(2)),
+            "Option.None" if argc == 0 => return Some(CallTarget::None_),
+            _ => {}
+        }
+
+        if let Some(id) = self.resolve_fn_id_by_name(dotted) {
+            return Some(CallTarget::KnownFn(id));
+        }
+        if let Some(target) = self.resolve_builtin_target(dotted) {
+            return Some(target);
+        }
+        if let Some((type_name, variant_name)) = dotted.rsplit_once('.')
+            && let Some(type_id) = self.resolve_type_id(type_name)
+            && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
+        {
+            return Some(CallTarget::Variant(type_id, variant_id));
+        }
+        if dotted.contains('.') {
+            Some(CallTarget::UnknownQualified(dotted.to_string()))
+        } else {
+            None
+        }
     }
 
     fn emit_resolved_call_after_loaded_args(
@@ -287,10 +348,10 @@ impl<'a> FnCompiler<'a> {
     fn compile_resolved_call(
         &mut self,
         target: CallTarget,
-        args: &[Spanned<Expr>],
+        args: &[Spanned<ResolvedExpr>],
     ) -> Result<(), CompileError> {
         // Compute owned mask before compiling args (we need the AST).
-        let arg_refs: Vec<&Spanned<Expr>> = args.iter().collect();
+        let arg_refs: Vec<&Spanned<ResolvedExpr>> = args.iter().collect();
         let owned_mask = self.compute_builtin_owned_mask(&arg_refs);
         for arg in args {
             self.compile_expr(arg)?;
@@ -300,8 +361,8 @@ impl<'a> FnCompiler<'a> {
 
     pub(super) fn compile_tail_call(
         &mut self,
-        target: &str,
-        args: &[Spanned<Expr>],
+        target: FnId,
+        args: &[Spanned<ResolvedExpr>],
     ) -> Result<(), CompileError> {
         for arg in args {
             self.compile_expr(arg)?;
@@ -317,95 +378,123 @@ impl<'a> FnCompiler<'a> {
             }
         });
 
-        let call_ctx = VmCallCtx { compiler: self };
-        match classify_tail_call_plan(target, &self.name, &call_ctx) {
-            TailCallPlan::SelfCall => {
-                self.emit_op(TAIL_CALL_SELF);
-                self.emit_u8(args.len() as u8);
-                self.emit_u8(owned_mask);
-            }
-            TailCallPlan::KnownFunction(name) => {
-                if let Some(fn_id) = self.resolve_fn_id(&name) {
-                    self.emit_op(TAIL_CALL_KNOWN);
-                    self.emit_u16(fn_id as u16);
-                    self.emit_u8(args.len() as u8);
-                    self.emit_u8(owned_mask);
-                } else {
-                    return Err(CompileError {
-                        msg: format!("unknown tail call target: {}", name),
-                    });
-                }
-            }
-            TailCallPlan::Unknown(name) => {
-                return Err(CompileError {
-                    msg: format!("unknown tail call target: {}", name),
-                });
-            }
+        let target_name = self.canonical_fn_name(target)?;
+        if target_name == self.name() {
+            self.emit_op(TAIL_CALL_SELF);
+            self.emit_u8(args.len() as u8);
+            self.emit_u8(owned_mask);
+            return Ok(());
         }
-        Ok(())
+        if let Some(fn_id) = self.resolve_fn_id_by_name(&target_name) {
+            self.emit_op(TAIL_CALL_KNOWN);
+            self.emit_u16(fn_id as u16);
+            self.emit_u8(args.len() as u8);
+            self.emit_u8(owned_mask);
+            return Ok(());
+        }
+        Err(CompileError {
+            msg: format!("unknown tail call target: {}", target_name),
+        })
     }
 
-    pub(super) fn compile_constructor(
+    /// Compile a constructor expression (`Shape.Circle(1.0)`,
+    /// `Shape.Rect(3.0, 4.0)`, `Result.Ok(42)`, `Option.None`).
+    /// Mirrors the pre-Phase-E `compile_constructor` but consumes a
+    /// typed [`ResolvedCtor`] instead of re-deriving the kind from a
+    /// `&str` name. The arg-count discriminator is whatever the
+    /// resolver lifted from the source FnCall — user variants
+    /// preserve all their fields; built-in wrappers always pass a
+    /// single arg (or none, for `Option.None`).
+    pub(super) fn compile_ctor(
         &mut self,
-        name: &str,
-        arg: Option<&Spanned<Expr>>,
+        ctor: &ResolvedCtor,
+        args: &[Spanned<ResolvedExpr>],
     ) -> Result<(), CompileError> {
-        let normalized_name = match name {
-            "Ok" => "Result.Ok",
-            "Err" => "Result.Err",
-            "Some" => "Option.Some",
-            "None" => "Option.None",
-            other => other,
-        };
-
-        match self.classify_constructor_semantics(normalized_name) {
-            SemanticConstructor::Wrapper(kind) => {
-                self.compile_constructor_arg(arg)?;
+        match ctor {
+            ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => {
+                self.compile_constructor_arg(args.first())?;
                 self.emit_op(WRAP);
-                self.emit_u8(match kind {
-                    WrapperKind::ResultOk => 0,
-                    WrapperKind::ResultErr => 1,
-                    WrapperKind::OptionSome => 2,
-                });
+                self.emit_u8(0);
+                Ok(())
             }
-            SemanticConstructor::NoneValue => {
+            ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => {
+                self.compile_constructor_arg(args.first())?;
+                self.emit_op(WRAP);
+                self.emit_u8(1);
+                Ok(())
+            }
+            ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => {
+                self.compile_constructor_arg(args.first())?;
+                self.emit_op(WRAP);
+                self.emit_u8(2);
+                Ok(())
+            }
+            ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => {
                 let idx = self.add_constant(NanValue::NONE);
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
+                Ok(())
             }
-            SemanticConstructor::TypeConstructor {
-                qualified_type_name,
-                variant_name,
+            ResolvedCtor::User {
+                type_id,
+                name: variant_name,
+                ..
             } => {
-                if let Some(type_id) = self.resolve_type_id(&qualified_type_name)
-                    && let Some(variant_id) = self.arena.find_variant_id(type_id, &variant_name)
+                let qualified_type_name = self.canonical_type_name(*type_id)?;
+                if let Some(arena_type_id) = self.resolve_type_id(&qualified_type_name)
+                    && let Some(variant_id) =
+                        self.arena.find_variant_id(arena_type_id, variant_name)
                 {
-                    let field_count = if let Some(a) = arg {
-                        self.compile_expr(a)?;
-                        1u8
-                    } else {
-                        0u8
-                    };
+                    for arg in args {
+                        self.compile_expr(arg)?;
+                    }
                     self.emit_op(VARIANT_NEW);
-                    self.emit_u16(type_id as u16);
+                    self.emit_u16(arena_type_id as u16);
                     self.emit_u16(variant_id);
-                    self.emit_u8(field_count);
+                    self.emit_u8(args.len() as u8);
                     return Ok(());
                 }
-                return Err(CompileError {
-                    msg: format!("unknown constructor: {}", name),
-                });
+                Err(CompileError {
+                    msg: format!(
+                        "unknown constructor: {}.{}",
+                        qualified_type_name, variant_name
+                    ),
+                })
             }
-            SemanticConstructor::Unknown(_) => {
-                return Err(CompileError {
+            ResolvedCtor::Unresolved { name } => {
+                // Recovery / cross-module fallback. The resolver
+                // emits `Unresolved` when its symbol table doesn't
+                // know the owning type — typically a cross-module
+                // ctor inside an entry whose pipeline wasn't given
+                // `dep_modules`. The dotted name still routes
+                // correctly through the arena (modules register
+                // their types under the qualified `Module.Type`
+                // alias inside `integrate_module`).
+                if let Some((type_name, variant_name)) = name.rsplit_once('.')
+                    && let Some(arena_type_id) = self.resolve_type_id(type_name)
+                    && let Some(variant_id) =
+                        self.arena.find_variant_id(arena_type_id, variant_name)
+                {
+                    for arg in args {
+                        self.compile_expr(arg)?;
+                    }
+                    self.emit_op(VARIANT_NEW);
+                    self.emit_u16(arena_type_id as u16);
+                    self.emit_u16(variant_id);
+                    self.emit_u8(args.len() as u8);
+                    return Ok(());
+                }
+                Err(CompileError {
                     msg: format!("unknown constructor: {}", name),
-                });
+                })
             }
         }
-        Ok(())
     }
 
-    fn compile_constructor_arg(&mut self, arg: Option<&Spanned<Expr>>) -> Result<(), CompileError> {
+    fn compile_constructor_arg(
+        &mut self,
+        arg: Option<&Spanned<ResolvedExpr>>,
+    ) -> Result<(), CompileError> {
         if let Some(a) = arg {
             self.compile_expr(a)
         } else {
@@ -414,47 +503,62 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
-    fn compile_leaf_op(&mut self, leaf: LeafOp<'_>) -> Result<(), CompileError> {
-        match leaf {
-            LeafOp::FieldAccess { object, field_name } => self.compile_attr(object, field_name),
-            LeafOp::MapGet { map, key } => {
-                self.compile_expr(map)?;
-                self.compile_expr(key)?;
+    fn compile_leaf_op_kind(
+        &mut self,
+        kind: ResolvedLeafOpKind,
+        original: &ResolvedExpr,
+    ) -> Result<(), CompileError> {
+        match kind {
+            ResolvedLeafOpKind::FieldAccess => {
+                // Re-walk to extract the inner expression structurally
+                // — we know it's a top-level Attr because that's what
+                // classify_leaf_op_resolved matched.
+                let ResolvedExpr::Attr(obj, field) = original else {
+                    return Err(CompileError {
+                        msg: "leaf op shape mismatch".to_string(),
+                    });
+                };
+                self.compile_attr(obj, field)
+            }
+            ResolvedLeafOpKind::MapGet => {
+                let (a, b) = expect_two_args(original)?;
+                self.compile_expr(a)?;
+                self.compile_expr(b)?;
                 self.emit_builtin_after_args(VmBuiltin::MapGet, 2, 0)?;
                 Ok(())
             }
-            LeafOp::MapSet { map, key, value } => {
-                let owned_mask = self.compute_builtin_owned_mask(&[map, key, value]);
-                self.compile_expr(map)?;
-                self.compile_expr(key)?;
-                self.compile_expr(value)?;
+            ResolvedLeafOpKind::MapSet => {
+                let (a, b, c) = expect_three_args(original)?;
+                let owned_mask = self.compute_builtin_owned_mask(&[a, b, c]);
+                self.compile_expr(a)?;
+                self.compile_expr(b)?;
+                self.compile_expr(c)?;
                 self.emit_builtin_after_args(VmBuiltin::MapSet, 3, owned_mask)?;
                 Ok(())
             }
-            LeafOp::VectorNew { size, fill } => {
-                self.compile_expr(size)?;
-                self.compile_expr(fill)?;
+            ResolvedLeafOpKind::VectorNew => {
+                let (a, b) = expect_two_args(original)?;
+                self.compile_expr(a)?;
+                self.compile_expr(b)?;
                 self.emit_builtin_after_args(VmBuiltin::VectorNew, 2, 0)?;
                 Ok(())
             }
-            LeafOp::VectorGetOrDefaultLiteral {
-                vector,
-                index,
-                default_literal,
-            } => {
+            ResolvedLeafOpKind::VectorGetOrDefaultLiteral { default_literal } => {
+                // Outer call: `Option.withDefault(vector_get_call, default_literal)`.
+                let (vector_get_call, _default_expr) = expect_two_args(original)?;
+                let (vector, index) = expect_two_args(&vector_get_call.node)?;
                 self.compile_expr(vector)?;
                 self.compile_expr(index)?;
-                let default_value = self.nan_literal(default_literal);
+                let default_value = self.nan_literal(&default_literal);
                 let const_idx = self.add_constant(default_value);
                 self.emit_op(VECTOR_GET_OR);
                 self.emit_u16(const_idx);
                 Ok(())
             }
-            LeafOp::VectorSetOrDefaultSameVector {
-                vector,
-                index,
-                value,
-            } => {
+            ResolvedLeafOpKind::VectorSetOrDefaultSameVector => {
+                // Outer call: `Option.withDefault(vector_set_call, vector)`.
+                let (vector_set_call, _default_expr) = expect_two_args(original)?;
+                let (vector, index, value) = expect_three_args(&vector_set_call.node)?;
                 // In the fused VECTOR_SET_OR_KEEP opcode the default is
                 // implicitly the same vector — it's not loaded separately,
                 // so the vec appears once on the stack. In-place mutation
@@ -465,12 +569,9 @@ impl<'a> FnCompiler<'a> {
                 // the slow-path (clone backing items, push fresh arena
                 // entry) keeps shared entries intact.
                 let owned = match &vector.node {
-                    Expr::Resolved { slot, last_use, .. } => {
+                    ResolvedExpr::Resolved { slot, last_use, .. } => {
                         last_use.0 && !self.is_aliased_slot(*slot)
                     }
-                    // Non-`Resolved` vectors land here as a transient stack
-                    // value — there's no other slot to alias with, so the
-                    // owned fast path is sound.
                     _ => true,
                 };
                 self.compile_expr(vector)?;
@@ -480,57 +581,35 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u8(if owned { 1 } else { 0 });
                 Ok(())
             }
-            LeafOp::ListIndexGet { list, index } => {
-                // Decompose: Vector.fromList(list) then Vector.get(_, index)
+            ResolvedLeafOpKind::ListIndexGet => {
+                let (vector_from_list_call, index) = expect_two_args(original)?;
+                let list = expect_one_arg(&vector_from_list_call.node)?;
                 self.compile_expr(list)?;
                 self.emit_builtin_after_args(VmBuiltin::VectorFromList, 1, 0)?;
                 self.compile_expr(index)?;
                 self.emit_op(VECTOR_GET);
                 Ok(())
             }
-            LeafOp::IntModOrDefaultLiteral {
-                a,
-                b,
-                default_literal,
-            } => {
+            ResolvedLeafOpKind::IntModOrDefaultLiteral { default_literal } => {
+                let (int_mod_call, _default_expr) = expect_two_args(original)?;
+                let (a, b) = expect_two_args(&int_mod_call.node)?;
                 self.compile_expr(a)?;
                 self.compile_expr(b)?;
                 self.emit_builtin_after_args(VmBuiltin::IntMod, 2, 0)?;
-                let default_value = self.nan_literal(default_literal);
+                let default_value = self.nan_literal(&default_literal);
                 let const_idx = self.add_constant(default_value);
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(const_idx);
                 self.emit_op(UNWRAP_RESULT_OR);
                 Ok(())
             }
-            LeafOp::NoneValue => {
+            ResolvedLeafOpKind::NoneValue => {
                 let idx = self.add_constant(NanValue::NONE);
                 self.emit_op(LOAD_CONST);
                 self.emit_u16(idx);
                 Ok(())
             }
-            LeafOp::VariantConstructor {
-                ref qualified_type_name,
-                ref variant_name,
-            } => {
-                if let Some(type_id) = self.resolve_type_id(qualified_type_name)
-                    && let Some(variant_id) = self.arena.find_variant_id(type_id, variant_name)
-                {
-                    self.emit_op(VARIANT_NEW);
-                    self.emit_u16(type_id as u16);
-                    self.emit_u16(variant_id);
-                    self.emit_u8(0); // nullary — zero fields
-                    Ok(())
-                } else {
-                    Err(CompileError {
-                        msg: format!(
-                            "unknown variant constructor: {}.{}",
-                            qualified_type_name, variant_name
-                        ),
-                    })
-                }
-            }
-            LeafOp::StaticRef(ref name) => {
+            ResolvedLeafOpKind::StaticRef(name) => {
                 // Static function/builtin reference in value position.
                 // Resolve via namespace path lookup (same as compile_attr).
                 if let Some(dot) = name.rfind('.') {
@@ -597,10 +676,10 @@ impl<'a> FnCompiler<'a> {
     /// `ir::alias`). Both annotations live on `FnResolution` —
     /// `last_use.0` on the `Resolved` node, `aliased_slots` on the
     /// resolution itself.
-    fn compute_builtin_owned_mask(&self, arg_exprs: &[&Spanned<Expr>]) -> u8 {
+    fn compute_builtin_owned_mask(&self, arg_exprs: &[&Spanned<ResolvedExpr>]) -> u8 {
         let mut mask = 0u8;
         for (i, arg) in arg_exprs.iter().enumerate().take(8) {
-            if let Expr::Resolved { slot, last_use, .. } = &arg.node
+            if let ResolvedExpr::Resolved { slot, last_use, .. } = &arg.node
                 && last_use.0
                 && !self.is_aliased_slot(*slot)
             {
@@ -623,10 +702,10 @@ impl<'a> FnCompiler<'a> {
 
     pub(super) fn compile_attr(
         &mut self,
-        obj: &Spanned<Expr>,
+        obj: &Spanned<ResolvedExpr>,
         field: &str,
     ) -> Result<(), CompileError> {
-        if let Some(path) = self.flatten_path(obj)
+        if let Some(path) = resolved_to_dotted(&obj.node)
             && let Some(symbol_id) = self.symbols.resolve_namespace_path(&path)
         {
             let idx = self.add_constant(VmSymbolTable::symbol_ref(symbol_id));
@@ -655,11 +734,10 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn infer_record_field_idx(&self, obj: &Expr, field: &str) -> Option<u8> {
+    fn infer_record_field_idx(&self, obj: &ResolvedExpr, field: &str) -> Option<u8> {
         let type_name = match obj {
-            Expr::RecordCreate { type_name, .. } | Expr::RecordUpdate { type_name, .. } => {
-                type_name.as_str()
-            }
+            ResolvedExpr::RecordCreate { type_name, .. }
+            | ResolvedExpr::RecordUpdate { type_name, .. } => type_name.as_str(),
             _ => return None,
         };
         let type_id = self.resolve_type_id(type_name)?;
@@ -670,10 +748,10 @@ impl<'a> FnCompiler<'a> {
             .map(|idx| idx as u8)
     }
 
-    fn resolve_record_field_idx(&self, obj: &Expr, field: &str) -> Option<u8> {
+    fn resolve_record_field_idx(&self, obj: &ResolvedExpr, field: &str) -> Option<u8> {
         let field_symbol_id = self.code_store.symbols.find(field)?;
         match obj {
-            Expr::Ident(type_name)
+            ResolvedExpr::Ident(type_name)
                 if type_name.chars().next().is_some_and(|c| c.is_uppercase()) =>
             {
                 let type_id = self.resolve_type_id(type_name)?;
@@ -687,33 +765,140 @@ impl<'a> FnCompiler<'a> {
     }
 }
 
+fn canonical_name_from_key(key: &FnKey) -> String {
+    key.canonical()
+}
+
 /// Check if an expression tree contains a `Resolved { slot, last_use: true }`
 /// for a specific slot. Used to derive tail-call owned_mask from last_use
 /// annotations instead of the old `TailCallData.owned` mechanism.
-fn contains_last_use_slot(expr: &Expr, target_slot: u16) -> bool {
+fn contains_last_use_slot(expr: &ResolvedExpr, target_slot: u16) -> bool {
     match expr {
-        Expr::Resolved { slot, last_use, .. } => *slot == target_slot && last_use.0,
-        Expr::FnCall(fn_expr, args) => {
-            contains_last_use_slot(&fn_expr.node, target_slot)
-                || args
-                    .iter()
-                    .any(|a| contains_last_use_slot(&a.node, target_slot))
-        }
-        Expr::BinOp(_, left, right) => {
+        ResolvedExpr::Resolved { slot, last_use, .. } => *slot == target_slot && last_use.0,
+        ResolvedExpr::Call(_, args) => args
+            .iter()
+            .any(|a| contains_last_use_slot(&a.node, target_slot)),
+        ResolvedExpr::BinOp(_, left, right) => {
             contains_last_use_slot(&left.node, target_slot)
                 || contains_last_use_slot(&right.node, target_slot)
         }
-        Expr::Attr(obj, _) => contains_last_use_slot(&obj.node, target_slot),
-        Expr::ErrorProp(inner) | Expr::Constructor(_, Some(inner)) => {
+        ResolvedExpr::Attr(obj, _) => contains_last_use_slot(&obj.node, target_slot),
+        ResolvedExpr::ErrorProp(inner) | ResolvedExpr::Neg(inner) => {
             contains_last_use_slot(&inner.node, target_slot)
         }
-        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
-            crate::ast::StrPart::Parsed(e) => contains_last_use_slot(&e.node, target_slot),
+        ResolvedExpr::Ctor(_, args) => args
+            .iter()
+            .any(|a| contains_last_use_slot(&a.node, target_slot)),
+        ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ir::hir::ResolvedStrPart::Parsed(e) => {
+                contains_last_use_slot(&e.node, target_slot)
+            }
             _ => false,
         }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
+        ResolvedExpr::List(items)
+        | ResolvedExpr::Tuple(items)
+        | ResolvedExpr::IndependentProduct(items, _) => items
             .iter()
             .any(|e| contains_last_use_slot(&e.node, target_slot)),
+        ResolvedExpr::TailCall { args, .. } => args
+            .iter()
+            .any(|a| contains_last_use_slot(&a.node, target_slot)),
         _ => false,
     }
+}
+
+/// Owned-shape mirror of [`ResolvedLeafOp`]. The leaf classifier
+/// returns borrows into the source `ResolvedExpr`; this enum
+/// captures only the per-variant scalar data so the compiler can
+/// re-borrow the expression tree by structure (avoiding the
+/// lifetime conflict with `self.arena` mutation).
+enum ResolvedLeafOpKind {
+    FieldAccess,
+    MapGet,
+    MapSet,
+    VectorNew,
+    VectorSetOrDefaultSameVector,
+    VectorGetOrDefaultLiteral { default_literal: Literal },
+    IntModOrDefaultLiteral { default_literal: Literal },
+    ListIndexGet,
+    NoneValue,
+    StaticRef(String),
+}
+
+fn leaf_into_owned_kind(leaf: ResolvedLeafOp<'_>) -> ResolvedLeafOpKind {
+    match leaf {
+        ResolvedLeafOp::FieldAccess { .. } => ResolvedLeafOpKind::FieldAccess,
+        ResolvedLeafOp::MapGet { .. } => ResolvedLeafOpKind::MapGet,
+        ResolvedLeafOp::MapSet { .. } => ResolvedLeafOpKind::MapSet,
+        ResolvedLeafOp::VectorNew { .. } => ResolvedLeafOpKind::VectorNew,
+        ResolvedLeafOp::VectorSetOrDefaultSameVector { .. } => {
+            ResolvedLeafOpKind::VectorSetOrDefaultSameVector
+        }
+        ResolvedLeafOp::VectorGetOrDefaultLiteral {
+            default_literal, ..
+        } => ResolvedLeafOpKind::VectorGetOrDefaultLiteral {
+            default_literal: default_literal.clone(),
+        },
+        ResolvedLeafOp::IntModOrDefaultLiteral {
+            default_literal, ..
+        } => ResolvedLeafOpKind::IntModOrDefaultLiteral {
+            default_literal: default_literal.clone(),
+        },
+        ResolvedLeafOp::ListIndexGet { .. } => ResolvedLeafOpKind::ListIndexGet,
+        ResolvedLeafOp::NoneValue => ResolvedLeafOpKind::NoneValue,
+        ResolvedLeafOp::VariantConstructor { .. } => {
+            // The leaf classifier currently does not lift nullary
+            // user variant ctors to LeafOp (the resolver routes them
+            // through `ResolvedExpr::Ctor` instead). Treat as a
+            // "shouldn't happen but be safe" fallback so the surrounding
+            // tree walks: we pretend it's a NoneValue placeholder,
+            // and the caller's expression-shape check will surface
+            // a CompileError if it tries to lower it. In practice
+            // this branch is unreachable.
+            ResolvedLeafOpKind::NoneValue
+        }
+        ResolvedLeafOp::StaticRef(name) => ResolvedLeafOpKind::StaticRef(name),
+    }
+}
+
+fn expect_one_arg(expr: &ResolvedExpr) -> Result<&Spanned<ResolvedExpr>, CompileError> {
+    let ResolvedExpr::Call(_, args) = expr else {
+        return Err(CompileError {
+            msg: "leaf-op inner call shape mismatch".to_string(),
+        });
+    };
+    if args.len() != 1 {
+        return Err(CompileError {
+            msg: "leaf-op arity mismatch".to_string(),
+        });
+    }
+    Ok(&args[0])
+}
+
+fn expect_two_args(expr: &ResolvedExpr) -> Result<SpannedResolvedPair<'_>, CompileError> {
+    let ResolvedExpr::Call(_, args) = expr else {
+        return Err(CompileError {
+            msg: "leaf-op outer call shape mismatch".to_string(),
+        });
+    };
+    if args.len() != 2 {
+        return Err(CompileError {
+            msg: "leaf-op arity mismatch".to_string(),
+        });
+    }
+    Ok((&args[0], &args[1]))
+}
+
+fn expect_three_args(expr: &ResolvedExpr) -> Result<SpannedResolvedTriple<'_>, CompileError> {
+    let ResolvedExpr::Call(_, args) = expr else {
+        return Err(CompileError {
+            msg: "leaf-op outer call shape mismatch".to_string(),
+        });
+    };
+    if args.len() != 3 {
+        return Err(CompileError {
+            msg: "leaf-op arity mismatch".to_string(),
+        });
+    }
+    Ok((&args[0], &args[1], &args[2]))
 }

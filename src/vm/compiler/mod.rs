@@ -2,10 +2,15 @@ mod calls;
 mod classify;
 mod expr;
 mod patterns;
+mod resolved_classify;
 
 use std::collections::HashMap;
 
-use crate::ast::{FnBody, FnDef, Stmt, TopLevel, TypeDef};
+use crate::ast::{Stmt, TopLevel, TypeDef};
+use crate::ir::SymbolTable;
+use crate::ir::hir::{
+    ResolveCtx, ResolvedFnBody, ResolvedFnDef, ResolvedStmt, ResolvedTopLevel, resolve_top_level,
+};
 use crate::nan_value::{Arena, NanValue};
 use crate::types::{option, result};
 use crate::visibility;
@@ -15,23 +20,30 @@ use super::opcode::*;
 use super::symbol::{VmSymbolTable, VmVariantCtor};
 use super::types::{CodeStore, FnChunk};
 
-/// Compile a parsed + TCO-transformed + resolved program into bytecode.
+/// Compile a resolved program into bytecode.
 ///
-/// `analysis` carries per-fn `FnAnalysis.allocates` from the pipeline's
-/// analyze stage; the VM compiler reads `chunk.no_alloc` from it
-/// directly. `None` triggers an in-place `compute_alloc_info` fallback
-/// for ad-hoc test harnesses (no production caller passes None).
+/// `items` is the entry's resolved HIR (the output of the
+/// `NameResolve` pipeline stage). `symbols` is the entry's symbol
+/// table — every `ResolvedCallee::Fn(FnId)` / `ResolvedCtor::User`
+/// in the resolved tree resolves through it to a canonical name
+/// that the VM dispatches against.
+///
+/// `analysis` carries per-fn `FnAnalysis.allocates` from the
+/// pipeline's analyze stage; the VM compiler reads `chunk.no_alloc`
+/// from it directly.
 pub fn compile_program(
-    items: &[TopLevel],
+    items: &[ResolvedTopLevel],
+    symbols: &SymbolTable,
     arena: &mut Arena,
     analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_with_modules(items, arena, None, "", analysis)
+    compile_program_with_modules(items, symbols, arena, None, "", analysis)
 }
 
 /// Compile with explicit module root for `depends` resolution.
 pub fn compile_program_with_modules(
-    items: &[TopLevel],
+    items: &[ResolvedTopLevel],
+    symbols: &SymbolTable,
     arena: &mut Arena,
     module_root: Option<&str>,
     source_file: &str,
@@ -39,6 +51,7 @@ pub fn compile_program_with_modules(
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     compile_program_inner(
         items,
+        symbols,
         arena,
         source_file,
         ModuleSource::Disk(module_root),
@@ -50,7 +63,8 @@ pub fn compile_program_with_modules(
 /// (or out of a virtual filesystem). The browser playground uses this
 /// to run multi-file programs without any real fs access.
 pub fn compile_program_with_loaded_modules(
-    items: &[TopLevel],
+    items: &[ResolvedTopLevel],
+    symbols: &SymbolTable,
     arena: &mut Arena,
     loaded: Vec<crate::source::LoadedModule>,
     source_file: &str,
@@ -58,6 +72,7 @@ pub fn compile_program_with_loaded_modules(
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     compile_program_inner(
         items,
+        symbols,
         arena,
         source_file,
         ModuleSource::Loaded(loaded),
@@ -71,7 +86,8 @@ enum ModuleSource<'a> {
 }
 
 fn compile_program_inner(
-    items: &[TopLevel],
+    items: &[ResolvedTopLevel],
+    symbols: &SymbolTable,
     arena: &mut Arena,
     source_file: &str,
     module_source: ModuleSource<'_>,
@@ -100,23 +116,23 @@ fn compile_program_inner(
     }
 
     for item in items {
-        if let TopLevel::Stmt(Stmt::Binding(name, _, _)) = item {
+        if let ResolvedTopLevel::Passthrough(TopLevel::Stmt(Stmt::Binding(name, _, _))) = item {
             compiler.ensure_global(name);
         }
     }
 
     for item in items {
         match item {
-            TopLevel::FnDef(fndef) => {
-                compiler.ensure_global(&fndef.name);
-                let effect_ids: Vec<u32> = fndef
+            ResolvedTopLevel::FnDef(rfd) => {
+                compiler.ensure_global(&rfd.name);
+                let effect_ids: Vec<u32> = rfd
                     .effects
                     .iter()
                     .map(|effect| compiler.symbols.intern_name(&effect.node))
                     .collect();
                 let fn_id = compiler.code.add_function(FnChunk {
-                    name: fndef.name.clone(),
-                    arity: fndef.params.len() as u8,
+                    name: rfd.name.clone(),
+                    arity: rfd.params.len() as u8,
                     local_count: 0,
                     code: Vec::new(),
                     constants: Vec::new(),
@@ -129,18 +145,17 @@ fn compile_program_inner(
                     line_table: Vec::new(),
                 });
                 let symbol_id = compiler.symbols.intern_function(
-                    &fndef.name,
+                    &rfd.name,
                     fn_id,
-                    &fndef
-                        .effects
+                    &rfd.effects
                         .iter()
                         .map(|e| e.node.clone())
                         .collect::<Vec<_>>(),
                 )?;
-                let global_idx = compiler.global_names[&fndef.name];
+                let global_idx = compiler.global_names[&rfd.name];
                 compiler.globals[global_idx as usize] = VmSymbolTable::symbol_ref(symbol_id);
             }
-            TopLevel::TypeDef(td) => {
+            ResolvedTopLevel::Passthrough(TopLevel::TypeDef(td)) => {
                 // Current module: register in Arena (no qualified alias needed)
                 match td {
                     TypeDef::Product { name, fields, .. } => {
@@ -164,74 +179,48 @@ fn compile_program_inner(
     compiler.register_current_module_namespace(items)?;
 
     for item in items {
-        if let TopLevel::FnDef(fndef) = item {
-            let fn_id = compiler.code.find(&fndef.name).unwrap();
-            let chunk = compiler.compile_fn(fndef, arena)?;
+        if let ResolvedTopLevel::FnDef(rfd) = item {
+            let fn_id = compiler.code.find(&rfd.name).unwrap();
+            let chunk = compiler.compile_fn(rfd, symbols, arena)?;
             compiler.code.functions[fn_id as usize] = chunk;
         }
     }
 
-    compiler.compile_top_level(items, arena)?;
+    compiler.compile_top_level(items, symbols, arena)?;
     compiler.code.symbols = compiler.symbols.clone();
     classify::classify_thin_functions(&mut compiler.code, arena)?;
 
-    // Lowering-level no-alloc analysis (shared `ir::compute_alloc_info`).
-    // Annotates each chunk so the dispatch loop can skip the runtime
-    // length-compare guard inside `finalize_frame_locals_for_tail_call`
-    // when the target body is provably alloc-free. The WASM backend uses
-    // the same pass to skip boundary framing entirely; here the VM's
-    // `TAIL_CALL_KNOWN` site shortcuts a few ops per iteration.
-    let user_fn_defs: Vec<&crate::ast::FnDef> = items
-        .iter()
-        .filter_map(|item| {
-            if let TopLevel::FnDef(fd) = item {
-                Some(fd)
-            } else {
-                None
-            }
-        })
-        .collect();
-    if !user_fn_defs.is_empty() {
-        // Read the per-fn `allocates` flag from the supplied analysis
-        // when available (production path through the canonical
-        // pipeline); fall back to in-place `compute_alloc_info` for
-        // callers that haven't migrated. `VmAllocPolicy` and the
-        // pipeline-default `NeutralAllocPolicy` agree on every name
-        // today, so the two paths produce identical results.
-        let fallback_info = if analysis.is_none() {
-            let policy = super::VmAllocPolicy;
-            Some(crate::ir::compute_alloc_info(&user_fn_defs, &policy))
-        } else {
-            None
-        };
-        let allocates = |name: &str| -> bool {
-            if let Some(a) = analysis
-                && let Some(fa) = a.fn_analyses.get(name)
-                && let Some(b) = fa.allocates
-            {
-                return b;
-            }
-            if let Some(info) = fallback_info.as_ref() {
-                return *info.get(name).unwrap_or(&true);
-            }
-            // Analysis present but no `allocates` field — pipeline ran
-            // without an alloc_policy. Conservative default: assume yes.
-            true
-        };
-        for fd in &user_fn_defs {
-            if !allocates(&fd.name)
-                && let Some(fn_id) = compiler.code.find(&fd.name)
-            {
-                let chunk = &mut compiler.code.functions[fn_id as usize];
-                chunk.no_alloc = true;
-                // No-alloc bodies always satisfy `can_fast_return`'s
-                // runtime length-equality guards, so promote them into
-                // the thin fast-return class. The bytecode classifier
-                // rejected them for unrelated reasons (mutual TCO call,
-                // body size > MAX_PARENT_THIN, etc.) but for return
-                // purposes there's nothing left to do.
-                chunk.thin = true;
-            }
+    // Lowering-level no-alloc analysis driven by the supplied
+    // analysis. The pre-Phase-E in-place `compute_alloc_info`
+    // fallback assumed access to the original `FnDef` shape;
+    // after migration the VM compiler no longer holds those
+    // (resolved fn defs carry typed params, not source strings),
+    // so the fallback path becomes a conservative "assume yes".
+    // Every production caller passes `Some(analysis)` so the
+    // optimisation is reached on every real path.
+    let allocates = |name: &str| -> bool {
+        if let Some(a) = analysis
+            && let Some(fa) = a.fn_analyses.get(name)
+            && let Some(b) = fa.allocates
+        {
+            return b;
+        }
+        true
+    };
+    for item in items {
+        if let ResolvedTopLevel::FnDef(rfd) = item
+            && !allocates(&rfd.name)
+            && let Some(fn_id) = compiler.code.find(&rfd.name)
+        {
+            let chunk = &mut compiler.code.functions[fn_id as usize];
+            chunk.no_alloc = true;
+            // No-alloc bodies always satisfy `can_fast_return`'s
+            // runtime length-equality guards, so promote them into
+            // the thin fast-return class. The bytecode classifier
+            // rejected them for unrelated reasons (mutual TCO call,
+            // body size > MAX_PARENT_THIN, etc.) but for return
+            // purposes there's nothing left to do.
+            chunk.thin = true;
         }
     }
 
@@ -310,16 +299,13 @@ impl ProgramCompiler {
     /// then compile each module's functions and register symbols.
     fn load_modules(
         &mut self,
-        items: &[TopLevel],
+        items: &[ResolvedTopLevel],
         module_root: &str,
         arena: &mut Arena,
     ) -> Result<(), CompileError> {
-        let module = items.iter().find_map(|i| {
-            if let TopLevel::Module(m) = i {
-                Some(m)
-            } else {
-                None
-            }
+        let module = items.iter().find_map(|i| match i {
+            ResolvedTopLevel::Module(m) => Some(m),
+            _ => None,
         });
         let module = match module {
             Some(m) => m,
@@ -337,6 +323,12 @@ impl ProgramCompiler {
 
     /// Integrate a loaded module into the VM: register types, compile functions,
     /// expose symbols.
+    ///
+    /// Dep items come in unresolved (the entry's pipeline only saw the
+    /// entry source). Run TCO + slot-resolve here, then build a
+    /// per-dep `SymbolTable` and lift the dep into resolved HIR so the
+    /// bytecode-emit walk consumes the same `ResolvedTopLevel` shape
+    /// it does for entry items.
     fn integrate_module(
         &mut self,
         dep_name: &str,
@@ -372,19 +364,66 @@ impl ProgramCompiler {
             }
         }
 
+        // Build per-dep symbol table + lift to resolved HIR. The
+        // dep's `ResolvedCallee::Fn(FnId)` / `ResolvedCtor::User`
+        // references in its own bodies resolve through this table.
+        //
+        // Pack the dep as a `ModuleInfo` so its FnIds / TypeIds end
+        // up under `scope = Some(dep_name)` — `SymbolTable::build`
+        // ignores the embedded `TopLevel::Module(_)` declaration in
+        // entry items and would otherwise file the dep's fns under
+        // entry scope, blowing up the canonical-name lookup later on
+        // (the VM symbol table stores everything under qualified
+        // names).
+        let dep_module_info = crate::codegen::ModuleInfo {
+            prefix: dep_name.to_string(),
+            depends: Vec::new(),
+            type_defs: mod_items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::TypeDef(td) => Some(td.clone()),
+                    _ => None,
+                })
+                .collect(),
+            fn_defs: mod_items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::FnDef(fd) => Some(fd.clone()),
+                    _ => None,
+                })
+                .collect(),
+            analysis: None,
+        };
+        let dep_modules = vec![dep_module_info];
+        let dep_symbols = SymbolTable::build(&[], &dep_modules);
+        // The dep's source declares `module Foo` for the leaf name
+        // even when `loaded.dep_name` is the full dotted path
+        // ("Domain.Eval.Store"). `resolve_program`'s default would
+        // pick up the source-declared leaf and miss every
+        // `FnKey::in_module(dep_name, _)` entry. Pin the resolver
+        // ctx's `current_module` to the canonical dep_name so the
+        // intra-dep call shape (`Foo.bar`, bare `bar`) resolves to
+        // the dep_symbols rows we just inserted.
+        let mut ctx = ResolveCtx::new(&dep_symbols);
+        ctx.current_module = Some(dep_name.to_string());
+        let dep_resolved: Vec<ResolvedTopLevel> = mod_items
+            .iter()
+            .map(|i| resolve_top_level(&ctx, i))
+            .collect();
+
         // Compile ALL functions (not just exposed).
         let mut module_fn_ids: Vec<(String, u32)> = Vec::new();
-        for item in &mod_items {
-            if let TopLevel::FnDef(fndef) = item {
-                let qualified_name = visibility::qualified_name(dep_name, &fndef.name);
-                let effect_ids: Vec<u32> = fndef
+        for item in &dep_resolved {
+            if let ResolvedTopLevel::FnDef(rfd) = item {
+                let qualified_name = visibility::qualified_name(dep_name, &rfd.name);
+                let effect_ids: Vec<u32> = rfd
                     .effects
                     .iter()
                     .map(|effect| self.symbols.intern_name(&effect.node))
                     .collect();
                 let fn_id = self.code.add_function(FnChunk {
                     name: qualified_name.clone(),
-                    arity: fndef.params.len() as u8,
+                    arity: rfd.params.len() as u8,
                     local_count: 0,
                     code: Vec::new(),
                     constants: Vec::new(),
@@ -399,22 +438,22 @@ impl ProgramCompiler {
                 self.symbols.intern_function(
                     &qualified_name,
                     fn_id,
-                    &fndef
-                        .effects
+                    &rfd.effects
                         .iter()
                         .map(|e| e.node.clone())
                         .collect::<Vec<_>>(),
                 )?;
-                module_fn_ids.push((fndef.name.clone(), fn_id));
+                module_fn_ids.push((rfd.name.clone(), fn_id));
             }
         }
 
         let module_scope: HashMap<String, u32> = module_fn_ids.iter().cloned().collect();
         let mut fn_idx = 0;
-        for item in &mod_items {
-            if let TopLevel::FnDef(fndef) = item {
+        for item in &dep_resolved {
+            if let ResolvedTopLevel::FnDef(rfd) = item {
                 let (fn_name, fn_id) = &module_fn_ids[fn_idx];
-                let mut chunk = self.compile_fn_with_scope(fndef, arena, &module_scope)?;
+                let mut chunk =
+                    self.compile_fn_with_scope(rfd, &dep_symbols, arena, &module_scope)?;
                 chunk.name = visibility::qualified_name(dep_name, fn_name);
                 self.code.functions[*fn_id as usize] = chunk;
                 fn_idx += 1;
@@ -620,24 +659,29 @@ impl ProgramCompiler {
         Ok(())
     }
 
-    fn compile_fn(&mut self, fndef: &FnDef, arena: &mut Arena) -> Result<FnChunk, CompileError> {
+    fn compile_fn(
+        &mut self,
+        rfd: &ResolvedFnDef,
+        symbols: &SymbolTable,
+        arena: &mut Arena,
+    ) -> Result<FnChunk, CompileError> {
         let empty_scope = HashMap::new();
-        self.compile_fn_with_scope(fndef, arena, &empty_scope)
+        self.compile_fn_with_scope(rfd, symbols, arena, &empty_scope)
     }
 
     fn compile_fn_with_scope(
         &mut self,
-        fndef: &FnDef,
+        rfd: &ResolvedFnDef,
+        symbols: &SymbolTable,
         arena: &mut Arena,
         module_scope: &HashMap<String, u32>,
     ) -> Result<FnChunk, CompileError> {
-        let resolution = fndef.resolution.as_ref();
-        let local_count = resolution.map_or(fndef.params.len() as u16, |r| r.local_count);
+        let resolution = rfd.resolution.as_ref();
+        let local_count = resolution.map_or(rfd.params.len() as u16, |r| r.local_count);
         let local_slots: HashMap<String, u16> = resolution
             .map(|r| r.local_slots.as_ref().clone())
             .unwrap_or_else(|| {
-                fndef
-                    .params
+                rfd.params
                     .iter()
                     .enumerate()
                     .map(|(i, (name, _))| (name.clone(), i as u16))
@@ -645,11 +689,10 @@ impl ProgramCompiler {
             });
 
         let mut fc = FnCompiler::new(
-            &fndef.name,
-            fndef.params.len() as u8,
+            &rfd.name,
+            rfd.params.len() as u8,
             local_count,
-            fndef
-                .effects
+            rfd.effects
                 .iter()
                 .map(|effect| self.symbols.intern_name(&effect.node))
                 .collect(),
@@ -659,15 +702,16 @@ impl ProgramCompiler {
             &self.code,
             &mut self.symbols,
             arena,
+            symbols,
         );
         fc.source_file = self.source_file.clone();
-        fc.note_line(fndef.line);
+        fc.note_line(rfd.line);
         if let Some(res) = resolution {
             fc.set_aliased_slots(res.aliased_slots.clone());
         }
 
-        match fndef.body.as_ref() {
-            FnBody::Block(stmts) => fc.compile_body(stmts)?,
+        match rfd.body.as_ref() {
+            ResolvedFnBody::Block(stmts) => fc.compile_body(stmts)?,
         }
 
         Ok(fc.finish())
@@ -675,19 +719,29 @@ impl ProgramCompiler {
 
     fn compile_top_level(
         &mut self,
-        items: &[TopLevel],
+        items: &[ResolvedTopLevel],
+        symbols: &SymbolTable,
         arena: &mut Arena,
     ) -> Result<(), CompileError> {
-        let has_stmts = items.iter().any(|i| matches!(i, TopLevel::Stmt(_)));
+        let has_stmts = items
+            .iter()
+            .any(|i| matches!(i, ResolvedTopLevel::Passthrough(TopLevel::Stmt(_))));
         if !has_stmts {
             return Ok(());
         }
 
         for item in items {
-            if let TopLevel::Stmt(Stmt::Binding(name, _, _)) = item {
+            if let ResolvedTopLevel::Passthrough(TopLevel::Stmt(Stmt::Binding(name, _, _))) = item {
                 self.ensure_global(name);
             }
         }
+
+        // Top-level statements never went through the resolver pass
+        // (Phase E lifts `FnDef` bodies but leaves `TopLevel::Stmt`
+        // as passthrough). Resolve them here against the entry's
+        // symbol table so the bytecode-emit walk operates on the
+        // same `ResolvedExpr` shape it does inside fn bodies.
+        let resolver_ctx = crate::ir::hir::ResolveCtx::new(symbols);
 
         let empty_mod_scope = HashMap::new();
         let mut fc = FnCompiler::new(
@@ -701,19 +755,21 @@ impl ProgramCompiler {
             &self.code,
             &mut self.symbols,
             arena,
+            symbols,
         );
 
         for item in items {
-            if let TopLevel::Stmt(stmt) = item {
-                match stmt {
-                    Stmt::Binding(name, _type_ann, expr) => {
-                        fc.compile_expr(expr)?;
+            if let ResolvedTopLevel::Passthrough(TopLevel::Stmt(stmt)) = item {
+                let resolved_stmt = resolve_stmt_for_top_level(&resolver_ctx, stmt);
+                match &resolved_stmt {
+                    ResolvedStmt::Binding { name, value, .. } => {
+                        fc.compile_expr(value)?;
                         let idx = self.global_names[name.as_str()];
                         fc.emit_op(STORE_GLOBAL);
                         fc.emit_u16(idx);
                     }
-                    Stmt::Expr(expr) => {
-                        fc.compile_expr(expr)?;
+                    ResolvedStmt::Expr(value) => {
+                        fc.compile_expr(value)?;
                         fc.emit_op(POP);
                     }
                 }
@@ -730,14 +786,11 @@ impl ProgramCompiler {
 
     fn register_current_module_namespace(
         &mut self,
-        items: &[TopLevel],
+        items: &[ResolvedTopLevel],
     ) -> Result<(), CompileError> {
-        let Some(module) = items.iter().find_map(|item| {
-            if let TopLevel::Module(module) = item {
-                Some(module)
-            } else {
-                None
-            }
+        let Some(module) = items.iter().find_map(|item| match item {
+            ResolvedTopLevel::Module(module) => Some(module),
+            _ => None,
         }) else {
             return Ok(());
         };
@@ -751,11 +804,11 @@ impl ProgramCompiler {
 
         for item in items {
             match item {
-                TopLevel::FnDef(fndef) => {
-                    if visibility::is_exposed(&fndef.name, exposes_ref)
-                        && let Some(symbol_id) = self.symbols.find(&fndef.name)
+                ResolvedTopLevel::FnDef(rfd) => {
+                    if visibility::is_exposed(&rfd.name, exposes_ref)
+                        && let Some(symbol_id) = self.symbols.find(&rfd.name)
                     {
-                        let member_symbol_id = self.symbols.intern_name(&fndef.name);
+                        let member_symbol_id = self.symbols.intern_name(&rfd.name);
                         self.symbols.add_namespace_member_by_id(
                             module_symbol_id,
                             member_symbol_id,
@@ -763,7 +816,9 @@ impl ProgramCompiler {
                         )?;
                     }
                 }
-                TopLevel::TypeDef(TypeDef::Product { name, .. } | TypeDef::Sum { name, .. }) => {
+                ResolvedTopLevel::Passthrough(TopLevel::TypeDef(
+                    TypeDef::Product { name, .. } | TypeDef::Sum { name, .. },
+                )) => {
                     if visibility::is_exposed(name, exposes_ref)
                         && let Some(symbol_id) = self.symbols.find(name)
                     {
@@ -782,8 +837,12 @@ impl ProgramCompiler {
     }
 }
 
+fn resolve_stmt_for_top_level(ctx: &crate::ir::hir::ResolveCtx<'_>, stmt: &Stmt) -> ResolvedStmt {
+    crate::ir::hir::resolve::resolve_stmt_external(ctx, stmt)
+}
+
 /// What a function expression resolves to at compile time.
-enum CallTarget {
+pub(super) enum CallTarget {
     /// Known function id (local or qualified module function).
     KnownFn(u32),
     /// Result.Ok / Result.Err / Option.Some → WRAP opcode. kind: 0=Ok, 1=Err, 2=Some.
@@ -798,19 +857,29 @@ enum CallTarget {
     UnknownQualified(String),
 }
 
-struct FnCompiler<'a> {
+pub(super) struct FnCompiler<'a> {
     name: String,
     arity: u8,
     local_count: u16,
     effects: Vec<u32>,
-    local_slots: HashMap<String, u16>,
+    pub(super) local_slots: HashMap<String, u16>,
     global_names: &'a HashMap<String, u16>,
     /// Module-local function scope: simple_name → fn_id.
     /// Used for intra-module calls (e.g. `placeStairs` inside map.av).
     module_scope: &'a HashMap<String, u32>,
-    code_store: &'a CodeStore,
-    symbols: &'a mut VmSymbolTable,
-    arena: &'a mut Arena,
+    pub(super) code_store: &'a CodeStore,
+    pub(super) symbols: &'a mut VmSymbolTable,
+    pub(super) arena: &'a mut Arena,
+    /// Resolved-identity table for the current compilation scope. Used
+    /// to map [`crate::ir::hir::ResolvedCallee::Fn`] and `ResolvedCtor::User`
+    /// references back to their source-level canonical names so the VM
+    /// can dispatch through `code_store.find` / arena lookups by name.
+    ///
+    /// Entry fns use the entry's `SymbolTable`. Dep fns (compiled via
+    /// `integrate_module`) use a per-dep `SymbolTable` built off the
+    /// dep's own items — keeps each compilation scope's `FnId` space
+    /// self-consistent without forcing the caller to pre-merge.
+    pub(super) symbol_table: &'a SymbolTable,
     code: Vec<u8>,
     constants: Vec<NanValue>,
     /// Byte offset of the last emitted opcode (for superinstruction fusion).
@@ -845,6 +914,7 @@ impl<'a> FnCompiler<'a> {
         code_store: &'a CodeStore,
         symbols: &'a mut VmSymbolTable,
         arena: &'a mut Arena,
+        symbol_table: &'a SymbolTable,
     ) -> Self {
         FnCompiler {
             name: name.to_string(),
@@ -857,6 +927,7 @@ impl<'a> FnCompiler<'a> {
             code_store,
             symbols,
             arena,
+            symbol_table,
             code: Vec::new(),
             constants: Vec::new(),
             last_op_pos: usize::MAX,
@@ -876,6 +947,18 @@ impl<'a> FnCompiler<'a> {
             .get(slot as usize)
             .copied()
             .unwrap_or(false)
+    }
+
+    pub(super) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(super) fn global_names(&self) -> &HashMap<String, u16> {
+        self.global_names
+    }
+
+    pub(super) fn module_scope(&self) -> &HashMap<String, u32> {
+        self.module_scope
     }
 
     fn finish(self) -> FnChunk {
@@ -898,7 +981,7 @@ impl<'a> FnCompiler<'a> {
     /// Record that bytecode emitted from this point forward corresponds to
     /// the given source line. RLE-deduplicated: consecutive calls with the
     /// same line produce only one entry.
-    fn note_line(&mut self, line: usize) {
+    pub(super) fn note_line(&mut self, line: usize) {
         if line == 0 {
             return;
         }
@@ -910,7 +993,7 @@ impl<'a> FnCompiler<'a> {
         self.line_table.push((self.code.len() as u16, line16));
     }
 
-    fn emit_op(&mut self, op: u8) {
+    pub(super) fn emit_op(&mut self, op: u8) {
         let prev_pos = self.last_op_pos;
         let prev_op = if prev_pos < self.code.len() {
             self.code[prev_pos]
@@ -950,35 +1033,35 @@ impl<'a> FnCompiler<'a> {
         self.code.push(op);
     }
 
-    fn emit_u8(&mut self, val: u8) {
+    pub(super) fn emit_u8(&mut self, val: u8) {
         self.code.push(val);
     }
 
-    fn emit_u16(&mut self, val: u16) {
+    pub(super) fn emit_u16(&mut self, val: u16) {
         self.code.push((val >> 8) as u8);
         self.code.push((val & 0xFF) as u8);
     }
 
-    fn emit_i16(&mut self, val: i16) {
+    pub(super) fn emit_i16(&mut self, val: i16) {
         self.emit_u16(val as u16);
     }
 
-    fn emit_u32(&mut self, val: u32) {
+    pub(super) fn emit_u32(&mut self, val: u32) {
         self.code.push((val >> 24) as u8);
         self.code.push(((val >> 16) & 0xFF) as u8);
         self.code.push(((val >> 8) & 0xFF) as u8);
         self.code.push((val & 0xFF) as u8);
     }
 
-    fn emit_u64(&mut self, val: u64) {
+    pub(super) fn emit_u64(&mut self, val: u64) {
         self.code.extend_from_slice(&val.to_be_bytes());
     }
 
-    fn emit_i64(&mut self, val: i64) {
+    pub(super) fn emit_i64(&mut self, val: i64) {
         self.code.extend_from_slice(&val.to_be_bytes());
     }
 
-    fn add_constant(&mut self, val: NanValue) -> u16 {
+    pub(super) fn add_constant(&mut self, val: NanValue) -> u16 {
         for (i, c) in self.constants.iter().enumerate() {
             if c.bits() == val.bits() {
                 return i as u16;
@@ -989,18 +1072,26 @@ impl<'a> FnCompiler<'a> {
         idx
     }
 
-    fn offset(&self) -> usize {
+    pub(super) fn offset(&self) -> usize {
         self.code.len()
     }
 
-    fn emit_jump(&mut self, op: u8) -> usize {
+    pub(super) fn code(&self) -> &Vec<u8> {
+        &self.code
+    }
+
+    pub(super) fn code_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.code
+    }
+
+    pub(super) fn emit_jump(&mut self, op: u8) -> usize {
         self.emit_op(op);
         let patch_pos = self.code.len();
         self.emit_i16(0);
         patch_pos
     }
 
-    fn patch_jump(&mut self, patch_pos: usize) {
+    pub(super) fn patch_jump(&mut self, patch_pos: usize) {
         let target = self.code.len();
         let offset = (target as isize - patch_pos as isize - 2) as i16;
         let bytes = (offset as u16).to_be_bytes();
@@ -1008,14 +1099,14 @@ impl<'a> FnCompiler<'a> {
         self.code[patch_pos + 1] = bytes[1];
     }
 
-    fn patch_jump_to(&mut self, patch_pos: usize, target: usize) {
+    pub(super) fn patch_jump_to(&mut self, patch_pos: usize, target: usize) {
         let offset = (target as isize - patch_pos as isize - 2) as i16;
         let bytes = (offset as u16).to_be_bytes();
         self.code[patch_pos] = bytes[0];
         self.code[patch_pos + 1] = bytes[1];
     }
 
-    fn bind_top_to_local(&mut self, name: &str) {
+    pub(super) fn bind_top_to_local(&mut self, name: &str) {
         if let Some(&slot) = self.local_slots.get(name) {
             self.emit_op(STORE_LOCAL);
             self.emit_u8(slot as u8);
@@ -1024,7 +1115,7 @@ impl<'a> FnCompiler<'a> {
         }
     }
 
-    fn dup_and_bind_top_to_local(&mut self, name: &str) {
+    pub(super) fn dup_and_bind_top_to_local(&mut self, name: &str) {
         self.emit_op(DUP);
         self.bind_top_to_local(name);
     }
@@ -1036,7 +1127,7 @@ impl<'a> FnCompiler<'a> {
     /// prior mapping so the caller can `restore_local_slots` afterward.
     pub(super) fn install_arm_slots(
         &mut self,
-        arm: &crate::ast::MatchArm,
+        arm: &crate::ir::hir::ResolvedMatchArm,
     ) -> Vec<(String, Option<u16>)> {
         let names = collect_pattern_binding_names(&arm.pattern);
         let slots = arm.binding_slots.get().cloned().unwrap_or_default();
@@ -1072,26 +1163,48 @@ impl<'a> FnCompiler<'a> {
 /// Pattern-position-ordered binding names — must mirror
 /// `resolver::ResolverState::allocate_pattern` exactly so position
 /// `i` lines up with `arm.binding_slots[i]`.
-fn collect_pattern_binding_names(pattern: &crate::ast::Pattern) -> Vec<String> {
-    use crate::ast::Pattern;
+fn collect_pattern_binding_names(pattern: &crate::ir::hir::ResolvedPattern) -> Vec<String> {
+    use crate::ir::hir::ResolvedPattern;
     match pattern {
-        Pattern::Ident(name) => vec![name.clone()],
-        Pattern::Cons(head, tail) => vec![head.clone(), tail.clone()],
-        Pattern::Constructor(_, bindings) => bindings.clone(),
-        Pattern::Tuple(items) => items
+        ResolvedPattern::Ident(name) => vec![name.clone()],
+        ResolvedPattern::Cons(head, tail) => vec![head.clone(), tail.clone()],
+        ResolvedPattern::Ctor(_, bindings) => bindings.clone(),
+        ResolvedPattern::Tuple(items) => items
             .iter()
             .flat_map(collect_pattern_binding_names)
             .collect(),
-        Pattern::Wildcard | Pattern::Literal(_) | Pattern::EmptyList => Vec::new(),
+        ResolvedPattern::Wildcard | ResolvedPattern::Literal(_) | ResolvedPattern::EmptyList => {
+            Vec::new()
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::compile_program;
+    use crate::ir::SymbolTable;
+    use crate::ir::hir::resolve_program;
     use crate::nan_value::Arena;
     use crate::source::parse_source;
     use crate::vm::opcode::{LT, NOT, VECTOR_GET_OR, VECTOR_SET_OR_KEEP};
+
+    /// Mirror of the pre-Phase-E test helper: tco + slot-resolve +
+    /// resolved-HIR lift, no typecheck. Matches the original
+    /// `compile_program` callsites that exercised the bytecode-emit
+    /// path in isolation — keeping the "no `LT_INT` because spans
+    /// aren't typed" assumption alive so the byte-shape assertions
+    /// don't get nudged by typed-opcode promotion.
+    fn compile_via_pipeline(source: &str) -> crate::vm::CodeStore {
+        let mut items = parse_source(source).expect("source should parse");
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
+        let symbols = SymbolTable::build(&items, &[]);
+        let resolved = resolve_program(&symbols, &items);
+        let mut arena = Arena::new();
+        let (code, _globals) =
+            compile_program(&resolved, &symbols, &mut arena, None).expect("vm compile should pass");
+        code
+    }
 
     #[test]
     fn vector_get_with_literal_default_lowers_to_vector_get_or() {
@@ -1102,13 +1215,7 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
     Option.withDefault(Vector.get(grid, idx), 0)
 "#;
 
-        let mut items = parse_source(source).expect("source should parse");
-        crate::ir::pipeline::tco(&mut items);
-        crate::ir::pipeline::resolve(&mut items);
-
-        let mut arena = Arena::new();
-        let (code, _globals) =
-            compile_program(&items, &mut arena, None).expect("vm compile should pass");
+        let code = compile_via_pipeline(source);
         let fn_id = code.find("cellAt").expect("cellAt should exist");
         let chunk = code.get(fn_id);
 
@@ -1128,13 +1235,7 @@ fn updateOrKeep(vec: Vector<Int>, idx: Int, value: Int) -> Vector<Int>
     Option.withDefault(Vector.set(vec, idx, value), vec)
 "#;
 
-        let mut items = parse_source(source).expect("source should parse");
-        crate::ir::pipeline::tco(&mut items);
-        crate::ir::pipeline::resolve(&mut items);
-
-        let mut arena = Arena::new();
-        let (code, _globals) =
-            compile_program(&items, &mut arena, None).expect("vm compile should pass");
+        let code = compile_via_pipeline(source);
         let fn_id = code
             .find("updateOrKeep")
             .expect("updateOrKeep should exist");
@@ -1158,13 +1259,7 @@ fn bucket(n: Int) -> Int
         false -> 3
 "#;
 
-        let mut items = parse_source(source).expect("source should parse");
-        crate::ir::pipeline::tco(&mut items);
-        crate::ir::pipeline::resolve(&mut items);
-
-        let mut arena = Arena::new();
-        let (code, _globals) =
-            compile_program(&items, &mut arena, None).expect("vm compile should pass");
+        let code = compile_via_pipeline(source);
         let fn_id = code.find("bucket").expect("bucket should exist");
         let chunk = code.get(fn_id);
 
@@ -1192,13 +1287,7 @@ fn listenWith(context: Int, handler: Int) -> Unit
     SelfHostRuntime.httpServerListenWith(8081, context, handler)
 "#;
 
-        let mut items = parse_source(source).expect("source should parse");
-        crate::ir::pipeline::tco(&mut items);
-        crate::ir::pipeline::resolve(&mut items);
-
-        let mut arena = Arena::new();
-        let (code, _globals) =
-            compile_program(&items, &mut arena, None).expect("vm compile should pass");
+        let code = compile_via_pipeline(source);
         assert!(code.find("listen").is_some(), "listen should compile");
         assert!(
             code.find("listenWith").is_some(),

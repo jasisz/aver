@@ -154,7 +154,8 @@ pub(super) fn run_vm_replay(
     let mut arena = aver::nan_value::Arena::new();
     vm::register_service_types(&mut arena);
     let (code, globals) = vm::compile_program_with_modules(
-        items,
+        &pipeline_result.resolved_items,
+        &pipeline_result.symbol_table,
         &mut arena,
         Some(replay_module_root),
         &recording.program_file,

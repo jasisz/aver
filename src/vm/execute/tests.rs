@@ -13,7 +13,10 @@ fn compile_vm(src: &str) -> VM {
     crate::ir::pipeline::resolve(&mut items);
 
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile failed");
+    let symbols = crate::ir::SymbolTable::build(&items, &[]);
+    let resolved = crate::ir::hir::resolve_program(&symbols, &items);
+    let (code, globals) =
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
     VM::new(code, globals, arena)
 }
 

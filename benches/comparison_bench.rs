@@ -198,7 +198,10 @@ fn run_vm(source: &str) {
     tco::transform_program(&mut items);
     resolver::resolve_program(&mut items);
     let mut arena = Arena::new();
-    let (code, globals) = vm::compile_program(&items, &mut arena, None).expect("compile error");
+    let symbols = aver::ir::SymbolTable::build(&items, &[]);
+    let resolved = aver::ir::hir::resolve_program(&symbols, &items);
+    let (code, globals) =
+        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile error");
     let mut machine = vm::VM::new(code, globals, arena);
     let _ = machine.run().expect("VM error");
 }
