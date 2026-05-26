@@ -808,6 +808,66 @@ pub fn find_refined_type<'a>(
     find_refined_type_with_key_scoped(ctx, name, None).map(|(_, d)| d)
 }
 
+/// Round-5: `ir.fn_contracts` is now keyed by canonical name
+/// (`Module.fn` for module-owned fns, bare for entry). Callsites
+/// holding a bare fn name resolve to the right slot through this
+/// resolver.
+pub fn find_fn_contract<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+) -> Option<&'a crate::ir::proof_ir::FnContract> {
+    find_fn_contract_scoped(ctx, name, None)
+}
+
+/// Scope-aware variant. `scope = Some(prefix)` directs bare-name
+/// lookups to that module's slot before falling back to entry /
+/// module-walk. Mirror of `find_refined_type_scoped` for fn
+/// contracts — without it, two modules with same-bare-name
+/// recursive fns silently merge under whichever module-walk hit
+/// first.
+pub fn find_fn_contract_scoped<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+    scope: Option<&str>,
+) -> Option<&'a crate::ir::proof_ir::FnContract> {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    let name_is_already_qualified = name.contains('.');
+    if let Some(prefix) = scope
+        && !name_is_already_qualified
+    {
+        let scoped = format!("{}.{}", prefix, bare);
+        if let Some(c) = ctx.proof_ir.fn_contracts.get(&scoped) {
+            return Some(c);
+        }
+    }
+    if let Some(c) = ctx.proof_ir.fn_contracts.get(name) {
+        return Some(c);
+    }
+    for m in &ctx.modules {
+        for fd in &m.fn_defs {
+            if fd.name == bare {
+                let canonical = format!("{}.{}", m.prefix, bare);
+                if let Some(c) = ctx.proof_ir.fn_contracts.get(&canonical) {
+                    return Some(c);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Membership check counterpart of [`find_fn_contract`]. Used by
+/// the SCC routing in `transpile_unified` to decide whether a fn
+/// has a contract pinned without borrowing the decl.
+pub fn fn_contract_exists(ctx: &CodegenContext, name: &str) -> bool {
+    find_fn_contract(ctx, name).is_some()
+}
+
+/// Scoped membership check.
+pub fn fn_contract_exists_scoped(ctx: &CodegenContext, name: &str, scope: Option<&str>) -> bool {
+    find_fn_contract_scoped(ctx, name, scope).is_some()
+}
+
 /// Canonical-key-aware resolver — returns `(canonical_key, decl)`
 /// so consumers thread one stable identifier through refinement
 /// lift / strip-wrappers / when-redundancy / backend emit instead
@@ -887,8 +947,22 @@ pub fn resolve_refined_type_in<'a>(
     modules: &[crate::codegen::ModuleInfo],
     name: &str,
 ) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
+    resolve_refined_type_in_with_key(refined_types, modules, name).map(|(_, d)| d)
+}
+
+/// Same as [`resolve_refined_type_in`] but returns the canonical
+/// key paired with the decl — used by IR-internal callers (the
+/// proof-lower side `walk_for_refinement_carrier`) so they
+/// thread the same canonical identifier through their boolean
+/// `.is_some()` checks today and any future load-bearing
+/// downstream use without re-introducing bare-name heuristics.
+pub fn resolve_refined_type_in_with_key<'a>(
+    refined_types: &'a std::collections::HashMap<String, crate::ir::proof_ir::RefinedTypeDecl>,
+    modules: &[crate::codegen::ModuleInfo],
+    name: &str,
+) -> Option<(String, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
     if let Some(decl) = refined_types.get(name) {
-        return Some(decl);
+        return Some((name.to_string(), decl));
     }
     let bare = name.rsplit('.').next().unwrap_or(name);
     for m in modules {
@@ -896,7 +970,7 @@ pub fn resolve_refined_type_in<'a>(
             if type_def_name(td) == bare {
                 let canonical = format!("{}.{}", m.prefix, bare);
                 if let Some(decl) = refined_types.get(&canonical) {
-                    return Some(decl);
+                    return Some((canonical, decl));
                 }
             }
         }

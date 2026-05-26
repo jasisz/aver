@@ -18,11 +18,11 @@
 //! canonical source pattern — divergence between the classifier and
 //! the IR populator surfaces there.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Expr, FnDef, Literal, Spanned, TopLevel, TypeDef};
 use crate::codegen::common::expr_to_dotted_name;
-use crate::codegen::recursion::{RecursionPlan, analyze_plans};
+use crate::codegen::recursion::RecursionPlan;
 use crate::codegen::{CodegenContext, ModuleInfo};
 use crate::ir::proof_ir::{
     DecreaseProof, FnContract, Measure, NativeIntCountdownBody, Predicate, PreservationProof,
@@ -102,6 +102,60 @@ impl<'a> ProofLowerInputs<'a> {
             .filter(|name| pure_names.contains(name.as_str()))
             .cloned()
             .collect()
+    }
+
+    /// Pure fns restricted to a single scope: `None` = entry only,
+    /// `Some(prefix)` = the dep module with that prefix only. Aver's
+    /// module DAG invariant rules out cross-module recursion SCCs,
+    /// so per-scope classification is the canonical view —
+    /// `populate_fn_contracts` walks this per scope to give each
+    /// `Module.fn` its own canonical key in `ir.fn_contracts`
+    /// instead of letting two same-bare-name fns silently merge.
+    pub fn pure_fns_in_scope(&self, scope: Option<&str>) -> Vec<&'a FnDef> {
+        match scope {
+            None => self
+                .entry_items
+                .iter()
+                .filter_map(|item| match item {
+                    TopLevel::FnDef(fd) => Some(fd),
+                    _ => None,
+                })
+                .filter(|fd| crate::codegen::common::is_pure_fn(fd))
+                .collect(),
+            Some(prefix) => self
+                .dep_modules
+                .iter()
+                .filter(|m| m.prefix == prefix)
+                .flat_map(|m| m.fn_defs.iter())
+                .filter(|fd| crate::codegen::common::is_pure_fn(fd))
+                .collect(),
+        }
+    }
+
+    /// Recursive pure fn names restricted to a single scope. The
+    /// global `recursive_fns` set is filtered by membership in that
+    /// scope's `pure_fns_in_scope`.
+    pub fn recursive_pure_fn_names_in_scope(&self, scope: Option<&str>) -> HashSet<String> {
+        let pure_names: HashSet<String> = self
+            .pure_fns_in_scope(scope)
+            .into_iter()
+            .map(|fd| fd.name.clone())
+            .collect();
+        self.recursive_fns
+            .iter()
+            .filter(|name| pure_names.contains(name.as_str()))
+            .cloned()
+            .collect()
+    }
+
+    /// Iterator over (`None` = entry, `Some(prefix)` = each dep
+    /// module) — drives `populate_fn_contracts`'s per-scope walk.
+    pub fn scopes(&self) -> Vec<Option<String>> {
+        let mut out = vec![None];
+        for m in self.dep_modules {
+            out.push(Some(m.prefix.clone()));
+        }
+        out
     }
 
     /// Names of every recursive user-defined type across entry + deps.
@@ -268,26 +322,46 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// recursion shape doesn't need IR-level pre-decisions; backends
 /// emit fuel scaffolding inline).
 pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
-    let (plans, issues) = analyze_plans(inputs);
-    ir.unclassified_fns
-        .extend(issues.into_iter().map(|issue| crate::ir::UnclassifiedFn {
-            line: issue.line,
-            message: issue.message,
-        }));
-    let all_fns: Vec<&FnDef> = inputs
-        .dep_modules
-        .iter()
-        .flat_map(|m| m.fn_defs.iter())
-        .chain(inputs.entry_items.iter().filter_map(|item| match item {
-            TopLevel::FnDef(fd) => Some(fd),
-            _ => None,
-        }))
-        .collect();
+    // Round-5 finding: walk per-scope so two modules each with a
+    // recursive `foo` (or entry + module both declaring `foo`)
+    // don't collide on the bare-name `plans: HashMap<String, _>`.
+    // Aver's module DAG invariant rules out cross-module recursion
+    // SCCs, so per-scope classification is the canonical view and
+    // each `Module.fn` gets its own slot in `ir.fn_contracts`.
+    for scope in inputs.scopes() {
+        let (plans, issues) =
+            crate::codegen::recursion::analyze_plans_in_scope(inputs, scope.as_deref(), false);
+        ir.unclassified_fns
+            .extend(issues.into_iter().map(|issue| crate::ir::UnclassifiedFn {
+                line: issue.line,
+                message: issue.message,
+            }));
+        populate_fn_contracts_for_scope(inputs, ir, scope.as_deref(), &plans);
+    }
+}
 
-    for (fn_name, plan) in &plans {
-        let Some(fd) = all_fns.iter().find(|fd| fd.name == *fn_name) else {
+fn populate_fn_contracts_for_scope(
+    inputs: &ProofLowerInputs,
+    ir: &mut ProofIR,
+    scope: Option<&str>,
+    plans: &HashMap<String, RecursionPlan>,
+) {
+    let scoped_fns: Vec<&FnDef> = inputs.pure_fns_in_scope(scope);
+    let qualify = |bare: &str| -> String {
+        match scope {
+            Some(prefix) => format!("{}.{}", prefix, bare),
+            None => bare.to_string(),
+        }
+    };
+
+    for (fn_name, plan) in plans {
+        let Some(fd) = scoped_fns.iter().find(|fd| fd.name == *fn_name) else {
             continue;
         };
+        // `fn_name` stays bare (used as `source_name` in each insert);
+        // `canonical_key` is the map key (`Module.fn` for module-scope,
+        // bare for entry-scope).
+        let canonical_key = qualify(fn_name);
 
         // IntCountdown — fuel-encoded countdown on a single Int param.
         // Distinct from IntCountdownGuarded: external callers may pass
@@ -297,7 +371,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         if let RecursionPlan::IntCountdown { param_index } = plan {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
                 ir.fn_contracts.insert(
-                    fn_name.clone(),
+                    canonical_key.clone(),
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -318,7 +392,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         if let RecursionPlan::IntAscending { param_index, bound } = plan {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
                 ir.fn_contracts.insert(
-                    fn_name.clone(),
+                    canonical_key.clone(),
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -342,7 +416,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         if let RecursionPlan::ListStructural { param_index } = plan {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
                 ir.fn_contracts.insert(
-                    fn_name.clone(),
+                    canonical_key.clone(),
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -362,7 +436,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         // whole frame — so the IR variant carries no param name.
         if matches!(plan, RecursionPlan::SizeOfStructural) {
             ir.fn_contracts.insert(
-                fn_name.clone(),
+                canonical_key.clone(),
                 FnContract {
                     source_name: fn_name.clone(),
                     recursion: Some(RecursionContract::Fuel {
@@ -381,7 +455,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 (fd.params.first(), fd.params.get(1))
             {
                 ir.fn_contracts.insert(
-                    fn_name.clone(),
+                    canonical_key.clone(),
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -418,7 +492,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                     .map(|(n, _)| vec![n.clone()])
                     .unwrap_or_default();
                 ir.fn_contracts.insert(
-                    fn_name.clone(),
+                    canonical_key.clone(),
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -431,7 +505,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             RecursionPlan::MutualStringPosAdvance { rank } => {
                 let params = fd.params.iter().take(2).map(|(n, _)| n.clone()).collect();
                 ir.fn_contracts.insert(
-                    fn_name.clone(),
+                    canonical_key.clone(),
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -446,7 +520,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             }
             RecursionPlan::MutualSizeOfRanked { rank } => {
                 ir.fn_contracts.insert(
-                    fn_name.clone(),
+                    canonical_key.clone(),
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -461,7 +535,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             }
             RecursionPlan::LinearRecurrence2 => {
                 ir.fn_contracts.insert(
-                    fn_name.clone(),
+                    canonical_key.clone(),
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::LinearRecurrence2),
@@ -498,7 +572,7 @@ pub fn populate_fn_contracts(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             .collect();
 
         ir.fn_contracts.insert(
-            fn_name.clone(),
+            canonical_key.clone(),
             FnContract {
                 source_name: fn_name.clone(),
                 recursion: Some(RecursionContract::Native {
@@ -917,13 +991,23 @@ fn walk_for_refinement_carrier(
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
             );
             if matches_var
-                && let Some(decl) = crate::codegen::common::resolve_refined_type_in(
-                    refined_types,
-                    dep_modules,
-                    type_name,
-                )
+                && let Some((canonical_key, _decl)) =
+                    crate::codegen::common::resolve_refined_type_in_with_key(
+                        refined_types,
+                        dep_modules,
+                        type_name,
+                    )
             {
-                *result = Some(decl.name.clone());
+                // Return the canonical key the IR populator stored
+                // the slot under (e.g. `AAA.Natural`), not
+                // `decl.name` which is bare per `RefinedTypeDecl`'s
+                // doc. Today the only consumer reads `.is_some()`
+                // (see `detect_simp_omega_unfold`), so this is a
+                // hygiene fix — but any future load-bearing use of
+                // the returned identifier inherits the same
+                // canonical guarantee `find_refined_type_with_key`
+                // gives the backend side.
+                *result = Some(canonical_key);
                 return;
             }
             // Even non-matching RecordCreate may contain nested

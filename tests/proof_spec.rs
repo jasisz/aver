@@ -2004,6 +2004,107 @@ fn proof_dafny_verifies_date_when_dafny_is_available() {
 }
 
 #[test]
+fn proof_export_cross_module_recursive_fns_get_per_module_fn_contracts() {
+    // Round-5 audit follow-up: two dep modules each declaring a
+    // recursive `countdown(n: Int) -> Int` with the canonical
+    // IntCountdown shape used to emit `partial def` in both modules
+    // even though the standalone single-module export produced a
+    // proper fuel-encoded def. Two coupled gaps:
+    //   1. The proof-lower pipeline built `inputs.recursive_fns`
+    //      from entry's analyze only — module fns never reached the
+    //      IntCountdown classifier (entry has no countdown → empty
+    //      entry-recursive set).
+    //   2. `populate_fn_contracts` keyed `ir.fn_contracts` by bare
+    //      fn name, so even when both modules' contracts were
+    //      populated they collided on `"countdown"`.
+    // Round-5 plumbs union'd `recursive_fns` through pipeline AND
+    // keys `fn_contracts` by canonical `Module.fn`. Lookup-side
+    // helpers `find_fn_contract` / `fn_contract_exists` walk back
+    // to the canonical slot.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-cross-module-fn-contracts");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    std::fs::write(
+        root.join("CountdownA.av"),
+        "module CountdownA\n\
+         \x20   exposes [countdown]\n\
+         \x20   intent = \"Plain countdown.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn countdown(n: Int) -> Int\n\
+         \x20   ? \"Countdown to 0.\"\n\
+         \x20   match n <= 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> countdown(n - 1)\n",
+    )
+    .expect("write CountdownA.av");
+    std::fs::write(
+        root.join("CountdownB.av"),
+        "module CountdownB\n\
+         \x20   exposes [countdown]\n\
+         \x20   intent = \"Sum on countdown.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn countdown(n: Int) -> Int\n\
+         \x20   ? \"Countdown summing n.\"\n\
+         \x20   match n <= 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> n + countdown(n - 1)\n",
+    )
+    .expect("write CountdownB.av");
+    std::fs::write(
+        root.join("entry.av"),
+        "module Entry\n\
+         \x20   depends [CountdownA, CountdownB]\n\
+         \x20   intent = \"Touch both modules so each surfaces in proof IR.\"\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   0\n",
+    )
+    .expect("write entry.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let a_lean =
+        std::fs::read_to_string(out_dir.join("CountdownA.lean")).expect("read CountdownA.lean");
+    let b_lean =
+        std::fs::read_to_string(out_dir.join("CountdownB.lean")).expect("read CountdownB.lean");
+
+    assert!(
+        a_lean.contains("def countdown__fuel"),
+        "CountdownA.countdown must emit fuel-encoded def, not `partial def`:\n{a_lean}"
+    );
+    assert!(
+        b_lean.contains("def countdown__fuel"),
+        "CountdownB.countdown must emit fuel-encoded def, not `partial def`:\n{b_lean}"
+    );
+    assert!(
+        !a_lean.contains("partial def countdown"),
+        "CountdownA.lean must not regress to `partial def countdown`:\n{a_lean}"
+    );
+    assert!(
+        !b_lean.contains("partial def countdown"),
+        "CountdownB.lean must not regress to `partial def countdown`:\n{b_lean}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn proof_export_cross_module_refined_types_keep_distinct_predicates() {
     // Review findings 2 + 3 (round 2): two modules each declaring a
     // refined `Natural` (different predicates) must each carry its

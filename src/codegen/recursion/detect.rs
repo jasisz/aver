@@ -1538,11 +1538,36 @@ fn walk_caller_collect_callsite_guards(
 pub fn analyze_plans(
     inputs: &ProofLowerInputs,
 ) -> (HashMap<String, RecursionPlan>, Vec<ProofModeIssue>) {
+    analyze_plans_in_scope(inputs, None, true)
+}
+
+/// Scope-aware variant. `scope = None` runs against entry only,
+/// `Some(prefix)` against one dep module. Aver's module DAG
+/// invariant rules out cross-module recursion SCCs, so per-scope
+/// classification is the canonical view and avoids two
+/// same-bare-name fns from different modules colliding in the
+/// SCC analyser's `HashMap<name, _>`. The `global_view` flag is
+/// the legacy entry point: it keeps the old "chain all fns,
+/// classify globally" behaviour for callers that don't yet know
+/// about scopes.
+pub fn analyze_plans_in_scope(
+    inputs: &ProofLowerInputs,
+    scope: Option<&str>,
+    global_view: bool,
+) -> (HashMap<String, RecursionPlan>, Vec<ProofModeIssue>) {
     let mut plans = HashMap::new();
     let mut issues = Vec::new();
 
-    let all_pure = inputs.pure_fns();
-    let recursive_names = inputs.recursive_pure_fn_names();
+    let all_pure = if global_view {
+        inputs.pure_fns()
+    } else {
+        inputs.pure_fns_in_scope(scope)
+    };
+    let recursive_names = if global_view {
+        inputs.recursive_pure_fn_names()
+    } else {
+        inputs.recursive_pure_fn_names_in_scope(scope)
+    };
     let components = call_graph::ordered_fn_components(&all_pure, inputs.module_prefixes);
 
     for component in components {

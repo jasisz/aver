@@ -492,11 +492,28 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     // `fn_contracts`, LawLower writes `law_theorems`. Each is
     // independently opt-in.
     if cfg.run_refinement_lower || cfg.run_contract_lower || cfg.run_law_lower {
-        let recursive_fns_owned: std::collections::HashSet<String> = result
-            .analysis
-            .as_ref()
-            .map(|a| a.recursive_fns.iter().cloned().collect())
-            .unwrap_or_default();
+        // Round-5: union entry's analyze with each dep module's
+        // `analysis.recursive_fns`. Without this, multi-module proof
+        // export's `populate_fn_contracts` only sees entry-recursive
+        // fns and classifies module fns as "outside subset" — even
+        // when each module's analyze already saw their countdown /
+        // structural-recursion shape. Aver's module DAG invariant
+        // rules out cross-module recursion SCCs, so unioning the
+        // per-scope `recursive_fns` sets matches the build-time
+        // `ctx.recursive_fns` view in `codegen::build_context`.
+        let recursive_fns_owned: std::collections::HashSet<String> = {
+            let mut set: std::collections::HashSet<String> = result
+                .analysis
+                .as_ref()
+                .map(|a| a.recursive_fns.iter().cloned().collect())
+                .unwrap_or_default();
+            for m in cfg.dep_modules {
+                if let Some(a) = m.analysis.as_ref() {
+                    set.extend(a.recursive_fns.iter().cloned());
+                }
+            }
+            set
+        };
         let module_prefixes: std::collections::HashSet<String> =
             cfg.dep_modules.iter().map(|m| m.prefix.clone()).collect();
         let inputs = crate::codegen::proof_lower::ProofLowerInputs {
