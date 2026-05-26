@@ -187,7 +187,8 @@ impl SymbolTable {
             })
             .collect();
 
-        let scopes: Vec<(ModuleId, Option<&str>, Vec<&FnDef>, Vec<&TypeDef>)> =
+        type ScopeWalk<'a> = (ModuleId, Option<&'a str>, Vec<&'a FnDef>, Vec<&'a TypeDef>);
+        let scopes: Vec<ScopeWalk> =
             std::iter::once((ModuleId::ENTRY, None, entry_fns, entry_types))
                 .chain(dep_modules.iter().enumerate().map(|(i, m)| {
                     let module_id = ModuleId((i + 1) as u32);
