@@ -291,8 +291,6 @@ pub enum PassReport {
         law_theorems: usize,
     },
     BuildSymbols {
-        /// Modules in the table (always ≥ 1 — entry scope counts).
-        modules: usize,
         /// Total fn declarations across entry + dep modules.
         fns: usize,
         /// Total type declarations across entry + dep modules.
@@ -300,7 +298,33 @@ pub enum PassReport {
         /// Total constructors (record + sum variants) across all
         /// type declarations.
         ctors: usize,
+        /// Per-module breakdown (entry first, then deps in walk
+        /// order). Shows where each fn/type lives — useful for
+        /// "is this big project actually multi-module?" sanity
+        /// checks at a glance.
+        modules: Vec<BuildSymbolsModule>,
+        /// Number of bare fn names that occur in 2+ different
+        /// scopes (e.g. entry + Module, or Module.A + Module.B).
+        /// Under bare-name keying these would have silently
+        /// merged; opaque `FnId` keeps them distinct. Zero would
+        /// mean phase E migration had no practical effect on
+        /// *this* project — non-zero is the proof it did.
+        fn_name_collisions: usize,
+        /// Same for type names.
+        type_name_collisions: usize,
     },
+}
+
+/// Per-module entry in `PassReport::BuildSymbols`. `prefix` is the
+/// dotted module name (`"Models.User"`); the entry scope is
+/// represented by an empty string so JSON consumers can sort/group
+/// uniformly.
+#[derive(Debug, Clone)]
+pub struct BuildSymbolsModule {
+    pub prefix: String,
+    pub fns: usize,
+    pub types: usize,
+    pub ctors: usize,
 }
 
 /// Per-fn counter delta — used by `Tco` and `InterpLower` reports to
@@ -796,13 +820,53 @@ fn diag_for_law_lower(ir: &crate::ir::ProofIR) -> PassDiagnostic {
 }
 
 fn diag_for_build_symbols(table: &crate::ir::SymbolTable) -> PassDiagnostic {
+    // Per-module breakdown: walk every fn/type/ctor, bucket by its
+    // owning module, count. Single pass, O(fns + types + ctors).
+    let mut per_module: Vec<BuildSymbolsModule> = table
+        .modules
+        .iter()
+        .map(|m| BuildSymbolsModule {
+            prefix: m.prefix.clone().unwrap_or_default(),
+            fns: 0,
+            types: 0,
+            ctors: 0,
+        })
+        .collect();
+    for fe in &table.fns {
+        per_module[fe.module.0 as usize].fns += 1;
+    }
+    for te in &table.types {
+        per_module[te.module.0 as usize].types += 1;
+    }
+    for ce in &table.ctors {
+        let owning_module = table.types[ce.owning_type.0 as usize].module;
+        per_module[owning_module.0 as usize].ctors += 1;
+    }
+
+    // Bare-name collision count: a fn/type with the same `key.name`
+    // appearing in 2+ different scopes. Under bare-name keying these
+    // would silently merge; under opaque IDs each gets its own slot.
+    use std::collections::HashMap;
+    let mut fn_buckets: HashMap<&str, usize> = HashMap::new();
+    for fe in &table.fns {
+        *fn_buckets.entry(fe.key.name.as_str()).or_default() += 1;
+    }
+    let fn_name_collisions = fn_buckets.values().filter(|c| **c >= 2).count();
+    let mut type_buckets: HashMap<&str, usize> = HashMap::new();
+    for te in &table.types {
+        *type_buckets.entry(te.key.name.as_str()).or_default() += 1;
+    }
+    let type_name_collisions = type_buckets.values().filter(|c| **c >= 2).count();
+
     PassDiagnostic {
         stage: PipelineStage::BuildSymbols,
         report: PassReport::BuildSymbols {
-            modules: table.modules.len(),
             fns: table.fns.len(),
             types: table.types.len(),
             ctors: table.ctors.len(),
+            modules: per_module,
+            fn_name_collisions,
+            type_name_collisions,
         },
     }
 }

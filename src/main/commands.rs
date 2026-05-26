@@ -3065,6 +3065,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "last_use" => Some(PipelineStage::LastUse),
         "analyze" => Some(PipelineStage::Analyze),
         "escape" => Some(PipelineStage::Escape),
+        "build_symbols" => Some(PipelineStage::BuildSymbols),
         "refinement_lower" => Some(PipelineStage::RefinementLower),
         "contract_lower" => Some(PipelineStage::ContractLower),
         "law_lower" => Some(PipelineStage::LawLower),
@@ -3073,7 +3074,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, refinement_lower, contract_lower, law_lower",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, build_symbols, refinement_lower, contract_lower, law_lower",
                     other
                 )
                 .red()
@@ -3184,6 +3185,17 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 process::exit(1);
             }
         }
+        return;
+    }
+
+    // `build_symbols` is the same shape — side-artifact (the symbol
+    // table), not item rewrite. Dump the resolved-identity layer so
+    // users can inspect FnKey → FnId / TypeKey → TypeId mappings.
+    if target == PipelineStage::BuildSymbols {
+        print!(
+            "{}",
+            render_symbol_table_dump(&pipeline_result.symbol_table)
+        );
         return;
     }
 
@@ -3311,6 +3323,67 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: &aver::ir::SymbolTable)
             theorem.strategy,
             theorem.quantifiers.len(),
             theorem.premises.len(),
+        )
+        .unwrap();
+    }
+    out
+}
+
+/// Backend-neutral textual dump of the resolved-identity layer.
+/// Drives `aver compile FILE --emit-ir-after=build_symbols` — same
+/// shape as `render_proof_ir_dump`, just for the SymbolTable
+/// side-artifact instead of ProofIR. Lists every module / fn /
+/// type / ctor with its opaque ID so debug sessions can verify
+/// "what FnId did `Module.foo` resolve to?" without grep'ing.
+fn render_symbol_table_dump(symbols: &aver::ir::SymbolTable) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    writeln!(out, "# SymbolTable").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "## modules ({})", symbols.modules.len()).unwrap();
+    for (idx, m) in symbols.modules.iter().enumerate() {
+        let prefix = m.prefix.as_deref().unwrap_or("<entry>");
+        writeln!(out, "- ModuleId({}) = {}", idx, prefix).unwrap();
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "## fns ({})", symbols.fns.len()).unwrap();
+    for (idx, fe) in symbols.fns.iter().enumerate() {
+        writeln!(
+            out,
+            "- FnId({}) = {} (in ModuleId({}), source index {})",
+            idx,
+            fe.key.canonical(),
+            fe.module.0,
+            fe.index_in_module,
+        )
+        .unwrap();
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "## types ({})", symbols.types.len()).unwrap();
+    for (idx, te) in symbols.types.iter().enumerate() {
+        let shape = if te.is_product { "record" } else { "sum" };
+        writeln!(
+            out,
+            "- TypeId({}) = {} ({}, {} ctor(s), in ModuleId({}))",
+            idx,
+            te.key.canonical(),
+            shape,
+            te.variants.len().max(if te.is_product { 1 } else { 0 }),
+            te.module.0,
+        )
+        .unwrap();
+    }
+    writeln!(out).unwrap();
+    writeln!(out, "## ctors ({})", symbols.ctors.len()).unwrap();
+    for (idx, ce) in symbols.ctors.iter().enumerate() {
+        let owning = &symbols.types[ce.owning_type.0 as usize];
+        writeln!(
+            out,
+            "- CtorId({}) = {}.{} (of TypeId({}))",
+            idx,
+            owning.key.canonical(),
+            ce.name,
+            ce.owning_type.0,
         )
         .unwrap();
     }
@@ -3525,15 +3598,35 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                 ));
             }
             PassReport::BuildSymbols {
-                modules,
                 fns,
                 types,
                 ctors,
+                modules,
+                fn_name_collisions,
+                type_name_collisions,
             } => {
                 out.push_str(&format!(
-                    "{label} symbol table: {modules} module(s), {fns} fn(s), \
-                     {types} type(s), {ctors} ctor(s)\n"
+                    "{label} symbol table: {} module(s), {fns} fn(s), \
+                     {types} type(s), {ctors} ctor(s)\n",
+                    modules.len()
                 ));
+                if *fn_name_collisions > 0 || *type_name_collisions > 0 {
+                    out.push_str(&format!(
+                        "  • bare-name collisions resolved by opaque ID: \
+                         {fn_name_collisions} fn name(s), {type_name_collisions} type name(s)\n"
+                    ));
+                }
+                for m in modules {
+                    let scope = if m.prefix.is_empty() {
+                        "<entry>"
+                    } else {
+                        m.prefix.as_str()
+                    };
+                    out.push_str(&format!(
+                        "  • {scope}: {} fn(s), {} type(s), {} ctor(s)\n",
+                        m.fns, m.types, m.ctors
+                    ));
+                }
             }
         }
         out.push('\n');
@@ -3699,14 +3792,34 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                 out.push_str(&format!("{{\"law_theorems\":{}}}", law_theorems));
             }
             PassReport::BuildSymbols {
-                modules,
                 fns,
                 types,
                 ctors,
+                modules,
+                fn_name_collisions,
+                type_name_collisions,
             } => {
                 out.push_str(&format!(
-                    "{{\"modules\":{modules},\"fns\":{fns},\"types\":{types},\"ctors\":{ctors}}}"
+                    "{{\"fns\":{fns},\"types\":{types},\"ctors\":{ctors},\
+                     \"fn_name_collisions\":{fn_name_collisions},\
+                     \"type_name_collisions\":{type_name_collisions},\
+                     \"modules\":["
                 ));
+                let mut first = true;
+                for m in modules {
+                    if !first {
+                        out.push(',');
+                    }
+                    first = false;
+                    out.push_str(&format!(
+                        "{{\"prefix\":{},\"fns\":{},\"types\":{},\"ctors\":{}}}",
+                        json_escape(&m.prefix),
+                        m.fns,
+                        m.types,
+                        m.ctors
+                    ));
+                }
+                out.push_str("]}");
             }
         }
         out.push('}');
