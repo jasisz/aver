@@ -16,6 +16,7 @@ pub mod proof_lower;
 pub mod recursion;
 #[cfg(feature = "runtime")]
 pub mod rust;
+pub mod scc;
 #[cfg(feature = "wasip2")]
 pub mod wasip2;
 #[cfg(feature = "wasm-compile")]
@@ -94,11 +95,6 @@ pub struct CodegenContext {
     /// `mutual_tco_members`. Used by codegen sites that previously
     /// called `call_graph::find_recursive_fns` ad-hoc.
     pub recursive_fns: HashSet<crate::ir::FnId>,
-    /// Per-fn analysis facts unioned from entry + every dep module's
-    /// `AnalysisResult.fn_analyses`. WASM emitter / VM compiler /
-    /// future inliner read `allocates`, `thin_kind`, `body_shape`,
-    /// `local_count`, etc. from here instead of recomputing.
-    pub fn_analyses: HashMap<String, crate::ir::FnAnalysis>,
     /// Buffer-build sink fns (`List.prepend`/`reverse` builders consumed
     /// by `String.join`). The Rust backend emits a `<fn>__buffered`
     /// variant alongside each entry; the WASM backend rewrites bodies
@@ -189,42 +185,32 @@ pub fn build_context(
 
     let module_prefixes: HashSet<String> = modules.iter().map(|m| m.prefix.clone()).collect();
 
-    // Symbol table threaded in from the caller (pipeline or stripped
-    // test driver). Used here to convert the per-scope bare-name sets
-    // unioned below into FnId-keyed sets.
-
-    // Helper: bare fn name → entry-scope FnId. Used for entry-source
-    // analysis facts (per-module facts use `(prefix, name)` below).
-    let entry_fn_id = |name: &str| -> Option<crate::ir::FnId> {
-        symbol_table.fn_id_of(&crate::ir::FnKey::entry(name))
-    };
-    let module_fn_id = |prefix: &str, name: &str| -> Option<crate::ir::FnId> {
-        symbol_table.fn_id_of(&crate::ir::FnKey::in_module(prefix.to_string(), name))
-    };
-
-    // Mutual-TCO membership unions per-module sets from the analyze stage
-    // (entry's `entry_analysis` + each dep module's `module.analysis`).
-    // Aver's module DAG invariant guarantees SCCs never span modules, so
-    // a per-module union is the correct global view — see
-    // `project_aver_module_dag` memory and `src/ir/analyze.rs` doc.
-    //
-    // Falls back to ad-hoc `tailcall_scc_components` per module when the
-    // analysis isn't supplied (callers that haven't migrated to the
-    // pipeline). The fallback path will go away once every entry point
-    // runs the canonical pipeline.
+    // Mutual-TCO membership unions per-scope sets from the analyze
+    // stage (entry's `entry_analysis` + each dep module's
+    // `module.analysis`); falls back to recomputing per-scope via
+    // `call_graph::tailcall_scc_components` when no analysis ran.
+    // Aver's module DAG invariant guarantees SCCs never span
+    // modules — per-scope union is the correct global view (see
+    // `project_aver_module_dag` memory + `src/ir/analyze.rs`). The
+    // FnId resolution happens inside the `scc` wrappers below.
     let mut mutual_tco_members: HashSet<crate::ir::FnId> = HashSet::new();
     match entry_analysis {
-        Some(a) => {
-            mutual_tco_members.extend(a.mutual_tco_members.iter().filter_map(|n| entry_fn_id(n)))
-        }
+        Some(a) => mutual_tco_members.extend(scc::analysis_set_to_fn_ids(
+            &a.mutual_tco_members,
+            &symbol_table,
+            None,
+        )),
         None => {
+            // No entry analysis: compute the per-scope SCC set inline
+            // via `call_graph` and project to FnIds. Same effect as
+            // running the analyze stage's mutual-TCO discovery.
             let entry_fns: Vec<&FnDef> = fn_defs.iter().filter(|fd| fd.name != "main").collect();
             for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
                 if group.len() < 2 {
                     continue;
                 }
                 for fd in group {
-                    if let Some(id) = entry_fn_id(&fd.name) {
+                    if let Some(id) = symbol_table.fn_id_of(&crate::ir::FnKey::entry(&fd.name)) {
                         mutual_tco_members.insert(id);
                     }
                 }
@@ -233,11 +219,11 @@ pub fn build_context(
     }
     for module in &modules {
         match module.analysis.as_ref() {
-            Some(a) => mutual_tco_members.extend(
-                a.mutual_tco_members
-                    .iter()
-                    .filter_map(|n| module_fn_id(&module.prefix, n)),
-            ),
+            Some(a) => mutual_tco_members.extend(scc::analysis_set_to_fn_ids(
+                &a.mutual_tco_members,
+                &symbol_table,
+                Some(&module.prefix),
+            )),
             None => {
                 let mod_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
                 for group in crate::call_graph::tailcall_scc_components(&mod_fns) {
@@ -245,7 +231,10 @@ pub fn build_context(
                         continue;
                     }
                     for fd in group {
-                        if let Some(id) = module_fn_id(&module.prefix, &fd.name) {
+                        if let Some(id) = symbol_table.fn_id_of(&crate::ir::FnKey::in_module(
+                            module.prefix.clone(),
+                            &fd.name,
+                        )) {
                             mutual_tco_members.insert(id);
                         }
                     }
@@ -254,59 +243,44 @@ pub fn build_context(
         }
     }
 
-    // Per-fn analysis dictionary — union of entry's `fn_analyses` plus
-    // each dep module's. Codegen reads `allocates`, `thin_kind`, etc.
-    // from here instead of recomputing.
-    let mut fn_analyses: HashMap<String, crate::ir::FnAnalysis> = HashMap::new();
-    if let Some(a) = entry_analysis {
-        for (name, fa) in &a.fn_analyses {
-            fn_analyses.insert(name.clone(), fa.clone());
-        }
-    }
-    for module in &modules {
-        if let Some(a) = module.analysis.as_ref() {
-            for (name, fa) in &a.fn_analyses {
-                fn_analyses
-                    .entry(name.clone())
-                    .or_insert_with(|| fa.clone());
-            }
-        }
-    }
-
-    // `recursive_fns` follows the same shape as `mutual_tco_members` —
-    // per-module sets unioned (Aver's module DAG keeps cross-module
-    // recursion from existing). Falls back to ad-hoc `find_recursive_fns`
-    // when a module's analysis is missing. Keyed by opaque `FnId` for
-    // the same disambiguation guarantee as `mutual_tco_members`.
+    // `recursive_fns` follows the same shape — per-scope union with
+    // analyze-stage fallback. Keyed by opaque `FnId` so entry +
+    // dep-module same-bare-name fns stay distinct.
     let mut recursive_fns: HashSet<crate::ir::FnId> = HashSet::new();
     match entry_analysis {
-        Some(a) => recursive_fns.extend(a.recursive_fns.iter().filter_map(|n| entry_fn_id(n))),
-        None => {
-            recursive_fns.extend(
-                crate::call_graph::find_recursive_fns(&items)
-                    .iter()
-                    .filter_map(|n| entry_fn_id(n)),
-            );
-        }
+        Some(a) => recursive_fns.extend(scc::analysis_set_to_fn_ids(
+            &a.recursive_fns,
+            &symbol_table,
+            None,
+        )),
+        None => recursive_fns.extend(scc::bare_names_to_fn_ids(
+            crate::call_graph::find_recursive_fns(&items)
+                .iter()
+                .map(String::as_str),
+            &symbol_table,
+            None,
+        )),
     }
     for module in &modules {
         match module.analysis.as_ref() {
-            Some(a) => recursive_fns.extend(
-                a.recursive_fns
-                    .iter()
-                    .filter_map(|n| module_fn_id(&module.prefix, n)),
-            ),
+            Some(a) => recursive_fns.extend(scc::analysis_set_to_fn_ids(
+                &a.recursive_fns,
+                &symbol_table,
+                Some(&module.prefix),
+            )),
             None => {
                 let mod_items: Vec<TopLevel> = module
                     .fn_defs
                     .iter()
                     .map(|fd| TopLevel::FnDef(fd.clone()))
                     .collect();
-                recursive_fns.extend(
+                recursive_fns.extend(scc::bare_names_to_fn_ids(
                     crate::call_graph::find_recursive_fns(&mod_items)
                         .iter()
-                        .filter_map(|n| module_fn_id(&module.prefix, n)),
-                );
+                        .map(String::as_str),
+                    &symbol_table,
+                    Some(&module.prefix),
+                ));
             }
         }
     }
@@ -453,7 +427,6 @@ pub fn build_context(
         extra_fn_defs: Vec::new(),
         mutual_tco_members,
         recursive_fns,
-        fn_analyses,
         buffer_build_sinks,
         buffer_fusion_sites,
         synthesized_buffered_fns,
@@ -530,22 +503,26 @@ impl CodegenContext {
         }
         self.mutual_tco_members = mutual_tco_members;
 
-        let mut recursive_fns: HashSet<crate::ir::FnId> =
+        let mut recursive_fns: HashSet<crate::ir::FnId> = scc::bare_names_to_fn_ids(
             crate::call_graph::find_recursive_fns(&self.items)
                 .iter()
-                .filter_map(|n| entry_fn_id(n))
-                .collect();
+                .map(String::as_str),
+            &symbol_table,
+            None,
+        );
         for module in &self.modules {
             let mod_items: Vec<TopLevel> = module
                 .fn_defs
                 .iter()
                 .map(|fd| TopLevel::FnDef(fd.clone()))
                 .collect();
-            recursive_fns.extend(
+            recursive_fns.extend(scc::bare_names_to_fn_ids(
                 crate::call_graph::find_recursive_fns(&mod_items)
                     .iter()
-                    .filter_map(|n| module_fn_id(&module.prefix, n)),
-            );
+                    .map(String::as_str),
+                &symbol_table,
+                Some(&module.prefix),
+            ));
         }
         self.recursive_fns = recursive_fns;
 

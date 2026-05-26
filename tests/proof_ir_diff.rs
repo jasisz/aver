@@ -19,7 +19,7 @@
 use aver::ast::{Spanned, TopLevel, TypeDef};
 use aver::codegen::CodegenContext;
 use aver::codegen::common::refinement_info_for;
-use aver::codegen::recursion::{RecursionPlan, analyze_plans};
+use aver::codegen::recursion::{RecursionPlan, analyze_plans_in_scope};
 use aver::ir::proof_ir::{
     DecreaseProof, FuelMetric, Measure, PreservationProof, QuantifierType, RecursionContract,
 };
@@ -320,7 +320,7 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
     let src = include_str!("../examples/data/fibonacci.av");
     let ctx = build_ctx(src);
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, _) = analyze_plans(&inputs);
+    let (plans, _) = analyze_plans_in_scope(&inputs, None, true);
 
     let RecursionPlan::IntCountdownGuarded {
         param_index,
@@ -435,7 +435,7 @@ fn exposed_int_countdown_lowers_to_fuel_contract() {
          \x20       _ -> exposed_count(n - 1)\n";
     let ctx = build_ctx(src);
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, _) = analyze_plans(&inputs);
+    let (plans, _) = analyze_plans_in_scope(&inputs, None, true);
 
     let RecursionPlan::IntCountdown {
         param_index: legacy_idx,
@@ -495,7 +495,7 @@ fn int_ascending_lowers_to_bound_fuel_contract() {
          \x20       false -> climb(n + 1)\n";
     let ctx = build_ctx(src);
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, _) = analyze_plans(&inputs);
+    let (plans, _) = analyze_plans_in_scope(&inputs, None, true);
 
     let RecursionPlan::IntAscending {
         param_index: legacy_idx,
@@ -554,7 +554,7 @@ fn list_structural_lowers_to_seq_len_fuel_contract() {
          \x20       [_, ..rest] -> 1 + len(rest)\n";
     let ctx = build_ctx(src);
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, _) = analyze_plans(&inputs);
+    let (plans, _) = analyze_plans_in_scope(&inputs, None, true);
 
     let RecursionPlan::ListStructural {
         param_index: legacy_idx,
@@ -609,7 +609,7 @@ fn sizeof_structural_lowers_to_sizeof_fuel_contract() {
          \x20       Tree.Node(l, r) -> count(l) + count(r)\n";
     let ctx = build_ctx(src);
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, _) = analyze_plans(&inputs);
+    let (plans, _) = analyze_plans_in_scope(&inputs, None, true);
 
     assert!(
         matches!(plans.get("count"), Some(RecursionPlan::SizeOfStructural)),
@@ -645,7 +645,7 @@ fn string_pos_advance_lowers_to_string_pos_fuel_contract() {
          \x20       true -> walk(s, pos + 1)\n";
     let ctx = build_ctx(src);
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, _) = analyze_plans(&inputs);
+    let (plans, _) = analyze_plans_in_scope(&inputs, None, true);
 
     assert!(
         matches!(plans.get("walk"), Some(RecursionPlan::StringPosAdvance)),
@@ -704,7 +704,7 @@ fn mutual_int_countdown_lowers_to_lex_fuel_contract() {
          \x20       _ -> even(n - 1)\n";
     let ctx = build_ctx(src);
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, _) = analyze_plans(&inputs);
+    let (plans, _) = analyze_plans_in_scope(&inputs, None, true);
 
     for fn_name in ["even", "odd"] {
         assert!(
@@ -752,7 +752,7 @@ fn linear_recurrence_lowers_to_dedicated_contract() {
          \x20           _ -> fib(n - 1) + fib(n - 2)\n";
     let ctx = build_ctx(src);
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-    let (plans, _) = analyze_plans(&inputs);
+    let (plans, _) = analyze_plans_in_scope(&inputs, None, true);
 
     assert!(
         matches!(plans.get("fib"), Some(RecursionPlan::LinearRecurrence2)),
