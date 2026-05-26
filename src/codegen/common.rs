@@ -835,18 +835,26 @@ pub fn find_fn_contract_scoped<'a>(
     if let Some(prefix) = scope
         && !name_is_already_qualified
     {
-        let scoped = format!("{}.{}", prefix, bare);
-        if let Some(c) = ctx.proof_ir.fn_contracts.get(&scoped) {
+        let scoped_key = crate::ir::FnKey::in_module(prefix.to_string(), bare);
+        if let Some(c) = ctx.proof_ir.fn_contracts.get(&scoped_key) {
             return Some(c);
         }
     }
-    if let Some(c) = ctx.proof_ir.fn_contracts.get(name) {
+    // Direct `name`-as-given lookup: build entry key for bare,
+    // module key for already-qualified.
+    let direct_key =
+        if name_is_already_qualified && let Some((prefix, bare_part)) = name.rsplit_once('.') {
+            crate::ir::FnKey::in_module(prefix.to_string(), bare_part)
+        } else {
+            crate::ir::FnKey::entry(name)
+        };
+    if let Some(c) = ctx.proof_ir.fn_contracts.get(&direct_key) {
         return Some(c);
     }
     for m in &ctx.modules {
         for fd in &m.fn_defs {
             if fd.name == bare {
-                let canonical = format!("{}.{}", m.prefix, bare);
+                let canonical = crate::ir::FnKey::in_module(m.prefix.clone(), bare);
                 if let Some(c) = ctx.proof_ir.fn_contracts.get(&canonical) {
                     return Some(c);
                 }
@@ -868,15 +876,84 @@ pub fn fn_contract_exists_scoped(ctx: &CodegenContext, name: &str, scope: Option
     find_fn_contract_scoped(ctx, name, scope).is_some()
 }
 
+/// Round-7: build a [`crate::ir::FnKey`] from a borrowed `&FnDef`.
+/// The owning module is resolved by pointer-comparison against
+/// `ctx.modules[*].fn_defs` (entry items / synthesized variants /
+/// `extra_fn_defs` fall through to `FnKey::entry`). This is the
+/// single resolver consumers should reach for from emit code with
+/// a `&FnDef` in hand — produces the typed key the IR maps store
+/// instead of leaving the bare-name collision risk in place.
+pub fn fn_key_for_decl(ctx: &CodegenContext, fd: &FnDef) -> crate::ir::FnKey {
+    match fn_owning_scope_for(ctx, fd) {
+        Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), fd.name.clone()),
+        None => crate::ir::FnKey::entry(fd.name.clone()),
+    }
+}
+
+/// Round-7: build a [`crate::ir::TypeKey`] from a borrowed
+/// `&TypeDef`. Same shape as [`fn_key_for_decl`] — pointer-eq
+/// against `ctx.modules[*].type_defs` resolves the owning module.
+pub fn type_key_for_decl(ctx: &CodegenContext, td: &TypeDef) -> crate::ir::TypeKey {
+    for m in &ctx.modules {
+        for t in &m.type_defs {
+            if std::ptr::eq(t, td) {
+                return crate::ir::TypeKey::in_module(m.prefix.clone(), type_def_name(td));
+            }
+        }
+    }
+    crate::ir::TypeKey::entry(type_def_name(td))
+}
+
+/// Round-7: resolve a (possibly bare) type name from the AST into
+/// a [`crate::ir::TypeKey`]. `scope` is the emit-time current scope
+/// (`Some(prefix)` inside a per-module emit loop, `None` for
+/// entry). Bare names prefer the current scope, then entry, then
+/// fall back to module-walk first match — mirroring
+/// [`find_refined_type_scoped`]'s resolution order.
+pub fn type_key_for_name(
+    ctx: &CodegenContext,
+    name: &str,
+    scope: Option<&str>,
+) -> crate::ir::TypeKey {
+    let bare = name.rsplit('.').next().unwrap_or(name);
+    let name_is_qualified = name.contains('.');
+    if let Some(prefix) = scope
+        && !name_is_qualified
+    {
+        for m in &ctx.modules {
+            if m.prefix == prefix && m.type_defs.iter().any(|td| type_def_name(td) == bare) {
+                return crate::ir::TypeKey::in_module(prefix.to_string(), bare);
+            }
+        }
+    }
+    // Entry-declared types win the bare lookup when no scope is
+    // active (or when scope's module doesn't own the name).
+    if !name_is_qualified && ctx.type_defs.iter().any(|td| type_def_name(td) == bare) {
+        return crate::ir::TypeKey::entry(bare);
+    }
+    if name_is_qualified
+        && let Some((prefix, bare_part)) = name.rsplit_once('.')
+        && ctx.modules.iter().any(|m| m.prefix == prefix)
+    {
+        return crate::ir::TypeKey::in_module(prefix.to_string(), bare_part);
+    }
+    for m in &ctx.modules {
+        if m.type_defs.iter().any(|td| type_def_name(td) == bare) {
+            return crate::ir::TypeKey::in_module(m.prefix.clone(), bare);
+        }
+    }
+    // Unresolved — fall back to entry key with the original text.
+    // Callers using this typically end up with a miss in the IR
+    // map, which is the same outcome as the pre-FnKey
+    // `find_refined_type` returning `None`.
+    crate::ir::TypeKey::entry(name)
+}
+
 /// Round-6: resolve a `&FnDef`'s owning scope by pointer comparison
-/// against `ctx.modules[*].fn_defs`. The bare-keyed `fn_owning_scope`
-/// helper collides when two modules export same-named fns (last
-/// insert wins), so emit-time callers that hold a borrowed `&FnDef`
-/// from one module's `fn_defs` couldn't use it to canonically
-/// resolve their own scope. Pointer-eq sidesteps the bare-name
-/// collision — `&CountdownA.fn_defs[0]` and `&CountdownB.fn_defs[0]`
-/// are *distinct* addresses even with `fd.name = "countdown"` in
-/// both.
+/// against `ctx.modules[*].fn_defs`. Pointer-eq sidesteps the
+/// bare-name collision — `&CountdownA.fn_defs[0]` and
+/// `&CountdownB.fn_defs[0]` are *distinct* addresses even with
+/// `fd.name = "countdown"` in both.
 ///
 /// Returns `None` when the `fd` is not in any dep module — entry
 /// items, synthesized buffered variants, and `extra_fn_defs` all
@@ -959,20 +1036,26 @@ pub fn find_refined_type_with_key_scoped<'a>(
     if let Some(prefix) = scope
         && !name_is_already_qualified
     {
-        let scoped = format!("{}.{}", prefix, bare);
-        if let Some(decl) = ctx.proof_ir.refined_types.get(&scoped) {
-            return Some((scoped, decl));
+        let scoped_key = crate::ir::TypeKey::in_module(prefix.to_string(), bare);
+        if let Some(decl) = ctx.proof_ir.refined_types.get(&scoped_key) {
+            return Some((scoped_key.canonical(), decl));
         }
     }
-    if let Some(decl) = ctx.proof_ir.refined_types.get(name) {
-        return Some((name.to_string(), decl));
+    let direct_key =
+        if name_is_already_qualified && let Some((prefix, bare_part)) = name.rsplit_once('.') {
+            crate::ir::TypeKey::in_module(prefix.to_string(), bare_part)
+        } else {
+            crate::ir::TypeKey::entry(name)
+        };
+    if let Some(decl) = ctx.proof_ir.refined_types.get(&direct_key) {
+        return Some((direct_key.canonical(), decl));
     }
     for m in &ctx.modules {
         for td in &m.type_defs {
             if type_def_name(td) == bare {
-                let canonical = format!("{}.{}", m.prefix, bare);
-                if let Some(decl) = ctx.proof_ir.refined_types.get(&canonical) {
-                    return Some((canonical, decl));
+                let canonical_key = crate::ir::TypeKey::in_module(m.prefix.clone(), bare);
+                if let Some(decl) = ctx.proof_ir.refined_types.get(&canonical_key) {
+                    return Some((canonical_key.canonical(), decl));
                 }
             }
         }
@@ -984,7 +1067,10 @@ pub fn find_refined_type_with_key_scoped<'a>(
 /// in-flight `refined_types` map plus dep-module list — used inside
 /// `proof_lower` where there is no `CodegenContext` yet.
 pub fn resolve_refined_type_in<'a>(
-    refined_types: &'a std::collections::HashMap<String, crate::ir::proof_ir::RefinedTypeDecl>,
+    refined_types: &'a std::collections::HashMap<
+        crate::ir::TypeKey,
+        crate::ir::proof_ir::RefinedTypeDecl,
+    >,
     modules: &[crate::codegen::ModuleInfo],
     name: &str,
 ) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
@@ -992,24 +1078,33 @@ pub fn resolve_refined_type_in<'a>(
 }
 
 /// Same as [`resolve_refined_type_in`] but returns the canonical
-/// key paired with the decl — used by IR-internal callers (the
-/// proof-lower side `walk_for_refinement_carrier`) so they
-/// thread the same canonical identifier through their boolean
-/// `.is_some()` checks today and any future load-bearing
-/// downstream use without re-introducing bare-name heuristics.
+/// `TypeKey` paired with the decl — used by IR-internal callers
+/// (the proof-lower side `walk_for_refinement_carrier`) so they
+/// thread the canonical identity through downstream comparisons
+/// without re-introducing bare-name heuristics.
 pub fn resolve_refined_type_in_with_key<'a>(
-    refined_types: &'a std::collections::HashMap<String, crate::ir::proof_ir::RefinedTypeDecl>,
+    refined_types: &'a std::collections::HashMap<
+        crate::ir::TypeKey,
+        crate::ir::proof_ir::RefinedTypeDecl,
+    >,
     modules: &[crate::codegen::ModuleInfo],
     name: &str,
-) -> Option<(String, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
-    if let Some(decl) = refined_types.get(name) {
-        return Some((name.to_string(), decl));
-    }
+) -> Option<(crate::ir::TypeKey, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
     let bare = name.rsplit('.').next().unwrap_or(name);
+    let name_is_already_qualified = name.contains('.');
+    let direct_key =
+        if name_is_already_qualified && let Some((prefix, bare_part)) = name.rsplit_once('.') {
+            crate::ir::TypeKey::in_module(prefix.to_string(), bare_part)
+        } else {
+            crate::ir::TypeKey::entry(name)
+        };
+    if let Some(decl) = refined_types.get(&direct_key) {
+        return Some((direct_key, decl));
+    }
     for m in modules {
         for td in &m.type_defs {
             if type_def_name(td) == bare {
-                let canonical = format!("{}.{}", m.prefix, bare);
+                let canonical = crate::ir::TypeKey::in_module(m.prefix.clone(), bare);
                 if let Some(decl) = refined_types.get(&canonical) {
                     return Some((canonical, decl));
                 }
@@ -2296,9 +2391,15 @@ mod tests {
             },
             witness: Some(witness.to_string()),
         };
-        let mut refined_types: HashMap<String, RefinedTypeDecl> = HashMap::new();
-        refined_types.insert("A.Natural".to_string(), make_decl("a", 0));
-        refined_types.insert("B.Natural".to_string(), make_decl("b", 10));
+        let mut refined_types: HashMap<crate::ir::TypeKey, RefinedTypeDecl> = HashMap::new();
+        refined_types.insert(
+            crate::ir::TypeKey::in_module("A", "Natural"),
+            make_decl("a", 0),
+        );
+        refined_types.insert(
+            crate::ir::TypeKey::in_module("B", "Natural"),
+            make_decl("b", 10),
+        );
 
         // Fully-qualified lookups hit the exact slot.
         let a = resolve_refined_type_in(&refined_types, &modules, "A.Natural")
@@ -2388,12 +2489,14 @@ mod tests {
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
         };
-        ctx.proof_ir
-            .refined_types
-            .insert("Natural".to_string(), make_decl("entry_n", "0"));
-        ctx.proof_ir
-            .refined_types
-            .insert("Mod.Natural".to_string(), make_decl("mod_n", "10"));
+        ctx.proof_ir.refined_types.insert(
+            crate::ir::TypeKey::entry("Natural"),
+            make_decl("entry_n", "0"),
+        );
+        ctx.proof_ir.refined_types.insert(
+            crate::ir::TypeKey::in_module("Mod", "Natural"),
+            make_decl("mod_n", "10"),
+        );
 
         let from_module = find_refined_type_scoped(&ctx, "Natural", Some("Mod"))
             .expect("Mod-scoped Natural lookup");

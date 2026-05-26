@@ -255,8 +255,8 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             continue;
         }
         let canonical_key = match module_prefix {
-            Some(prefix) => format!("{}.{}", prefix, name),
-            None => name.clone(),
+            Some(prefix) => crate::ir::TypeKey::in_module(prefix.to_string(), name),
+            None => crate::ir::TypeKey::entry(name),
         };
         if ir.refined_types.contains_key(&canonical_key) {
             // Same canonical key already populated — possible if a
@@ -347,10 +347,10 @@ fn populate_fn_contracts_for_scope(
     plans: &HashMap<String, RecursionPlan>,
 ) {
     let scoped_fns: Vec<&FnDef> = inputs.pure_fns_in_scope(scope);
-    let qualify = |bare: &str| -> String {
+    let qualify = |bare: &str| -> crate::ir::FnKey {
         match scope {
-            Some(prefix) => format!("{}.{}", prefix, bare),
-            None => bare.to_string(),
+            Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), bare),
+            None => crate::ir::FnKey::entry(bare),
         }
     };
 
@@ -359,8 +359,7 @@ fn populate_fn_contracts_for_scope(
             continue;
         };
         // `fn_name` stays bare (used as `source_name` in each insert);
-        // `canonical_key` is the map key (`Module.fn` for module-scope,
-        // bare for entry-scope).
+        // `canonical_key` is the typed map key.
         let canonical_key = qualify(fn_name);
 
         // IntCountdown — fuel-encoded countdown on a single Int param.
@@ -680,7 +679,7 @@ fn classify_law_strategy(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
     inputs: &ProofLowerInputs,
-    refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
+    refined_types: &std::collections::HashMap<crate::ir::TypeKey, crate::ir::RefinedTypeDecl>,
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
@@ -838,7 +837,7 @@ fn detect_simp_omega_unfold(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
     inputs: &ProofLowerInputs,
-    refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
+    refined_types: &std::collections::HashMap<crate::ir::TypeKey, crate::ir::RefinedTypeDecl>,
 ) -> Option<SimpOmegaPlan> {
     use std::collections::BTreeSet;
 
@@ -963,7 +962,7 @@ fn refinement_lift_for_given_ir(
     given_name: &str,
     lhs: &Spanned<crate::ast::Expr>,
     rhs: &Spanned<crate::ast::Expr>,
-    refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
+    refined_types: &std::collections::HashMap<crate::ir::TypeKey, crate::ir::RefinedTypeDecl>,
     dep_modules: &[crate::codegen::ModuleInfo],
 ) -> Option<String> {
     let mut result: Option<String> = None;
@@ -975,7 +974,7 @@ fn refinement_lift_for_given_ir(
 fn walk_for_refinement_carrier(
     expr: &Spanned<crate::ast::Expr>,
     given_name: &str,
-    refined_types: &std::collections::HashMap<String, crate::ir::RefinedTypeDecl>,
+    refined_types: &std::collections::HashMap<crate::ir::TypeKey, crate::ir::RefinedTypeDecl>,
     dep_modules: &[crate::codegen::ModuleInfo],
     result: &mut Option<String>,
 ) {
@@ -1007,7 +1006,7 @@ fn walk_for_refinement_carrier(
                 // the returned identifier inherits the same
                 // canonical guarantee `find_refined_type_with_key`
                 // gives the backend side.
-                *result = Some(canonical_key);
+                *result = Some(canonical_key.canonical());
                 return;
             }
             // Even non-matching RecordCreate may contain nested

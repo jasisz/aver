@@ -23,6 +23,15 @@ use std::collections::HashMap;
 
 use crate::ast::Spanned;
 
+// Identity keys for named declarations crossing module boundaries
+// (`FnKey`, `TypeKey`, `LawKey`) live in `crate::ir::identity` —
+// they're general identity primitives, not proof-specific. Today's
+// proof flow is where the bare-string bug class first surfaced
+// (reviewer rounds 5/6), but other backends with multi-module emit
+// (VM, Rust codegen, WASM) will reach for the same types when they
+// hit the same bug class. Re-exported here for ergonomics.
+pub use crate::ir::identity::{FnKey, LawKey, TypeKey};
+
 /// Output of the `proof_lower` pipeline stage. Every decision the
 /// proof backends will make is materialised here; backends become
 /// pure renderers.
@@ -33,15 +42,18 @@ use crate::ast::Spanned;
 /// untyped AST path, same as runtime backends (VM, Rust, WASM).
 #[derive(Debug, Clone, Default)]
 pub struct ProofIR {
-    /// Every refinement-lifted user type, keyed by canonical type
-    /// name (`Module.Natural` or bare `Natural` when no enclosing
-    /// module). Includes types declared in the entry items and in
-    /// dependent modules — the lowerer normalises both into the
-    /// same map so backends don't have to walk two corpora.
-    pub refined_types: HashMap<String, RefinedTypeDecl>,
+    /// Every refinement-lifted user type, keyed by [`TypeKey`].
+    /// Two modules with same-bare-name refined records (`A.Natural`
+    /// and `B.Natural`) get distinct keys so their predicates never
+    /// merge. Includes types declared in the entry items and in
+    /// dependent modules.
+    pub refined_types: HashMap<TypeKey, RefinedTypeDecl>,
     /// Per-pure-fn contract describing what proof artifact the fn
     /// lowers to (native / fuel / structural / linear recurrence).
-    pub fn_contracts: HashMap<String, FnContract>,
+    /// Keyed by [`FnKey`] so two modules with same-bare-name fns
+    /// (`A.foo` IntCountdown + `B.foo` ListStructural) hold their
+    /// own contracts without collision.
+    pub fn_contracts: HashMap<FnKey, FnContract>,
     /// Per-verify-law theorem decomposed into quantifiers, premises,
     /// and claim with all wrapper-strip / val-projection / drop-vs-
     /// keep decisions baked in, plus the pinned proof strategy.
