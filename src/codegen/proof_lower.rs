@@ -646,7 +646,10 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         let strategy = classify_law_strategy(law, &vb.fn_name, inputs, &ir.refined_types);
 
         ir.law_theorems.push(LawTheorem {
-            fn_name: vb.fn_name.clone(),
+            // Verify laws are entry-only per current model — see
+            // `LawTheorem.fn_key` doc. The bare `vb.fn_name` from
+            // the source AST becomes an entry-scope `FnKey`.
+            fn_key: crate::ir::FnKey::entry(vb.fn_name.clone()),
             law_name: law.name.clone(),
             quantifiers,
             premises,

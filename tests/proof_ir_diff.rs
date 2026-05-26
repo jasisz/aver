@@ -752,7 +752,7 @@ fn law_lower_populates_theorems_from_verify_law_blocks() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "add" && t.law_name == "commutative")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("add") && t.law_name == "commutative")
         .expect("add::commutative law theorem missing from ProofIR");
 
     assert_eq!(theorem.quantifiers.len(), 2, "expected 2 quantifiers");
@@ -802,7 +802,7 @@ fn reflexive_law_pinned_when_lhs_equals_rhs() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "id" && t.law_name == "reflexive")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("id") && t.law_name == "reflexive")
         .expect("id::reflexive law theorem missing from ProofIR");
     assert!(
         matches!(theorem.strategy, aver::ir::ProofStrategy::Reflexive),
@@ -831,7 +831,7 @@ fn wrapper_associative_pinned_on_three_int_givens_assoc_shape() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "add" && t.law_name == "associative")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("add") && t.law_name == "associative")
         .expect("add::associative law theorem missing");
     assert!(
         matches!(
@@ -864,7 +864,7 @@ fn wrapper_identity_pinned_on_add_with_zero_rhs() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "add" && t.law_name == "identityZero")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("add") && t.law_name == "identityZero")
         .expect("add::identityZero law theorem missing");
     assert!(
         matches!(
@@ -897,7 +897,7 @@ fn wrapper_sub_right_identity_pinned_on_sub_with_zero_rhs() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "sub" && t.law_name == "rightIdentity")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("sub") && t.law_name == "rightIdentity")
         .expect("sub::rightIdentity law theorem missing");
     assert!(
         matches!(
@@ -931,7 +931,7 @@ fn wrapper_sub_anti_commutative_pinned_with_neg_direction() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "sub" && t.law_name == "antiCommutative")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("sub") && t.law_name == "antiCommutative")
         .expect("sub::antiCommutative law theorem missing");
     assert!(
         matches!(
@@ -970,7 +970,7 @@ fn wrapper_unary_equivalence_pinned_with_inner_fn_name() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "addOne" && t.law_name == "identityViaAdd")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("addOne") && t.law_name == "identityViaAdd")
         .expect("addOne::identityViaAdd law theorem missing");
     let aver::ir::ProofStrategy::UnaryEqualsBinary { ref inner_fn } = theorem.strategy else {
         panic!("expected UnaryEqualsBinary, got: {:?}", theorem.strategy);
@@ -1000,7 +1000,7 @@ fn simp_omega_unfold_pinned_on_sub_anti_comm_via_zero() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "sub" && t.law_name == "antiCommutative")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("sub") && t.law_name == "antiCommutative")
         .expect("sub::antiCommutative law theorem missing");
     let aver::ir::ProofStrategy::LinearArithmetic {
         ref unfold_fns,
@@ -1051,7 +1051,7 @@ fn linear_arithmetic_pinned_with_lifted_for_refinement_law() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "add" && t.law_name == "commutative")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("add") && t.law_name == "commutative")
         .expect("add::commutative law theorem missing");
     let aver::ir::ProofStrategy::LinearArithmetic {
         wrapper_return,
@@ -1093,7 +1093,7 @@ fn induction_pinned_on_recursive_adt_given() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "id" && t.law_name == "identity")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("id") && t.law_name == "identity")
         .expect("id::identity law theorem missing");
     let aver::ir::ProofStrategy::Induction { ref param } = theorem.strategy else {
         panic!(
@@ -1125,7 +1125,7 @@ fn library_axiom_pinned_on_map_has_set_self() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "touch" && t.law_name == "hasAfterSet")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("touch") && t.law_name == "hasAfterSet")
         .expect("touch::hasAfterSet law theorem missing");
     let aver::ir::ProofStrategy::LibraryAxiom {
         ref axiom,
@@ -1162,7 +1162,7 @@ fn map_update_postcondition_pinned_has_after() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "incCount" && t.law_name == "keyPresent")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("incCount") && t.law_name == "keyPresent")
         .expect("incCount::keyPresent law theorem missing");
     let aver::ir::ProofStrategy::MapUpdatePostcondition {
         ref outer_fn,
@@ -1209,7 +1209,9 @@ fn map_update_postcondition_pinned_get_after_with_helper_unfolds() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "incCount" && t.law_name == "existingKeyIncrements")
+        .find(|t| {
+            t.fn_key == aver::ir::FnKey::entry("incCount") && t.law_name == "existingKeyIncrements"
+        })
         .expect("incCount::existingKeyIncrements law theorem missing");
     let aver::ir::ProofStrategy::MapUpdatePostcondition {
         ref outer_fn,
@@ -1257,7 +1259,9 @@ fn map_key_tracked_increment_pinned_on_defaulted_get_plus_one() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "incCount" && t.law_name == "trackedCountStepsByOne")
+        .find(|t| {
+            t.fn_key == aver::ir::FnKey::entry("incCount") && t.law_name == "trackedCountStepsByOne"
+        })
         .expect("incCount::trackedCountStepsByOne law theorem missing");
     let aver::ir::ProofStrategy::MapKeyTrackedIncrement { ref outer_fn, .. } = theorem.strategy
     else {
@@ -1295,7 +1299,7 @@ fn spec_equivalence_pinned_on_identical_body_impl_spec_pair() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "absVal" && t.law_name == "absValSpec")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("absVal") && t.law_name == "absValSpec")
         .expect("absVal::absValSpec law theorem missing");
     let aver::ir::ProofStrategy::SpecEquivalence { ref extra_unfolds } = theorem.strategy else {
         panic!("expected SpecEquivalence, got: {:?}", theorem.strategy);
@@ -1337,7 +1341,7 @@ fn effectful_spec_equivalence_pinned_post_oracle_lift() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "pickPair" && t.law_name == "branchPathLaw")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("pickPair") && t.law_name == "branchPathLaw")
         .expect("pickPair::branchPathLaw law theorem missing");
     let aver::ir::ProofStrategy::EffectfulSpecEquivalence {
         ref impl_fn,
@@ -1377,7 +1381,7 @@ fn simp_normalized_spec_equivalence_pinned_on_arithmetic_identity_gap() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "square" && t.law_name == "squareSpec")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("square") && t.law_name == "squareSpec")
         .expect("square::squareSpec law theorem missing");
     let aver::ir::ProofStrategy::SpecEquivalenceSimpNormalized { ref extra_unfolds } =
         theorem.strategy
@@ -1421,7 +1425,7 @@ fn linear_int_spec_equivalence_pinned_on_commutative_addition() {
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == "addOne" && t.law_name == "addOneSpec")
+        .find(|t| t.fn_key == aver::ir::FnKey::entry("addOne") && t.law_name == "addOneSpec")
         .expect("addOne::addOneSpec law theorem missing");
     let aver::ir::ProofStrategy::LinearIntSpecEquivalence {
         ref unfolded_impl,

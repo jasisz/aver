@@ -1281,11 +1281,12 @@ pub fn emit_verify_law(
     // BackendDispatch / Sorry don't close constant-RHS shapes;
     // anything else (Reflexive, Associative, MapUpdatePostcondition,
     // …) does and stays. Mirror of the Lean gate.
+    let vb_fn_key = crate::ir::FnKey::entry(&vb.fn_name);
     let ir_strategy_closes_const_rhs = ctx
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == vb.fn_name && t.law_name == law.name)
+        .find(|t| t.fn_key == vb_fn_key && t.law_name == law.name)
         .is_some_and(|t| {
             !matches!(
                 t.strategy,
@@ -1334,7 +1335,7 @@ pub fn emit_verify_law(
         .proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_name == vb.fn_name && t.law_name == law.name)
+        .find(|t| t.fn_key == crate::ir::FnKey::entry(&vb.fn_name) && t.law_name == law.name)
         .map(|t| t.strategy.clone())
     {
         return emit_linear_recurrence2_support_stack(

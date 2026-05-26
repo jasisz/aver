@@ -292,7 +292,13 @@ pub enum DecreaseProof {
 /// already baked into the fields below; backends render directly.
 #[derive(Debug, Clone)]
 pub struct LawTheorem {
-    pub fn_name: String,
+    /// Round-7+: typed identity for the fn this law targets. Verify
+    /// laws are entry-only per the current model, so the key's
+    /// scope is effectively always `None` today — keying via
+    /// [`FnKey`] is the discipline marker, ready for laws in dep
+    /// modules once that feature lands. Callsites compare against
+    /// the typed key, not a bare string.
+    pub fn_key: FnKey,
     pub law_name: String,
     pub quantifiers: Vec<Quantifier>,
     /// Premises in order. Already includes `when` if it carries
