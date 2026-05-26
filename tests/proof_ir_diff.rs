@@ -72,6 +72,19 @@ fn build_ctx(src: &str) -> CodegenContext {
     ctx
 }
 
+/// Resolve a top-level fn's `FnContract` by bare name. After the
+/// FnKey → FnId migration the contracts map is keyed by opaque
+/// `FnId`, so tests resolve the identity through the symbol table
+/// the same way backends do.
+fn fn_contract<'a>(
+    ctx: &'a CodegenContext,
+    name: &str,
+) -> Option<&'a aver::ir::proof_ir::FnContract> {
+    let key = aver::ir::FnKey::entry(name);
+    let id = ctx.symbol_table.as_ref()?.fn_id_of(&key)?;
+    ctx.proof_ir.fn_contracts.get(&id)
+}
+
 fn legacy_decision(ctx: &CodegenContext, type_name: &str) -> Option<LegacyDecl> {
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let info = refinement_info_for(type_name, &inputs)?;
@@ -309,11 +322,8 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
         );
     };
 
-    let contract = ctx
-        .proof_ir
-        .fn_contracts
-        .get(&aver::ir::FnKey::entry("fibTR"))
-        .unwrap_or_else(|| panic!("fibTR has no FnContract in ProofIR"));
+    let contract =
+        fn_contract(&ctx, "fibTR").unwrap_or_else(|| panic!("fibTR has no FnContract in ProofIR"));
     let RecursionContract::Native {
         precondition,
         measure,
@@ -425,11 +435,8 @@ fn exposed_int_countdown_lowers_to_fuel_contract() {
         );
     };
 
-    let contract = ctx
-        .proof_ir
-        .fn_contracts
-        .get(&aver::ir::FnKey::entry("exposed_count"))
-        .expect("exposed_count has no FnContract in ProofIR");
+    let contract =
+        fn_contract(&ctx, "exposed_count").expect("exposed_count has no FnContract in ProofIR");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
         .as_ref()
@@ -489,11 +496,7 @@ fn int_ascending_lowers_to_bound_fuel_contract() {
         );
     };
 
-    let contract = ctx
-        .proof_ir
-        .fn_contracts
-        .get(&aver::ir::FnKey::entry("climb"))
-        .expect("climb has no FnContract");
+    let contract = fn_contract(&ctx, "climb").expect("climb has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
         .as_ref()
@@ -551,11 +554,7 @@ fn list_structural_lowers_to_seq_len_fuel_contract() {
         );
     };
 
-    let contract = ctx
-        .proof_ir
-        .fn_contracts
-        .get(&aver::ir::FnKey::entry("len"))
-        .expect("len has no FnContract");
+    let contract = fn_contract(&ctx, "len").expect("len has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
         .as_ref()
@@ -604,11 +603,7 @@ fn sizeof_structural_lowers_to_sizeof_fuel_contract() {
         plans.get("count")
     );
 
-    let contract = ctx
-        .proof_ir
-        .fn_contracts
-        .get(&aver::ir::FnKey::entry("count"))
-        .expect("count has no FnContract");
+    let contract = fn_contract(&ctx, "count").expect("count has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
         .as_ref()
@@ -644,11 +639,7 @@ fn string_pos_advance_lowers_to_string_pos_fuel_contract() {
         plans.get("walk")
     );
 
-    let contract = ctx
-        .proof_ir
-        .fn_contracts
-        .get(&aver::ir::FnKey::entry("walk"))
-        .expect("walk has no FnContract");
+    let contract = fn_contract(&ctx, "walk").expect("walk has no FnContract");
     let RecursionContract::Fuel { fuel_metric } = contract
         .recursion
         .as_ref()
@@ -709,11 +700,8 @@ fn mutual_int_countdown_lowers_to_lex_fuel_contract() {
             plans.get(fn_name),
         );
 
-        let contract = ctx
-            .proof_ir
-            .fn_contracts
-            .get(&aver::ir::FnKey::entry(fn_name))
-            .unwrap_or_else(|| panic!("{} has no FnContract", fn_name));
+        let contract =
+            fn_contract(&ctx, fn_name).unwrap_or_else(|| panic!("{} has no FnContract", fn_name));
         let RecursionContract::Fuel { fuel_metric } = contract
             .recursion
             .as_ref()
@@ -758,11 +746,7 @@ fn linear_recurrence_lowers_to_dedicated_contract() {
         plans.get("fib"),
     );
 
-    let contract = ctx
-        .proof_ir
-        .fn_contracts
-        .get(&aver::ir::FnKey::entry("fib"))
-        .expect("fib has no FnContract");
+    let contract = fn_contract(&ctx, "fib").expect("fib has no FnContract");
     assert!(
         matches!(
             contract.recursion,

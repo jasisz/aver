@@ -808,67 +808,61 @@ pub fn find_refined_type<'a>(
     find_refined_type_with_key_scoped(ctx, name, None).map(|(_, d)| d)
 }
 
-/// Round-5: `ir.fn_contracts` is now keyed by canonical name
-/// (`Module.fn` for module-owned fns, bare for entry). Callsites
-/// holding a bare fn name resolve to the right slot through this
-/// resolver.
-pub fn find_fn_contract<'a>(
-    ctx: &'a CodegenContext,
-    name: &str,
-) -> Option<&'a crate::ir::proof_ir::FnContract> {
-    find_fn_contract_scoped(ctx, name, None)
-}
-
-/// Scope-aware variant. `scope = Some(prefix)` directs bare-name
-/// lookups to that module's slot before falling back to entry /
-/// module-walk. Mirror of `find_refined_type_scoped` for fn
+/// Scope-aware fn-contract resolver. `scope = Some(prefix)` directs
+/// bare-name lookups to that module's slot before falling back to
+/// entry / module-walk. Mirror of `find_refined_type_scoped` for fn
 /// contracts — without it, two modules with same-bare-name
 /// recursive fns silently merge under whichever module-walk hit
 /// first.
+///
+/// Prefer `find_fn_contract_for_fn` whenever you have a `&FnDef` in
+/// hand: it resolves identity by pointer-eq against
+/// `ctx.modules[*].fn_defs` and avoids the bare-name footgun this
+/// scoped lookup still inherits from string-based call sites.
 pub fn find_fn_contract_scoped<'a>(
     ctx: &'a CodegenContext,
     name: &str,
     scope: Option<&str>,
 ) -> Option<&'a crate::ir::proof_ir::FnContract> {
+    // Round-7: `ProofIR.fn_contracts` is keyed by opaque `FnId`
+    // after the phase-E migration. Resolve `name` → `FnKey` →
+    // `FnId` through the symbol table, then look up the contract.
+    // Without a symbol table (legacy callers that haven't enabled
+    // `run_build_symbols`) this returns `None`, which the
+    // downstream emit path treats the same as "no contract" — the
+    // table is part of every production build flow.
+    let symbols = ctx.symbol_table.as_ref()?;
     let bare = name.rsplit('.').next().unwrap_or(name);
     let name_is_already_qualified = name.contains('.');
+    let try_key = |key: crate::ir::FnKey| -> Option<&'a crate::ir::proof_ir::FnContract> {
+        let id = symbols.fn_id_of(&key)?;
+        ctx.proof_ir.fn_contracts.get(&id)
+    };
     if let Some(prefix) = scope
         && !name_is_already_qualified
+        && let Some(c) = try_key(crate::ir::FnKey::in_module(prefix.to_string(), bare))
     {
-        let scoped_key = crate::ir::FnKey::in_module(prefix.to_string(), bare);
-        if let Some(c) = ctx.proof_ir.fn_contracts.get(&scoped_key) {
-            return Some(c);
-        }
+        return Some(c);
     }
-    // Direct `name`-as-given lookup: build entry key for bare,
-    // module key for already-qualified.
     let direct_key =
         if name_is_already_qualified && let Some((prefix, bare_part)) = name.rsplit_once('.') {
             crate::ir::FnKey::in_module(prefix.to_string(), bare_part)
         } else {
             crate::ir::FnKey::entry(name)
         };
-    if let Some(c) = ctx.proof_ir.fn_contracts.get(&direct_key) {
+    if let Some(c) = try_key(direct_key) {
         return Some(c);
     }
     for m in &ctx.modules {
         for fd in &m.fn_defs {
-            if fd.name == bare {
-                let canonical = crate::ir::FnKey::in_module(m.prefix.clone(), bare);
-                if let Some(c) = ctx.proof_ir.fn_contracts.get(&canonical) {
-                    return Some(c);
-                }
+            if fd.name == bare
+                && let Some(c) = try_key(crate::ir::FnKey::in_module(m.prefix.clone(), bare))
+            {
+                return Some(c);
             }
         }
     }
     None
-}
-
-/// Membership check counterpart of [`find_fn_contract`]. Used by
-/// the SCC routing in `transpile_unified` to decide whether a fn
-/// has a contract pinned without borrowing the decl.
-pub fn fn_contract_exists(ctx: &CodegenContext, name: &str) -> bool {
-    find_fn_contract(ctx, name).is_some()
 }
 
 /// Scoped membership check.
@@ -978,7 +972,15 @@ pub fn find_fn_contract_for_fn<'a>(
     ctx: &'a CodegenContext,
     fd: &FnDef,
 ) -> Option<&'a crate::ir::proof_ir::FnContract> {
-    find_fn_contract_scoped(ctx, &fd.name, fn_owning_scope_for(ctx, fd))
+    // Direct path: resolve the `&FnDef` to a `FnKey` via pointer-eq
+    // scope detection, then look up the `FnId` in the symbol table
+    // and the contract by ID. Cleaner than the bare-name resolver
+    // chain because the source `&FnDef` already identifies its
+    // owning module unambiguously.
+    let symbols = ctx.symbol_table.as_ref()?;
+    let fn_key = fn_key_for_decl(ctx, fd);
+    let fn_id = symbols.fn_id_of(&fn_key)?;
+    ctx.proof_ir.fn_contracts.get(&fn_id)
 }
 
 /// Membership check counterpart of [`find_fn_contract_for_fn`].

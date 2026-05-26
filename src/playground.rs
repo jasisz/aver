@@ -301,6 +301,12 @@ fn build_ctx(
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;
     }
+    // BuildSymbols auto-runs when any proof stage is on (see
+    // `ir::pipeline::run`), so the symbol table is populated for the
+    // proof path. Plumb it through so backend lookups
+    // (`find_fn_contract_for_fn`, etc.) resolve through opaque IDs
+    // instead of returning `None` and dropping recursion contracts.
+    ctx.symbol_table = pipeline_result.symbol_table;
     Ok(ctx)
 }
 
@@ -346,14 +352,36 @@ fn build_project_ctx(
     let root_depends = module_depends(&entry_items);
     let loaded = load_module_tree_from_map(&root_depends, files)?;
 
+    // Build the dep-module list BEFORE pipeline::run so the pipeline
+    // sees the full program. `SymbolTable::build` walks dep_modules
+    // to assign `FnId`s to module-owned fns; `populate_fn_contracts`
+    // then resolves `FnKey { scope: Some("Module"), name }` against
+    // those ids. Skipping this step left the multi-file proof path
+    // with an entry-only symbol table and module fns silently missing
+    // from `proof_ir.fn_contracts`.
+    let modules: Vec<codegen::ModuleInfo> = loaded
+        .iter()
+        .cloned()
+        .map(|m| loaded_to_module_info(m, apply_traversal_lowering))
+        .collect();
+
     // Multi-file pipeline. `apply_traversal_lowering` mirrors the CLI
-    // proof-vs-runtime distinction at this API boundary.
+    // proof-vs-runtime distinction at this API boundary: proof export
+    // wants source-level IR (no traversal lowering) AND the proof
+    // stages populated. BuildSymbols auto-enables alongside proof
+    // stages so the FnId-keyed `fn_contracts` / `refined_types` maps
+    // are reachable downstream.
+    let proof_target = !apply_traversal_lowering;
     let pipeline_result = crate::ir::pipeline::run(
         &mut entry_items,
         PipelineConfig {
             typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
             run_interp_lower: apply_traversal_lowering,
             run_buffer_build: apply_traversal_lowering,
+            run_refinement_lower: proof_target,
+            run_contract_lower: proof_target,
+            run_law_lower: proof_target,
+            dep_modules: &modules,
             ..Default::default()
         },
     );
@@ -362,19 +390,20 @@ fn build_project_ctx(
         return Err(format_tc_errors(&tc_result.errors));
     }
 
-    let modules: Vec<codegen::ModuleInfo> = loaded
-        .into_iter()
-        .map(|m| loaded_to_module_info(m, apply_traversal_lowering))
-        .collect();
-
-    Ok(codegen::build_context(
+    let proof_ir = pipeline_result.proof_ir;
+    let mut ctx = codegen::build_context(
         entry_items,
         &tc_result,
         pipeline_result.analysis.as_ref(),
         HashSet::new(),
         "playground".to_string(),
         modules,
-    ))
+    );
+    if let Some(ir) = proof_ir {
+        ctx.proof_ir = ir;
+    }
+    ctx.symbol_table = pipeline_result.symbol_table;
+    Ok(ctx)
 }
 
 /// Multi-file Aver project → Lean 4 project files.
@@ -1049,6 +1078,68 @@ mod tests {
             .expect("multi-file Dafny export should succeed");
         assert!(!out.is_empty(), "Dafny project export should produce files");
         assert!(out.iter().any(|(k, _)| k.ends_with(".dfy")));
+    }
+
+    #[test]
+    fn proof_project_path_populates_fnid_keyed_proof_ir() {
+        // Regression for the PR #142 follow-up: `build_project_ctx`
+        // used to skip proof stages + drop the symbol table, so
+        // `proof_*_files_project` exported multi-file proofs with
+        // an empty ProofIR. Existing project tests only assert
+        // files are produced; this one asserts the FnId-keyed proof
+        // layer actually landed for a recursive fn in a dep module.
+        let mut files: HashMap<String, String> = HashMap::new();
+        files.insert(
+            "helper.av".to_string(),
+            r#"module Helper
+    intent = "countdown"
+    depends []
+
+fn down(n: Int) -> Int
+    match n
+        0 -> 0
+        _ -> down(n - 1)
+"#
+            .to_string(),
+        );
+        files.insert(
+            "main.av".to_string(),
+            r#"module Main
+    intent = "use helper"
+    depends [Helper]
+
+fn main() -> Int
+    Helper.down(3)
+"#
+            .to_string(),
+        );
+
+        let ctx = super::build_project_ctx(&files, "main.av", false)
+            .expect("multi-file proof ctx should build");
+
+        // The fix proper: symbol table is plumbed onto the multi-file
+        // proof ctx (regression for the previous "build_context without
+        // proof_ir / symbol_table" gap).
+        let symbols = ctx
+            .symbol_table
+            .as_ref()
+            .expect("symbol_table must be plumbed onto multi-file proof ctx");
+        let helper_down_id = symbols
+            .fn_id_of(&crate::ir::FnKey::in_module("Helper".to_string(), "down"))
+            .expect("SymbolTable must carry FnId for Helper.down");
+
+        // Producer side: the FnId-keyed `fn_contracts` map must
+        // hold the recursion contract for the dep-module fn.
+        // Pre-fix this was empty because the pipeline ran without
+        // `dep_modules` and `populate_fn_contracts` had nothing
+        // to classify outside the entry scope.
+        assert!(
+            ctx.proof_ir.fn_contracts.contains_key(&helper_down_id),
+            "fn_contracts should hold an entry for Helper.down (FnId={:?}); \
+             got {} entries instead",
+            helper_down_id,
+            ctx.proof_ir.fn_contracts.len()
+        );
     }
 
     #[test]

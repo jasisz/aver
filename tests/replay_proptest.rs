@@ -1,3 +1,9 @@
+// `HashMap<Value, Value>` keys are intentionally Value: Value carries
+// interior-mutability slots (Arc<RefCell<_>>) only for variant payloads
+// that the generator skips, so the maps tested here are well-behaved
+// despite clippy's conservative `mutable_key_type` check.
+#![allow(clippy::mutable_key_type)]
+
 //! Property tests for the replay JSON codec (Iron — B3).
 //!
 //! Every replay-safe `Value` must round-trip through the replay JSON

@@ -526,6 +526,29 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     // RefinementLower writes `refined_types`, ContractLower writes
     // `fn_contracts`, LawLower writes `law_theorems`. Each is
     // independently opt-in.
+    // BuildSymbols runs BEFORE proof stages so `populate_*` resolve
+    // `FnKey`/`TypeKey` to `FnId`/`TypeId` once at the IR boundary
+    // and key `ProofIR.fn_contracts` / `ProofIR.refined_types` /
+    // `LawTheorem.fn_id` by the opaque IDs (#138 phase E).
+    //
+    // Proof stages have a hard dependency on the symbol table —
+    // since fn_contracts is keyed by `FnId`, populate cannot run
+    // without resolved identity. Auto-enable here so callers can't
+    // accidentally turn on `run_contract_lower` / `run_law_lower`
+    // without symbols and silently produce an empty proof IR.
+    let needs_symbols = cfg.run_build_symbols
+        || cfg.run_refinement_lower
+        || cfg.run_contract_lower
+        || cfg.run_law_lower;
+    if needs_symbols {
+        let symbol_table = crate::ir::SymbolTable::build(items, cfg.dep_modules);
+        result
+            .pass_diagnostics
+            .push(diag_for_build_symbols(&symbol_table));
+        result.symbol_table = Some(symbol_table);
+        fire(&mut cfg, PipelineStage::BuildSymbols, items);
+    }
+
     if cfg.run_refinement_lower || cfg.run_contract_lower || cfg.run_law_lower {
         // Round-5: union entry's analyze with each dep module's
         // `analysis.recursive_fns`. Without this, multi-module proof
@@ -556,6 +579,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             dep_modules: cfg.dep_modules,
             module_prefixes: &module_prefixes,
             recursive_fns: &recursive_fns_owned,
+            symbol_table: result.symbol_table.as_ref(),
         };
         let mut ir = result.proof_ir.take().unwrap_or_default();
         if cfg.run_refinement_lower {
@@ -574,15 +598,6 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             fire(&mut cfg, PipelineStage::LawLower, items);
         }
         result.proof_ir = Some(ir);
-    }
-
-    if cfg.run_build_symbols {
-        let symbol_table = crate::ir::SymbolTable::build(items, cfg.dep_modules);
-        result
-            .pass_diagnostics
-            .push(diag_for_build_symbols(&symbol_table));
-        result.symbol_table = Some(symbol_table);
-        fire(&mut cfg, PipelineStage::BuildSymbols, items);
     }
 
     result

@@ -1515,6 +1515,11 @@ mod tests {
     /// IR-pinned law strategies rely on this being populated so the
     /// backend's IR-pin lookups can fire.
     fn populate_proof_ir(ctx: &mut CodegenContext) {
+        // Mirror the production order: BuildSymbols → proof_lower. The
+        // populate side asserts the symbol table is present (it's a
+        // hard prerequisite for FnId-keyed fn_contracts), so synthetic-
+        // ctx tests have to build it the same way `refresh_facts` does.
+        ctx.symbol_table = Some(crate::ir::SymbolTable::build(&ctx.items, &ctx.modules));
         let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
         ctx.proof_ir = crate::codegen::proof_lower::lower(&inputs);
     }
@@ -1571,7 +1576,10 @@ mod tests {
                 run_refinement_lower: true,
                 run_contract_lower: true,
                 run_law_lower: true,
-                run_build_symbols: false,
+                // BuildSymbols is needed for fn_contracts lookup
+                // (keyed by opaque FnId resolved through the symbol
+                // table since the FnKey → FnId migration).
+                run_build_symbols: true,
                 dep_modules: &[],
                 alloc_policy: None,
                 call_ctx: None,
@@ -1596,6 +1604,7 @@ mod tests {
         if let Some(ir) = proof_ir {
             ctx.proof_ir = ir;
         }
+        ctx.symbol_table = pipeline_result.symbol_table;
         ctx
     }
 

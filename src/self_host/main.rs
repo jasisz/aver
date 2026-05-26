@@ -25,6 +25,7 @@ pub use replay_support::*;
 
 mod self_host_support;
 
+#[allow(clippy::needless_return, unused_braces)]
 pub mod aver_generated;
 
 fn main() {
