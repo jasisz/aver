@@ -584,17 +584,19 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         let recursive_fns_owned: std::collections::HashSet<crate::ir::FnId> = {
             let mut set = std::collections::HashSet::new();
             if let Some(a) = result.analysis.as_ref() {
-                set.extend(
-                    a.recursive_fns
-                        .iter()
-                        .filter_map(|n| symbols.fn_id_of(&crate::ir::FnKey::entry(n))),
-                );
+                set.extend(crate::codegen::scc::analysis_set_to_fn_ids(
+                    &a.recursive_fns,
+                    symbols,
+                    None,
+                ));
             }
             for m in cfg.dep_modules {
                 if let Some(a) = m.analysis.as_ref() {
-                    set.extend(a.recursive_fns.iter().filter_map(|n| {
-                        symbols.fn_id_of(&crate::ir::FnKey::in_module(m.prefix.clone(), n))
-                    }));
+                    set.extend(crate::codegen::scc::analysis_set_to_fn_ids(
+                        &a.recursive_fns,
+                        symbols,
+                        Some(&m.prefix),
+                    ));
                 }
             }
             set

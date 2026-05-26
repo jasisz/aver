@@ -2548,7 +2548,6 @@ mod tests {
             extra_fn_defs: Vec::new(),
             mutual_tco_members: HashSet::new(),
             recursive_fns: HashSet::new(),
-            fn_analyses: HashMap::new(),
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),

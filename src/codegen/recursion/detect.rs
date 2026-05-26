@@ -1535,21 +1535,15 @@ fn walk_caller_collect_callsite_guards(
 /// (`tests/proof_ir_diff.rs`) cross-checks ProofIR against the
 /// legacy classifier output — that test is itself slated for
 /// rationalisation once the migration is fully bedded down.
-pub fn analyze_plans(
-    inputs: &ProofLowerInputs,
-) -> (HashMap<String, RecursionPlan>, Vec<ProofModeIssue>) {
-    analyze_plans_in_scope(inputs, None, true)
-}
-
-/// Scope-aware variant. `scope = None` runs against entry only,
+/// Scope-aware classifier. `scope = None` runs against entry only,
 /// `Some(prefix)` against one dep module. Aver's module DAG
 /// invariant rules out cross-module recursion SCCs, so per-scope
 /// classification is the canonical view and avoids two
 /// same-bare-name fns from different modules colliding in the
-/// SCC analyser's `HashMap<name, _>`. The `global_view` flag is
-/// the legacy entry point: it keeps the old "chain all fns,
-/// classify globally" behaviour for callers that don't yet know
-/// about scopes.
+/// SCC analyser's `HashMap<name, _>`. The `global_view` flag keeps
+/// the legacy "chain all fns, classify globally" behaviour for
+/// `tests/proof_ir_diff.rs` cross-check tests; production callers
+/// always pass `global_view = false` and walk scopes themselves.
 pub fn analyze_plans_in_scope(
     inputs: &ProofLowerInputs,
     scope: Option<&str>,
