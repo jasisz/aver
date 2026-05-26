@@ -84,6 +84,131 @@ pub mod resolve;
 pub use dump::{dump_resolved_expr, dump_resolved_program};
 pub use resolve::{ResolveCtx, resolve_program, resolve_top_level};
 
+/// Count every `ResolvedCallee::Unresolved` and
+/// `ResolvedCtor::Unresolved` reachable from `fd`'s body. The Phase E
+/// contract for `resolved_items` is **zero unresolved for well-typed
+/// programs** — non-zero means either the typechecker already
+/// rejected the program (resolver bailed to recovery) or there's a
+/// resolver gap. CI invariants compare this count against typecheck
+/// errors to catch silent regressions.
+pub fn count_unresolved_in_fn(fd: &ResolvedFnDef) -> usize {
+    let mut count = 0;
+    count_unresolved_in_body(&fd.body, &mut count);
+    count
+}
+
+fn count_unresolved_in_body(body: &ResolvedFnBody, out: &mut usize) {
+    match body {
+        ResolvedFnBody::Block(stmts) => {
+            for stmt in stmts {
+                count_unresolved_in_stmt(stmt, out);
+            }
+        }
+    }
+}
+
+fn count_unresolved_in_stmt(stmt: &ResolvedStmt, out: &mut usize) {
+    match stmt {
+        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
+            count_unresolved_in_expr(&value.node, out)
+        }
+    }
+}
+
+fn count_unresolved_in_expr(expr: &ResolvedExpr, out: &mut usize) {
+    match expr {
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {}
+        ResolvedExpr::Attr(obj, _) => count_unresolved_in_expr(&obj.node, out),
+        ResolvedExpr::Call(callee, args) => {
+            if let ResolvedCallee::Unresolved { callee } = callee {
+                *out += 1;
+                count_unresolved_in_expr(&callee.node, out);
+            }
+            for a in args {
+                count_unresolved_in_expr(&a.node, out);
+            }
+        }
+        ResolvedExpr::BinOp(_, l, r) => {
+            count_unresolved_in_expr(&l.node, out);
+            count_unresolved_in_expr(&r.node, out);
+        }
+        ResolvedExpr::Neg(inner) | ResolvedExpr::ErrorProp(inner) => {
+            count_unresolved_in_expr(&inner.node, out)
+        }
+        ResolvedExpr::Match { subject, arms } => {
+            count_unresolved_in_expr(&subject.node, out);
+            for arm in arms {
+                count_unresolved_in_pattern(&arm.pattern, out);
+                count_unresolved_in_expr(&arm.body.node, out);
+            }
+        }
+        ResolvedExpr::Ctor(ctor, args) => {
+            if matches!(ctor, ResolvedCtor::Unresolved { .. }) {
+                *out += 1;
+            }
+            for a in args {
+                count_unresolved_in_expr(&a.node, out);
+            }
+        }
+        ResolvedExpr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let ResolvedStrPart::Parsed(inner) = p {
+                    count_unresolved_in_expr(&inner.node, out);
+                }
+            }
+        }
+        ResolvedExpr::List(items)
+        | ResolvedExpr::Tuple(items)
+        | ResolvedExpr::IndependentProduct(items, _) => {
+            for i in items {
+                count_unresolved_in_expr(&i.node, out);
+            }
+        }
+        ResolvedExpr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                count_unresolved_in_expr(&k.node, out);
+                count_unresolved_in_expr(&v.node, out);
+            }
+        }
+        ResolvedExpr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                count_unresolved_in_expr(&e.node, out);
+            }
+        }
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+            count_unresolved_in_expr(&base.node, out);
+            for (_, e) in updates {
+                count_unresolved_in_expr(&e.node, out);
+            }
+        }
+        ResolvedExpr::TailCall { args, .. } => {
+            for a in args {
+                count_unresolved_in_expr(&a.node, out);
+            }
+        }
+    }
+}
+
+fn count_unresolved_in_pattern(pat: &ResolvedPattern, out: &mut usize) {
+    match pat {
+        ResolvedPattern::Wildcard
+        | ResolvedPattern::Literal(_)
+        | ResolvedPattern::Ident(_)
+        | ResolvedPattern::EmptyList
+        | ResolvedPattern::Cons(_, _) => {}
+        ResolvedPattern::Tuple(items) => {
+            for p in items {
+                count_unresolved_in_pattern(p, out);
+            }
+        }
+        ResolvedPattern::Ctor(ctor, _) => {
+            if matches!(ctor, ResolvedCtor::Unresolved { .. }) {
+                *out += 1;
+            }
+        }
+    }
+}
+
 /// Resolved expression — the mechanical mirror of [`crate::ast::Expr`].
 ///
 /// Every variant that referenced a declared symbol by string in

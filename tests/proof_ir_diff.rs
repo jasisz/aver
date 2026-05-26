@@ -48,7 +48,6 @@ fn build_ctx(src: &str) -> CodegenContext {
             // tests that touch `ctx.symbol_table` see the populated
             // form. Cheap traversal — no analysis.
             run_build_symbols: true,
-            run_name_resolve: false,
             dep_modules: &[],
             alloc_policy: None,
             call_ctx: None,

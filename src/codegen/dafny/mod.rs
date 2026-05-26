@@ -699,7 +699,6 @@ mod tests {
                 // (keyed by opaque FnId resolved through the symbol
                 // table since the FnKey → FnId migration).
                 run_build_symbols: true,
-                run_name_resolve: false,
                 dep_modules: &[],
                 alloc_policy: None,
                 call_ctx: None,

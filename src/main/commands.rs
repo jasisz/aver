@@ -2493,7 +2493,6 @@ fn build_codegen_context(
             // get it; ad-hoc `pipeline::run` callers (tests,
             // playground) opt in via `PipelineConfig`.
             run_build_symbols: true,
-            run_name_resolve: false,
             dep_modules: &modules,
             ..Default::default()
         },
@@ -3150,7 +3149,6 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             run_refinement_lower,
             run_contract_lower,
             run_law_lower,
-            run_name_resolve: target == PipelineStage::NameResolve,
             dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage, items_after| {
                 if stage == target {
@@ -3209,19 +3207,10 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     // `FnId` / `CtorId` / `TypeId` markers so the migration is
     // visually verifiable from the CLI.
     if target == PipelineStage::NameResolve {
-        match pipeline_result.resolved_items {
-            Some(items) => {
-                print!("{}", aver::ir::hir::dump_resolved_program(&items));
-            }
-            None => {
-                eprintln!(
-                    "{}",
-                    "stage 'name_resolve' did not run (likely skipped after typecheck errors)"
-                        .red(),
-                );
-                process::exit(1);
-            }
-        }
+        print!(
+            "{}",
+            aver::ir::hir::dump_resolved_program(&pipeline_result.resolved_items)
+        );
         return;
     }
 
@@ -3657,10 +3646,12 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
             PassReport::NameResolve {
                 promoted_fns,
                 passthrough_items,
+                unresolved_count,
             } => {
                 out.push_str(&format!(
                     "{label} resolved HIR: {promoted_fns} fn(s) promoted, \
-                     {passthrough_items} item(s) passthrough\n"
+                     {passthrough_items} item(s) passthrough, \
+                     {unresolved_count} unresolved\n"
                 ));
             }
         }
@@ -3859,10 +3850,12 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             PassReport::NameResolve {
                 promoted_fns,
                 passthrough_items,
+                unresolved_count,
             } => {
                 out.push_str(&format!(
                     "{{\"promoted_fns\":{promoted_fns},\
-                     \"passthrough_items\":{passthrough_items}}}"
+                     \"passthrough_items\":{passthrough_items},\
+                     \"unresolved_count\":{unresolved_count}}}"
                 ));
             }
         }

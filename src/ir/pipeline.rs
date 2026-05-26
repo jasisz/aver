@@ -76,9 +76,10 @@ pub enum PipelineStage {
     /// `FnId` / `CtorId`-keyed, constructor / record references
     /// carry typed identity, tail calls carry their target `FnId`.
     /// Phase E of #147; populates
-    /// `PipelineResult::resolved_items`. Opt-in via
-    /// `PipelineConfig::run_name_resolve` until backends start
-    /// consuming it.
+    /// `PipelineResult::resolved_items`. Unconditional like
+    /// `BuildSymbols` — the resolver is part of the canonical
+    /// pipeline output, not an opt-in concern. Backends consume
+    /// `resolved_items` in lieu of re-resolving `Expr` themselves.
     NameResolve,
 }
 
@@ -176,14 +177,6 @@ pub struct PipelineConfig<'a> {
     /// Independent of every other stage; future consumers (proof
     /// IR maps keyed by `FnId`, resolved AST emit) require it on.
     pub run_build_symbols: bool,
-    /// Whether to run the name-resolve pass (Phase E PR 3, #147).
-    /// Populates `PipelineResult::resolved_items` with a typed-
-    /// identity AST lifted from the post-typecheck `Expr`. Opt-in
-    /// for now — until backends start consuming the resolved HIR
-    /// the pass is dead weight on the hot path. Future PRs in the
-    /// Phase E stack flip this default to `true` once a backend
-    /// migrates over.
-    pub run_name_resolve: bool,
     /// Pre-loaded dependent modules. Carried alongside items so the
     /// proof-lower pass can walk both the entry and dep type/fn defs
     /// (refinement records live in either; cross-module recursion is
@@ -223,7 +216,6 @@ impl<'a> Default for PipelineConfig<'a> {
             run_contract_lower: false,
             run_law_lower: false,
             run_build_symbols: false,
-            run_name_resolve: false,
             dep_modules: &[],
             alloc_policy: None,
             call_ctx: None,
@@ -344,6 +336,17 @@ pub enum PassReport {
         /// recovery). The fewer of these, the more the resolved
         /// HIR captured.
         passthrough_items: usize,
+        /// Resolver-escape-hatch occurrences in the resolved tree —
+        /// `ResolvedCallee::Unresolved` and `ResolvedCtor::Unresolved`
+        /// summed across every expression. The contract for backends
+        /// that consume `resolved_items` is **zero unresolved for
+        /// well-typed programs**; non-zero implies either a
+        /// typechecker error already reported (the resolver bailed
+        /// to recovery shape) or a resolver gap that needs
+        /// patching. CI gates can compare this count against the
+        /// typecheck error count to catch silent resolver
+        /// regressions.
+        unresolved_count: usize,
     },
 }
 
@@ -416,12 +419,14 @@ pub struct PipelineResult {
     /// regardless.
     pub symbol_table: crate::ir::SymbolTable,
     /// Resolved HIR — post-typecheck AST lifted onto opaque
-    /// identities (Phase E of #147). `Some` when
-    /// `PipelineConfig::run_name_resolve` was true; `None` when
-    /// the pass was disabled. No backend consumes this yet; the
-    /// follow-up PRs in the Phase E stack migrate VM / Rust /
-    /// wasm-gc / Lean / Dafny / self-host onto it one at a time.
-    pub resolved_items: Option<Vec<crate::ir::hir::ResolvedTopLevel>>,
+    /// identities (Phase E of #147). Always populated: the
+    /// pipeline runs `NameResolve` unconditionally after
+    /// `BuildSymbols`, mirroring how the symbol table is always
+    /// built. Backends consume this in lieu of re-resolving
+    /// `Expr` themselves. The migration of individual backends
+    /// (VM / Rust / wasm-gc / Lean / Dafny / self-host) is staged
+    /// across follow-up PRs in the Phase E stack.
+    pub resolved_items: Vec<crate::ir::hir::ResolvedTopLevel>,
     /// Per-stage diagnostic records — one per pass that actually ran.
     /// Drives `aver compile --explain-passes`; consumed by the future
     /// CI failable-invariant checks.
@@ -607,16 +612,19 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     // Name-resolve runs after BuildSymbols (needs the symbol
     // table) and after the slot resolver + last_use (so
     // `Expr::Resolved` slots / `last_use` flags are populated and
-    // carry through to the resolved AST). Opt-in via
-    // `cfg.run_name_resolve` — until a backend consumes
-    // `resolved_items`, running the pass is dead weight on the hot
-    // path.
-    if cfg.run_name_resolve {
+    // carry through to the resolved AST). Unconditional: like
+    // `BuildSymbols`, the resolved HIR is part of the canonical
+    // pipeline output — every backend can rely on
+    // `PipelineResult::resolved_items` being populated without
+    // opt-in setup. Cost is O(n) over the AST (mirror of what
+    // typecheck already walks) — small enough to make the
+    // architectural simplicity worth it.
+    {
         let resolved = crate::ir::hir::resolve_program(&result.symbol_table, items);
         result
             .pass_diagnostics
             .push(diag_for_name_resolve(&resolved));
-        result.resolved_items = Some(resolved);
+        result.resolved_items = resolved;
         fire(&mut cfg, PipelineStage::NameResolve, items);
     }
 
@@ -932,9 +940,13 @@ fn diag_for_name_resolve(items: &[crate::ir::hir::ResolvedTopLevel]) -> PassDiag
     use crate::ir::hir::ResolvedTopLevel;
     let mut promoted_fns = 0;
     let mut passthrough_items = 0;
+    let mut unresolved_count = 0;
     for item in items {
         match item {
-            ResolvedTopLevel::FnDef(_) => promoted_fns += 1,
+            ResolvedTopLevel::FnDef(fd) => {
+                promoted_fns += 1;
+                unresolved_count += crate::ir::hir::count_unresolved_in_fn(fd);
+            }
             ResolvedTopLevel::Passthrough(_) => passthrough_items += 1,
             ResolvedTopLevel::Module(_) => {}
         }
@@ -944,6 +956,7 @@ fn diag_for_name_resolve(items: &[crate::ir::hir::ResolvedTopLevel]) -> PassDiag
         report: PassReport::NameResolve {
             promoted_fns,
             passthrough_items,
+            unresolved_count,
         },
     }
 }
@@ -1013,6 +1026,10 @@ fn id(n: Int) -> Int
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
                 PipelineStage::LastUse,
+                // Phase E (#147): NameResolve runs unconditionally
+                // after BuildSymbols (which fires only via flag, but
+                // the resolved AST is always built).
+                PipelineStage::NameResolve,
             ]
         );
     }
@@ -1043,7 +1060,16 @@ fn id(n: Int) -> Int
                 ..Default::default()
             },
         );
-        assert_eq!(fired, vec![PipelineStage::Tco, PipelineStage::Resolve]);
+        // NameResolve runs unconditionally after BuildSymbols, even
+        // when most other stages are disabled.
+        assert_eq!(
+            fired,
+            vec![
+                PipelineStage::Tco,
+                PipelineStage::Resolve,
+                PipelineStage::NameResolve,
+            ]
+        );
     }
 
     #[test]
@@ -1245,6 +1271,9 @@ fn id(n: Int) -> Int
                 PipelineStage::BufferBuild,
                 PipelineStage::Escape,
                 PipelineStage::LastUse, // fires even without Resolve — a no-op pass
+                // NameResolve runs unconditionally after
+                // BuildSymbols (Phase E of #147).
+                PipelineStage::NameResolve,
             ]
         );
     }
@@ -1286,6 +1315,8 @@ fn factorial(n: Int, acc: Int) -> Int
                 // foundation for proof IR + backend identity); the
                 // diagnostic always lands in `pass_diagnostics`.
                 PipelineStage::BuildSymbols,
+                // NameResolve same — unconditional Phase E pass.
+                PipelineStage::NameResolve,
             ]
         );
 
@@ -1332,7 +1363,7 @@ fn factorial(n: Int, acc: Int) -> Int
     }
 
     #[test]
-    fn name_resolve_off_by_default_leaves_resolved_items_none() {
+    fn name_resolve_runs_unconditionally() {
         let mut items = parse(
             r#"
 module M
@@ -1350,23 +1381,26 @@ fn id(n: Int) -> Int
                 ..Default::default()
             },
         );
+        // Phase E (#147): NameResolve runs unconditionally, like
+        // `BuildSymbols`. `resolved_items` is always populated —
+        // the pipeline is the resolver's caller, and backends
+        // consume the result rather than re-resolving themselves.
         assert!(
-            result.resolved_items.is_none(),
-            "name-resolve is opt-in; default config must leave resolved_items=None"
+            !result.resolved_items.is_empty(),
+            "NameResolve runs unconditionally; resolved_items must be populated"
         );
-        // Stage list also excludes NameResolve.
         let saw_name_resolve = result
             .pass_diagnostics
             .iter()
             .any(|d| d.stage == PipelineStage::NameResolve);
         assert!(
-            !saw_name_resolve,
-            "NameResolve stage must not run when the flag is off"
+            saw_name_resolve,
+            "NameResolve stage must always fire its diagnostic"
         );
     }
 
     #[test]
-    fn name_resolve_populates_resolved_items_when_enabled() {
+    fn name_resolve_populates_resolved_items() {
         let mut items = parse(
             r#"
 module M
@@ -1384,13 +1418,10 @@ fn main() -> Int
             &mut items,
             PipelineConfig {
                 typecheck: Some(TypecheckMode::Full { base_dir: None }),
-                run_name_resolve: true,
                 ..Default::default()
             },
         );
-        let resolved = result
-            .resolved_items
-            .expect("run_name_resolve=true must populate resolved_items");
+        let resolved = result.resolved_items;
         // Two FnDefs (helper + main) promoted; the Module item
         // lands as ResolvedTopLevel::Module — neither promoted nor
         // passthrough. So exactly 2 promoted, 0 passthrough.
@@ -1416,11 +1447,110 @@ fn main() -> Int
             PassReport::NameResolve {
                 promoted_fns,
                 passthrough_items,
+                unresolved_count,
             } => {
                 assert_eq!(*promoted_fns, 2);
                 assert_eq!(*passthrough_items, 0);
+                // Well-typed input — the resolver MUST classify
+                // every reference. Non-zero would mean the resolver
+                // bailed to a `ResolvedCallee::Unresolved` /
+                // `ResolvedCtor::Unresolved` escape hatch.
+                assert_eq!(
+                    *unresolved_count, 0,
+                    "well-typed program must produce zero unresolved nodes"
+                );
             }
             other => panic!("expected NameResolve report, got {other:?}"),
+        }
+    }
+
+    /// Phase E contract gate: for well-typed programs, the resolver
+    /// MUST classify every reference. `ResolvedCallee::Unresolved` /
+    /// `ResolvedCtor::Unresolved` are recovery escape hatches for
+    /// typecheck-error programs; their occurrence in well-typed
+    /// input is a resolver gap, not a legitimate state.
+    #[test]
+    fn name_resolve_invariant_zero_unresolved_for_well_typed_programs() {
+        // Battery of well-typed fixtures exercising every shape the
+        // resolver classifies: user fn calls (incl. recursion + TCO),
+        // builtin namespace methods, user ctors, builtin ctors,
+        // record create + update, match patterns, binding
+        // annotations.
+        let fixtures: &[&str] = &[
+            // Recursive fn, builtin call, binding annotation.
+            r#"
+fn count(n: Int, acc: Int) -> Int
+    match n
+        0 -> acc
+        _ -> count(n - 1, acc + Int.abs(-1))
+
+fn main() -> Int
+    x: Int = count(5, 0)
+    x
+"#,
+            // User sum type + variants + match arms.
+            r#"
+type Shape
+    Circle(Float)
+    Square(Float)
+
+fn area(s: Shape) -> Float
+    match s
+        Shape.Circle(r) -> r * r
+        Shape.Square(s) -> s * s
+
+fn main() -> Float
+    area(Shape.Circle(3.0))
+"#,
+            // Record create + update + builtin ctor.
+            r#"
+record Point
+    x: Int
+    y: Int
+
+fn origin() -> Point
+    Point(x = 0, y = 0)
+
+fn shift(p: Point) -> Result<Point, String>
+    Result.Ok(Point.update(p, x = p.x + 1))
+"#,
+        ];
+        for (i, src) in fixtures.iter().enumerate() {
+            let mut items = parse(src);
+            let result = run(
+                &mut items,
+                PipelineConfig {
+                    typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                    ..Default::default()
+                },
+            );
+            // Sanity: input must actually typecheck — otherwise the
+            // invariant doesn't apply (recovery escapes are allowed
+            // for broken programs).
+            if let Some(tc) = result.typecheck.as_ref() {
+                assert!(
+                    tc.errors.is_empty(),
+                    "fixture #{i} did not typecheck: {:?}",
+                    tc.errors
+                );
+            }
+            let diag = result
+                .pass_diagnostics
+                .iter()
+                .find(|d| d.stage == PipelineStage::NameResolve)
+                .expect("NameResolve diagnostic missing");
+            match &diag.report {
+                PassReport::NameResolve {
+                    unresolved_count, ..
+                } => {
+                    assert_eq!(
+                        *unresolved_count, 0,
+                        "fixture #{i}: well-typed program produced {} unresolved nodes",
+                        *unresolved_count
+                    );
+                }
+                other => panic!("expected NameResolve report, got {other:?}"),
+            }
         }
     }
 
@@ -1444,7 +1574,6 @@ fn id(n: Int) -> Int
             PipelineConfig {
                 typecheck: Some(TypecheckMode::Full { base_dir: None }),
                 run_build_symbols: true,
-                run_name_resolve: true,
                 on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
                 ..Default::default()
             },
