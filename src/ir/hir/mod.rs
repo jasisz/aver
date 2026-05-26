@@ -79,6 +79,9 @@
 use crate::ast::{AnnotBool, BinOp, FnResolution, Literal, Module, Spanned, Type};
 use crate::ir::identity::{CtorId, FnId, TypeId};
 
+pub mod resolve;
+pub use resolve::{ResolveCtx, resolve_program, resolve_top_level};
+
 /// Resolved expression — the mechanical mirror of [`crate::ast::Expr`].
 ///
 /// Every variant that referenced a declared symbol by string in
