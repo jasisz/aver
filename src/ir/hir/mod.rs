@@ -315,6 +315,16 @@ pub enum ResolvedCallee {
     /// flat and global, so a string key is enough — and stable
     /// across compiler versions.
     Builtin(String),
+    /// Compiler-synthesised intrinsic emitted by the
+    /// `interp_lower` / `buffer_build` deforestation passes.
+    /// Source-illegal names (`__buf_*`, `__to_str`) that only ever
+    /// appear after lowering. Carrying them as a typed variant
+    /// instead of `Unresolved { Ident("__buf_*") }` keeps the
+    /// "well-typed → zero unresolved" invariant honest — see
+    /// [`BuiltinIntrinsic`] for the enumerated set and the
+    /// `name_resolve_invariant_zero_unresolved_*` tests in
+    /// [`crate::ir::pipeline`].
+    Intrinsic(BuiltinIntrinsic),
     /// First-class fn value bound to a local slot (lambda / fn ref
     /// passed as an argument). The slot resolver already mapped
     /// the binding; we just thread the slot through.
@@ -333,6 +343,55 @@ pub enum ResolvedCallee {
         /// IR so the surrounding tree still walks cleanly.
         callee: Box<Spanned<ResolvedExpr>>,
     },
+}
+
+/// The enumerated set of compiler-synthesised call intrinsics. New
+/// variants are added only when a lowering pass introduces a new
+/// `Expr::Ident("__…")` shape — there is no user-source mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinIntrinsic {
+    /// `__buf_new(<cap_hint>)` — allocate a fresh buffer slot.
+    BufNew,
+    /// `__buf_append(<buf>, <str>)` — concatenate a string fragment
+    /// onto the host-side buffer pool entry.
+    BufAppend,
+    /// `__buf_append_sep_unless_first(<buf>, <sep>)` — emit the
+    /// separator before every fragment except the first.
+    BufAppendSepUnlessFirst,
+    /// `__buf_finalize(<buf>)` — materialise the buffer pool entry
+    /// into an Aver `String` value and free the slot.
+    BufFinalize,
+    /// `__to_str(<value>)` — coerce any value to its display string
+    /// (used by interpolation lowering before `__buf_append`).
+    ToStr,
+}
+
+impl BuiltinIntrinsic {
+    /// Canonical source-level name. Used by diagnostic dumps and as
+    /// the bridge into the resolver / VM dispatch tables.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::BufNew => "__buf_new",
+            Self::BufAppend => "__buf_append",
+            Self::BufAppendSepUnlessFirst => "__buf_append_sep_unless_first",
+            Self::BufFinalize => "__buf_finalize",
+            Self::ToStr => "__to_str",
+        }
+    }
+
+    /// Recognise a bare identifier as one of the known intrinsics.
+    /// Returns `None` for anything else — the resolver then falls
+    /// through to its regular fn / Unresolved classification.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "__buf_new" => Some(Self::BufNew),
+            "__buf_append" => Some(Self::BufAppend),
+            "__buf_append_sep_unless_first" => Some(Self::BufAppendSepUnlessFirst),
+            "__buf_finalize" => Some(Self::BufFinalize),
+            "__to_str" => Some(Self::ToStr),
+            _ => None,
+        }
+    }
 }
 
 /// Constructor classification for [`ResolvedExpr::Ctor`] and

@@ -547,8 +547,13 @@ pub fn classify_forward_call_resolved<'a>(
     args: &'a [crate::ast::Spanned<ResolvedExpr>],
 ) -> Option<ResolvedForwardCallPlan<'a>> {
     match callee {
+        // Intrinsics short-circuit the call pipeline well before
+        // the forward-call optimisation runs; they should never be
+        // a forward-call target. Same for LocalSlot (dynamic) and
+        // Unresolved (recovery shape).
         ResolvedCallee::Unresolved { .. } => return None,
         ResolvedCallee::LocalSlot { .. } => return None,
+        ResolvedCallee::Intrinsic(_) => return None,
         _ => {}
     }
 

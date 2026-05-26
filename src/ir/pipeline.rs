@@ -1514,6 +1514,18 @@ fn origin() -> Point
 fn shift(p: Point) -> Result<Point, String>
     Result.Ok(Point.update(p, x = p.x + 1))
 "#,
+            // Interpolation — exercises `interp_lower` synthesizing
+            // `__buf_*` / `__to_str` intrinsics. With the post-Phase-E
+            // resolver these land as `ResolvedCallee::Intrinsic(_)`,
+            // not as `Unresolved`, so the invariant must hold even
+            // after lowering passes have run.
+            r#"
+fn greet(n: Int) -> String
+    "hi ${n}!"
+
+fn main() -> String
+    greet(7)
+"#,
         ];
         for (i, src) in fixtures.iter().enumerate() {
             let mut items = parse(src);

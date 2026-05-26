@@ -4,7 +4,7 @@ use super::resolved_classify::{
 };
 use super::{CallTarget, CompileError, FnCompiler};
 use crate::ast::{Literal, Spanned};
-use crate::ir::hir::{BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr};
+use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic, ResolvedCallee, ResolvedCtor, ResolvedExpr};
 use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
@@ -18,18 +18,18 @@ type SpannedResolvedTriple<'a> = (
     &'a Spanned<ResolvedExpr>,
 );
 
-/// Map a synthesized deforestation intrinsic name to its VM opcode.
-/// Returns `None` for anything that isn't one of the four `__buf_*`
-/// intrinsics or whose arity doesn't match. Arity is checked here so
-/// a stray user-level identifier collision (very unlikely given the
-/// `__` prefix) doesn't accidentally lower to a buffer op.
-fn buffer_intrinsic_opcode(name: &str, argc: usize) -> Option<u8> {
-    match (name, argc) {
-        ("__buf_new", 1) => Some(BUFFER_NEW),
-        ("__buf_append", 2) => Some(BUFFER_APPEND_STR),
-        ("__buf_append_sep_unless_first", 2) => Some(BUFFER_APPEND_SEP_UNLESS_FIRST),
-        ("__buf_finalize", 1) => Some(BUFFER_FINALIZE),
-        _ => None,
+/// Map a typed [`BuiltinIntrinsic`] to its VM opcode + expected
+/// arity. Returns `None` for `ToStr`, which lowers to a CONCAT-with-
+/// empty trick instead of a dedicated opcode. The arity is checked
+/// at the callsite so a future intrinsic with a different shape
+/// can't accidentally re-use the wrong opcode.
+fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8, usize)> {
+    match intrinsic {
+        BuiltinIntrinsic::BufNew => Some((BUFFER_NEW, 1)),
+        BuiltinIntrinsic::BufAppend => Some((BUFFER_APPEND_STR, 2)),
+        BuiltinIntrinsic::BufAppendSepUnlessFirst => Some((BUFFER_APPEND_SEP_UNLESS_FIRST, 2)),
+        BuiltinIntrinsic::BufFinalize => Some((BUFFER_FINALIZE, 1)),
+        BuiltinIntrinsic::ToStr => None,
     }
 }
 
@@ -82,6 +82,16 @@ impl<'a> FnCompiler<'a> {
                 self.emit_u16(idx);
                 Ok(())
             }
+            // Synthesis-only — intrinsics are never first-class
+            // values. The only sites that compile a callee as a
+            // value are independent-product branches, which can
+            // only contain user-visible call shapes.
+            ResolvedCallee::Intrinsic(kind) => Err(CompileError {
+                msg: format!(
+                    "intrinsic {} cannot be used as a first-class value",
+                    kind.name()
+                ),
+            }),
             ResolvedCallee::LocalSlot { slot, last_use, .. } => {
                 self.emit_op(if last_use.0 { MOVE_LOCAL } else { LOAD_LOCAL });
                 self.emit_u8(*slot as u8);
@@ -138,59 +148,11 @@ impl<'a> FnCompiler<'a> {
         // shapes with `__buf_finalize(<fn>__buffered(args.., __buf_new(...), sep))`,
         // and `<fn>__buffered`'s body is built from `__buf_append` /
         // `__buf_append_sep_unless_first`. None of these are user-visible —
-        // they only ever appear synthesized — so we recognise them
-        // before regular builtin resolution and emit dedicated opcodes
+        // they only ever appear synthesized — so we recognise them via
+        // [`ResolvedCallee::Intrinsic`] and emit dedicated opcodes
         // backed by `vm.buffer_pool` (a host-side `Vec<Option<String>>`).
-        if let ResolvedCallee::Unresolved { callee: inner } = callee
-            && let ResolvedExpr::Ident(name) = &inner.node
-        {
-            if let Some(opcode) = buffer_intrinsic_opcode(name, args.len()) {
-                for arg in args {
-                    self.compile_expr(arg)?;
-                }
-                self.emit_op(opcode);
-                return Ok(());
-            }
-
-            // `__to_str(x)`: coerce any value to its string repr. Used by
-            // the interpolation lowering pass to produce a string before
-            // a `__buf_append`. Reuses the existing CONCAT-against-empty
-            // trick — CONCAT calls `NanValue::repr` on both sides, so any
-            // value lowers to its display string.
-            if name == "__to_str" && args.len() == 1 {
-                self.compile_expr(&args[0])?;
-                let empty_nv = NanValue::new_string_value("", self.arena);
-                let empty_const = self.add_constant(empty_nv);
-                self.emit_op(LOAD_CONST);
-                self.emit_u16(empty_const);
-                self.emit_op(CONCAT);
-                return Ok(());
-            }
-        }
-
-        // Buffer-intrinsics on a Builtin callee (the buffer-build
-        // pass produces these as `__buf_*` "builtin"-class symbols
-        // via the standard `Builtin(name)` classification).
-        if let ResolvedCallee::Builtin(name) = callee
-            && let Some(opcode) = buffer_intrinsic_opcode(name, args.len())
-        {
-            for arg in args {
-                self.compile_expr(arg)?;
-            }
-            self.emit_op(opcode);
-            return Ok(());
-        }
-        if let ResolvedCallee::Builtin(name) = callee
-            && name == "__to_str"
-            && args.len() == 1
-        {
-            self.compile_expr(&args[0])?;
-            let empty_nv = NanValue::new_string_value("", self.arena);
-            let empty_const = self.add_constant(empty_nv);
-            self.emit_op(LOAD_CONST);
-            self.emit_u16(empty_const);
-            self.emit_op(CONCAT);
-            return Ok(());
+        if let ResolvedCallee::Intrinsic(intrinsic) = callee {
+            return self.compile_intrinsic_call(*intrinsic, args);
         }
 
         if let Some(plan) = classify_forward_call_resolved(callee, args)
@@ -218,6 +180,56 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
+    /// Compile one of the synthesised buffer / coercion intrinsics
+    /// down to its dedicated opcode shape. Intrinsics are emitted by
+    /// `interp_lower` / `buffer_build`; user source cannot reach
+    /// this branch.
+    fn compile_intrinsic_call(
+        &mut self,
+        intrinsic: BuiltinIntrinsic,
+        args: &[Spanned<ResolvedExpr>],
+    ) -> Result<(), CompileError> {
+        if let Some((opcode, expected_arity)) = buffer_intrinsic_opcode(intrinsic) {
+            if args.len() != expected_arity {
+                return Err(CompileError {
+                    msg: format!(
+                        "intrinsic {} expects {} arg(s), got {}",
+                        intrinsic.name(),
+                        expected_arity,
+                        args.len()
+                    ),
+                });
+            }
+            for arg in args {
+                self.compile_expr(arg)?;
+            }
+            self.emit_op(opcode);
+            return Ok(());
+        }
+        // `__to_str(x)`: coerce any value to its string repr. Used by
+        // the interpolation lowering pass to produce a string before
+        // a `__buf_append`. Reuses the existing CONCAT-against-empty
+        // trick — CONCAT calls `NanValue::repr` on both sides, so any
+        // value lowers to its display string.
+        debug_assert!(matches!(intrinsic, BuiltinIntrinsic::ToStr));
+        if args.len() != 1 {
+            return Err(CompileError {
+                msg: format!(
+                    "intrinsic {} expects 1 arg, got {}",
+                    intrinsic.name(),
+                    args.len()
+                ),
+            });
+        }
+        self.compile_expr(&args[0])?;
+        let empty_nv = NanValue::new_string_value("", self.arena);
+        let empty_const = self.add_constant(empty_nv);
+        self.emit_op(LOAD_CONST);
+        self.emit_u16(empty_const);
+        self.emit_op(CONCAT);
+        Ok(())
+    }
+
     /// Promote a [`ResolvedCallee`] to a [`CallTarget`] when the
     /// callee shape can be lowered through a direct dispatch
     /// opcode (CALL_KNOWN / WRAP / VARIANT_NEW / CALL_BUILTIN). Returns
@@ -239,6 +251,10 @@ impl<'a> FnCompiler<'a> {
                 self.resolve_builtin_target(name)
                     .unwrap_or_else(|| CallTarget::UnknownQualified(name.clone())),
             )),
+            // Intrinsics never reach this path — `compile_call`
+            // short-circuits them via `compile_intrinsic_call`
+            // before any plan / target classification happens.
+            ResolvedCallee::Intrinsic(_) => Ok(None),
             ResolvedCallee::LocalSlot { .. } => Ok(None),
             ResolvedCallee::Unresolved { callee } => {
                 // Best-effort name reconstruction so a known-shape
