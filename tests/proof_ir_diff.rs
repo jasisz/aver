@@ -44,6 +44,10 @@ fn build_ctx(src: &str) -> CodegenContext {
             run_refinement_lower: true,
             run_contract_lower: true,
             run_law_lower: true,
+            // Build the symbol table alongside proof IR so downstream
+            // tests that touch `ctx.symbol_table` see the populated
+            // form. Cheap traversal — no analysis.
+            run_build_symbols: true,
             dep_modules: &[],
             alloc_policy: None,
             call_ctx: None,
@@ -64,6 +68,7 @@ fn build_ctx(src: &str) -> CodegenContext {
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;
     }
+    ctx.symbol_table = pipeline_result.symbol_table;
     ctx
 }
 
@@ -143,6 +148,47 @@ fn assert_equiv(src: &str, type_names: &[&str]) {
 fn natural_refinement_decision_matches_legacy() {
     let src = include_str!("../examples/refinement/natural/natural.av");
     assert_equiv(src, &["Natural"]);
+}
+
+#[test]
+fn pipeline_populates_symbol_table_when_build_symbols_is_on() {
+    // #138 phase E wire-up: when the pipeline runs with
+    // `run_build_symbols = true`, the result carries a populated
+    // `SymbolTable` and `build_codegen_context` plumbs it into
+    // `ctx.symbol_table`. No downstream consumer reads it yet —
+    // this test is the contract that the table exists.
+    let src = include_str!("../examples/refinement/natural/natural.av");
+    let ctx = build_ctx(src);
+    let symbols = ctx
+        .symbol_table
+        .as_ref()
+        .expect("ctx.symbol_table must be Some after run_build_symbols");
+
+    // Natural.av declares the `Natural` record + the `fromInt` /
+    // `toInt` / `add` / `mul` fns. Look up via `TypeKey` /
+    // `FnKey` directly — exercises the resolver path the
+    // migration PRs will rely on.
+    let nat_id = symbols
+        .type_id_of(&aver::ir::TypeKey::entry("Natural"))
+        .expect("Natural type id");
+    let entry = symbols.type_entry(nat_id);
+    assert_eq!(entry.key.name, "Natural");
+    assert!(entry.is_product, "Natural is a record (product)");
+
+    let from_int = symbols
+        .fn_id_of(&aver::ir::FnKey::entry("fromInt"))
+        .expect("fromInt fn id");
+    assert_eq!(symbols.fn_entry(from_int).key.name, "fromInt");
+
+    // Result.Ok / Result.Err / Option.Some / Option.None are
+    // built-ins, NOT user-declared, so they must NOT appear here.
+    // (Future: built-in ctors get their own well-known IDs; for
+    // now their absence is the contract.)
+    assert!(
+        symbols
+            .type_id_of(&aver::ir::TypeKey::entry("Result"))
+            .is_none()
+    );
 }
 
 #[test]

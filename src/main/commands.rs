@@ -2486,6 +2486,13 @@ fn build_codegen_context(
             run_refinement_lower,
             run_contract_lower,
             run_law_lower,
+            // #138 phase E wire-up — build the symbol table for
+            // every codegen context. Cheap, no consumers yet but
+            // downstream PRs migrate proof IR maps to `FnId` and
+            // need the table populated. Production callers always
+            // get it; ad-hoc `pipeline::run` callers (tests,
+            // playground) opt in via `PipelineConfig`.
+            run_build_symbols: true,
             dep_modules: &modules,
             ..Default::default()
         },
@@ -2535,6 +2542,7 @@ fn build_codegen_context(
     // pipeline; pull it across before assembly so build_context doesn't
     // redundantly recompute it.
     let prebuilt_proof_ir = pipeline_result.proof_ir;
+    let prebuilt_symbol_table = pipeline_result.symbol_table;
     let mut ctx = codegen::build_context(
         items,
         &tc_result,
@@ -2549,6 +2557,7 @@ fn build_codegen_context(
     }
     #[cfg(not(feature = "runtime"))]
     let _ = prebuilt_proof_ir;
+    ctx.symbol_table = prebuilt_symbol_table;
     ctx.policy = policy;
     ctx.emit_replay_runtime = use_scoped_runtime;
     ctx.runtime_policy_from_env = use_runtime_policy;
@@ -3500,6 +3509,17 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     "{label} {law_theorems} verify-law theorem(s) lowered\n"
                 ));
             }
+            PassReport::BuildSymbols {
+                modules,
+                fns,
+                types,
+                ctors,
+            } => {
+                out.push_str(&format!(
+                    "{label} symbol table: {modules} module(s), {fns} fn(s), \
+                     {types} type(s), {ctors} ctor(s)\n"
+                ));
+            }
         }
         out.push('\n');
     }
@@ -3662,6 +3682,16 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             }
             PassReport::LawLower { law_theorems } => {
                 out.push_str(&format!("{{\"law_theorems\":{}}}", law_theorems));
+            }
+            PassReport::BuildSymbols {
+                modules,
+                fns,
+                types,
+                ctors,
+            } => {
+                out.push_str(&format!(
+                    "{{\"modules\":{modules},\"fns\":{fns},\"types\":{types},\"ctors\":{ctors}}}"
+                ));
             }
         }
         out.push('}');
@@ -4782,6 +4812,7 @@ mod tests {
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
             proof_ir: aver::ir::ProofIR::default(),
+            symbol_table: None,
         }
     }
 

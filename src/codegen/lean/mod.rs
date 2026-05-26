@@ -1543,6 +1543,7 @@ mod tests {
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
+            symbol_table: None,
         }
     }
 
@@ -1570,6 +1571,7 @@ mod tests {
                 run_refinement_lower: true,
                 run_contract_lower: true,
                 run_law_lower: true,
+                run_build_symbols: false,
                 dep_modules: &[],
                 alloc_policy: None,
                 call_ctx: None,
