@@ -2493,6 +2493,7 @@ fn build_codegen_context(
             // get it; ad-hoc `pipeline::run` callers (tests,
             // playground) opt in via `PipelineConfig`.
             run_build_symbols: true,
+            run_name_resolve: false,
             dep_modules: &modules,
             ..Default::default()
         },
@@ -3628,6 +3629,15 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     ));
                 }
             }
+            PassReport::NameResolve {
+                promoted_fns,
+                passthrough_items,
+            } => {
+                out.push_str(&format!(
+                    "{label} resolved HIR: {promoted_fns} fn(s) promoted, \
+                     {passthrough_items} item(s) passthrough\n"
+                ));
+            }
         }
         out.push('\n');
     }
@@ -3820,6 +3830,15 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                     ));
                 }
                 out.push_str("]}");
+            }
+            PassReport::NameResolve {
+                promoted_fns,
+                passthrough_items,
+            } => {
+                out.push_str(&format!(
+                    "{{\"promoted_fns\":{promoted_fns},\
+                     \"passthrough_items\":{passthrough_items}}}"
+                ));
             }
         }
         out.push('}');
