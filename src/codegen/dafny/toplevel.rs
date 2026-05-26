@@ -1308,8 +1308,7 @@ pub fn emit_verify_law(
     // …) does and stays. Mirror of the Lean gate.
     let vb_fn_id = ctx
         .symbol_table
-        .as_ref()
-        .and_then(|s| s.fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name)));
+        .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name));
     let ir_strategy_closes_const_rhs = vb_fn_id
         .and_then(|fn_id| {
             ctx.proof_ir

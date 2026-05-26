@@ -351,11 +351,14 @@ pub struct PipelineResult {
     pub proof_ir: Option<crate::ir::ProofIR>,
     /// Resolved-identity table — opaque `FnId` / `TypeId` /
     /// `CtorId` / `ModuleId` for every named declaration in the
-    /// program (#138 phase E). `Some` when `run_build_symbols`
-    /// was on. No consumer reads it through this field yet;
-    /// downstream migration PRs (proof IR maps keyed by `FnId`,
-    /// backend mangling) will start once the wire-up is in place.
-    pub symbol_table: Option<crate::ir::SymbolTable>,
+    /// program (#138 phase E). Always populated: the pipeline
+    /// builds it unconditionally at the head of `run` (it's the
+    /// universal foundation for proof IR + backend identity).
+    /// `run_build_symbols` in `PipelineConfig` controls whether
+    /// the BuildSymbols stage fires its `on_after_pass` hook for
+    /// `--emit-ir-after=build_symbols`; the table itself is built
+    /// regardless.
+    pub symbol_table: crate::ir::SymbolTable,
     /// Per-stage diagnostic records — one per pass that actually ran.
     /// Drives `aver compile --explain-passes`; consumed by the future
     /// CI failable-invariant checks.
@@ -521,32 +524,21 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         crate::ir::alias::annotate_program_alias_slots(items);
     }
 
-    // Proof-export lowerings come last — they share an output sink
-    // (`result.proof_ir`) but populate disjoint fields:
-    // RefinementLower writes `refined_types`, ContractLower writes
-    // `fn_contracts`, LawLower writes `law_theorems`. Each is
-    // independently opt-in.
-    // BuildSymbols runs BEFORE proof stages so `populate_*` resolve
-    // `FnKey`/`TypeKey` to `FnId`/`TypeId` once at the IR boundary
-    // and key `ProofIR.fn_contracts` / `ProofIR.refined_types` /
-    // `LawTheorem.fn_id` by the opaque IDs (#138 phase E).
-    //
-    // Proof stages have a hard dependency on the symbol table —
-    // since fn_contracts is keyed by `FnId`, populate cannot run
-    // without resolved identity. Auto-enable here so callers can't
-    // accidentally turn on `run_contract_lower` / `run_law_lower`
-    // without symbols and silently produce an empty proof IR.
-    let needs_symbols = cfg.run_build_symbols
-        || cfg.run_refinement_lower
-        || cfg.run_contract_lower
-        || cfg.run_law_lower;
-    if needs_symbols {
+    // Resolved-identity table is the universal foundation for proof
+    // IR + every backend's name lookup, so it's built unconditionally.
+    // `run_build_symbols` in PipelineConfig controls only whether the
+    // BuildSymbols stage fires its `on_after_pass` hook (for
+    // `--emit-ir-after=build_symbols`); the table itself lands in
+    // `result.symbol_table` regardless.
+    {
         let symbol_table = crate::ir::SymbolTable::build(items, cfg.dep_modules);
         result
             .pass_diagnostics
             .push(diag_for_build_symbols(&symbol_table));
-        result.symbol_table = Some(symbol_table);
-        fire(&mut cfg, PipelineStage::BuildSymbols, items);
+        result.symbol_table = symbol_table;
+        if cfg.run_build_symbols {
+            fire(&mut cfg, PipelineStage::BuildSymbols, items);
+        }
     }
 
     if cfg.run_refinement_lower || cfg.run_contract_lower || cfg.run_law_lower {
@@ -559,15 +551,26 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         // rules out cross-module recursion SCCs, so unioning the
         // per-scope `recursive_fns` sets matches the build-time
         // `ctx.recursive_fns` view in `codegen::build_context`.
-        let recursive_fns_owned: std::collections::HashSet<String> = {
-            let mut set: std::collections::HashSet<String> = result
-                .analysis
-                .as_ref()
-                .map(|a| a.recursive_fns.iter().cloned().collect())
-                .unwrap_or_default();
+        // Project per-scope bare-name sets to opaque FnIds through the
+        // (already-built) symbol table — same flow `build_context`
+        // uses to populate `ctx.recursive_fns`. Without a symbol
+        // table the producer side of proof_lower can't run anyway
+        // (populate panics by design), so default to empty.
+        let symbols = &result.symbol_table;
+        let recursive_fns_owned: std::collections::HashSet<crate::ir::FnId> = {
+            let mut set = std::collections::HashSet::new();
+            if let Some(a) = result.analysis.as_ref() {
+                set.extend(
+                    a.recursive_fns
+                        .iter()
+                        .filter_map(|n| symbols.fn_id_of(&crate::ir::FnKey::entry(n))),
+                );
+            }
             for m in cfg.dep_modules {
                 if let Some(a) = m.analysis.as_ref() {
-                    set.extend(a.recursive_fns.iter().cloned());
+                    set.extend(a.recursive_fns.iter().filter_map(|n| {
+                        symbols.fn_id_of(&crate::ir::FnKey::in_module(m.prefix.clone(), n))
+                    }));
                 }
             }
             set
@@ -579,7 +582,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             dep_modules: cfg.dep_modules,
             module_prefixes: &module_prefixes,
             recursive_fns: &recursive_fns_owned,
-            symbol_table: result.symbol_table.as_ref(),
+            symbol_table: symbols,
         };
         let mut ir = result.proof_ir.take().unwrap_or_default();
         if cfg.run_refinement_lower {
@@ -1138,6 +1141,10 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
                 PipelineStage::LastUse,
+                // Symbol table is built unconditionally (universal
+                // foundation for proof IR + backend identity); the
+                // diagnostic always lands in `pass_diagnostics`.
+                PipelineStage::BuildSymbols,
             ]
         );
 

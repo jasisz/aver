@@ -64,11 +64,11 @@ fn build_ctx(src: &str) -> CodegenContext {
         HashSet::new(),
         "diff".to_string(),
         vec![],
+        pipeline_result.symbol_table,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;
     }
-    ctx.symbol_table = pipeline_result.symbol_table;
     ctx
 }
 
@@ -81,7 +81,7 @@ fn fn_contract<'a>(
     name: &str,
 ) -> Option<&'a aver::ir::proof_ir::FnContract> {
     let key = aver::ir::FnKey::entry(name);
-    let id = ctx.symbol_table.as_ref()?.fn_id_of(&key)?;
+    let id = ctx.symbol_table.fn_id_of(&key)?;
     ctx.proof_ir.fn_contracts.get(&id)
 }
 
@@ -95,7 +95,6 @@ fn law_theorem<'a>(
 ) -> Option<&'a aver::ir::proof_ir::LawTheorem> {
     let fn_id = ctx
         .symbol_table
-        .as_ref()?
         .fn_id_of(&aver::ir::FnKey::entry(fn_name))?;
     ctx.proof_ir
         .law_theorems
@@ -190,10 +189,7 @@ fn pipeline_populates_symbol_table_when_build_symbols_is_on() {
     // this test is the contract that the table exists.
     let src = include_str!("../examples/refinement/natural/natural.av");
     let ctx = build_ctx(src);
-    let symbols = ctx
-        .symbol_table
-        .as_ref()
-        .expect("ctx.symbol_table must be Some after run_build_symbols");
+    let symbols = &ctx.symbol_table;
 
     // Natural.av declares the `Natural` record + the `fromInt` /
     // `toInt` / `add` / `mul` fns. Look up via `TypeKey` /

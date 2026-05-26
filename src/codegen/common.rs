@@ -831,7 +831,7 @@ pub fn find_fn_contract_scoped<'a>(
     // `run_build_symbols`) this returns `None`, which the
     // downstream emit path treats the same as "no contract" — the
     // table is part of every production build flow.
-    let symbols = ctx.symbol_table.as_ref()?;
+    let symbols = &ctx.symbol_table;
     let bare = name.rsplit('.').next().unwrap_or(name);
     let name_is_already_qualified = name.contains('.');
     let try_key = |key: crate::ir::FnKey| -> Option<&'a crate::ir::proof_ir::FnContract> {
@@ -977,7 +977,7 @@ pub fn find_fn_contract_for_fn<'a>(
     // and the contract by ID. Cleaner than the bare-name resolver
     // chain because the source `&FnDef` already identifies its
     // owning module unambiguously.
-    let symbols = ctx.symbol_table.as_ref()?;
+    let symbols = &ctx.symbol_table;
     let fn_key = fn_key_for_decl(ctx, fd);
     let fn_id = symbols.fn_id_of(&fn_key)?;
     ctx.proof_ir.fn_contracts.get(&fn_id)
@@ -990,14 +990,12 @@ pub fn fn_contract_exists_for_fn(ctx: &CodegenContext, fd: &FnDef) -> bool {
 
 /// Resolve `&FnDef` to the opaque [`crate::ir::FnId`] from the
 /// symbol table. Pointer-eq scope detection routes module-owned
-/// fns through their canonical `Module.fn` key. Returns `None`
-/// when there's no symbol table (legacy synthetic-ctx paths) or
-/// when the fn isn't registered (built-ins / synthesized variants
-/// the table excludes by design).
+/// fns through their canonical `Module.fn` key. Returns `None` when
+/// the fn isn't registered (built-ins / synthesized variants the
+/// table excludes by design).
 pub fn fn_id_for_decl(ctx: &CodegenContext, fd: &FnDef) -> Option<crate::ir::FnId> {
-    let symbols = ctx.symbol_table.as_ref()?;
     let fn_key = fn_key_for_decl(ctx, fd);
-    symbols.fn_id_of(&fn_key)
+    ctx.symbol_table.fn_id_of(&fn_key)
 }
 
 /// Resolve a dotted source-level name (`fn`, `Module.fn`) to the
@@ -1006,13 +1004,12 @@ pub fn fn_id_for_decl(ctx: &CodegenContext, fd: &FnDef) -> Option<crate::ir::FnI
 /// — keeps the FnKey resolution in one place instead of letting
 /// each walker re-derive identity from bare strings.
 pub fn fn_id_for_dotted_name(ctx: &CodegenContext, dotted: &str) -> Option<crate::ir::FnId> {
-    let symbols = ctx.symbol_table.as_ref()?;
     let key = if let Some((prefix, bare)) = dotted.rsplit_once('.') {
         crate::ir::FnKey::in_module(prefix.to_string(), bare)
     } else {
         crate::ir::FnKey::entry(dotted)
     };
-    symbols.fn_id_of(&key)
+    ctx.symbol_table.fn_id_of(&key)
 }
 
 /// Canonical-key-aware resolver — returns `(canonical_key, decl)`
@@ -1061,15 +1058,16 @@ pub fn find_refined_type_scoped<'a>(
 /// human-readable identifier here for diagnostics and `defmt`-style
 /// canonical comparison.
 ///
-/// Without `ctx.symbol_table` (synthetic legacy ctxs), returns
-/// `None` — the FnId/TypeId migration makes the table mandatory for
-/// proof IR lookup in production paths.
+/// `ctx.symbol_table` is always populated after phase E (pipeline
+/// builds it unconditionally); the lookup returns `None` only when
+/// the requested type isn't registered (built-ins / non-existent
+/// names) or when the type has no `RefinedTypeDecl` slot.
 pub fn find_refined_type_with_key_scoped<'a>(
     ctx: &'a CodegenContext,
     name: &str,
     scope: Option<&str>,
 ) -> Option<(String, &'a crate::ir::proof_ir::RefinedTypeDecl)> {
-    let symbols = ctx.symbol_table.as_ref()?;
+    let symbols = &ctx.symbol_table;
     let bare = name.rsplit('.').next().unwrap_or(name);
     let name_is_already_qualified = name.contains('.');
     let try_key =
@@ -2555,7 +2553,7 @@ mod tests {
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
-            symbol_table: Some(symbol_table),
+            symbol_table,
         };
         ctx.proof_ir
             .refined_types

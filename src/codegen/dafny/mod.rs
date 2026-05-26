@@ -719,11 +719,11 @@ mod tests {
             HashSet::new(),
             project_name.to_string(),
             vec![],
+            pipeline_result.symbol_table,
         );
         if let Some(ir) = proof_ir {
             ctx.proof_ir = ir;
         }
-        ctx.symbol_table = pipeline_result.symbol_table;
         ctx
     }
 

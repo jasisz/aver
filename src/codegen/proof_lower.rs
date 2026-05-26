@@ -49,9 +49,13 @@ pub struct ProofLowerInputs<'a> {
     pub dep_modules: &'a [ModuleInfo],
     /// Set of dep module prefix strings (e.g. `"Models.User"`).
     pub module_prefixes: &'a HashSet<String>,
-    /// Recursive fn names from the `analyze` pipeline stage. Used by
-    /// `analyze_plans` to short-circuit non-recursive fns.
-    pub recursive_fns: &'a HashSet<String>,
+    /// Recursive fn ids from the `analyze` pipeline stage. Keyed
+    /// by opaque [`crate::ir::FnId`] so entry+module same-bare-name
+    /// fns don't merge. Per-scope helpers below project back to
+    /// `HashSet<String>` for consumers that operate on a single
+    /// scope (the DAG invariant keeps bare-name unambiguous within
+    /// a scope).
+    pub recursive_fns: &'a HashSet<crate::ir::FnId>,
     /// Resolved-identity table (#138 phase E). When `Some`, the
     /// populate-side resolves `FnKey` / `TypeKey` to `FnId` /
     /// `TypeId` once at the IR boundary and keys `ProofIR.fn_contracts`
@@ -59,7 +63,7 @@ pub struct ProofLowerInputs<'a> {
     /// IDs. Callers that haven't wired in the symbol-table stage
     /// pass `None` and fall through to legacy key-typed maps
     /// (transitional during phase E migration).
-    pub symbol_table: Option<&'a crate::ir::SymbolTable>,
+    pub symbol_table: &'a crate::ir::SymbolTable,
 }
 
 impl<'a> ProofLowerInputs<'a> {
@@ -73,7 +77,7 @@ impl<'a> ProofLowerInputs<'a> {
             dep_modules: &ctx.modules,
             module_prefixes: &ctx.module_prefixes,
             recursive_fns: &ctx.recursive_fns,
-            symbol_table: ctx.symbol_table.as_ref(),
+            symbol_table: &ctx.symbol_table,
         }
     }
 
@@ -98,18 +102,31 @@ impl<'a> ProofLowerInputs<'a> {
             .collect()
     }
 
-    /// Recursive pure fn names. Filters `recursive_fns` (populated by
-    /// the analyze pipeline stage) by pure-ness.
+    /// Recursive pure fn names. Filters `recursive_fns` by pure-ness.
+    /// Returns bare names (pure_fns view is the whole program here,
+    /// so any FnId in `recursive_fns` that maps back to a pure fn
+    /// gets its bare name surfaced for downstream classifiers).
     pub fn recursive_pure_fn_names(&self) -> HashSet<String> {
-        let pure_names: HashSet<String> = self
+        let symbols = self.symbol_table;
+        let pure_ids: HashSet<crate::ir::FnId> = self
             .pure_fns()
             .into_iter()
-            .map(|fd| fd.name.clone())
+            .filter_map(|fd| {
+                let scope = self
+                    .dep_modules
+                    .iter()
+                    .find(|m| m.fn_defs.iter().any(|d| std::ptr::eq(d, fd)))
+                    .map(|m| m.prefix.as_str());
+                let key = match scope {
+                    Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), &fd.name),
+                    None => crate::ir::FnKey::entry(&fd.name),
+                };
+                symbols.fn_id_of(&key)
+            })
             .collect();
         self.recursive_fns
-            .iter()
-            .filter(|name| pure_names.contains(name.as_str()))
-            .cloned()
+            .intersection(&pure_ids)
+            .map(|id| symbols.fn_entry(*id).key.name.clone())
             .collect()
     }
 
@@ -141,19 +158,27 @@ impl<'a> ProofLowerInputs<'a> {
         }
     }
 
-    /// Recursive pure fn names restricted to a single scope. The
-    /// global `recursive_fns` set is filtered by membership in that
-    /// scope's `pure_fns_in_scope`.
+    /// Recursive pure fn names restricted to a single scope. Filters
+    /// the FnId-keyed `recursive_fns` to the ones whose canonical
+    /// scope matches `scope`, then projects back to bare names for
+    /// scope-local consumers (DAG invariant keeps bare-name
+    /// unambiguous within a single scope).
     pub fn recursive_pure_fn_names_in_scope(&self, scope: Option<&str>) -> HashSet<String> {
-        let pure_names: HashSet<String> = self
+        let symbols = self.symbol_table;
+        let pure_ids: HashSet<crate::ir::FnId> = self
             .pure_fns_in_scope(scope)
             .into_iter()
-            .map(|fd| fd.name.clone())
+            .filter_map(|fd| {
+                let key = match scope {
+                    Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), &fd.name),
+                    None => crate::ir::FnKey::entry(&fd.name),
+                };
+                symbols.fn_id_of(&key)
+            })
             .collect();
         self.recursive_fns
-            .iter()
-            .filter(|name| pure_names.contains(name.as_str()))
-            .cloned()
+            .intersection(&pure_ids)
+            .map(|id| symbols.fn_entry(*id).key.name.clone())
             .collect()
     }
 
@@ -244,14 +269,11 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // here; consumers (`find_refined_type_scoped`) resolve through
     // the same symbol table at lookup time.
     //
-    // BuildSymbols auto-enables alongside RefinementLower in the
-    // pipeline, so reaching this point without `inputs.symbol_table`
-    // is a wiring bug. Synthetic-ctx callers (test helpers) must
-    // build the symbol table before invoking `lower` — `refresh_facts`
-    // and the lean/dafny test `populate_proof_ir` helpers already do.
-    let symbols = inputs
-        .symbol_table
-        .expect("populate_refined_types requires SymbolTable (run BuildSymbols first)");
+    // SymbolTable is always present (`ProofLowerInputs.symbol_table`
+    // is `&SymbolTable`, not `Option<&_>` — the pipeline builds it
+    // unconditionally). Synthetic-ctx callers (test helpers) thread
+    // their own through `from_ctx` / direct construction.
+    let symbols = inputs.symbol_table;
 
     let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::TypeDef(td) => Some((None::<&str>, td)),
@@ -376,18 +398,10 @@ fn populate_fn_contracts_for_scope(
             None => crate::ir::FnKey::entry(bare),
         }
     };
-    // Round-7 phase E: contracts key by opaque `FnId` resolved
-    // once via the symbol table. The pipeline auto-enables
-    // BuildSymbols whenever ContractLower runs, so reaching this
-    // point without `inputs.symbol_table` is a wiring bug — callers
-    // who build a `ProofLowerInputs` by hand (synthetic-ctx tests)
-    // are responsible for setting `symbol_table` before calling
-    // populate. We panic instead of silently skipping so the
-    // wiring bug surfaces at the producer rather than as missing
-    // contracts in downstream emit output.
-    let symbols = inputs
-        .symbol_table
-        .expect("populate_fn_contracts requires SymbolTable (run BuildSymbols first)");
+    // Contracts key by opaque `FnId`; SymbolTable is always present
+    // (pipeline builds it unconditionally, `ProofLowerInputs.symbol_
+    // table: &SymbolTable`).
+    let symbols = inputs.symbol_table;
 
     for (fn_name, plan) in plans {
         let Some(fd) = scoped_fns.iter().find(|fd| fd.name == *fn_name) else {
@@ -647,9 +661,7 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     use crate::ast::{TopLevel, VerifyKind};
     use crate::ir::{LawTheorem, Predicate, Quantifier, QuantifierType};
 
-    let symbols = inputs
-        .symbol_table
-        .expect("populate_law_theorems requires SymbolTable (run BuildSymbols first)");
+    let symbols = inputs.symbol_table;
 
     let entry_verifies = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::Verify(vb) => Some(vb),
@@ -902,9 +914,7 @@ fn detect_simp_omega_unfold(
     // Natural, b: Natural)`) and unfold through the smart
     // constructor to Int arithmetic. Skip the outer-Int rejection
     // for lifted laws.
-    let symbols = inputs
-        .symbol_table
-        .expect("detect_simp_omega_unfold requires SymbolTable");
+    let symbols = inputs.symbol_table;
     let lifted = law.givens.iter().any(|g| {
         refinement_lift_for_given_ir(
             &g.name,

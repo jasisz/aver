@@ -32,7 +32,6 @@ fn law_strategy_for(
 ) -> Option<crate::ir::ProofStrategy> {
     let fn_id = ctx
         .symbol_table
-        .as_ref()?
         .fn_id_of(&crate::ir::FnKey::entry(fn_name))?;
     ctx.proof_ir
         .law_theorems
