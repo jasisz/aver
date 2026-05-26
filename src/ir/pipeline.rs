@@ -71,6 +71,15 @@ pub enum PipelineStage {
     /// (proof IR maps keyed by `FnId`, backend mangling by
     /// `FnId → name`) all depend on this stage running.
     BuildSymbols,
+    /// Lift the post-typecheck `Expr` AST into
+    /// [`crate::ir::hir::ResolvedTopLevel`] — call sites become
+    /// `FnId` / `CtorId`-keyed, constructor / record references
+    /// carry typed identity, tail calls carry their target `FnId`.
+    /// Phase E of #147; populates
+    /// `PipelineResult::resolved_items`. Opt-in via
+    /// `PipelineConfig::run_name_resolve` until backends start
+    /// consuming it.
+    NameResolve,
 }
 
 impl PipelineStage {
@@ -88,6 +97,7 @@ impl PipelineStage {
             Self::ContractLower => "contract_lower",
             Self::LawLower => "law_lower",
             Self::BuildSymbols => "build_symbols",
+            Self::NameResolve => "name_resolve",
         }
     }
 }
@@ -166,6 +176,14 @@ pub struct PipelineConfig<'a> {
     /// Independent of every other stage; future consumers (proof
     /// IR maps keyed by `FnId`, resolved AST emit) require it on.
     pub run_build_symbols: bool,
+    /// Whether to run the name-resolve pass (Phase E PR 3, #147).
+    /// Populates `PipelineResult::resolved_items` with a typed-
+    /// identity AST lifted from the post-typecheck `Expr`. Opt-in
+    /// for now — until backends start consuming the resolved HIR
+    /// the pass is dead weight on the hot path. Future PRs in the
+    /// Phase E stack flip this default to `true` once a backend
+    /// migrates over.
+    pub run_name_resolve: bool,
     /// Pre-loaded dependent modules. Carried alongside items so the
     /// proof-lower pass can walk both the entry and dep type/fn defs
     /// (refinement records live in either; cross-module recursion is
@@ -205,6 +223,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_contract_lower: false,
             run_law_lower: false,
             run_build_symbols: false,
+            run_name_resolve: false,
             dep_modules: &[],
             alloc_policy: None,
             call_ctx: None,
@@ -313,6 +332,19 @@ pub enum PassReport {
         /// Same for type names.
         type_name_collisions: usize,
     },
+    NameResolve {
+        /// Top-level fn definitions promoted to
+        /// [`crate::ir::hir::ResolvedFnDef`]. One per `FnDef` that
+        /// resolved through the symbol table.
+        promoted_fns: usize,
+        /// Top-level items kept as
+        /// [`crate::ir::hir::ResolvedTopLevel::Passthrough`] (verify
+        /// blocks, decisions, type defs, top-level stmts, and any
+        /// fn whose name didn't resolve — typechecker error
+        /// recovery). The fewer of these, the more the resolved
+        /// HIR captured.
+        passthrough_items: usize,
+    },
 }
 
 /// Per-module entry in `PassReport::BuildSymbols`. `prefix` is the
@@ -383,6 +415,13 @@ pub struct PipelineResult {
     /// `--emit-ir-after=build_symbols`; the table itself is built
     /// regardless.
     pub symbol_table: crate::ir::SymbolTable,
+    /// Resolved HIR — post-typecheck AST lifted onto opaque
+    /// identities (Phase E of #147). `Some` when
+    /// `PipelineConfig::run_name_resolve` was true; `None` when
+    /// the pass was disabled. No backend consumes this yet; the
+    /// follow-up PRs in the Phase E stack migrate VM / Rust /
+    /// wasm-gc / Lean / Dafny / self-host onto it one at a time.
+    pub resolved_items: Option<Vec<crate::ir::hir::ResolvedTopLevel>>,
     /// Per-stage diagnostic records — one per pass that actually ran.
     /// Drives `aver compile --explain-passes`; consumed by the future
     /// CI failable-invariant checks.
@@ -563,6 +602,22 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         if cfg.run_build_symbols {
             fire(&mut cfg, PipelineStage::BuildSymbols, items);
         }
+    }
+
+    // Name-resolve runs after BuildSymbols (needs the symbol
+    // table) and after the slot resolver + last_use (so
+    // `Expr::Resolved` slots / `last_use` flags are populated and
+    // carry through to the resolved AST). Opt-in via
+    // `cfg.run_name_resolve` — until a backend consumes
+    // `resolved_items`, running the pass is dead weight on the hot
+    // path.
+    if cfg.run_name_resolve {
+        let resolved = crate::ir::hir::resolve_program(&result.symbol_table, items);
+        result
+            .pass_diagnostics
+            .push(diag_for_name_resolve(&resolved));
+        result.resolved_items = Some(resolved);
+        fire(&mut cfg, PipelineStage::NameResolve, items);
     }
 
     if cfg.run_refinement_lower || cfg.run_contract_lower || cfg.run_law_lower {
@@ -869,6 +924,26 @@ fn diag_for_build_symbols(table: &crate::ir::SymbolTable) -> PassDiagnostic {
             modules: per_module,
             fn_name_collisions,
             type_name_collisions,
+        },
+    }
+}
+
+fn diag_for_name_resolve(items: &[crate::ir::hir::ResolvedTopLevel]) -> PassDiagnostic {
+    use crate::ir::hir::ResolvedTopLevel;
+    let mut promoted_fns = 0;
+    let mut passthrough_items = 0;
+    for item in items {
+        match item {
+            ResolvedTopLevel::FnDef(_) => promoted_fns += 1,
+            ResolvedTopLevel::Passthrough(_) => passthrough_items += 1,
+            ResolvedTopLevel::Module(_) => {}
+        }
+    }
+    PassDiagnostic {
+        stage: PipelineStage::NameResolve,
+        report: PassReport::NameResolve {
+            promoted_fns,
+            passthrough_items,
         },
     }
 }
@@ -1254,5 +1329,137 @@ fn factorial(n: Int, acc: Int) -> Int
             ),
             other => panic!("expected Resolve report, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn name_resolve_off_by_default_leaves_resolved_items_none() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn id(n: Int) -> Int
+    n
+"#,
+        );
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                ..Default::default()
+            },
+        );
+        assert!(
+            result.resolved_items.is_none(),
+            "name-resolve is opt-in; default config must leave resolved_items=None"
+        );
+        // Stage list also excludes NameResolve.
+        let saw_name_resolve = result
+            .pass_diagnostics
+            .iter()
+            .any(|d| d.stage == PipelineStage::NameResolve);
+        assert!(
+            !saw_name_resolve,
+            "NameResolve stage must not run when the flag is off"
+        );
+    }
+
+    #[test]
+    fn name_resolve_populates_resolved_items_when_enabled() {
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn helper(n: Int) -> Int
+    n + 1
+
+fn main() -> Int
+    helper(7)
+"#,
+        );
+        let result = run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                run_name_resolve: true,
+                ..Default::default()
+            },
+        );
+        let resolved = result
+            .resolved_items
+            .expect("run_name_resolve=true must populate resolved_items");
+        // Two FnDefs (helper + main) promoted; the Module item
+        // lands as ResolvedTopLevel::Module — neither promoted nor
+        // passthrough. So exactly 2 promoted, 0 passthrough.
+        use crate::ir::hir::ResolvedTopLevel;
+        let promoted = resolved
+            .iter()
+            .filter(|t| matches!(t, ResolvedTopLevel::FnDef(_)))
+            .count();
+        let passthrough = resolved
+            .iter()
+            .filter(|t| matches!(t, ResolvedTopLevel::Passthrough(_)))
+            .count();
+        assert_eq!(promoted, 2, "helper + main should both promote");
+        assert_eq!(passthrough, 0, "no non-fn items in this fixture");
+
+        // Diagnostic mirrors the counts.
+        let diag = result
+            .pass_diagnostics
+            .iter()
+            .find(|d| d.stage == PipelineStage::NameResolve)
+            .expect("NameResolve diagnostic missing");
+        match &diag.report {
+            PassReport::NameResolve {
+                promoted_fns,
+                passthrough_items,
+            } => {
+                assert_eq!(*promoted_fns, 2);
+                assert_eq!(*passthrough_items, 0);
+            }
+            other => panic!("expected NameResolve report, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn name_resolve_runs_after_build_symbols() {
+        // The resolver needs the symbol table — it must always come
+        // after BuildSymbols in the firing order.
+        let mut items = parse(
+            r#"
+module M
+    intent = "test"
+    depends []
+
+fn id(n: Int) -> Int
+    n
+"#,
+        );
+        let mut fired: Vec<PipelineStage> = Vec::new();
+        run(
+            &mut items,
+            PipelineConfig {
+                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                run_build_symbols: true,
+                run_name_resolve: true,
+                on_after_pass: Some(Box::new(|stage, _| fired.push(stage))),
+                ..Default::default()
+            },
+        );
+        let build_pos = fired
+            .iter()
+            .position(|s| *s == PipelineStage::BuildSymbols)
+            .expect("BuildSymbols fired");
+        let resolve_pos = fired
+            .iter()
+            .position(|s| *s == PipelineStage::NameResolve)
+            .expect("NameResolve fired");
+        assert!(
+            resolve_pos > build_pos,
+            "NameResolve must fire after BuildSymbols (saw {fired:?})"
+        );
     }
 }
