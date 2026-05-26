@@ -54,7 +54,15 @@ impl TypeChecker {
                 let mut params = Vec::new();
                 for (param_name, ty_str) in &f.params {
                     match parse_type_str_strict(ty_str) {
-                        Ok(ty) => params.push(self.canonicalize_named(ty)),
+                        Ok(ty) => {
+                            let canon = self.canonicalize_named(ty);
+                            self.report_ambiguous_named(
+                                &canon,
+                                f.line,
+                                &format!("Function '{}', parameter '{}'", f.name, param_name),
+                            );
+                            params.push(canon);
+                        }
                         Err(unknown) => {
                             self.error(format!(
                                 "Function '{}': unknown type '{}' for parameter '{}'",
@@ -65,7 +73,15 @@ impl TypeChecker {
                     }
                 }
                 let ret = match parse_type_str_strict(&f.return_type) {
-                    Ok(ty) => self.canonicalize_named(ty),
+                    Ok(ty) => {
+                        let canon = self.canonicalize_named(ty);
+                        self.report_ambiguous_named(
+                            &canon,
+                            f.line,
+                            &format!("Function '{}' return type", f.name),
+                        );
+                        canon
+                    }
                     Err(unknown) => {
                         self.error(format!(
                             "Function '{}': unknown return type '{}'",
@@ -264,9 +280,15 @@ impl TypeChecker {
                         .fields
                         .iter()
                         .map(|f| {
-                            self.canonicalize_named(
+                            let canon = self.canonicalize_named(
                                 parse_type_str_strict(f).unwrap_or(Type::Invalid),
-                            )
+                            );
+                            self.report_ambiguous_named(
+                                &canon,
+                                *line,
+                                &format!("Type '{}', variant '{}'", type_name, variant.name),
+                            );
+                            canon
                         })
                         .collect();
                     let alias_key = crate::visibility::member_key(type_name, &variant.name);
@@ -353,6 +375,11 @@ impl TypeChecker {
                 for (field_name, ty_str) in fields {
                     let field_ty = self
                         .canonicalize_named(parse_type_str_strict(ty_str).unwrap_or(Type::Invalid));
+                    self.report_ambiguous_named(
+                        &field_ty,
+                        *line,
+                        &format!("Type '{}', field '{}'", type_name, field_name),
+                    );
                     let canonical_type = if module_name != type_name {
                         canonical_name(module_name, type_name)
                     } else {

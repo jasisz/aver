@@ -615,6 +615,101 @@ impl TypeChecker {
         )
     }
 
+    /// List the canonical names of every type sharing `bare`. Used
+    /// to produce a helpful "use `A.Foo` or `B.Foo`" diagnostic when
+    /// an ambiguous bare reference surfaces in source. Returns an
+    /// empty list when the name isn't ambiguous (the caller doesn't
+    /// emit a diagnostic in that case).
+    pub(crate) fn ambiguous_type_candidates(&self, bare: &str) -> Vec<String> {
+        if !self.type_name_is_ambiguous(bare) {
+            return Vec::new();
+        }
+        let mut out: Vec<String> = self
+            .symbol_table
+            .types
+            .iter()
+            .filter(|e| e.key.name == bare)
+            .map(|e| e.key.canonical())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Walk `ty` and emit one diagnostic per distinct ambiguous bare
+    /// name reachable from it. Called from the signature-registration
+    /// boundary (`build_signatures`, `register_type_def_sigs`) so the
+    /// user gets a clean "Ambiguous type name 'Foo'; use `A.Foo` or
+    /// `B.Foo`" message instead of the downstream `expected Foo, got
+    /// Foo` cascade the matcher otherwise produces.
+    pub(super) fn report_ambiguous_named(&mut self, ty: &Type, line: usize, source_ctx: &str) {
+        let mut seen: HashSet<String> = HashSet::new();
+        self.collect_ambiguous_into(ty, &mut seen);
+        for name in seen {
+            let candidates = self.ambiguous_type_candidates(&name);
+            if candidates.is_empty() {
+                continue;
+            }
+            let suggestion = match candidates.as_slice() {
+                [a] => a.clone(),
+                [a, b] => format!("`{}` or `{}`", a, b),
+                more => {
+                    let last = more.last().expect("non-empty");
+                    let head = &more[..more.len() - 1];
+                    let joined = head
+                        .iter()
+                        .map(|c| format!("`{}`", c))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{}, or `{}`", joined, last)
+                }
+            };
+            self.error_at_line(
+                line,
+                format!(
+                    "{source_ctx}: Ambiguous type name '{name}'; use {suggestion} to disambiguate"
+                ),
+            );
+        }
+    }
+
+    fn collect_ambiguous_into(&self, ty: &Type, out: &mut HashSet<String>) {
+        match ty {
+            Type::Named { id: None, name } if self.type_name_is_ambiguous(name) => {
+                out.insert(name.clone());
+            }
+            Type::Named { .. }
+            | Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => {}
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.collect_ambiguous_into(inner, out);
+            }
+            Type::Result(ok, err) => {
+                self.collect_ambiguous_into(ok, out);
+                self.collect_ambiguous_into(err, out);
+            }
+            Type::Map(k, v) => {
+                self.collect_ambiguous_into(k, out);
+                self.collect_ambiguous_into(v, out);
+            }
+            Type::Tuple(items) => {
+                for item in items {
+                    self.collect_ambiguous_into(item, out);
+                }
+            }
+            Type::Fn(params, ret, _) => {
+                for p in params {
+                    self.collect_ambiguous_into(p, out);
+                }
+                self.collect_ambiguous_into(ret, out);
+            }
+        }
+    }
+
     /// Register a bare → `FnId` alias, marking it `Ambiguous` if a
     /// different identity is already registered under the same bare
     /// name. Duplicate registration of the same identity (e.g. an

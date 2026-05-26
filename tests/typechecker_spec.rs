@@ -2696,10 +2696,30 @@ fn callsWithB() -> Float
     // names. Without that refusal the old name-equality fallback
     // would let both calls go through and silently agree on
     // whichever `Shape` happened to win the global alias slot.
-    let mismatches: Vec<&String> = errs.iter().filter(|e| e.contains("takesShape")).collect();
+    // Both call sites are equally unsound (one passes A.Shape, the
+    // other B.Shape against an ambiguous bare param), so both must
+    // surface. Asserting exact count catches an asymmetric regression
+    // where one side gets rejected because the bare alias secretly
+    // resolved to the other module's identity.
+    let call_mismatches: Vec<&String> = errs
+        .iter()
+        .filter(|e| e.contains("Argument 1 of 'takesShape'"))
+        .collect();
+    assert_eq!(
+        call_mismatches.len(),
+        2,
+        "expected exactly 2 argument-mismatch diagnostics on `takesShape(...)` calls when `Shape` is ambiguous, got: {errs:?}"
+    );
+    // Explicit ambiguity diagnostic on the param annotation itself —
+    // surfaces the underlying cause instead of just two
+    // type-mismatch errors that read `expected Shape, got Shape`.
     assert!(
-        !mismatches.is_empty(),
-        "expected at least one diagnostic on a `takesShape(...)` call when `Shape` is ambiguous, got: {errs:?}"
+        errs.iter().any(|e| {
+            e.contains("Ambiguous type name 'Shape'")
+                && e.contains("A.Shape")
+                && e.contains("B.Shape")
+        }),
+        "expected an 'Ambiguous type name Shape; use A.Shape or B.Shape' diagnostic, got: {errs:?}"
     );
 
     let _ = std::fs::remove_dir_all(&root);
