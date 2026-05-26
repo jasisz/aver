@@ -109,9 +109,12 @@ impl TypeChecker {
                 // Bare alias so source-faithful references inside this
                 // module's own bodies (`foo()`) still resolve to its
                 // FnId when the canonical name carries the module
-                // prefix (`A.foo`).
+                // prefix (`A.foo`). Use `fn_id_for_canonical` (no
+                // visibility filter) — the fn IS visible to its own
+                // module, and `insert_fn_sig` above already added it
+                // to `visible_fn_ids`.
                 if canonical != f.name
-                    && let Some(id) = self.resolve_fn_id(&canonical)
+                    && let Some(id) = self.fn_id_for_canonical(&canonical)
                 {
                     self.merge_bare_fn_alias(f.name.clone(), id);
                 }
@@ -266,13 +269,18 @@ impl TypeChecker {
                     effects: vec![],
                 };
                 self.insert_fn_sig(&canonical_type, type_sig);
-                // Bare alias for the type name so bodies inside the
-                // same module can reference `Shape` and have it
-                // resolve to its TypeId.
-                if canonical_type != *type_name
-                    && let Some(id) = self.resolve_type_id(&canonical_type)
-                {
-                    self.merge_bare_type_alias(type_name.clone(), id);
+                // Mark the type itself visible to the current scope —
+                // own-module types are always visible to their own
+                // module. `type_id_for_canonical` bypasses the
+                // visibility filter so we can register it.
+                if let Some(id) = self.type_id_for_canonical(&canonical_type) {
+                    self.mark_type_visible(id);
+                    // Bare alias for the type name so bodies inside the
+                    // same module can reference `Shape` and have it
+                    // resolve to its TypeId.
+                    if canonical_type != *type_name {
+                        self.merge_bare_type_alias(type_name.clone(), id);
+                    }
                 }
                 // Register each constructor with a qualified key.
                 for variant in variants {
@@ -361,10 +369,11 @@ impl TypeChecker {
                     effects: vec![],
                 };
                 self.insert_fn_sig(&canonical_type, prod_sig);
-                if canonical_type != *type_name
-                    && let Some(id) = self.resolve_type_id(&canonical_type)
-                {
-                    self.merge_bare_type_alias(type_name.clone(), id);
+                if let Some(id) = self.type_id_for_canonical(&canonical_type) {
+                    self.mark_type_visible(id);
+                    if canonical_type != *type_name {
+                        self.merge_bare_type_alias(type_name.clone(), id);
+                    }
                 }
                 // Register per-field types so dot-access is checked.
                 // Phase B: single entry under canonical `(Module.Type,
@@ -444,23 +453,26 @@ impl TypeChecker {
     ) -> Result<(), String> {
         use crate::visibility::SymbolKind;
 
-        // First pass: populate the bare → typed-id alias maps from
-        // every entry that carries a visibility-exposed alias. Phase B
-        // moves bare-name resolution off `sig_aliases` (string→string)
-        // and onto these typed bridges. Done up front so the second
-        // pass — which calls `insert_fn_sig` and `resolved_named_type`
-        // — can already resolve type references via the aliases.
+        // First pass: populate the bare → typed-id alias maps AND the
+        // visibility sets from every registry entry. The registry
+        // itself is already filtered to exposed-only items by
+        // `SymbolRegistry::from_modules`, so every `FnId` / `TypeId`
+        // we see here is by definition visible to the current
+        // checker. The visibility gating in `resolve_*_id` then
+        // refuses look-ups against any ID that the symbol table has
+        // but this pass never touched — closing the
+        // qualified-private-import leak (peer review round 4).
         for entry in &registry.entries {
-            let Some(alias) = entry.alias.as_deref() else {
-                continue;
-            };
             match &entry.kind {
                 SymbolKind::Function { name: fn_name, .. } => {
                     if let Some(id) = self
                         .symbol_table
                         .fn_id_of(&FnKey::in_module(entry.module.clone(), fn_name.clone()))
                     {
-                        self.merge_bare_fn_alias(alias.to_string(), id);
+                        self.visible_fn_ids.insert(id);
+                        if let Some(alias) = entry.alias.as_deref() {
+                            self.merge_bare_fn_alias(alias.to_string(), id);
+                        }
                     }
                 }
                 SymbolKind::OpaqueType { name }
@@ -470,7 +482,10 @@ impl TypeChecker {
                         .symbol_table
                         .type_id_of(&TypeKey::in_module(entry.module.clone(), name.clone()))
                     {
-                        self.merge_bare_type_alias(alias.to_string(), id);
+                        self.visible_type_ids.insert(id);
+                        if let Some(alias) = entry.alias.as_deref() {
+                            self.merge_bare_type_alias(alias.to_string(), id);
+                        }
                     }
                 }
                 SymbolKind::Constructor { .. } | SymbolKind::RecordField { .. } => {

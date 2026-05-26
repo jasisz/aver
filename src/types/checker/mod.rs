@@ -470,6 +470,24 @@ struct TypeChecker {
     /// for the type-name dimension; consumed by `resolve_type_id`
     /// and `canonical_type_name`.
     bare_type_aliases: HashMap<String, Resolution<TypeId>>,
+    /// `FnId`s the current checker may legitimately resolve to.
+    /// Populated from `build_signatures` (the current module's own
+    /// fns — always visible from within the module) and from
+    /// `integrate_registry` (visibility-exposed entries from each
+    /// dep module — already filtered against the `exposes` contract
+    /// by `crate::visibility::SymbolRegistry::from_modules`).
+    ///
+    /// `resolve_fn_id` consults this set so a qualified
+    /// `C.helper()` reference fails when `helper` isn't exposed even
+    /// though the symbol table — which carries every fn from every
+    /// dep module regardless of visibility — has its `FnId`.
+    visible_fn_ids: HashSet<FnId>,
+    /// `TypeId`s the current checker may legitimately resolve to.
+    /// Same role as `visible_fn_ids` for the type-name dimension —
+    /// closes the qualified-private-import leak peer review round 4
+    /// flagged on `fn takes(s: C.Shape)` references against a `C`
+    /// whose `exposes` list didn't include `Shape`.
+    visible_type_ids: HashSet<TypeId>,
     value_members: HashMap<String, Type>,
     /// Field types for record types, keyed by `(type_name, field_name)`.
     /// Populated for both user-defined `record` types and built-in records
@@ -543,6 +561,8 @@ impl TypeChecker {
             extra_sigs: HashMap::new(),
             bare_fn_aliases: HashMap::new(),
             bare_type_aliases: HashMap::new(),
+            visible_fn_ids: HashSet::new(),
+            visible_type_ids: HashSet::new(),
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
             type_variants,
@@ -575,36 +595,38 @@ impl TypeChecker {
     /// don't live in the program symbol table; callers fall back to
     /// the `extra_sigs` string-keyed half.
     pub(crate) fn resolve_fn_id(&self, name: &str) -> Option<FnId> {
+        // Phase B (peer review round 4): every `SymbolTable`
+        // resolution path filters through `visible_fn_ids` so a
+        // qualified `C.helper()` reference can't reach into a dep
+        // module's private fn just because the symbol table
+        // unconditionally stores every dep entry. Bare-name lookup
+        // already went through `bare_fn_aliases`, which is itself
+        // populated only from visibility-exposed entries — that
+        // branch stays as-is.
         if let Some((prefix, n)) = name.rsplit_once('.') {
-            if let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, n)) {
+            if let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, n))
+                && self.visible_fn_ids.contains(&id)
+            {
                 return Some(id);
             }
-            // Entry items that declare `module Rogue` still live
-            // under `FnKey::entry` in the symbol table — only
-            // dep modules occupy real module scopes. Fall back to
-            // entry-scope lookup when the qualified prefix matches
-            // the current scope's declared module name.
             if self.current_module_prefix.as_deref() == Some(prefix)
                 && let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(n))
+                && self.visible_fn_ids.contains(&id)
             {
                 return Some(id);
             }
         }
         if let Some(prefix) = self.current_module_prefix.as_deref()
             && let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, name))
+            && self.visible_fn_ids.contains(&id)
         {
             return Some(id);
         }
-        if let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(name)) {
+        if let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(name))
+            && self.visible_fn_ids.contains(&id)
+        {
             return Some(id);
         }
-        // Cross-module bare-name imports — `bare_fn_aliases` is the
-        // typed replacement for the pre-phase-B `sig_aliases` map.
-        // Populated by `integrate_registry` from visibility-exposed
-        // aliases (and by `build_signatures` for the current module's
-        // own fns). Returns `None` when two distinct modules surface
-        // the same bare name so the caller can refuse the look-up
-        // instead of last-write-wins.
         self.bare_fn_aliases
             .get(name)
             .and_then(Resolution::unambiguous)
@@ -643,16 +665,25 @@ impl TypeChecker {
         out
     }
 
-    /// Walk `ty` and emit one diagnostic per distinct ambiguous bare
-    /// name reachable from it. Called from the signature-registration
-    /// boundary (`build_signatures`, `register_type_def_sigs`) so the
-    /// user gets a clean "Ambiguous type name 'Foo'; use `A.Foo` or
-    /// `B.Foo`" message instead of the downstream `expected Foo, got
-    /// Foo` cascade the matcher otherwise produces.
+    /// Walk `ty` and emit diagnostics for every distinct unresolved
+    /// reason the typechecker deliberately blocked resolution.
+    /// Called from the signature-registration boundary
+    /// (`build_signatures`, `register_type_def_sigs`, flow's binding
+    /// annotations) so the user gets a clean explanation instead of
+    /// downstream `expected X, got X` cascades. Two reasons are
+    /// surfaced:
+    ///
+    ///   - Ambiguous bare reference: `Foo` matches multiple
+    ///     visibility-exposed `TypeId`s. Diagnostic suggests the
+    ///     qualified forms.
+    ///   - Private qualified import: `Module.Foo` exists in the
+    ///     symbol table but isn't on `Module`'s `exposes` list.
+    ///     Diagnostic names the dep + asks for the export.
     pub(super) fn report_ambiguous_named(&mut self, ty: &Type, line: usize, source_ctx: &str) {
-        let mut seen: HashSet<String> = HashSet::new();
-        self.collect_ambiguous_into(ty, &mut seen);
-        for name in seen {
+        let mut seen_ambig: HashSet<String> = HashSet::new();
+        let mut seen_private: HashSet<String> = HashSet::new();
+        self.collect_unresolved_into(ty, &mut seen_ambig, &mut seen_private);
+        for name in seen_ambig {
             let candidates = self.ambiguous_type_candidates(&name);
             if candidates.is_empty() {
                 continue;
@@ -678,12 +709,33 @@ impl TypeChecker {
                 ),
             );
         }
+        for qualified in seen_private {
+            let (module, type_name) = qualified
+                .rsplit_once('.')
+                .map(|(m, t)| (m.to_string(), t.to_string()))
+                .expect("private qualified name always has a `.`");
+            self.error_at_line(
+                line,
+                format!(
+                    "{source_ctx}: Type '{qualified}' is not exposed by module '{module}' — add '{type_name}' to its `exposes` list to import it",
+                ),
+            );
+        }
     }
 
-    fn collect_ambiguous_into(&self, ty: &Type, out: &mut HashSet<String>) {
+    fn collect_unresolved_into(
+        &self,
+        ty: &Type,
+        ambig: &mut HashSet<String>,
+        private: &mut HashSet<String>,
+    ) {
         match ty {
-            Type::Named { id: None, name } if self.type_name_is_ambiguous(name) => {
-                out.insert(name.clone());
+            Type::Named { id: None, name } => {
+                if self.type_name_is_ambiguous(name) {
+                    ambig.insert(name.clone());
+                } else if self.type_name_is_private_import(name) {
+                    private.insert(name.clone());
+                }
             }
             Type::Named { .. }
             | Type::Int
@@ -694,26 +746,26 @@ impl TypeChecker {
             | Type::Var(_)
             | Type::Invalid => {}
             Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
-                self.collect_ambiguous_into(inner, out);
+                self.collect_unresolved_into(inner, ambig, private);
             }
             Type::Result(ok, err) => {
-                self.collect_ambiguous_into(ok, out);
-                self.collect_ambiguous_into(err, out);
+                self.collect_unresolved_into(ok, ambig, private);
+                self.collect_unresolved_into(err, ambig, private);
             }
             Type::Map(k, v) => {
-                self.collect_ambiguous_into(k, out);
-                self.collect_ambiguous_into(v, out);
+                self.collect_unresolved_into(k, ambig, private);
+                self.collect_unresolved_into(v, ambig, private);
             }
             Type::Tuple(items) => {
                 for item in items {
-                    self.collect_ambiguous_into(item, out);
+                    self.collect_unresolved_into(item, ambig, private);
                 }
             }
             Type::Fn(params, ret, _) => {
                 for p in params {
-                    self.collect_ambiguous_into(p, out);
+                    self.collect_unresolved_into(p, ambig, private);
                 }
-                self.collect_ambiguous_into(ret, out);
+                self.collect_unresolved_into(ret, ambig, private);
             }
         }
     }
@@ -737,14 +789,21 @@ impl TypeChecker {
             .or_insert(Resolution::Single(id));
     }
 
-    /// Type-side equivalent of [`Self::resolve_fn_id`].
+    /// Type-side equivalent of [`Self::resolve_fn_id`]. Same
+    /// visibility gating: `SymbolTable` look-ups are filtered through
+    /// `visible_type_ids` so a qualified `C.Shape` reference can't
+    /// resolve to a private (non-exposed) type even though the symbol
+    /// table holds every dep type unconditionally.
     pub(crate) fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
         if let Some((prefix, n)) = name.rsplit_once('.') {
-            if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n)) {
+            if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n))
+                && self.visible_type_ids.contains(&id)
+            {
                 return Some(id);
             }
             if self.current_module_prefix.as_deref() == Some(prefix)
                 && let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(n))
+                && self.visible_type_ids.contains(&id)
             {
                 return Some(id);
             }
@@ -753,15 +812,41 @@ impl TypeChecker {
             && let Some(id) = self
                 .symbol_table
                 .type_id_of(&TypeKey::in_module(prefix, name))
+            && self.visible_type_ids.contains(&id)
         {
             return Some(id);
         }
-        if let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(name)) {
+        if let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(name))
+            && self.visible_type_ids.contains(&id)
+        {
             return Some(id);
         }
         self.bare_type_aliases
             .get(name)
             .and_then(Resolution::unambiguous)
+    }
+
+    /// `true` when `name` (qualified `Module.Type` form) resolves to
+    /// an existing `TypeId` in the symbol table but the typechecker
+    /// hasn't registered that ID as visible to the current scope.
+    /// Distinguishes "type doesn't exist anywhere" (silently miss →
+    /// downstream "unknown type" error) from "type exists but its
+    /// dep module doesn't expose it" (explicit private-import
+    /// diagnostic emitted by `report_named_visibility_errors`).
+    pub(crate) fn type_name_is_private_import(&self, name: &str) -> bool {
+        let Some((prefix, n)) = name.rsplit_once('.') else {
+            return false;
+        };
+        if self.current_module_prefix.as_deref() == Some(prefix) {
+            // Self-references like `Main.foo` inside `Main` always
+            // resolve through the entry-scope alias; never a privacy
+            // failure.
+            return false;
+        }
+        let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n)) else {
+            return false;
+        };
+        !self.visible_type_ids.contains(&id)
     }
 
     /// Canonical name (`"Module.Type"` or bare entry name) for a
@@ -923,15 +1008,79 @@ impl TypeChecker {
     /// `FnId`-keyed user map when the name resolves through the
     /// symbol table (i.e. it names a user fn declared in `items` or a
     /// dep module); otherwise it lands in the `extra_sigs` half.
+    ///
+    /// Also marks the `FnId` as visible to the current scope — every
+    /// fn the checker's own `build_signatures` / `integrate_registry`
+    /// path inserts is by definition reachable from here (own module
+    /// items or visibility-exposed dep entries). The visibility
+    /// gating in `resolve_fn_id` then refuses look-ups against any
+    /// `FnId` that landed in the symbol table but not in this set —
+    /// a qualified `C.helper()` reference whose `helper` isn't on
+    /// `C`'s `exposes` list never gets inserted here and so never
+    /// resolves.
     fn insert_fn_sig(&mut self, canonical: &str, sig: FnSig) {
-        match self.resolve_fn_id(canonical) {
+        match self.fn_id_for_canonical(canonical) {
             Some(id) => {
                 self.fn_sigs.insert(id, sig);
+                self.visible_fn_ids.insert(id);
             }
             None => {
                 self.extra_sigs.insert(canonical.to_string(), sig);
             }
         }
+    }
+
+    /// `resolve_fn_id` minus the visibility filter — used by
+    /// `insert_fn_sig` (where the very point of the insert is to
+    /// register visibility) and by other boundary points that build
+    /// the visible set itself. Production look-ups must go through
+    /// `resolve_fn_id`.
+    fn fn_id_for_canonical(&self, name: &str) -> Option<FnId> {
+        if let Some((prefix, n)) = name.rsplit_once('.') {
+            if let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, n)) {
+                return Some(id);
+            }
+            if self.current_module_prefix.as_deref() == Some(prefix)
+                && let Some(id) = self.symbol_table.fn_id_of(&FnKey::entry(n))
+            {
+                return Some(id);
+            }
+        }
+        if let Some(prefix) = self.current_module_prefix.as_deref()
+            && let Some(id) = self.symbol_table.fn_id_of(&FnKey::in_module(prefix, name))
+        {
+            return Some(id);
+        }
+        self.symbol_table.fn_id_of(&FnKey::entry(name))
+    }
+
+    /// Type-side equivalent of [`Self::fn_id_for_canonical`].
+    fn type_id_for_canonical(&self, name: &str) -> Option<TypeId> {
+        if let Some((prefix, n)) = name.rsplit_once('.') {
+            if let Some(id) = self.symbol_table.type_id_of(&TypeKey::in_module(prefix, n)) {
+                return Some(id);
+            }
+            if self.current_module_prefix.as_deref() == Some(prefix)
+                && let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(n))
+            {
+                return Some(id);
+            }
+        }
+        if let Some(prefix) = self.current_module_prefix.as_deref()
+            && let Some(id) = self
+                .symbol_table
+                .type_id_of(&TypeKey::in_module(prefix, name))
+        {
+            return Some(id);
+        }
+        self.symbol_table.type_id_of(&TypeKey::entry(name))
+    }
+
+    /// Mark a `TypeId` as visible to the current scope. Called from
+    /// `register_type_def_sigs` (own module types) and
+    /// `integrate_registry` (visibility-exposed dep types).
+    fn mark_type_visible(&mut self, id: TypeId) {
+        self.visible_type_ids.insert(id);
     }
 
     // -- Helpers -----------------------------------------------------------

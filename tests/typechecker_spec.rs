@@ -2725,6 +2725,53 @@ fn callsWithB() -> Float
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Phase B (#138, peer review round 4 F1): a qualified
+/// `C.Shape` reference must NOT resolve when `C` doesn't expose
+/// `Shape`. Pre-fix `resolve_type_id` consulted the symbol table
+/// directly, which carries every dep type regardless of the
+/// `exposes` contract, so the qualified import bypassed visibility.
+/// Now `resolve_type_id` filters through `visible_type_ids`
+/// (populated only from `SymbolRegistry::from_modules` and own-
+/// module declarations); the qualified private import either fails
+/// to resolve, or — when picked up at a signature boundary — the
+/// explicit "private import" diagnostic surfaces.
+#[test]
+fn qualified_private_dep_type_does_not_resolve() {
+    let root = temp_module_root("qualified_private_import");
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [helper]
+    intent = "C.Shape declared but NOT exposed."
+
+type Shape
+    Hexagon(Float)
+
+fn helper() -> Int
+    0
+"#,
+    )
+    .expect("write C.av failed");
+
+    let src = r#"module Main
+    depends [C]
+    intent = "Tries to import C.Shape directly."
+
+fn takesPrivate(s: C.Shape) -> Float
+    0.0
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter().any(|e| {
+            (e.contains("private") || e.contains("not exposed") || e.contains("not visible"))
+                && e.contains("C.Shape")
+        }),
+        "expected a 'C.Shape is private / not exposed' diagnostic on `s: C.Shape`, got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Phase B (#138, peer review round 3 nit #1): the ambiguity
 /// diagnostic must NOT list a private (non-exposed) candidate even
 /// when it shares the bare name. `Resolution::Ambiguous(Vec<TypeId>)`
