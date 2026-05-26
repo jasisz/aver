@@ -42,7 +42,7 @@ pub fn type_to_lean(ty: &Type) -> String {
                  This indicates unresolved typing leaked into codegen."
             )
         }
-        Type::Named(name) => {
+        Type::Named { name, .. } => {
             if name.contains('.') {
                 name.replace('.', "_")
             } else {

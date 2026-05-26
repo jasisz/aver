@@ -267,8 +267,7 @@ impl TypeChecker {
                 // Oracle v1: classify the verified function's effects to
                 // decide whether this verify block is in the proof subset.
                 let fn_effects: Vec<String> = self
-                    .fn_sigs
-                    .get(&vb.fn_name)
+                    .find_fn_sig(&vb.fn_name)
                     .map(|sig| sig.effects.clone())
                     .unwrap_or_default();
                 let classified_effects: Vec<String> = fn_effects
@@ -479,8 +478,7 @@ impl TypeChecker {
                 // Inherit effects from the tested function so verify blocks
                 // can call effectful functions without declaring effects.
                 let inherited_effects: Vec<String> = self
-                    .fn_sigs
-                    .get(&vb.fn_name)
+                    .find_fn_sig(&vb.fn_name)
                     .map(|sig| sig.effects.clone())
                     .unwrap_or_default();
                 let caller = format!("<verify:{}>", vb.fn_name);

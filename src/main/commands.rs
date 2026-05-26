@@ -483,11 +483,11 @@ fn validate_self_host_guest_entry_contract(ctx: &codegen::CodegenContext) -> Res
         .ok_or_else(|| format!("guest entry '{entry_name}' was not found"))?;
 
     let has_prog = fd.params.iter().any(|(name, type_ann)| {
-        name == "prog" && parse_type_str(type_ann) == Type::Named("Program".to_string())
+        name == "prog" && parse_type_str(type_ann) == Type::named("Program")
     });
     let has_module_fns = fd.params.iter().any(|(name, type_ann)| {
         name == "moduleFns"
-            && parse_type_str(type_ann) == Type::List(Box::new(Type::Named("FnDef".to_string())))
+            && parse_type_str(type_ann) == Type::List(Box::new(Type::named("FnDef")))
     });
 
     if has_prog && has_module_fns {
@@ -507,7 +507,7 @@ fn mark_type_uses(
     used_by_target: &mut HashMap<String, HashSet<String>>,
 ) {
     match ty {
-        Type::Named(name) => {
+        Type::Named { name, .. } => {
             let parts = name
                 .split('.')
                 .map(|part| part.to_string())

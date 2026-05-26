@@ -124,7 +124,7 @@ fn display_type_for_expected(ty: &Type) -> String {
                 )
             }
         }
-        Type::Named(name) => name.clone(),
+        Type::Named { name, .. } => name.clone(),
     }
 }
 
@@ -137,7 +137,7 @@ fn display_type_for_expected(ty: &Type) -> String {
 fn type_is_fully_concrete(ty: &Type) -> bool {
     match ty {
         Type::Var(_) | Type::Invalid => false,
-        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named(_) => true,
+        Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named { .. } => true,
         Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
             type_is_fully_concrete(inner)
         }
@@ -1118,12 +1118,12 @@ impl TypeChecker {
                     if field == "result" {
                         return self.infer_type(obj);
                     }
-                    return Type::Named("Trace".to_string());
+                    return Type::named("Trace");
                 }
                 let obj_ty = self.infer_type(obj);
                 // Oracle v1: `.contains` / `.length` / `.event` accessors
                 // on a Trace value. Return types match the plan's API.
-                if matches!(&obj_ty, Type::Named(n) if n == "Trace") {
+                if matches!(&obj_ty, Type::Named { name: n, .. } if n == "Trace") {
                     match field.as_str() {
                         "length" => {
                             return Type::Fn(vec![], Box::new(Type::Int), vec![]);
@@ -1151,9 +1151,7 @@ impl TypeChecker {
                         "event" => {
                             return Type::Fn(
                                 vec![Type::Int],
-                                Box::new(Type::Option(Box::new(Type::Named(
-                                    "EffectEvent".to_string(),
-                                )))),
+                                Box::new(Type::Option(Box::new(Type::named("EffectEvent")))),
                                 vec![],
                             );
                         }
@@ -1165,7 +1163,7 @@ impl TypeChecker {
                         "group" => {
                             return Type::Fn(
                                 vec![Type::Int],
-                                Box::new(Type::Named("Trace".to_string())),
+                                Box::new(Type::named("Trace")),
                                 vec![],
                             );
                         }
@@ -1177,7 +1175,7 @@ impl TypeChecker {
                         "branch" => {
                             return Type::Fn(
                                 vec![Type::Int],
-                                Box::new(Type::Named("Trace".to_string())),
+                                Box::new(Type::named("Trace")),
                                 vec![],
                             );
                         }
@@ -1185,16 +1183,15 @@ impl TypeChecker {
                     }
                 }
                 match obj_ty {
-                    Type::Named(ref type_name) => {
-                        // Iron — A3: `opaque_types` keys are canonical
+                    Type::Named {
+                        name: ref type_name,
+                        ..
+                    } => {
+                        // Phase B: `opaque_types` keys are canonical
                         // "Module.Type"; resolve the bare reference
-                        // through `sig_aliases` before checking.
-                        let canon = self
-                            .sig_aliases
-                            .get(type_name)
-                            .map(String::as_str)
-                            .unwrap_or(type_name);
-                        if !self.self_host_mode && self.opaque_types.contains(canon) {
+                        // through the symbol table before checking.
+                        let canon = self.canonical_type_name(type_name);
+                        if !self.self_host_mode && self.opaque_types.contains(&canon) {
                             self.error(format!(
                                 "Cannot access field '{}' of opaque type '{}'",
                                 field, type_name

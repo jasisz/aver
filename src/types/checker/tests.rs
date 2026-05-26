@@ -673,7 +673,7 @@ mod proptest_strategies {
             Just(Type::Bool),
             Just(Type::Unit),
             Just(Type::Invalid),
-            "[A-Z][a-zA-Z]{0,4}".prop_map(Type::Named),
+            "[A-Z][a-zA-Z]{0,4}".prop_map(Type::named),
             "[A-Z]".prop_map(Type::Var),
         ];
 

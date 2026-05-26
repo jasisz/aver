@@ -858,16 +858,16 @@ fn error_record_creation_field_type_mismatch() {
 fn named_types_are_compatible_with_same_name() {
     // Two Named("Shape") values should be compatible
     use aver::types::Type;
-    let a = Type::Named("Shape".to_string());
-    let b = Type::Named("Shape".to_string());
+    let a = Type::named("Shape");
+    let b = Type::named("Shape");
     assert!(a.compatible(&b));
 }
 
 #[test]
 fn named_types_are_incompatible_with_different_names() {
     use aver::types::Type;
-    let a = Type::Named("Shape".to_string());
-    let b = Type::Named("User".to_string());
+    let a = Type::named("Shape");
+    let b = Type::named("User");
     assert!(!a.compatible(&b));
 }
 
@@ -878,7 +878,7 @@ fn named_type_is_compatible_with_invalid_recovery() {
     // into a cascade of `expected X, got Invalid` diagnostics. Pre-A4
     // this test asserted the opposite direction.
     use aver::types::Type;
-    let named = Type::Named("Shape".to_string());
+    let named = Type::named("Shape");
     assert!(named.compatible(&Type::Invalid));
     assert!(Type::Invalid.compatible(&named));
 }

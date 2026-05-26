@@ -115,7 +115,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // Refinement-via-opaque records emit as Dafny subset types,
             // so projecting the carrier field is the identity (the
             // value *is* the underlying `int`).
-            if let Some(crate::types::Type::Named(t_name)) = obj.ty()
+            if let Some(crate::types::Type::Named { name: t_name, .. }) = obj.ty()
                 && let Some(decl) = crate::codegen::common::find_refined_type(ctx, t_name)
                 && decl.carrier_type == "Int"
                 && field == &decl.carrier_field

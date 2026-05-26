@@ -65,7 +65,9 @@ impl TypeChecker {
                 "None" if arity == 0 => return Vec::new(),
                 _ => {}
             },
-            Type::Named(_type_name) => {
+            Type::Named {
+                name: _type_name, ..
+            } => {
                 let qualified = if ctor_name.contains('.') {
                     ctor_name.to_string()
                 } else {
@@ -111,12 +113,8 @@ impl TypeChecker {
                 // `sig_aliases` because `opaque_types` is keyed by the
                 // canonical `Module.Type` form.
                 let type_prefix = name.split('.').next().unwrap_or(name);
-                let canon_prefix = self
-                    .sig_aliases
-                    .get(type_prefix)
-                    .map(String::as_str)
-                    .unwrap_or(type_prefix);
-                if !self.self_host_mode && self.opaque_types.contains(canon_prefix) {
+                let canon_prefix = self.canonical_type_name(type_prefix);
+                if !self.self_host_mode && self.opaque_types.contains(&canon_prefix) {
                     self.error(format!(
                         "Cannot pattern match on opaque type '{}'",
                         type_prefix

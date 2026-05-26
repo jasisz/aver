@@ -12,17 +12,13 @@ impl TypeChecker {
         // opaque type by its bare name (`Discount` from
         // `Pricing.Discount`) is caught the same way the fully
         // qualified form would be.
-        let canonical_type = self
-            .sig_aliases
-            .get(type_name)
-            .cloned()
-            .unwrap_or_else(|| type_name.to_string());
+        let canonical_type = self.canonical_type_name(type_name);
         if !self.self_host_mode && self.opaque_types.contains(canonical_type.as_str()) {
             self.error(format!(
                 "Cannot construct opaque type '{}' — use its module's constructor function",
                 type_name
             ));
-            return Type::Named(canonical_type);
+            return Type::named(canonical_type);
         }
 
         // Iron — A5: `fields_for_type` canonicalises `type_name`
@@ -83,7 +79,7 @@ impl TypeChecker {
                 }
             }
         }
-        Type::Named(type_name.to_string())
+        Type::named(type_name.to_string())
     }
 
     pub(in super::super) fn infer_record_update_expr(
@@ -94,22 +90,18 @@ impl TypeChecker {
     ) -> Type {
         // Iron — A3: same canonical resolution as construction so the
         // bare-named reference to an imported opaque type is caught.
-        let canon = self
-            .sig_aliases
-            .get(type_name)
-            .map(String::as_str)
-            .unwrap_or(type_name);
-        if !self.self_host_mode && self.opaque_types.contains(canon) {
+        let canon = self.canonical_type_name(type_name);
+        if !self.self_host_mode && self.opaque_types.contains(&canon) {
             self.error(format!(
                 "Cannot update opaque type '{}' — use its module's API",
                 type_name
             ));
-            return Type::Named(type_name.to_string());
+            return Type::named(type_name.to_string());
         }
         let base_ty = self.infer_type(base);
         // Canonicalize the user-written type name so the matcher sees
         // the same form `infer_type` stamps onto the base expression.
-        let expected_ty = self.canonicalize_named(Type::Named(type_name.to_string()));
+        let expected_ty = self.canonicalize_named(Type::named(type_name.to_string()));
         if !self.compatible(&base_ty, &expected_ty) {
             self.error(format!(
                 "{}.update: base has type {}, expected {}",
@@ -152,6 +144,6 @@ impl TypeChecker {
             }
         }
 
-        Type::Named(type_name.to_string())
+        Type::named(type_name.to_string())
     }
 }

@@ -40,45 +40,7 @@ use std::collections::HashMap;
 
 use crate::ast::{FnDef, TopLevel, TypeDef, TypeVariant};
 use crate::codegen::ModuleInfo;
-use crate::ir::identity::{FnKey, TypeKey};
-
-/// Opaque, stable identity for a function declaration. Indices
-/// are assigned by [`SymbolTable::build`] in deterministic order
-/// (modules in dep order, then entry; fns in source order within
-/// each scope). Two builds against the same input produce the
-/// same IDs.
-///
-/// `FnId` is `Copy` and 4 bytes wide — cheap to thread through
-/// resolved AST and IR nodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct FnId(pub u32);
-
-/// Opaque, stable identity for a type declaration (record or sum).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct TypeId(pub u32);
-
-/// Opaque, stable identity for a constructor (a single variant of
-/// a sum type, or a single record's nominal constructor — record
-/// types still have exactly one "constructor" in the symbol table
-/// sense so pattern emit + value construction route through one
-/// shape).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct CtorId(pub u32);
-
-/// Opaque, stable identity for a module. `ModuleId(0)` is reserved
-/// for the entry scope (matching `FnKey::scope == None`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct ModuleId(pub u32);
-
-impl ModuleId {
-    /// The entry scope — top-level items not declared inside any
-    /// dep module. Always assigned `ModuleId(0)`.
-    pub const ENTRY: ModuleId = ModuleId(0);
-
-    pub fn is_entry(self) -> bool {
-        self == Self::ENTRY
-    }
-}
+use crate::ir::identity::{CtorId, FnId, FnKey, ModuleId, TypeId, TypeKey};
 
 /// One entry in the function table. The `key` field is the public
 /// canonical handle; `module` is the owning scope; `index_in_module`

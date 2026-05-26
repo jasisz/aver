@@ -18,7 +18,7 @@ pub mod symbol_table;
 pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
-pub use identity::{FnKey, LawKey, TypeKey};
+pub use identity::{CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
 pub use pipeline::{
     FnCountChange, NonTailEntry, PassDiagnostic, PassReport, PipelineConfig, PipelineResult,
     PipelineStage, TypecheckMode,
@@ -28,9 +28,7 @@ pub use proof_ir::{
     NativeIntCountdownBody, Predicate, PreservationProof, ProofIR, ProofStrategy, Quantifier,
     QuantifierType, RecursionContract, RefinedTypeDecl, SmartGuard, UnclassifiedFn,
 };
-pub use symbol_table::{
-    CtorEntry, CtorId, FnEntry, FnId, ModuleEntry, ModuleId, SymbolTable, TypeEntry, TypeId,
-};
+pub use symbol_table::{CtorEntry, FnEntry, ModuleEntry, SymbolTable, TypeEntry};
 
 pub use alloc_info::{
     AllocPolicy, compute_alloc_info, count_alloc_sites_in_fn, count_alloc_sites_in_program,

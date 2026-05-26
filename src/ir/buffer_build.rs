@@ -621,7 +621,7 @@ fn intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<
 /// returns the (possibly-grown) owned buffer.
 fn buffer_intrinsic_call(line: usize, name: &str, args: Vec<Spanned<Expr>>) -> Spanned<Expr> {
     let call = intrinsic_call(line, name, args);
-    call.set_ty(crate::types::Type::Named("Buffer".to_string()));
+    call.set_ty(crate::types::Type::named("Buffer"));
     call
 }
 
@@ -996,7 +996,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
     // returning the possibly-grown buffer. The outer intrinsic appends
     // the user's element. The result is what gets passed as the
     // buffered variant's `__buf` arg in the recursive call.
-    let buffer_ty = crate::types::Type::Named("Buffer".to_string());
+    let buffer_ty = crate::types::Type::named("Buffer");
     let buf_ident = || sp_at_typed(line, Expr::Ident(buf_name.to_string()), buffer_ty.clone());
     let sep_ident = || {
         sp_at_typed(
@@ -1094,7 +1094,7 @@ fn build_buffered_variant(fd: &FnDef, shape: &BufferBuildShape) -> Option<FnDef>
             subject: subject_orig.clone(),
             arms: new_arms,
         },
-        crate::types::Type::Named("Buffer".to_string()),
+        crate::types::Type::named("Buffer"),
     );
 
     let new_body = FnBody::Block(vec![Stmt::Expr(new_match)]);

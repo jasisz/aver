@@ -30,8 +30,7 @@ use crate::ast::Spanned;
 // (reviewer rounds 5/6), but other backends with multi-module emit
 // (VM, Rust codegen, WASM) will reach for the same types when they
 // hit the same bug class. Re-exported here for ergonomics.
-pub use crate::ir::identity::{FnKey, LawKey, TypeKey};
-pub use crate::ir::symbol_table::{CtorId, FnId, ModuleId, TypeId};
+pub use crate::ir::identity::{CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
 
 /// Output of the `proof_lower` pipeline stage. Every decision the
 /// proof backends will make is materialised here; backends become

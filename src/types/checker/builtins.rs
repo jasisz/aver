@@ -67,9 +67,7 @@ impl TypeChecker {
         // Oracle v1: Trace = { events: List<EffectEvent> }.
         let trace_fields: &[(&str, Type)] = &[(
             "events",
-            Type::List(Box::new(Type::Named(
-                crate::types::effect_event::TYPE_NAME.to_string(),
-            ))),
+            Type::List(Box::new(Type::named(crate::types::effect_event::TYPE_NAME))),
         )];
         for (field, ty) in trace_fields {
             self.record_field_types.insert(
@@ -93,12 +91,7 @@ impl TypeChecker {
         // backend-by-backend runtime guards.
         self.opaque_types.insert("Tcp.Connection".to_string());
 
-        let net_ret = || {
-            Type::Result(
-                Box::new(Type::Named("HttpResponse".to_string())),
-                Box::new(Type::Str),
-            )
-        };
+        let net_ret = || Type::Result(Box::new(Type::named("HttpResponse")), Box::new(Type::Str));
         let disk_unit = || Type::Result(Box::new(Type::Unit), Box::new(Type::Str));
         let disk_str = || Type::Result(Box::new(Type::Str), Box::new(Type::Str));
         let disk_list = || {
@@ -150,15 +143,15 @@ impl TypeChecker {
         };
         let http_handler = || {
             Type::Fn(
-                vec![Type::Named("HttpRequest".to_string())],
-                Box::new(Type::Named("HttpResponse".to_string())),
+                vec![Type::named("HttpRequest")],
+                Box::new(Type::named("HttpResponse")),
                 server_handler_effects(),
             )
         };
         let http_handler_with_context = || {
             Type::Fn(
-                vec![context_var(), Type::Named("HttpRequest".to_string())],
-                Box::new(Type::Named("HttpResponse".to_string())),
+                vec![context_var(), Type::named("HttpRequest")],
+                Box::new(Type::named("HttpResponse")),
                 server_handler_effects(),
             )
         };
@@ -303,27 +296,24 @@ impl TypeChecker {
             (
                 "Tcp.connect",
                 &[Type::Str, Type::Int],
-                Type::Result(
-                    Box::new(Type::Named("Tcp.Connection".to_string())),
-                    Box::new(Type::Str),
-                ),
+                Type::Result(Box::new(Type::named("Tcp.Connection")), Box::new(Type::Str)),
                 &["Tcp.connect"],
             ),
             (
                 "Tcp.writeLine",
-                &[Type::Named("Tcp.Connection".to_string()), Type::Str],
+                &[Type::named("Tcp.Connection"), Type::Str],
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp.writeLine"],
             ),
             (
                 "Tcp.readLine",
-                &[Type::Named("Tcp.Connection".to_string())],
+                &[Type::named("Tcp.Connection")],
                 Type::Result(Box::new(Type::Str), Box::new(Type::Str)),
                 &["Tcp.readLine"],
             ),
             (
                 "Tcp.close",
-                &[Type::Named("Tcp.Connection".to_string())],
+                &[Type::named("Tcp.Connection")],
                 Type::Result(Box::new(Type::Unit), Box::new(Type::Str)),
                 &["Tcp.close"],
             ),
@@ -395,7 +385,7 @@ impl TypeChecker {
                 (
                     "Terminal.size",
                     &[],
-                    Type::Named("Terminal.Size".to_string()),
+                    Type::named("Terminal.Size"),
                     &["Terminal.size"],
                 ),
                 (
@@ -638,7 +628,7 @@ impl TypeChecker {
         // BranchPath — opaque builtin used by Oracle-proof specs for
         // generative-effect oracles (`(BranchPath, Int, args...) -> T`).
         // Three constructors, no other public surface.
-        let branch_path_ty = || Type::Named(crate::types::branch_path::TYPE_NAME.to_string());
+        let branch_path_ty = || Type::named(crate::types::branch_path::TYPE_NAME.to_string());
         // `BranchPath.Root` is a nullary value (like `Option.None`) —
         // PascalCase, no parens. `.child` / `.parse` are methods.
         self.value_members

@@ -270,7 +270,7 @@ fn build_module_depths(contexts: &[FileContext]) -> Vec<usize> {
 
 fn collect_named_type_refs(ty: &Type, out: &mut Vec<String>) {
     match ty {
-        Type::Named(name) => out.push(name.clone()),
+        Type::Named { name, .. } => out.push(name.clone()),
         Type::Result(ok, err) | Type::Map(ok, err) => {
             collect_named_type_refs(ok, out);
             collect_named_type_refs(err, out);

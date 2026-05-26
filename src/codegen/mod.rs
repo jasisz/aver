@@ -366,7 +366,7 @@ pub fn build_context(
     // `memory access out of bounds` traps. Buffer parses to
     // Type::Named("Buffer") which is_heap_type accepts.
     {
-        let buffer_ty = || crate::types::Type::Named("Buffer".to_string());
+        let buffer_ty = || crate::types::Type::named("Buffer");
         let str_ty = || crate::types::Type::Str;
         let int_ty = || crate::types::Type::Int;
         let intrinsic_sigs: &[(&str, Vec<crate::types::Type>, crate::types::Type)] = &[

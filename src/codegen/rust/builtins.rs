@@ -1081,7 +1081,7 @@ mod tests {
             ))]),
         ];
         let mut local_types = HashMap::new();
-        local_types.insert("config".to_string(), Type::Named("DbConfig".to_string()));
+        local_types.insert("config".to_string(), Type::named("DbConfig"));
         local_types.insert("sql".to_string(), Type::Str);
 
         let emitted = emit_builtin_call(

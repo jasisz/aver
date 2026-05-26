@@ -2,13 +2,13 @@ use super::*;
 
 impl TypeChecker {
     pub(super) fn check(&mut self, items: &[TopLevel], base_dir: Option<&str>) {
-        // Iron — A3: load + integrate dependency modules FIRST so the
-        // alias map is populated before `build_signatures`
-        // canonicalises local fn / type annotations. Without this, a
-        // bare reference to an imported type in a local signature
-        // stays as `Type::Named("Discount")` instead of resolving to
-        // `Type::Named("Pricing.Discount.Discount")`, and the strict
-        // matcher then rejects every call site of that function.
+        // Phase B: track the entry module's prefix so bare-name
+        // resolution in `resolve_fn_id` / `resolve_type_id` knows
+        // which scope to try first.
+        self.current_module_prefix = Self::module_decl(items).map(|m| m.name.clone());
+        // Load + integrate dependency modules FIRST so the alias
+        // maps are populated before `build_signatures` resolves local
+        // fn / type annotations.
         let mut loaded_modules: Vec<crate::source::LoadedModule> = Vec::new();
         if let Some(base) = base_dir
             && let Some(module) = Self::module_decl(items)
@@ -40,10 +40,12 @@ impl TypeChecker {
         items: &[TopLevel],
         loaded: &[crate::source::LoadedModule],
     ) {
-        // Iron — A3: dependency aliases come in before local
-        // signatures so `build_signatures`'s canonicalization sees
-        // imported types (e.g. `Tile` resolves to `Types.Tile` when
-        // `Types` is in `depends`).
+        // Phase B: track the entry module's prefix (see `check`).
+        self.current_module_prefix = Self::module_decl(items).map(|m| m.name.clone());
+        // Dependency aliases come in before local signatures so
+        // `build_signatures`'s resolution sees imported types
+        // (e.g. `Tile` resolves to `Types.Tile` when `Types` is in
+        // `depends`).
         self.integrate_loaded_modules(loaded);
         self.build_signatures(items);
         self.check_loaded_module_bodies(loaded);
@@ -78,22 +80,27 @@ impl TypeChecker {
     /// surfaces alongside any error in `main.av`.
     fn check_loaded_module_bodies(&mut self, modules: &[crate::source::LoadedModule]) {
         for (idx, module) in modules.iter().enumerate() {
-            let mut sub = TypeChecker::new();
-            // Propagate self-host opaque bypass into the dep module sub-
-            // checker. `domain/builtins.av` round-trips `Tcp.Connection`
-            // through the replay `Val` shape; without this, the sub-checker
-            // re-enforces opacity even when the parent compile was kicked
-            // off with `--with-self-host-support`.
+            // Phase B: clone the parent's `SymbolTable` into the sub-
+            // checker so every module shares the same opaque
+            // identity space. The dep module's own declarations are
+            // already registered in the table (the parent built it
+            // from `entry_items + dep_modules`).
+            let mut sub = TypeChecker::new_with_symbols(self.symbol_table.clone());
             sub.self_host_mode = self.self_host_mode;
-            // Iron — A3: pull in dependency aliases BEFORE building
-            // local signatures. build_signatures canonicalizes every
-            // type annotation by walking `sig_aliases`; without the
-            // imported types in there first, a bare reference like
-            // `Tile` (imported from `Types`) stays as
-            // `Type::Named("Tile")` instead of being rewritten to
-            // `Type::Named("Types.Tile")`, and the strict matcher
-            // then rejects the call site that passes the canonical
-            // form.
+            // Phase B: the dep module's prefix in the symbol table is
+            // its `dep_name` (the path the entry's `depends` clause
+            // wrote, e.g. `Pricing.Discount`), not the interior
+            // `module X` declaration inside the file. Use the
+            // `dep_name` so `resolve_fn_id` finds `mkDiscount` ->
+            // `FnKey::in_module(dep_name, "mkDiscount")` for own-module
+            // bodies in the sub-checker.
+            sub.current_module_prefix = Some(module.dep_name.clone());
+            // Pull in dependency aliases BEFORE building local
+            // signatures. `build_signatures` canonicalises every
+            // type annotation through the symbol table; without the
+            // imported types in the alias map first, a bare
+            // reference like `Tile` (imported from `Types`) wouldn't
+            // resolve.
             let others: Vec<_> = modules
                 .iter()
                 .enumerate()
@@ -141,7 +148,7 @@ impl TypeChecker {
             | Type::Invalid
             | Type::Var(_) => false,
             Type::Result(_, _) | Type::Option(_) => false,
-            Type::Named(name) => {
+            Type::Named { name, .. } => {
                 // Prevent infinite recursion for cyclic type defs
                 if !visiting.insert(name.clone()) {
                     return true;
@@ -168,12 +175,14 @@ impl TypeChecker {
             return true;
         }
 
-        // Check sum type variants: constructors are registered in fn_sigs
-        // as "TypeName.VariantName" with param types, or in value_members
-        // for zero-arg constructors.
+        // Check sum type variants: constructors are registered as
+        // "TypeName.VariantName" with param types, or in value_members
+        // for zero-arg constructors. Phase B: constructors live in
+        // `extra_sigs`, never in the FnId-keyed `fn_sigs`, but
+        // `all_fn_sigs` flattens both halves for the prefix scan.
         let prefix = format!("{}.", name);
         let mut found_variants = false;
-        for (key, sig) in &self.fn_sigs {
+        for (key, sig) in self.all_fn_sigs() {
             if key.starts_with(&prefix) && key.len() > prefix.len() {
                 found_variants = true;
                 for param in &sig.params {
@@ -206,7 +215,7 @@ impl TypeChecker {
                     TypeDef::Sum { name, .. } | TypeDef::Product { name, .. } => name,
                 };
                 let mut visiting = HashSet::new();
-                if self.is_memo_safe(&Type::Named(name.clone()), &mut visiting) {
+                if self.is_memo_safe(&Type::named(name.clone()), &mut visiting) {
                     safe.insert(name.clone());
                 }
             }

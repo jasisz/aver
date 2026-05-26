@@ -24,6 +24,52 @@
 //! Rust codegen multi-module module-fn lookups) will use the same
 //! types.
 
+// ---------------------------------------------------------------------------
+// Opaque IDs
+// ---------------------------------------------------------------------------
+//
+// These live here, not in `symbol_table`, so that `crate::ast::Type` can
+// carry a `TypeId` field without `ast` having to depend on `crate::ir`'s
+// AST-bearing modules. `identity` has no upward deps (only `std`), which
+// keeps the dependency layering clean: `ast` → `ir::identity` →
+// `ir::symbol_table` (consumes ast) → everything else.
+
+/// Opaque, stable identity for a function declaration. Indices are
+/// assigned by [`crate::ir::SymbolTable::build`] in deterministic order
+/// (modules in dep order, then entry; fns in source order within each
+/// scope). Two builds against the same input produce the same IDs.
+///
+/// `FnId` is `Copy` and 4 bytes wide — cheap to thread through
+/// resolved AST and IR nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct FnId(pub u32);
+
+/// Opaque, stable identity for a type declaration (record or sum).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct TypeId(pub u32);
+
+/// Opaque, stable identity for a constructor (a single variant of a
+/// sum type, or a single record's nominal constructor — record types
+/// still have exactly one "constructor" in the symbol table sense so
+/// pattern emit + value construction route through one shape).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct CtorId(pub u32);
+
+/// Opaque, stable identity for a module. `ModuleId(0)` is reserved
+/// for the entry scope (matching `FnKey::scope == None`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct ModuleId(pub u32);
+
+impl ModuleId {
+    /// The entry scope — top-level items not declared inside any dep
+    /// module. Always assigned `ModuleId(0)`.
+    pub const ENTRY: ModuleId = ModuleId(0);
+
+    pub fn is_entry(self) -> bool {
+        self == Self::ENTRY
+    }
+}
+
 /// Canonical identity for a user-defined function across the IR
 /// boundary. `scope = None` is the entry file; `scope = Some(prefix)`
 /// names a dep module (`"ModuleA"`, `"Models.User"`, …). `name`

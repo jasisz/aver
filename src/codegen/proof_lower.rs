@@ -3026,7 +3026,7 @@ fn smart_ctor_matches(fd: &FnDef, type_name: &str) -> bool {
     let parsed = crate::types::parse_type_str(&fd.return_type);
     matches!(
         parsed,
-        crate::types::Type::Result(ok, _) if matches!(&*ok, crate::types::Type::Named(n) if n == type_name)
+        crate::types::Type::Result(ok, _) if matches!(&*ok, crate::types::Type::Named { name: n, .. } if n == type_name)
     )
 }
 

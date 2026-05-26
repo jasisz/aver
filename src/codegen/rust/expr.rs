@@ -1102,7 +1102,7 @@ fn attr_result_is_copy(obj: &Expr, field: &str, ctx: &CodegenContext, ectx: &Emi
         _ => None,
     };
     let record_name = match obj_type {
-        Some(Type::Named(name)) => name.as_str(),
+        Some(Type::Named { name, .. }) => name.as_str(),
         _ => return false,
     };
     // Find record definition and look up field type.
@@ -1751,11 +1751,13 @@ pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> H
     let Some((params, ret, _)) = sig else {
         return out;
     };
-    let Type::Named(ret_name) = ret else {
+    let Type::Named { name: ret_name, .. } = ret else {
         return out;
     };
     for (idx, param) in params.iter().enumerate() {
-        if let Type::Named(param_name) = param
+        if let Type::Named {
+            name: param_name, ..
+        } = param
             && param_name == ret_name
         {
             out.insert(idx);

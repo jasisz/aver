@@ -33,8 +33,16 @@ impl TypeChecker {
         // a later-in-source type with a bare `Type::Named`, and the
         // strict matcher would then reject otherwise-correct
         // programs.
-        let module_name = Self::module_decl(items)
-            .map(|m| m.name.clone())
+        // Phase B: prefer `current_module_prefix` (set by the
+        // sub-checker driver to the dep module's `dep_name`) so the
+        // canonical name aligns with the symbol table's `FnKey`. Fall
+        // back to the interior `module X` declaration only at entry
+        // scope where the symbol table doesn't use a module prefix
+        // for items at all (entry items live under `FnKey::entry`).
+        let module_name = self
+            .current_module_prefix
+            .clone()
+            .or_else(|| Self::module_decl(items).map(|m| m.name.clone()))
             .unwrap_or_default();
         for item in items {
             if let TopLevel::TypeDef(td) = item {
@@ -46,7 +54,7 @@ impl TypeChecker {
                 let mut params = Vec::new();
                 for (param_name, ty_str) in &f.params {
                     match parse_type_str_strict(ty_str) {
-                        Ok(ty) => params.push(ty),
+                        Ok(ty) => params.push(self.canonicalize_named(ty)),
                         Err(unknown) => {
                             self.error(format!(
                                 "Function '{}': unknown type '{}' for parameter '{}'",
@@ -57,7 +65,7 @@ impl TypeChecker {
                     }
                 }
                 let ret = match parse_type_str_strict(&f.return_type) {
-                    Ok(ty) => ty,
+                    Ok(ty) => self.canonicalize_named(ty),
                     Err(unknown) => {
                         self.error(format!(
                             "Function '{}': unknown return type '{}'",
@@ -68,7 +76,7 @@ impl TypeChecker {
                 };
                 let canonical = canonical_name(&module_name, &f.name);
                 // Iron — A2: refuse silent shadowing.
-                if self.fn_sigs.contains_key(&canonical) {
+                if self.fn_sig_contains_canonical(&canonical) {
                     self.error_at_line(
                         f.line,
                         format!("Function '{}' is already defined in this module", f.name),
@@ -79,25 +87,68 @@ impl TypeChecker {
                     ret,
                     effects: f.effects.iter().map(|e| e.node.clone()).collect(),
                 };
-                self.fn_sigs.insert(canonical.clone(), sig.clone());
-                if canonical != f.name {
-                    self.sig_aliases.insert(f.name.clone(), canonical);
-                    self.fn_sigs.insert(f.name.clone(), sig);
+                // Phase B: routing handled by `insert_fn_sig` — user
+                // fns land in the `FnId`-keyed `fn_sigs`.
+                self.insert_fn_sig(&canonical, sig);
+                // Bare alias so source-faithful references inside this
+                // module's own bodies (`foo()`) still resolve to its
+                // FnId when the canonical name carries the module
+                // prefix (`A.foo`).
+                if canonical != f.name
+                    && let Some(id) = self.resolve_fn_id(&canonical)
+                {
+                    self.bare_fn_aliases.insert(f.name.clone(), id);
                 }
             }
         }
     }
 
-    /// Iron — A3: rewrite every `Type::Named(bare)` reachable from
-    /// `ty` to `Type::Named(canonical)` when `bare` has a registered
-    /// alias. Leaves the structure intact otherwise — `Type::Var`,
-    /// primitives, `Type::List<Bare>` (recurse into inner), etc.
+    /// Build a `Type::Named` for `type_name` declared inside
+    /// `module_name`. Keeps the `name` field source-faithful (bare
+    /// `type_name`, matching pre-phase-B's stamping convention) and
+    /// populates `id` from the symbol table. Entry items declaring
+    /// `module X` live under `TypeKey::entry` in the symbol table,
+    /// so we probe entry scope as a fallback when the module-scoped
+    /// lookup misses.
+    pub(super) fn resolved_named_type(&self, type_name: &str, module_name: &str) -> Type {
+        let id = if module_name.is_empty() {
+            self.symbol_table
+                .type_id_of(&crate::ir::TypeKey::entry(type_name))
+        } else {
+            self.symbol_table
+                .type_id_of(&crate::ir::TypeKey::in_module(module_name, type_name))
+                .or_else(|| {
+                    self.symbol_table
+                        .type_id_of(&crate::ir::TypeKey::entry(type_name))
+                })
+        };
+        Type::Named {
+            id,
+            name: type_name.to_string(),
+        }
+    }
+
+    /// Phase B: rewrite every `Type::Named { id: None, name: bare }`
+    /// reachable from `ty` so that `id` and `name` reflect the
+    /// canonical form resolved through the symbol table. Leaves the
+    /// structure intact otherwise — `Type::Var`, primitives,
+    /// `Type::List<Bare>` (recurse into inner), etc.
     pub(super) fn canonicalize_named(&self, ty: Type) -> Type {
+        // Phase B: keep the `name` field source-faithful (matches
+        // pre-phase-B `Type::Named(bare)` behaviour — backend codegen
+        // that does string-equality lookups against its own type
+        // registry needs to keep seeing what the user wrote). The
+        // `id` field carries the typed identity; the matcher uses it
+        // when both sides have `Some` and falls back to source-name
+        // matching otherwise.
         match ty {
-            Type::Named(name) => {
-                let resolved = self.sig_aliases.get(&name).cloned().unwrap_or(name);
-                Type::Named(resolved)
-            }
+            Type::Named { id, name } => match self.resolve_type_id(&name) {
+                Some(resolved_id) => Type::Named {
+                    id: Some(resolved_id),
+                    name,
+                },
+                None => Type::Named { id, name },
+            },
             Type::List(inner) => Type::List(Box::new(self.canonicalize_named(*inner))),
             Type::Vector(inner) => Type::Vector(Box::new(self.canonicalize_named(*inner))),
             Type::Option(inner) => Type::Option(Box::new(self.canonicalize_named(*inner))),
@@ -147,7 +198,7 @@ impl TypeChecker {
                 // first decl but the symbol path used the second.
                 // Reject the duplicate at typecheck so the VM never
                 // sees the inconsistency.
-                if self.fn_sigs.contains_key(&canonical_type) {
+                if self.fn_sig_contains_canonical(&canonical_type) {
                     self.error_at_line(
                         *line,
                         format!("Type '{}' is already defined in this module", type_name),
@@ -185,47 +236,55 @@ impl TypeChecker {
                 if canonical_type != *type_name {
                     self.type_variants.insert(type_name.clone(), variant_names);
                 }
-                // Iron — A3: fn_sigs values stay source-faithful
-                // (`Type::Named(bare)`) so downstream discovery /
-                // codegen walkers see what the user wrote; the
-                // `sig_aliases` map carries bare → canonical for the
-                // matcher to resolve at comparison time.
+                // Phase B: type-as-callable goes through the unified
+                // `insert_fn_sig` router. User types land in `fn_sigs`
+                // keyed by `FnId` only if the type also names a
+                // function — they generally don't, so this falls
+                // through to `extra_sigs`. The bare-alias mirror that
+                // pre-phase-B `sig_aliases` carried is subsumed by
+                // `canonical_extra_key` doing the symbol-table type
+                // resolution on lookup.
                 let type_sig = FnSig {
                     params: vec![],
-                    ret: Type::Named(type_name.clone()),
+                    ret: self.resolved_named_type(type_name, module_name),
                     effects: vec![],
                 };
-                self.fn_sigs
-                    .insert(canonical_type.clone(), type_sig.clone());
-                if canonical_type != *type_name {
-                    self.sig_aliases
-                        .insert(type_name.clone(), canonical_type.clone());
-                    self.fn_sigs.insert(type_name.clone(), type_sig);
+                self.insert_fn_sig(&canonical_type, type_sig);
+                // Bare alias for the type name so bodies inside the
+                // same module can reference `Shape` and have it
+                // resolve to its TypeId.
+                if canonical_type != *type_name
+                    && let Some(id) = self.resolve_type_id(&canonical_type)
+                {
+                    self.bare_type_aliases.insert(type_name.clone(), id);
                 }
                 // Register each constructor with a qualified key.
                 for variant in variants {
                     let params: Vec<Type> = variant
                         .fields
                         .iter()
-                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Invalid))
+                        .map(|f| {
+                            self.canonicalize_named(
+                                parse_type_str_strict(f).unwrap_or(Type::Invalid),
+                            )
+                        })
                         .collect();
                     let alias_key = crate::visibility::member_key(type_name, &variant.name);
                     let canonical_key = canonical_name(module_name, &alias_key);
                     if params.is_empty() {
-                        self.value_members
-                            .insert(canonical_key.clone(), Type::Named(type_name.clone()));
-                    } else {
-                        self.fn_sigs.insert(
+                        self.value_members.insert(
                             canonical_key.clone(),
+                            self.resolved_named_type(type_name, module_name),
+                        );
+                    } else {
+                        self.insert_fn_sig(
+                            &canonical_key,
                             FnSig {
                                 params,
-                                ret: Type::Named(type_name.clone()),
+                                ret: self.resolved_named_type(type_name, module_name),
                                 effects: vec![],
                             },
                         );
-                    }
-                    if canonical_key != alias_key {
-                        self.sig_aliases.insert(alias_key, canonical_key);
                     }
                 }
             }
@@ -240,7 +299,7 @@ impl TypeChecker {
                 // overwrite the first via `HashMap::insert` and leave
                 // downstream consumers (codegen, VM compiler, refinement
                 // detector) reading whichever copy won the race.
-                if self.fn_sigs.contains_key(&canonical_type) {
+                if self.fn_sig_contains_canonical(&canonical_type) {
                     self.error_at_line(
                         *line,
                         format!("Type '{}' is already defined in this module", type_name),
@@ -263,35 +322,37 @@ impl TypeChecker {
                         );
                     }
                 }
-                // Record constructors are handled via Expr::RecordCreate
-                // — fn_sigs entry exists so `Ident("TypeName")` resolves
-                // to `Type::Named(bare)` (Iron — A3: source-faithful).
+                // Record constructors flow through `Expr::RecordCreate`.
+                // The fn_sigs-like entry lets `Ident("TypeName")` resolve
+                // to a `Type::Named`-shaped callable for diagnostic use.
                 let params: Vec<Type> = fields
                     .iter()
-                    .map(|(_, ty_str)| parse_type_str_strict(ty_str).unwrap_or(Type::Invalid))
+                    .map(|(_, ty_str)| {
+                        self.canonicalize_named(
+                            parse_type_str_strict(ty_str).unwrap_or(Type::Invalid),
+                        )
+                    })
                     .collect();
                 let prod_sig = FnSig {
                     params,
-                    ret: Type::Named(type_name.clone()),
+                    ret: self.resolved_named_type(type_name, module_name),
                     effects: vec![],
                 };
-                self.fn_sigs
-                    .insert(canonical_type.clone(), prod_sig.clone());
-                if canonical_type != *type_name {
-                    self.sig_aliases
-                        .insert(type_name.clone(), canonical_type.clone());
-                    self.fn_sigs.insert(type_name.clone(), prod_sig);
+                self.insert_fn_sig(&canonical_type, prod_sig);
+                if canonical_type != *type_name
+                    && let Some(id) = self.resolve_type_id(&canonical_type)
+                {
+                    self.bare_type_aliases.insert(type_name.clone(), id);
                 }
                 // Register per-field types so dot-access is checked.
-                // Iron — A5: single entry under the canonical
-                // `(Module.Type, field)` key. Bare-name lookups
-                // canonicalise via `sig_aliases`; no more mirror
-                // entry under `(Type, field)`. The bare→canonical
-                // alias is still recorded so other code paths
-                // (`find_value_member`, `find_fn_sig`) can resolve
-                // bare references.
+                // Phase B: single entry under canonical `(Module.Type,
+                // field)` — the bare-alias mirror that pre-phase-B
+                // `sig_aliases` carried is subsumed by
+                // `canonical_type_name` resolving through the symbol
+                // table on lookup.
                 for (field_name, ty_str) in fields {
-                    let field_ty = parse_type_str_strict(ty_str).unwrap_or(Type::Invalid);
+                    let field_ty = self
+                        .canonicalize_named(parse_type_str_strict(ty_str).unwrap_or(Type::Invalid));
                     let canonical_type = if module_name != type_name {
                         canonical_name(module_name, type_name)
                     } else {
@@ -299,12 +360,6 @@ impl TypeChecker {
                     };
                     self.record_field_types
                         .insert(RecordFieldKey::new(&canonical_type, field_name), field_ty);
-                    if canonical_type != *type_name {
-                        let alias_key = crate::visibility::member_key(type_name, field_name);
-                        let canonical_key =
-                            crate::visibility::member_key(&canonical_type, field_name);
-                        self.sig_aliases.insert(alias_key, canonical_key);
-                    }
                 }
             }
         }
@@ -339,53 +394,70 @@ impl TypeChecker {
 
     pub(super) fn has_namespace_prefix(&self, key: &str) -> bool {
         let prefix = format!("{}.", key);
-        self.fn_sigs.keys().any(|k| k.starts_with(&prefix))
+        self.all_fn_sigs().any(|(k, _)| k.starts_with(&prefix))
             || self.value_members.keys().any(|k| k.starts_with(&prefix))
     }
 
-    /// Populate checker maps from the shared SymbolRegistry.
-    /// The registry is the canonical source — checker derives its maps from it.
+    /// Populate checker maps from the shared SymbolRegistry. The
+    /// registry is the canonical source — checker derives its maps
+    /// from it.
+    ///
+    /// Phase B: registry entries are stored under their canonical
+    /// name (`"Module.Type"`, `"Module.fn"`, `"Module.Type.field"`).
+    /// The bare → canonical alias map that pre-phase-B code
+    /// maintained (`sig_aliases`) is gone; instead, lookups
+    /// canonicalise through the `SymbolTable` (`resolve_type_id` /
+    /// `resolve_fn_id`) at read time. Per-fn / per-type duplicate
+    /// mirror entries are gone too — `insert_fn_sig` routes user fns
+    /// into `fn_sigs` (FnId-keyed) and leaves builtins/constructors
+    /// in `extra_sigs` (string-keyed).
     pub(super) fn integrate_registry(
         &mut self,
         registry: &crate::visibility::SymbolRegistry,
     ) -> Result<(), String> {
         use crate::visibility::SymbolKind;
 
-        // Iron — A3: aliases first. `canonicalize_named` walks
-        // `sig_aliases` to rewrite bare references in fn/variant
-        // type annotations, and entries come from the registry in
-        // (function, type, constructor) order — without this pre-
-        // pass, a function whose param type names a type defined
-        // later in the same module's entry list would canonicalize
-        // to the bare name and the strict matcher would then reject
-        // any call site that uses the canonical form.
+        // First pass: populate the bare → typed-id alias maps from
+        // every entry that carries a visibility-exposed alias. Phase B
+        // moves bare-name resolution off `sig_aliases` (string→string)
+        // and onto these typed bridges. Done up front so the second
+        // pass — which calls `insert_fn_sig` and `resolved_named_type`
+        // — can already resolve type references via the aliases.
         for entry in &registry.entries {
-            if let Some(alias) = &entry.alias
-                && matches!(
-                    entry.kind,
-                    SymbolKind::OpaqueType { .. }
-                        | SymbolKind::SumType { .. }
-                        | SymbolKind::ProductType { .. }
-                )
-            {
-                self.sig_aliases
-                    .insert(alias.clone(), entry.canonical_name.clone());
+            let Some(alias) = entry.alias.as_deref() else {
+                continue;
+            };
+            match &entry.kind {
+                SymbolKind::Function { name: fn_name, .. } => {
+                    if let Some(id) = self
+                        .symbol_table
+                        .fn_id_of(&FnKey::in_module(entry.module.clone(), fn_name.clone()))
+                    {
+                        self.bare_fn_aliases.insert(alias.to_string(), id);
+                    }
+                }
+                SymbolKind::OpaqueType { name }
+                | SymbolKind::SumType { name, .. }
+                | SymbolKind::ProductType { name, .. } => {
+                    if let Some(id) = self
+                        .symbol_table
+                        .type_id_of(&TypeKey::in_module(entry.module.clone(), name.clone()))
+                    {
+                        self.bare_type_aliases.insert(alias.to_string(), id);
+                    }
+                }
+                SymbolKind::Constructor { .. } | SymbolKind::RecordField { .. } => {
+                    // Constructors / record fields aren't part of
+                    // SymbolTable's fn/type id space — they're keyed
+                    // by `CtorId` under their owning type. Their bare
+                    // aliases stay routed through the canonical
+                    // string keys in `extra_sigs` (handled by
+                    // `find_fn_sig` falling back on direct lookup).
+                }
             }
         }
 
         for entry in &registry.entries {
-            if let Some(alias) = &entry.alias
-                && !matches!(
-                    entry.kind,
-                    SymbolKind::OpaqueType { .. }
-                        | SymbolKind::SumType { .. }
-                        | SymbolKind::ProductType { .. }
-                )
-            {
-                self.sig_aliases
-                    .insert(alias.clone(), entry.canonical_name.clone());
-            }
-
             match &entry.kind {
                 SymbolKind::Function {
                     name: fn_name,
@@ -401,16 +473,18 @@ impl TypeChecker {
                                 entry.module, fn_name, unknown, param_name
                             )
                         })?;
-                        parsed_params.push(ty);
+                        parsed_params.push(self.canonicalize_named(ty));
                     }
-                    let ret = parse_type_str_strict(return_type).map_err(|unknown| {
-                        format!(
-                            "Module '{}', function '{}': unknown return type '{}'",
-                            entry.module, fn_name, unknown
-                        )
-                    })?;
-                    self.fn_sigs.insert(
-                        entry.canonical_name.clone(),
+                    let ret = self.canonicalize_named(parse_type_str_strict(return_type).map_err(
+                        |unknown| {
+                            format!(
+                                "Module '{}', function '{}': unknown return type '{}'",
+                                entry.module, fn_name, unknown
+                            )
+                        },
+                    )?);
+                    self.insert_fn_sig(
+                        &entry.canonical_name,
                         FnSig {
                             params: parsed_params,
                             ret,
@@ -419,15 +493,12 @@ impl TypeChecker {
                     );
                 }
                 SymbolKind::OpaqueType { name } => {
-                    // Iron — A3: fn_sigs values stay source-faithful
-                    // (bare `Type::Named(name)`); the bare alias is in
-                    // `sig_aliases` for matcher resolution.
                     let canonical = entry.canonical_name.clone();
-                    self.fn_sigs.insert(
-                        canonical.clone(),
+                    self.insert_fn_sig(
+                        &canonical,
                         FnSig {
                             params: vec![],
-                            ret: Type::Named(name.clone()),
+                            ret: self.resolved_named_type(name, &entry.module),
                             effects: vec![],
                         },
                     );
@@ -438,12 +509,11 @@ impl TypeChecker {
                     self.type_variants.insert(canonical, variants.clone());
                 }
                 SymbolKind::ProductType { name, .. } => {
-                    let canonical = entry.canonical_name.clone();
-                    self.fn_sigs.insert(
-                        canonical,
+                    self.insert_fn_sig(
+                        &entry.canonical_name,
                         FnSig {
                             params: vec![],
-                            ret: Type::Named(name.clone()),
+                            ret: self.resolved_named_type(name, &entry.module),
                             effects: vec![],
                         },
                     );
@@ -455,30 +525,32 @@ impl TypeChecker {
                 } => {
                     let params: Vec<Type> = field_types
                         .iter()
-                        .map(|f| parse_type_str_strict(f).unwrap_or(Type::Invalid))
+                        .map(|f| {
+                            self.canonicalize_named(
+                                parse_type_str_strict(f).unwrap_or(Type::Invalid),
+                            )
+                        })
                         .collect();
                     if params.is_empty() {
-                        self.value_members
-                            .insert(entry.canonical_name.clone(), Type::Named(type_name.clone()));
-                    } else {
-                        self.fn_sigs.insert(
+                        self.value_members.insert(
                             entry.canonical_name.clone(),
+                            self.resolved_named_type(type_name, &entry.module),
+                        );
+                    } else {
+                        self.insert_fn_sig(
+                            &entry.canonical_name,
                             FnSig {
                                 params,
-                                ret: Type::Named(type_name.clone()),
+                                ret: self.resolved_named_type(type_name, &entry.module),
                                 effects: vec![],
                             },
                         );
                     }
                 }
                 SymbolKind::RecordField { field_type, .. } => {
-                    let field_ty = parse_type_str_strict(field_type).unwrap_or(Type::Invalid);
-                    // Iron — A5: canonical_name is
-                    // "Module.Type.field"; split off the trailing
-                    // field name and keep the rest as the typed-key
-                    // `type_name`. Bare alias still goes into
-                    // `sig_aliases` so a source reference of `Type`
-                    // canonicalises to `Module.Type` at lookup.
+                    let field_ty = self.canonicalize_named(
+                        parse_type_str_strict(field_type).unwrap_or(Type::Invalid),
+                    );
                     let canonical = &entry.canonical_name;
                     if let Some((canonical_type, field_name)) = canonical.rsplit_once('.') {
                         self.record_field_types

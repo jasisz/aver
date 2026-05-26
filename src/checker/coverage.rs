@@ -214,7 +214,9 @@ pub fn collect_verify_coverage_warnings_in(
                 });
             }
 
-            if let Type::Named(type_name) = ret_ty
+            if let Type::Named {
+                name: type_name, ..
+            } = ret_ty
                 && let Some(constructors) = local_sum_type_constructors(items, &type_name)
             {
                 let mut covered = BTreeSet::new();
