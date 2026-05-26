@@ -428,14 +428,15 @@ pub(super) enum Commands {
         optimize: Option<WasmOptMode>,
         /// Print the IR after the named pipeline stage and exit before codegen.
         /// One of: `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`,
-        /// `last_use`, `analyze`, `escape`, `build_symbols`, `refinement_lower`,
-        /// `contract_lower`, `law_lower`. Use `--emit-ir-after=resolve` to see
-        /// the final IR that goes into codegen. Pass `parse` to see the AST as
-        /// the parser produced it, before any pass runs. For side-artifact
-        /// stages (`build_symbols` dumps the SymbolTable, `refinement_lower` /
-        /// `contract_lower` / `law_lower` dump the ProofIR sections each
-        /// populates) the dump shows the produced artifact, not the
-        /// (unchanged) items list.
+        /// `last_use`, `analyze`, `escape`, `build_symbols`, `name_resolve`,
+        /// `refinement_lower`, `contract_lower`, `law_lower`. Use
+        /// `--emit-ir-after=resolve` to see the final IR that goes into codegen.
+        /// Pass `parse` to see the AST as the parser produced it, before any
+        /// pass runs. For side-artifact stages (`build_symbols` dumps the
+        /// SymbolTable; `name_resolve` dumps the resolved HIR with FnId/CtorId/
+        /// TypeId markers; `refinement_lower` / `contract_lower` / `law_lower`
+        /// dump the ProofIR sections each populates) the dump shows the
+        /// produced artifact, not the (unchanged) items list.
         #[arg(long, value_name = "PASS")]
         emit_ir_after: Option<String>,
         /// Run the full pipeline and print a per-pass diagnostic report

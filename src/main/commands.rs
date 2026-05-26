@@ -3067,6 +3067,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
         "analyze" => Some(PipelineStage::Analyze),
         "escape" => Some(PipelineStage::Escape),
         "build_symbols" => Some(PipelineStage::BuildSymbols),
+        "name_resolve" => Some(PipelineStage::NameResolve),
         "refinement_lower" => Some(PipelineStage::RefinementLower),
         "contract_lower" => Some(PipelineStage::ContractLower),
         "law_lower" => Some(PipelineStage::LawLower),
@@ -3075,7 +3076,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, build_symbols, refinement_lower, contract_lower, law_lower",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower",
                     other
                 )
                 .red()
@@ -3149,6 +3150,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             run_refinement_lower,
             run_contract_lower,
             run_law_lower,
+            run_name_resolve: target == PipelineStage::NameResolve,
             dep_modules: &dep_modules,
             on_after_pass: Some(Box::new(|stage, items_after| {
                 if stage == target {
@@ -3197,6 +3199,29 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
             "{}",
             render_symbol_table_dump(&pipeline_result.symbol_table)
         );
+        return;
+    }
+
+    // `name_resolve` — render the resolved HIR (Phase E PR 5 of #147).
+    // The resolved AST lives in `pipeline_result.resolved_items`, not
+    // in the item slice, because the pass is a producer rather than
+    // an in-place rewrite. `dump_resolved_program` surfaces opaque
+    // `FnId` / `CtorId` / `TypeId` markers so the migration is
+    // visually verifiable from the CLI.
+    if target == PipelineStage::NameResolve {
+        match pipeline_result.resolved_items {
+            Some(items) => {
+                print!("{}", aver::ir::hir::dump_resolved_program(&items));
+            }
+            None => {
+                eprintln!(
+                    "{}",
+                    "stage 'name_resolve' did not run (likely skipped after typecheck errors)"
+                        .red(),
+                );
+                process::exit(1);
+            }
+        }
         return;
     }
 
