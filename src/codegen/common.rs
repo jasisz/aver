@@ -988,6 +988,33 @@ pub fn fn_contract_exists_for_fn(ctx: &CodegenContext, fd: &FnDef) -> bool {
     find_fn_contract_for_fn(ctx, fd).is_some()
 }
 
+/// Resolve `&FnDef` to the opaque [`crate::ir::FnId`] from the
+/// symbol table. Pointer-eq scope detection routes module-owned
+/// fns through their canonical `Module.fn` key. Returns `None`
+/// when there's no symbol table (legacy synthetic-ctx paths) or
+/// when the fn isn't registered (built-ins / synthesized variants
+/// the table excludes by design).
+pub fn fn_id_for_decl(ctx: &CodegenContext, fd: &FnDef) -> Option<crate::ir::FnId> {
+    let symbols = ctx.symbol_table.as_ref()?;
+    let fn_key = fn_key_for_decl(ctx, fd);
+    symbols.fn_id_of(&fn_key)
+}
+
+/// Resolve a dotted source-level name (`fn`, `Module.fn`) to the
+/// opaque `FnId`. Used by emit code that walks AST expressions
+/// (e.g. detecting calls to opaque-emitted fns inside a law body)
+/// — keeps the FnKey resolution in one place instead of letting
+/// each walker re-derive identity from bare strings.
+pub fn fn_id_for_dotted_name(ctx: &CodegenContext, dotted: &str) -> Option<crate::ir::FnId> {
+    let symbols = ctx.symbol_table.as_ref()?;
+    let key = if let Some((prefix, bare)) = dotted.rsplit_once('.') {
+        crate::ir::FnKey::in_module(prefix.to_string(), bare)
+    } else {
+        crate::ir::FnKey::entry(dotted)
+    };
+    symbols.fn_id_of(&key)
+}
+
 /// Canonical-key-aware resolver — returns `(canonical_key, decl)`
 /// so consumers thread one stable identifier through refinement
 /// lift / strip-wrappers / when-redundancy / backend emit instead

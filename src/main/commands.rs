@@ -3224,14 +3224,32 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: Option<&aver::ir::Symbo
     writeln!(out, "# ProofIR").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "## refined_types ({})", ir.refined_types.len()).unwrap();
-    let mut refined: Vec<_> = ir.refined_types.values().collect();
-    refined.sort_by(|a, b| a.name.cmp(&b.name));
-    for decl in refined {
+    // After phase E2 the map is keyed by opaque `TypeId`; render the
+    // canonical `Module.Name` form via the symbol table so two
+    // module-owned `Natural`s disambiguate in the dump. Without a
+    // symbol table (best-effort path), fall back to the bare
+    // `decl.name` — the dump is diagnostic, not load-bearing for
+    // any consumer.
+    let type_label = |type_id: aver::ir::TypeId| -> String {
+        symbols
+            .map(|s| s.type_entry(type_id).key.canonical())
+            .unwrap_or_else(|| format!("TypeId({:?})", type_id))
+    };
+    let mut refined: Vec<(aver::ir::TypeId, &aver::ir::proof_ir::RefinedTypeDecl)> = ir
+        .refined_types
+        .iter()
+        .map(|(id, decl)| (*id, decl))
+        .collect();
+    refined.sort_by_key(|(id, _)| type_label(*id));
+    for (type_id, decl) in refined {
         let witness = decl.witness.as_deref().unwrap_or("<none>");
         writeln!(
             out,
             "- {} : {{ {} : {} // <predicate> }} witness {}",
-            decl.name, decl.predicate_param, decl.carrier_type, witness,
+            type_label(type_id),
+            decl.predicate_param,
+            decl.carrier_type,
+            witness,
         )
         .unwrap();
         writeln!(

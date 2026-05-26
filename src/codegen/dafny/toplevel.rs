@@ -853,9 +853,9 @@ pub fn emit_law_samples(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     suffix: &str,
-    opaque_fns: &std::collections::HashSet<String>,
-    fuel_emitted: &std::collections::HashSet<String>,
-    native_emitted: &std::collections::HashSet<String>,
+    opaque_fns: &std::collections::HashSet<crate::ir::FnId>,
+    fuel_emitted: &std::collections::HashSet<crate::ir::FnId>,
+    native_emitted: &std::collections::HashSet<crate::ir::FnId>,
 ) -> Option<String> {
     if vb.cases.is_empty() {
         return None;
@@ -898,7 +898,9 @@ pub fn emit_law_samples(
     });
     let any_opaque = first_rewrite
         .as_ref()
-        .map(|(l, r)| law_refs_opaque_fn(l, opaque_fns) || law_refs_opaque_fn(r, opaque_fns))
+        .map(|(l, r)| {
+            law_refs_opaque_fn(l, ctx, opaque_fns) || law_refs_opaque_fn(r, ctx, opaque_fns)
+        })
         .unwrap_or(false);
     // Native-decreases mutual recursion is *not* opaque (Dafny can
     // unfold these on its own), but the universal `add_commutative
@@ -909,7 +911,7 @@ pub fn emit_law_samples(
     let any_native_mutual = first_rewrite
         .as_ref()
         .map(|(l, r)| {
-            law_refs_opaque_fn(l, native_emitted) || law_refs_opaque_fn(r, native_emitted)
+            law_refs_opaque_fn(l, ctx, native_emitted) || law_refs_opaque_fn(r, ctx, native_emitted)
         })
         .unwrap_or(false);
     let needs_bounded_form = any_opaque || any_native_mutual;
@@ -1041,7 +1043,9 @@ pub fn emit_law_samples(
                     continue;
                 }
                 fuel_targets.push(aver_name_to_dafny(f));
-                if fuel_emitted.contains(f) {
+                if crate::codegen::common::fn_id_for_dotted_name(ctx, f)
+                    .is_some_and(|id| fuel_emitted.contains(&id))
+                {
                     fuel_targets.push(crate::codegen::recursion::fuel_helper_name(f));
                 }
             }
@@ -1063,7 +1067,10 @@ pub fn emit_law_samples(
             // bounded-∀ universal even if this pair isn't a real
             // proof.
             let bindings = vb.case_givens.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-            let all_native = callees.iter().all(|f| !fuel_emitted.contains(f));
+            let all_native = callees.iter().all(|f| {
+                !crate::codegen::common::fn_id_for_dotted_name(ctx, f)
+                    .is_some_and(|id| fuel_emitted.contains(&id))
+            });
             let body = if all_native || sample_within_closable_range(bindings) {
                 "{ }".to_string()
             } else {
@@ -1113,8 +1120,8 @@ use crate::codegen::common::{OracleInjectionMode, rewrite_effectful_calls_in_law
 /// opaque too.
 pub fn transitive_opaque_closure(
     ctx: &CodegenContext,
-    opaque: &std::collections::HashSet<String>,
-) -> std::collections::HashSet<String> {
+    opaque: &std::collections::HashSet<crate::ir::FnId>,
+) -> std::collections::HashSet<crate::ir::FnId> {
     let mut result = opaque.clone();
     let all_fns: Vec<&FnDef> = ctx
         .items
@@ -1132,13 +1139,20 @@ pub fn transitive_opaque_closure(
     while changed {
         changed = false;
         for fd in &all_fns {
-            if result.contains(&fd.name) {
+            let Some(fd_id) = crate::codegen::common::fn_id_for_decl(ctx, fd) else {
+                continue;
+            };
+            if result.contains(&fd_id) {
                 continue;
             }
             let mut callees = std::collections::BTreeSet::new();
             collect_called_fns_in_body(&fd.body, &mut callees);
-            if callees.iter().any(|c| result.contains(c)) {
-                result.insert(fd.name.clone());
+            let hits = callees.iter().any(|name| {
+                crate::codegen::common::fn_id_for_dotted_name(ctx, name)
+                    .is_some_and(|id| result.contains(&id))
+            });
+            if hits {
+                result.insert(fd_id);
                 changed = true;
             }
         }
@@ -1146,34 +1160,45 @@ pub fn transitive_opaque_closure(
     result
 }
 
-fn law_refs_opaque_fn(expr: &Spanned<Expr>, opaque: &std::collections::HashSet<String>) -> bool {
+fn law_refs_opaque_fn(
+    expr: &Spanned<Expr>,
+    ctx: &CodegenContext,
+    opaque: &std::collections::HashSet<crate::ir::FnId>,
+) -> bool {
     match &expr.node {
         Expr::FnCall(callee, args) => {
             let hits_callee = crate::codegen::common::expr_to_dotted_name(&callee.node)
-                .is_some_and(|n| opaque.contains(&n));
+                .and_then(|n| crate::codegen::common::fn_id_for_dotted_name(ctx, &n))
+                .is_some_and(|id| opaque.contains(&id));
             hits_callee
-                || law_refs_opaque_fn(callee, opaque)
-                || args.iter().any(|a| law_refs_opaque_fn(a, opaque))
+                || law_refs_opaque_fn(callee, ctx, opaque)
+                || args.iter().any(|a| law_refs_opaque_fn(a, ctx, opaque))
         }
-        Expr::BinOp(_, l, r) => law_refs_opaque_fn(l, opaque) || law_refs_opaque_fn(r, opaque),
+        Expr::BinOp(_, l, r) => {
+            law_refs_opaque_fn(l, ctx, opaque) || law_refs_opaque_fn(r, ctx, opaque)
+        }
         Expr::Match { subject, arms } => {
-            law_refs_opaque_fn(subject, opaque)
-                || arms.iter().any(|a| law_refs_opaque_fn(&a.body, opaque))
+            law_refs_opaque_fn(subject, ctx, opaque)
+                || arms
+                    .iter()
+                    .any(|a| law_refs_opaque_fn(&a.body, ctx, opaque))
         }
-        Expr::Attr(inner, _) | Expr::ErrorProp(inner) => law_refs_opaque_fn(inner, opaque),
-        Expr::Constructor(_, Some(inner)) => law_refs_opaque_fn(inner, opaque),
+        Expr::Attr(inner, _) | Expr::ErrorProp(inner) => law_refs_opaque_fn(inner, ctx, opaque),
+        Expr::Constructor(_, Some(inner)) => law_refs_opaque_fn(inner, ctx, opaque),
         Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(|i| law_refs_opaque_fn(i, opaque))
+            items.iter().any(|i| law_refs_opaque_fn(i, ctx, opaque))
         }
-        Expr::RecordCreate { fields, .. } => {
-            fields.iter().any(|(_, v)| law_refs_opaque_fn(v, opaque))
-        }
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, v)| law_refs_opaque_fn(v, ctx, opaque)),
         Expr::RecordUpdate { base, updates, .. } => {
-            law_refs_opaque_fn(base, opaque)
-                || updates.iter().any(|(_, v)| law_refs_opaque_fn(v, opaque))
+            law_refs_opaque_fn(base, ctx, opaque)
+                || updates
+                    .iter()
+                    .any(|(_, v)| law_refs_opaque_fn(v, ctx, opaque))
         }
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
-            StrPart::Parsed(inner) => law_refs_opaque_fn(inner, opaque),
+            StrPart::Parsed(inner) => law_refs_opaque_fn(inner, ctx, opaque),
             _ => false,
         }),
         _ => false,
@@ -1256,8 +1281,8 @@ pub fn emit_verify_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
     ctx: &CodegenContext,
-    opaque_fns: &std::collections::HashSet<String>,
-    native_emitted: &std::collections::HashSet<String>,
+    opaque_fns: &std::collections::HashSet<crate::ir::FnId>,
+    native_emitted: &std::collections::HashSet<crate::ir::FnId>,
     suffix: &str,
 ) -> String {
     let fn_name = aver_name_to_dafny(&vb.fn_name);
@@ -1525,16 +1550,16 @@ pub fn emit_verify_law(
     // the declared domain closed by `rcases` + `native_decide` per
     // case. Falls back to `assume {:axiom}` for open-domain opaque
     // (e.g. `given x: Int` without explicit values, oracle givens).
-    let is_opaque =
-        law_refs_opaque_fn(&law.lhs, opaque_fns) || law_refs_opaque_fn(&law.rhs, opaque_fns);
+    let is_opaque = law_refs_opaque_fn(&law.lhs, ctx, opaque_fns)
+        || law_refs_opaque_fn(&law.rhs, ctx, opaque_fns);
     // Native-decreases mutual recursion isn't opaque (Dafny unfolds
     // it), but the universal `add_commutative(a, b: int)` over
     // `int × int` still doesn't close as a true ∀ without a domain
     // restriction. Route through the bounded-∀ form the same way
     // opaque does — the case-split body composes per-pair sample
     // lemmas that Dafny *can* close from `{}` on the native path.
-    let is_native_mutual = law_refs_opaque_fn(&law.lhs, native_emitted)
-        || law_refs_opaque_fn(&law.rhs, native_emitted);
+    let is_native_mutual = law_refs_opaque_fn(&law.lhs, ctx, native_emitted)
+        || law_refs_opaque_fn(&law.rhs, ctx, native_emitted);
     let needs_bounded_form = is_opaque || is_native_mutual;
     let all_explicit_int = !law.givens.is_empty()
         && law.givens.iter().all(|g| {
