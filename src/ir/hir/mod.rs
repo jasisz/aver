@@ -79,7 +79,9 @@
 use crate::ast::{AnnotBool, BinOp, FnResolution, Literal, Module, Spanned, Type};
 use crate::ir::identity::{CtorId, FnId, TypeId};
 
+pub mod dump;
 pub mod resolve;
+pub use dump::{dump_resolved_expr, dump_resolved_program};
 pub use resolve::{ResolveCtx, resolve_program, resolve_top_level};
 
 /// Resolved expression — the mechanical mirror of [`crate::ast::Expr`].
