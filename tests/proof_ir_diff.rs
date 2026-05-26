@@ -85,6 +85,24 @@ fn fn_contract<'a>(
     ctx.proof_ir.fn_contracts.get(&id)
 }
 
+/// Find a `LawTheorem` by entry-scope fn name + law name. Mirror of
+/// `fn_contract` for the FnKey → FnId migration: tests resolve the
+/// fn identity through the symbol table, then match by opaque id.
+fn law_theorem<'a>(
+    ctx: &'a CodegenContext,
+    fn_name: &str,
+    law_name: &str,
+) -> Option<&'a aver::ir::proof_ir::LawTheorem> {
+    let fn_id = ctx
+        .symbol_table
+        .as_ref()?
+        .fn_id_of(&aver::ir::FnKey::entry(fn_name))?;
+    ctx.proof_ir
+        .law_theorems
+        .iter()
+        .find(|t| t.fn_id == fn_id && t.law_name == law_name)
+}
+
 fn legacy_decision(ctx: &CodegenContext, type_name: &str) -> Option<LegacyDecl> {
     let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
     let info = refinement_info_for(type_name, &inputs)?;
@@ -778,11 +796,7 @@ fn law_lower_populates_theorems_from_verify_law_blocks() {
          \x20   add(a, b) => add(b, a)\n";
     let ctx = build_ctx(src);
 
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("add") && t.law_name == "commutative")
+    let theorem = law_theorem(&ctx, "add", "commutative")
         .expect("add::commutative law theorem missing from ProofIR");
 
     assert_eq!(theorem.quantifiers.len(), 2, "expected 2 quantifiers");
@@ -828,11 +842,7 @@ fn reflexive_law_pinned_when_lhs_equals_rhs() {
          \x20   given x: Int = -2..2\n\
          \x20   x => x\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("id") && t.law_name == "reflexive")
+    let theorem = law_theorem(&ctx, "id", "reflexive")
         .expect("id::reflexive law theorem missing from ProofIR");
     assert!(
         matches!(theorem.strategy, aver::ir::ProofStrategy::Reflexive),
@@ -857,12 +867,8 @@ fn wrapper_associative_pinned_on_three_int_givens_assoc_shape() {
          \x20   given c: Int = -1..1\n\
          \x20   add(add(a, b), c) => add(a, add(b, c))\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("add") && t.law_name == "associative")
-        .expect("add::associative law theorem missing");
+    let theorem =
+        law_theorem(&ctx, "add", "associative").expect("add::associative law theorem missing");
     assert!(
         matches!(
             theorem.strategy,
@@ -890,12 +896,8 @@ fn wrapper_identity_pinned_on_add_with_zero_rhs() {
          \x20   given a: Int = -3..3\n\
          \x20   add(a, 0) => a\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("add") && t.law_name == "identityZero")
-        .expect("add::identityZero law theorem missing");
+    let theorem =
+        law_theorem(&ctx, "add", "identityZero").expect("add::identityZero law theorem missing");
     assert!(
         matches!(
             theorem.strategy,
@@ -923,12 +925,8 @@ fn wrapper_sub_right_identity_pinned_on_sub_with_zero_rhs() {
          \x20   given a: Int = -3..3\n\
          \x20   sub(a, 0) => a\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("sub") && t.law_name == "rightIdentity")
-        .expect("sub::rightIdentity law theorem missing");
+    let theorem =
+        law_theorem(&ctx, "sub", "rightIdentity").expect("sub::rightIdentity law theorem missing");
     assert!(
         matches!(
             theorem.strategy,
@@ -957,11 +955,7 @@ fn wrapper_sub_anti_commutative_pinned_with_neg_direction() {
          \x20   given b: Int = -2..2\n\
          \x20   sub(a, b) => -sub(b, a)\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("sub") && t.law_name == "antiCommutative")
+    let theorem = law_theorem(&ctx, "sub", "antiCommutative")
         .expect("sub::antiCommutative law theorem missing");
     assert!(
         matches!(
@@ -996,11 +990,7 @@ fn wrapper_unary_equivalence_pinned_with_inner_fn_name() {
          \x20   given a: Int = -2..2\n\
          \x20   addOne(a) => add(a, 1)\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("addOne") && t.law_name == "identityViaAdd")
+    let theorem = law_theorem(&ctx, "addOne", "identityViaAdd")
         .expect("addOne::identityViaAdd law theorem missing");
     let aver::ir::ProofStrategy::UnaryEqualsBinary { ref inner_fn } = theorem.strategy else {
         panic!("expected UnaryEqualsBinary, got: {:?}", theorem.strategy);
@@ -1026,11 +1016,7 @@ fn simp_omega_unfold_pinned_on_sub_anti_comm_via_zero() {
          \x20   given b: Int = -2..2\n\
          \x20   sub(a, b) => 0 - sub(b, a)\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("sub") && t.law_name == "antiCommutative")
+    let theorem = law_theorem(&ctx, "sub", "antiCommutative")
         .expect("sub::antiCommutative law theorem missing");
     let aver::ir::ProofStrategy::LinearArithmetic {
         ref unfold_fns,
@@ -1077,12 +1063,8 @@ fn linear_arithmetic_pinned_with_lifted_for_refinement_law() {
          \x20   when b >= 0\n\
          \x20   add(Natural(value = a), Natural(value = b)) => add(Natural(value = b), Natural(value = a))\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("add") && t.law_name == "commutative")
-        .expect("add::commutative law theorem missing");
+    let theorem =
+        law_theorem(&ctx, "add", "commutative").expect("add::commutative law theorem missing");
     let aver::ir::ProofStrategy::LinearArithmetic {
         wrapper_return,
         lifted,
@@ -1119,12 +1101,7 @@ fn induction_pinned_on_recursive_adt_given() {
          \x20   given t: Tree = [Tree.Leaf]\n\
          \x20   id(t) => t\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("id") && t.law_name == "identity")
-        .expect("id::identity law theorem missing");
+    let theorem = law_theorem(&ctx, "id", "identity").expect("id::identity law theorem missing");
     let aver::ir::ProofStrategy::Induction { ref param } = theorem.strategy else {
         panic!(
             "expected Induction {{ param }}, got: {:?}",
@@ -1151,12 +1128,8 @@ fn library_axiom_pinned_on_map_has_set_self() {
          \x20   given v: Int = [1]\n\
          \x20   Map.has(Map.set(m, k, v), k) => true\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("touch") && t.law_name == "hasAfterSet")
-        .expect("touch::hasAfterSet law theorem missing");
+    let theorem =
+        law_theorem(&ctx, "touch", "hasAfterSet").expect("touch::hasAfterSet law theorem missing");
     let aver::ir::ProofStrategy::LibraryAxiom {
         ref axiom,
         ref args,
@@ -1188,11 +1161,7 @@ fn map_update_postcondition_pinned_has_after() {
          \x20   given word: String = [\"a\"]\n\
          \x20   Map.has(incCount(counts, word), word) => true\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("incCount") && t.law_name == "keyPresent")
+    let theorem = law_theorem(&ctx, "incCount", "keyPresent")
         .expect("incCount::keyPresent law theorem missing");
     let aver::ir::ProofStrategy::MapUpdatePostcondition {
         ref outer_fn,
@@ -1235,13 +1204,7 @@ fn map_update_postcondition_pinned_get_after_with_helper_unfolds() {
          \x20   given counts: Map<String, Int> = [{\"a\" => 1}]\n\
          \x20   Map.get(incCount(counts, \"a\"), \"a\") => Option.Some(addOne(Option.withDefault(Map.get(counts, \"a\"), 0)))\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| {
-            t.fn_key == aver::ir::FnKey::entry("incCount") && t.law_name == "existingKeyIncrements"
-        })
+    let theorem = law_theorem(&ctx, "incCount", "existingKeyIncrements")
         .expect("incCount::existingKeyIncrements law theorem missing");
     let aver::ir::ProofStrategy::MapUpdatePostcondition {
         ref outer_fn,
@@ -1285,13 +1248,7 @@ fn map_key_tracked_increment_pinned_on_defaulted_get_plus_one() {
          \x20   given word: String = [\"a\"]\n\
          \x20   Option.withDefault(Map.get(incCount(counts, word), word), 0) => Option.withDefault(Map.get(counts, word), 0) + 1\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| {
-            t.fn_key == aver::ir::FnKey::entry("incCount") && t.law_name == "trackedCountStepsByOne"
-        })
+    let theorem = law_theorem(&ctx, "incCount", "trackedCountStepsByOne")
         .expect("incCount::trackedCountStepsByOne law theorem missing");
     let aver::ir::ProofStrategy::MapKeyTrackedIncrement { ref outer_fn, .. } = theorem.strategy
     else {
@@ -1325,12 +1282,8 @@ fn spec_equivalence_pinned_on_identical_body_impl_spec_pair() {
          \x20   given x: Int = [0]\n\
          \x20   absVal(x) => absValSpec(x)\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("absVal") && t.law_name == "absValSpec")
-        .expect("absVal::absValSpec law theorem missing");
+    let theorem =
+        law_theorem(&ctx, "absVal", "absValSpec").expect("absVal::absValSpec law theorem missing");
     let aver::ir::ProofStrategy::SpecEquivalence { ref extra_unfolds } = theorem.strategy else {
         panic!("expected SpecEquivalence, got: {:?}", theorem.strategy);
     };
@@ -1367,11 +1320,7 @@ fn effectful_spec_equivalence_pinned_post_oracle_lift() {
          \x20   given rnd: Random.int = [counterStub]\n\
          \x20   pickPair() => pairSpec(BranchPath.Root, rnd)\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("pickPair") && t.law_name == "branchPathLaw")
+    let theorem = law_theorem(&ctx, "pickPair", "branchPathLaw")
         .expect("pickPair::branchPathLaw law theorem missing");
     let aver::ir::ProofStrategy::EffectfulSpecEquivalence {
         ref impl_fn,
@@ -1407,12 +1356,8 @@ fn simp_normalized_spec_equivalence_pinned_on_arithmetic_identity_gap() {
          \x20   given x: Int = [0]\n\
          \x20   square(x) => squareSpec(x)\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("square") && t.law_name == "squareSpec")
-        .expect("square::squareSpec law theorem missing");
+    let theorem =
+        law_theorem(&ctx, "square", "squareSpec").expect("square::squareSpec law theorem missing");
     let aver::ir::ProofStrategy::SpecEquivalenceSimpNormalized { ref extra_unfolds } =
         theorem.strategy
     else {
@@ -1451,12 +1396,8 @@ fn linear_int_spec_equivalence_pinned_on_commutative_addition() {
          \x20   given n: Int = [0]\n\
          \x20   addOne(n) => addOneSpec(n)\n";
     let ctx = build_ctx(src);
-    let theorem = ctx
-        .proof_ir
-        .law_theorems
-        .iter()
-        .find(|t| t.fn_key == aver::ir::FnKey::entry("addOne") && t.law_name == "addOneSpec")
-        .expect("addOne::addOneSpec law theorem missing");
+    let theorem =
+        law_theorem(&ctx, "addOne", "addOneSpec").expect("addOne::addOneSpec law theorem missing");
     let aver::ir::ProofStrategy::LinearIntSpecEquivalence {
         ref unfolded_impl,
         ref unfolded_spec,

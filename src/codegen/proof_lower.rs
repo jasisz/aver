@@ -234,18 +234,25 @@ pub fn lower(inputs: &ProofLowerInputs) -> ProofIR {
 /// (Lean → Subtype, Dafny → subset type) render these directly.
 pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     // Walk entry items first, then dep modules. The map is keyed by
-    // *canonical* name: bare for entry types, `Module.Name` for
-    // module-owned types. Bare keying was insufficient — the
-    // typechecker explicitly permits two modules to expose
-    // distinct types of the same bare name (`A.Shape` vs
-    // `B.Shape`; see `tests/typechecker_spec::cross_module_same_named_
-    // types_do_not_merge`). If a project depends on two modules
-    // each declaring a refined `Natural` with different predicates,
-    // bare keying picked whichever one walked first and silently
-    // applied its predicate at every call site referring to the
-    // other. Canonical keying gives each declaration its own slot;
-    // [`find_refined_type`] does the lookup-side resolution from
-    // bare references back through `ctx.modules`.
+    // opaque `TypeId` resolved through the symbol table — same
+    // collision-safe shape as `fn_contracts: HashMap<FnId, _>`. The
+    // typechecker explicitly permits two modules to expose distinct
+    // types of the same bare name (`A.Shape` vs `B.Shape`; see
+    // `tests/typechecker_spec::cross_module_same_named_types_do_not_
+    // merge`); opaque IDs make their predicates impossible to merge
+    // by construction. Producer resolves `TypeKey -> TypeId` once
+    // here; consumers (`find_refined_type_scoped`) resolve through
+    // the same symbol table at lookup time.
+    //
+    // BuildSymbols auto-enables alongside RefinementLower in the
+    // pipeline, so reaching this point without `inputs.symbol_table`
+    // is a wiring bug. Synthetic-ctx callers (test helpers) must
+    // build the symbol table before invoking `lower` — `refresh_facts`
+    // and the lean/dafny test `populate_proof_ir` helpers already do.
+    let symbols = inputs
+        .symbol_table
+        .expect("populate_refined_types requires SymbolTable (run BuildSymbols first)");
+
     let entry_typedefs = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::TypeDef(td) => Some((None::<&str>, td)),
         _ => None,
@@ -263,15 +270,22 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         if fields.len() != 1 {
             continue;
         }
-        let canonical_key = match module_prefix {
+        let type_key = match module_prefix {
             Some(prefix) => crate::ir::TypeKey::in_module(prefix.to_string(), name),
             None => crate::ir::TypeKey::entry(name),
         };
+        let Some(canonical_key) = symbols.type_id_of(&type_key) else {
+            // Type isn't in the symbol table — built-ins (Result.Ok
+            // etc.) are excluded by construction; for user types
+            // this is a wiring bug surfaced via the symbol-table
+            // builder, so just skip.
+            continue;
+        };
         if ir.refined_types.contains_key(&canonical_key) {
-            // Same canonical key already populated — possible if a
-            // module is walked twice through dep aliasing. Skip so
-            // we don't overwrite a verified-witness entry with a
-            // predicate-eval fallback witness.
+            // Same TypeId already populated — possible if a module
+            // is walked twice through dep aliasing. Skip so we don't
+            // overwrite a verified-witness entry with a predicate-
+            // eval fallback witness.
             continue;
         }
         // Scope the smart-constructor lookup to the same module the
@@ -633,6 +647,10 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
     use crate::ast::{TopLevel, VerifyKind};
     use crate::ir::{LawTheorem, Predicate, Quantifier, QuantifierType};
 
+    let symbols = inputs
+        .symbol_table
+        .expect("populate_law_theorems requires SymbolTable (run BuildSymbols first)");
+
     let entry_verifies = inputs.entry_items.iter().filter_map(|item| match item {
         TopLevel::Verify(vb) => Some(vb),
         _ => None,
@@ -667,11 +685,18 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 
         let strategy = classify_law_strategy(law, &vb.fn_name, inputs, &ir.refined_types);
 
+        // Verify laws are entry-only per current model — see
+        // `LawTheorem.fn_id` doc. The bare `vb.fn_name` resolves
+        // through the symbol table to an entry-scope `FnId`; when
+        // the fn isn't in the symbol table (verify block targeting
+        // a fn that doesn't exist), skip the law silently — the
+        // typechecker / verify-driver surfaces the missing target
+        // elsewhere.
+        let Some(fn_id) = symbols.fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name)) else {
+            continue;
+        };
         ir.law_theorems.push(LawTheorem {
-            // Verify laws are entry-only per current model — see
-            // `LawTheorem.fn_key` doc. The bare `vb.fn_name` from
-            // the source AST becomes an entry-scope `FnKey`.
-            fn_key: crate::ir::FnKey::entry(vb.fn_name.clone()),
+            fn_id,
             law_name: law.name.clone(),
             quantifiers,
             premises,
@@ -704,7 +729,7 @@ fn classify_law_strategy(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
     inputs: &ProofLowerInputs,
-    refined_types: &std::collections::HashMap<crate::ir::TypeKey, crate::ir::RefinedTypeDecl>,
+    refined_types: &std::collections::HashMap<crate::ir::TypeId, crate::ir::RefinedTypeDecl>,
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
@@ -862,7 +887,7 @@ fn detect_simp_omega_unfold(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
     inputs: &ProofLowerInputs,
-    refined_types: &std::collections::HashMap<crate::ir::TypeKey, crate::ir::RefinedTypeDecl>,
+    refined_types: &std::collections::HashMap<crate::ir::TypeId, crate::ir::RefinedTypeDecl>,
 ) -> Option<SimpOmegaPlan> {
     use std::collections::BTreeSet;
 
@@ -877,12 +902,16 @@ fn detect_simp_omega_unfold(
     // Natural, b: Natural)`) and unfold through the smart
     // constructor to Int arithmetic. Skip the outer-Int rejection
     // for lifted laws.
+    let symbols = inputs
+        .symbol_table
+        .expect("detect_simp_omega_unfold requires SymbolTable");
     let lifted = law.givens.iter().any(|g| {
         refinement_lift_for_given_ir(
             &g.name,
             &law.lhs,
             &law.rhs,
             refined_types,
+            symbols,
             inputs.dep_modules,
         )
         .is_some()
@@ -987,19 +1016,35 @@ fn refinement_lift_for_given_ir(
     given_name: &str,
     lhs: &Spanned<crate::ast::Expr>,
     rhs: &Spanned<crate::ast::Expr>,
-    refined_types: &std::collections::HashMap<crate::ir::TypeKey, crate::ir::RefinedTypeDecl>,
+    refined_types: &std::collections::HashMap<crate::ir::TypeId, crate::ir::RefinedTypeDecl>,
+    symbols: &crate::ir::SymbolTable,
     dep_modules: &[crate::codegen::ModuleInfo],
 ) -> Option<String> {
     let mut result: Option<String> = None;
-    walk_for_refinement_carrier(lhs, given_name, refined_types, dep_modules, &mut result);
-    walk_for_refinement_carrier(rhs, given_name, refined_types, dep_modules, &mut result);
+    walk_for_refinement_carrier(
+        lhs,
+        given_name,
+        refined_types,
+        symbols,
+        dep_modules,
+        &mut result,
+    );
+    walk_for_refinement_carrier(
+        rhs,
+        given_name,
+        refined_types,
+        symbols,
+        dep_modules,
+        &mut result,
+    );
     result
 }
 
 fn walk_for_refinement_carrier(
     expr: &Spanned<crate::ast::Expr>,
     given_name: &str,
-    refined_types: &std::collections::HashMap<crate::ir::TypeKey, crate::ir::RefinedTypeDecl>,
+    refined_types: &std::collections::HashMap<crate::ir::TypeId, crate::ir::RefinedTypeDecl>,
+    symbols: &crate::ir::SymbolTable,
     dep_modules: &[crate::codegen::ModuleInfo],
     result: &mut Option<String>,
 ) {
@@ -1015,55 +1060,87 @@ fn walk_for_refinement_carrier(
                 Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == given_name
             );
             if matches_var
-                && let Some((canonical_key, _decl)) =
+                && let Some((type_id, _decl)) =
                     crate::codegen::common::resolve_refined_type_in_with_key(
                         refined_types,
+                        symbols,
                         dep_modules,
                         type_name,
                     )
             {
-                // Return the canonical key the IR populator stored
-                // the slot under (e.g. `AAA.Natural`), not
-                // `decl.name` which is bare per `RefinedTypeDecl`'s
-                // doc. Today the only consumer reads `.is_some()`
-                // (see `detect_simp_omega_unfold`), so this is a
-                // hygiene fix — but any future load-bearing use of
-                // the returned identifier inherits the same
-                // canonical guarantee `find_refined_type_with_key`
-                // gives the backend side.
-                *result = Some(canonical_key.canonical());
+                // Stringify the canonical name via the symbol table's
+                // type entry. The only consumer today reads `.is_some()`
+                // (see `detect_simp_omega_unfold`), but recovering a
+                // human-readable id keeps the diagnostic path honest.
+                *result = Some(symbols.type_entry(type_id).key.canonical());
                 return;
             }
             // Even non-matching RecordCreate may contain nested
             // refinement carriers (e.g. `Foo(value = Bar(value = a))`).
             for (_, v) in fields {
-                walk_for_refinement_carrier(v, given_name, refined_types, dep_modules, result);
+                walk_for_refinement_carrier(
+                    v,
+                    given_name,
+                    refined_types,
+                    symbols,
+                    dep_modules,
+                    result,
+                );
             }
         }
         Expr::FnCall(callee, args) => {
-            walk_for_refinement_carrier(callee, given_name, refined_types, dep_modules, result);
+            walk_for_refinement_carrier(
+                callee,
+                given_name,
+                refined_types,
+                symbols,
+                dep_modules,
+                result,
+            );
             for a in args {
-                walk_for_refinement_carrier(a, given_name, refined_types, dep_modules, result);
+                walk_for_refinement_carrier(
+                    a,
+                    given_name,
+                    refined_types,
+                    symbols,
+                    dep_modules,
+                    result,
+                );
             }
         }
         Expr::BinOp(_, l, r) => {
-            walk_for_refinement_carrier(l, given_name, refined_types, dep_modules, result);
-            walk_for_refinement_carrier(r, given_name, refined_types, dep_modules, result);
+            walk_for_refinement_carrier(l, given_name, refined_types, symbols, dep_modules, result);
+            walk_for_refinement_carrier(r, given_name, refined_types, symbols, dep_modules, result);
         }
         Expr::Match { subject, arms, .. } => {
-            walk_for_refinement_carrier(subject, given_name, refined_types, dep_modules, result);
+            walk_for_refinement_carrier(
+                subject,
+                given_name,
+                refined_types,
+                symbols,
+                dep_modules,
+                result,
+            );
             for arm in arms {
                 walk_for_refinement_carrier(
                     &arm.body,
                     given_name,
                     refined_types,
+                    symbols,
                     dep_modules,
                     result,
                 );
             }
         }
         Expr::Attr(obj, _) => {
-            walk_for_refinement_carrier(obj, given_name, refined_types, dep_modules, result);
+            walk_for_refinement_carrier(
+                obj,
+                given_name,
+                refined_types,
+                symbols,
+                dep_modules,
+                result,
+            );
         }
         _ => {}
     }

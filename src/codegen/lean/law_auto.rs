@@ -30,11 +30,14 @@ fn law_strategy_for(
     fn_name: &str,
     law_name: &str,
 ) -> Option<crate::ir::ProofStrategy> {
-    let key = crate::ir::FnKey::entry(fn_name);
+    let fn_id = ctx
+        .symbol_table
+        .as_ref()?
+        .fn_id_of(&crate::ir::FnKey::entry(fn_name))?;
     ctx.proof_ir
         .law_theorems
         .iter()
-        .find(|t| t.fn_key == key && t.law_name == law_name)
+        .find(|t| t.fn_id == fn_id && t.law_name == law_name)
         .map(|t| t.strategy.clone())
 }
 

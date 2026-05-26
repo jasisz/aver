@@ -43,12 +43,14 @@ pub use crate::ir::symbol_table::{CtorId, FnId, ModuleId, TypeId};
 /// untyped AST path, same as runtime backends (VM, Rust, WASM).
 #[derive(Debug, Clone, Default)]
 pub struct ProofIR {
-    /// Every refinement-lifted user type, keyed by [`TypeKey`].
-    /// Two modules with same-bare-name refined records (`A.Natural`
-    /// and `B.Natural`) get distinct keys so their predicates never
-    /// merge. Includes types declared in the entry items and in
-    /// dependent modules.
-    pub refined_types: HashMap<TypeKey, RefinedTypeDecl>,
+    /// Every refinement-lifted user type, keyed by opaque [`TypeId`]
+    /// from the symbol table. Same-bare-name refined records in two
+    /// modules (`A.Natural` vs `B.Natural`) get distinct IDs, so
+    /// their predicates never merge. Includes types declared in the
+    /// entry items and in dependent modules; name resolution happens
+    /// once in `populate_refined_types`, consumers look up directly
+    /// by id through `ctx.symbol_table`.
+    pub refined_types: HashMap<TypeId, RefinedTypeDecl>,
     /// Per-pure-fn contract describing what proof artifact the fn
     /// lowers to (native / fuel / structural / linear recurrence).
     /// Keyed by opaque [`FnId`] from the symbol table — name
@@ -296,13 +298,14 @@ pub enum DecreaseProof {
 /// already baked into the fields below; backends render directly.
 #[derive(Debug, Clone)]
 pub struct LawTheorem {
-    /// Round-7+: typed identity for the fn this law targets. Verify
-    /// laws are entry-only per the current model, so the key's
-    /// scope is effectively always `None` today — keying via
-    /// [`FnKey`] is the discipline marker, ready for laws in dep
-    /// modules once that feature lands. Callsites compare against
-    /// the typed key, not a bare string.
-    pub fn_key: FnKey,
+    /// Opaque identity of the fn this law targets, resolved through
+    /// `SymbolTable` at populate time (phase E3). Verify laws are
+    /// entry-only per the current model, so this is effectively
+    /// always an entry-scope `FnId` today; once laws-in-modules
+    /// lands the same `FnId` will distinguish two same-bare-name
+    /// recursive fns across modules without any per-callsite scope
+    /// plumbing.
+    pub fn_id: FnId,
     pub law_name: String,
     pub quantifiers: Vec<Quantifier>,
     /// Premises in order. Already includes `when` if it carries

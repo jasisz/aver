@@ -2158,6 +2158,23 @@ verify square law squareSpec
     #[test]
     fn transpile_auto_proves_reflexive_law_with_rfl() {
         let mut ctx = empty_ctx();
+        // After the phase-E3 migration LawTheorem.fn_id is resolved
+        // through the symbol table at populate time, so the law's
+        // target fn must exist as a FnDef in `ctx.items`. Pre-fix
+        // the verify block alone was enough (FnKey was constructed
+        // from the bare name without checking).
+        let id_law = FnDef {
+            name: "idLaw".to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(sb(Expr::Ident("x".to_string())))),
+            resolution: None,
+        };
+        ctx.fn_defs.push(id_law.clone());
+        ctx.items.push(TopLevel::FnDef(id_law));
         ctx.items.push(TopLevel::Verify(VerifyBlock {
             fn_name: "idLaw".to_string(),
             line: 1,
@@ -2609,6 +2626,21 @@ verify square law squareSpec
     #[test]
     fn transpile_auto_proves_direct_map_set_laws() {
         let mut ctx = empty_ctx();
+
+        // Stub FnDef for the verify target — see analogous note in
+        // `transpile_auto_proves_reflexive_law_with_rfl`.
+        let map_fn = FnDef {
+            name: "map".to_string(),
+            line: 1,
+            params: vec![],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(sb(Expr::Literal(Literal::Int(0))))),
+            resolution: None,
+        };
+        ctx.fn_defs.push(map_fn.clone());
+        ctx.items.push(TopLevel::FnDef(map_fn));
 
         let map_set = |m: Spanned<Expr>, k: Spanned<Expr>, v: Spanned<Expr>| {
             sb(Expr::FnCall(

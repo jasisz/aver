@@ -3169,7 +3169,10 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     // selected stage populated) instead of the (unchanged) items list.
     if proof_target {
         match pipeline_result.proof_ir {
-            Some(ir) => print!("{}", render_proof_ir_dump(&ir)),
+            Some(ir) => print!(
+                "{}",
+                render_proof_ir_dump(&ir, pipeline_result.symbol_table.as_ref())
+            ),
             None => {
                 eprintln!(
                     "{}",
@@ -3214,7 +3217,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
 /// exporter (Lean / Dafny) would consume. Useful for debugging
 /// "why did this fn get Fuel vs Native?", "what precondition did
 /// the lowerer derive?", "did this type lift to a subtype?".
-fn render_proof_ir_dump(ir: &aver::ir::ProofIR) -> String {
+fn render_proof_ir_dump(ir: &aver::ir::ProofIR, symbols: Option<&aver::ir::SymbolTable>) -> String {
     use aver::ir::{Measure, RecursionContract};
     use std::fmt::Write as _;
     let mut out = String::new();
@@ -3284,14 +3287,21 @@ fn render_proof_ir_dump(ir: &aver::ir::ProofIR) -> String {
     writeln!(out).unwrap();
     writeln!(out, "## law_theorems ({})", ir.law_theorems.len()).unwrap();
     let mut laws: Vec<_> = ir.law_theorems.iter().collect();
-    laws.sort_by(|a, b| {
-        (a.fn_key.canonical(), &a.law_name).cmp(&(b.fn_key.canonical(), &b.law_name))
-    });
+    // Render the fn identity through the symbol table so the dump
+    // stays human-readable after the FnKey → FnId migration. When
+    // there is no symbol table (best-effort path), fall back to
+    // the raw FnId for sort-stability.
+    let fn_label = |fn_id: aver::ir::FnId| -> String {
+        symbols
+            .map(|s| s.fn_entry(fn_id).key.canonical())
+            .unwrap_or_else(|| format!("FnId({:?})", fn_id))
+    };
+    laws.sort_by(|a, b| (fn_label(a.fn_id), &a.law_name).cmp(&(fn_label(b.fn_id), &b.law_name)));
     for theorem in laws {
         writeln!(
             out,
             "- {}::{} ({:?}, {} quantifier(s), {} premise(s))",
-            theorem.fn_key.canonical(),
+            fn_label(theorem.fn_id),
             theorem.law_name,
             theorem.strategy,
             theorem.quantifiers.len(),
