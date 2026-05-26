@@ -204,18 +204,32 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         checker.fn_sigs.iter().map(|(id, sig)| (*id, sig)).collect();
     ordered_user.sort_by_key(|(id, _)| id.0);
 
-    let mut bare_owners: HashMap<String, FnId> = HashMap::new();
-    let mut bare_ambiguous: HashSet<String> = HashSet::new();
+    // Tally bare-name owners. Phase B (peer review round 2): an
+    // entry-scope fn shadows any dep-module fn sharing the same bare
+    // name — source-level `doit()` inside `Main` unambiguously means
+    // `Main.doit`, even when a dep also exposes `doit`. We therefore
+    // suppress the bare alias only for dep-dep ambiguity (multiple
+    // dep modules share a bare name *and* the entry doesn't define
+    // one). When the entry owns the bare name, the bare alias points
+    // at the entry FnId; dep fns stay reachable only by qualified
+    // name.
+    let mut bare_entry_owner: HashMap<String, FnId> = HashMap::new();
+    let mut bare_dep_owners: HashMap<String, FnId> = HashMap::new();
+    let mut bare_dep_ambiguous: HashSet<String> = HashSet::new();
     for (id, _) in &ordered_user {
         let entry = checker.symbol_table.fn_entry(*id);
         let bare = entry.key.name.as_str();
-        match bare_owners.get(bare) {
+        if entry.module.is_entry() {
+            bare_entry_owner.insert(bare.to_string(), *id);
+            continue;
+        }
+        match bare_dep_owners.get(bare) {
             None => {
-                bare_owners.insert(bare.to_string(), *id);
+                bare_dep_owners.insert(bare.to_string(), *id);
             }
             Some(prior) if prior == id => {}
             Some(_) => {
-                bare_ambiguous.insert(bare.to_string());
+                bare_dep_ambiguous.insert(bare.to_string());
             }
         }
     }
@@ -232,10 +246,24 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         };
         let triple = (sig.params.clone(), sig.ret.clone(), sig.effects.clone());
         fn_sigs.insert(canonical.clone(), triple.clone());
-        // Bare alias only when there's no conflict between distinct
-        // modules' fns sharing the same bare name. The canonical key
-        // is always present so consumers can fall back to it.
-        if entry.key.name != canonical && !bare_ambiguous.contains(&entry.key.name) {
+        // Bare alias rules:
+        //  - entry-scope owner always wins (shadows any dep with the
+        //    same bare name);
+        //  - dep-scope fn gets the bare alias only when (a) the entry
+        //    doesn't own it and (b) no other dep module conflicts.
+        if entry.key.name == canonical {
+            continue;
+        }
+        let is_entry_owner = bare_entry_owner.get(&entry.key.name) == Some(id);
+        let mut emit_bare = false;
+        if entry.module.is_entry() {
+            emit_bare = is_entry_owner;
+        } else if !bare_entry_owner.contains_key(&entry.key.name)
+            && !bare_dep_ambiguous.contains(&entry.key.name)
+        {
+            emit_bare = true;
+        }
+        if emit_bare {
             fn_sigs.entry(entry.key.name.clone()).or_insert(triple);
         }
     }
@@ -570,6 +598,21 @@ impl TypeChecker {
         self.bare_fn_aliases
             .get(name)
             .and_then(Resolution::unambiguous)
+    }
+
+    /// `true` when the bare alias map has recorded multiple distinct
+    /// `TypeId`s for `name` (cross-module same-bare-name import).
+    /// Distinct from "name doesn't resolve at all" — used by the
+    /// matcher to decide whether a mixed (Some, None) typed/raw
+    /// comparison should fall back to name equality (only when the
+    /// `None` side is genuinely a builtin / external name, not when
+    /// it's ambiguous bare reference whose typed identity we
+    /// deliberately suppressed).
+    pub(crate) fn type_name_is_ambiguous(&self, name: &str) -> bool {
+        matches!(
+            self.bare_type_aliases.get(name),
+            Some(Resolution::Ambiguous)
+        )
     }
 
     /// Register a bare → `FnId` alias, marking it `Ambiguous` if a
@@ -943,9 +986,42 @@ impl TypeChecker {
                         .or_else(|| checker.and_then(|c| c.resolve_type_id(expected_name)));
                     let act_id =
                         actual_id.or_else(|| checker.and_then(|c| c.resolve_type_id(actual_name)));
+                    // Phase B (peer review round 2): the typed-identity
+                    // comparison must reject mixed (Some, None) cases
+                    // for user-defined types — otherwise an ambiguous
+                    // bare reference (`Shape` when both `A.Shape` and
+                    // `B.Shape` are exposed) silently matches against
+                    // any specific `A.Shape` / `B.Shape` via the
+                    // string fallback below. Distinguish "ambiguous
+                    // bare reference, identity deliberately
+                    // suppressed" from "builtin name that has no
+                    // typed identity by design (`HttpResponse`,
+                    // `Buffer`, …)" by asking the checker whether the
+                    // unresolved side's name is recorded as
+                    // ambiguous; reject in that case, allow name
+                    // fallback otherwise.
                     match (exp_id, act_id) {
                         (Some(e), Some(a)) => e == a,
-                        _ => {
+                        (Some(_), None) | (None, Some(_)) => {
+                            let unresolved = if exp_id.is_none() {
+                                expected_name
+                            } else {
+                                actual_name
+                            };
+                            if checker.is_some_and(|c| c.type_name_is_ambiguous(unresolved)) {
+                                return false;
+                            }
+                            // Builtin / external name: allow strict
+                            // name equality so two stamps of the same
+                            // builtin (`HttpResponse` vs
+                            // `HttpResponse`) still match. No suffix
+                            // fallback — that would let
+                            // `"A.Shape"` swallow a bare `"Shape"`
+                            // and re-introduce the cross-module
+                            // collapse.
+                            expected_name == actual_name
+                        }
+                        (None, None) => {
                             let exp = checker
                                 .map(|c| c.canonical_type_name(expected_name))
                                 .unwrap_or_else(|| expected_name.clone());

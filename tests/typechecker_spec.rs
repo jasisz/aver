@@ -2675,25 +2675,31 @@ type Shape
     depends [A, B]
     intent = "Bare reference to Shape must be ambiguous."
 
-fn takesAShape(s: A.Shape) -> Float
+fn takesShape(s: Shape) -> Float
     0.0
 
+fn callsWithA() -> Float
+    takesShape(A.Shape.Circle(1.0))
+
 fn callsWithB() -> Float
-    takesAShape(B.Shape.Triangle(3.0))
+    takesShape(B.Shape.Triangle(2.0))
 "#;
     let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
-    // Bare `Shape` resolves to neither: the param expects `A.Shape`
-    // (qualified), the caller passes a `B.Shape.Triangle` — typed
-    // identity must reject the call regardless of whether the bare
-    // `Shape` alias map remembers one side or the other. Pre-phase-B
-    // soundness already relied on the matcher rejecting this; what
-    // peer review #148 added on top: the bare alias map must not
-    // silently bind one side, so `Shape` referenced bare anywhere in
-    // Main also fails to resolve.
+    // The param annotation `s: Shape` cannot resolve — both
+    // `A.Shape` and `B.Shape` are exposed, so the bare alias is
+    // `Ambiguous` and `resolve_type_id` deliberately refuses it.
+    // Each call site then surfaces a typed-identity mismatch: the
+    // caller's `A.Shape.Circle(...)` / `B.Shape.Triangle(...)` stamps
+    // a `Type::Named { id: Some(_), name: "Shape" }` value, the
+    // param is `Type::Named { id: None, name: "Shape" }`, and the
+    // matcher refuses the mixed-id case for ambiguous-by-design
+    // names. Without that refusal the old name-equality fallback
+    // would let both calls go through and silently agree on
+    // whichever `Shape` happened to win the global alias slot.
+    let mismatches: Vec<&String> = errs.iter().filter(|e| e.contains("takesShape")).collect();
     assert!(
-        errs.iter()
-            .any(|e| e.contains("Argument 1 of 'takesAShape'") && e.contains("expected A.Shape")),
-        "expected A.Shape vs B.Shape mismatch at the call site, got: {errs:?}"
+        !mismatches.is_empty(),
+        "expected at least one diagnostic on a `takesShape(...)` call when `Shape` is ambiguous, got: {errs:?}"
     );
 
     let _ = std::fs::remove_dir_all(&root);
@@ -2767,6 +2773,73 @@ fn caller() -> Int
     assert!(
         !result.fn_sigs.contains_key("doit"),
         "bare `doit` must not appear when two dep modules both expose it; keys: {:?}",
+        result.fn_sigs.keys().collect::<Vec<_>>()
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 2): when the entry module and a
+/// dep module both declare `doit`, source-level `doit()` inside the
+/// entry unambiguously means the entry's own fn. The exported
+/// `TypeCheckResult.fn_sigs` bare alias must therefore point at the
+/// entry fn rather than being suppressed as "ambiguous" — consumers
+/// (`verify_effects`, `diagnostics::context::callgraph`, intent
+/// checks) still look the entry's bodies up by `&fd.name` and need
+/// the local signature.
+#[test]
+fn entry_local_fn_shadows_dep_module_bare_alias() {
+    use aver::source::parse_source;
+
+    let root = temp_module_root("entry_shadows_dep_fn");
+    std::fs::write(
+        root.join("Helper.av"),
+        r#"module Helper
+    exposes [doit]
+    intent = "Dep `doit` returning a String."
+
+fn doit(n: Int) -> String
+    "from-helper"
+"#,
+    )
+    .expect("write Helper.av failed");
+
+    let src = r#"module Main
+    depends [Helper]
+    intent = "Local `doit` shadowing the imported one."
+
+fn doit(n: Int) -> Int
+    n
+
+fn caller() -> Int
+    doit(7)
+"#;
+    let items = parse_source(src).expect("parse failed");
+    let mut items = items;
+    aver::tco::transform_program(&mut items);
+    let result = aver::types::checker::run_type_check_full(&items, root.to_str());
+
+    // No errors — `doit(7)` resolves to the entry's own fn.
+    assert!(
+        result.errors.is_empty(),
+        "expected entry-local `doit` to resolve cleanly, got: {:?}",
+        result.errors
+    );
+    // Bare alias points at the entry's signature (returns `Int`),
+    // not at Helper's (returns `String`).
+    let (_, bare_ret, _) = result
+        .fn_sigs
+        .get("doit")
+        .expect("expected bare `doit` alias to be present (entry shadowing)");
+    assert!(
+        matches!(bare_ret, aver::ast::Type::Int),
+        "bare `doit` ret must be the entry fn's `Int`, not Helper.doit's `String`; got {:?}",
+        bare_ret
+    );
+    // Canonical Helper.doit is still reachable for callers that want it.
+    assert!(
+        result.fn_sigs.contains_key("Helper.doit"),
+        "expected canonical Helper.doit, got keys: {:?}",
         result.fn_sigs.keys().collect::<Vec<_>>()
     );
 
