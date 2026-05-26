@@ -85,6 +85,11 @@ fn main() -> Int
             "escape",
             "last_use",
             "build_symbols",
+            // Phase E (#147): NameResolve runs unconditionally after
+            // BuildSymbols, mirroring how the symbol table itself is
+            // always built. Backends consume `resolved_items` in lieu
+            // of re-resolving `Expr` themselves.
+            "name_resolve",
             "refinement_lower",
             "contract_lower",
             "law_lower",
