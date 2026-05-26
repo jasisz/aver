@@ -6,6 +6,7 @@ mod buffer_build;
 mod calls;
 pub mod dump;
 pub mod escape;
+pub mod hir;
 pub mod identity;
 mod interp_lower;
 pub mod last_use;
