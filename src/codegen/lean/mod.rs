@@ -1515,6 +1515,11 @@ mod tests {
     /// IR-pinned law strategies rely on this being populated so the
     /// backend's IR-pin lookups can fire.
     fn populate_proof_ir(ctx: &mut CodegenContext) {
+        // Mirror the production order: BuildSymbols → proof_lower. The
+        // populate side asserts the symbol table is present (it's a
+        // hard prerequisite for FnId-keyed fn_contracts), so synthetic-
+        // ctx tests have to build it the same way `refresh_facts` does.
+        ctx.symbol_table = Some(crate::ir::SymbolTable::build(&ctx.items, &ctx.modules));
         let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
         ctx.proof_ir = crate::codegen::proof_lower::lower(&inputs);
     }

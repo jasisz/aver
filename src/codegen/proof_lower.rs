@@ -363,13 +363,17 @@ fn populate_fn_contracts_for_scope(
         }
     };
     // Round-7 phase E: contracts key by opaque `FnId` resolved
-    // once via the symbol table. When the table isn't wired up
-    // (legacy synthetic-IR test paths), skip populating contracts
-    // entirely — backends without a symbol table have no way to
-    // look them up anyway.
-    let Some(symbols) = inputs.symbol_table else {
-        return;
-    };
+    // once via the symbol table. The pipeline auto-enables
+    // BuildSymbols whenever ContractLower runs, so reaching this
+    // point without `inputs.symbol_table` is a wiring bug — callers
+    // who build a `ProofLowerInputs` by hand (synthetic-ctx tests)
+    // are responsible for setting `symbol_table` before calling
+    // populate. We panic instead of silently skipping so the
+    // wiring bug surfaces at the producer rather than as missing
+    // contracts in downstream emit output.
+    let symbols = inputs
+        .symbol_table
+        .expect("populate_fn_contracts requires SymbolTable (run BuildSymbols first)");
 
     for (fn_name, plan) in plans {
         let Some(fd) = scoped_fns.iter().find(|fd| fd.name == *fn_name) else {

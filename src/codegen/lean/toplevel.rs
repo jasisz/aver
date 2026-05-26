@@ -879,8 +879,8 @@ fn emit_fuelized_sizeof_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
 /// Read the rank component of a `Fuel { Lex { .., rank } }` contract.
 /// Returns `None` when the fn has no contract or the contract isn't
 /// a Lex shape (non-mutual variant or non-recursive).
-fn contract_lex_rank(ctx: &CodegenContext, fn_name: &str) -> Option<usize> {
-    contract_lex_params_rank(ctx, fn_name).map(|(_, rank)| rank)
+fn contract_lex_rank(ctx: &CodegenContext, fd: &FnDef) -> Option<usize> {
+    contract_lex_params_rank(ctx, fd).map(|(_, rank)| rank)
 }
 
 /// Read both the params Vec and rank of a `Fuel { Lex { params, rank } }`
@@ -892,9 +892,9 @@ fn contract_lex_rank(ctx: &CodegenContext, fn_name: &str) -> Option<usize> {
 /// - `MutualSizeOfRanked`: `params.is_empty()`
 fn contract_lex_params_rank<'a>(
     ctx: &'a CodegenContext,
-    fn_name: &str,
+    fd: &FnDef,
 ) -> Option<(&'a [String], usize)> {
-    let contract = crate::codegen::common::find_fn_contract(ctx, fn_name)?;
+    let contract = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)?;
     let crate::ir::RecursionContract::Fuel {
         fuel_metric: crate::ir::FuelMetric::Lex { params, rank },
     } = contract.recursion.as_ref()?
@@ -908,7 +908,7 @@ fn emit_fuelized_mutual_string_pos_group(fns: &[&FnDef], ctx: &CodegenContext) -
     let targets: HashSet<String> = fns.iter().map(|fd| fd.name.clone()).collect();
     let max_rank = fns
         .iter()
-        .filter_map(|fd| contract_lex_rank(ctx, &fd.name))
+        .filter_map(|fd| contract_lex_rank(ctx, fd))
         .max()
         .unwrap_or(1);
 
@@ -1059,7 +1059,7 @@ fn emit_native_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> Opti
         // MutualSizeOfRanked carries `params: vec![]` + rank>=1; any
         // other Lex shape (single-param mutual int-countdown, two-
         // param string-pos) fails this group's pre-conditions.
-        match contract_lex_params_rank(ctx, &fd.name) {
+        match contract_lex_params_rank(ctx, fd) {
             Some(([], rank)) => {
                 ranks.insert(fd.name.clone(), rank);
             }
@@ -1126,7 +1126,7 @@ fn emit_fuelized_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> St
         .collect();
     let rank_budget = fns
         .iter()
-        .filter_map(|fd| contract_lex_rank(ctx, &fd.name))
+        .filter_map(|fd| contract_lex_rank(ctx, fd))
         .max()
         .unwrap_or(1)
         + 1;
@@ -2300,7 +2300,7 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
     //   `[]` rank >=1 → MutualSizeOfRanked
     let all_int_countdown = fns.iter().all(|fd| {
         matches!(
-            contract_lex_params_rank(ctx, &fd.name),
+            contract_lex_params_rank(ctx, fd),
             Some((params, 0)) if params.len() == 1
         )
     });
@@ -2310,7 +2310,7 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
 
     let all_string_pos = fns.iter().all(|fd| {
         matches!(
-            contract_lex_params_rank(ctx, &fd.name),
+            contract_lex_params_rank(ctx, fd),
             Some((params, _)) if params.len() == 2
         )
     });
@@ -2320,7 +2320,7 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
 
     let all_sizeof = fns.iter().all(|fd| {
         matches!(
-            contract_lex_params_rank(ctx, &fd.name),
+            contract_lex_params_rank(ctx, fd),
             Some((params, _)) if params.is_empty()
         )
     });
@@ -2352,7 +2352,7 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
         for line in body.lines() {
             lines.push(format!("  {}", line));
         }
-        match contract_lex_params_rank(ctx, &fd.name) {
+        match contract_lex_params_rank(ctx, fd) {
             Some((params, 0)) if params.len() == 1 => {
                 // MutualIntCountdown — every member counts down the
                 // shared first-Int param. (The IR's param name is

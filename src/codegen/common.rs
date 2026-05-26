@@ -808,23 +808,17 @@ pub fn find_refined_type<'a>(
     find_refined_type_with_key_scoped(ctx, name, None).map(|(_, d)| d)
 }
 
-/// Round-5: `ir.fn_contracts` is now keyed by canonical name
-/// (`Module.fn` for module-owned fns, bare for entry). Callsites
-/// holding a bare fn name resolve to the right slot through this
-/// resolver.
-pub fn find_fn_contract<'a>(
-    ctx: &'a CodegenContext,
-    name: &str,
-) -> Option<&'a crate::ir::proof_ir::FnContract> {
-    find_fn_contract_scoped(ctx, name, None)
-}
-
-/// Scope-aware variant. `scope = Some(prefix)` directs bare-name
-/// lookups to that module's slot before falling back to entry /
-/// module-walk. Mirror of `find_refined_type_scoped` for fn
+/// Scope-aware fn-contract resolver. `scope = Some(prefix)` directs
+/// bare-name lookups to that module's slot before falling back to
+/// entry / module-walk. Mirror of `find_refined_type_scoped` for fn
 /// contracts — without it, two modules with same-bare-name
 /// recursive fns silently merge under whichever module-walk hit
 /// first.
+///
+/// Prefer `find_fn_contract_for_fn` whenever you have a `&FnDef` in
+/// hand: it resolves identity by pointer-eq against
+/// `ctx.modules[*].fn_defs` and avoids the bare-name footgun this
+/// scoped lookup still inherits from string-based call sites.
 pub fn find_fn_contract_scoped<'a>(
     ctx: &'a CodegenContext,
     name: &str,
@@ -869,13 +863,6 @@ pub fn find_fn_contract_scoped<'a>(
         }
     }
     None
-}
-
-/// Membership check counterpart of [`find_fn_contract`]. Used by
-/// the SCC routing in `transpile_unified` to decide whether a fn
-/// has a contract pinned without borrowing the decl.
-pub fn fn_contract_exists(ctx: &CodegenContext, name: &str) -> bool {
-    find_fn_contract(ctx, name).is_some()
 }
 
 /// Scoped membership check.

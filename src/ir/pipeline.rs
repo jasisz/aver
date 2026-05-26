@@ -530,7 +530,17 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
     // `FnKey`/`TypeKey` to `FnId`/`TypeId` once at the IR boundary
     // and key `ProofIR.fn_contracts` / `ProofIR.refined_types` /
     // `LawTheorem.fn_id` by the opaque IDs (#138 phase E).
-    if cfg.run_build_symbols {
+    //
+    // Proof stages have a hard dependency on the symbol table —
+    // since fn_contracts is keyed by `FnId`, populate cannot run
+    // without resolved identity. Auto-enable here so callers can't
+    // accidentally turn on `run_contract_lower` / `run_law_lower`
+    // without symbols and silently produce an empty proof IR.
+    let needs_symbols = cfg.run_build_symbols
+        || cfg.run_refinement_lower
+        || cfg.run_contract_lower
+        || cfg.run_law_lower;
+    if needs_symbols {
         let symbol_table = crate::ir::SymbolTable::build(items, cfg.dep_modules);
         result
             .pass_diagnostics

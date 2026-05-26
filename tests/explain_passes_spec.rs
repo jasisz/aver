@@ -84,6 +84,7 @@ fn main() -> Int
             "analyze",
             "escape",
             "last_use",
+            "build_symbols",
             "refinement_lower",
             "contract_lower",
             "law_lower",
