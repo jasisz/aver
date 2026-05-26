@@ -111,22 +111,25 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         crate::call_graph::ordered_fn_components(&mutual_fns_all, &ctx.module_prefixes);
 
     let mut fuel_per_scope: HashMap<String, Vec<String>> = HashMap::new();
-    // Round-7 follow-up: these three sets still key by bare fn name.
-    // Verify laws are entry-only per current model, so cross-module
-    // same-bare-name collision can't actually arise here today — but
-    // when laws-in-modules lands, migrate these to `HashSet<FnKey>`
-    // alongside `transitive_opaque_closure` and `emit_law_samples`
-    // signatures. Tracked as deferred from the FnKey/TypeKey PR.
-    let mut fuel_emitted: HashSet<String> = HashSet::new();
-    let mut native_emitted: HashSet<String> = HashSet::new();
-    let mut axiom_fn_names: HashSet<String> = HashSet::new();
+    // Phase E finalization: SCC-membership sets key by opaque
+    // `FnId` resolved through the symbol table. Same shape as
+    // `ProofIR.fn_contracts` post-#142 — bare-name lookups are gone
+    // by construction, so two same-bare-name fns across modules can
+    // never collide in these sets even after laws-in-modules lands.
+    let mut fuel_emitted: HashSet<crate::ir::FnId> = HashSet::new();
+    let mut native_emitted: HashSet<crate::ir::FnId> = HashSet::new();
+    let mut axiom_fn_ids: HashSet<crate::ir::FnId> = HashSet::new();
+
+    let insert_fn_ids = |set: &mut HashSet<crate::ir::FnId>, fns: &[&FnDef]| {
+        for fd in fns {
+            if let Some(id) = crate::codegen::common::fn_id_for_decl(ctx, fd) {
+                set.insert(id);
+            }
+        }
+    };
 
     for component in &mutual_components {
         let scc_fns: Vec<&FnDef> = component.iter().map(|fd| &**fd).collect();
-        // Round-6: pointer-eq resolution avoids the bare-name
-        // collision in the legacy `fn_owning_scope` helper —
-        // `&fd_from_module_A` and `&fd_from_module_B` with the same
-        // `fd.name` route to their own scopes here.
         let scope = scc_fns
             .first()
             .and_then(|fd| crate::codegen::common::fn_owning_scope_for(ctx, fd))
@@ -141,21 +144,15 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         // when the SCC has a non-sizeOf member.
         if let Some(code) = fuel::emit_mutual_native_decreases_group(&scc_fns, ctx) {
             fuel_per_scope.entry(scope).or_default().push(code);
-            for fd in &scc_fns {
-                native_emitted.insert(fd.name.clone());
-            }
+            insert_fn_ids(&mut native_emitted, &scc_fns);
         } else {
             match fuel::emit_mutual_fuel_group(&scc_fns, ctx) {
                 Some(code) => {
                     fuel_per_scope.entry(scope).or_default().push(code);
-                    for fd in &scc_fns {
-                        fuel_emitted.insert(fd.name.clone());
-                    }
+                    insert_fn_ids(&mut fuel_emitted, &scc_fns);
                 }
                 None => {
-                    for fd in &scc_fns {
-                        axiom_fn_names.insert(fd.name.clone());
-                    }
+                    insert_fn_ids(&mut axiom_fn_ids, &scc_fns);
                 }
             }
         }
@@ -168,12 +165,15 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                 .flatten()
                 .is_none()
     };
+    let id_in = |set: &HashSet<crate::ir::FnId>, fd: &FnDef| -> bool {
+        crate::codegen::common::fn_id_for_decl(ctx, fd).is_some_and(|id| set.contains(&id))
+    };
     let emit_pure_or_axiom = |fd: &FnDef| -> String {
         if needs_axiom_for_error_prop(fd) {
             toplevel::emit_fn_def_axiom(fd)
-        } else if fuel_emitted.contains(&fd.name) || native_emitted.contains(&fd.name) {
+        } else if id_in(&fuel_emitted, fd) || id_in(&native_emitted, fd) {
             String::new()
-        } else if axiom_fn_names.contains(&fd.name) {
+        } else if id_in(&axiom_fn_ids, fd) {
             toplevel::emit_fn_def_axiom(fd)
         } else {
             toplevel::emit_fn_def(fd, ctx)
@@ -347,8 +347,8 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             } else {
                 String::new()
             };
-            let direct_opaque: HashSet<String> =
-                axiom_fn_names.union(&fuel_emitted).cloned().collect();
+            let direct_opaque: HashSet<crate::ir::FnId> =
+                axiom_fn_ids.union(&fuel_emitted).copied().collect();
             let opaque_fns = toplevel::transitive_opaque_closure(ctx, &direct_opaque);
             // Native mutual-rec members + their transitive callers
             // also need bounded-∀ universal (true ∀ over int doesn't
