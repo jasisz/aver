@@ -2725,6 +2725,69 @@ fn callsWithB() -> Float
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Phase B (#138, peer review round 7): `canonicalize_named` must
+/// treat an existing `Some(TypeId)` as sacred. Pre-fix, the
+/// canonicaliser overwrote any `id` by whatever `resolve_type_id`
+/// returned in the *current* checker context — so a value coming
+/// back from `C.make()` correctly stamped with `Some(C.Shape)`
+/// would get re-stamped to `Some(A.Shape)` when `infer_type` re-
+/// canonicalised it in the importer's context (A's `Shape` is the
+/// only visible bare alias). Soundness collapsed: `A.consume(C.make())`
+/// silently typechecked.
+///
+/// Fix: canonicaliser only fills in `id: None`. Once a stamp has
+/// `id: Some(_)`, no later context can override it.
+#[test]
+fn canonicalize_named_does_not_overwrite_existing_typeid() {
+    let root = temp_module_root("canonicalize_preserves_id");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape, consume]
+    intent = "Public A.Shape + consumer."
+
+type Shape
+    Circle(Float)
+
+fn consume(s: Shape) -> Float
+    match s
+        Shape.Circle(r) -> r
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [make]
+    intent = "Private C.Shape (only `make` exposed)."
+
+type Shape
+    Hexagon(Float)
+
+fn make() -> Shape
+    Shape.Hexagon(1.0)
+"#,
+    )
+    .expect("write C.av failed");
+
+    let src = r#"module Main
+    depends [A, C]
+    intent = "Tries to feed C.make() into A.consume — distinct types, must reject."
+
+fn caller() -> Float
+    A.consume(C.make())
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Argument 1 of 'A.consume'")
+                || e.contains("Argument 1 of 'consume'")),
+        "expected an argument-type mismatch on `A.consume(C.make())` (A.Shape != C.Shape); got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Phase B (#138, peer review round 6): an exported `fn` in module
 /// B that references a type by bare name must resolve in B's own
 /// resolver context — B's own types + B's actual `depends` transitive

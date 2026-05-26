@@ -181,13 +181,25 @@ impl TypeChecker {
     /// entry module.
     pub(super) fn canonicalize_named_in_module(&self, ty: Type, owner_module: &str) -> Type {
         match ty {
-            Type::Named { id, name } => match self.resolve_in_owner_context(&name, owner_module) {
-                Some(resolved_id) => Type::Named {
-                    id: Some(resolved_id),
-                    name,
-                },
-                None => Type::Named { id, name },
+            // Peer review round 7: `Some(id)` is sacred even in the
+            // owner-context canonicaliser. Never overwrite an
+            // existing typed-identity stamp.
+            Type::Named {
+                id: Some(existing),
+                name,
+            } => Type::Named {
+                id: Some(existing),
+                name,
             },
+            Type::Named { id: None, name } => {
+                match self.resolve_in_owner_context(&name, owner_module) {
+                    Some(resolved_id) => Type::Named {
+                        id: Some(resolved_id),
+                        name,
+                    },
+                    None => Type::Named { id: None, name },
+                }
+            }
             Type::List(inner) => Type::List(Box::new(
                 self.canonicalize_named_in_module(*inner, owner_module),
             )),
@@ -286,13 +298,27 @@ impl TypeChecker {
         // `id` field carries the typed identity; the matcher uses it
         // when both sides have `Some` and falls back to source-name
         // matching otherwise.
+        //
+        // Peer review round 7: once a stamp carries `Some(id)`, no
+        // later context may overwrite it. Pre-fix the canonicaliser
+        // re-stamped any `Some` value by `resolve_type_id(name)` in
+        // the current scope, which let an importer's bare alias for
+        // `Shape` re-bind a properly-stamped `C.Shape` value to
+        // `A.Shape`. `Some(_)` is sacred; only fill in `id: None`.
         match ty {
-            Type::Named { id, name } => match self.resolve_type_id(&name) {
+            Type::Named {
+                id: Some(existing),
+                name,
+            } => Type::Named {
+                id: Some(existing),
+                name,
+            },
+            Type::Named { id: None, name } => match self.resolve_type_id(&name) {
                 Some(resolved_id) => Type::Named {
                     id: Some(resolved_id),
                     name,
                 },
-                None => Type::Named { id, name },
+                None => Type::Named { id: None, name },
             },
             Type::List(inner) => Type::List(Box::new(self.canonicalize_named(*inner))),
             Type::Vector(inner) => Type::Vector(Box::new(self.canonicalize_named(*inner))),
