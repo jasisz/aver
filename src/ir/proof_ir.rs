@@ -31,6 +31,7 @@ use crate::ast::Spanned;
 // (VM, Rust codegen, WASM) will reach for the same types when they
 // hit the same bug class. Re-exported here for ergonomics.
 pub use crate::ir::identity::{FnKey, LawKey, TypeKey};
+pub use crate::ir::symbol_table::{CtorId, FnId, ModuleId, TypeId};
 
 /// Output of the `proof_lower` pipeline stage. Every decision the
 /// proof backends will make is materialised here; backends become
@@ -50,10 +51,13 @@ pub struct ProofIR {
     pub refined_types: HashMap<TypeKey, RefinedTypeDecl>,
     /// Per-pure-fn contract describing what proof artifact the fn
     /// lowers to (native / fuel / structural / linear recurrence).
-    /// Keyed by [`FnKey`] so two modules with same-bare-name fns
-    /// (`A.foo` IntCountdown + `B.foo` ListStructural) hold their
-    /// own contracts without collision.
-    pub fn_contracts: HashMap<FnKey, FnContract>,
+    /// Keyed by opaque [`FnId`] from the symbol table — name
+    /// resolution happens once in `populate_fn_contracts`;
+    /// consumers thereafter use `ctx.symbol_table` to resolve
+    /// `&FnDef → FnId` and look up directly. Cross-module
+    /// same-bare-name fns get distinct IDs, so the lookup is
+    /// unambiguous without per-call-site scope plumbing.
+    pub fn_contracts: HashMap<FnId, FnContract>,
     /// Per-verify-law theorem decomposed into quantifiers, premises,
     /// and claim with all wrapper-strip / val-projection / drop-vs-
     /// keep decisions baked in, plus the pinned proof strategy.

@@ -473,6 +473,13 @@ impl CodegenContext {
         }
         self.recursive_fns = recursive_fns;
 
+        // Symbol table must be rebuilt before proof_lower runs so the
+        // populate side can resolve `FnKey` → opaque `FnId` for the
+        // (now FnId-keyed) `fn_contracts` map. Synthetic-ctx test
+        // paths reach this codepath through `refresh_facts`, so this
+        // is the only place those flows get a symbol table.
+        self.symbol_table = Some(crate::ir::SymbolTable::build(&self.items, &self.modules));
+
         // ProofIR's `fn_contracts` / `refined_types` are derived from
         // the just-recomputed item set + the recursion classifier, so
         // they must stay in step with the rest of the facts. Test

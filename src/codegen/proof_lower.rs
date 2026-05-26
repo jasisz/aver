@@ -52,6 +52,14 @@ pub struct ProofLowerInputs<'a> {
     /// Recursive fn names from the `analyze` pipeline stage. Used by
     /// `analyze_plans` to short-circuit non-recursive fns.
     pub recursive_fns: &'a HashSet<String>,
+    /// Resolved-identity table (#138 phase E). When `Some`, the
+    /// populate-side resolves `FnKey` / `TypeKey` to `FnId` /
+    /// `TypeId` once at the IR boundary and keys `ProofIR.fn_contracts`
+    /// / `ProofIR.refined_types` / `LawTheorem.fn_id` by the opaque
+    /// IDs. Callers that haven't wired in the symbol-table stage
+    /// pass `None` and fall through to legacy key-typed maps
+    /// (transitional during phase E migration).
+    pub symbol_table: Option<&'a crate::ir::SymbolTable>,
 }
 
 impl<'a> ProofLowerInputs<'a> {
@@ -65,6 +73,7 @@ impl<'a> ProofLowerInputs<'a> {
             dep_modules: &ctx.modules,
             module_prefixes: &ctx.module_prefixes,
             recursive_fns: &ctx.recursive_fns,
+            symbol_table: ctx.symbol_table.as_ref(),
         }
     }
 
@@ -353,14 +362,23 @@ fn populate_fn_contracts_for_scope(
             None => crate::ir::FnKey::entry(bare),
         }
     };
+    // Round-7 phase E: contracts key by opaque `FnId` resolved
+    // once via the symbol table. When the table isn't wired up
+    // (legacy synthetic-IR test paths), skip populating contracts
+    // entirely — backends without a symbol table have no way to
+    // look them up anyway.
+    let Some(symbols) = inputs.symbol_table else {
+        return;
+    };
 
     for (fn_name, plan) in plans {
         let Some(fd) = scoped_fns.iter().find(|fd| fd.name == *fn_name) else {
             continue;
         };
-        // `fn_name` stays bare (used as `source_name` in each insert);
-        // `canonical_key` is the typed map key.
-        let canonical_key = qualify(fn_name);
+        let fn_key = qualify(fn_name);
+        let Some(canonical_key) = symbols.fn_id_of(&fn_key) else {
+            continue;
+        };
 
         // IntCountdown — fuel-encoded countdown on a single Int param.
         // Distinct from IntCountdownGuarded: external callers may pass
@@ -370,7 +388,7 @@ fn populate_fn_contracts_for_scope(
         if let RecursionPlan::IntCountdown { param_index } = plan {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
                 ir.fn_contracts.insert(
-                    canonical_key.clone(),
+                    canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -391,7 +409,7 @@ fn populate_fn_contracts_for_scope(
         if let RecursionPlan::IntAscending { param_index, bound } = plan {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
                 ir.fn_contracts.insert(
-                    canonical_key.clone(),
+                    canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -415,7 +433,7 @@ fn populate_fn_contracts_for_scope(
         if let RecursionPlan::ListStructural { param_index } = plan {
             if let Some((param_name, _)) = fd.params.get(*param_index) {
                 ir.fn_contracts.insert(
-                    canonical_key.clone(),
+                    canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -435,7 +453,7 @@ fn populate_fn_contracts_for_scope(
         // whole frame — so the IR variant carries no param name.
         if matches!(plan, RecursionPlan::SizeOfStructural) {
             ir.fn_contracts.insert(
-                canonical_key.clone(),
+                canonical_key,
                 FnContract {
                     source_name: fn_name.clone(),
                     recursion: Some(RecursionContract::Fuel {
@@ -454,7 +472,7 @@ fn populate_fn_contracts_for_scope(
                 (fd.params.first(), fd.params.get(1))
             {
                 ir.fn_contracts.insert(
-                    canonical_key.clone(),
+                    canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -491,7 +509,7 @@ fn populate_fn_contracts_for_scope(
                     .map(|(n, _)| vec![n.clone()])
                     .unwrap_or_default();
                 ir.fn_contracts.insert(
-                    canonical_key.clone(),
+                    canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -504,7 +522,7 @@ fn populate_fn_contracts_for_scope(
             RecursionPlan::MutualStringPosAdvance { rank } => {
                 let params = fd.params.iter().take(2).map(|(n, _)| n.clone()).collect();
                 ir.fn_contracts.insert(
-                    canonical_key.clone(),
+                    canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -519,7 +537,7 @@ fn populate_fn_contracts_for_scope(
             }
             RecursionPlan::MutualSizeOfRanked { rank } => {
                 ir.fn_contracts.insert(
-                    canonical_key.clone(),
+                    canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::Fuel {
@@ -534,7 +552,7 @@ fn populate_fn_contracts_for_scope(
             }
             RecursionPlan::LinearRecurrence2 => {
                 ir.fn_contracts.insert(
-                    canonical_key.clone(),
+                    canonical_key,
                     FnContract {
                         source_name: fn_name.clone(),
                         recursion: Some(RecursionContract::LinearRecurrence2),
@@ -571,7 +589,7 @@ fn populate_fn_contracts_for_scope(
             .collect();
 
         ir.fn_contracts.insert(
-            canonical_key.clone(),
+            canonical_key,
             FnContract {
                 source_name: fn_name.clone(),
                 recursion: Some(RecursionContract::Native {

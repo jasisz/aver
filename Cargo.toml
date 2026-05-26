@@ -105,6 +105,7 @@ harness = false
 [[bench]]
 name = "comparison_bench"
 harness = false
+required-features = ["wasm"]
 
 [profile.release]
 lto = true

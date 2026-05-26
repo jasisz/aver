@@ -448,8 +448,12 @@ mod tests {
         let some = table
             .intern_wrapper("Option.Some", 2)
             .expect("intern Option.Some");
-        table.add_namespace_member("Option", "Some", VmSymbolTable::symbol_ref(some));
-        table.add_namespace_member("Option", "None", NanValue::NONE);
+        table
+            .add_namespace_member("Option", "Some", VmSymbolTable::symbol_ref(some))
+            .expect("add Option.Some member");
+        table
+            .add_namespace_member("Option", "None", NanValue::NONE)
+            .expect("add Option.None member");
 
         let some_member = table.find("Some").unwrap();
         let none_member = table.find("None").unwrap();

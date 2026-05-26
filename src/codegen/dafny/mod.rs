@@ -695,7 +695,10 @@ mod tests {
                 run_refinement_lower: true,
                 run_contract_lower: true,
                 run_law_lower: true,
-                run_build_symbols: false,
+                // BuildSymbols is needed for fn_contracts lookup
+                // (keyed by opaque FnId resolved through the symbol
+                // table since the FnKey → FnId migration).
+                run_build_symbols: true,
                 dep_modules: &[],
                 alloc_policy: None,
                 call_ctx: None,
@@ -720,6 +723,7 @@ mod tests {
         if let Some(ir) = proof_ir {
             ctx.proof_ir = ir;
         }
+        ctx.symbol_table = pipeline_result.symbol_table;
         ctx
     }
 
