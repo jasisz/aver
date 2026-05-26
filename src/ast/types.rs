@@ -133,17 +133,17 @@ impl Type {
                 // distinct `TypeId`, must stay incompatible).
                 (Some(a), Some(b)) => a == b,
                 // Exactly one side carries a `TypeId`: the typechecker
-                // already classified that side, the other side is a
-                // raw stamp (parser output / builtin / in-flight
-                // recovery). Phase B post-review tightens this branch:
-                // the pre-phase-B suffix fallback would have happily
-                // matched `Named { Some(A_Shape), "A.Shape" }` against
-                // `Named { None, "Shape" }`, re-introducing the
-                // cross-module collapse the typed identity is meant to
-                // prevent. Require strict-name equality so a Some-id
-                // side never matches a string that could canonicalise
-                // to a different ID.
-                (Some(_), None) | (None, Some(_)) => name_a == name_b,
+                // already classified that side; the other side
+                // attempted resolution and came up empty. Always
+                // reject — silent name fallback here was the round-6
+                // entry-fallback bug, where a dep module's
+                // unresolved bare `Shape` silently bound to the
+                // entry module's own `Shape`. Builtins like
+                // `HttpResponse` never set `id` on either side, so
+                // they exercise the `(None, None)` branch below;
+                // genuine cross-module typed/raw mixes hit this
+                // branch and must fail.
+                (Some(_), None) | (None, Some(_)) => false,
                 // Both sides unresolved (raw stamps, builtin records,
                 // tests). Keep the historical suffix relation as a
                 // best-effort match — there's no typed identity to

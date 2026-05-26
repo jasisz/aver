@@ -53,6 +53,17 @@ impl TypeChecker {
     }
 
     fn integrate_loaded_modules(&mut self, modules: &[crate::source::LoadedModule]) {
+        // Phase B (peer review round 6): track each dep module's own
+        // `depends` list so the per-owner type resolver
+        // (`canonicalize_named_in_module`) can walk it instead of
+        // falling back to the importer's context or to whichever
+        // siblings happen to be in the entry's loaded tree.
+        for m in modules {
+            if let Some(module_decl) = TypeChecker::module_decl(&m.items) {
+                self.module_depends
+                    .insert(m.dep_name.clone(), module_decl.depends.clone());
+            }
+        }
         let pairs: Vec<_> = modules
             .iter()
             .map(|m| (m.dep_name.clone(), m.items.clone()))
@@ -79,7 +90,7 @@ impl TypeChecker {
     /// back into the parent so a real type bug in `combat.av` still
     /// surfaces alongside any error in `main.av`.
     fn check_loaded_module_bodies(&mut self, modules: &[crate::source::LoadedModule]) {
-        for (idx, module) in modules.iter().enumerate() {
+        for module in modules {
             // Phase B: clone the parent's `SymbolTable` into the sub-
             // checker so every module shares the same opaque
             // identity space. The dep module's own declarations are
@@ -95,19 +106,25 @@ impl TypeChecker {
             // `FnKey::in_module(dep_name, "mkDiscount")` for own-module
             // bodies in the sub-checker.
             sub.current_module_prefix = Some(module.dep_name.clone());
-            // Pull in dependency aliases BEFORE building local
-            // signatures. `build_signatures` canonicalises every
-            // type annotation through the symbol table; without the
-            // imported types in the alias map first, a bare
-            // reference like `Tile` (imported from `Types`) wouldn't
-            // resolve.
-            let others: Vec<_> = modules
+            // Phase B (peer review round 6): the sub-checker for
+            // module `B` must see `B`'s *own* depends — not every
+            // sibling the entry happened to load. The pre-fix sent
+            // `modules - self`, which let an unrelated sibling `C`
+            // (also a dep of the entry) leak into `B`'s resolver
+            // context and silently shadow types `B` genuinely
+            // depends on. Filter `modules` by the dep names listed
+            // in `B`'s own `depends [...]` declaration so the only
+            // bare-name aliases the sub-checker sees come from
+            // modules `B` itself imported.
+            let own_depends: Vec<String> = TypeChecker::module_decl(&module.items)
+                .map(|m| m.depends.clone())
+                .unwrap_or_default();
+            let visible_to_sub: Vec<_> = modules
                 .iter()
-                .enumerate()
-                .filter(|(i, _)| *i != idx)
-                .map(|(_, m)| m.clone())
+                .filter(|m| own_depends.iter().any(|d| d == &m.dep_name))
+                .cloned()
                 .collect();
-            sub.integrate_loaded_modules(&others);
+            sub.integrate_loaded_modules(&visible_to_sub);
             sub.build_signatures(&module.items);
             sub.check_top_level_stmts(&module.items);
             sub.check_verify_blocks(&module.items);

@@ -153,53 +153,41 @@ impl TypeChecker {
     /// structure intact otherwise — `Type::Var`, primitives,
     /// `Type::List<Bare>` (recurse into inner), etc.
     /// Owner-aware variant of `canonicalize_named`. Bare `Type::Named`
-    /// references inside `ty` resolve against `owner_module`'s scope
-    /// in the symbol table, ignoring the importer's
-    /// `current_module_prefix` / `bare_type_aliases`. Used by
-    /// `integrate_registry` when integrating a dep module's exported
-    /// signatures: a bare `Shape` in B's `fn make() -> Shape` must
-    /// always stamp as `B.Shape`, regardless of what `Shape` means in
-    /// the importing module.
+    /// references inside `ty` resolve in `owner_module`'s **own
+    /// resolver context**: the owner's own types plus the
+    /// visibility-exposed types from each module the owner itself
+    /// declares in its `depends [...]`. The contrast with
+    /// `canonicalize_named` (the importer-context variant) is the
+    /// whole point — peer review round 6 caught the regression where
+    /// B's exported `fn pass(s: Shape) -> Shape` (with `Shape`
+    /// meaning A.Shape per B's depends [A]) silently resolved against
+    /// the importer's bare alias map, which was ambiguous between A
+    /// and an unrelated sibling C the entry happened to also depend
+    /// on. Routing the resolution through B's own depends shuts
+    /// siblings out.
     ///
-    /// Resolves through `symbol_table.type_id_of` directly — bypasses
-    /// the visibility filter. Owners always see their own types, and
-    /// the resulting `TypeId` is the soundness anchor downstream
-    /// matcher checks rely on. The importer's visibility is a
-    /// separate concern enforced when the user-source side references
-    /// the type by name.
+    /// Three resolution cases, in order:
+    ///
+    /// 1. Qualified form (`Module.Type`): trust the prefix, but the
+    ///    referenced type must be exposed by the named module unless
+    ///    the owner is the named module itself.
+    /// 2. Bare in owner's own scope.
+    /// 3. Bare in any of owner's own `depends [...]` — exposed
+    ///    types only.
+    ///
+    /// No entry-scope fallback for dep modules: a bare reference in
+    /// a dep that doesn't resolve via the above stays unresolved
+    /// rather than silently binding to an unrelated `Shape` in the
+    /// entry module.
     pub(super) fn canonicalize_named_in_module(&self, ty: Type, owner_module: &str) -> Type {
         match ty {
-            Type::Named { id, name } => {
-                let resolved = if let Some((prefix, n)) = name.rsplit_once('.') {
-                    // Already qualified: trust the explicit prefix.
-                    self.symbol_table
-                        .type_id_of(&TypeKey::in_module(prefix, n))
-                        .or_else(|| {
-                            // Owner referencing its own type via the
-                            // full `Module.Type` form: SymbolTable
-                            // stores entry items under `TypeKey::entry`
-                            // for the parent build path, so probe
-                            // entry too when the explicit prefix
-                            // matches `owner_module`.
-                            if prefix == owner_module {
-                                self.symbol_table.type_id_of(&TypeKey::entry(n))
-                            } else {
-                                None
-                            }
-                        })
-                } else {
-                    self.symbol_table
-                        .type_id_of(&TypeKey::in_module(owner_module, &name))
-                        .or_else(|| self.symbol_table.type_id_of(&TypeKey::entry(&name)))
-                };
-                match resolved {
-                    Some(resolved_id) => Type::Named {
-                        id: Some(resolved_id),
-                        name,
-                    },
-                    None => Type::Named { id, name },
-                }
-            }
+            Type::Named { id, name } => match self.resolve_in_owner_context(&name, owner_module) {
+                Some(resolved_id) => Type::Named {
+                    id: Some(resolved_id),
+                    name,
+                },
+                None => Type::Named { id, name },
+            },
             Type::List(inner) => Type::List(Box::new(
                 self.canonicalize_named_in_module(*inner, owner_module),
             )),
@@ -233,6 +221,61 @@ impl TypeChecker {
             ),
             other => other,
         }
+    }
+
+    /// Resolve a single type name in `owner_module`'s context. See
+    /// `canonicalize_named_in_module` for the three-case ordering.
+    fn resolve_in_owner_context(&self, name: &str, owner_module: &str) -> Option<TypeId> {
+        if let Some((prefix, n)) = name.rsplit_once('.') {
+            // Qualified form: trust the prefix, but enforce
+            // visibility unless the owner is the named module.
+            let id = self
+                .symbol_table
+                .type_id_of(&TypeKey::in_module(prefix, n))?;
+            if prefix == owner_module || self.is_type_exposed_by(prefix, n) {
+                return Some(id);
+            }
+            return None;
+        }
+        // Bare in owner's own scope.
+        if let Some(id) = self
+            .symbol_table
+            .type_id_of(&TypeKey::in_module(owner_module, name))
+        {
+            return Some(id);
+        }
+        // Bare in any of owner's own depends — visibility-exposed
+        // only. No fallback to entry: bare references in a dep that
+        // can't be satisfied by its own scope or its own depends
+        // stay unresolved.
+        if let Some(deps) = self.module_depends.get(owner_module) {
+            for dep in deps {
+                if let Some(id) = self
+                    .symbol_table
+                    .type_id_of(&TypeKey::in_module(dep.as_str(), name))
+                    && self.is_type_exposed_by(dep, name)
+                {
+                    return Some(id);
+                }
+            }
+        }
+        None
+    }
+
+    /// `true` when `module` exposes a type named `type_name` to its
+    /// importers — i.e. the type is in `module`'s `exposes [...]`
+    /// list (or admitted by the underscore default rule).
+    /// The exposure source of truth is `visible_type_ids`, populated
+    /// from `visibility::SymbolRegistry::from_modules` entries. If
+    /// the type's `TypeId` is in that set, it was visibility-exposed.
+    fn is_type_exposed_by(&self, module: &str, type_name: &str) -> bool {
+        let Some(id) = self
+            .symbol_table
+            .type_id_of(&TypeKey::in_module(module, type_name))
+        else {
+            return false;
+        };
+        self.visible_type_ids.contains(&id)
     }
 
     pub(super) fn canonicalize_named(&self, ty: Type) -> Type {

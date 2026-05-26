@@ -488,6 +488,16 @@ struct TypeChecker {
     /// flagged on `fn takes(s: C.Shape)` references against a `C`
     /// whose `exposes` list didn't include `Shape`.
     visible_type_ids: HashSet<TypeId>,
+    /// Per-module `depends` list, keyed by the dep module's
+    /// `dep_name`. Populated by `integrate_loaded_modules` so the
+    /// per-owner type resolver (`canonicalize_named_in_module`) can
+    /// walk an owner module's *own* depends when canonicalising its
+    /// exported signatures — not the entry module's or arbitrary
+    /// loaded siblings'. Round-6 peer review caught the leak: B
+    /// depends on A; Main depends on B, C; B's bare `Shape` was
+    /// resolving against `[A, C]` (Main's loaded tree) instead of
+    /// `[A]` (B's own depends), and `Shape` came back ambiguous.
+    module_depends: HashMap<String, Vec<String>>,
     value_members: HashMap<String, Type>,
     /// Field types for record types, keyed by `(type_name, field_name)`.
     /// Populated for both user-defined `record` types and built-in records
@@ -563,6 +573,7 @@ impl TypeChecker {
             bare_type_aliases: HashMap::new(),
             visible_fn_ids: HashSet::new(),
             visible_type_ids: HashSet::new(),
+            module_depends: HashMap::new(),
             value_members: HashMap::new(),
             record_field_types: HashMap::new(),
             type_variants,
@@ -1234,10 +1245,21 @@ impl TypeChecker {
                     id: actual_id,
                     name: actual_name,
                 } => {
-                    let exp_id = expected_id
-                        .or_else(|| checker.and_then(|c| c.resolve_type_id(expected_name)));
-                    let act_id =
-                        actual_id.or_else(|| checker.and_then(|c| c.resolve_type_id(actual_name)));
+                    // Peer review round 6: do NOT auto-resolve an
+                    // unresolved side in the matcher's
+                    // (importer-context) symbol table. Upstream
+                    // signature/binding boundaries
+                    // (`canonicalize_named`,
+                    // `canonicalize_named_in_module`) are
+                    // responsible for stamping `id` in the correct
+                    // owner context. If a `Type::Named` reaches the
+                    // matcher with `id = None`, that's a deliberate
+                    // unresolved state — either a genuine builtin
+                    // (HttpResponse) or a resolution gap the matcher
+                    // must surface, not silently paper over by
+                    // re-resolving in the wrong scope.
+                    let exp_id = *expected_id;
+                    let act_id = *actual_id;
                     // Phase B (peer review round 2): the typed-identity
                     // comparison must reject mixed (Some, None) cases
                     // for user-defined types — otherwise an ambiguous
@@ -1254,25 +1276,15 @@ impl TypeChecker {
                     // fallback otherwise.
                     match (exp_id, act_id) {
                         (Some(e), Some(a)) => e == a,
-                        (Some(_), None) | (None, Some(_)) => {
-                            let unresolved = if exp_id.is_none() {
-                                expected_name
-                            } else {
-                                actual_name
-                            };
-                            if checker.is_some_and(|c| c.type_name_is_ambiguous(unresolved)) {
-                                return false;
-                            }
-                            // Builtin / external name: allow strict
-                            // name equality so two stamps of the same
-                            // builtin (`HttpResponse` vs
-                            // `HttpResponse`) still match. No suffix
-                            // fallback — that would let
-                            // `"A.Shape"` swallow a bare `"Shape"`
-                            // and re-introduce the cross-module
-                            // collapse.
-                            expected_name == actual_name
-                        }
+                        // Peer review round 6 entry-fallback bug:
+                        // a dep module's unresolved bare `Shape` was
+                        // silently binding to the entry module's
+                        // `Shape` via name equality here. Reject all
+                        // mixed (Some, None) cases. Builtins always
+                        // exercise (None, None) below; user-source
+                        // typed/raw mixes are by definition a
+                        // resolution gap and must surface.
+                        (Some(_), None) | (None, Some(_)) => false,
                         (None, None) => {
                             let exp = checker
                                 .map(|c| c.canonical_type_name(expected_name))

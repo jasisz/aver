@@ -2725,6 +2725,130 @@ fn callsWithB() -> Float
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Phase B (#138, peer review round 6): an exported `fn` in module
+/// B that references a type by bare name must resolve in B's own
+/// resolver context — B's own types + B's actual `depends` transitive
+/// exports — NOT against arbitrary siblings the entry module happens
+/// to also pull in.
+///
+/// Repro: B depends on A and re-uses `A.Shape` as bare `Shape` in
+/// its own signature. Main depends on B and C (C exposes an
+/// unrelated `Shape`). Pre-fix, when Main's checker canonicalised
+/// B's exported sig, the bare `Shape` resolved against the
+/// importer's bare alias map — which was ambiguous between
+/// `A.Shape` and `C.Shape` — and the typed-id never got populated.
+/// `takeA(B.pass(A.make()))` then failed with the cross-module
+/// collapse. Fix: per-owner resolver knows B's own `depends [A]`,
+/// resolves `Shape` to `A.Shape`, ignoring siblings.
+#[test]
+fn dep_module_resolver_uses_owner_depends_not_importer_siblings() {
+    let root = temp_module_root("owner_depends_resolver");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape, make]
+    intent = "A.Shape + factory."
+
+type Shape
+    Circle(Float)
+
+fn make() -> Shape
+    Shape.Circle(1.0)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    depends [A]
+    exposes [pass]
+    intent = "Re-exports an A.Shape passthrough; uses bare `Shape`."
+
+fn pass(s: Shape) -> Shape
+    s
+"#,
+    )
+    .expect("write B.av failed");
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [Shape]
+    intent = "Unrelated sibling Shape that must NOT leak into B's scope."
+
+type Shape
+    Triangle(Float)
+"#,
+    )
+    .expect("write C.av failed");
+
+    let src = r#"module Main
+    depends [B, C]
+    intent = "Plumbs A.make through B.pass; C is just an unrelated sibling."
+
+fn takeA(s: A.Shape) -> Float
+    match s
+        A.Shape.Circle(r) -> r
+
+fn caller() -> Float
+    takeA(B.pass(A.make()))
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected B's bare `Shape` to resolve to A.Shape via B's own depends; got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 6 part 2): a dep module B's
+/// bare `Shape` must NOT fall back to a `Shape` declared in the
+/// entry module. Entry-scope types don't belong to dep modules'
+/// resolver contexts. `B.id(s: Shape)` with no `Shape` in B's scope
+/// (and Main defining one) should fail to resolve, not silently bind
+/// B's parameter to Main's type.
+#[test]
+fn dep_module_resolver_does_not_fall_back_to_entry_types() {
+    let root = temp_module_root("dep_resolver_no_entry_fallback");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [id]
+    intent = "Has no `Shape`; uses bare `Shape` in its signature."
+
+fn id(s: Shape) -> Shape
+    s
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [B]
+    intent = "Defines its own Shape; B must NOT pick it up."
+
+type Shape
+    Circle(Float)
+
+fn caller() -> Float
+    match B.id(Shape.Circle(1.0))
+        Shape.Circle(r) -> r
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    // B's signature contains an unresolved `Shape` — B has neither
+    // its own nor any dep providing one. The pre-fix entry-fallback
+    // let this silently bind to Main's `Shape`, smuggling Main's
+    // type into B's signature. Either B's sig fails to typecheck
+    // (B can't resolve `Shape`) or Main's call surfaces the
+    // identity mismatch; both are acceptable, but a quiet `✓ types`
+    // is the regression we're guarding against.
+    assert!(
+        !errs.is_empty(),
+        "expected B's `s: Shape` to fail to silently bind to Main.Shape via entry-fallback; got no errors"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Phase B (#138, peer review round 5 F1): the type stamp on
 /// a dep module's exported fn signature must resolve in the dep's
 /// own scope, not the importer's. Pre-fix

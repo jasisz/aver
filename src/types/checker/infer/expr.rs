@@ -175,12 +175,18 @@ impl TypeChecker {
     /// inference logic lives in `infer_type_inner`; this wrapper exists only
     /// to keep the `set_ty` step in one place.
     pub(in super::super) fn infer_type(&mut self, expr: &Spanned<Expr>) -> Type {
-        // Iron — A3: leave Spanned.ty stamps in whatever form the
-        // source wrote (bare or qualified) so downstream discovery
-        // walkers (wasm-gc TypeRegistry, codegen helpers) keep seeing
-        // the source-faithful shape. The matcher itself resolves
-        // bare ↔ canonical via `sig_aliases` at comparison time.
-        let t = self.infer_type_inner(expr);
+        // Phase B: every stamp goes through `canonicalize_named` so
+        // `Type::Named` always carries a `TypeId` whenever the
+        // current checker can resolve it. The pre-phase-B matcher
+        // re-resolved unresolved sides itself; round-6 caught that
+        // route as the path for the entry-fallback leak (an
+        // unresolved `Shape` in a dep sig silently bound to the
+        // entry's `Shape`). Canonicalising once at the stamp site
+        // means the matcher can rely on `id` being the
+        // load-bearing signal and reject mixed `(Some, None)`
+        // outright.
+        let raw = self.infer_type_inner(expr);
+        let t = self.canonicalize_named(raw);
         expr.set_ty(t.clone());
         t
     }
