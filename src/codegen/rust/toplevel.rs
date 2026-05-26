@@ -2796,6 +2796,7 @@ mod tests {
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
+            symbol_table: None,
         }
     }
 

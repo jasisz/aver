@@ -121,6 +121,13 @@ pub struct CodegenContext {
     /// `refinement_info_for` for now. Step 3+ migrates backends.
     #[cfg(feature = "runtime")]
     pub proof_ir: crate::ir::ProofIR,
+    /// Resolved-identity table (#138 phase E). `Some` when the
+    /// pipeline's `run_build_symbols` was on. No consumer reads
+    /// it through this field yet — production callers populate
+    /// it so downstream migration PRs (proof IR maps keyed by
+    /// `FnId`, backend `FnId → name` mangling) can wire in
+    /// without re-running name resolution per emit site.
+    pub symbol_table: Option<crate::ir::SymbolTable>,
 }
 
 /// Output files from a codegen backend.
@@ -404,6 +411,7 @@ pub fn build_context(
         synthesized_buffered_fns,
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
+        symbol_table: None,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);

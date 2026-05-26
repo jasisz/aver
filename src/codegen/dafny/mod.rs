@@ -695,6 +695,7 @@ mod tests {
                 run_refinement_lower: true,
                 run_contract_lower: true,
                 run_law_lower: true,
+                run_build_symbols: false,
                 dep_modules: &[],
                 alloc_policy: None,
                 call_ctx: None,

@@ -63,6 +63,14 @@ pub enum PipelineStage {
     /// `ProofStrategy::BackendDispatch` and the consumer's ad-hoc
     /// chain still decides.
     LawLower,
+    /// Build the resolved-identity table (`SymbolTable`) — opaque
+    /// `FnId` / `TypeId` / `CtorId` / `ModuleId` for every named
+    /// declaration. Phase E of #138; populates
+    /// `PipelineResult.symbol_table`. No consumer reads it from
+    /// the pipeline output yet, but downstream migration PRs
+    /// (proof IR maps keyed by `FnId`, backend mangling by
+    /// `FnId → name`) all depend on this stage running.
+    BuildSymbols,
 }
 
 impl PipelineStage {
@@ -79,6 +87,7 @@ impl PipelineStage {
             Self::RefinementLower => "refinement_lower",
             Self::ContractLower => "contract_lower",
             Self::LawLower => "law_lower",
+            Self::BuildSymbols => "build_symbols",
         }
     }
 }
@@ -150,6 +159,13 @@ pub struct PipelineConfig<'a> {
     /// exporters always enable it alongside refinement_lower and
     /// contract_lower.
     pub run_law_lower: bool,
+    /// Whether to run the symbol-table build pass (#138 phase E).
+    /// Populates `PipelineResult.symbol_table` with opaque IDs for
+    /// every named declaration. Cheap to run unconditionally —
+    /// pure traversal of entry items + dep modules, no analysis.
+    /// Independent of every other stage; future consumers (proof
+    /// IR maps keyed by `FnId`, resolved AST emit) require it on.
+    pub run_build_symbols: bool,
     /// Pre-loaded dependent modules. Carried alongside items so the
     /// proof-lower pass can walk both the entry and dep type/fn defs
     /// (refinement records live in either; cross-module recursion is
@@ -188,6 +204,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_refinement_lower: false,
             run_contract_lower: false,
             run_law_lower: false,
+            run_build_symbols: false,
             dep_modules: &[],
             alloc_policy: None,
             call_ctx: None,
@@ -273,6 +290,17 @@ pub enum PassReport {
         /// with quantifiers + premises + claim.
         law_theorems: usize,
     },
+    BuildSymbols {
+        /// Modules in the table (always ≥ 1 — entry scope counts).
+        modules: usize,
+        /// Total fn declarations across entry + dep modules.
+        fns: usize,
+        /// Total type declarations across entry + dep modules.
+        types: usize,
+        /// Total constructors (record + sum variants) across all
+        /// type declarations.
+        ctors: usize,
+    },
 }
 
 /// Per-fn counter delta — used by `Tco` and `InterpLower` reports to
@@ -321,6 +349,13 @@ pub struct PipelineResult {
     /// populated by the stages that ran (an opt-in to only
     /// RefinementLower leaves `fn_contracts` empty, vice versa).
     pub proof_ir: Option<crate::ir::ProofIR>,
+    /// Resolved-identity table — opaque `FnId` / `TypeId` /
+    /// `CtorId` / `ModuleId` for every named declaration in the
+    /// program (#138 phase E). `Some` when `run_build_symbols`
+    /// was on. No consumer reads it through this field yet;
+    /// downstream migration PRs (proof IR maps keyed by `FnId`,
+    /// backend mangling) will start once the wire-up is in place.
+    pub symbol_table: Option<crate::ir::SymbolTable>,
     /// Per-stage diagnostic records — one per pass that actually ran.
     /// Drives `aver compile --explain-passes`; consumed by the future
     /// CI failable-invariant checks.
@@ -541,6 +576,15 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         result.proof_ir = Some(ir);
     }
 
+    if cfg.run_build_symbols {
+        let symbol_table = crate::ir::SymbolTable::build(items, cfg.dep_modules);
+        result
+            .pass_diagnostics
+            .push(diag_for_build_symbols(&symbol_table));
+        result.symbol_table = Some(symbol_table);
+        fire(&mut cfg, PipelineStage::BuildSymbols, items);
+    }
+
     result
 }
 
@@ -729,6 +773,18 @@ fn diag_for_law_lower(ir: &crate::ir::ProofIR) -> PassDiagnostic {
         stage: PipelineStage::LawLower,
         report: PassReport::LawLower {
             law_theorems: ir.law_theorems.len(),
+        },
+    }
+}
+
+fn diag_for_build_symbols(table: &crate::ir::SymbolTable) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::BuildSymbols,
+        report: PassReport::BuildSymbols {
+            modules: table.modules.len(),
+            fns: table.fns.len(),
+            types: table.types.len(),
+            ctors: table.ctors.len(),
         },
     }
 }
