@@ -85,7 +85,10 @@ impl TypeChecker {
                 let out_ty = match (&left_ty, &right_ty) {
                     (Type::Var(_), _) => right_ty,
                     (_, Type::Var(_)) => left_ty,
-                    _ if left_ty.compatible(&right_ty) => left_ty,
+                    // Phase B: route through `self.compatible` so the
+                    // symbol table resolves bare ↔ canonical instead of
+                    // the raw `Type::compatible`'s suffix fallback.
+                    _ if self.compatible(&left_ty, &right_ty) => left_ty,
                     _ => {
                         self.error(format!(
                             "Arguments of '{}': list element types differ: {} vs {}",

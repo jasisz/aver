@@ -18,7 +18,7 @@ impl TypeChecker {
                 "Cannot construct opaque type '{}' — use its module's constructor function",
                 type_name
             ));
-            return Type::named(canonical_type);
+            return self.canonicalize_named(Type::named(canonical_type));
         }
 
         // Iron — A5: `fields_for_type` canonicalises `type_name`
@@ -79,7 +79,10 @@ impl TypeChecker {
                 }
             }
         }
-        Type::named(type_name.to_string())
+        // Phase B: stamp with the symbol-table TypeId so downstream
+        // backends see the typed identity (peer-review #148: record
+        // create/update returned `Type::named(...)` with `id: None`).
+        self.canonicalize_named(Type::named(type_name.to_string()))
     }
 
     pub(in super::super) fn infer_record_update_expr(
@@ -96,7 +99,7 @@ impl TypeChecker {
                 "Cannot update opaque type '{}' — use its module's API",
                 type_name
             ));
-            return Type::named(type_name.to_string());
+            return self.canonicalize_named(Type::named(type_name.to_string()));
         }
         let base_ty = self.infer_type(base);
         // Canonicalize the user-written type name so the matcher sees
@@ -144,6 +147,9 @@ impl TypeChecker {
             }
         }
 
-        Type::named(type_name.to_string())
+        // Phase B: stamp with the symbol-table TypeId so downstream
+        // backends see the typed identity (peer-review #148: record
+        // create/update returned `Type::named(...)` with `id: None`).
+        self.canonicalize_named(Type::named(type_name.to_string()))
     }
 }

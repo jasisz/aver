@@ -180,19 +180,47 @@ pub fn run_type_check_with_loaded_self_host(
 }
 
 fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCheckResult {
-    // Phase B: build the exported string-keyed map by flattening both
-    // halves of the internal split (`fn_sigs` keyed by `FnId`,
-    // `extra_sigs` keyed by canonical string). External consumers
-    // (`verify_effects`, Lean / Dafny codegen, the CLI summary,
-    // `diagnostics::context::callgraph`) continue to look entries up by
-    // bare or canonical name. For entry-scope fns inside an
-    // `module X` declaration we mirror the entry under both
-    // `"X.name"` (TypeChecker canonical) and the bare name; for
-    // module-scoped fns we keep the symbol table's canonical plus a
-    // bare alias mirror.
+    // Phase B (post peer-review #148): flatten the internal split
+    // (`fn_sigs` keyed by `FnId`, `extra_sigs` keyed by canonical
+    // string) into the exported `HashMap<String, _>` external
+    // consumers expect. The old bare-alias mirror was last-write-wins
+    // across modules: when two distinct dep modules each exposed `foo`,
+    // one would silently win the global `"foo"` slot and Rust codegen's
+    // `ctx.fn_sigs.get(&fd.name)` could pick up the wrong signature.
+    //
+    // Now bare aliases land only when unambiguous. Each canonical key
+    // is always present; bare-name keys land only when no other fn in
+    // the program shares that bare name. Consumers that previously
+    // relied on a non-deterministic global "foo" entry will see a miss
+    // and surface a clear "qualify the reference" error instead of
+    // mismatched parameters.
     let entry_prefix = checker.current_module_prefix.clone();
     let mut fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)> = HashMap::new();
-    for (id, sig) in &checker.fn_sigs {
+
+    // Iterate in `FnId` order for deterministic output (HashMap
+    // iteration order would otherwise leak non-determinism into the
+    // exported map and downstream diagnostics).
+    let mut ordered_user: Vec<(FnId, &FnSig)> =
+        checker.fn_sigs.iter().map(|(id, sig)| (*id, sig)).collect();
+    ordered_user.sort_by_key(|(id, _)| id.0);
+
+    let mut bare_owners: HashMap<String, FnId> = HashMap::new();
+    let mut bare_ambiguous: HashSet<String> = HashSet::new();
+    for (id, _) in &ordered_user {
+        let entry = checker.symbol_table.fn_entry(*id);
+        let bare = entry.key.name.as_str();
+        match bare_owners.get(bare) {
+            None => {
+                bare_owners.insert(bare.to_string(), *id);
+            }
+            Some(prior) if prior == id => {}
+            Some(_) => {
+                bare_ambiguous.insert(bare.to_string());
+            }
+        }
+    }
+
+    for (id, sig) in &ordered_user {
         let entry = checker.symbol_table.fn_entry(*id);
         let canonical = if entry.module.is_entry() {
             match entry_prefix.as_deref() {
@@ -204,10 +232,10 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
         };
         let triple = (sig.params.clone(), sig.ret.clone(), sig.effects.clone());
         fn_sigs.insert(canonical.clone(), triple.clone());
-        // Mirror bare alias so existing bare-name external callers
-        // keep resolving regardless of whether the canonical carries
-        // a module prefix.
-        if entry.key.name != canonical {
+        // Bare alias only when there's no conflict between distinct
+        // modules' fns sharing the same bare name. The canonical key
+        // is always present so consumers can fall back to it.
+        if entry.key.name != canonical && !bare_ambiguous.contains(&entry.key.name) {
             fn_sigs.entry(entry.key.name.clone()).or_insert(triple);
         }
     }
@@ -324,6 +352,38 @@ impl RecordFieldKey {
     }
 }
 
+/// Bare-name resolution result. Tracks ambiguity explicitly so
+/// `resolve_fn_id` / `resolve_type_id` can refuse the look-up when
+/// two distinct identities surface the same source name (without that
+/// distinction the bare alias would be last-write-wins — peer review
+/// flagged this on PR #148).
+#[derive(Debug, Clone)]
+enum Resolution<T> {
+    Single(T),
+    Ambiguous,
+}
+
+impl<T: Copy + PartialEq> Resolution<T> {
+    /// Merge another candidate identity into an alias entry. Two
+    /// distinct identities for the same bare name produce
+    /// `Ambiguous`; a duplicate registration of the same identity is
+    /// a no-op (same module re-traversed by another path).
+    fn merge(&mut self, candidate: T) {
+        match self {
+            Resolution::Single(existing) if *existing == candidate => {}
+            Resolution::Single(_) => *self = Resolution::Ambiguous,
+            Resolution::Ambiguous => {}
+        }
+    }
+
+    fn unambiguous(&self) -> Option<T> {
+        match self {
+            Resolution::Single(v) => Some(*v),
+            Resolution::Ambiguous => None,
+        }
+    }
+}
+
 struct TypeChecker {
     /// Resolved-identity table — phase B (#138). Populated by
     /// [`TypeChecker::new_with_symbols`] from the program's `entry_items
@@ -359,11 +419,19 @@ struct TypeChecker {
     /// `sig_aliases: HashMap<String, String>`: same bare-name routing
     /// role, but the value side now carries opaque identity instead
     /// of a string that needed re-resolution downstream.
-    bare_fn_aliases: HashMap<String, FnId>,
+    ///
+    /// When two distinct modules each expose the same bare name
+    /// (`Pricing.percent` *and* `Math.percent` both surface a bare
+    /// `percent`), the entry switches to [`Resolution::Ambiguous`]
+    /// and `resolve_fn_id` refuses to silently pick one — the user
+    /// must qualify the reference. Avoids the
+    /// "global bare alias last-wins" bug class peer review #148
+    /// flagged.
+    bare_fn_aliases: HashMap<String, Resolution<FnId>>,
     /// Bare → `TypeId` aliases. Same role as `bare_fn_aliases`
     /// for the type-name dimension; consumed by `resolve_type_id`
     /// and `canonical_type_name`.
-    bare_type_aliases: HashMap<String, TypeId>,
+    bare_type_aliases: HashMap<String, Resolution<TypeId>>,
     value_members: HashMap<String, Type>,
     /// Field types for record types, keyed by `(type_name, field_name)`.
     /// Populated for both user-defined `record` types and built-in records
@@ -496,10 +564,31 @@ impl TypeChecker {
         // typed replacement for the pre-phase-B `sig_aliases` map.
         // Populated by `integrate_registry` from visibility-exposed
         // aliases (and by `build_signatures` for the current module's
-        // own fns), so a bare reference to an imported fn picks up
-        // its `FnId` here even when the symbol-table key would need a
-        // scope hint to find it.
-        self.bare_fn_aliases.get(name).copied()
+        // own fns). Returns `None` when two distinct modules surface
+        // the same bare name so the caller can refuse the look-up
+        // instead of last-write-wins.
+        self.bare_fn_aliases
+            .get(name)
+            .and_then(Resolution::unambiguous)
+    }
+
+    /// Register a bare → `FnId` alias, marking it `Ambiguous` if a
+    /// different identity is already registered under the same bare
+    /// name. Duplicate registration of the same identity (e.g. an
+    /// item walked twice by `integrate_registry` + `build_signatures`)
+    /// is a no-op.
+    pub(super) fn merge_bare_fn_alias(&mut self, alias: String, id: FnId) {
+        self.bare_fn_aliases
+            .entry(alias)
+            .and_modify(|r| r.merge(id))
+            .or_insert(Resolution::Single(id));
+    }
+
+    pub(super) fn merge_bare_type_alias(&mut self, alias: String, id: TypeId) {
+        self.bare_type_aliases
+            .entry(alias)
+            .and_modify(|r| r.merge(id))
+            .or_insert(Resolution::Single(id));
     }
 
     /// Type-side equivalent of [`Self::resolve_fn_id`].
@@ -524,7 +613,9 @@ impl TypeChecker {
         if let Some(id) = self.symbol_table.type_id_of(&TypeKey::entry(name)) {
             return Some(id);
         }
-        self.bare_type_aliases.get(name).copied()
+        self.bare_type_aliases
+            .get(name)
+            .and_then(Resolution::unambiguous)
     }
 
     /// Canonical name (`"Module.Type"` or bare entry name) for a

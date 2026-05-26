@@ -986,8 +986,12 @@ impl TypeChecker {
                             &arm.body,
                             arm_expected_ref,
                         );
-                        // Only report mismatch when both types are concrete
-                        if !first_ty.compatible(&arm_ty)
+                        // Only report mismatch when both types are concrete.
+                        // Phase B: route through `self.compatible` so the
+                        // symbol table resolves either side's bare ↔
+                        // canonical reference instead of the raw
+                        // `Type::compatible`'s suffix fallback.
+                        if !self.compatible(&first_ty, &arm_ty)
                             && !matches!(first_ty, Type::Invalid)
                             && !matches!(arm_ty, Type::Invalid)
                         {

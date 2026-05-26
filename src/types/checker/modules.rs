@@ -97,7 +97,7 @@ impl TypeChecker {
                 if canonical != f.name
                     && let Some(id) = self.resolve_fn_id(&canonical)
                 {
-                    self.bare_fn_aliases.insert(f.name.clone(), id);
+                    self.merge_bare_fn_alias(f.name.clone(), id);
                 }
             }
         }
@@ -256,7 +256,7 @@ impl TypeChecker {
                 if canonical_type != *type_name
                     && let Some(id) = self.resolve_type_id(&canonical_type)
                 {
-                    self.bare_type_aliases.insert(type_name.clone(), id);
+                    self.merge_bare_type_alias(type_name.clone(), id);
                 }
                 // Register each constructor with a qualified key.
                 for variant in variants {
@@ -342,7 +342,7 @@ impl TypeChecker {
                 if canonical_type != *type_name
                     && let Some(id) = self.resolve_type_id(&canonical_type)
                 {
-                    self.bare_type_aliases.insert(type_name.clone(), id);
+                    self.merge_bare_type_alias(type_name.clone(), id);
                 }
                 // Register per-field types so dot-access is checked.
                 // Phase B: single entry under canonical `(Module.Type,
@@ -433,7 +433,7 @@ impl TypeChecker {
                         .symbol_table
                         .fn_id_of(&FnKey::in_module(entry.module.clone(), fn_name.clone()))
                     {
-                        self.bare_fn_aliases.insert(alias.to_string(), id);
+                        self.merge_bare_fn_alias(alias.to_string(), id);
                     }
                 }
                 SymbolKind::OpaqueType { name }
@@ -443,7 +443,7 @@ impl TypeChecker {
                         .symbol_table
                         .type_id_of(&TypeKey::in_module(entry.module.clone(), name.clone()))
                     {
-                        self.bare_type_aliases.insert(alias.to_string(), id);
+                        self.merge_bare_type_alias(alias.to_string(), id);
                     }
                 }
                 SymbolKind::Constructor { .. } | SymbolKind::RecordField { .. } => {

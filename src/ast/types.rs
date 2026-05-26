@@ -132,12 +132,23 @@ impl Type {
                 // names happen to coincide (cross-module `Shape` —
                 // distinct `TypeId`, must stay incompatible).
                 (Some(a), Some(b)) => a == b,
-                // At least one side is unresolved (builtin record, in-
-                // flight stamp, parser output not yet through the
-                // checker's resolve pass). Fall back to the source-name
-                // suffix relation that has been the compatibility
-                // contract since before opaque IDs existed.
-                _ => {
+                // Exactly one side carries a `TypeId`: the typechecker
+                // already classified that side, the other side is a
+                // raw stamp (parser output / builtin / in-flight
+                // recovery). Phase B post-review tightens this branch:
+                // the pre-phase-B suffix fallback would have happily
+                // matched `Named { Some(A_Shape), "A.Shape" }` against
+                // `Named { None, "Shape" }`, re-introducing the
+                // cross-module collapse the typed identity is meant to
+                // prevent. Require strict-name equality so a Some-id
+                // side never matches a string that could canonicalise
+                // to a different ID.
+                (Some(_), None) | (None, Some(_)) => name_a == name_b,
+                // Both sides unresolved (raw stamps, builtin records,
+                // tests). Keep the historical suffix relation as a
+                // best-effort match — there's no typed identity to
+                // disagree with on either side.
+                (None, None) => {
                     name_a == name_b
                         || name_a.ends_with(&format!(".{}", name_b))
                         || name_b.ends_with(&format!(".{}", name_a))

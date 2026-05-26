@@ -2638,6 +2638,141 @@ fn pick() -> Int
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Phase B (#138, peer review #148): when two dep modules each
+/// expose the same bare type name (`A.Shape` *and* `B.Shape` both
+/// exposed as `Shape`), the bare alias resolution must NOT silently
+/// pick one. The pre-review code last-write-won an arbitrary
+/// `TypeId`; that's the same bug class typed identity is supposed to
+/// eliminate. Verify the bare reference is rejected so callers are
+/// forced to qualify.
+#[test]
+fn cross_module_same_bare_type_name_bare_reference_is_ambiguous() {
+    let root = temp_module_root("bare_ambiguous_type");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "Module A's Shape."
+
+type Shape
+    Circle(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape]
+    intent = "Module B's Shape."
+
+type Shape
+    Triangle(Float)
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Bare reference to Shape must be ambiguous."
+
+fn takesAShape(s: A.Shape) -> Float
+    0.0
+
+fn callsWithB() -> Float
+    takesAShape(B.Shape.Triangle(3.0))
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    // Bare `Shape` resolves to neither: the param expects `A.Shape`
+    // (qualified), the caller passes a `B.Shape.Triangle` — typed
+    // identity must reject the call regardless of whether the bare
+    // `Shape` alias map remembers one side or the other. Pre-phase-B
+    // soundness already relied on the matcher rejecting this; what
+    // peer review #148 added on top: the bare alias map must not
+    // silently bind one side, so `Shape` referenced bare anywhere in
+    // Main also fails to resolve.
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Argument 1 of 'takesAShape'") && e.contains("expected A.Shape")),
+        "expected A.Shape vs B.Shape mismatch at the call site, got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review #148): the exported `TypeCheckResult.fn_sigs`
+/// map must not silently bind a bare-name fn entry when two distinct
+/// dep modules both expose the same bare name. Rust codegen and
+/// other downstream consumers historically did
+/// `ctx.fn_sigs.get(&fd.name)` against a `HashMap<String, _>` whose
+/// global bare alias was last-write-wins — a real bug class where a
+/// `foo` lookup could pick up the wrong module's parameter list.
+/// After this PR the bare-name entry exists only when unambiguous;
+/// the canonical `"Module.foo"` key is always present.
+#[test]
+fn cross_module_same_bare_fn_name_drops_bare_alias_in_exported_map() {
+    use aver::source::parse_source;
+    use aver::types::checker::run_type_check_with_base;
+
+    let root = temp_module_root("bare_ambiguous_fn");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [doit]
+    intent = "Module A's doit."
+
+fn doit(a: Int) -> Int
+    a
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [doit]
+    intent = "Module B's doit (different param)."
+
+fn doit(b: String) -> Int
+    0
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Two `doit` fns, only the qualified form may resolve."
+
+fn caller() -> Int
+    A.doit(1)
+"#;
+    let items = parse_source(src).expect("parse failed");
+    let mut items = items;
+    aver::tco::transform_program(&mut items);
+    let _ = run_type_check_with_base(&items, root.to_str());
+    let result = aver::types::checker::run_type_check_full(&items, root.to_str());
+
+    // Both qualified canonicals are present.
+    assert!(
+        result.fn_sigs.contains_key("A.doit"),
+        "expected canonical A.doit, got keys: {:?}",
+        result.fn_sigs.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        result.fn_sigs.contains_key("B.doit"),
+        "expected canonical B.doit, got keys: {:?}",
+        result.fn_sigs.keys().collect::<Vec<_>>()
+    );
+    // The bare-name alias is suppressed because A.doit and B.doit
+    // disagree — last-write-wins would have left whichever module
+    // happened to iterate second silently winning the `doit` slot.
+    assert!(
+        !result.fn_sigs.contains_key("doit"),
+        "bare `doit` must not appear when two dep modules both expose it; keys: {:?}",
+        result.fn_sigs.keys().collect::<Vec<_>>()
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Iron — A4: a single source error (here: an unknown function
 /// call) must not fan out through downstream `compatible` checks
 /// and produce a cascade of "expected X, got Invalid" diagnostics.
