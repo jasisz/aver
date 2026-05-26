@@ -105,12 +105,12 @@ fn compile_program_inner(
 
     match module_source {
         ModuleSource::Disk(Some(module_root)) => {
-            compiler.load_modules(items, module_root, arena)?;
+            compiler.load_modules(items, module_root, symbols, arena)?;
         }
         ModuleSource::Disk(None) => {}
         ModuleSource::Loaded(loaded) => {
             for m in loaded {
-                compiler.integrate_module(&m.dep_name, m.items, arena)?;
+                compiler.integrate_module(&m.dep_name, m.items, symbols, arena)?;
             }
         }
     }
@@ -301,6 +301,7 @@ impl ProgramCompiler {
         &mut self,
         items: &[ResolvedTopLevel],
         module_root: &str,
+        entry_symbols: &SymbolTable,
         arena: &mut Arena,
     ) -> Result<(), CompileError> {
         let module = items.iter().find_map(|i| match i {
@@ -316,7 +317,7 @@ impl ProgramCompiler {
             .map_err(|e| CompileError { msg: e })?;
 
         for loaded in modules {
-            self.integrate_module(&loaded.dep_name, loaded.items, arena)?;
+            self.integrate_module(&loaded.dep_name, loaded.items, entry_symbols, arena)?;
         }
         Ok(())
     }
@@ -324,22 +325,26 @@ impl ProgramCompiler {
     /// Integrate a loaded module into the VM: register types, compile functions,
     /// expose symbols.
     ///
-    /// Dep items come in unresolved (the entry's pipeline only saw the
-    /// entry source). Run TCO + slot-resolve here, then build a
-    /// per-dep `SymbolTable` and lift the dep into resolved HIR so the
-    /// bytecode-emit walk consumes the same `ResolvedTopLevel` shape
-    /// it does for entry items.
+    /// Resolves dep items against the entry's `SymbolTable` so every
+    /// scope shares the same `FnId` / `TypeId` namespace — the VM no
+    /// longer owns a parallel resolver. Callers ensure the entry
+    /// pipeline ran with `dep_modules` populated so `entry_symbols`
+    /// knows about every transitive dep before this is invoked
+    /// (`cmd_run_vm`, `cmd_compile_aver`, and tests via
+    /// `load_compile_deps`).
     fn integrate_module(
         &mut self,
         dep_name: &str,
         mut mod_items: Vec<TopLevel>,
+        entry_symbols: &SymbolTable,
         arena: &mut Arena,
     ) -> Result<(), CompileError> {
-        // Internal VM dep-loading: TCO + resolver only. Caller already ran
-        // the full canonical pipeline on the entry; this path runs on
-        // freshly parsed dep items that are otherwise unprepared. Idempotent
-        // with `load_module_recursive`'s pipeline call when both touch the
-        // same module.
+        // Caller already ran the full canonical pipeline on the entry,
+        // including BuildSymbols + NameResolve over `dep_modules`. We
+        // still need TCO + slot-resolve on the freshly-parsed dep
+        // items so the body shape matches what the entry's resolver
+        // saw (TCO rewrites tail calls; the slot resolver allocates
+        // local slots both passes rely on).
         crate::ir::pipeline::tco(&mut mod_items);
         crate::ir::pipeline::resolve(&mut mod_items);
 
@@ -364,47 +369,15 @@ impl ProgramCompiler {
             }
         }
 
-        // Build per-dep symbol table + lift to resolved HIR. The
-        // dep's `ResolvedCallee::Fn(FnId)` / `ResolvedCtor::User`
-        // references in its own bodies resolve through this table.
-        //
-        // Pack the dep as a `ModuleInfo` so its FnIds / TypeIds end
-        // up under `scope = Some(dep_name)` — `SymbolTable::build`
-        // ignores the embedded `TopLevel::Module(_)` declaration in
-        // entry items and would otherwise file the dep's fns under
-        // entry scope, blowing up the canonical-name lookup later on
-        // (the VM symbol table stores everything under qualified
-        // names).
-        let dep_module_info = crate::codegen::ModuleInfo {
-            prefix: dep_name.to_string(),
-            depends: Vec::new(),
-            type_defs: mod_items
-                .iter()
-                .filter_map(|i| match i {
-                    TopLevel::TypeDef(td) => Some(td.clone()),
-                    _ => None,
-                })
-                .collect(),
-            fn_defs: mod_items
-                .iter()
-                .filter_map(|i| match i {
-                    TopLevel::FnDef(fd) => Some(fd.clone()),
-                    _ => None,
-                })
-                .collect(),
-            analysis: None,
-        };
-        let dep_modules = vec![dep_module_info];
-        let dep_symbols = SymbolTable::build(&[], &dep_modules);
-        // The dep's source declares `module Foo` for the leaf name
-        // even when `loaded.dep_name` is the full dotted path
-        // ("Domain.Eval.Store"). `resolve_program`'s default would
-        // pick up the source-declared leaf and miss every
-        // `FnKey::in_module(dep_name, _)` entry. Pin the resolver
-        // ctx's `current_module` to the canonical dep_name so the
-        // intra-dep call shape (`Foo.bar`, bare `bar`) resolves to
-        // the dep_symbols rows we just inserted.
-        let mut ctx = ResolveCtx::new(&dep_symbols);
+        // Lift dep items into resolved HIR against the *entry's*
+        // symbol table — keeps a single, unified `FnId` / `TypeId`
+        // namespace across the whole compile unit. Pin the
+        // resolver's `current_module` to the canonical dep_name so
+        // intra-dep call shapes (`Foo.bar`, bare `bar`) match the
+        // `FnKey::in_module(dep_name, _)` rows the entry pipeline
+        // already inserted, regardless of the dep's source-declared
+        // leaf name (`module Ast` inside `Domain.Ast.av`).
+        let mut ctx = ResolveCtx::new(entry_symbols);
         ctx.current_module = Some(dep_name.to_string());
         let dep_resolved: Vec<ResolvedTopLevel> = mod_items
             .iter()
@@ -453,7 +426,7 @@ impl ProgramCompiler {
             if let ResolvedTopLevel::FnDef(rfd) = item {
                 let (fn_name, fn_id) = &module_fn_ids[fn_idx];
                 let mut chunk =
-                    self.compile_fn_with_scope(rfd, &dep_symbols, arena, &module_scope)?;
+                    self.compile_fn_with_scope(rfd, entry_symbols, arena, &module_scope)?;
                 chunk.name = visibility::qualified_name(dep_name, fn_name);
                 self.code.functions[*fn_id as usize] = chunk;
                 fn_idx += 1;

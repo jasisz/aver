@@ -133,6 +133,24 @@ pub(super) fn run_vm_replay(
     items: &mut Vec<aver::ast::TopLevel>,
     check_args: bool,
 ) -> Result<BackendReplayOutcome, String> {
+    // Preload dep modules so the entry SymbolTable knows about every
+    // cross-module call — same shape as `cmd_run_vm`. Without this
+    // the VM compiler's per-dep resolver would re-derive identities
+    // it could read straight off `pipeline_result.symbol_table`.
+    let depends = items
+        .iter()
+        .find_map(|i| match i {
+            aver::ast::TopLevel::Module(m) => Some(m.depends.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let loaded = aver::source::load_module_tree(&depends, replay_module_root)
+        .map_err(|e| format!("dep load: {}", e))?;
+    let dep_modules: Vec<aver::codegen::ModuleInfo> = loaded
+        .iter()
+        .map(aver::codegen::ModuleInfo::from_loaded)
+        .collect();
+
     // Full pipeline. Recordings store effect syscalls (`Console.print(...)`
     // with concrete args) — they don't reference IR shape or bytecode, so
     // running interp_lower + buffer_build during replay produces the same
@@ -143,6 +161,7 @@ pub(super) fn run_vm_replay(
             typecheck: Some(aver::ir::TypecheckMode::Full {
                 base_dir: Some(replay_module_root),
             }),
+            dep_modules: &dep_modules,
             ..Default::default()
         },
     );

@@ -234,6 +234,23 @@ fn run_vm_command(
     let mut items = parse_source(&source).map_err(|e| e.to_string())?;
     require_module_declaration(&items, file).map_err(|e| e.to_string())?;
 
+    // Preload dep modules so the entry's `SymbolTable` knows about
+    // cross-module call targets — mirrors `cmd_run_vm` so the VM
+    // compiler's per-dep resolver path drops out.
+    let depends = items
+        .iter()
+        .find_map(|i| match i {
+            aver::ast::TopLevel::Module(m) => Some(m.depends.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let loaded =
+        aver::source::load_module_tree(&depends, module_root).map_err(|e| e.to_string())?;
+    let dep_modules: Vec<aver::codegen::ModuleInfo> = loaded
+        .iter()
+        .map(aver::codegen::ModuleInfo::from_loaded)
+        .collect();
+
     // VM profiler runs the canonical full pipeline so the numbers reflect
     // what `aver run` actually executes.
     let pipeline_result = pipeline::run(
@@ -242,6 +259,7 @@ fn run_vm_command(
             typecheck: Some(TypecheckMode::Full {
                 base_dir: Some(module_root),
             }),
+            dep_modules: &dep_modules,
             ..Default::default()
         },
     );
