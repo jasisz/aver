@@ -297,16 +297,11 @@ fn build_ctx(
         HashSet::new(),
         "playground".to_string(),
         vec![],
+        pipeline_result.symbol_table,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;
     }
-    // BuildSymbols auto-runs when any proof stage is on (see
-    // `ir::pipeline::run`), so the symbol table is populated for the
-    // proof path. Plumb it through so backend lookups
-    // (`find_fn_contract_for_fn`, etc.) resolve through opaque IDs
-    // instead of returning `None` and dropping recursion contracts.
-    ctx.symbol_table = pipeline_result.symbol_table;
     Ok(ctx)
 }
 
@@ -398,11 +393,11 @@ fn build_project_ctx(
         HashSet::new(),
         "playground".to_string(),
         modules,
+        pipeline_result.symbol_table,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;
     }
-    ctx.symbol_table = pipeline_result.symbol_table;
     Ok(ctx)
 }
 

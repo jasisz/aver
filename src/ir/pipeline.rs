@@ -291,8 +291,6 @@ pub enum PassReport {
         law_theorems: usize,
     },
     BuildSymbols {
-        /// Modules in the table (always ≥ 1 — entry scope counts).
-        modules: usize,
         /// Total fn declarations across entry + dep modules.
         fns: usize,
         /// Total type declarations across entry + dep modules.
@@ -300,7 +298,33 @@ pub enum PassReport {
         /// Total constructors (record + sum variants) across all
         /// type declarations.
         ctors: usize,
+        /// Per-module breakdown (entry first, then deps in walk
+        /// order). Shows where each fn/type lives — useful for
+        /// "is this big project actually multi-module?" sanity
+        /// checks at a glance.
+        modules: Vec<BuildSymbolsModule>,
+        /// Number of bare fn names that occur in 2+ different
+        /// scopes (e.g. entry + Module, or Module.A + Module.B).
+        /// Under bare-name keying these would have silently
+        /// merged; opaque `FnId` keeps them distinct. Zero would
+        /// mean phase E migration had no practical effect on
+        /// *this* project — non-zero is the proof it did.
+        fn_name_collisions: usize,
+        /// Same for type names.
+        type_name_collisions: usize,
     },
+}
+
+/// Per-module entry in `PassReport::BuildSymbols`. `prefix` is the
+/// dotted module name (`"Models.User"`); the entry scope is
+/// represented by an empty string so JSON consumers can sort/group
+/// uniformly.
+#[derive(Debug, Clone)]
+pub struct BuildSymbolsModule {
+    pub prefix: String,
+    pub fns: usize,
+    pub types: usize,
+    pub ctors: usize,
 }
 
 /// Per-fn counter delta — used by `Tco` and `InterpLower` reports to
@@ -351,11 +375,14 @@ pub struct PipelineResult {
     pub proof_ir: Option<crate::ir::ProofIR>,
     /// Resolved-identity table — opaque `FnId` / `TypeId` /
     /// `CtorId` / `ModuleId` for every named declaration in the
-    /// program (#138 phase E). `Some` when `run_build_symbols`
-    /// was on. No consumer reads it through this field yet;
-    /// downstream migration PRs (proof IR maps keyed by `FnId`,
-    /// backend mangling) will start once the wire-up is in place.
-    pub symbol_table: Option<crate::ir::SymbolTable>,
+    /// program (#138 phase E). Always populated: the pipeline
+    /// builds it unconditionally at the head of `run` (it's the
+    /// universal foundation for proof IR + backend identity).
+    /// `run_build_symbols` in `PipelineConfig` controls whether
+    /// the BuildSymbols stage fires its `on_after_pass` hook for
+    /// `--emit-ir-after=build_symbols`; the table itself is built
+    /// regardless.
+    pub symbol_table: crate::ir::SymbolTable,
     /// Per-stage diagnostic records — one per pass that actually ran.
     /// Drives `aver compile --explain-passes`; consumed by the future
     /// CI failable-invariant checks.
@@ -521,32 +548,21 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         crate::ir::alias::annotate_program_alias_slots(items);
     }
 
-    // Proof-export lowerings come last — they share an output sink
-    // (`result.proof_ir`) but populate disjoint fields:
-    // RefinementLower writes `refined_types`, ContractLower writes
-    // `fn_contracts`, LawLower writes `law_theorems`. Each is
-    // independently opt-in.
-    // BuildSymbols runs BEFORE proof stages so `populate_*` resolve
-    // `FnKey`/`TypeKey` to `FnId`/`TypeId` once at the IR boundary
-    // and key `ProofIR.fn_contracts` / `ProofIR.refined_types` /
-    // `LawTheorem.fn_id` by the opaque IDs (#138 phase E).
-    //
-    // Proof stages have a hard dependency on the symbol table —
-    // since fn_contracts is keyed by `FnId`, populate cannot run
-    // without resolved identity. Auto-enable here so callers can't
-    // accidentally turn on `run_contract_lower` / `run_law_lower`
-    // without symbols and silently produce an empty proof IR.
-    let needs_symbols = cfg.run_build_symbols
-        || cfg.run_refinement_lower
-        || cfg.run_contract_lower
-        || cfg.run_law_lower;
-    if needs_symbols {
+    // Resolved-identity table is the universal foundation for proof
+    // IR + every backend's name lookup, so it's built unconditionally.
+    // `run_build_symbols` in PipelineConfig controls only whether the
+    // BuildSymbols stage fires its `on_after_pass` hook (for
+    // `--emit-ir-after=build_symbols`); the table itself lands in
+    // `result.symbol_table` regardless.
+    {
         let symbol_table = crate::ir::SymbolTable::build(items, cfg.dep_modules);
         result
             .pass_diagnostics
             .push(diag_for_build_symbols(&symbol_table));
-        result.symbol_table = Some(symbol_table);
-        fire(&mut cfg, PipelineStage::BuildSymbols, items);
+        result.symbol_table = symbol_table;
+        if cfg.run_build_symbols {
+            fire(&mut cfg, PipelineStage::BuildSymbols, items);
+        }
     }
 
     if cfg.run_refinement_lower || cfg.run_contract_lower || cfg.run_law_lower {
@@ -559,15 +575,26 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         // rules out cross-module recursion SCCs, so unioning the
         // per-scope `recursive_fns` sets matches the build-time
         // `ctx.recursive_fns` view in `codegen::build_context`.
-        let recursive_fns_owned: std::collections::HashSet<String> = {
-            let mut set: std::collections::HashSet<String> = result
-                .analysis
-                .as_ref()
-                .map(|a| a.recursive_fns.iter().cloned().collect())
-                .unwrap_or_default();
+        // Project per-scope bare-name sets to opaque FnIds through the
+        // (already-built) symbol table — same flow `build_context`
+        // uses to populate `ctx.recursive_fns`. Without a symbol
+        // table the producer side of proof_lower can't run anyway
+        // (populate panics by design), so default to empty.
+        let symbols = &result.symbol_table;
+        let recursive_fns_owned: std::collections::HashSet<crate::ir::FnId> = {
+            let mut set = std::collections::HashSet::new();
+            if let Some(a) = result.analysis.as_ref() {
+                set.extend(
+                    a.recursive_fns
+                        .iter()
+                        .filter_map(|n| symbols.fn_id_of(&crate::ir::FnKey::entry(n))),
+                );
+            }
             for m in cfg.dep_modules {
                 if let Some(a) = m.analysis.as_ref() {
-                    set.extend(a.recursive_fns.iter().cloned());
+                    set.extend(a.recursive_fns.iter().filter_map(|n| {
+                        symbols.fn_id_of(&crate::ir::FnKey::in_module(m.prefix.clone(), n))
+                    }));
                 }
             }
             set
@@ -579,7 +606,7 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             dep_modules: cfg.dep_modules,
             module_prefixes: &module_prefixes,
             recursive_fns: &recursive_fns_owned,
-            symbol_table: result.symbol_table.as_ref(),
+            symbol_table: symbols,
         };
         let mut ir = result.proof_ir.take().unwrap_or_default();
         if cfg.run_refinement_lower {
@@ -793,13 +820,53 @@ fn diag_for_law_lower(ir: &crate::ir::ProofIR) -> PassDiagnostic {
 }
 
 fn diag_for_build_symbols(table: &crate::ir::SymbolTable) -> PassDiagnostic {
+    // Per-module breakdown: walk every fn/type/ctor, bucket by its
+    // owning module, count. Single pass, O(fns + types + ctors).
+    let mut per_module: Vec<BuildSymbolsModule> = table
+        .modules
+        .iter()
+        .map(|m| BuildSymbolsModule {
+            prefix: m.prefix.clone().unwrap_or_default(),
+            fns: 0,
+            types: 0,
+            ctors: 0,
+        })
+        .collect();
+    for fe in &table.fns {
+        per_module[fe.module.0 as usize].fns += 1;
+    }
+    for te in &table.types {
+        per_module[te.module.0 as usize].types += 1;
+    }
+    for ce in &table.ctors {
+        let owning_module = table.types[ce.owning_type.0 as usize].module;
+        per_module[owning_module.0 as usize].ctors += 1;
+    }
+
+    // Bare-name collision count: a fn/type with the same `key.name`
+    // appearing in 2+ different scopes. Under bare-name keying these
+    // would silently merge; under opaque IDs each gets its own slot.
+    use std::collections::HashMap;
+    let mut fn_buckets: HashMap<&str, usize> = HashMap::new();
+    for fe in &table.fns {
+        *fn_buckets.entry(fe.key.name.as_str()).or_default() += 1;
+    }
+    let fn_name_collisions = fn_buckets.values().filter(|c| **c >= 2).count();
+    let mut type_buckets: HashMap<&str, usize> = HashMap::new();
+    for te in &table.types {
+        *type_buckets.entry(te.key.name.as_str()).or_default() += 1;
+    }
+    let type_name_collisions = type_buckets.values().filter(|c| **c >= 2).count();
+
     PassDiagnostic {
         stage: PipelineStage::BuildSymbols,
         report: PassReport::BuildSymbols {
-            modules: table.modules.len(),
             fns: table.fns.len(),
             types: table.types.len(),
             ctors: table.ctors.len(),
+            modules: per_module,
+            fn_name_collisions,
+            type_name_collisions,
         },
     }
 }
@@ -1138,6 +1205,10 @@ fn factorial(n: Int, acc: Int) -> Int
                 PipelineStage::Analyze,
                 PipelineStage::Escape,
                 PipelineStage::LastUse,
+                // Symbol table is built unconditionally (universal
+                // foundation for proof IR + backend identity); the
+                // diagnostic always lands in `pass_diagnostics`.
+                PipelineStage::BuildSymbols,
             ]
         );
 

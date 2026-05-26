@@ -754,19 +754,20 @@ pub(crate) fn recursive_type_names(ctx: &CodegenContext) -> HashSet<String> {
 }
 
 pub(crate) fn recursive_pure_fn_names(ctx: &CodegenContext) -> HashSet<String> {
-    let pure_names: HashSet<String> = pure_fns(ctx)
+    // `ctx.recursive_fns` is the single source of truth — populated
+    // by `build_context` from analyze in production, by
+    // `refresh_facts()` (called from each `transpile*` entry point)
+    // in test stubs. After phase C it's keyed by opaque `FnId`;
+    // project pure-fn ids back through the symbol table and surface
+    // bare names for Lean's downstream scope-local classifiers.
+    let symbols = &ctx.symbol_table;
+    let pure_ids: HashSet<crate::ir::FnId> = pure_fns(ctx)
         .into_iter()
-        .map(|fd| fd.name.clone())
+        .filter_map(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd))
         .collect();
-    // `ctx.recursive_fns` is the single source of truth — populated by
-    // `build_context` from analyze in production, by `refresh_facts()`
-    // (called from each `transpile*` entry point) in test stubs. Aver's
-    // module DAG keeps cross-module recursion impossible, so the union
-    // of per-module sets is the correct global view.
     ctx.recursive_fns
-        .iter()
-        .filter(|name| pure_names.contains(name.as_str()))
-        .cloned()
+        .intersection(&pure_ids)
+        .map(|id| symbols.fn_entry(*id).key.name.clone())
         .collect()
 }
 
@@ -1206,7 +1207,16 @@ fn transpile_unified(
 ) -> ProjectOutput {
     // Read recursion fact from `ctx.recursive_fns` — populated upstream
     // by `refresh_facts()` (test stubs) or `build_context` (production).
-    let recursive_fns: HashSet<String> = ctx.recursive_fns.clone();
+    // After phase C the set is keyed by `FnId`; project back to bare
+    // names for scope-local `emit_fn_def` consumers via the symbol
+    // table (the DAG invariant keeps bare-name unambiguous within a
+    // single scope). The proof-mode auto-prove path also needs the
+    // same bare-name projection.
+    let recursive_fns: HashSet<String> = ctx
+        .recursive_fns
+        .iter()
+        .map(|id| ctx.symbol_table.fn_entry(*id).key.name.clone())
+        .collect();
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
 
@@ -1519,7 +1529,7 @@ mod tests {
         // populate side asserts the symbol table is present (it's a
         // hard prerequisite for FnId-keyed fn_contracts), so synthetic-
         // ctx tests have to build it the same way `refresh_facts` does.
-        ctx.symbol_table = Some(crate::ir::SymbolTable::build(&ctx.items, &ctx.modules));
+        ctx.symbol_table = crate::ir::SymbolTable::build(&ctx.items, &ctx.modules);
         let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
         ctx.proof_ir = crate::codegen::proof_lower::lower(&inputs);
     }
@@ -1541,14 +1551,14 @@ mod tests {
             guest_entry: None,
             emit_self_host_support: false,
             extra_fn_defs: Vec::new(),
-            mutual_tco_members: HashSet::new(),
-            recursive_fns: HashSet::new(),
+            mutual_tco_members: HashSet::<crate::ir::FnId>::new(),
+            recursive_fns: HashSet::<crate::ir::FnId>::new(),
             fn_analyses: HashMap::new(),
             buffer_build_sinks: HashMap::new(),
             buffer_fusion_sites: Vec::new(),
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
-            symbol_table: None,
+            symbol_table: crate::ir::SymbolTable::default(),
         }
     }
 
@@ -1600,11 +1610,11 @@ mod tests {
             HashSet::new(),
             project_name.to_string(),
             vec![],
+            pipeline_result.symbol_table,
         );
         if let Some(ir) = proof_ir {
             ctx.proof_ir = ir;
         }
-        ctx.symbol_table = pipeline_result.symbol_table;
         ctx
     }
 

@@ -80,15 +80,20 @@ pub struct CodegenContext {
     /// Set temporarily by the Rust backend when emitting a dependent module so that
     /// `find_fn_def_by_name` can resolve same-module calls.
     pub extra_fn_defs: Vec<FnDef>,
-    /// Functions that are part of a mutual-TCO SCC group (emitted as trampoline + wrappers).
-    /// Functions NOT in this set but with TailCalls are emitted as plain self-TCO loops.
-    pub mutual_tco_members: HashSet<String>,
-    /// Functions that call themselves directly or transitively. Set-form
-    /// union of `entry_analysis.recursive_fns` plus each module's
-    /// `analysis.recursive_fns`. Used by codegen sites that previously
-    /// called `call_graph::find_recursive_fns` ad-hoc (Lean recursion
-    /// planning, type checker flow, etc.).
-    pub recursive_fns: HashSet<String>,
+    /// Functions that are part of a mutual-TCO SCC group (emitted as
+    /// trampoline + wrappers). Functions NOT in this set but with
+    /// TailCalls are emitted as plain self-TCO loops. Keyed by opaque
+    /// [`crate::ir::FnId`] from the symbol table — entry-module fns
+    /// and dep-module fns with the same bare name can't accidentally
+    /// merge under bare-name keying.
+    pub mutual_tco_members: HashSet<crate::ir::FnId>,
+    /// Functions that call themselves directly or transitively. Set-
+    /// form union of `entry_analysis.recursive_fns` plus each
+    /// module's `analysis.recursive_fns`. Keyed by opaque
+    /// [`crate::ir::FnId`] — same disambiguation guarantee as
+    /// `mutual_tco_members`. Used by codegen sites that previously
+    /// called `call_graph::find_recursive_fns` ad-hoc.
+    pub recursive_fns: HashSet<crate::ir::FnId>,
     /// Per-fn analysis facts unioned from entry + every dep module's
     /// `AnalysisResult.fn_analyses`. WASM emitter / VM compiler /
     /// future inliner read `allocates`, `thin_kind`, `body_shape`,
@@ -121,13 +126,12 @@ pub struct CodegenContext {
     /// `refinement_info_for` for now. Step 3+ migrates backends.
     #[cfg(feature = "runtime")]
     pub proof_ir: crate::ir::ProofIR,
-    /// Resolved-identity table (#138 phase E). `Some` when the
-    /// pipeline's `run_build_symbols` was on. No consumer reads
-    /// it through this field yet — production callers populate
-    /// it so downstream migration PRs (proof IR maps keyed by
-    /// `FnId`, backend `FnId → name` mangling) can wire in
-    /// without re-running name resolution per emit site.
-    pub symbol_table: Option<crate::ir::SymbolTable>,
+    /// Resolved-identity table (#138 phase E). Always populated:
+    /// `pipeline::run` builds it unconditionally and threads it
+    /// through `build_context`. Consumers (proof IR lookups,
+    /// backend FnId/TypeId resolution) read it directly — no
+    /// `Option` wrapper to unwrap at each callsite.
+    pub symbol_table: crate::ir::SymbolTable,
 }
 
 /// Output files from a codegen backend.
@@ -145,6 +149,13 @@ pub struct ProjectOutput {
 /// codegen unions the per-module sets to build a global view (sound
 /// under Aver's module DAG invariant — no cross-module SCCs possible,
 /// see `src/ir/analyze.rs` doc).
+///
+/// `symbol_table` is the resolved-identity layer built by the
+/// pipeline (`pipeline_result.symbol_table`). Always required:
+/// `pipeline::run` builds it unconditionally so every caller has
+/// one available. The ad-hoc test helpers that drive a stripped
+/// pipeline build their own via `SymbolTable::build(&items,
+/// &modules)` and pass it here.
 pub fn build_context(
     items: Vec<TopLevel>,
     tc_result: &TypeCheckResult,
@@ -152,6 +163,7 @@ pub fn build_context(
     memo_fns: HashSet<String>,
     project_name: String,
     modules: Vec<ModuleInfo>,
+    symbol_table: crate::ir::SymbolTable,
 ) -> CodegenContext {
     let type_defs: Vec<TypeDef> = items
         .iter()
@@ -177,6 +189,19 @@ pub fn build_context(
 
     let module_prefixes: HashSet<String> = modules.iter().map(|m| m.prefix.clone()).collect();
 
+    // Symbol table threaded in from the caller (pipeline or stripped
+    // test driver). Used here to convert the per-scope bare-name sets
+    // unioned below into FnId-keyed sets.
+
+    // Helper: bare fn name → entry-scope FnId. Used for entry-source
+    // analysis facts (per-module facts use `(prefix, name)` below).
+    let entry_fn_id = |name: &str| -> Option<crate::ir::FnId> {
+        symbol_table.fn_id_of(&crate::ir::FnKey::entry(name))
+    };
+    let module_fn_id = |prefix: &str, name: &str| -> Option<crate::ir::FnId> {
+        symbol_table.fn_id_of(&crate::ir::FnKey::in_module(prefix.to_string(), name))
+    };
+
     // Mutual-TCO membership unions per-module sets from the analyze stage
     // (entry's `entry_analysis` + each dep module's `module.analysis`).
     // Aver's module DAG invariant guarantees SCCs never span modules, so
@@ -187,9 +212,11 @@ pub fn build_context(
     // analysis isn't supplied (callers that haven't migrated to the
     // pipeline). The fallback path will go away once every entry point
     // runs the canonical pipeline.
-    let mut mutual_tco_members: HashSet<String> = HashSet::new();
+    let mut mutual_tco_members: HashSet<crate::ir::FnId> = HashSet::new();
     match entry_analysis {
-        Some(a) => mutual_tco_members.extend(a.mutual_tco_members.iter().cloned()),
+        Some(a) => {
+            mutual_tco_members.extend(a.mutual_tco_members.iter().filter_map(|n| entry_fn_id(n)))
+        }
         None => {
             let entry_fns: Vec<&FnDef> = fn_defs.iter().filter(|fd| fd.name != "main").collect();
             for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
@@ -197,14 +224,20 @@ pub fn build_context(
                     continue;
                 }
                 for fd in group {
-                    mutual_tco_members.insert(fd.name.clone());
+                    if let Some(id) = entry_fn_id(&fd.name) {
+                        mutual_tco_members.insert(id);
+                    }
                 }
             }
         }
     }
     for module in &modules {
         match module.analysis.as_ref() {
-            Some(a) => mutual_tco_members.extend(a.mutual_tco_members.iter().cloned()),
+            Some(a) => mutual_tco_members.extend(
+                a.mutual_tco_members
+                    .iter()
+                    .filter_map(|n| module_fn_id(&module.prefix, n)),
+            ),
             None => {
                 let mod_fns: Vec<&FnDef> = module.fn_defs.iter().collect();
                 for group in crate::call_graph::tailcall_scc_components(&mod_fns) {
@@ -212,7 +245,9 @@ pub fn build_context(
                         continue;
                     }
                     for fd in group {
-                        mutual_tco_members.insert(fd.name.clone());
+                        if let Some(id) = module_fn_id(&module.prefix, &fd.name) {
+                            mutual_tco_members.insert(id);
+                        }
                     }
                 }
             }
@@ -241,24 +276,37 @@ pub fn build_context(
     // `recursive_fns` follows the same shape as `mutual_tco_members` —
     // per-module sets unioned (Aver's module DAG keeps cross-module
     // recursion from existing). Falls back to ad-hoc `find_recursive_fns`
-    // when a module's analysis is missing.
-    let mut recursive_fns: HashSet<String> = HashSet::new();
+    // when a module's analysis is missing. Keyed by opaque `FnId` for
+    // the same disambiguation guarantee as `mutual_tco_members`.
+    let mut recursive_fns: HashSet<crate::ir::FnId> = HashSet::new();
     match entry_analysis {
-        Some(a) => recursive_fns.extend(a.recursive_fns.iter().cloned()),
+        Some(a) => recursive_fns.extend(a.recursive_fns.iter().filter_map(|n| entry_fn_id(n))),
         None => {
-            recursive_fns.extend(crate::call_graph::find_recursive_fns(&items));
+            recursive_fns.extend(
+                crate::call_graph::find_recursive_fns(&items)
+                    .iter()
+                    .filter_map(|n| entry_fn_id(n)),
+            );
         }
     }
     for module in &modules {
         match module.analysis.as_ref() {
-            Some(a) => recursive_fns.extend(a.recursive_fns.iter().cloned()),
+            Some(a) => recursive_fns.extend(
+                a.recursive_fns
+                    .iter()
+                    .filter_map(|n| module_fn_id(&module.prefix, n)),
+            ),
             None => {
                 let mod_items: Vec<TopLevel> = module
                     .fn_defs
                     .iter()
                     .map(|fd| TopLevel::FnDef(fd.clone()))
                     .collect();
-                recursive_fns.extend(crate::call_graph::find_recursive_fns(&mod_items));
+                recursive_fns.extend(
+                    crate::call_graph::find_recursive_fns(&mod_items)
+                        .iter()
+                        .filter_map(|n| module_fn_id(&module.prefix, n)),
+                );
             }
         }
     }
@@ -411,7 +459,12 @@ pub fn build_context(
         synthesized_buffered_fns,
         #[cfg(feature = "runtime")]
         proof_ir: crate::ir::ProofIR::default(),
-        symbol_table: None,
+        // Symbol table threaded through from the pipeline (or
+        // built locally in fallback). The FnId-keyed `recursive_
+        // fns` / `mutual_tco_members` above used it; backends
+        // (proof_lower / Lean / Rust / Dafny) read it directly off
+        // ctx for opaque-ID lookups.
+        symbol_table,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
@@ -437,16 +490,29 @@ impl CodegenContext {
     /// Calling `refresh_facts` on a production-built ctx is redundant
     /// work that produces the same answer — leave it off the hot path.
     pub fn refresh_facts(&mut self) {
+        // Synthetic-ctx path must own its symbol table too — FnId-
+        // keyed sets below resolve through it, same shape as the
+        // production `build_context` flow.
+        let symbol_table = crate::ir::SymbolTable::build(&self.items, &self.modules);
+        let entry_fn_id = |name: &str| -> Option<crate::ir::FnId> {
+            symbol_table.fn_id_of(&crate::ir::FnKey::entry(name))
+        };
+        let module_fn_id = |prefix: &str, name: &str| -> Option<crate::ir::FnId> {
+            symbol_table.fn_id_of(&crate::ir::FnKey::in_module(prefix.to_string(), name))
+        };
+
         let entry_fn_refs: Vec<&FnDef> =
             self.fn_defs.iter().filter(|fd| fd.name != "main").collect();
 
-        let mut mutual_tco_members: HashSet<String> = HashSet::new();
+        let mut mutual_tco_members: HashSet<crate::ir::FnId> = HashSet::new();
         for group in crate::call_graph::tailcall_scc_components(&entry_fn_refs) {
             if group.len() < 2 {
                 continue;
             }
             for fd in group {
-                mutual_tco_members.insert(fd.name.clone());
+                if let Some(id) = entry_fn_id(&fd.name) {
+                    mutual_tco_members.insert(id);
+                }
             }
         }
         for module in &self.modules {
@@ -456,29 +522,37 @@ impl CodegenContext {
                     continue;
                 }
                 for fd in group {
-                    mutual_tco_members.insert(fd.name.clone());
+                    if let Some(id) = module_fn_id(&module.prefix, &fd.name) {
+                        mutual_tco_members.insert(id);
+                    }
                 }
             }
         }
         self.mutual_tco_members = mutual_tco_members;
 
-        let mut recursive_fns: HashSet<String> = crate::call_graph::find_recursive_fns(&self.items);
+        let mut recursive_fns: HashSet<crate::ir::FnId> =
+            crate::call_graph::find_recursive_fns(&self.items)
+                .iter()
+                .filter_map(|n| entry_fn_id(n))
+                .collect();
         for module in &self.modules {
             let mod_items: Vec<TopLevel> = module
                 .fn_defs
                 .iter()
                 .map(|fd| TopLevel::FnDef(fd.clone()))
                 .collect();
-            recursive_fns.extend(crate::call_graph::find_recursive_fns(&mod_items));
+            recursive_fns.extend(
+                crate::call_graph::find_recursive_fns(&mod_items)
+                    .iter()
+                    .filter_map(|n| module_fn_id(&module.prefix, n)),
+            );
         }
         self.recursive_fns = recursive_fns;
 
-        // Symbol table must be rebuilt before proof_lower runs so the
-        // populate side can resolve `FnKey` → opaque `FnId` for the
-        // (now FnId-keyed) `fn_contracts` map. Synthetic-ctx test
-        // paths reach this codepath through `refresh_facts`, so this
-        // is the only place those flows get a symbol table.
-        self.symbol_table = Some(crate::ir::SymbolTable::build(&self.items, &self.modules));
+        // Reuse the symbol table built at the top of this function
+        // for proof_lower below — it already resolved every FnId we
+        // need for `recursive_fns` / `mutual_tco_members`.
+        self.symbol_table = symbol_table;
 
         // ProofIR's `fn_contracts` / `refined_types` are derived from
         // the just-recomputed item set + the recursion classifier, so

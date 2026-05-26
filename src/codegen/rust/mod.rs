@@ -454,7 +454,9 @@ fn entry_module_sections(
     }
 
     for fd in &ctx.fn_defs {
-        if fd.name == "main" || ctx.mutual_tco_members.contains(&fd.name) {
+        let is_mutual = crate::codegen::common::fn_id_for_decl(ctx, fd)
+            .is_some_and(|id| ctx.mutual_tco_members.contains(&id));
+        if fd.name == "main" || is_mutual {
             continue;
         }
         let is_memo = ctx.memo_fns.contains(&fd.name);
@@ -483,13 +485,29 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
 
     // Same shape as the entry path: groups (with indices) come from
     // `find_mutual_tco_groups`, set-form membership reads from
-    // `module.analysis.mutual_tco_members` when the analyze stage ran.
+    // `module.analysis.mutual_tco_members` (bare names, scope-local
+    // per module, DAG invariant keeps them unambiguous) when the
+    // analyze stage ran. Fall back to projecting `ctx.mutual_tco_members`
+    // (FnId set) back to bare names for this module's scope.
     let fn_refs: Vec<&FnDef> = module.fn_defs.iter().collect();
     let mutual_groups = toplevel::find_mutual_tco_groups(&fn_refs);
-    let module_mutual: &HashSet<String> = match module.analysis.as_ref() {
-        Some(a) => &a.mutual_tco_members,
-        None => &ctx.mutual_tco_members,
+    let module_mutual_owned: HashSet<String> = match module.analysis.as_ref() {
+        Some(a) => a.mutual_tco_members.clone(),
+        None => ctx
+            .mutual_tco_members
+            .iter()
+            .filter_map(|id| {
+                let entry = ctx.symbol_table.fn_entry(*id);
+                entry
+                    .key
+                    .scope
+                    .as_deref()
+                    .filter(|s| *s == module.prefix)
+                    .map(|_| entry.key.name.clone())
+            })
+            .collect(),
     };
+    let module_mutual = &module_mutual_owned;
 
     for (group_id, group_indices) in mutual_groups.iter().enumerate() {
         let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| fn_refs[idx]).collect();
@@ -610,6 +628,10 @@ mod tests {
             "source should typecheck without errors: {:?}",
             tc.errors
         );
+        // No pipeline analyze stage run here — supply a locally-built
+        // SymbolTable so build_context can populate its FnId-keyed
+        // sets. Cheap traversal, no analysis.
+        let symbol_table = crate::ir::SymbolTable::build(&items, &[]);
         build_context(
             items,
             &tc,
@@ -617,6 +639,7 @@ mod tests {
             HashSet::new(),
             project_name.to_string(),
             vec![],
+            symbol_table,
         )
     }
 
