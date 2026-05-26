@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use crate::ast::{Expr, FnBody, MatchArm, Spanned, Stmt, StrPart, TailCallData};
 use crate::codegen::common::expr_to_dotted_name;
 
-pub use detect::analyze_plans;
+pub use detect::{analyze_plans, analyze_plans_in_scope};
 
 /// Classification for a single recursive fn (or a whole mutual-recursion
 /// SCC, in which case every fn in the SCC gets its own plan from the
