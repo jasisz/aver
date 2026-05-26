@@ -382,13 +382,16 @@ impl RecordFieldKey {
 
 /// Bare-name resolution result. Tracks ambiguity explicitly so
 /// `resolve_fn_id` / `resolve_type_id` can refuse the look-up when
-/// two distinct identities surface the same source name (without that
-/// distinction the bare alias would be last-write-wins — peer review
-/// flagged this on PR #148).
+/// two distinct identities surface the same source name. The
+/// `Ambiguous` variant carries the actual candidate IDs (only those
+/// that made it through visibility, since that's the population
+/// path) so diagnostics can suggest exactly the names the user can
+/// actually pick from — never a private dep type that happens to
+/// share the bare name.
 #[derive(Debug, Clone)]
 enum Resolution<T> {
     Single(T),
-    Ambiguous,
+    Ambiguous(Vec<T>),
 }
 
 impl<T: Copy + PartialEq> Resolution<T> {
@@ -399,15 +402,22 @@ impl<T: Copy + PartialEq> Resolution<T> {
     fn merge(&mut self, candidate: T) {
         match self {
             Resolution::Single(existing) if *existing == candidate => {}
-            Resolution::Single(_) => *self = Resolution::Ambiguous,
-            Resolution::Ambiguous => {}
+            Resolution::Single(existing) => {
+                let prior = *existing;
+                *self = Resolution::Ambiguous(vec![prior, candidate]);
+            }
+            Resolution::Ambiguous(seen) => {
+                if !seen.contains(&candidate) {
+                    seen.push(candidate);
+                }
+            }
         }
     }
 
     fn unambiguous(&self) -> Option<T> {
         match self {
             Resolution::Single(v) => Some(*v),
-            Resolution::Ambiguous => None,
+            Resolution::Ambiguous(_) => None,
         }
     }
 }
@@ -611,25 +621,23 @@ impl TypeChecker {
     pub(crate) fn type_name_is_ambiguous(&self, name: &str) -> bool {
         matches!(
             self.bare_type_aliases.get(name),
-            Some(Resolution::Ambiguous)
+            Some(Resolution::Ambiguous(_))
         )
     }
 
-    /// List the canonical names of every type sharing `bare`. Used
-    /// to produce a helpful "use `A.Foo` or `B.Foo`" diagnostic when
-    /// an ambiguous bare reference surfaces in source. Returns an
-    /// empty list when the name isn't ambiguous (the caller doesn't
-    /// emit a diagnostic in that case).
+    /// List the canonical names of every type that the bare alias map
+    /// recorded as a candidate for `bare`. The `Resolution::Ambiguous`
+    /// variant carries the actual conflicting `TypeId`s populated
+    /// through visibility-exposed aliases — never scans the full
+    /// `symbol_table.types`, so a private (non-exposed) dep type that
+    /// happens to share a bare name never appears in the diagnostic.
     pub(crate) fn ambiguous_type_candidates(&self, bare: &str) -> Vec<String> {
-        if !self.type_name_is_ambiguous(bare) {
+        let Some(Resolution::Ambiguous(ids)) = self.bare_type_aliases.get(bare) else {
             return Vec::new();
-        }
-        let mut out: Vec<String> = self
-            .symbol_table
-            .types
+        };
+        let mut out: Vec<String> = ids
             .iter()
-            .filter(|e| e.key.name == bare)
-            .map(|e| e.key.canonical())
+            .map(|id| self.symbol_table.type_entry(*id).key.canonical())
             .collect();
         out.sort();
         out

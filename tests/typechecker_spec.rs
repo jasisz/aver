@@ -2725,6 +2725,136 @@ fn callsWithB() -> Float
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Phase B (#138, peer review round 3 nit #1): the ambiguity
+/// diagnostic must NOT list a private (non-exposed) candidate even
+/// when it shares the bare name. `Resolution::Ambiguous(Vec<TypeId>)`
+/// carries the candidate IDs populated through visibility-exposed
+/// aliases — types that aren't exposed never reach the alias map, so
+/// `ambiguous_type_candidates` returns only the names the user can
+/// actually pick from.
+#[test]
+fn ambiguity_diagnostic_omits_private_dep_candidates() {
+    let root = temp_module_root("ambiguity_private_excluded");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "Public A.Shape."
+
+type Shape
+    Circle(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape]
+    intent = "Public B.Shape."
+
+type Shape
+    Triangle(Float)
+"#,
+    )
+    .expect("write B.av failed");
+    // C declares a `Shape` but does NOT expose it. (Non-empty
+    // `exposes [helper]` triggers the explicit-list rule, so `Shape`
+    // — absent from the list — stays private.) Pre-fix
+    // `ambiguous_type_candidates` would have scanned the full
+    // SymbolTable and listed `C.Shape` alongside `A.Shape` / `B.Shape`
+    // in the user-facing diagnostic, even though the user can't
+    // actually reference `C.Shape` from `Main`.
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [helper]
+    intent = "Private C.Shape (Shape NOT in exposes list)."
+
+type Shape
+    Hexagon(Float)
+
+fn helper() -> Int
+    0
+"#,
+    )
+    .expect("write C.av failed");
+
+    let src = r#"module Main
+    depends [A, B, C]
+    intent = "Bare Shape with one private dep candidate."
+
+fn takesShape(s: Shape) -> Float
+    0.0
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    let ambig = errs
+        .iter()
+        .find(|e| e.contains("Ambiguous type name 'Shape'"))
+        .expect("expected an ambiguity diagnostic");
+    assert!(ambig.contains("A.Shape"), "missing A.Shape: {ambig}");
+    assert!(ambig.contains("B.Shape"), "missing B.Shape: {ambig}");
+    assert!(
+        !ambig.contains("C.Shape"),
+        "private C.Shape leaked into diagnostic: {ambig}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 3 nit #2): the explicit
+/// ambiguity diagnostic now also fires on local binding annotations
+/// (`x: Shape = ...`), not just function param / return / record
+/// field positions. Without this hook the matcher still rejects the
+/// program — but the user got "expected Shape, got Shape" instead of
+/// the actionable "Ambiguous type name; use A.Shape or B.Shape".
+#[test]
+fn ambiguous_bare_name_in_binding_annotation_surfaces_explicit_diagnostic() {
+    let root = temp_module_root("ambiguous_binding_ann");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "A.Shape."
+
+type Shape
+    Circle(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape]
+    intent = "B.Shape."
+
+type Shape
+    Triangle(Float)
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Bare Shape annotation in a binding."
+
+fn pick() -> Float
+    s: Shape = A.Shape.Circle(1.0)
+    0.0
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter().any(|e| {
+            e.contains("Binding 's' annotation")
+                && e.contains("Ambiguous type name 'Shape'")
+                && e.contains("A.Shape")
+                && e.contains("B.Shape")
+        }),
+        "expected an ambiguity diagnostic on the binding annotation, got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Phase B (#138, peer review #148): the exported `TypeCheckResult.fn_sigs`
 /// map must not silently bind a bare-name fn entry when two distinct
 /// dep modules both expose the same bare name. Rust codegen and

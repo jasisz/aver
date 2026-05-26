@@ -206,6 +206,12 @@ impl TypeChecker {
                             let ty = if let Some(ann_src) = type_ann {
                                 match crate::types::parse_type_str_strict(ann_src) {
                                     Ok(annotated) => {
+                                        let annotated = self.canonicalize_named(annotated);
+                                        self.report_ambiguous_named(
+                                            &annotated,
+                                            expr.line,
+                                            &format!("Binding '{}' annotation", name),
+                                        );
                                         if !self.compatible(&inferred, &annotated) {
                                             self.error(format!(
                                                 "Binding '{}': expression has type {}, annotation says {}",
@@ -601,7 +607,8 @@ impl TypeChecker {
                         // annotation rather than stamping `Unknown`.
                         let parsed_ann = type_ann
                             .as_ref()
-                            .and_then(|src| crate::types::parse_type_str_strict(src).ok());
+                            .and_then(|src| crate::types::parse_type_str_strict(src).ok())
+                            .map(|ty| self.canonicalize_named(ty));
                         let inferred = self.infer_type_with_expected(expr, parsed_ann.as_ref());
                         // Mirror the top-level rejection above — fn refs
                         // aren't supported as local bindings, period. See
@@ -615,6 +622,12 @@ impl TypeChecker {
                         let ty = if let Some(ann_src) = type_ann {
                             match crate::types::parse_type_str_strict(ann_src) {
                                 Ok(annotated) => {
+                                    let annotated = self.canonicalize_named(annotated);
+                                    self.report_ambiguous_named(
+                                        &annotated,
+                                        expr.line,
+                                        &format!("Binding '{}' annotation", name),
+                                    );
                                     if !self.compatible(&inferred, &annotated) {
                                         self.error(format!(
                                             "Binding '{}': expression has type {}, annotation says {}",
