@@ -2725,6 +2725,125 @@ fn callsWithB() -> Float
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Phase B (#138, peer review round 5 F1): the type stamp on
+/// a dep module's exported fn signature must resolve in the dep's
+/// own scope, not the importer's. Pre-fix
+/// `integrate_registry` called the regular `canonicalize_named`,
+/// which uses the importer's `current_module_prefix` + bare alias
+/// map — so `B.make() -> Shape` (where `Shape` is B's own type) lost
+/// its `TypeId` whenever `Shape` was ambiguous or unresolvable in
+/// `Main`. The user-visible failure was
+/// `expected B.Shape, got Shape` on every cross-module call.
+#[test]
+fn dep_module_exported_sig_resolves_in_owner_scope() {
+    let root = temp_module_root("owner_aware_canonicalize");
+    std::fs::write(
+        root.join("A.av"),
+        r#"module A
+    exposes [Shape]
+    intent = "A.Shape."
+
+type Shape
+    Circle(Float)
+"#,
+    )
+    .expect("write A.av failed");
+    std::fs::write(
+        root.join("B.av"),
+        r#"module B
+    exposes [Shape, make]
+    intent = "B.Shape + factory."
+
+type Shape
+    Triangle(Float)
+
+fn make() -> Shape
+    Shape.Triangle(2.0)
+"#,
+    )
+    .expect("write B.av failed");
+
+    let src = r#"module Main
+    depends [A, B]
+    intent = "Forwards B.make() into a B.Shape consumer."
+
+fn takeB(s: B.Shape) -> Float
+    match s
+        B.Shape.Triangle(r) -> r
+
+fn caller() -> Float
+    takeB(B.make())
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.is_empty(),
+        "expected `takeB(B.make())` to typecheck cleanly when B.make's return is B.Shape; got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Phase B (#138, peer review round 5 F1, soundness counterpart):
+/// even when both dep modules hide their own `Shape` from `exposes`,
+/// the typechecker must still distinguish `C.Shape` from `D.Shape`
+/// at the matcher boundary so `D.consume(C.make())` is rejected.
+/// Pre-fix the registry-side canonicalisation left both signatures'
+/// `Shape` references unresolved (`id: None`), the matcher's
+/// `(None, None)` branch compared by name, and the call silently
+/// passed. With owner-aware canonicalisation each side carries its
+/// own real `TypeId` (still treated as opaque to the importer
+/// because neither type is exposed) and the matcher rejects.
+#[test]
+fn private_exported_sig_types_do_not_collapse_across_modules() {
+    let root = temp_module_root("private_exported_sigs_distinct");
+    std::fs::write(
+        root.join("C.av"),
+        r#"module C
+    exposes [make]
+    intent = "C's Shape is private but appears in exported make."
+
+type Shape
+    Hexagon(Float)
+
+fn make() -> Shape
+    Shape.Hexagon(1.0)
+"#,
+    )
+    .expect("write C.av failed");
+    std::fs::write(
+        root.join("D.av"),
+        r#"module D
+    exposes [consume]
+    intent = "D's Shape is private but appears in exported consume."
+
+type Shape
+    Circle(Float)
+
+fn consume(s: Shape) -> Float
+    match s
+        Shape.Circle(r) -> r
+"#,
+    )
+    .expect("write D.av failed");
+
+    let src = r#"module Main
+    depends [C, D]
+    intent = "Tries to feed C.make() into D.consume — distinct private types."
+
+fn main() -> Float
+    D.consume(C.make())
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Argument 1 of 'D.consume'")
+                || e.contains("Argument 1 of 'consume'")),
+        "expected an argument-type mismatch on `D.consume(C.make())` (C.Shape != D.Shape); got: {errs:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Phase B (#138, peer review round 4 F1): a qualified
 /// `C.Shape` reference must NOT resolve when `C` doesn't expose
 /// `Shape`. Pre-fix `resolve_type_id` consulted the symbol table

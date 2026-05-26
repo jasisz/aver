@@ -152,6 +152,89 @@ impl TypeChecker {
     /// canonical form resolved through the symbol table. Leaves the
     /// structure intact otherwise — `Type::Var`, primitives,
     /// `Type::List<Bare>` (recurse into inner), etc.
+    /// Owner-aware variant of `canonicalize_named`. Bare `Type::Named`
+    /// references inside `ty` resolve against `owner_module`'s scope
+    /// in the symbol table, ignoring the importer's
+    /// `current_module_prefix` / `bare_type_aliases`. Used by
+    /// `integrate_registry` when integrating a dep module's exported
+    /// signatures: a bare `Shape` in B's `fn make() -> Shape` must
+    /// always stamp as `B.Shape`, regardless of what `Shape` means in
+    /// the importing module.
+    ///
+    /// Resolves through `symbol_table.type_id_of` directly — bypasses
+    /// the visibility filter. Owners always see their own types, and
+    /// the resulting `TypeId` is the soundness anchor downstream
+    /// matcher checks rely on. The importer's visibility is a
+    /// separate concern enforced when the user-source side references
+    /// the type by name.
+    pub(super) fn canonicalize_named_in_module(&self, ty: Type, owner_module: &str) -> Type {
+        match ty {
+            Type::Named { id, name } => {
+                let resolved = if let Some((prefix, n)) = name.rsplit_once('.') {
+                    // Already qualified: trust the explicit prefix.
+                    self.symbol_table
+                        .type_id_of(&TypeKey::in_module(prefix, n))
+                        .or_else(|| {
+                            // Owner referencing its own type via the
+                            // full `Module.Type` form: SymbolTable
+                            // stores entry items under `TypeKey::entry`
+                            // for the parent build path, so probe
+                            // entry too when the explicit prefix
+                            // matches `owner_module`.
+                            if prefix == owner_module {
+                                self.symbol_table.type_id_of(&TypeKey::entry(n))
+                            } else {
+                                None
+                            }
+                        })
+                } else {
+                    self.symbol_table
+                        .type_id_of(&TypeKey::in_module(owner_module, &name))
+                        .or_else(|| self.symbol_table.type_id_of(&TypeKey::entry(&name)))
+                };
+                match resolved {
+                    Some(resolved_id) => Type::Named {
+                        id: Some(resolved_id),
+                        name,
+                    },
+                    None => Type::Named { id, name },
+                }
+            }
+            Type::List(inner) => Type::List(Box::new(
+                self.canonicalize_named_in_module(*inner, owner_module),
+            )),
+            Type::Vector(inner) => Type::Vector(Box::new(
+                self.canonicalize_named_in_module(*inner, owner_module),
+            )),
+            Type::Option(inner) => Type::Option(Box::new(
+                self.canonicalize_named_in_module(*inner, owner_module),
+            )),
+            Type::Result(ok, err) => Type::Result(
+                Box::new(self.canonicalize_named_in_module(*ok, owner_module)),
+                Box::new(self.canonicalize_named_in_module(*err, owner_module)),
+            ),
+            Type::Map(k, v) => Type::Map(
+                Box::new(self.canonicalize_named_in_module(*k, owner_module)),
+                Box::new(self.canonicalize_named_in_module(*v, owner_module)),
+            ),
+            Type::Tuple(items) => Type::Tuple(
+                items
+                    .into_iter()
+                    .map(|t| self.canonicalize_named_in_module(t, owner_module))
+                    .collect(),
+            ),
+            Type::Fn(params, ret, effects) => Type::Fn(
+                params
+                    .into_iter()
+                    .map(|t| self.canonicalize_named_in_module(t, owner_module))
+                    .collect(),
+                Box::new(self.canonicalize_named_in_module(*ret, owner_module)),
+                effects,
+            ),
+            other => other,
+        }
+    }
+
     pub(super) fn canonicalize_named(&self, ty: Type) -> Type {
         // Phase B: keep the `name` field source-faithful (matches
         // pre-phase-B `Type::Named(bare)` behaviour — backend codegen
@@ -515,16 +598,20 @@ impl TypeChecker {
                                 entry.module, fn_name, unknown, param_name
                             )
                         })?;
-                        parsed_params.push(self.canonicalize_named(ty));
+                        // Phase B (peer review round 5): canonicalise
+                        // dep module sigs in the OWNER's scope so a
+                        // bare `Shape` in B's `fn make() -> Shape`
+                        // stamps as B.Shape regardless of what `Shape`
+                        // means in the importing module.
+                        parsed_params.push(self.canonicalize_named_in_module(ty, &entry.module));
                     }
-                    let ret = self.canonicalize_named(parse_type_str_strict(return_type).map_err(
-                        |unknown| {
-                            format!(
-                                "Module '{}', function '{}': unknown return type '{}'",
-                                entry.module, fn_name, unknown
-                            )
-                        },
-                    )?);
+                    let ret_raw = parse_type_str_strict(return_type).map_err(|unknown| {
+                        format!(
+                            "Module '{}', function '{}': unknown return type '{}'",
+                            entry.module, fn_name, unknown
+                        )
+                    })?;
+                    let ret = self.canonicalize_named_in_module(ret_raw, &entry.module);
                     self.insert_fn_sig(
                         &entry.canonical_name,
                         FnSig {
@@ -568,8 +655,9 @@ impl TypeChecker {
                     let params: Vec<Type> = field_types
                         .iter()
                         .map(|f| {
-                            self.canonicalize_named(
+                            self.canonicalize_named_in_module(
                                 parse_type_str_strict(f).unwrap_or(Type::Invalid),
+                                &entry.module,
                             )
                         })
                         .collect();
@@ -590,8 +678,9 @@ impl TypeChecker {
                     }
                 }
                 SymbolKind::RecordField { field_type, .. } => {
-                    let field_ty = self.canonicalize_named(
+                    let field_ty = self.canonicalize_named_in_module(
                         parse_type_str_strict(field_type).unwrap_or(Type::Invalid),
+                        &entry.module,
                     );
                     let canonical = &entry.canonical_name;
                     if let Some((canonical_type, field_name)) = canonical.rsplit_once('.') {
