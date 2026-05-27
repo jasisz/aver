@@ -141,7 +141,7 @@ pub fn lookupFnOption(fns: &FnStore, name: AverStr) -> Option<FnDef> {
 #[inline(always)]
 pub fn lookupFn(fns: &FnStore, name: AverStr) -> Result<FnDef, AverStr> {
     crate::cancel_checkpoint();
-    match lookupFnOption(fns, name.clone()) {
+    match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
         Some(fd) => Ok(fd),
         None => Err((AverStr::from("undefined function: ") + &name)),
     }
@@ -188,7 +188,8 @@ pub fn mergeBindings(
 /// Build a function store with a name->id index and id->FnDef table.
 pub fn fnsToStore(fns: &aver_rt::AverList<FnDef>) -> FnStore {
     crate::cancel_checkpoint();
-    let nameToId = fnsToIdMap(fns.clone(), HashMap::new(), 0i64);
+    let nameToId =
+        crate::aver_generated::domain::eval::store::fnsToIdMap(fns.clone(), HashMap::new(), 0i64);
     FnStore {
         nameToId: nameToId,
         byId: aver_rt::AverVector::from_vec(fns.to_vec()),

@@ -517,7 +517,7 @@ impl aver_replay::ReplayValue for Token {
 pub fn tokenRepr(t: &Token) -> AverStr {
     crate::cancel_checkpoint();
     match t.clone() {
-        Token::TkInt(n) => aver_rt::AverStr::from({
+        crate::aver_generated::domain::token::Token::TkInt(n) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
                     let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
@@ -530,8 +530,8 @@ pub fn tokenRepr(t: &Token) -> AverStr {
             __b.push_str(&AverStr::from(")"));
             __b
         }),
-        Token::TkFloat(f) => AverStr::from("Float"),
-        Token::TkStr(s) => aver_rt::AverStr::from({
+        crate::aver_generated::domain::token::Token::TkFloat(f) => AverStr::from("Float"),
+        crate::aver_generated::domain::token::Token::TkStr(s) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
                     let mut __b = aver_rt::Buffer::with_capacity((21i64) as usize);
@@ -544,7 +544,7 @@ pub fn tokenRepr(t: &Token) -> AverStr {
             __b.push_str(&AverStr::from(")"));
             __b
         }),
-        Token::TkIdent(s) => aver_rt::AverStr::from({
+        crate::aver_generated::domain::token::Token::TkIdent(s) => aver_rt::AverStr::from({
             let mut __b = {
                 let mut __b = {
                     let mut __b = aver_rt::Buffer::with_capacity((23i64) as usize);
@@ -557,40 +557,40 @@ pub fn tokenRepr(t: &Token) -> AverStr {
             __b.push_str(&AverStr::from(")"));
             __b
         }),
-        Token::TkTrue => AverStr::from("True"),
-        Token::TkFalse => AverStr::from("False"),
-        Token::TkPlus => AverStr::from("Plus"),
-        Token::TkMinus => AverStr::from("Minus"),
-        Token::TkStar => AverStr::from("Star"),
-        Token::TkSlash => AverStr::from("Slash"),
-        Token::TkEq => AverStr::from("Eq"),
-        Token::TkEqEq => AverStr::from("EqEq"),
-        Token::TkNeq => AverStr::from("Neq"),
-        Token::TkLt => AverStr::from("Lt"),
-        Token::TkGt => AverStr::from("Gt"),
-        Token::TkLte => AverStr::from("Lte"),
-        Token::TkGte => AverStr::from("Gte"),
-        Token::TkLParen => AverStr::from("LParen"),
-        Token::TkRParen => AverStr::from("RParen"),
-        Token::TkComma => AverStr::from("Comma"),
-        Token::TkArrow => AverStr::from("Arrow"),
-        Token::TkLBracket => AverStr::from("LBracket"),
-        Token::TkRBracket => AverStr::from("RBracket"),
-        Token::TkDot => AverStr::from("Dot"),
-        Token::TkDotDot => AverStr::from("DotDot"),
-        Token::TkQuestion => AverStr::from("Question"),
-        Token::TkNewline => AverStr::from("Newline"),
-        Token::TkInterpStart => AverStr::from("InterpStart"),
-        Token::TkInterpEnd => AverStr::from("InterpEnd"),
-        Token::TkColon => AverStr::from("Colon"),
-        Token::TkBang => AverStr::from("Bang"),
-        Token::TkFatArrow => AverStr::from("FatArrow"),
-        Token::TkIndent => AverStr::from("Indent"),
-        Token::TkDedent => AverStr::from("Dedent"),
-        Token::TkLBrace => AverStr::from("LBrace"),
-        Token::TkRBrace => AverStr::from("RBrace"),
-        Token::TkFn => AverStr::from("Fn"),
-        Token::TkMatch => AverStr::from("Match"),
-        Token::TkEof => AverStr::from("Eof"),
+        crate::aver_generated::domain::token::Token::TkTrue => AverStr::from("True"),
+        crate::aver_generated::domain::token::Token::TkFalse => AverStr::from("False"),
+        crate::aver_generated::domain::token::Token::TkPlus => AverStr::from("Plus"),
+        crate::aver_generated::domain::token::Token::TkMinus => AverStr::from("Minus"),
+        crate::aver_generated::domain::token::Token::TkStar => AverStr::from("Star"),
+        crate::aver_generated::domain::token::Token::TkSlash => AverStr::from("Slash"),
+        crate::aver_generated::domain::token::Token::TkEq => AverStr::from("Eq"),
+        crate::aver_generated::domain::token::Token::TkEqEq => AverStr::from("EqEq"),
+        crate::aver_generated::domain::token::Token::TkNeq => AverStr::from("Neq"),
+        crate::aver_generated::domain::token::Token::TkLt => AverStr::from("Lt"),
+        crate::aver_generated::domain::token::Token::TkGt => AverStr::from("Gt"),
+        crate::aver_generated::domain::token::Token::TkLte => AverStr::from("Lte"),
+        crate::aver_generated::domain::token::Token::TkGte => AverStr::from("Gte"),
+        crate::aver_generated::domain::token::Token::TkLParen => AverStr::from("LParen"),
+        crate::aver_generated::domain::token::Token::TkRParen => AverStr::from("RParen"),
+        crate::aver_generated::domain::token::Token::TkComma => AverStr::from("Comma"),
+        crate::aver_generated::domain::token::Token::TkArrow => AverStr::from("Arrow"),
+        crate::aver_generated::domain::token::Token::TkLBracket => AverStr::from("LBracket"),
+        crate::aver_generated::domain::token::Token::TkRBracket => AverStr::from("RBracket"),
+        crate::aver_generated::domain::token::Token::TkDot => AverStr::from("Dot"),
+        crate::aver_generated::domain::token::Token::TkDotDot => AverStr::from("DotDot"),
+        crate::aver_generated::domain::token::Token::TkQuestion => AverStr::from("Question"),
+        crate::aver_generated::domain::token::Token::TkNewline => AverStr::from("Newline"),
+        crate::aver_generated::domain::token::Token::TkInterpStart => AverStr::from("InterpStart"),
+        crate::aver_generated::domain::token::Token::TkInterpEnd => AverStr::from("InterpEnd"),
+        crate::aver_generated::domain::token::Token::TkColon => AverStr::from("Colon"),
+        crate::aver_generated::domain::token::Token::TkBang => AverStr::from("Bang"),
+        crate::aver_generated::domain::token::Token::TkFatArrow => AverStr::from("FatArrow"),
+        crate::aver_generated::domain::token::Token::TkIndent => AverStr::from("Indent"),
+        crate::aver_generated::domain::token::Token::TkDedent => AverStr::from("Dedent"),
+        crate::aver_generated::domain::token::Token::TkLBrace => AverStr::from("LBrace"),
+        crate::aver_generated::domain::token::Token::TkRBrace => AverStr::from("RBrace"),
+        crate::aver_generated::domain::token::Token::TkFn => AverStr::from("Fn"),
+        crate::aver_generated::domain::token::Token::TkMatch => AverStr::from("Match"),
+        crate::aver_generated::domain::token::Token::TkEof => AverStr::from("Eof"),
     }
 }

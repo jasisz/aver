@@ -449,6 +449,7 @@ fn entry_module_sections(
             group_id + 1,
             &group_fns,
             ctx,
+            None,
             "pub ",
         ));
     }
@@ -515,6 +516,7 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             group_id + 1,
             &group_fns,
             ctx,
+            Some(&module.prefix),
             "pub ",
         ));
     }

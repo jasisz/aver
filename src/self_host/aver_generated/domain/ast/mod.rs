@@ -2922,18 +2922,19 @@ pub fn ctorNameToTag(name: AverStr) -> i64 {
     {
         let __dispatch_subject = name.clone();
         if &*__dispatch_subject == "Result.Ok" {
-            tagResultOk()
+            crate::aver_generated::domain::ast::tagResultOk()
         } else {
             if &*__dispatch_subject == "Result.Err" {
-                tagResultErr()
+                crate::aver_generated::domain::ast::tagResultErr()
             } else {
                 if &*__dispatch_subject == "Option.Some" {
-                    tagOptionSome()
+                    crate::aver_generated::domain::ast::tagOptionSome()
                 } else {
                     if &*__dispatch_subject == "Option.None" {
-                        tagOptionNone()
+                        crate::aver_generated::domain::ast::tagOptionNone()
                     } else {
-                        (tagUserBase() + &userCtorTagOffset(name))
+                        (crate::aver_generated::domain::ast::tagUserBase()
+                            + &crate::aver_generated::domain::ast::userCtorTagOffset(name))
                     }
                 }
             }
@@ -2945,7 +2946,7 @@ pub fn ctorNameToTag(name: AverStr) -> i64 {
 #[inline(always)]
 pub fn userCtorTagOffset(name: AverStr) -> i64 {
     crate::cancel_checkpoint();
-    userCtorTagOffsetLoop(name, 0i64, 0i64)
+    crate::aver_generated::domain::ast::userCtorTagOffsetLoop(name, 0i64, 0i64)
 }
 
 /// Walk the constructor name and accumulate a bounded rolling hash.
@@ -2960,8 +2961,10 @@ pub fn userCtorTagOffsetLoop(mut name: AverStr, mut pos: i64, mut acc: i64) -> i
             match (name.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(ch) => {
                     let __tmp1 = (pos + 1i64);
-                    let __tmp2 =
-                        userCtorTagStep(acc, (ch.chars().next().map(|c| c as i64).unwrap_or(0i64)));
+                    let __tmp2 = crate::aver_generated::domain::ast::userCtorTagStep(
+                        acc,
+                        (ch.chars().next().map(|c| c as i64).unwrap_or(0i64)),
+                    );
                     pos = __tmp1;
                     acc = __tmp2;
                     continue;
@@ -2977,7 +2980,7 @@ pub fn userCtorTagStep(acc: i64, code: i64) -> i64 {
     crate::cancel_checkpoint();
     let next = ((acc * 131i64) + code);
     {
-        let __b = userTagSpan();
+        let __b = crate::aver_generated::domain::ast::userTagSpan();
         if __b == 0i64 {
             0i64
         } else {

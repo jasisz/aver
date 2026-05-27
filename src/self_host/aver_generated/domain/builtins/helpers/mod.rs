@@ -54,7 +54,7 @@ pub fn twoArgs(args: &aver_rt::AverList<Val>) -> Result<(Val, Val), AverStr> {
 pub fn expectList(v: &Val) -> Result<aver_rt::AverList<Val>, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
-        Val::ValList(items) => Ok(items),
+        crate::aver_generated::domain::value::Val::ValList(items) => Ok(items),
         _ => Err(AverStr::from("expected list argument")),
     }
 }
@@ -63,7 +63,7 @@ pub fn expectList(v: &Val) -> Result<aver_rt::AverList<Val>, AverStr> {
 pub fn expectInt(v: &Val) -> Result<i64, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
-        Val::ValInt(n) => Ok(n),
+        crate::aver_generated::domain::value::Val::ValInt(n) => Ok(n),
         _ => Err(AverStr::from("expected int argument")),
     }
 }
@@ -72,7 +72,7 @@ pub fn expectInt(v: &Val) -> Result<i64, AverStr> {
 pub fn expectStr(v: &Val) -> Result<AverStr, AverStr> {
     crate::cancel_checkpoint();
     match v.clone() {
-        Val::ValStr(s) => Ok(s),
+        crate::aver_generated::domain::value::Val::ValStr(s) => Ok(s),
         _ => Err(AverStr::from("expected string argument")),
     }
 }

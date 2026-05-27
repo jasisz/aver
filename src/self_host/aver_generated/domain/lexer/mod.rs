@@ -71,10 +71,10 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<Tok
             __MutualTco2::TokenizeDefault(mut c, mut src, mut pos) => {
                 crate::cancel_checkpoint();
                 if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
-                    return tokenizeDigit(src, pos);
+                    return crate::aver_generated::domain::lexer::tokenizeDigit(src, pos);
                 } else {
                     if crate::aver_generated::domain::lexer::chars::isAlpha(c.clone()) {
-                        return tokenizeAlpha(src, pos);
+                        return crate::aver_generated::domain::lexer::tokenizeAlpha(src, pos);
                     } else {
                         __MutualTco2::TokenizeBraceOrSkip(c, src, pos)
                     }
@@ -83,16 +83,16 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<Tok
             __MutualTco2::TokenizeBraceOrSkip(mut c, mut src, mut pos) => {
                 crate::cancel_checkpoint();
                 let nextPos = (pos + 1i64);
-                if (c == openBrace()) {
+                if (c == crate::aver_generated::domain::lexer::openBrace()) {
                     return aver_rt::AverList::prepend(
                         Token::TkLBrace.clone(),
-                        &tokenize(src, nextPos),
+                        &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
                     );
                 } else {
-                    if (c == closeBrace()) {
+                    if (c == crate::aver_generated::domain::lexer::closeBrace()) {
                         return aver_rt::AverList::prepend(
                             Token::TkRBrace.clone(),
-                            &tokenize(src, nextPos),
+                            &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
                         );
                     } else {
                         __MutualTco2::Tokenize(src, nextPos)
@@ -108,70 +108,68 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<Tok
                         __MutualTco2::Tokenize(src, nextPos)
                     } else {
                         if &*__dispatch_subject == "\n" {
-                            return tokenizeNewline(src, nextPos);
+                            return crate::aver_generated::domain::lexer::tokenizeNewline(
+                                src, nextPos,
+                            );
                         } else {
                             if &*__dispatch_subject == "/" {
-                                return tokenizeSlashOrComment(src, pos);
+                                return crate::aver_generated::domain::lexer::tokenizeSlashOrComment(
+                                    src, pos,
+                                );
                             } else {
                                 if &*__dispatch_subject == "+" {
                                     return aver_rt::AverList::prepend(
                                         Token::TkPlus.clone(),
-                                        &tokenize(src, nextPos),
+                                        &crate::aver_generated::domain::lexer::tokenize(
+                                            src, nextPos,
+                                        ),
                                     );
                                 } else {
                                     if &*__dispatch_subject == "*" {
                                         return aver_rt::AverList::prepend(
                                             Token::TkStar.clone(),
-                                            &tokenize(src, nextPos),
+                                            &crate::aver_generated::domain::lexer::tokenize(
+                                                src, nextPos,
+                                            ),
                                         );
                                     } else {
                                         if &*__dispatch_subject == "<" {
-                                            return tokenizeLt(src, pos);
+                                            return crate::aver_generated::domain::lexer::tokenizeLt(
+                                                src, pos,
+                                            );
                                         } else {
                                             if &*__dispatch_subject == ">" {
-                                                return tokenizeGt(src, pos);
+                                                return crate::aver_generated::domain::lexer::tokenizeGt(src, pos);
                                             } else {
                                                 if &*__dispatch_subject == "!" {
-                                                    return tokenizeBang(src, pos);
+                                                    return crate::aver_generated::domain::lexer::tokenizeBang(src, pos);
                                                 } else {
                                                     if &*__dispatch_subject == "?" {
-                                                        return aver_rt::AverList::prepend(
-                                                            Token::TkQuestion.clone(),
-                                                            &tokenize(src, nextPos),
-                                                        );
+                                                        return aver_rt::AverList::prepend(Token::TkQuestion.clone(), &crate::aver_generated::domain::lexer::tokenize(src, nextPos));
                                                     } else {
                                                         if &*__dispatch_subject == "\"" {
-                                                            return tokenizeString(
-                                                                src,
-                                                                nextPos,
-                                                                AverStr::from(""),
-                                                            );
+                                                            return crate::aver_generated::domain::lexer::tokenizeString(src, nextPos, AverStr::from(""));
                                                         } else {
                                                             if &*__dispatch_subject == "(" {
-                                                                return aver_rt::AverList::prepend(
-                                                                    Token::TkLParen.clone(),
-                                                                    &tokenize(src, nextPos),
-                                                                );
+                                                                return aver_rt::AverList::prepend(Token::TkLParen.clone(), &crate::aver_generated::domain::lexer::tokenize(src, nextPos));
                                                             } else {
                                                                 if &*__dispatch_subject == ")" {
-                                                                    return aver_rt::AverList::prepend(Token::TkRParen.clone(), &tokenize(src, nextPos));
+                                                                    return aver_rt::AverList::prepend(Token::TkRParen.clone(), &crate::aver_generated::domain::lexer::tokenize(src, nextPos));
                                                                 } else {
                                                                     if &*__dispatch_subject == "[" {
-                                                                        return aver_rt::AverList::prepend(Token::TkLBracket.clone(), &tokenize(src, nextPos));
+                                                                        return aver_rt::AverList::prepend(Token::TkLBracket.clone(), &crate::aver_generated::domain::lexer::tokenize(src, nextPos));
                                                                     } else {
                                                                         if &*__dispatch_subject
                                                                             == "]"
                                                                         {
-                                                                            return aver_rt::AverList::prepend(Token::TkRBracket.clone(), &tokenize(src, nextPos));
+                                                                            return aver_rt::AverList::prepend(Token::TkRBracket.clone(), &crate::aver_generated::domain::lexer::tokenize(src, nextPos));
                                                                         } else {
                                                                             if &*__dispatch_subject
                                                                                 == "."
                                                                             {
-                                                                                return tokenizeDot(
-                                                                                    src, pos,
-                                                                                );
+                                                                                return crate::aver_generated::domain::lexer::tokenizeDot(src, pos);
                                                                             } else {
-                                                                                if &*__dispatch_subject == "," { return aver_rt::AverList::prepend(Token::TkComma.clone(), &tokenize(src, nextPos)) } else { if &*__dispatch_subject == ":" { return aver_rt::AverList::prepend(Token::TkColon.clone(), &tokenize(src, nextPos)) } else { if &*__dispatch_subject == "=" { return tokenizeEq(src, pos) } else { if &*__dispatch_subject == "-" { return tokenizeMinus(src, pos) } else { __MutualTco2::TokenizeDefault(c, src, pos) } } } }
+                                                                                if &*__dispatch_subject == "," { return aver_rt::AverList::prepend(Token::TkComma.clone(), &crate::aver_generated::domain::lexer::tokenize(src, nextPos)) } else { if &*__dispatch_subject == ":" { return aver_rt::AverList::prepend(Token::TkColon.clone(), &crate::aver_generated::domain::lexer::tokenize(src, nextPos)) } else { if &*__dispatch_subject == "=" { return crate::aver_generated::domain::lexer::tokenizeEq(src, pos) } else { if &*__dispatch_subject == "-" { return crate::aver_generated::domain::lexer::tokenizeMinus(src, pos) } else { __MutualTco2::TokenizeDefault(c, src, pos) } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -281,10 +279,14 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> aver_rt::AverList<Tok
             }
             __MutualTco3::TokenizeInterpExprC(mut src, mut pos, mut c) => {
                 crate::cancel_checkpoint();
-                if (c == closeBrace()) {
+                if (c == crate::aver_generated::domain::lexer::closeBrace()) {
                     return aver_rt::AverList::prepend(
                         Token::TkInterpEnd.clone(),
-                        &tokenizeString(src, (pos + 1i64), AverStr::from("")),
+                        &crate::aver_generated::domain::lexer::tokenizeString(
+                            src,
+                            (pos + 1i64),
+                            AverStr::from(""),
+                        ),
                     );
                 } else {
                     __MutualTco3::TokenizeInterpExprChar(src, pos, c)
@@ -293,7 +295,7 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> aver_rt::AverList<Tok
             __MutualTco3::TokenizeInterpExprChar(mut src, mut pos, mut c) => {
                 crate::cancel_checkpoint();
                 if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
-                    return tokenizeInterpDigit(src, pos);
+                    return crate::aver_generated::domain::lexer::tokenizeInterpDigit(src, pos);
                 } else {
                     __MutualTco3::TokenizeInterpNonDigit(src, pos, c)
                 }
@@ -317,63 +319,47 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> aver_rt::AverList<Tok
                         if &*__dispatch_subject == "(" {
                             return aver_rt::AverList::prepend(
                                 Token::TkLParen.clone(),
-                                &tokenizeInterpExpr(src, nextPos),
+                                &crate::aver_generated::domain::lexer::tokenizeInterpExpr(
+                                    src, nextPos,
+                                ),
                             );
                         } else {
                             if &*__dispatch_subject == ")" {
                                 return aver_rt::AverList::prepend(
                                     Token::TkRParen.clone(),
-                                    &tokenizeInterpExpr(src, nextPos),
+                                    &crate::aver_generated::domain::lexer::tokenizeInterpExpr(
+                                        src, nextPos,
+                                    ),
                                 );
                             } else {
                                 if &*__dispatch_subject == "+" {
                                     return aver_rt::AverList::prepend(
                                         Token::TkPlus.clone(),
-                                        &tokenizeInterpExpr(src, nextPos),
+                                        &crate::aver_generated::domain::lexer::tokenizeInterpExpr(
+                                            src, nextPos,
+                                        ),
                                     );
                                 } else {
                                     if &*__dispatch_subject == "-" {
-                                        return aver_rt::AverList::prepend(
-                                            Token::TkMinus.clone(),
-                                            &tokenizeInterpExpr(src, nextPos),
-                                        );
+                                        return aver_rt::AverList::prepend(Token::TkMinus.clone(), &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, nextPos));
                                     } else {
                                         if &*__dispatch_subject == "*" {
-                                            return aver_rt::AverList::prepend(
-                                                Token::TkStar.clone(),
-                                                &tokenizeInterpExpr(src, nextPos),
-                                            );
+                                            return aver_rt::AverList::prepend(Token::TkStar.clone(), &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, nextPos));
                                         } else {
                                             if &*__dispatch_subject == "," {
-                                                return aver_rt::AverList::prepend(
-                                                    Token::TkComma.clone(),
-                                                    &tokenizeInterpExpr(src, nextPos),
-                                                );
+                                                return aver_rt::AverList::prepend(Token::TkComma.clone(), &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, nextPos));
                                             } else {
                                                 if &*__dispatch_subject == "." {
-                                                    return aver_rt::AverList::prepend(
-                                                        Token::TkDot.clone(),
-                                                        &tokenizeInterpExpr(src, nextPos),
-                                                    );
+                                                    return aver_rt::AverList::prepend(Token::TkDot.clone(), &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, nextPos));
                                                 } else {
                                                     if &*__dispatch_subject == "[" {
-                                                        return aver_rt::AverList::prepend(
-                                                            Token::TkLBracket.clone(),
-                                                            &tokenizeInterpExpr(src, nextPos),
-                                                        );
+                                                        return aver_rt::AverList::prepend(Token::TkLBracket.clone(), &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, nextPos));
                                                     } else {
                                                         if &*__dispatch_subject == "]" {
-                                                            return aver_rt::AverList::prepend(
-                                                                Token::TkRBracket.clone(),
-                                                                &tokenizeInterpExpr(src, nextPos),
-                                                            );
+                                                            return aver_rt::AverList::prepend(Token::TkRBracket.clone(), &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, nextPos));
                                                         } else {
                                                             if &*__dispatch_subject == "\"" {
-                                                                return tokenizeInterpString(
-                                                                    src,
-                                                                    nextPos,
-                                                                    AverStr::from(""),
-                                                                );
+                                                                return crate::aver_generated::domain::lexer::tokenizeInterpString(src, nextPos, AverStr::from(""));
                                                             } else {
                                                                 __MutualTco3::TokenizeInterpExpr(
                                                                     src, nextPos,
@@ -406,7 +392,9 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> aver_rt::AverList<Tok
                                     crate::aver_generated::domain::lexer::chars::keywordOrIdent(
                                         word,
                                     ),
-                                    &tokenizeInterpExpr(src, newPos),
+                                    &crate::aver_generated::domain::lexer::tokenizeInterpExpr(
+                                        src, newPos,
+                                    ),
                                 );
                             }
                         }
@@ -471,7 +459,7 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> aver_rt::AverList<Tok
                 crate::cancel_checkpoint();
                 if (pos >= (src.chars().count() as i64)) {
                     return aver_rt::AverList::from_vec(vec![
-                        Token::TkStr(acc),
+                        crate::aver_generated::domain::token::Token::TkStr(acc),
                         Token::TkEof.clone(),
                     ]);
                 } else {
@@ -490,7 +478,7 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> aver_rt::AverList<Tok
                     }
                     None => {
                         return aver_rt::AverList::from_vec(vec![
-                            Token::TkStr(acc),
+                            crate::aver_generated::domain::token::Token::TkStr(acc),
                             Token::TkEof.clone(),
                         ]);
                     }
@@ -562,7 +550,7 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> aver_rt::AverList<Tok
                     }
                     None => {
                         return aver_rt::AverList::from_vec(vec![
-                            Token::TkStr(acc),
+                            crate::aver_generated::domain::token::Token::TkStr(acc),
                             Token::TkEof.clone(),
                         ]);
                     }
@@ -572,8 +560,8 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> aver_rt::AverList<Tok
                 crate::cancel_checkpoint();
                 if (&*c == "\"") {
                     return aver_rt::AverList::prepend(
-                        Token::TkStr(acc),
-                        &tokenize(src, (pos + 1i64)),
+                        crate::aver_generated::domain::token::Token::TkStr(acc),
+                        &crate::aver_generated::domain::lexer::tokenize(src, (pos + 1i64)),
                     );
                 } else {
                     __MutualTco4::TokenizeStringCharInner(src, pos, acc, c)
@@ -581,10 +569,10 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> aver_rt::AverList<Tok
             }
             __MutualTco4::TokenizeStringCharInner(mut src, mut pos, mut acc, mut c) => {
                 crate::cancel_checkpoint();
-                if (c == openBrace()) {
+                if (c == crate::aver_generated::domain::lexer::openBrace()) {
                     __MutualTco4::TokenizeStringMaybeEscapedBrace(src, pos, acc)
                 } else {
-                    if (c == closeBrace()) {
+                    if (c == crate::aver_generated::domain::lexer::closeBrace()) {
                         __MutualTco4::TokenizeStringMaybeEscapedClose(src, pos, acc)
                     } else {
                         __MutualTco4::TokenizeString(src, (pos + 1i64), (acc + &c))
@@ -596,22 +584,30 @@ fn __mutual_tco_trampoline_4(mut __state: __MutualTco4) -> aver_rt::AverList<Tok
                 let nextPos = (pos + 1i64);
                 match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
                     Some(next) => {
-                        if (next == openBrace()) {
-                            __MutualTco4::TokenizeString(src, (pos + 2i64), (acc + &openBrace()))
+                        if (next == crate::aver_generated::domain::lexer::openBrace()) {
+                            __MutualTco4::TokenizeString(
+                                src,
+                                (pos + 2i64),
+                                (acc + &crate::aver_generated::domain::lexer::openBrace()),
+                            )
                         } else {
-                            return tokenizeInterp(src, pos, acc);
+                            return crate::aver_generated::domain::lexer::tokenizeInterp(
+                                src, pos, acc,
+                            );
                         }
                     }
-                    None => return tokenizeInterp(src, pos, acc),
+                    None => {
+                        return crate::aver_generated::domain::lexer::tokenizeInterp(src, pos, acc);
+                    }
                 }
             }
             __MutualTco4::TokenizeStringMaybeEscapedClose(mut src, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
                 let nextPos = (pos + 1i64);
-                let accBrace = (acc + &closeBrace());
+                let accBrace = (acc + &crate::aver_generated::domain::lexer::closeBrace());
                 match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
                     Some(next) => {
-                        if (next == closeBrace()) {
+                        if (next == crate::aver_generated::domain::lexer::closeBrace()) {
                             __MutualTco4::TokenizeString(src, (pos + 2i64), accBrace)
                         } else {
                             __MutualTco4::TokenizeString(src, nextPos, accBrace)
@@ -683,7 +679,7 @@ pub fn tokenizeDigit(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     {
         let (n, newPos) =
             crate::aver_generated::domain::lexer::chars::readNumber(src.clone(), pos, 0i64);
-        tokenizeAfterInt(src, newPos, n)
+        crate::aver_generated::domain::lexer::tokenizeAfterInt(src, newPos, n)
     }
 }
 
@@ -694,12 +690,18 @@ pub fn tokenizeAfterInt(src: AverStr, pos: i64, n: i64) -> aver_rt::AverList<Tok
     match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
         Some(c) => {
             if (c == AverStr::from(".")) {
-                tokenizeAfterIntDot(src, pos, n)
+                crate::aver_generated::domain::lexer::tokenizeAfterIntDot(src, pos, n)
             } else {
-                aver_rt::AverList::prepend(Token::TkInt(n), &tokenize(src, pos))
+                aver_rt::AverList::prepend(
+                    crate::aver_generated::domain::token::Token::TkInt(n),
+                    &crate::aver_generated::domain::lexer::tokenize(src, pos),
+                )
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkInt(n), &tokenize(src, pos)),
+        None => aver_rt::AverList::prepend(
+            crate::aver_generated::domain::token::Token::TkInt(n),
+            &crate::aver_generated::domain::lexer::tokenize(src, pos),
+        ),
     }
 }
 
@@ -711,12 +713,18 @@ pub fn tokenizeAfterIntDot(src: AverStr, pos: i64, n: i64) -> aver_rt::AverList<
     match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
         Some(d) => {
             if crate::aver_generated::domain::lexer::chars::isDigit(d) {
-                tokenizeFloat(src, nextPos, n)
+                crate::aver_generated::domain::lexer::tokenizeFloat(src, nextPos, n)
             } else {
-                aver_rt::AverList::prepend(Token::TkInt(n), &tokenize(src, pos))
+                aver_rt::AverList::prepend(
+                    crate::aver_generated::domain::token::Token::TkInt(n),
+                    &crate::aver_generated::domain::lexer::tokenize(src, pos),
+                )
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkInt(n), &tokenize(src, pos)),
+        None => aver_rt::AverList::prepend(
+            crate::aver_generated::domain::token::Token::TkInt(n),
+            &crate::aver_generated::domain::lexer::tokenize(src, pos),
+        ),
     }
 }
 
@@ -726,7 +734,13 @@ pub fn tokenizeFloat(src: AverStr, pos: i64, intPart: i64) -> aver_rt::AverList<
     {
         let (decPart, newPos) =
             crate::aver_generated::domain::lexer::chars::readNumber(src.clone(), pos, 0i64);
-        buildFloat(src, newPos.clone(), intPart, decPart, (newPos - pos))
+        crate::aver_generated::domain::lexer::buildFloat(
+            src,
+            newPos.clone(),
+            intPart,
+            decPart,
+            (newPos - pos),
+        )
     }
 }
 
@@ -739,15 +753,19 @@ pub fn buildFloat(
     decDigits: i64,
 ) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    let f = (intPart as f64 + (decPart as f64 / pow10(decDigits)));
-    aver_rt::AverList::prepend(Token::TkFloat(f), &tokenize(src, pos))
+    let f = (intPart as f64
+        + (decPart as f64 / crate::aver_generated::domain::lexer::pow10(decDigits)));
+    aver_rt::AverList::prepend(
+        crate::aver_generated::domain::token::Token::TkFloat(f),
+        &crate::aver_generated::domain::lexer::tokenize(src, pos),
+    )
 }
 
 /// Compute 10^n as Float.
 #[inline(always)]
 pub fn pow10(n: i64) -> f64 {
     crate::cancel_checkpoint();
-    pow10Acc(n, 1.0f64)
+    crate::aver_generated::domain::lexer::pow10Acc(n, 1.0f64)
 }
 
 /// Accumulate 10^n as Float.
@@ -774,7 +792,7 @@ pub fn pow10Acc(mut n: i64, mut acc: f64) -> f64 {
 pub fn tokenizeAlpha(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
     match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
-        Some(c) => tokenizeAlphaWith(
+        Some(c) => crate::aver_generated::domain::lexer::tokenizeAlphaWith(
             src,
             pos,
             crate::aver_generated::domain::lexer::chars::isUpper(c),
@@ -795,7 +813,7 @@ pub fn tokenizeAlphaWith(src: AverStr, pos: i64, dotted: bool) -> aver_rt::AverL
         );
         aver_rt::AverList::prepend(
             crate::aver_generated::domain::lexer::chars::keywordOrIdent(word),
-            &tokenize(src, newPos),
+            &crate::aver_generated::domain::lexer::tokenize(src, newPos),
         )
     }
 }
@@ -813,13 +831,22 @@ pub fn tokenizeMinus(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     let nextPos = (pos + 1i64);
     match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
         Some(c) => {
-            if isGreaterThan(c) {
-                aver_rt::AverList::prepend(Token::TkArrow.clone(), &tokenize(src, (pos + 2i64)))
+            if crate::aver_generated::domain::lexer::isGreaterThan(c) {
+                aver_rt::AverList::prepend(
+                    Token::TkArrow.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, (pos + 2i64)),
+                )
             } else {
-                aver_rt::AverList::prepend(Token::TkMinus.clone(), &tokenize(src, nextPos))
+                aver_rt::AverList::prepend(
+                    Token::TkMinus.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+                )
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkMinus.clone(), &tokenize(src, nextPos)),
+        None => aver_rt::AverList::prepend(
+            Token::TkMinus.clone(),
+            &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+        ),
     }
 }
 
@@ -837,10 +864,10 @@ pub fn openBrace() -> AverStr {
 pub fn tokenizeInterp(src: AverStr, pos: i64, acc: AverStr) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
     aver_rt::AverList::prepend(
-        Token::TkStr(acc),
+        crate::aver_generated::domain::token::Token::TkStr(acc),
         &aver_rt::AverList::prepend(
             Token::TkInterpStart.clone(),
-            &tokenizeInterpExpr(src, (pos + 1i64)),
+            &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, (pos + 1i64)),
         ),
     )
 }
@@ -865,14 +892,17 @@ pub fn tokenizeInterpString(
         crate::cancel_checkpoint();
         let nextPos = (pos + 1i64);
         return if (pos >= (src.chars().count() as i64)) {
-            aver_rt::AverList::prepend(Token::TkStr(acc), &tokenizeInterpExpr(src, pos))
+            aver_rt::AverList::prepend(
+                crate::aver_generated::domain::token::Token::TkStr(acc),
+                &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, pos),
+            )
         } else {
             match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
                     if (&*c == "\"") {
                         aver_rt::AverList::prepend(
-                            Token::TkStr(acc),
-                            &tokenizeInterpExpr(src, nextPos),
+                            crate::aver_generated::domain::token::Token::TkStr(acc),
+                            &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, nextPos),
                         )
                     } else {
                         {
@@ -883,9 +913,10 @@ pub fn tokenizeInterpString(
                         }
                     }
                 }
-                None => {
-                    aver_rt::AverList::prepend(Token::TkStr(acc), &tokenizeInterpExpr(src, pos))
-                }
+                None => aver_rt::AverList::prepend(
+                    crate::aver_generated::domain::token::Token::TkStr(acc),
+                    &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, pos),
+                ),
             }
         };
     }
@@ -897,7 +928,10 @@ pub fn tokenizeInterpDigit(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     {
         let (n, newPos) =
             crate::aver_generated::domain::lexer::chars::readNumber(src.clone(), pos, 0i64);
-        aver_rt::AverList::prepend(Token::TkInt(n), &tokenizeInterpExpr(src, newPos))
+        aver_rt::AverList::prepend(
+            crate::aver_generated::domain::token::Token::TkInt(n),
+            &crate::aver_generated::domain::lexer::tokenizeInterpExpr(src, newPos),
+        )
     }
 }
 
@@ -909,12 +943,18 @@ pub fn tokenizeSlashOrComment(src: AverStr, pos: i64) -> aver_rt::AverList<Token
     match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
         Some(c) => {
             if (c == AverStr::from("/")) {
-                skipLineComment(src, (pos + 2i64))
+                crate::aver_generated::domain::lexer::skipLineComment(src, (pos + 2i64))
             } else {
-                aver_rt::AverList::prepend(Token::TkSlash.clone(), &tokenize(src, nextPos))
+                aver_rt::AverList::prepend(
+                    Token::TkSlash.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+                )
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkSlash.clone(), &tokenize(src, nextPos)),
+        None => aver_rt::AverList::prepend(
+            Token::TkSlash.clone(),
+            &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+        ),
     }
 }
 
@@ -930,7 +970,7 @@ pub fn skipLineComment(mut src: AverStr, mut pos: i64) -> aver_rt::AverList<Toke
             match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
                     if (&*c == "\n") {
-                        tokenizeNewline(src, nextPos)
+                        crate::aver_generated::domain::lexer::tokenizeNewline(src, nextPos)
                     } else {
                         {
                             pos = nextPos;
@@ -952,12 +992,21 @@ pub fn tokenizeDot(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
         Some(c) => {
             if (c == AverStr::from(".")) {
-                aver_rt::AverList::prepend(Token::TkDotDot.clone(), &tokenize(src, (pos + 2i64)))
+                aver_rt::AverList::prepend(
+                    Token::TkDotDot.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, (pos + 2i64)),
+                )
             } else {
-                aver_rt::AverList::prepend(Token::TkDot.clone(), &tokenize(src, nextPos))
+                aver_rt::AverList::prepend(
+                    Token::TkDot.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+                )
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkDot.clone(), &tokenize(src, nextPos)),
+        None => aver_rt::AverList::prepend(
+            Token::TkDot.clone(),
+            &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+        ),
     }
 }
 
@@ -969,12 +1018,21 @@ pub fn tokenizeLt(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
         Some(c) => {
             if (c == AverStr::from("=")) {
-                aver_rt::AverList::prepend(Token::TkLte.clone(), &tokenize(src, (pos + 2i64)))
+                aver_rt::AverList::prepend(
+                    Token::TkLte.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, (pos + 2i64)),
+                )
             } else {
-                aver_rt::AverList::prepend(Token::TkLt.clone(), &tokenize(src, nextPos))
+                aver_rt::AverList::prepend(
+                    Token::TkLt.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+                )
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkLt.clone(), &tokenize(src, nextPos)),
+        None => aver_rt::AverList::prepend(
+            Token::TkLt.clone(),
+            &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+        ),
     }
 }
 
@@ -986,12 +1044,21 @@ pub fn tokenizeGt(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
         Some(c) => {
             if (c == AverStr::from("=")) {
-                aver_rt::AverList::prepend(Token::TkGte.clone(), &tokenize(src, (pos + 2i64)))
+                aver_rt::AverList::prepend(
+                    Token::TkGte.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, (pos + 2i64)),
+                )
             } else {
-                aver_rt::AverList::prepend(Token::TkGt.clone(), &tokenize(src, nextPos))
+                aver_rt::AverList::prepend(
+                    Token::TkGt.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+                )
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkGt.clone(), &tokenize(src, nextPos)),
+        None => aver_rt::AverList::prepend(
+            Token::TkGt.clone(),
+            &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+        ),
     }
 }
 
@@ -1003,12 +1070,21 @@ pub fn tokenizeBang(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     match (src.chars().nth(nextPos as usize).map(|c| c.to_string())).into_aver() {
         Some(c) => {
             if (c == AverStr::from("=")) {
-                aver_rt::AverList::prepend(Token::TkNeq.clone(), &tokenize(src, (pos + 2i64)))
+                aver_rt::AverList::prepend(
+                    Token::TkNeq.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, (pos + 2i64)),
+                )
             } else {
-                aver_rt::AverList::prepend(Token::TkBang.clone(), &tokenize(src, nextPos))
+                aver_rt::AverList::prepend(
+                    Token::TkBang.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+                )
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkBang.clone(), &tokenize(src, nextPos)),
+        None => aver_rt::AverList::prepend(
+            Token::TkBang.clone(),
+            &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+        ),
     }
 }
 
@@ -1022,30 +1098,42 @@ pub fn tokenizeEq(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
         Some(c) => {
             let __dispatch_subject = c;
             if &*__dispatch_subject == "=" {
-                aver_rt::AverList::prepend(Token::TkEqEq.clone(), &tokenize(src, pos2))
+                aver_rt::AverList::prepend(
+                    Token::TkEqEq.clone(),
+                    &crate::aver_generated::domain::lexer::tokenize(src, pos2),
+                )
             } else {
                 if &*__dispatch_subject == ">" {
-                    aver_rt::AverList::prepend(Token::TkFatArrow.clone(), &tokenize(src, pos2))
+                    aver_rt::AverList::prepend(
+                        Token::TkFatArrow.clone(),
+                        &crate::aver_generated::domain::lexer::tokenize(src, pos2),
+                    )
                 } else {
-                    aver_rt::AverList::prepend(Token::TkEq.clone(), &tokenize(src, nextPos))
+                    aver_rt::AverList::prepend(
+                        Token::TkEq.clone(),
+                        &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+                    )
                 }
             }
         }
-        None => aver_rt::AverList::prepend(Token::TkEq.clone(), &tokenize(src, nextPos)),
+        None => aver_rt::AverList::prepend(
+            Token::TkEq.clone(),
+            &crate::aver_generated::domain::lexer::tokenize(src, nextPos),
+        ),
     }
 }
 
 /// Handle newline: count indent of next line, emit NEWLINE + raw indent marker.
 pub fn tokenizeNewline(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    let r = countIndent(src.clone(), pos, 0i64);
+    let r = crate::aver_generated::domain::lexer::countIndent(src.clone(), pos, 0i64);
     {
         let (indent, newPos) = r;
         aver_rt::AverList::prepend(
             Token::TkNewline.clone(),
             &aver_rt::AverList::prepend(
-                Token::TkInt(((0i64 - indent) - 1i64)),
-                &tokenize(src, newPos),
+                crate::aver_generated::domain::token::Token::TkInt(((0i64 - indent) - 1i64)),
+                &crate::aver_generated::domain::lexer::tokenize(src, newPos),
             ),
         )
     }
@@ -1054,8 +1142,11 @@ pub fn tokenizeNewline(src: AverStr, pos: i64) -> aver_rt::AverList<Token> {
 /// Tokenize a complete source string with INDENT/DEDENT.
 pub fn lex(src: AverStr) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    let raw = tokenize(src, 0i64);
-    let processed = processIndentation(&raw, &aver_rt::AverList::from_vec(vec![0i64]));
+    let raw = crate::aver_generated::domain::lexer::tokenize(src, 0i64);
+    let processed = crate::aver_generated::domain::lexer::processIndentation(
+        &raw,
+        &aver_rt::AverList::from_vec(vec![0i64]),
+    );
     processed
 }
 
@@ -1066,7 +1157,7 @@ pub fn processIndentation(
     stack: &aver_rt::AverList<i64>,
 ) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    aver_list_match!(tokens.clone(), [] => emitFinalDedents(stack), [t, rest] => processIndentToken(&t, &rest, stack))
+    aver_list_match!(tokens.clone(), [] => crate::aver_generated::domain::lexer::emitFinalDedents(stack), [t, rest] => crate::aver_generated::domain::lexer::processIndentToken(&t, &rest, stack))
 }
 
 /// Process one token in the indentation pass.
@@ -1077,12 +1168,17 @@ pub fn processIndentToken(
 ) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
     match t {
-        Token::TkNewline => processAfterNewline(rest, stack),
-        Token::TkEof => aver_rt::AverList::concat(
-            &emitFinalDedents(stack),
+        crate::aver_generated::domain::token::Token::TkNewline => {
+            crate::aver_generated::domain::lexer::processAfterNewline(rest, stack)
+        }
+        crate::aver_generated::domain::token::Token::TkEof => aver_rt::AverList::concat(
+            &crate::aver_generated::domain::lexer::emitFinalDedents(stack),
             &aver_rt::AverList::from_vec(vec![Token::TkEof.clone()]),
         ),
-        _ => aver_rt::AverList::prepend(t.clone(), &processIndentation(rest, stack)),
+        _ => aver_rt::AverList::prepend(
+            t.clone(),
+            &crate::aver_generated::domain::lexer::processIndentation(rest, stack),
+        ),
     }
 }
 
@@ -1093,7 +1189,7 @@ pub fn processAfterNewline(
     stack: &aver_rt::AverList<i64>,
 ) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    aver_list_match!(tokens.clone(), [] => aver_rt::AverList::prepend(Token::TkNewline.clone(), &emitFinalDedents(stack)), [t, rest] => processAfterNewlineToken(&t, &rest, stack))
+    aver_list_match!(tokens.clone(), [] => aver_rt::AverList::prepend(Token::TkNewline.clone(), &crate::aver_generated::domain::lexer::emitFinalDedents(stack)), [t, rest] => crate::aver_generated::domain::lexer::processAfterNewlineToken(&t, &rest, stack))
 }
 
 /// Check if token after newline is a raw indent marker.
@@ -1104,19 +1200,29 @@ pub fn processAfterNewlineToken(
 ) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
     match t.clone() {
-        Token::TkInt(n) => {
+        crate::aver_generated::domain::token::Token::TkInt(n) => {
             if (n < 0i64) {
-                emitIndentChange(((0i64 - n) - 1i64), rest, stack)
+                crate::aver_generated::domain::lexer::emitIndentChange(
+                    ((0i64 - n) - 1i64),
+                    rest,
+                    stack,
+                )
             } else {
                 aver_rt::AverList::prepend(
                     Token::TkNewline.clone(),
-                    &aver_rt::AverList::prepend(t.clone(), &processIndentation(rest, stack)),
+                    &aver_rt::AverList::prepend(
+                        t.clone(),
+                        &crate::aver_generated::domain::lexer::processIndentation(rest, stack),
+                    ),
                 )
             }
         }
         _ => aver_rt::AverList::prepend(
             Token::TkNewline.clone(),
-            &aver_rt::AverList::prepend(t.clone(), &processIndentation(rest, stack)),
+            &aver_rt::AverList::prepend(
+                t.clone(),
+                &crate::aver_generated::domain::lexer::processIndentation(rest, stack),
+            ),
         ),
     }
 }
@@ -1129,20 +1235,26 @@ pub fn emitIndentChange(
     stack: &aver_rt::AverList<i64>,
 ) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    let currentIndent = stackTop(stack);
+    let currentIndent = crate::aver_generated::domain::lexer::stackTop(stack);
     if (indent > currentIndent) {
         aver_rt::AverList::prepend(
             Token::TkNewline.clone(),
             &aver_rt::AverList::prepend(
                 Token::TkIndent.clone(),
-                &processIndentation(rest, &aver_rt::AverList::prepend(indent, &stack.clone())),
+                &crate::aver_generated::domain::lexer::processIndentation(
+                    rest,
+                    &aver_rt::AverList::prepend(indent, &stack.clone()),
+                ),
             ),
         )
     } else {
         if (indent < currentIndent) {
-            emitDedents(indent, rest, stack)
+            crate::aver_generated::domain::lexer::emitDedents(indent, rest, stack)
         } else {
-            aver_rt::AverList::prepend(Token::TkNewline.clone(), &processIndentation(rest, stack))
+            aver_rt::AverList::prepend(
+                Token::TkNewline.clone(),
+                &crate::aver_generated::domain::lexer::processIndentation(rest, stack),
+            )
         }
     }
 }
@@ -1154,7 +1266,7 @@ pub fn emitDedents(
     stack: &aver_rt::AverList<i64>,
 ) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    emitDedentsAcc(
+    crate::aver_generated::domain::lexer::emitDedentsAcc(
         targetIndent,
         rest.clone(),
         stack.clone(),
@@ -1173,7 +1285,7 @@ pub fn emitDedentsAcc(
     loop {
         crate::cancel_checkpoint();
         let reversed = acc.reverse();
-        return aver_list_match!(stack.clone(), [] => aver_rt::AverList::concat(&reversed, &processIndentation(&rest, &aver_rt::AverList::from_vec(vec![0i64]))), [top, below] => { if (top <= targetIndent) { aver_rt::AverList::concat(&reversed, &aver_rt::AverList::prepend(Token::TkNewline.clone(), &processIndentation(&rest, &stack))) } else { {
+        return aver_list_match!(stack.clone(), [] => aver_rt::AverList::concat(&reversed, &crate::aver_generated::domain::lexer::processIndentation(&rest, &aver_rt::AverList::from_vec(vec![0i64]))), [top, below] => { if (top <= targetIndent) { aver_rt::AverList::concat(&reversed, &aver_rt::AverList::prepend(Token::TkNewline.clone(), &crate::aver_generated::domain::lexer::processIndentation(&rest, &stack))) } else { {
             let __tmp3 = aver_rt::AverList::prepend(Token::TkDedent.clone(), &acc);
             stack = below;
             acc = __tmp3;
@@ -1186,7 +1298,10 @@ pub fn emitDedentsAcc(
 #[inline(always)]
 pub fn emitFinalDedents(stack: &aver_rt::AverList<i64>) -> aver_rt::AverList<Token> {
     crate::cancel_checkpoint();
-    emitFinalDedentsAcc(stack.clone(), aver_rt::AverList::empty())
+    crate::aver_generated::domain::lexer::emitFinalDedentsAcc(
+        stack.clone(),
+        aver_rt::AverList::empty(),
+    )
 }
 
 /// Accumulate DEDENT tokens for each indent level above 0.

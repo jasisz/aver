@@ -79,10 +79,10 @@ pub fn isUpper(c: AverStr) -> bool {
 #[inline(always)]
 pub fn isLetterOrUnderscore(c: AverStr) -> bool {
     crate::cancel_checkpoint();
-    if isLower(c.clone()) {
+    if crate::aver_generated::domain::lexer::chars::isLower(c.clone()) {
         true
     } else {
-        if isUpper(c.clone()) {
+        if crate::aver_generated::domain::lexer::chars::isUpper(c.clone()) {
             true
         } else {
             (&*c == "_")
@@ -95,7 +95,7 @@ pub fn isLetterOrUnderscore(c: AverStr) -> bool {
 pub fn isAlpha(c: AverStr) -> bool {
     crate::cancel_checkpoint();
     if ((c.chars().count() as i64) == 1i64) {
-        isLetterOrUnderscore(c)
+        crate::aver_generated::domain::lexer::chars::isLetterOrUnderscore(c)
     } else {
         false
     }
@@ -105,7 +105,11 @@ pub fn isAlpha(c: AverStr) -> bool {
 #[inline(always)]
 pub fn isAlphaNum(c: AverStr) -> bool {
     crate::cancel_checkpoint();
-    if isAlpha(c.clone()) { true } else { isDigit(c) }
+    if crate::aver_generated::domain::lexer::chars::isAlpha(c.clone()) {
+        true
+    } else {
+        crate::aver_generated::domain::lexer::chars::isDigit(c)
+    }
 }
 
 /// Convert a digit character to its integer value.
@@ -166,10 +170,11 @@ pub fn readNumberLoop(mut src: AverStr, mut pos: i64, mut acc: i64) -> (i64, i64
         return if (pos < (src.chars().count() as i64)) {
             match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
-                    if isDigit(c.clone()) {
+                    if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
                         {
                             let __tmp1 = (pos + 1i64);
-                            let __tmp2 = ((acc * 10i64) + digitVal(c));
+                            let __tmp2 = ((acc * 10i64)
+                                + crate::aver_generated::domain::lexer::chars::digitVal(c));
                             pos = __tmp1;
                             acc = __tmp2;
                             continue;
@@ -190,14 +195,14 @@ pub fn readNumberLoop(mut src: AverStr, mut pos: i64, mut acc: i64) -> (i64, i64
 #[inline(always)]
 pub fn readNumber(src: AverStr, pos: i64, acc: i64) -> (i64, i64) {
     crate::cancel_checkpoint();
-    readNumberLoop(src.clone(), pos, acc)
+    crate::aver_generated::domain::lexer::chars::readNumberLoop(src, pos, acc)
 }
 
 /// Check if character can continue a dotted identifier (alphanumeric, underscore, or dot).
 #[inline(always)]
 pub fn isIdentCharDotted(c: AverStr) -> bool {
     crate::cancel_checkpoint();
-    if isAlphaNum(c.clone()) {
+    if crate::aver_generated::domain::lexer::chars::isAlphaNum(c.clone()) {
         true
     } else {
         (&*c == ".")
@@ -208,7 +213,7 @@ pub fn isIdentCharDotted(c: AverStr) -> bool {
 #[inline(always)]
 pub fn isIdentCharPlain(c: AverStr) -> bool {
     crate::cancel_checkpoint();
-    isAlphaNum(c.clone())
+    crate::aver_generated::domain::lexer::chars::isAlphaNum(c)
 }
 
 /// Read identifier including dots (for qualified names like List.prepend).
@@ -219,7 +224,7 @@ pub fn readIdentLoopDotted(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> 
         return if (pos < (src.chars().count() as i64)) {
             match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
-                    if isIdentCharDotted(c.clone()) {
+                    if crate::aver_generated::domain::lexer::chars::isIdentCharDotted(c.clone()) {
                         {
                             let __tmp1 = (pos + 1i64);
                             let __tmp2 = (acc + &c);
@@ -247,7 +252,7 @@ pub fn readIdentLoopPlain(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> (
         return if (pos < (src.chars().count() as i64)) {
             match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
-                    if isIdentCharPlain(c.clone()) {
+                    if crate::aver_generated::domain::lexer::chars::isIdentCharPlain(c.clone()) {
                         {
                             let __tmp1 = (pos + 1i64);
                             let __tmp2 = (acc + &c);
@@ -272,9 +277,9 @@ pub fn readIdentLoopPlain(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> (
 pub fn readIdent(src: AverStr, pos: i64, acc: AverStr, dotted: bool) -> (AverStr, i64) {
     crate::cancel_checkpoint();
     if dotted {
-        readIdentLoopDotted(src, pos, acc)
+        crate::aver_generated::domain::lexer::chars::readIdentLoopDotted(src, pos, acc)
     } else {
-        readIdentLoopPlain(src, pos, acc)
+        crate::aver_generated::domain::lexer::chars::readIdentLoopPlain(src, pos, acc)
     }
 }
 
@@ -297,30 +302,42 @@ pub fn keywordOrIdent(s: AverStr) -> Token {
                         Token::TkFalse.clone()
                     } else {
                         if &*__dispatch_subject == "module" {
-                            Token::TkIdent(AverStr::from("module"))
+                            crate::aver_generated::domain::token::Token::TkIdent(AverStr::from(
+                                "module",
+                            ))
                         } else {
                             if &*__dispatch_subject == "type" {
-                                Token::TkIdent(AverStr::from("type"))
+                                crate::aver_generated::domain::token::Token::TkIdent(AverStr::from(
+                                    "type",
+                                ))
                             } else {
                                 if &*__dispatch_subject == "record" {
-                                    Token::TkIdent(AverStr::from("record"))
+                                    crate::aver_generated::domain::token::Token::TkIdent(
+                                        AverStr::from("record"),
+                                    )
                                 } else {
                                     if &*__dispatch_subject == "verify" {
-                                        Token::TkIdent(AverStr::from("verify"))
+                                        crate::aver_generated::domain::token::Token::TkIdent(
+                                            AverStr::from("verify"),
+                                        )
                                     } else {
                                         if &*__dispatch_subject == "depends" {
-                                            Token::TkIdent(AverStr::from("depends"))
+                                            crate::aver_generated::domain::token::Token::TkIdent(
+                                                AverStr::from("depends"),
+                                            )
                                         } else {
                                             if &*__dispatch_subject == "exposes" {
-                                                Token::TkIdent(AverStr::from("exposes"))
+                                                crate::aver_generated::domain::token::Token::TkIdent(
+                                                    AverStr::from("exposes"),
+                                                )
                                             } else {
                                                 if &*__dispatch_subject == "intent" {
-                                                    Token::TkIdent(AverStr::from("intent"))
+                                                    crate::aver_generated::domain::token::Token::TkIdent(AverStr::from("intent"))
                                                 } else {
                                                     if &*__dispatch_subject == "decision" {
-                                                        Token::TkIdent(AverStr::from("decision"))
+                                                        crate::aver_generated::domain::token::Token::TkIdent(AverStr::from("decision"))
                                                     } else {
-                                                        Token::TkIdent(s)
+                                                        crate::aver_generated::domain::token::Token::TkIdent(s)
                                                     }
                                                 }
                                             }

@@ -176,7 +176,7 @@ pub fn qualifyFnsOne(
 /// Lex, parse, resolve, and evaluate an Aver source string (no module loading).
 pub fn run(source: AverStr) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
-    let tokens = crate::aver_generated::domain::lexer::lex(source.clone());
+    let tokens = crate::aver_generated::domain::lexer::lex(source);
     let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
     let resolved = crate::aver_generated::domain::resolver::resolveProgram(&prog);
     runGuestProgram(
@@ -202,7 +202,7 @@ pub fn prepareProgramWithModules(
     moduleRoot: AverStr,
 ) -> Result<(Program, aver_rt::AverList<FnDef>), AverStr> {
     crate::cancel_checkpoint();
-    let tokens = crate::aver_generated::domain::lexer::lex(source.clone());
+    let tokens = crate::aver_generated::domain::lexer::lex(source);
     let prog = crate::aver_generated::domain::parser::parse(&tokens)?;
     let resolved = crate::aver_generated::domain::resolver::resolveProgram(&prog);
     let r = loadModules(
@@ -392,8 +392,11 @@ pub fn shiftFnIdsInFn(fd: &FnDef, offset: i64) -> FnDef {
 pub fn shiftFnIdsInFastPath(path: &FnFastPath, offset: i64) -> FnFastPath {
     crate::cancel_checkpoint();
     match path.clone() {
-        FnFastPath::FastForwardCall(targetId, slotArgs) => {
-            FnFastPath::FastForwardCall((targetId + offset), slotArgs)
+        crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(targetId, slotArgs) => {
+            crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(
+                (targetId + offset),
+                slotArgs,
+            )
         }
         _ => path.clone(),
     }
@@ -421,9 +424,21 @@ pub fn shiftFnIdsInStmts(
 pub fn shiftFnIdsInStmt(stmt: &Stmt, offset: i64) -> Stmt {
     crate::cancel_checkpoint();
     match stmt.clone() {
-        Stmt::StmtBind(name, expr) => Stmt::StmtBind(name, shiftFnIdsInExpr(&expr, offset)),
-        Stmt::StmtBindSlot(slot, expr) => Stmt::StmtBindSlot(slot, shiftFnIdsInExpr(&expr, offset)),
-        Stmt::StmtExpr(expr) => Stmt::StmtExpr(shiftFnIdsInExpr(&expr, offset)),
+        crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
+            crate::aver_generated::domain::ast::Stmt::StmtBind(
+                name,
+                shiftFnIdsInExpr(&expr, offset),
+            )
+        }
+        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
+            crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
+                slot,
+                shiftFnIdsInExpr(&expr, offset),
+            )
+        }
+        crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
+            crate::aver_generated::domain::ast::Stmt::StmtExpr(shiftFnIdsInExpr(&expr, offset))
+        }
     }
 }
 
@@ -431,78 +446,82 @@ pub fn shiftFnIdsInStmt(stmt: &Stmt, offset: i64) -> Stmt {
 pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        Expr::ExprBoolBranch(cond, thenExpr, elseExpr) => {
+        crate::aver_generated::domain::ast::Expr::ExprBoolBranch(cond, thenExpr, elseExpr) => {
             let cond = (*cond).clone();
             let thenExpr = (*thenExpr).clone();
             let elseExpr = (*elseExpr).clone();
-            Expr::ExprBoolBranch(
+            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
                 std::sync::Arc::new(shiftFnIdsInExpr(&cond, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&thenExpr, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&elseExpr, offset)),
             )
         }
-        Expr::ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) => {
+        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
+            vecExpr,
+            idxExpr,
+            defaultValue,
+        ) => {
             let vecExpr = (*vecExpr).clone();
             let idxExpr = (*idxExpr).clone();
-            Expr::ExprVectorGetOrInt(
+            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
                 std::sync::Arc::new(shiftFnIdsInExpr(&vecExpr, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&idxExpr, offset)),
                 defaultValue,
             )
         }
-        Expr::ExprIntModOrInt(a, b, defaultValue) => {
+        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(a, b, defaultValue) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprIntModOrInt(
+            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
                 defaultValue,
             )
         }
-        Expr::ExprAdd(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprAdd(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprAdd(
+            crate::aver_generated::domain::ast::Expr::ExprAdd(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprSub(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprSub(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprSub(
+            crate::aver_generated::domain::ast::Expr::ExprSub(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprMul(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprMul(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprMul(
+            crate::aver_generated::domain::ast::Expr::ExprMul(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprDiv(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprDiv(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprDiv(
+            crate::aver_generated::domain::ast::Expr::ExprDiv(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprEq(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprEq(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprEq(
+            crate::aver_generated::domain::ast::Expr::ExprEq(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprNeq(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprNeq(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprNeq(
+            crate::aver_generated::domain::ast::Expr::ExprNeq(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
@@ -515,51 +534,65 @@ pub fn shiftFnIdsInExpr(expr: &Expr, offset: i64) -> Expr {
 pub fn shiftFnIdsInExprTail(expr: &Expr, offset: i64) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        Expr::ExprLt(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprLt(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprLt(
+            crate::aver_generated::domain::ast::Expr::ExprLt(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprGt(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprGt(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprGt(
+            crate::aver_generated::domain::ast::Expr::ExprGt(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprLte(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprLte(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprLte(
+            crate::aver_generated::domain::ast::Expr::ExprLte(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprGte(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprGte(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprGte(
+            crate::aver_generated::domain::ast::Expr::ExprGte(
                 std::sync::Arc::new(shiftFnIdsInExpr(&a, offset)),
                 std::sync::Arc::new(shiftFnIdsInExpr(&b, offset)),
             )
         }
-        Expr::ExprConcat(parts) => {
-            Expr::ExprConcat(shiftFnIdsInExprs(parts, offset, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprConcat(parts) => {
+            crate::aver_generated::domain::ast::Expr::ExprConcat(shiftFnIdsInExprs(
+                parts,
+                offset,
+                aver_rt::AverList::empty(),
+            ))
         }
-        Expr::ExprTuple(exprs) => {
-            Expr::ExprTuple(shiftFnIdsInExprs(exprs, offset, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprTuple(exprs) => {
+            crate::aver_generated::domain::ast::Expr::ExprTuple(shiftFnIdsInExprs(
+                exprs,
+                offset,
+                aver_rt::AverList::empty(),
+            ))
         }
-        Expr::ExprList(exprs) => {
-            Expr::ExprList(shiftFnIdsInExprs(exprs, offset, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprList(exprs) => {
+            crate::aver_generated::domain::ast::Expr::ExprList(shiftFnIdsInExprs(
+                exprs,
+                offset,
+                aver_rt::AverList::empty(),
+            ))
         }
-        Expr::ExprRecord(name, fields) => Expr::ExprRecord(
-            name,
-            shiftFnIdsInFields(fields, offset, aver_rt::AverList::empty()),
-        ),
+        crate::aver_generated::domain::ast::Expr::ExprRecord(name, fields) => {
+            crate::aver_generated::domain::ast::Expr::ExprRecord(
+                name,
+                shiftFnIdsInFields(fields, offset, aver_rt::AverList::empty()),
+            )
+        }
         _ => shiftFnIdsInExprCalls(expr, offset),
     }
 }
@@ -568,41 +601,56 @@ pub fn shiftFnIdsInExprTail(expr: &Expr, offset: i64) -> Expr {
 pub fn shiftFnIdsInExprCalls(expr: &Expr, offset: i64) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        Expr::ExprFieldAccess(obj, field) => {
+        crate::aver_generated::domain::ast::Expr::ExprFieldAccess(obj, field) => {
             let obj = (*obj).clone();
-            Expr::ExprFieldAccess(std::sync::Arc::new(shiftFnIdsInExpr(&obj, offset)), field)
+            crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
+                std::sync::Arc::new(shiftFnIdsInExpr(&obj, offset)),
+                field,
+            )
         }
-        Expr::ExprCall(name, args) => Expr::ExprCall(
-            name,
-            shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
-        ),
-        Expr::ExprCallDirect(fnId, args) => Expr::ExprCallDirect(
-            (fnId + offset),
-            shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
-        ),
-        Expr::ExprCallBuiltin(name, args) => Expr::ExprCallBuiltin(
-            name,
-            shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
-        ),
-        Expr::ExprCallBuiltinId(id, args) => Expr::ExprCallBuiltinId(
-            id,
-            shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
-        ),
-        Expr::ExprMatch(scrutinee, arms) => {
+        crate::aver_generated::domain::ast::Expr::ExprCall(name, args) => {
+            crate::aver_generated::domain::ast::Expr::ExprCall(
+                name,
+                shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
+            )
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, args) => {
+            crate::aver_generated::domain::ast::Expr::ExprCallDirect(
+                (fnId + offset),
+                shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
+            )
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, args) => {
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                name,
+                shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
+            )
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(id, args) => {
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
+                id,
+                shiftFnIdsInExprs(args, offset, aver_rt::AverList::empty()),
+            )
+        }
+        crate::aver_generated::domain::ast::Expr::ExprMatch(scrutinee, arms) => {
             let scrutinee = (*scrutinee).clone();
-            Expr::ExprMatch(
+            crate::aver_generated::domain::ast::Expr::ExprMatch(
                 std::sync::Arc::new(shiftFnIdsInExpr(&scrutinee, offset)),
                 shiftFnIdsInArms(arms, offset, aver_rt::AverList::empty()),
             )
         }
-        Expr::ExprPropagate(inner) => {
+        crate::aver_generated::domain::ast::Expr::ExprPropagate(inner) => {
             let inner = (*inner).clone();
-            Expr::ExprPropagate(std::sync::Arc::new(shiftFnIdsInExpr(&inner, offset)))
+            crate::aver_generated::domain::ast::Expr::ExprPropagate(std::sync::Arc::new(
+                shiftFnIdsInExpr(&inner, offset),
+            ))
         }
-        Expr::ExprIndependentProduct(exprs, unwrap) => Expr::ExprIndependentProduct(
-            shiftFnIdsInExprs(exprs, offset, aver_rt::AverList::empty()),
-            unwrap,
-        ),
+        crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(exprs, unwrap) => {
+            crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
+                shiftFnIdsInExprs(exprs, offset, aver_rt::AverList::empty()),
+                unwrap,
+            )
+        }
         _ => expr.clone(),
     }
 }
@@ -719,7 +767,7 @@ pub fn loadProgramFromFile(
             || (aver_rt::read_text(&__effect_arg0)).into_aver(),
         )
     }?;
-    prepareProgramWithModules(source, moduleRoot.clone())
+    prepareProgramWithModules(source, moduleRoot)
 }
 
 /// Dispatch normalized CLI args: path, module root, then guest args. Carries the user main()'s return Val up so the wrapping replay scope serialises it as recording.output.
@@ -760,7 +808,7 @@ pub fn finishCliRun(localFns: &aver_rt::AverList<FnDef>, result: &Val) -> Result
 pub fn finishCliMainResult(result: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match result.clone() {
-        Val::ValErr(err) => {
+        crate::aver_generated::domain::value::Val::ValErr(err) => {
             let err = (*err).clone();
             Err((AverStr::from("Main returned error: ")
                 + &crate::aver_generated::domain::value::valRepr(&err)))

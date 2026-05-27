@@ -14,10 +14,18 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
 // Resolved-form lookup helpers live as methods on [`CodegenContext`]
-// since Phase E PR 9: `ctx.resolve_fn_def(fd)`, `ctx.resolve_expr(spanned)`,
-// `ctx.resolve_stmt(stmt)`, `ctx.resolve_pattern(pat)` — shared with
-// wasm-gc / Lean / Dafny / self-host backends as they migrate. See
-// `src/codegen/mod.rs`.
+// since Phase E PR 9: `ctx.resolve_fn_def(fd, scope)`,
+// `ctx.resolve_expr(spanned, scope)`, `ctx.resolve_stmt(stmt, scope)`,
+// `ctx.resolve_pattern(pat, scope)` — shared with wasm-gc / Lean /
+// Dafny / self-host backends as they migrate. The `scope` parameter
+// (Phase E PR 9.3a / 9.4) carries the owning module prefix when the
+// caller knows which dep module the source-shape AST lives in, so
+// cross-module ctor / fn classification uses the right resolver
+// `current_module` instead of the entry's. The local `emit_*_legacy`
+// helpers below read `scope` off `EmitCtx::current_module_scope`
+// (stamped via `EmitCtx::with_scope` at fn-emit time) so the
+// threading stays implicit through 20+ on-demand call sites.
+// See `src/codegen/mod.rs`.
 
 /// Source-shape variant of [`emit_expr`] for emitters that still hold
 /// a pre-resolve [`Expr`] borrow (TCO hoisting / loop, mutual-TCO
@@ -27,14 +35,14 @@ use std::fmt::Write as _;
 /// call — cheap for the small subtrees these helpers walk.
 fn emit_expr_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let spanned = Spanned::bare(expr.clone());
-    let resolved = ctx.resolve_expr(&spanned);
+    let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
     emit_expr(&resolved.node, ctx, ectx)
 }
 
 /// `clone_arg`/`borrow_arg` analogue that takes a source-shape `&Expr`.
 fn clone_arg_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let spanned = Spanned::bare(expr.clone());
-    let resolved = ctx.resolve_expr(&spanned);
+    let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
     clone_arg(&resolved.node, ctx, ectx)
 }
 
@@ -86,13 +94,18 @@ fn classify_body_expr_plan_source<'a>(
 /// through [`CodegenContext::resolve_stmt`] and calls the migrated
 /// emit.
 fn emit_stmt_legacy(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    let resolved = ctx.resolve_stmt(stmt);
+    let resolved = ctx.resolve_stmt(stmt, ectx.current_module_scope.as_deref());
     emit_stmt(&resolved, ctx, ectx)
 }
 
 /// Source-shape variant of [`super::pattern::emit_pattern`].
-fn emit_pattern_legacy(pat: &Pattern, string_context: bool, ctx: &CodegenContext) -> String {
-    let resolved = ctx.resolve_pattern(pat);
+fn emit_pattern_legacy(
+    pat: &Pattern,
+    string_context: bool,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
+    let resolved = ctx.resolve_pattern(pat, ectx.current_module_scope.as_deref());
     super::pattern::emit_pattern(&resolved, string_context, ctx)
 }
 
@@ -113,11 +126,16 @@ fn has_list_patterns_legacy(arms: &[MatchArm]) -> bool {
 /// past `Expr` shape (TCO loop emit, mutual-TCO trampoline arms) but
 /// need to feed `&[ResolvedMatchArm]` to the migrated dispatch /
 /// list-match / pattern emit helpers.
-fn resolve_match_arms_on_demand(arms: &[MatchArm], ctx: &CodegenContext) -> Vec<ResolvedMatchArm> {
+fn resolve_match_arms_on_demand(
+    arms: &[MatchArm],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Vec<ResolvedMatchArm> {
+    let scope = ectx.current_module_scope.as_deref();
     arms.iter()
         .map(|arm| {
-            let pattern = ctx.resolve_pattern(&arm.pattern);
-            let body = Box::new(ctx.resolve_expr(&arm.body));
+            let pattern = ctx.resolve_pattern(&arm.pattern, scope);
+            let body = Box::new(ctx.resolve_expr(&arm.body, scope));
             let binding_slots = std::sync::OnceLock::new();
             if let Some(slots) = arm.binding_slots.get() {
                 let _ = binding_slots.set(slots.clone());
@@ -138,7 +156,7 @@ fn classify_dispatch_plan_for_rust_legacy(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<crate::ir::MatchDispatchPlan> {
-    let resolved = resolve_match_arms_on_demand(arms, ctx);
+    let resolved = resolve_match_arms_on_demand(arms, ctx, ectx);
     classify_dispatch_plan_for_rust(&resolved, ctx, ectx)
 }
 
@@ -149,12 +167,13 @@ fn emit_list_match_legacy<F>(
     list_shape: Option<crate::ir::ListMatchShape>,
     allow_fast_macro: bool,
     ctx: &CodegenContext,
+    ectx: &EmitCtx,
     body_for_arm: F,
 ) -> String
 where
     F: Fn(&MatchArm) -> String,
 {
-    let resolved = resolve_match_arms_on_demand(arms, ctx);
+    let resolved = resolve_match_arms_on_demand(arms, ctx, ectx);
     super::expr::emit_list_match(
         subject,
         &resolved,
@@ -185,12 +204,13 @@ fn emit_dispatch_table_match_legacy<F>(
     arms: &[MatchArm],
     shape: &crate::ir::DispatchTableShape,
     ctx: &CodegenContext,
+    ectx: &EmitCtx,
     body_for_arm: F,
 ) -> String
 where
     F: Fn(&MatchArm) -> String,
 {
-    let resolved = resolve_match_arms_on_demand(arms, ctx);
+    let resolved = resolve_match_arms_on_demand(arms, ctx, ectx);
     super::expr::emit_dispatch_table_match(subject, &resolved, shape, |rarm| {
         let idx = resolved
             .iter()
@@ -537,14 +557,14 @@ fn collect_fn_local_types(fd: &FnDef, ctx: &CodegenContext) -> HashMap<String, T
 
 /// Build an EmitCtx for a function from its parameter types in fn_sigs.
 /// Uses borrow-by-default: non-Copy, non-Str params are tracked as borrowed.
-fn build_fn_ectx(fd: &FnDef, ctx: &CodegenContext) -> EmitCtx {
-    EmitCtx::for_fn(collect_fn_local_types(fd, ctx))
+fn build_fn_ectx(fd: &FnDef, ctx: &CodegenContext, scope: Option<&str>) -> EmitCtx {
+    EmitCtx::for_fn(collect_fn_local_types(fd, ctx)).with_scope(scope)
 }
 
 /// Build an EmitCtx for a function WITHOUT borrow-by-default.
 /// Used for TCO and memo functions where params need to be owned/mutable.
-fn build_fn_ectx_no_borrow(fd: &FnDef, ctx: &CodegenContext) -> EmitCtx {
-    EmitCtx::for_fn_no_borrow(collect_fn_local_types(fd, ctx))
+fn build_fn_ectx_no_borrow(fd: &FnDef, ctx: &CodegenContext, scope: Option<&str>) -> EmitCtx {
+    EmitCtx::for_fn_no_borrow(collect_fn_local_types(fd, ctx)).with_scope(scope)
 }
 
 /// Emit a Rust function from an Aver FnDef.
@@ -604,9 +624,9 @@ fn emit_fn_def_with_visibility(
     // Memo functions always use borrow-by-default (memo wrapper takes &T).
     // Normal functions use borrow-by-default for non-Copy, non-Str params.
     let ectx = if has_tco && !use_memo {
-        build_fn_ectx_no_borrow(fd, ctx)
+        build_fn_ectx_no_borrow(fd, ctx, scope)
     } else {
-        build_fn_ectx(fd, ctx)
+        build_fn_ectx(fd, ctx, scope)
     };
 
     let guest_args_name = if is_guest_entry {
@@ -2179,7 +2199,7 @@ fn emit_tco_expr(
 
             let needs_as_str = has_string_literal_patterns_legacy(arms);
             if has_list_patterns_legacy(arms) {
-                return emit_list_match_legacy(subj, arms, None, true, ctx, |arm| {
+                return emit_list_match_legacy(subj, arms, None, true, ctx, ectx, |arm| {
                     emit_tco_expr(
                         &arm.body.node,
                         self_name,
@@ -2194,7 +2214,7 @@ fn emit_tco_expr(
             }
 
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-                return emit_dispatch_table_match_legacy(subj, arms, shape, ctx, |arm| {
+                return emit_dispatch_table_match_legacy(subj, arms, shape, ctx, ectx, |arm| {
                     emit_tco_expr(
                         &arm.body.node,
                         self_name,
@@ -2216,7 +2236,7 @@ fn emit_tco_expr(
 
             let mut arm_strs = Vec::new();
             for arm in arms {
-                let pat = emit_pattern_legacy(&arm.pattern, needs_as_str, ctx);
+                let pat = emit_pattern_legacy(&arm.pattern, needs_as_str, ctx, ectx);
                 let body = emit_tco_expr(
                     &arm.body.node,
                     self_name,
@@ -2317,6 +2337,7 @@ pub fn emit_mutual_tco_block(
     group_id: usize,
     group_fns: &[&FnDef],
     ctx: &CodegenContext,
+    scope: Option<&str>,
     visibility: &str,
 ) -> String {
     let enum_name = format!("__MutualTco{}", group_id);
@@ -2408,7 +2429,7 @@ pub fn emit_mutual_tco_block(
         tramp_lines.push(format!("            {} => {{", binding));
 
         // Trampoline params are `mut T`, no borrow-by-default
-        let ectx = build_fn_ectx_no_borrow(fd, ctx);
+        let ectx = build_fn_ectx_no_borrow(fd, ctx, scope);
         let ectx = if rc_names.is_empty() {
             ectx
         } else {
@@ -2598,7 +2619,7 @@ fn emit_trampoline_expr(
 
             // List match
             if has_list_patterns_legacy(arms) {
-                return emit_list_match_legacy(subj, arms, None, true, ctx, |arm| {
+                return emit_list_match_legacy(subj, arms, None, true, ctx, ectx, |arm| {
                     emit_trampoline_expr(
                         &arm.body.node,
                         enum_name,
@@ -2611,7 +2632,7 @@ fn emit_trampoline_expr(
             }
 
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-                return emit_dispatch_table_match_legacy(subj, arms, shape, ctx, |arm| {
+                return emit_dispatch_table_match_legacy(subj, arms, shape, ctx, ectx, |arm| {
                     emit_trampoline_expr(
                         &arm.body.node,
                         enum_name,
@@ -2632,7 +2653,7 @@ fn emit_trampoline_expr(
 
             let mut arm_strs = Vec::new();
             for arm in arms {
-                let pat = emit_pattern_legacy(&arm.pattern, needs_as_str, ctx);
+                let pat = emit_pattern_legacy(&arm.pattern, needs_as_str, ctx, ectx);
                 let body = emit_trampoline_expr(
                     &arm.body.node,
                     enum_name,
@@ -2896,7 +2917,7 @@ fn emit_main_with_visibility(
 
     // Main function body
     if let Some(fd) = main_fn {
-        let main_ectx = build_fn_ectx(fd, ctx);
+        let main_ectx = build_fn_ectx(fd, ctx, None);
         let stmts = fd.body.stmts();
         for (i, stmt) in stmts.iter().enumerate() {
             let is_last = i == stmts.len() - 1;
@@ -3042,7 +3063,7 @@ mod tests {
             "repeatSum",
             vec![("xs", "List<Int>"), ("remaining", "Int"), ("sink", "Int")],
         );
-        let ectx = build_fn_ectx(&fd, &ctx);
+        let ectx = build_fn_ectx(&fd, &ctx, None);
         let expr = Expr::TailCall(Box::new(TailCallData::new(
             "repeatSum".to_string(),
             vec![
@@ -3095,7 +3116,7 @@ mod tests {
                 ("sink", "Int"),
             ],
         );
-        let ectx = build_fn_ectx(&fd, &ctx);
+        let ectx = build_fn_ectx(&fd, &ctx, None);
         let expr = Expr::TailCall(Box::new(TailCallData::new(
             "repeatAppend".to_string(),
             vec![
@@ -3148,7 +3169,7 @@ mod tests {
     fn self_tco_does_not_rewrite_same_arity_mutual_tailcall() {
         let ctx = empty_ctx();
         let fd = list_param_fn("validSymbolNames", vec![("e", "Sexpr")]);
-        let ectx = build_fn_ectx(&fd, &ctx);
+        let ectx = build_fn_ectx(&fd, &ctx, None);
         let expr = Expr::TailCall(Box::new(TailCallData::new(
             "validSymbolList".to_string(),
             vec![Spanned::bare(Expr::Ident("e".to_string()))],
@@ -3177,7 +3198,7 @@ mod tests {
             "sumAreas",
             vec![("n", "Int"), ("acc", "Int"), ("pick", "Int")],
         );
-        let ectx = build_fn_ectx(&fd, &ctx);
+        let ectx = build_fn_ectx(&fd, &ctx, None);
         let expr = Expr::TailCall(Box::new(TailCallData::new(
             "sumAreas".to_string(),
             vec![
@@ -3498,7 +3519,7 @@ mod tests {
         assert_eq!(groups[0], vec![0, 1]);
 
         let ctx = empty_ctx();
-        let block = emit_mutual_tco_block(1, &fn_defs, &ctx, "pub ");
+        let block = emit_mutual_tco_block(1, &fn_defs, &ctx, None, "pub ");
 
         // Enum with variants for both functions
         assert!(block.contains("enum __MutualTco1"));
@@ -3553,7 +3574,7 @@ mod tests {
         assert_eq!(groups[0], vec![0, 1, 2]);
 
         let ctx = empty_ctx();
-        let block = emit_mutual_tco_block(1, &fn_defs, &ctx, "pub ");
+        let block = emit_mutual_tco_block(1, &fn_defs, &ctx, None, "pub ");
         assert!(block.contains("StateA(i64)"));
         assert!(block.contains("StateB(i64)"));
         assert!(block.contains("StateC(i64)"));

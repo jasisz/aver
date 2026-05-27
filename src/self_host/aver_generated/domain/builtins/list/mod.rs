@@ -12,34 +12,36 @@ pub fn call(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
     {
         let __dispatch_subject = name.clone();
         if &*__dispatch_subject == "List.prepend" {
-            builtinListPrepend(args)
+            crate::aver_generated::domain::builtins::list::builtinListPrepend(args)
         } else {
             if &*__dispatch_subject == "List.len" {
-                builtinListLen(args)
+                crate::aver_generated::domain::builtins::list::builtinListLen(args)
             } else {
                 if &*__dispatch_subject == "List.take" {
-                    builtinListTake(args)
+                    crate::aver_generated::domain::builtins::list::builtinListTake(args)
                 } else {
                     if &*__dispatch_subject == "List.drop" {
-                        builtinListDrop(args)
+                        crate::aver_generated::domain::builtins::list::builtinListDrop(args)
                     } else {
                         if &*__dispatch_subject == "List.reverse" {
-                            builtinListReverse(args)
+                            crate::aver_generated::domain::builtins::list::builtinListReverse(args)
                         } else {
                             if &*__dispatch_subject == "List.concat" {
-                                builtinListConcat(args)
+                                crate::aver_generated::domain::builtins::list::builtinListConcat(
+                                    args,
+                                )
                             } else {
                                 if &*__dispatch_subject == "List.contains" {
-                                    builtinListContains(args)
+                                    crate::aver_generated::domain::builtins::list::builtinListContains(args)
                                 } else {
                                     if &*__dispatch_subject == "List.zip" {
-                                        builtinListZip(args)
+                                        crate::aver_generated::domain::builtins::list::builtinListZip(args)
                                     } else {
                                         if &*__dispatch_subject == "List.head" {
-                                            builtinListHead(args)
+                                            crate::aver_generated::domain::builtins::list::builtinListHead(args)
                                         } else {
                                             if &*__dispatch_subject == "List.tail" {
-                                                builtinListTail(args)
+                                                crate::aver_generated::domain::builtins::list::builtinListTail(args)
                                             } else {
                                                 Err(aver_rt::AverStr::from({
                                                     let mut __b = {
@@ -76,7 +78,7 @@ pub fn builtinListPrepend(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (v, lstV) = pair;
-        builtinListPrependInner(&v, &lstV)
+        crate::aver_generated::domain::builtins::list::builtinListPrependInner(&v, &lstV)
     }
 }
 
@@ -84,7 +86,9 @@ pub fn builtinListPrepend(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
 pub fn builtinListPrependInner(v: &Val, lstV: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let items = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
-    Ok(Val::ValList(aver_rt::AverList::prepend(v.clone(), &items)))
+    Ok(crate::aver_generated::domain::value::Val::ValList(
+        aver_rt::AverList::prepend(v.clone(), &items),
+    ))
 }
 
 /// List.len(list) -> length as Int.
@@ -92,7 +96,9 @@ pub fn builtinListLen(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
-    Ok(Val::ValInt((items.len() as i64)))
+    Ok(crate::aver_generated::domain::value::Val::ValInt(
+        (items.len() as i64),
+    ))
 }
 
 /// List.take(list, n) -> first n elements.
@@ -101,7 +107,7 @@ pub fn builtinListTake(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (lstV, nV) = pair;
-        builtinListTakeInner(&lstV, &nV)
+        crate::aver_generated::domain::builtins::list::builtinListTakeInner(&lstV, &nV)
     }
 }
 
@@ -110,7 +116,9 @@ pub fn builtinListTakeInner(lstV: &Val, nV: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let items = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     let count = crate::aver_generated::domain::builtins::helpers::expectInt(nV)?;
-    Ok(Val::ValList(listTake(&items, count)))
+    Ok(crate::aver_generated::domain::value::Val::ValList(
+        crate::aver_generated::domain::builtins::list::listTake(&items, count),
+    ))
 }
 
 /// Keep the first count elements; negative counts produce empty lists.
@@ -118,7 +126,7 @@ pub fn builtinListTakeInner(lstV: &Val, nV: &Val) -> Result<Val, AverStr> {
 pub fn listTake(items: &aver_rt::AverList<Val>, count: i64) -> aver_rt::AverList<Val> {
     crate::cancel_checkpoint();
     if (count > 0i64) {
-        aver_list_match!(items.clone(), [] => aver_rt::AverList::empty(), [item, rest] => aver_rt::AverList::prepend(item, &listTake(&rest, (count - 1i64))))
+        aver_list_match!(items.clone(), [] => aver_rt::AverList::empty(), [item, rest] => aver_rt::AverList::prepend(item, &crate::aver_generated::domain::builtins::list::listTake(&rest, (count - 1i64))))
     } else {
         aver_rt::AverList::empty()
     }
@@ -130,7 +138,7 @@ pub fn builtinListDrop(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (lstV, nV) = pair;
-        builtinListDropInner(&lstV, &nV)
+        crate::aver_generated::domain::builtins::list::builtinListDropInner(&lstV, &nV)
     }
 }
 
@@ -139,7 +147,9 @@ pub fn builtinListDropInner(lstV: &Val, nV: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let items = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
     let count = crate::aver_generated::domain::builtins::helpers::expectInt(nV)?;
-    Ok(Val::ValList(listDrop(items, count)))
+    Ok(crate::aver_generated::domain::value::Val::ValList(
+        crate::aver_generated::domain::builtins::list::listDrop(items, count),
+    ))
 }
 
 /// Skip the first count elements; negative counts leave the list unchanged.
@@ -165,7 +175,9 @@ pub fn builtinListReverse(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
-    Ok(Val::ValList(items.reverse()))
+    Ok(crate::aver_generated::domain::value::Val::ValList(
+        items.reverse(),
+    ))
 }
 
 /// List.concat(a, b) -> concatenated list.
@@ -174,7 +186,7 @@ pub fn builtinListConcat(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (aV, bV) = pair;
-        builtinListConcatInner(&aV, &bV)
+        crate::aver_generated::domain::builtins::list::builtinListConcatInner(&aV, &bV)
     }
 }
 
@@ -183,7 +195,9 @@ pub fn builtinListConcatInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let aItems = crate::aver_generated::domain::builtins::helpers::expectList(aV)?;
     let bItems = crate::aver_generated::domain::builtins::helpers::expectList(bV)?;
-    Ok(Val::ValList(aver_rt::AverList::concat(&aItems, &bItems)))
+    Ok(crate::aver_generated::domain::value::Val::ValList(
+        aver_rt::AverList::concat(&aItems, &bItems),
+    ))
 }
 
 /// List.contains(list, value) -> Bool.
@@ -192,7 +206,7 @@ pub fn builtinListContains(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (lstV, needle) = pair;
-        builtinListContainsInner(&lstV, &needle)
+        crate::aver_generated::domain::builtins::list::builtinListContainsInner(&lstV, &needle)
     }
 }
 
@@ -200,7 +214,9 @@ pub fn builtinListContains(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
 pub fn builtinListContainsInner(lstV: &Val, needle: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let items = crate::aver_generated::domain::builtins::helpers::expectList(lstV)?;
-    Ok(Val::ValBool(listContainsVal(items, needle.clone())))
+    Ok(crate::aver_generated::domain::value::Val::ValBool(
+        crate::aver_generated::domain::builtins::list::listContainsVal(items, needle.clone()),
+    ))
 }
 
 /// Check if a value is in a list by repr comparison.
@@ -221,7 +237,7 @@ pub fn builtinListZip(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
     {
         let (aV, bV) = pair;
-        builtinListZipInner(&aV, &bV)
+        crate::aver_generated::domain::builtins::list::builtinListZipInner(&aV, &bV)
     }
 }
 
@@ -230,14 +246,20 @@ pub fn builtinListZipInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let aItems = crate::aver_generated::domain::builtins::helpers::expectList(aV)?;
     let bItems = crate::aver_generated::domain::builtins::helpers::expectList(bV)?;
-    Ok(Val::ValList(zipLists(&aItems, &bItems)))
+    Ok(crate::aver_generated::domain::value::Val::ValList(
+        crate::aver_generated::domain::builtins::list::zipLists(&aItems, &bItems),
+    ))
 }
 
 /// Zip two lists into list of ValTuple.
 #[inline(always)]
 pub fn zipLists(a: &aver_rt::AverList<Val>, b: &aver_rt::AverList<Val>) -> aver_rt::AverList<Val> {
     crate::cancel_checkpoint();
-    zipListsAcc(a.clone(), b.clone(), aver_rt::AverList::empty())
+    crate::aver_generated::domain::builtins::list::zipListsAcc(
+        a.clone(),
+        b.clone(),
+        aver_rt::AverList::empty(),
+    )
 }
 
 /// Accumulate zipped pairs in reverse, then reverse at end.
@@ -251,7 +273,7 @@ pub fn zipListsAcc(
         crate::cancel_checkpoint();
         let reversed = acc.reverse();
         return aver_list_match!(a, [] => reversed, [x, xs] => { aver_list_match!(b, [] => reversed, [y, ys] => { {
-            let __tmp2 = aver_rt::AverList::prepend(Val::ValTuple(aver_rt::AverList::from_vec(vec![x, y])), &acc);
+            let __tmp2 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValTuple(aver_rt::AverList::from_vec(vec![x, y])), &acc);
             a = xs;
             b = ys;
             acc = __tmp2;
@@ -265,7 +287,7 @@ pub fn builtinListHead(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
-    aver_list_match!(items, [] => Ok(Val::ValNone.clone()), [h, rest] => Ok(Val::ValSome(std::sync::Arc::new(h))))
+    aver_list_match!(items, [] => Ok(Val::ValNone.clone()), [h, rest] => Ok(crate::aver_generated::domain::value::Val::ValSome(std::sync::Arc::new(h))))
 }
 
 /// List.tail(list) -> Option of rest.
@@ -273,5 +295,5 @@ pub fn builtinListTail(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let items = crate::aver_generated::domain::builtins::helpers::expectList(&v)?;
-    aver_list_match!(items, [] => Ok(Val::ValNone.clone()), [h, rest] => Ok(Val::ValSome(std::sync::Arc::new(Val::ValList(rest)))))
+    aver_list_match!(items, [] => Ok(Val::ValNone.clone()), [h, rest] => Ok(crate::aver_generated::domain::value::Val::ValSome(std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValList(rest)))))
 }

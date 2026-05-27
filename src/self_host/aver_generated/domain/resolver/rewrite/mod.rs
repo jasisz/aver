@@ -12,7 +12,7 @@ pub fn rewriteInternalFns(
     loop {
         crate::cancel_checkpoint();
         return aver_list_match!(fns, [] => acc.reverse(), [f, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(rewriteInternalFn(&f), &acc);
+            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(&f), &acc);
             fns = rest;
             acc = __tmp1;
             continue;
@@ -26,7 +26,10 @@ pub fn rewriteInternalFn(fd: &FnDef) -> FnDef {
     FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
-        body: rewriteInternalStmts(fd.body.clone(), aver_rt::AverList::empty()),
+        body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmts(
+            fd.body.clone(),
+            aver_rt::AverList::empty(),
+        ),
         slotCount: fd.slotCount,
         slotMap: fd.slotMap.clone(),
         fastPath: fd.fastPath.clone(),
@@ -43,7 +46,7 @@ pub fn rewriteInternalStmts(
     loop {
         crate::cancel_checkpoint();
         return aver_list_match!(stmts, [] => acc.reverse(), [stmt, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(rewriteInternalStmt(&stmt), &acc);
+            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(&stmt), &acc);
             stmts = rest;
             acc = __tmp1;
             continue;
@@ -55,9 +58,23 @@ pub fn rewriteInternalStmts(
 pub fn rewriteInternalStmt(stmt: &Stmt) -> Stmt {
     crate::cancel_checkpoint();
     match stmt.clone() {
-        Stmt::StmtBind(name, expr) => Stmt::StmtBind(name, rewriteInternalExpr(&expr)),
-        Stmt::StmtBindSlot(slot, expr) => Stmt::StmtBindSlot(slot, rewriteInternalExpr(&expr)),
-        Stmt::StmtExpr(expr) => Stmt::StmtExpr(rewriteInternalExpr(&expr)),
+        crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr) => {
+            crate::aver_generated::domain::ast::Stmt::StmtBind(
+                name,
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr),
+            )
+        }
+        crate::aver_generated::domain::ast::Stmt::StmtBindSlot(slot, expr) => {
+            crate::aver_generated::domain::ast::Stmt::StmtBindSlot(
+                slot,
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr),
+            )
+        }
+        crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
+            crate::aver_generated::domain::ast::Stmt::StmtExpr(
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr),
+            )
+        }
     }
 }
 
@@ -65,39 +82,61 @@ pub fn rewriteInternalStmt(stmt: &Stmt) -> Stmt {
 pub fn rewriteInternalExpr(expr: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        Expr::ExprBoolBranch(cond, thenExpr, elseExpr) => {
+        crate::aver_generated::domain::ast::Expr::ExprBoolBranch(cond, thenExpr, elseExpr) => {
             let cond = (*cond).clone();
             let thenExpr = (*thenExpr).clone();
             let elseExpr = (*elseExpr).clone();
-            Expr::ExprBoolBranch(
-                std::sync::Arc::new(rewriteInternalExpr(&cond)),
-                std::sync::Arc::new(rewriteInternalExpr(&thenExpr)),
-                std::sync::Arc::new(rewriteInternalExpr(&elseExpr)),
+            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
+                std::sync::Arc::new(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&cond),
+                ),
+                std::sync::Arc::new(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
+                        &thenExpr,
+                    ),
+                ),
+                std::sync::Arc::new(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(
+                        &elseExpr,
+                    ),
+                ),
             )
         }
-        Expr::ExprBinopSlotInt(_, _, _) => expr.clone(),
-        Expr::ExprBinopSlots(_, _, _) => expr.clone(),
-        Expr::ExprCmpSlotInt(_, _, _) => expr.clone(),
-        Expr::ExprCmpSlots(_, _, _) => expr.clone(),
-        Expr::ExprVectorGetOrInt(vecExpr, idxExpr, defaultValue) => {
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_, _, _) => expr.clone(),
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_, _, _) => expr.clone(),
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_, _, _) => expr.clone(),
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_, _, _) => expr.clone(),
+        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
+            vecExpr,
+            idxExpr,
+            defaultValue,
+        ) => {
             let vecExpr = (*vecExpr).clone();
             let idxExpr = (*idxExpr).clone();
-            Expr::ExprVectorGetOrInt(
-                std::sync::Arc::new(rewriteInternalExpr(&vecExpr)),
-                std::sync::Arc::new(rewriteInternalExpr(&idxExpr)),
+            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
+                std::sync::Arc::new(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&vecExpr),
+                ),
+                std::sync::Arc::new(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&idxExpr),
+                ),
                 defaultValue,
             )
         }
-        Expr::ExprIntModOrInt(a, b, defaultValue) => {
+        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(a, b, defaultValue) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            Expr::ExprIntModOrInt(
-                std::sync::Arc::new(rewriteInternalExpr(&a)),
-                std::sync::Arc::new(rewriteInternalExpr(&b)),
+            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
+                std::sync::Arc::new(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                ),
+                std::sync::Arc::new(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
+                ),
                 defaultValue,
             )
         }
-        _ => rewriteInternalExprAfterLeaf(expr),
+        _ => crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprAfterLeaf(expr),
     }
 }
 
@@ -105,101 +144,103 @@ pub fn rewriteInternalExpr(expr: &Expr) -> Expr {
 pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        Expr::ExprAdd(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprAdd(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalBinop(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                 &BinOp::OpAdd,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprSub(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprSub(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalBinop(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                 &BinOp::OpSub,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprMul(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprMul(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalBinop(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                 &BinOp::OpMul,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprDiv(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprDiv(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalBinop(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
                 &BinOp::OpDiv,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprNeg(inner) => {
+        crate::aver_generated::domain::ast::Expr::ExprNeg(inner) => {
             let inner = (*inner).clone();
-            Expr::ExprNeg(std::sync::Arc::new(rewriteInternalExpr(&inner)))
+            crate::aver_generated::domain::ast::Expr::ExprNeg(std::sync::Arc::new(
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&inner),
+            ))
         }
-        Expr::ExprEq(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprEq(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalCmp(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &CmpOp::CmpEq,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprNeq(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprNeq(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalCmp(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &CmpOp::CmpNeq,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprLt(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprLt(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalCmp(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &CmpOp::CmpLt,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprGt(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprGt(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalCmp(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &CmpOp::CmpGt,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprLte(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprLte(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalCmp(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &CmpOp::CmpLte,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        Expr::ExprGte(a, b) => {
+        crate::aver_generated::domain::ast::Expr::ExprGte(a, b) => {
             let a = (*a).clone();
             let b = (*b).clone();
-            rewriteInternalCmp(
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
                 &CmpOp::CmpGte,
-                &rewriteInternalExpr(&a),
-                &rewriteInternalExpr(&b),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
         }
-        _ => rewriteInternalExprAfterArith(expr),
+        _ => crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprAfterArith(expr),
     }
 }
 
@@ -207,50 +248,108 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
 pub fn rewriteInternalExprAfterArith(expr: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match expr.clone() {
-        Expr::ExprMatch(scrutinee, arms) => {
+        crate::aver_generated::domain::ast::Expr::ExprMatch(scrutinee, arms) => {
             let scrutinee = (*scrutinee).clone();
-            rewriteInternalMatch(
-                &rewriteInternalExpr(&scrutinee),
-                &rewriteInternalArms(arms, aver_rt::AverList::empty()),
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalMatch(
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&scrutinee),
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalArms(
+                    arms,
+                    aver_rt::AverList::empty(),
+                ),
             )
         }
-        Expr::ExprPropagate(inner) => {
+        crate::aver_generated::domain::ast::Expr::ExprPropagate(inner) => {
             let inner = (*inner).clone();
-            Expr::ExprPropagate(std::sync::Arc::new(rewriteInternalExpr(&inner)))
+            crate::aver_generated::domain::ast::Expr::ExprPropagate(std::sync::Arc::new(
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&inner),
+            ))
         }
-        Expr::ExprConcat(parts) => {
-            Expr::ExprConcat(rewriteInternalExprs(parts, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprConcat(parts) => {
+            crate::aver_generated::domain::ast::Expr::ExprConcat(
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
+                    parts,
+                    aver_rt::AverList::empty(),
+                ),
+            )
         }
-        Expr::ExprTuple(exprs) => {
-            Expr::ExprTuple(rewriteInternalExprs(exprs, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprTuple(exprs) => {
+            crate::aver_generated::domain::ast::Expr::ExprTuple(
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
+                    exprs,
+                    aver_rt::AverList::empty(),
+                ),
+            )
         }
-        Expr::ExprIndependentProduct(exprs, unwrap) => Expr::ExprIndependentProduct(
-            rewriteInternalExprs(exprs, aver_rt::AverList::empty()),
-            unwrap,
-        ),
-        Expr::ExprList(exprs) => {
-            Expr::ExprList(rewriteInternalExprs(exprs, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(exprs, unwrap) => {
+            crate::aver_generated::domain::ast::Expr::ExprIndependentProduct(
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
+                    exprs,
+                    aver_rt::AverList::empty(),
+                ),
+                unwrap,
+            )
         }
-        Expr::ExprRecord(name, fields) => Expr::ExprRecord(
-            name,
-            rewriteInternalFields(fields, aver_rt::AverList::empty()),
-        ),
-        Expr::ExprFieldAccess(obj, field) => {
+        crate::aver_generated::domain::ast::Expr::ExprList(exprs) => {
+            crate::aver_generated::domain::ast::Expr::ExprList(
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
+                    exprs,
+                    aver_rt::AverList::empty(),
+                ),
+            )
+        }
+        crate::aver_generated::domain::ast::Expr::ExprRecord(name, fields) => {
+            crate::aver_generated::domain::ast::Expr::ExprRecord(
+                name,
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalFields(
+                    fields,
+                    aver_rt::AverList::empty(),
+                ),
+            )
+        }
+        crate::aver_generated::domain::ast::Expr::ExprFieldAccess(obj, field) => {
             let obj = (*obj).clone();
-            Expr::ExprFieldAccess(std::sync::Arc::new(rewriteInternalExpr(&obj)), field)
+            crate::aver_generated::domain::ast::Expr::ExprFieldAccess(
+                std::sync::Arc::new(
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&obj),
+                ),
+                field,
+            )
         }
-        Expr::ExprCall(name, args) => {
-            Expr::ExprCall(name, rewriteInternalExprs(args, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprCall(name, args) => {
+            crate::aver_generated::domain::ast::Expr::ExprCall(
+                name,
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
+                    args,
+                    aver_rt::AverList::empty(),
+                ),
+            )
         }
-        Expr::ExprCallDirect(fnId, args) => {
-            Expr::ExprCallDirect(fnId, rewriteInternalExprs(args, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, args) => {
+            crate::aver_generated::domain::ast::Expr::ExprCallDirect(
+                fnId,
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
+                    args,
+                    aver_rt::AverList::empty(),
+                ),
+            )
         }
-        Expr::ExprCallBuiltin(name, args) => rewriteInternalBuiltin(
-            name,
-            &rewriteInternalExprs(args, aver_rt::AverList::empty()),
-        ),
-        Expr::ExprCallBuiltinId(id, args) => {
-            Expr::ExprCallBuiltinId(id, rewriteInternalExprs(args, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, args) => {
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalBuiltin(
+                name,
+                &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
+                    args,
+                    aver_rt::AverList::empty(),
+                ),
+            )
+        }
+        crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(id, args) => {
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltinId(
+                id,
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalExprs(
+                    args,
+                    aver_rt::AverList::empty(),
+                ),
+            )
         }
         _ => expr.clone(),
     }
@@ -265,7 +364,7 @@ pub fn rewriteInternalExprs(
     loop {
         crate::cancel_checkpoint();
         return aver_list_match!(exprs, [] => acc.reverse(), [expr, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(rewriteInternalExpr(&expr), &acc);
+            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr), &acc);
             exprs = rest;
             acc = __tmp1;
             continue;
@@ -283,7 +382,7 @@ pub fn rewriteInternalFields(
         crate::cancel_checkpoint();
         return aver_list_match!(fields, [] => acc.reverse(), [pair, rest] => { match pair {
             (name, expr) => {
-            let __tmp1 = aver_rt::AverList::prepend((name, rewriteInternalExpr(&expr)), &acc);
+            let __tmp1 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr)), &acc);
             fields = rest;
             acc = __tmp1;
             continue;
@@ -301,7 +400,7 @@ pub fn rewriteInternalArms(
     loop {
         crate::cancel_checkpoint();
         return aver_list_match!(arms, [] => acc.reverse(), [arm, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(MatchArm { pattern: rewritePattern(&arm.pattern), body: rewriteInternalExpr(&arm.body), bindingSlots: arm.bindingSlots.clone() }, &acc);
+            let __tmp1 = aver_rt::AverList::prepend(MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(&arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&arm.body), bindingSlots: arm.bindingSlots.clone() }, &acc);
             arms = rest;
             acc = __tmp1;
             continue;
@@ -313,20 +412,26 @@ pub fn rewriteInternalArms(
 pub fn rewritePattern(pat: &Pattern) -> Pattern {
     crate::cancel_checkpoint();
     match pat.clone() {
-        Pattern::PatConstructor(name, bindings) => rewritePatConstructor(name, &bindings),
-        Pattern::PatTuple(pats) => {
-            Pattern::PatTuple(rewritePatterns(pats, aver_rt::AverList::empty()))
+        crate::aver_generated::domain::ast::Pattern::PatConstructor(name, bindings) => {
+            crate::aver_generated::domain::resolver::rewrite::rewritePatConstructor(name, &bindings)
+        }
+        crate::aver_generated::domain::ast::Pattern::PatTuple(pats) => {
+            crate::aver_generated::domain::ast::Pattern::PatTuple(
+                crate::aver_generated::domain::resolver::rewrite::rewritePatterns(
+                    pats,
+                    aver_rt::AverList::empty(),
+                ),
+            )
         }
         _ => pat.clone(),
     }
 }
 
 /// Convert PatConstructor to PatConstructorId with stable tag and full constructor name.
-#[inline(always)]
 pub fn rewritePatConstructor(name: AverStr, bindings: &aver_rt::AverList<AverStr>) -> Pattern {
     crate::cancel_checkpoint();
     let tag = crate::aver_generated::domain::ast::ctorNameToTag(name.clone());
-    Pattern::PatConstructorId(tag, name.clone(), bindings.clone())
+    crate::aver_generated::domain::ast::Pattern::PatConstructorId(tag, name, bindings.clone())
 }
 
 /// Rewrite a list of patterns.
@@ -338,7 +443,7 @@ pub fn rewritePatterns(
     loop {
         crate::cancel_checkpoint();
         return aver_list_match!(pats, [] => acc.reverse(), [p, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(rewritePattern(&p), &acc);
+            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewritePattern(&p), &acc);
             pats = rest;
             acc = __tmp1;
             continue;
@@ -350,10 +455,20 @@ pub fn rewritePatterns(
 pub fn rewriteInternalBinop(op: &BinOp, left: &Expr, right: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match left.clone() {
-        Expr::ExprSlot(slot) => rewriteInternalBinopSlotLeft(op, slot, right),
+        crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinopSlotLeft(
+                op, slot, right,
+            )
+        }
         _ => match right.clone() {
-            Expr::ExprSlot(slot) => rewriteInternalBinopSlotRight(op, left, slot),
-            _ => rebuildInternalBinop(op, left, right),
+            crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinopSlotRight(
+                    op, left, slot,
+                )
+            }
+            _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalBinop(
+                op, left, right,
+            ),
         },
     }
 }
@@ -362,9 +477,17 @@ pub fn rewriteInternalBinop(op: &BinOp, left: &Expr, right: &Expr) -> Expr {
 pub fn rewriteInternalBinopSlotLeft(op: &BinOp, slot: i64, right: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match right.clone() {
-        Expr::ExprInt(n) => Expr::ExprBinopSlotInt(op.clone(), slot, n),
-        Expr::ExprSlot(rhs) => Expr::ExprBinopSlots(op.clone(), slot, rhs),
-        _ => rebuildInternalBinop(op, &Expr::ExprSlot(slot), right),
+        crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
+            crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(op.clone(), slot, n)
+        }
+        crate::aver_generated::domain::ast::Expr::ExprSlot(rhs) => {
+            crate::aver_generated::domain::ast::Expr::ExprBinopSlots(op.clone(), slot, rhs)
+        }
+        _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalBinop(
+            op,
+            &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+            right,
+        ),
     }
 }
 
@@ -372,15 +495,25 @@ pub fn rewriteInternalBinopSlotLeft(op: &BinOp, slot: i64, right: &Expr) -> Expr
 pub fn rewriteInternalBinopSlotRight(op: &BinOp, left: &Expr, slot: i64) -> Expr {
     crate::cancel_checkpoint();
     match left.clone() {
-        Expr::ExprSlot(lhs) => Expr::ExprBinopSlots(op.clone(), lhs, slot),
-        Expr::ExprInt(n) => {
-            if binopCanFlip(op) {
-                Expr::ExprBinopSlotInt(op.clone(), slot, n)
+        crate::aver_generated::domain::ast::Expr::ExprSlot(lhs) => {
+            crate::aver_generated::domain::ast::Expr::ExprBinopSlots(op.clone(), lhs, slot)
+        }
+        crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
+            if crate::aver_generated::domain::resolver::rewrite::binopCanFlip(op) {
+                crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(op.clone(), slot, n)
             } else {
-                rebuildInternalBinop(op, left, &Expr::ExprSlot(slot))
+                crate::aver_generated::domain::resolver::rewrite::rebuildInternalBinop(
+                    op,
+                    left,
+                    &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+                )
             }
         }
-        _ => rebuildInternalBinop(op, left, &Expr::ExprSlot(slot)),
+        _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalBinop(
+            op,
+            left,
+            &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+        ),
     }
 }
 
@@ -388,22 +521,30 @@ pub fn rewriteInternalBinopSlotRight(op: &BinOp, left: &Expr, slot: i64) -> Expr
 pub fn rebuildInternalBinop(op: &BinOp, left: &Expr, right: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match op {
-        BinOp::OpAdd => Expr::ExprAdd(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
-        BinOp::OpSub => Expr::ExprSub(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
-        BinOp::OpMul => Expr::ExprMul(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
-        BinOp::OpDiv => Expr::ExprDiv(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
+        crate::aver_generated::domain::ast::BinOp::OpAdd => {
+            crate::aver_generated::domain::ast::Expr::ExprAdd(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
+        crate::aver_generated::domain::ast::BinOp::OpSub => {
+            crate::aver_generated::domain::ast::Expr::ExprSub(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
+        crate::aver_generated::domain::ast::BinOp::OpMul => {
+            crate::aver_generated::domain::ast::Expr::ExprMul(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
+        crate::aver_generated::domain::ast::BinOp::OpDiv => {
+            crate::aver_generated::domain::ast::Expr::ExprDiv(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
     }
 }
 
@@ -411,8 +552,8 @@ pub fn rebuildInternalBinop(op: &BinOp, left: &Expr, right: &Expr) -> Expr {
 pub fn binopCanFlip(op: &BinOp) -> bool {
     crate::cancel_checkpoint();
     match op {
-        BinOp::OpAdd => true,
-        BinOp::OpMul => true,
+        crate::aver_generated::domain::ast::BinOp::OpAdd => true,
+        crate::aver_generated::domain::ast::BinOp::OpMul => true,
         _ => false,
     }
 }
@@ -424,12 +565,14 @@ pub fn rewriteInternalBuiltin(name: AverStr, args: &aver_rt::AverList<Expr>) -> 
     {
         let __dispatch_subject = name.clone();
         if &*__dispatch_subject == "Option.withDefault" {
-            rewriteInternalOptionWithDefault(args)
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalOptionWithDefault(args)
         } else {
             if &*__dispatch_subject == "Result.withDefault" {
-                rewriteInternalResultWithDefault(args)
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalResultWithDefault(
+                    args,
+                )
             } else {
-                Expr::ExprCallBuiltin(name, args.clone())
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, args.clone())
             }
         }
     }
@@ -444,13 +587,19 @@ pub fn rewriteInternalOptionWithDefault(args: &aver_rt::AverList<Expr>) -> Expr 
             {
                 let __list_subject = rest;
                 if let Some((defaultExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    rewriteInternalOptionWithDefaultArgs(&optionExpr, &defaultExpr)
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalOptionWithDefaultArgs(&optionExpr, &defaultExpr)
                 } else {
-                    Expr::ExprCallBuiltin(AverStr::from("Option.withDefault"), args.clone())
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                        AverStr::from("Option.withDefault"),
+                        args.clone(),
+                    )
                 }
             }
         } else {
-            Expr::ExprCallBuiltin(AverStr::from("Option.withDefault"), args.clone())
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                AverStr::from("Option.withDefault"),
+                args.clone(),
+            )
         }
     }
 }
@@ -459,23 +608,28 @@ pub fn rewriteInternalOptionWithDefault(args: &aver_rt::AverList<Expr>) -> Expr 
 pub fn rewriteInternalOptionWithDefaultArgs(optionExpr: &Expr, defaultExpr: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match defaultExpr.clone() {
-        Expr::ExprInt(defaultValue) => match optionExpr.clone() {
-            Expr::ExprCallBuiltin(name, innerArgs) => {
-                if (name == AverStr::from("Vector.get")) {
-                    rewriteInternalVectorGetOrInt(&innerArgs, defaultValue)
-                } else {
-                    Expr::ExprCallBuiltin(
-                        AverStr::from("Option.withDefault"),
-                        aver_rt::AverList::from_vec(vec![optionExpr.clone(), defaultExpr.clone()]),
-                    )
+        crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue) => {
+            match optionExpr.clone() {
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, innerArgs) => {
+                    if (name == AverStr::from("Vector.get")) {
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrInt(&innerArgs, defaultValue)
+                    } else {
+                        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                            AverStr::from("Option.withDefault"),
+                            aver_rt::AverList::from_vec(vec![
+                                optionExpr.clone(),
+                                defaultExpr.clone(),
+                            ]),
+                        )
+                    }
                 }
+                _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                    AverStr::from("Option.withDefault"),
+                    aver_rt::AverList::from_vec(vec![optionExpr.clone(), defaultExpr.clone()]),
+                ),
             }
-            _ => Expr::ExprCallBuiltin(
-                AverStr::from("Option.withDefault"),
-                aver_rt::AverList::from_vec(vec![optionExpr.clone(), defaultExpr.clone()]),
-            ),
-        },
-        _ => Expr::ExprCallBuiltin(
+        }
+        _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
             AverStr::from("Option.withDefault"),
             aver_rt::AverList::from_vec(vec![optionExpr.clone(), defaultExpr.clone()]),
         ),
@@ -491,23 +645,29 @@ pub fn rewriteInternalVectorGetOrInt(args: &aver_rt::AverList<Expr>, defaultValu
             {
                 let __list_subject = rest;
                 if let Some((idxExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    rewriteInternalVectorGetOrIntArgs(&vecExpr, &idxExpr, defaultValue)
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalVectorGetOrIntArgs(&vecExpr, &idxExpr, defaultValue)
                 } else {
-                    Expr::ExprCallBuiltin(
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         AverStr::from("Option.withDefault"),
                         aver_rt::AverList::from_vec(vec![
-                            Expr::ExprCallBuiltin(AverStr::from("Vector.get"), args.clone()),
-                            Expr::ExprInt(defaultValue),
+                            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                                AverStr::from("Vector.get"),
+                                args.clone(),
+                            ),
+                            crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
                         ]),
                     )
                 }
             }
         } else {
-            Expr::ExprCallBuiltin(
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 AverStr::from("Option.withDefault"),
                 aver_rt::AverList::from_vec(vec![
-                    Expr::ExprCallBuiltin(AverStr::from("Vector.get"), args.clone()),
-                    Expr::ExprInt(defaultValue),
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                        AverStr::from("Vector.get"),
+                        args.clone(),
+                    ),
+                    crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
                 ]),
             )
         }
@@ -522,28 +682,28 @@ pub fn rewriteInternalVectorGetOrIntArgs(
     defaultValue: i64,
 ) -> Expr {
     crate::cancel_checkpoint();
-    if exprHasSlotShape(vecExpr) {
-        Expr::ExprVectorGetOrInt(
+    if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(vecExpr) {
+        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
             std::sync::Arc::new(vecExpr.clone()),
             std::sync::Arc::new(idxExpr.clone()),
             defaultValue,
         )
     } else {
-        if exprHasSlotShape(idxExpr) {
-            Expr::ExprVectorGetOrInt(
+        if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(idxExpr) {
+            crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(
                 std::sync::Arc::new(vecExpr.clone()),
                 std::sync::Arc::new(idxExpr.clone()),
                 defaultValue,
             )
         } else {
-            Expr::ExprCallBuiltin(
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 AverStr::from("Option.withDefault"),
                 aver_rt::AverList::from_vec(vec![
-                    Expr::ExprCallBuiltin(
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         AverStr::from("Vector.get"),
                         aver_rt::AverList::from_vec(vec![vecExpr.clone(), idxExpr.clone()]),
                     ),
-                    Expr::ExprInt(defaultValue),
+                    crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
                 ]),
             )
         }
@@ -559,13 +719,19 @@ pub fn rewriteInternalResultWithDefault(args: &aver_rt::AverList<Expr>) -> Expr 
             {
                 let __list_subject = rest;
                 if let Some((defaultExpr, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    rewriteInternalResultWithDefaultArgs(&resultExpr, &defaultExpr)
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalResultWithDefaultArgs(&resultExpr, &defaultExpr)
                 } else {
-                    Expr::ExprCallBuiltin(AverStr::from("Result.withDefault"), args.clone())
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                        AverStr::from("Result.withDefault"),
+                        args.clone(),
+                    )
                 }
             }
         } else {
-            Expr::ExprCallBuiltin(AverStr::from("Result.withDefault"), args.clone())
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                AverStr::from("Result.withDefault"),
+                args.clone(),
+            )
         }
     }
 }
@@ -574,23 +740,31 @@ pub fn rewriteInternalResultWithDefault(args: &aver_rt::AverList<Expr>) -> Expr 
 pub fn rewriteInternalResultWithDefaultArgs(resultExpr: &Expr, defaultExpr: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match defaultExpr.clone() {
-        Expr::ExprInt(defaultValue) => match resultExpr.clone() {
-            Expr::ExprCallBuiltin(name, innerArgs) => {
-                if (name == AverStr::from("Int.mod")) {
-                    rewriteInternalIntModOrInt(&innerArgs, defaultValue)
-                } else {
-                    Expr::ExprCallBuiltin(
-                        AverStr::from("Result.withDefault"),
-                        aver_rt::AverList::from_vec(vec![resultExpr.clone(), defaultExpr.clone()]),
-                    )
+        crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue) => {
+            match resultExpr.clone() {
+                crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(name, innerArgs) => {
+                    if (name == AverStr::from("Int.mod")) {
+                        crate::aver_generated::domain::resolver::rewrite::rewriteInternalIntModOrInt(
+                            &innerArgs,
+                            defaultValue,
+                        )
+                    } else {
+                        crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                            AverStr::from("Result.withDefault"),
+                            aver_rt::AverList::from_vec(vec![
+                                resultExpr.clone(),
+                                defaultExpr.clone(),
+                            ]),
+                        )
+                    }
                 }
+                _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                    AverStr::from("Result.withDefault"),
+                    aver_rt::AverList::from_vec(vec![resultExpr.clone(), defaultExpr.clone()]),
+                ),
             }
-            _ => Expr::ExprCallBuiltin(
-                AverStr::from("Result.withDefault"),
-                aver_rt::AverList::from_vec(vec![resultExpr.clone(), defaultExpr.clone()]),
-            ),
-        },
-        _ => Expr::ExprCallBuiltin(
+        }
+        _ => crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
             AverStr::from("Result.withDefault"),
             aver_rt::AverList::from_vec(vec![resultExpr.clone(), defaultExpr.clone()]),
         ),
@@ -606,23 +780,33 @@ pub fn rewriteInternalIntModOrInt(args: &aver_rt::AverList<Expr>, defaultValue: 
             {
                 let __list_subject = rest;
                 if let Some((b, ignored)) = aver_rt::list_uncons_cloned(&__list_subject) {
-                    rewriteInternalIntModOrIntArgs(&a, &b, defaultValue)
+                    crate::aver_generated::domain::resolver::rewrite::rewriteInternalIntModOrIntArgs(
+                        &a,
+                        &b,
+                        defaultValue,
+                    )
                 } else {
-                    Expr::ExprCallBuiltin(
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         AverStr::from("Result.withDefault"),
                         aver_rt::AverList::from_vec(vec![
-                            Expr::ExprCallBuiltin(AverStr::from("Int.mod"), args.clone()),
-                            Expr::ExprInt(defaultValue),
+                            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                                AverStr::from("Int.mod"),
+                                args.clone(),
+                            ),
+                            crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
                         ]),
                     )
                 }
             }
         } else {
-            Expr::ExprCallBuiltin(
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 AverStr::from("Result.withDefault"),
                 aver_rt::AverList::from_vec(vec![
-                    Expr::ExprCallBuiltin(AverStr::from("Int.mod"), args.clone()),
-                    Expr::ExprInt(defaultValue),
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
+                        AverStr::from("Int.mod"),
+                        args.clone(),
+                    ),
+                    crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
                 ]),
             )
         }
@@ -633,28 +817,28 @@ pub fn rewriteInternalIntModOrInt(args: &aver_rt::AverList<Expr>, defaultValue: 
 #[inline(always)]
 pub fn rewriteInternalIntModOrIntArgs(a: &Expr, b: &Expr, defaultValue: i64) -> Expr {
     crate::cancel_checkpoint();
-    if exprHasSlotShape(a) {
-        Expr::ExprIntModOrInt(
+    if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(a) {
+        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
             std::sync::Arc::new(a.clone()),
             std::sync::Arc::new(b.clone()),
             defaultValue,
         )
     } else {
-        if exprHasSlotShape(b) {
-            Expr::ExprIntModOrInt(
+        if crate::aver_generated::domain::resolver::rewrite::exprHasSlotShape(b) {
+            crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(
                 std::sync::Arc::new(a.clone()),
                 std::sync::Arc::new(b.clone()),
                 defaultValue,
             )
         } else {
-            Expr::ExprCallBuiltin(
+            crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                 AverStr::from("Result.withDefault"),
                 aver_rt::AverList::from_vec(vec![
-                    Expr::ExprCallBuiltin(
+                    crate::aver_generated::domain::ast::Expr::ExprCallBuiltin(
                         AverStr::from("Int.mod"),
                         aver_rt::AverList::from_vec(vec![a.clone(), b.clone()]),
                     ),
-                    Expr::ExprInt(defaultValue),
+                    crate::aver_generated::domain::ast::Expr::ExprInt(defaultValue),
                 ]),
             )
         }
@@ -665,13 +849,13 @@ pub fn rewriteInternalIntModOrIntArgs(a: &Expr, b: &Expr, defaultValue: i64) -> 
 pub fn exprHasSlotShape(expr: &Expr) -> bool {
     crate::cancel_checkpoint();
     match expr {
-        Expr::ExprSlot(_) => true,
-        Expr::ExprBinopSlotInt(_, _, _) => true,
-        Expr::ExprBinopSlots(_, _, _) => true,
-        Expr::ExprCmpSlotInt(_, _, _) => true,
-        Expr::ExprCmpSlots(_, _, _) => true,
-        Expr::ExprVectorGetOrInt(_, _, _) => true,
-        Expr::ExprIntModOrInt(_, _, _) => true,
+        crate::aver_generated::domain::ast::Expr::ExprSlot(_) => true,
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlotInt(_, _, _) => true,
+        crate::aver_generated::domain::ast::Expr::ExprBinopSlots(_, _, _) => true,
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(_, _, _) => true,
+        crate::aver_generated::domain::ast::Expr::ExprCmpSlots(_, _, _) => true,
+        crate::aver_generated::domain::ast::Expr::ExprVectorGetOrInt(_, _, _) => true,
+        crate::aver_generated::domain::ast::Expr::ExprIntModOrInt(_, _, _) => true,
         _ => false,
     }
 }
@@ -680,10 +864,20 @@ pub fn exprHasSlotShape(expr: &Expr) -> bool {
 pub fn rewriteInternalCmp(op: &CmpOp, left: &Expr, right: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match left.clone() {
-        Expr::ExprSlot(slot) => rewriteInternalCmpSlotLeft(op, slot, right),
+        crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+            crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmpSlotLeft(
+                op, slot, right,
+            )
+        }
         _ => match right.clone() {
-            Expr::ExprSlot(slot) => rewriteInternalCmpSlotRight(op, left, slot),
-            _ => rebuildInternalCmp(op, left, right),
+            crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+                crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmpSlotRight(
+                    op, left, slot,
+                )
+            }
+            _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalCmp(
+                op, left, right,
+            ),
         },
     }
 }
@@ -692,9 +886,17 @@ pub fn rewriteInternalCmp(op: &CmpOp, left: &Expr, right: &Expr) -> Expr {
 pub fn rewriteInternalCmpSlotLeft(op: &CmpOp, slot: i64, right: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match right.clone() {
-        Expr::ExprInt(n) => Expr::ExprCmpSlotInt(op.clone(), slot, n),
-        Expr::ExprSlot(rhs) => Expr::ExprCmpSlots(op.clone(), slot, rhs),
-        _ => rebuildInternalCmp(op, &Expr::ExprSlot(slot), right),
+        crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
+            crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(op.clone(), slot, n)
+        }
+        crate::aver_generated::domain::ast::Expr::ExprSlot(rhs) => {
+            crate::aver_generated::domain::ast::Expr::ExprCmpSlots(op.clone(), slot, rhs)
+        }
+        _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalCmp(
+            op,
+            &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+            right,
+        ),
     }
 }
 
@@ -702,9 +904,21 @@ pub fn rewriteInternalCmpSlotLeft(op: &CmpOp, slot: i64, right: &Expr) -> Expr {
 pub fn rewriteInternalCmpSlotRight(op: &CmpOp, left: &Expr, slot: i64) -> Expr {
     crate::cancel_checkpoint();
     match left.clone() {
-        Expr::ExprInt(n) => Expr::ExprCmpSlotInt(flipCmp(op), slot, n),
-        Expr::ExprSlot(lhs) => Expr::ExprCmpSlots(op.clone(), lhs, slot),
-        _ => rebuildInternalCmp(op, left, &Expr::ExprSlot(slot)),
+        crate::aver_generated::domain::ast::Expr::ExprInt(n) => {
+            crate::aver_generated::domain::ast::Expr::ExprCmpSlotInt(
+                crate::aver_generated::domain::resolver::rewrite::flipCmp(op),
+                slot,
+                n,
+            )
+        }
+        crate::aver_generated::domain::ast::Expr::ExprSlot(lhs) => {
+            crate::aver_generated::domain::ast::Expr::ExprCmpSlots(op.clone(), lhs, slot)
+        }
+        _ => crate::aver_generated::domain::resolver::rewrite::rebuildInternalCmp(
+            op,
+            left,
+            &crate::aver_generated::domain::ast::Expr::ExprSlot(slot),
+        ),
     }
 }
 
@@ -712,30 +926,42 @@ pub fn rewriteInternalCmpSlotRight(op: &CmpOp, left: &Expr, slot: i64) -> Expr {
 pub fn rebuildInternalCmp(op: &CmpOp, left: &Expr, right: &Expr) -> Expr {
     crate::cancel_checkpoint();
     match op {
-        CmpOp::CmpEq => Expr::ExprEq(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
-        CmpOp::CmpNeq => Expr::ExprNeq(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
-        CmpOp::CmpLt => Expr::ExprLt(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
-        CmpOp::CmpGt => Expr::ExprGt(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
-        CmpOp::CmpLte => Expr::ExprLte(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
-        CmpOp::CmpGte => Expr::ExprGte(
-            std::sync::Arc::new(left.clone()),
-            std::sync::Arc::new(right.clone()),
-        ),
+        crate::aver_generated::domain::ast::CmpOp::CmpEq => {
+            crate::aver_generated::domain::ast::Expr::ExprEq(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
+            crate::aver_generated::domain::ast::Expr::ExprNeq(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpLt => {
+            crate::aver_generated::domain::ast::Expr::ExprLt(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpGt => {
+            crate::aver_generated::domain::ast::Expr::ExprGt(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpLte => {
+            crate::aver_generated::domain::ast::Expr::ExprLte(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpGte => {
+            crate::aver_generated::domain::ast::Expr::ExprGte(
+                std::sync::Arc::new(left.clone()),
+                std::sync::Arc::new(right.clone()),
+            )
+        }
     }
 }
 
@@ -743,12 +969,12 @@ pub fn rebuildInternalCmp(op: &CmpOp, left: &Expr, right: &Expr) -> Expr {
 pub fn flipCmp(op: &CmpOp) -> CmpOp {
     crate::cancel_checkpoint();
     match op {
-        CmpOp::CmpEq => CmpOp::CmpEq.clone(),
-        CmpOp::CmpNeq => CmpOp::CmpNeq.clone(),
-        CmpOp::CmpLt => CmpOp::CmpGt.clone(),
-        CmpOp::CmpGt => CmpOp::CmpLt.clone(),
-        CmpOp::CmpLte => CmpOp::CmpGte.clone(),
-        CmpOp::CmpGte => CmpOp::CmpLte.clone(),
+        crate::aver_generated::domain::ast::CmpOp::CmpEq => CmpOp::CmpEq.clone(),
+        crate::aver_generated::domain::ast::CmpOp::CmpNeq => CmpOp::CmpNeq.clone(),
+        crate::aver_generated::domain::ast::CmpOp::CmpLt => CmpOp::CmpGt.clone(),
+        crate::aver_generated::domain::ast::CmpOp::CmpGt => CmpOp::CmpLt.clone(),
+        crate::aver_generated::domain::ast::CmpOp::CmpLte => CmpOp::CmpGte.clone(),
+        crate::aver_generated::domain::ast::CmpOp::CmpGte => CmpOp::CmpLte.clone(),
     }
 }
 
@@ -756,16 +982,19 @@ pub fn flipCmp(op: &CmpOp) -> CmpOp {
 #[inline(always)]
 pub fn rewriteInternalMatch(scrutinee: &Expr, arms: &aver_rt::AverList<MatchArm>) -> Expr {
     crate::cancel_checkpoint();
-    match rewriteBoolMatchArms(arms) {
+    match crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArms(arms) {
         Some(pair) => {
             let (thenExpr, elseExpr) = pair;
-            Expr::ExprBoolBranch(
+            crate::aver_generated::domain::ast::Expr::ExprBoolBranch(
                 std::sync::Arc::new(scrutinee.clone()),
                 std::sync::Arc::new(thenExpr),
                 std::sync::Arc::new(elseExpr),
             )
         }
-        None => Expr::ExprMatch(std::sync::Arc::new(scrutinee.clone()), arms.clone()),
+        None => crate::aver_generated::domain::ast::Expr::ExprMatch(
+            std::sync::Arc::new(scrutinee.clone()),
+            arms.clone(),
+        ),
     }
 }
 
@@ -779,7 +1008,9 @@ pub fn rewriteBoolMatchArms(arms: &aver_rt::AverList<MatchArm>) -> Option<(Expr,
                 let __list_subject = rest;
                 if let Some((arm2, tail)) = aver_rt::list_uncons_cloned(&__list_subject) {
                     if (tail == aver_rt::AverList::empty()) {
-                        rewriteBoolMatchArmPair(&arm1, &arm2)
+                        crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArmPair(
+                            &arm1, &arm2,
+                        )
                     } else {
                         None
                     }
@@ -797,8 +1028,13 @@ pub fn rewriteBoolMatchArms(arms: &aver_rt::AverList<MatchArm>) -> Option<(Expr,
 pub fn rewriteBoolMatchArmPair(arm1: &MatchArm, arm2: &MatchArm) -> Option<(Expr, Expr)> {
     crate::cancel_checkpoint();
     match arm1.pattern.clone() {
-        Pattern::PatBool(b1) => {
-            rewriteBoolMatchArmPairInner(b1, &arm1.body, &arm2.pattern, &arm2.body)
+        crate::aver_generated::domain::ast::Pattern::PatBool(b1) => {
+            crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArmPairInner(
+                b1,
+                &arm1.body,
+                &arm2.pattern,
+                &arm2.body,
+            )
         }
         _ => None,
     }
@@ -813,7 +1049,11 @@ pub fn rewriteBoolMatchArmPairInner(
 ) -> Option<(Expr, Expr)> {
     crate::cancel_checkpoint();
     match p2.clone() {
-        Pattern::PatBool(b2) => rewriteBoolMatchArmPairBools(b1, body1, b2, body2),
+        crate::aver_generated::domain::ast::Pattern::PatBool(b2) => {
+            crate::aver_generated::domain::resolver::rewrite::rewriteBoolMatchArmPairBools(
+                b1, body1, b2, body2,
+            )
+        }
         _ => None,
     }
 }
