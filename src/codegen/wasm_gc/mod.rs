@@ -54,6 +54,7 @@ mod module;
 mod tests;
 mod types;
 mod types_discovery;
+mod view;
 mod wasip2_helpers;
 mod wasip2_http;
 mod wasip2_http_server;
