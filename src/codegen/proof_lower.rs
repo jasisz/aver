@@ -17,6 +17,58 @@
 //! `tests/proof_ir_diff.rs` pins the producer's output for each
 //! canonical source pattern — divergence between the classifier and
 //! the IR populator surfaces there.
+//!
+//! # Epic #170 Phase 7 invariant — AST discovery + typed identity
+//!
+//! This module is the **last consumer** of raw `crate::ast::Expr`
+//! patterns in the codegen layer. That is intentional, not
+//! migration debt.
+//!
+//! ## What's AST-shaped (syntax-discovery-only)
+//!
+//! Detector helpers in this file (`detect_*`, `walk_for_*`,
+//! `callee_matches_name`, `call_named_args`, `binary_call_var_const`,
+//! `matches_ident_expr`) walk `ast::Expr` directly. They are
+//! **pattern matchers** over source shape — they look for things
+//! like `match n { 0 -> base; _ -> rec(n - 1) }` or
+//! `Map.has(outer(m, k), k)` to decide which `ProofStrategy` /
+//! `RecursionPlan` variant lowers a given fn or law. The pattern
+//! belongs in source-shape; rewriting them on `ResolvedExpr` would
+//! be the same logic spelled in a different enum, no extra safety.
+//!
+//! Every detector helper carries a `syntax-discovery-only` comment
+//! at its definition.
+//!
+//! ## What's identity-sensitive (typed IDs)
+//!
+//! Decisions that depend on **which fn / type / ctor** a name
+//! refers to (not just "does this name appear") MUST go through
+//! `SymbolTable` or `ProofIR.refined_types` (`TypeId`-keyed) /
+//! `ProofIR.fn_contracts` (`FnId`-keyed). Examples:
+//!
+//! - Refinement-carrier lookups go through `find_refined_type` /
+//!   `resolve_refined_type_in_with_key`, both of which canonicalise
+//!   the name through the symbol table before reaching the IR map.
+//! - Fn-contract lookups go through `find_fn_contract_for_fn` —
+//!   pointer-eq scope on `&FnDef` resolves to the right `FnId`.
+//! - The Lean native-guarded rewriter pins target by `FnId` via
+//!   `rewrite_native_guarded_calls_resolved_expr` (PR 169).
+//!
+//! ## What stays raw-AST as a documented identity exception
+//!
+//! Builtin matchers (`callee_is X for X ∈ {"Bool.and", "Map.set",
+//! …}`) compare against the canonical builtin namespace, which is
+//! global by spec — no per-scope identity to leak. Verify-law
+//! callsites all walk `vb.fn_name` (entry-only by parser grammar);
+//! the `EntryFnIndex` newtype in `verify_law.rs` pins the
+//! entry-only contract at the type level (PR 177).
+//!
+//! Full `ResolvedProofLowerView` + semantic matcher API
+//! (`callee_is_builtin`, `callee_is_fn(FnId)`, `ctor_is`,
+//! `ident_name`, `int_lit`) deferred per
+//! `project_phase_e_scope_b_deferred` memory until a real trigger
+//! lands (module-scoped verify, dotted law targets, LSP rename,
+//! cross-scope inliner).
 
 use std::collections::{HashMap, HashSet};
 
@@ -1111,6 +1163,14 @@ fn refinement_lift_for_given_ir(
     result
 }
 
+/// **syntax-discovery-only** (epic #170 Phase 7). Walks raw AST
+/// looking for a `RecordCreate(type_name, [(field, Ident(given))])`
+/// pattern that lifts a `given` through a refinement type's smart
+/// constructor. The recursion descends into nested record-creates,
+/// fn calls, and binops so a deeply-wrapped lift still gets found.
+/// Identity is handed off to `resolve_refined_type_in_with_key`,
+/// which canonicalises through `SymbolTable` before keying the
+/// `refined_types` map — no bare-name keying past discovery.
 fn walk_for_refinement_carrier(
     expr: &Spanned<crate::ast::Expr>,
     given_name: &str,
@@ -2409,6 +2469,11 @@ fn option_some_arg(expr: &Spanned<crate::ast::Expr>) -> Option<&Spanned<crate::a
     (args.len() == 1).then_some(&args[0])
 }
 
+/// **syntax-discovery-only** (epic #170 Phase 7). Recognises a
+/// fn-call expression whose callee's dotted source name matches
+/// `full_name` exactly. Used by `Map.set` / `Map.get` axiom shape
+/// detection where `full_name` is a builtin namespace path
+/// (`"Map.get"` etc.) — global identity, no per-scope leak.
 fn call_named_args<'a>(
     expr: &'a Spanned<crate::ast::Expr>,
     full_name: &str,
@@ -2657,6 +2722,13 @@ fn matches_unary_call(expr: &Spanned<crate::ast::Expr>, fn_name: &str, arg: &str
 
 /// `inner(var, K)` or `inner(K, var)` shape. Returns
 /// `(callee_name, var_first, K)` on match.
+/// **syntax-discovery-only** (epic #170 Phase 7). Detects a
+/// 2-arg fn call whose first arg is `Ident(var_name)` and second
+/// is an `Int` literal (or symmetric). Returns the callee's dotted
+/// name + the literal — caller dispatches on the name string. Used
+/// only against builtin namespace methods (`Int.add`, etc.); the
+/// returned name string is not stored or used for identity past
+/// the dispatch site.
 fn binary_call_var_const(
     expr: &Spanned<crate::ast::Expr>,
     var_name: &str,
@@ -2825,16 +2897,29 @@ fn simplify_identity_expr(expr: &Spanned<crate::ast::Expr>) -> Spanned<crate::as
     Spanned::new(new_node, line)
 }
 
+/// **syntax-discovery-only** (epic #170 Phase 7). Returns true iff
+/// `expr` is a bare `Ident(name)` / `Resolved { name }` matching
+/// the given name. Used by shape detectors to recognise "the
+/// callsite mentions this binder" — no identity lookup, just
+/// source-name shape.
 fn matches_ident_expr(expr: &Spanned<crate::ast::Expr>, name: &str) -> bool {
     use crate::ast::Expr;
     matches!(&expr.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == name)
 }
 
+/// **syntax-discovery-only** (epic #170 Phase 7). Compares the
+/// callee's dotted source name against a target string for shape
+/// recognition. EXACT MATCH ONLY — the previous suffix-match clause
+/// (`name.rsplit('.').next() == Some(target)`) was an identity leak:
+/// it accepted `Foo.helper` as a match for target `"helper"`. Bounded
+/// today by the parser invariant (`vb.fn_name` is bare entry-only),
+/// but the suffix clause stayed live as dead code that any future
+/// module-scoped verify would silently exercise.
 fn callee_matches_name(expr: &Spanned<crate::ast::Expr>, target: &str) -> bool {
     let Some(name) = expr_to_dotted_name(&expr.node) else {
         return false;
     };
-    name == target || name.rsplit('.').next() == Some(target)
+    name == target
 }
 
 fn call2_args<'a>(
