@@ -80,11 +80,37 @@ jobs:
           PROPTEST_CASES: '2000'
         run: cargo test -p aver-lang --features wasm
 
+  wasm_release_build:
+    # Post-merge release-build verification under `--features wasm`.
+    # PR-time CI runs `cargo test --features wasm` (debug profile) in
+    # the `wasm` job above — that catches every logic regression. The
+    # release build only matters when the artifact actually ships
+    # (post-merge to `main`), and dragging it onto PR-time CI added
+    # 3–5 min of wait without ever surfacing a release-only bug in
+    # practice. If a release-mode regression slips in, a hot follow-up
+    # PR fixes it from main; PR review unblocks immediately.
+    name: WASM release build (main)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [check, wasm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build (wasm release)
         run: cargo build -p aver-lang --features wasm --release
 
   bench:
+    # Post-merge bench gate. PR-time CI doesn't run this — perf
+    # regressions get caught when they hit `main`, then a follow-up
+    # PR reverts or fixes them. Trade chosen deliberately: PR review
+    # unblocks 3–5 min faster, and the fix-forward latency for a perf
+    # regression on a pre-1.0 compiler is acceptable. Locally,
+    # contributors can still run `aver bench bench/scenarios/
+    # --target=vm` against their branch before opening a PR if they
+    # touched a perf-sensitive path.
     name: Bench Gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
