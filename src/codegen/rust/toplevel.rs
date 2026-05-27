@@ -6,103 +6,18 @@ use super::expr::{
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::ir::hir::{
-    ResolveCtx, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedMatchArm, ResolvedPattern,
-    ResolvedStmt, resolve_fn_def_external,
-};
+use crate::ir::hir::{ResolvedFnBody, ResolvedMatchArm, ResolvedStmt};
 use crate::ir::{BodyExprPlan, CallPlan, LeafOp, thin_kind_is_parent_thin_candidate};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-/// Look up the resolved-HIR mirror of a source-shape `FnDef` previously
-/// stashed in `ctx.resolved_fn_defs` / `ctx.resolved_module_fn_defs`. If
-/// neither path covers `fd`, fall back to a fresh per-call resolver lift
-/// against the entry's symbol table — this happens for synthetic FnDefs
-/// inserted between `build_context` and emit (e.g. memo wrappers, TCO
-/// hoist rewrites) which the resolver hasn't lifted upfront.
-fn resolved_fn_def_for<'a>(
-    fd: &'a FnDef,
-    ctx: &'a CodegenContext,
-) -> std::borrow::Cow<'a, ResolvedFnDef> {
-    use std::borrow::Cow;
-    if let Some(rfd) = ctx.resolved_fn_defs.iter().find(|rfd| rfd.name == fd.name) {
-        return Cow::Borrowed(rfd);
-    }
-    for module in &ctx.resolved_module_fn_defs {
-        if let Some(rfd) = module.iter().find(|rfd| rfd.name == fd.name) {
-            return Cow::Borrowed(rfd);
-        }
-    }
-    let module_name = ctx.items.iter().find_map(|i| match i {
-        TopLevel::Module(m) => Some(m.name.clone()),
-        _ => None,
-    });
-    let mut rctx = ResolveCtx::new(&ctx.symbol_table);
-    rctx.current_module = module_name;
-    let lifted = resolve_fn_def_external(&rctx, fd).unwrap_or_else(|| {
-        // Symbol-table lookup failed (typical for synthetic test FnDefs
-        // not registered in the program's `SymbolTable`). Synthesize
-        // the resolved fn def by lifting each body statement through
-        // [`resolved_stmt_on_demand`] — same shape the resolver
-        // would have produced if it had seen this fn. `fn_id` is left
-        // as a sentinel since no symbol-table entry maps to it.
-        let stmts: Vec<ResolvedStmt> = match fd.body.as_ref() {
-            FnBody::Block(stmts) => stmts
-                .iter()
-                .map(|s| resolved_stmt_on_demand(s, ctx))
-                .collect(),
-        };
-        ResolvedFnDef {
-            fn_id: crate::ir::FnId(u32::MAX),
-            name: fd.name.clone(),
-            line: fd.line,
-            params: fd
-                .params
-                .iter()
-                .map(|(n, ann)| (n.clone(), crate::types::parse_type_str(ann)))
-                .collect(),
-            return_type: crate::types::parse_type_str(&fd.return_type),
-            effects: fd.effects.clone(),
-            desc: fd.desc.clone(),
-            body: std::sync::Arc::new(ResolvedFnBody::Block(stmts)),
-            resolution: fd.resolution.clone(),
-        }
-    });
-    Cow::Owned(lifted)
-}
-
-/// Resolve a source-shape `Spanned<Expr>` on demand using the entry's
-/// resolver context — used by emit helpers that still walk `Expr` (TCO
-/// hoisting, mutual TCO, verify blocks) and need to feed the resolved
-/// shape into `emit_expr`. The `Spanned<ResolvedExpr>` carries the
-/// same line + type stamp as the input.
-fn resolved_expr_on_demand(expr: &Spanned<Expr>, ctx: &CodegenContext) -> Spanned<ResolvedExpr> {
-    let module_name = ctx.items.iter().find_map(|i| match i {
-        TopLevel::Module(m) => Some(m.name.clone()),
-        _ => None,
-    });
-    let mut rctx = ResolveCtx::new(&ctx.symbol_table);
-    rctx.current_module = module_name;
-    let stmt = Stmt::Expr(expr.clone());
-    match crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt) {
-        crate::ir::hir::ResolvedStmt::Expr(s) => s,
-        crate::ir::hir::ResolvedStmt::Binding { value, .. } => value,
-    }
-}
-
-/// Same as [`resolved_expr_on_demand`] but for whole statements
-/// (`Binding(name, ty_ann, expr)` or `Expr(expr)`).
-fn resolved_stmt_on_demand(stmt: &Stmt, ctx: &CodegenContext) -> ResolvedStmt {
-    let module_name = ctx.items.iter().find_map(|i| match i {
-        TopLevel::Module(m) => Some(m.name.clone()),
-        _ => None,
-    });
-    let mut rctx = ResolveCtx::new(&ctx.symbol_table);
-    rctx.current_module = module_name;
-    crate::ir::hir::resolve::resolve_stmt_external(&rctx, stmt)
-}
+// Resolved-form lookup helpers live as methods on [`CodegenContext`]
+// since Phase E PR 9: `ctx.resolve_fn_def(fd)`, `ctx.resolve_expr(spanned)`,
+// `ctx.resolve_stmt(stmt)`, `ctx.resolve_pattern(pat)` — shared with
+// wasm-gc / Lean / Dafny / self-host backends as they migrate. See
+// `src/codegen/mod.rs`.
 
 /// Source-shape variant of [`emit_expr`] for emitters that still hold
 /// a pre-resolve [`Expr`] borrow (TCO hoisting / loop, mutual-TCO
@@ -112,14 +27,14 @@ fn resolved_stmt_on_demand(stmt: &Stmt, ctx: &CodegenContext) -> ResolvedStmt {
 /// call — cheap for the small subtrees these helpers walk.
 fn emit_expr_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let spanned = Spanned::bare(expr.clone());
-    let resolved = resolved_expr_on_demand(&spanned, ctx);
+    let resolved = ctx.resolve_expr(&spanned);
     emit_expr(&resolved.node, ctx, ectx)
 }
 
 /// `clone_arg`/`borrow_arg` analogue that takes a source-shape `&Expr`.
 fn clone_arg_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let spanned = Spanned::bare(expr.clone());
-    let resolved = resolved_expr_on_demand(&spanned, ctx);
+    let resolved = ctx.resolve_expr(&spanned);
     clone_arg(&resolved.node, ctx, ectx)
 }
 
@@ -168,44 +83,17 @@ fn classify_body_expr_plan_source<'a>(
 /// Source-shape variant of [`super::expr::emit_stmt`] for sites that
 /// still walk pre-resolve [`Stmt`] (memo wrappers, TCO loop emit,
 /// trampoline arms, verify cases, main fn body). Lifts on-demand
-/// through [`resolved_stmt_on_demand`] and calls the migrated emit.
+/// through [`CodegenContext::resolve_stmt`] and calls the migrated
+/// emit.
 fn emit_stmt_legacy(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    let resolved = resolved_stmt_on_demand(stmt, ctx);
+    let resolved = ctx.resolve_stmt(stmt);
     emit_stmt(&resolved, ctx, ectx)
 }
 
 /// Source-shape variant of [`super::pattern::emit_pattern`].
 fn emit_pattern_legacy(pat: &Pattern, string_context: bool, ctx: &CodegenContext) -> String {
-    let resolved = resolved_pattern_on_demand(pat, ctx);
+    let resolved = ctx.resolve_pattern(pat);
     super::pattern::emit_pattern(&resolved, string_context, ctx)
-}
-
-fn resolved_pattern_on_demand(pat: &Pattern, ctx: &CodegenContext) -> ResolvedPattern {
-    let module_name = ctx.items.iter().find_map(|i| match i {
-        TopLevel::Module(m) => Some(m.name.clone()),
-        _ => None,
-    });
-    let mut rctx = ResolveCtx::new(&ctx.symbol_table);
-    rctx.current_module = module_name;
-    // Resolve via a synthetic match arm wrapper: simplest path that
-    // doesn't expose a private resolver helper.
-    let synthetic_arm = MatchArm {
-        pattern: pat.clone(),
-        body: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),
-        binding_slots: std::sync::OnceLock::new(),
-    };
-    let stmt = Stmt::Expr(Spanned::bare(Expr::Match {
-        subject: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),
-        arms: vec![synthetic_arm],
-    }));
-    let resolved_stmt = crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt);
-    let ResolvedStmt::Expr(spanned) = resolved_stmt else {
-        unreachable!()
-    };
-    let ResolvedExpr::Match { arms, .. } = spanned.node else {
-        unreachable!()
-    };
-    arms.into_iter().next().unwrap().pattern
 }
 
 /// Legacy [`has_string_literal_patterns`] for source-shape MatchArm.
@@ -228,8 +116,8 @@ fn has_list_patterns_legacy(arms: &[MatchArm]) -> bool {
 fn resolve_match_arms_on_demand(arms: &[MatchArm], ctx: &CodegenContext) -> Vec<ResolvedMatchArm> {
     arms.iter()
         .map(|arm| {
-            let pattern = resolved_pattern_on_demand(&arm.pattern, ctx);
-            let body = Box::new(resolved_expr_on_demand(&arm.body, ctx));
+            let pattern = ctx.resolve_pattern(&arm.pattern);
+            let body = Box::new(ctx.resolve_expr(&arm.body));
             let binding_slots = std::sync::OnceLock::new();
             if let Some(slots) = arm.binding_slots.get() {
                 let _ = binding_slots.set(slots.clone());
@@ -718,7 +606,7 @@ fn emit_fn_def_with_visibility(
     } else {
         None
     };
-    let resolved_fd_owned = resolved_fn_def_for(fd, ctx);
+    let resolved_fd_owned = ctx.resolve_fn_def(fd);
     let resolved_fd = resolved_fd_owned.as_ref();
     let optimized_thin_plan = classify_thin_fn_def_for_rust(resolved_fd, ctx, &ectx);
 

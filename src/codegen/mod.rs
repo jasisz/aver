@@ -655,4 +655,137 @@ impl CodegenContext {
         let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(self);
         self.proof_ir = crate::codegen::proof_lower::lower(&inputs);
     }
+
+    /// Look up the resolved-HIR mirror of a source-shape [`FnDef`]
+    /// previously stashed in [`resolved_fn_defs`] /
+    /// [`resolved_module_fn_defs`]. Falls back to a fresh per-call
+    /// resolver lift against the entry's [`crate::ir::SymbolTable`]
+    /// when neither path covers `fd` — this happens for synthetic
+    /// FnDefs inserted between `build_context` and emit (memo
+    /// wrappers, TCO hoist rewrites, test fixtures) which the
+    /// resolver hasn't lifted upfront.
+    ///
+    /// Phase E shared lookup boundary — Rust codegen (PR 8) already
+    /// consumes this through `rust::toplevel::resolved_fn_def_for`;
+    /// wasm-gc / Lean / Dafny / self-host backends pick it up in
+    /// their follow-up PRs.
+    ///
+    /// [`resolved_fn_defs`]: Self::resolved_fn_defs
+    /// [`resolved_module_fn_defs`]: Self::resolved_module_fn_defs
+    pub fn resolve_fn_def<'a>(
+        &'a self,
+        fd: &'a FnDef,
+    ) -> std::borrow::Cow<'a, crate::ir::hir::ResolvedFnDef> {
+        use crate::ir::hir::{
+            ResolveCtx, ResolvedFnBody, ResolvedFnDef, ResolvedStmt, resolve_fn_def_external,
+        };
+        use std::borrow::Cow;
+        if let Some(rfd) = self.resolved_fn_defs.iter().find(|rfd| rfd.name == fd.name) {
+            return Cow::Borrowed(rfd);
+        }
+        for module in &self.resolved_module_fn_defs {
+            if let Some(rfd) = module.iter().find(|rfd| rfd.name == fd.name) {
+                return Cow::Borrowed(rfd);
+            }
+        }
+        let module_name = self.items.iter().find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.name.clone()),
+            _ => None,
+        });
+        let mut rctx = ResolveCtx::new(&self.symbol_table);
+        rctx.current_module = module_name;
+        let lifted = resolve_fn_def_external(&rctx, fd).unwrap_or_else(|| {
+            let stmts: Vec<ResolvedStmt> = match fd.body.as_ref() {
+                crate::ast::FnBody::Block(stmts) => {
+                    stmts.iter().map(|s| self.resolve_stmt(s)).collect()
+                }
+            };
+            ResolvedFnDef {
+                fn_id: crate::ir::FnId(u32::MAX),
+                name: fd.name.clone(),
+                line: fd.line,
+                params: fd
+                    .params
+                    .iter()
+                    .map(|(n, ann)| (n.clone(), crate::types::parse_type_str(ann)))
+                    .collect(),
+                return_type: crate::types::parse_type_str(&fd.return_type),
+                effects: fd.effects.clone(),
+                desc: fd.desc.clone(),
+                body: std::sync::Arc::new(ResolvedFnBody::Block(stmts)),
+                resolution: fd.resolution.clone(),
+            }
+        });
+        Cow::Owned(lifted)
+    }
+
+    /// Resolve a source-shape `Spanned<Expr>` on demand using the
+    /// entry's resolver context. Used by emit helpers that still walk
+    /// `Expr` (TCO hoisting, mutual TCO, verify blocks, follow-up
+    /// backends pre-migration) and need to feed the resolved shape
+    /// into the migrated emitter. The returned `Spanned<ResolvedExpr>`
+    /// carries the same line + type stamp as the input.
+    pub fn resolve_expr(
+        &self,
+        expr: &crate::ast::Spanned<crate::ast::Expr>,
+    ) -> crate::ast::Spanned<crate::ir::hir::ResolvedExpr> {
+        use crate::ir::hir::{ResolveCtx, ResolvedStmt};
+        let module_name = self.items.iter().find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.name.clone()),
+            _ => None,
+        });
+        let mut rctx = ResolveCtx::new(&self.symbol_table);
+        rctx.current_module = module_name;
+        let stmt = crate::ast::Stmt::Expr(expr.clone());
+        match crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt) {
+            ResolvedStmt::Expr(s) => s,
+            ResolvedStmt::Binding { value, .. } => value,
+        }
+    }
+
+    /// Same as [`Self::resolve_expr`] but for whole statements
+    /// (`Binding(name, ty_ann, expr)` or `Expr(expr)`).
+    pub fn resolve_stmt(&self, stmt: &crate::ast::Stmt) -> crate::ir::hir::ResolvedStmt {
+        use crate::ir::hir::ResolveCtx;
+        let module_name = self.items.iter().find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.name.clone()),
+            _ => None,
+        });
+        let mut rctx = ResolveCtx::new(&self.symbol_table);
+        rctx.current_module = module_name;
+        crate::ir::hir::resolve::resolve_stmt_external(&rctx, stmt)
+    }
+
+    /// Resolve a source-shape [`crate::ast::Pattern`] to its resolved
+    /// HIR form. Wraps the pattern in a synthetic match arm + drops
+    /// it through `resolve_stmt_external`, since the resolver doesn't
+    /// expose a standalone pattern lifter — same workaround
+    /// `rust/toplevel.rs` used pre-PR-9.
+    pub fn resolve_pattern(&self, pat: &crate::ast::Pattern) -> crate::ir::hir::ResolvedPattern {
+        use crate::ast::{Expr, Literal, MatchArm, Spanned, Stmt};
+        use crate::ir::hir::{ResolveCtx, ResolvedExpr, ResolvedStmt};
+        let module_name = self.items.iter().find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.name.clone()),
+            _ => None,
+        });
+        let mut rctx = ResolveCtx::new(&self.symbol_table);
+        rctx.current_module = module_name;
+        let synthetic_arm = MatchArm {
+            pattern: pat.clone(),
+            body: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),
+            binding_slots: std::sync::OnceLock::new(),
+        };
+        let stmt = Stmt::Expr(Spanned::bare(Expr::Match {
+            subject: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),
+            arms: vec![synthetic_arm],
+        }));
+        let resolved_stmt = crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt);
+        let ResolvedStmt::Expr(spanned) = resolved_stmt else {
+            unreachable!()
+        };
+        let ResolvedExpr::Match { arms, .. } = spanned.node else {
+            unreachable!()
+        };
+        arms.into_iter().next().unwrap().pattern
+    }
 }
