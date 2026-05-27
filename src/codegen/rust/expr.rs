@@ -1053,22 +1053,37 @@ fn attr_result_is_copy(
         }
         _ => None,
     };
-    let record_name = match obj_type {
-        Some(Type::Named { name, .. }) => name.as_str(),
-        _ => return false,
+    let Some(named_ty) = obj_type.filter(|t| matches!(t, Type::Named { .. })) else {
+        return false;
     };
-    // Find record definition and look up field type.
-    for td in ctx
+    let Some(record_key) = crate::codegen::common::backend_named_type_key(ctx, named_ty) else {
+        return false;
+    };
+    // Find record definition and look up field type. Iterate
+    // through `(module_prefix, td)` pairs so canonical-key
+    // matching (`"A.Shape"`) routes to the right module's
+    // TypeDef list instead of first-bare-match-wins.
+    let candidates = ctx
         .type_defs
         .iter()
-        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
-    {
-        if let TypeDef::Product { name, fields, .. } = td
-            && name == record_name
-            && let Some((_, type_ann)) = fields.iter().find(|(n, _)| n == field)
-        {
-            let ty = types::parse_type_str(type_ann);
-            return super::emit_ctx::is_copy_type(&ty);
+        .map(|td| (None, td))
+        .chain(ctx.modules.iter().flat_map(|m| {
+            m.type_defs
+                .iter()
+                .map(move |td| (Some(m.prefix.as_str()), td))
+        }));
+    for (scope, td) in candidates {
+        if let TypeDef::Product { name, fields, .. } = td {
+            let canonical = match scope {
+                Some(prefix) => format!("{}.{}", prefix, name),
+                None => name.clone(),
+            };
+            if canonical == record_key
+                && let Some((_, type_ann)) = fields.iter().find(|(n, _)| n == field)
+            {
+                let ty = types::parse_type_str(type_ann);
+                return super::emit_ctx::is_copy_type(&ty);
+            }
         }
     }
     false
@@ -1703,15 +1718,20 @@ pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> H
     let Some((params, ret, _)) = sig else {
         return out;
     };
-    let Type::Named { name: ret_name, .. } = ret else {
+    let Some(ret_name) = ret.named_name() else {
         return out;
     };
+    let ret_id = ret.named_id();
+    // Epic #180 Phase 6 — prefer `TypeId` equality when both
+    // sides carry a stamp, fall back to `name` for `id: None`
+    // refs (synthetic / unresolved ctor sigs). Identity-safe
+    // across cross-module same-bare-name twins.
     for (idx, param) in params.iter().enumerate() {
-        if let Type::Named {
-            name: param_name, ..
-        } = param
-            && param_name == ret_name
-        {
+        let matches = match (ret_id, param.named_id()) {
+            (Some(r), Some(p)) => r == p,
+            _ => param.named_name() == Some(ret_name),
+        };
+        if matches {
             out.insert(idx);
         }
     }

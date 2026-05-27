@@ -952,6 +952,67 @@ pub fn find_refined_type<'a>(
     find_refined_type_with_key_scoped(ctx, name, None).map(|(_, d)| d)
 }
 
+/// Canonical backend key for a nominal `Type::Named` reference.
+///
+/// Epic #180 Phase 6 — preferred entry point for backend
+/// registries (record-field maps, eq-helper registration,
+/// type-default chasing, newtype underlying lookups) that
+/// previously extracted `name` directly out of
+/// `Type::Named { name, .. }`. The raw `name` field is
+/// source-faithful (so a bare `Shape` reference inside module
+/// `A` stays as `"Shape"` even when the declaration is
+/// canonically `A.Shape`). Registry routing keyed on raw `name`
+/// silently collides two modules' same-bare-name types under
+/// one slot — keying by the canonical form is identity-safe by
+/// construction.
+///
+/// Resolution order:
+///
+/// 1. `id: Some(type_id)` (the canonical case post-typecheck) →
+///    `symbol_table.type_entry(id).key.canonical()`.
+/// 2. `id: None` (builtins / unresolved refs that never went
+///    through `canonicalise_type`) → fall back to the source-
+///    faithful `name`. The resolver stamps `id: Some(_)`
+///    whenever the name binds to a declared type, so `id: None`
+///    survives only for refs the symbol table doesn't know.
+/// 3. Non-`Named` types (compound shapes like `List<X>`,
+///    `Result<A, B>`, tuples, maps) → `None`. Backend layout
+///    registries key compound types by a canonical compound
+///    string (`format!("List<{}>", inner)`) the caller builds
+///    itself; this helper covers only the nominal case.
+pub fn backend_named_type_key(ctx: &CodegenContext, ty: &crate::types::Type) -> Option<String> {
+    let crate::types::Type::Named { id, name } = ty else {
+        return None;
+    };
+    if let Some(type_id) = id {
+        return Some(ctx.symbol_table.type_entry(*type_id).key.canonical());
+    }
+    Some(name.clone())
+}
+
+/// Canonical backend key for a [`TypeDef`] declaration.
+///
+/// Epic #180 Phase 6 — paired with [`backend_named_type_key`] at
+/// the registry-storage side. Backend registries insert
+/// `TypeDef`s under the canonical key (`"Shape"` for entry,
+/// `"A.Shape"` for module-owned) so cross-module same-bare-name
+/// types occupy distinct slots and the
+/// `backend_named_type_key`-derived lookup at the expression
+/// side hits the right declaration.
+///
+/// Falls back to the bare `type_def_name(td)` when the symbol
+/// table doesn't index this `TypeDef` (synthetic / builtin
+/// inserts) — registry insertion paths accept both during the
+/// migration window.
+pub fn backend_type_def_key(ctx: &CodegenContext, td: &crate::ast::TypeDef) -> String {
+    let key = type_key_for_decl(ctx, td);
+    if ctx.symbol_table.type_id_of(&key).is_some() {
+        key.canonical()
+    } else {
+        type_def_name(td).to_string()
+    }
+}
+
 /// Direct `TypeId` lookup against `ProofIR.refined_types`.
 ///
 /// Epic #180 Phase 6 — preferred entry point for callers holding a
