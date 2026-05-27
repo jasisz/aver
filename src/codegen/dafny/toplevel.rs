@@ -885,13 +885,13 @@ pub fn emit_law_samples(
             rewrite_effectful_calls_in_law(
                 lhs,
                 law,
-                |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                 mode.clone(),
             ),
             rewrite_effectful_calls_in_law(
                 rhs,
                 law,
-                |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                 mode,
             ),
         )
@@ -949,13 +949,13 @@ pub fn emit_law_samples(
             let lhs_rw = rewrite_effectful_calls_in_law(
                 lhs,
                 law,
-                |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                 mode.clone(),
             );
             let rhs_rw = rewrite_effectful_calls_in_law(
                 rhs,
                 law,
-                |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                 mode,
             );
             (lhs_rw, rhs_rw)
@@ -1436,13 +1436,13 @@ pub fn emit_verify_law(
     let law_lhs = rewrite_effectful_calls_in_law(
         &law.lhs,
         law,
-        |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+        |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         OracleInjectionMode::LemmaBinding,
     );
     let law_rhs = rewrite_effectful_calls_in_law(
         &law.rhs,
         law,
-        |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+        |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         OracleInjectionMode::LemmaBinding,
     );
 
@@ -1470,7 +1470,7 @@ pub fn emit_verify_law(
     // Add transitive callees
     let mut transitive_fns = std::collections::BTreeSet::new();
     for f in &law_fns {
-        if let Some(fd) = ctx.fn_defs.iter().find(|fd| &fd.name == f) {
+        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
             collect_called_fns_in_body(&fd.body, &mut transitive_fns);
         }
     }
@@ -1483,7 +1483,10 @@ pub fn emit_verify_law(
     // `{:fuel oracle, 5}` makes Dafny reject the lemma.
     let fuel_attrs: String = law_fns
         .iter()
-        .filter(|f| ctx.fn_defs.iter().any(|fd| &fd.name == *f))
+        .filter(|f| {
+            ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
+                .is_some()
+        })
         .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
         .collect::<Vec<_>>()
         .join(" ");
@@ -1643,9 +1646,8 @@ pub fn emit_verify_law(
             // Find max recursion depth across both sides
             let has_double = [&lhs_fn, &rhs_fn].iter().any(|opt| {
                 opt.as_ref().is_some_and(|f| {
-                    ctx.fn_defs.iter().any(|fd| {
-                        fd.name == *f && count_recursive_calls_in_body(&fd.body, &fd.name) >= 2
-                    })
+                    ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
+                        .is_some_and(|fd| count_recursive_calls_in_body(&fd.body, &fd.name) >= 2)
                 })
             });
 
@@ -1679,7 +1681,7 @@ pub fn emit_verify_law(
         collect_called_fns(&law.lhs, &mut called);
         collect_called_fns(&law.rhs, &mut called);
         for f in called.clone() {
-            if let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == f) {
+            if let Some(fd) = ctx.fn_def_by_name(&f, ctx.active_module_scope().as_deref()) {
                 collect_called_fns_in_body(&fd.body, &mut called);
             }
         }
