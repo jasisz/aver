@@ -633,6 +633,45 @@ impl CodegenContext {
     pub fn active_module_scope(&self) -> Option<String> {
         self.current_module_scope.borrow().clone()
     }
+
+    /// Identity-keyed lookup from a bare fn name + scope to the
+    /// matching `&FnDef` in `fn_defs` / `modules[i].fn_defs`. Resolves
+    /// the name through the symbol table to an `FnId` first, then
+    /// recovers the AST `FnDef` via `fn_id_for_decl` pointer-eq scope
+    /// matching — so two same-bare-name fns across modules can't
+    /// cross-resolve.
+    ///
+    /// **Epic #170 Phase 5 helper.** Replaces the
+    /// `ctx.fn_defs.iter().find(|fd| fd.name == name)` pattern that
+    /// proof-mode law / verify rewriters used pre-migration. Backends
+    /// that still need a `&FnDef` (rather than the resolved twin —
+    /// e.g. `rewrite_effectful_calls_in_law` consumes AST shape)
+    /// reach this method instead of walking by bare name.
+    ///
+    /// Returns `None` when the symbol table doesn't know the name
+    /// under the given scope, or when the resolved `FnId` doesn't
+    /// match any `&FnDef` in that scope (synthetic FnDefs added
+    /// post-pipeline fall through here — callers can fallback to a
+    /// bare-name walk over `extra_fn_defs` etc. when that matters).
+    pub fn fn_def_by_name(&self, name: &str, scope: Option<&str>) -> Option<&FnDef> {
+        use crate::ir::FnKey;
+        let key = match scope {
+            Some(prefix) => FnKey::in_module(prefix.to_string(), name),
+            None => FnKey::entry(name),
+        };
+        let fn_id = self.symbol_table.fn_id_of(&key)?;
+        let matches = |fd: &&FnDef| crate::codegen::common::fn_id_for_decl(self, fd) == Some(fn_id);
+        match scope {
+            None => self.fn_defs.iter().find(matches),
+            Some(prefix) => self
+                .modules
+                .iter()
+                .find(|m| m.prefix == prefix)?
+                .fn_defs
+                .iter()
+                .find(matches),
+        }
+    }
 }
 
 impl CodegenContext {
