@@ -197,13 +197,9 @@ fn scan_file(path: &Path, violations: &mut Vec<String>) {
 /// category bleed-through silences a real violation.
 fn has_category_comment_nearby(lines: &[&str], idx: usize) -> bool {
     let start = idx.saturating_sub(12);
-    for window_idx in start..=idx {
-        let line = lines[window_idx];
-        if ALLOWED_CATEGORIES.iter().any(|cat| line.contains(cat)) {
-            return true;
-        }
-    }
-    false
+    lines[start..=idx]
+        .iter()
+        .any(|line| ALLOWED_CATEGORIES.iter().any(|cat| line.contains(cat)))
 }
 
 #[test]
