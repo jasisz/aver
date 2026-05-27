@@ -122,6 +122,125 @@ fn default_val(ty: &wasmtime::ValType) -> wasmtime::Val {
     }
 }
 
+/// Multi-module compile: parses entry + dep sources, runs the
+/// pipeline with `WithLoaded`, flattens dep fns into the entry
+/// namespace, runs the post-link resolver pass, and emits wasm
+/// bytes. Mirrors the playground's multi-file path so tests can
+/// exercise cross-module identity through the wasm-gc backend's
+/// `flatten_multimodule` + `WasmGcLinkedView` (epic #170 Phase 6).
+fn compile_multi_module_bytes(entry_src: &str, dep_sources: &[(&str, &str)]) -> Vec<u8> {
+    let mut entry_items = parse_source(entry_src).unwrap_or_else(|e| {
+        panic!("entry parse failed: {e}\n--- entry ---\n{entry_src}");
+    });
+    let loaded: Vec<aver::source::LoadedModule> = dep_sources
+        .iter()
+        .map(|(prefix, src)| aver::source::LoadedModule {
+            dep_name: prefix.to_string(),
+            items: parse_source(src).unwrap_or_else(|e| {
+                panic!("dep '{prefix}' parse failed: {e}\n--- dep ---\n{src}");
+            }),
+            path: std::path::PathBuf::from(format!("{prefix}.av")),
+        })
+        .collect();
+
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = pipeline::run(
+        &mut entry_items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::WithLoaded(&loaded)),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        panic!("typecheck failed: {:?}", tc.errors);
+    }
+    let modules: Vec<aver::codegen::ModuleInfo> = loaded
+        .into_iter()
+        .map(|m| aver::codegen::ModuleInfo::from_loaded(&m))
+        .collect();
+    aver::codegen::wasm_gc::flatten_multimodule(&mut entry_items, &modules);
+    aver::ir::pipeline::resolve(&mut entry_items);
+    compile_to_wasm_gc(&entry_items, result.analysis.as_ref()).unwrap_or_else(|e| {
+        panic!("wasm-gc multi-module compile failed: {e:?}");
+    })
+}
+
+fn run_int_multi(entry_src: &str, dep_sources: &[(&str, &str)]) -> i64 {
+    let bytes = compile_multi_module_bytes(entry_src, dep_sources);
+    let mut config = wasmtime::Config::new();
+    config.wasm_gc(true);
+    config.wasm_tail_call(true);
+    config.wasm_function_references(true);
+    config.wasm_reference_types(true);
+    config.wasm_multi_value(true);
+    config.wasm_bulk_memory(true);
+    config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+    config.max_wasm_stack(8 * 1024 * 1024);
+    config.async_stack_size(12 * 1024 * 1024);
+    let engine = wasmtime::Engine::new(&config).expect("wasmtime engine");
+    let module = wasmtime::Module::new(&engine, &bytes)
+        .unwrap_or_else(|e| panic!("wasmtime rejected wasm-gc bytes: {e}"));
+    let mut store = wasmtime::Store::new(&engine, ());
+    let mut linker = wasmtime::Linker::new(&engine);
+    stub_imports(&module, &engine, &mut linker);
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
+    let main = instance
+        .get_typed_func::<(), i64>(&mut store, "main")
+        .unwrap_or_else(|e| panic!("main: () -> Int export missing: {e}"));
+    main.call(&mut store, ())
+        .unwrap_or_else(|e| panic!("main trapped: {e}"))
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Cross-module identity (epic #170 Phase 6)
+// ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn cross_module_same_bare_name_fns_resolve_via_flatten_and_link_view() {
+    // Two same-bare `helper(n: Int) -> Int` fns — one in entry, one
+    // in dep module `Worker`. Different bodies (+1 vs +100). The
+    // wasm-gc backend's `flatten_multimodule` mangles dep fn names
+    // (`Worker.helper` → `Worker_helper`), then `WasmGcLinkedView`
+    // re-resolves against the flattened namespace and indexes by
+    // `FnId`. If either step regressed to bare-name keying, the two
+    // fns would collide on `helper` and main's `1 + 100 = 101`
+    // result would shift (e.g. to `1 + 1 = 2` if entry's body
+    // shadowed Worker's, or `100 + 100 = 200` the other way).
+    let entry_src = r#"
+module Entry
+    intent = "cross-module same-bare-name regression"
+    depends [Worker]
+
+fn helper(n: Int) -> Int
+    n + 1
+
+fn main() -> Int
+    helper(0) + Worker.helper(0)
+"#;
+    let dep_src = r#"
+module Worker
+    intent = "Worker module with same-bare 'helper'"
+    exposes [helper]
+    depends []
+
+fn helper(n: Int) -> Int
+    n + 100
+"#;
+    let result = run_int_multi(entry_src, &[("Worker", dep_src)]);
+    assert_eq!(
+        result, 101,
+        "expected Entry.helper(0) + Worker.helper(0) = 1 + 100 = 101; \
+         a divergence here means flatten / link-view crossed wires"
+    );
+}
+
 // ────────────────────────────────────────────────────────────────────
 // List<T>
 // ────────────────────────────────────────────────────────────────────

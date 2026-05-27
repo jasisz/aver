@@ -125,6 +125,29 @@ impl std::error::Error for WasmGcError {}
 /// `__rt_*` JS bridge + `_start` export. This is the path used by
 /// `--target wasm-gc` (browsers, Workers, embedded wasmtime via
 /// `aver run --wasm-gc`).
+///
+/// # Epic #170 Phase 6 contract — input shape
+///
+/// **Input is post-pipeline AST `&[TopLevel]`, not
+/// `&ResolvedProgramView`**, and this is intentional. The wasm-gc
+/// backend runs its own [`backend-link-stage`](self::view): a
+/// `flatten_multimodule` pass collapses dep modules into the entry
+/// items with module-prefixed names (`Fractal.render` →
+/// `Fractal_render`), then [`WasmGcLinkedView`] runs a fresh resolver
+/// pass against the flattened slice. The pre-link `ResolvedProgramView`
+/// from the pipeline keyed against the pre-flatten `SymbolTable`
+/// doesn't match the post-link namespace, so this backend builds
+/// its own post-link view internally rather than consuming the
+/// shared one.
+///
+/// **What this means for identity safety**: post-flatten lookups
+/// inside the backend go through `WasmGcLinkedView::fn_def_by_id`
+/// (opaque `FnId`), not bare-name walks over the flattened items.
+/// Cross-module same-bare-name fns get distinct `FnId`s by virtue
+/// of the prefix-mangle, and the link view's resolver pass
+/// canonicalises them.
+///
+/// [`WasmGcLinkedView`]: self::view::WasmGcLinkedView
 pub fn compile_to_wasm_gc(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
