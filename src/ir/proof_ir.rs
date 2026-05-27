@@ -18,6 +18,46 @@
 //! Coverage today: `refined_types` (refinement-via-opaque records),
 //! `fn_contracts` (per-pure-fn recursion shape), `law_theorems`
 //! (per-verify-law strategy + quantifier + claim decomposition).
+//!
+//! ## Invariant after #147 phase E PR 12 Scope A
+//!
+//! - **Backend-facing IR fields are resolved.** Every
+//!   `Spanned<...>` on this module's public structs carries
+//!   [`crate::ir::hir::ResolvedExpr`], not raw `ast::Expr`.
+//!   `proof_lower::populate_*` resolves at the producer site through
+//!   the symbol table under the correct scope (entry / dep-module
+//!   prefix); backends walk the resolved form directly via
+//!   `emit_expr`, no `emit_expr_legacy` adapter for IR-sourced
+//!   expressions.
+//! - **Identity-sensitive decisions use typed IDs.**
+//!   `fn_contracts` is keyed by [`FnId`] (not bare name);
+//!   `refined_types` is keyed by [`TypeId`]; `law_theorems` carry
+//!   the target fn's `FnId`. The Lean/Dafny native-guarded rewriter
+//!   pins target by `FnId` (via `fn_id_for_decl`), not bare name —
+//!   regression-pinned by
+//!   `proof_export_module_owned_native_guarded_resolves_correct_fn_id`.
+//! - **`proof_lower` internal AST discovery is intentional.**
+//!   The classifier's pattern matchers still walk raw `ast::Expr`
+//!   inside this stage. Source-pattern matching is the natural
+//!   shape for the discovery work (refinement carrier search,
+//!   `Map.set` axiom detection, spec-equivalence comparison); a
+//!   resolved walker would be the same logic spelled in a different
+//!   enum. Identity-sensitive sites that COULD leak across scope
+//!   were audited and are bounded today by:
+//!     1. `vb.fn_name` parses as a single `Ident` (verify blocks
+//!        target entry-only fns by current grammar)
+//!     2. Builtin matchers (`"Bool.and"`, `"Map.set"`, …) compare
+//!        global namespace methods that have no per-scope identity.
+//! - **Full `ResolvedProofLowerView` + semantic matcher API is
+//!   deferred** until a real trigger lands: module-scoped verify
+//!   blocks, dotted verify targets / laws over dep-module fns, LSP
+//!   rename, inliner / monomorphizer / cross-scope transforms. Each
+//!   of those unbounds the "entry-only" assumption above. When it
+//!   ships, the right architecture is a typed
+//!   `ProofLowerInputs::resolved_fn_view(fd)` + matcher helpers
+//!   (`callee_is_builtin`, `callee_is_fn(fn_id)`, `ctor_is`,
+//!   `ident_name`, `int_lit`) — not a mechanical
+//!   `Expr -> ResolvedExpr` rewrite of the discovery walkers.
 
 use std::collections::HashMap;
 
