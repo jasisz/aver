@@ -15,7 +15,7 @@
 
 use wasm_encoder::ValType;
 
-use crate::ast::{Expr, MatchArm, Pattern, Spanned};
+use crate::ast::{MatchArm, Pattern, Spanned};
 use crate::types::Type;
 
 use super::super::WasmGcError;
@@ -50,15 +50,55 @@ pub(super) fn arm_is_result_pattern(arm: &MatchArm) -> bool {
     false
 }
 
+/// Resolved-form mirror of [`arm_is_option_pattern`] for emitters that
+/// have already migrated to walk [`crate::ir::hir::ResolvedMatchArm`].
+/// The pattern shape comparison happens against
+/// [`crate::ir::hir::ResolvedCtor::Builtin`] variants instead of the
+/// source-shape dotted name. Allowed dead until the wasm-gc match
+/// emitters migrate in the follow-up PRs of #147 phase E.
+#[allow(dead_code)]
+pub(super) fn arm_is_option_pattern_resolved(arm: &crate::ir::hir::ResolvedMatchArm) -> bool {
+    use crate::ir::hir::{BuiltinCtor, ResolvedCtor, ResolvedPattern};
+    matches!(
+        &arm.pattern,
+        ResolvedPattern::Ctor(
+            ResolvedCtor::Builtin(BuiltinCtor::OptionSome | BuiltinCtor::OptionNone),
+            _,
+        )
+    )
+}
+
+/// Resolved-form mirror of [`arm_is_result_pattern`]. Allowed dead
+/// until the wasm-gc match emitters migrate in the follow-up PRs of
+/// #147 phase E.
+#[allow(dead_code)]
+pub(super) fn arm_is_result_pattern_resolved(arm: &crate::ir::hir::ResolvedMatchArm) -> bool {
+    use crate::ir::hir::{BuiltinCtor, ResolvedCtor, ResolvedPattern};
+    matches!(
+        &arm.pattern,
+        ResolvedPattern::Ctor(
+            ResolvedCtor::Builtin(BuiltinCtor::ResultOk | BuiltinCtor::ResultErr),
+            _,
+        )
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Typed-AST accessors
 // ---------------------------------------------------------------------------
 
-/// Inferred Aver type for a `Spanned<Expr>`. Panics if the type checker
-/// did not stamp this node — that is a pipeline bug, not a recoverable
-/// codegen condition (see module doc).
+/// Inferred Aver type for a typed `Spanned<T>`. Panics if the type
+/// checker did not stamp this node — that is a pipeline bug, not a
+/// recoverable codegen condition (see module doc).
+///
+/// Generic over the wrapped node type so the readers work uniformly
+/// against both `Spanned<crate::ast::Expr>` (source-shape, used by
+/// the pre-PR-9.x dispatch sites that haven't migrated yet) and
+/// `Spanned<crate::ir::hir::ResolvedExpr>` (resolved, used by the
+/// migrated emitters). `Spanned::ty()` is generic over `T` already,
+/// so the readers don't care which IR shape the node carries.
 #[track_caller]
-pub(super) fn aver_type_of(expr: &Spanned<Expr>) -> &Type {
+pub(super) fn aver_type_of<T: std::fmt::Debug>(expr: &Spanned<T>) -> &Type {
     expr.ty().unwrap_or_else(|| {
         panic!(
             "wasm-gc emit: expression has no type — typecheck must run before codegen \
@@ -73,15 +113,15 @@ pub(super) fn aver_type_of(expr: &Spanned<Expr>) -> &Type {
 /// (`record_field_type`, `aver_to_wasm`, registry canonical lookups),
 /// so a single `display()` per call site keeps the diff small.
 #[track_caller]
-pub(super) fn aver_type_str_of(expr: &Spanned<Expr>) -> String {
+pub(super) fn aver_type_str_of<T: std::fmt::Debug>(expr: &Spanned<T>) -> String {
     aver_type_of(expr).display()
 }
 
-/// WASM machine type for a `Spanned<Expr>`. Same panic contract as
-/// `aver_type_of`; `Ok(None)` for Unit (no value pushed).
+/// WASM machine type for a typed `Spanned<T>`. Same panic contract
+/// as `aver_type_of`; `Ok(None)` for Unit (no value pushed).
 #[track_caller]
-pub(super) fn wasm_type_of(
-    expr: &Spanned<Expr>,
+pub(super) fn wasm_type_of<T: std::fmt::Debug>(
+    expr: &Spanned<T>,
     registry: &TypeRegistry,
 ) -> Result<Option<ValType>, WasmGcError> {
     aver_to_wasm(&aver_type_str_of(expr), Some(registry))
@@ -91,8 +131,8 @@ pub(super) fn wasm_type_of(
 /// form used by wasm-gc registries. Generic constructors must already be
 /// resolved by the type checker before codegen reaches this reader.
 #[track_caller]
-pub(super) fn aver_type_canonical(
-    expr: &Spanned<Expr>,
+pub(super) fn aver_type_canonical<T: std::fmt::Debug>(
+    expr: &Spanned<T>,
     _return_type: &str,
     _registry: &TypeRegistry,
 ) -> String {
