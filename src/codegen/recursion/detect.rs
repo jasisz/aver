@@ -45,8 +45,13 @@ pub(crate) fn local_name_of(expr: &Spanned<Expr>) -> Option<&str> {
     }
 }
 
+/// **syntax-discovery-only** (epic #170 Phase 7). Exact-match
+/// recognition of a dotted source name. The previous suffix-match
+/// clause was an identity leak — sibling fix to the one in
+/// `proof_lower::callee_matches_name` /
+/// `law_auto::shared::callee_matches_name`.
 pub(crate) fn call_matches(name: &str, target: &str) -> bool {
-    name == target || name.rsplit('.').next() == Some(target)
+    name == target
 }
 
 pub(crate) fn call_is_in_set(name: &str, targets: &HashSet<String>) -> bool {
