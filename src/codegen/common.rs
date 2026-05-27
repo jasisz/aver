@@ -2553,6 +2553,8 @@ mod tests {
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table,
+            resolved_fn_defs: Vec::new(),
+            resolved_module_fn_defs: Vec::new(),
         };
         ctx.proof_ir
             .refined_types

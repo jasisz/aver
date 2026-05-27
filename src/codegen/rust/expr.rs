@@ -1,21 +1,23 @@
 use super::builtins;
 use super::emit_ctx::{EmitCtx, expr_can_move, expr_skip_clone, should_borrow_param};
 use super::pattern::emit_pattern;
-use crate::ast::*;
+use crate::ast::{BinOp, Literal, Spanned, TypeDef};
 use crate::codegen::CodegenContext;
-use crate::codegen::common::{
-    expr_to_dotted_name, is_user_type, module_prefix_to_rust_path, resolve_module_call,
+use crate::codegen::common::{module_prefix_to_rust_path, resolve_module_call};
+use crate::ir::hir::{
+    BuiltinIntrinsic, ResolvedBodyExprPlan, ResolvedBodyPlan, ResolvedBoolSubjectPlan,
+    ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnDef, ResolvedLeafOp, ResolvedMatchArm,
+    ResolvedPattern, ResolvedStmt, ResolvedThinBodyPlan, ThinKind, call_plan_from_resolved_callee,
+    classify_body_expr_plan_resolved, classify_body_plan_resolved,
+    classify_bool_subject_plan_resolved, classify_leaf_op_resolved,
+    classify_list_match_shape_resolved, classify_match_dispatch_plan_resolved,
+    classify_thin_fn_def_resolved, resolved_to_dotted, semantic_constructor_from_resolved_ctor,
 };
-use crate::ir::vars::pattern_bindings;
+use crate::ir::vars::resolved_pattern_bindings;
 use crate::ir::{
-    BodyExprPlan, BodyPlan, BoolCompareOp, BoolSubjectPlan, CallLowerCtx, CallPlan,
-    DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
-    ForwardArg, ForwardCallPlan, LeafOp, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
-    SemanticDispatchPattern, TailCallPlan, ThinBodyCtx, ThinBodyPlan, WrapperKind,
-    classify_body_expr_plan, classify_body_plan, classify_bool_subject_plan, classify_call_plan,
-    classify_constructor_name, classify_leaf_op, classify_list_match_shape,
-    classify_match_dispatch_plan, classify_tail_call_plan, classify_thin_fn_def,
-    is_builtin_namespace,
+    BoolCompareOp, CallPlan, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
+    DispatchLiteral, DispatchTableShape, ListMatchShape, MatchDispatchPlan, SemanticConstructor,
+    SemanticDispatchPattern, WrapperKind,
 };
 use crate::types::{self, Type};
 /// Aver expressions → Rust expression strings.
@@ -24,88 +26,49 @@ use std::collections::HashSet;
 pub use super::syntax::{aver_name_to_rust, emit_stmt};
 pub(super) use super::syntax::{has_list_patterns, has_string_literal_patterns};
 
-struct RustCallCtx<'a, 'b> {
-    ctx: &'a CodegenContext,
-    ectx: &'b EmitCtx,
-}
-
-impl CallLowerCtx for RustCallCtx<'_, '_> {
-    fn is_local_value(&self, name: &str) -> bool {
-        self.ectx.local_types.contains_key(name)
-    }
-
-    fn is_user_type(&self, name: &str) -> bool {
-        is_user_type(name, self.ctx)
-    }
-
-    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
-        let mut best = None;
-        for (dot_idx, _) in dotted.match_indices('.') {
-            let prefix = &dotted[..dot_idx];
-            let suffix = &dotted[dot_idx + 1..];
-            if self.ctx.module_prefixes.contains(prefix)
-                && best.is_none_or(|existing: (&str, &str)| prefix.len() > existing.0.len())
-            {
-                best = Some((prefix, suffix));
-            }
-        }
-        best
-    }
-}
-
-impl ThinBodyCtx for RustCallCtx<'_, '_> {
-    fn find_fn_def<'a>(&'a self, name: &str) -> Option<&'a FnDef> {
-        if let Some((prefix, bare)) = resolve_module_call(name, self.ctx) {
-            return self
-                .ctx
-                .modules
-                .iter()
-                .find(|module| module.prefix == prefix)
-                .and_then(|module| module.fn_defs.iter().find(|fd| fd.name == bare));
-        }
-
-        self.ctx.fn_defs.iter().find(|fd| fd.name == name)
-    }
+/// Predicate adapter shared by every resolved-shape classifier — the
+/// shared classifiers don't know about [`CodegenContext`] (it lives in
+/// the codegen crate, classifiers live in the IR), so they take a
+/// `Fn(&str) -> bool` for user-type recognition.
+fn is_user_type_fn(ctx: &CodegenContext) -> impl Fn(&str) -> bool + '_ {
+    move |name: &str| crate::codegen::common::is_user_type(name, ctx)
 }
 
 pub(super) fn classify_dispatch_plan_for_rust(
-    arms: &[MatchArm],
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
+    arms: &[ResolvedMatchArm],
+    _ctx: &CodegenContext,
+    _ectx: &EmitCtx,
 ) -> Option<MatchDispatchPlan> {
-    let lower_ctx = RustCallCtx { ctx, ectx };
-    classify_match_dispatch_plan(arms, &lower_ctx)
+    classify_match_dispatch_plan_resolved(arms)
 }
 
 pub(super) fn classify_body_plan_for_rust<'a>(
-    body: &'a FnBody,
+    body: &'a crate::ir::hir::ResolvedFnBody,
     ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> Option<BodyPlan<'a>> {
-    let lower_ctx = RustCallCtx { ctx, ectx };
-    classify_body_plan(body, &lower_ctx)
+    _ectx: &EmitCtx,
+) -> Option<ResolvedBodyPlan<'a>> {
+    classify_body_plan_resolved(body, &is_user_type_fn(ctx))
 }
 
+#[allow(dead_code)]
 pub(super) fn classify_body_expr_plan_for_rust<'a>(
-    expr: &'a Expr,
+    expr: &'a ResolvedExpr,
     ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> BodyExprPlan<'a> {
-    let lower_ctx = RustCallCtx { ctx, ectx };
-    classify_body_expr_plan(expr, &lower_ctx)
+    _ectx: &EmitCtx,
+) -> ResolvedBodyExprPlan<'a> {
+    classify_body_expr_plan_resolved(expr, &is_user_type_fn(ctx))
 }
 
 pub(super) fn classify_thin_fn_def_for_rust<'a>(
-    fd: &'a FnDef,
+    fd: &'a ResolvedFnDef,
     ctx: &'a CodegenContext,
-    ectx: &'a EmitCtx,
-) -> Option<ThinBodyPlan<'a>> {
-    let lower_ctx = RustCallCtx { ctx, ectx };
-    classify_thin_fn_def(fd, &lower_ctx)
+    _ectx: &'a EmitCtx,
+) -> Option<ResolvedThinBodyPlan<'a>> {
+    classify_thin_fn_def_resolved(fd, &is_user_type_fn(ctx))
 }
 
-/// Emit a Rust expression from an Aver Expr.
-pub fn emit_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+/// Emit a Rust expression from a resolved Aver Expr.
+pub fn emit_expr(expr: &ResolvedExpr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     emit_expr_with_options(expr, ctx, ectx, true)
 }
 
@@ -187,36 +150,28 @@ fn emit_parallel_result_tuple_unwrap(
 }
 
 fn emit_expr_with_options(
-    expr: &Expr,
+    expr: &ResolvedExpr,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
 ) -> String {
-    let lower_ctx = RustCallCtx { ctx, ectx };
-    if let Some(leaf) = classify_leaf_op(expr, &lower_ctx) {
+    if let Some(leaf) = classify_leaf_op_resolved(expr, &is_user_type_fn(ctx)) {
         return emit_leaf_op_with_options(&leaf, ctx, ectx, allow_callsite_inlining);
     }
 
     match expr {
-        Expr::Literal(lit) => emit_literal(lit),
-        Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_rust(name),
-        Expr::Attr(_, _) => unreachable!(
-            "Expr::Attr must be lowered through classify_leaf_op (field access, None, \
-             variant constructor, or static ref); reaching this arm means \
-             classify_field_access returned None for an Attr shape — a bug in ir::leaf"
+        ResolvedExpr::Literal(lit) => emit_literal(lit),
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } => aver_name_to_rust(name),
+        ResolvedExpr::Attr(_, _) => unreachable!(
+            "ResolvedExpr::Attr must be lowered through classify_leaf_op_resolved (field access, \
+             None, variant constructor, or static ref); reaching this arm means \
+             classify_field_access returned None for an Attr shape — a bug in ir::hir::classify"
         ),
-        Expr::FnCall(fn_expr, args) => {
-            let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
-            emit_fn_call_with_options(
-                &fn_expr.node,
-                &bare_args,
-                ctx,
-                ectx,
-                allow_callsite_inlining,
-            )
+        ResolvedExpr::Call(callee, args) => {
+            emit_fn_call_with_options(callee, args, ctx, ectx, allow_callsite_inlining)
         }
-        Expr::Neg(inner) => format!("(-{})", emit_expr(&inner.node, ctx, ectx)),
-        Expr::BinOp(op, left, right) => {
+        ResolvedExpr::Neg(inner) => format!("(-{})", emit_expr(&inner.node, ctx, ectx)),
+        ResolvedExpr::BinOp(op, left, right) => {
             // BinOp: left and right use parent ectx (last_use on Resolved handles liveness)
             let l = emit_expr(&left.node, ctx, ectx);
             let r = emit_expr(&right.node, ctx, ectx);
@@ -247,10 +202,10 @@ fn emit_expr_with_options(
                     // For Eq/Neq with a string literal on either side, deref AverStr (Rc<str>)
                     // to &str for comparison since Rc<str> doesn't impl PartialEq<&str>.
                     if matches!(op, BinOp::Eq | BinOp::Neq) {
-                        if let Expr::Literal(Literal::Str(s)) = &right.node {
+                        if let ResolvedExpr::Literal(Literal::Str(s)) = &right.node {
                             return format!("(&*{} {} {:?})", l, op_str, s);
                         }
-                        if let Expr::Literal(Literal::Str(s)) = &left.node {
+                        if let ResolvedExpr::Literal(Literal::Str(s)) = &left.node {
                             return format!("({:?} {} &*{})", s, op_str, r);
                         }
                     }
@@ -258,12 +213,9 @@ fn emit_expr_with_options(
                 }
             }
         }
-        Expr::Match { subject, arms, .. } => emit_match(&subject.node, arms, ctx, ectx),
-        Expr::Constructor(name, arg) => {
-            let bare_arg = arg.as_ref().map(|a| Box::new(a.node.clone()));
-            emit_constructor(name, &bare_arg, ctx, ectx)
-        }
-        Expr::ErrorProp(inner) => {
+        ResolvedExpr::Match { subject, arms, .. } => emit_match(&subject.node, arms, ctx, ectx),
+        ResolvedExpr::Ctor(ctor, args) => emit_constructor(ctor, args, ctx, ectx),
+        ResolvedExpr::ErrorProp(inner) => {
             let inner_str = emit_expr(&inner.node, ctx, ectx);
             format!("{}?", inner_str)
         }
@@ -272,28 +224,33 @@ fn emit_expr_with_options(
         // intrinsic chains that the runtime backends share. Reaching this
         // arm means the pipeline was misconfigured (interp_lower disabled
         // for a path that emits Rust); bug in the caller.
-        Expr::InterpolatedStr(_) => unreachable!(
+        ResolvedExpr::InterpolatedStr(_) => unreachable!(
             "InterpolatedStr should have been lowered by ir::interp_lower; \
              Rust codegen runs only on lowered IR (see ir::pipeline contract)"
         ),
-        Expr::List(elements) => {
+        ResolvedExpr::List(elements) => {
             if elements.is_empty() {
                 "aver_rt::AverList::empty()".to_string()
             } else {
-                let bare_elems: Vec<Expr> = elements.iter().map(|e| e.node.clone()).collect();
-                let parts: Vec<String> =
-                    bare_elems.iter().map(|e| clone_arg(e, ctx, ectx)).collect();
+                let parts: Vec<String> = elements
+                    .iter()
+                    .map(|e| clone_arg(&e.node, ctx, ectx))
+                    .collect();
                 format!("aver_rt::AverList::from_vec(vec![{}])", parts.join(", "))
             }
         }
-        Expr::Tuple(items) => {
-            let bare_items: Vec<Expr> = items.iter().map(|e| e.node.clone()).collect();
-            let parts: Vec<String> = bare_items.iter().map(|e| clone_arg(e, ctx, ectx)).collect();
+        ResolvedExpr::Tuple(items) => {
+            let parts: Vec<String> = items
+                .iter()
+                .map(|e| clone_arg(&e.node, ctx, ectx))
+                .collect();
             format!("({})", parts.join(", "))
         }
-        Expr::IndependentProduct(items, unwrap) => {
-            let bare_items: Vec<Expr> = items.iter().map(|e| e.node.clone()).collect();
-            let parts: Vec<String> = bare_items.iter().map(|e| clone_arg(e, ctx, ectx)).collect();
+        ResolvedExpr::IndependentProduct(items, unwrap) => {
+            let parts: Vec<String> = items
+                .iter()
+                .map(|e| clone_arg(&e.node, ctx, ectx))
+                .collect();
 
             let n = parts.len();
             let has_replay = ctx.emit_replay_runtime;
@@ -393,7 +350,7 @@ fn emit_expr_with_options(
             }
             code
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             if entries.is_empty() {
                 "HashMap::new()".to_string()
             } else {
@@ -411,7 +368,9 @@ fn emit_expr_with_options(
                 )
             }
         }
-        Expr::RecordCreate { type_name, fields } => {
+        ResolvedExpr::RecordCreate {
+            type_name, fields, ..
+        } => {
             let rust_type = if type_name == "Tcp.Connection" {
                 "Tcp_Connection"
             } else {
@@ -429,10 +388,11 @@ fn emit_expr_with_options(
                 .collect();
             format!("{} {{ {} }}", rust_type, parts.join(", "))
         }
-        Expr::RecordUpdate {
+        ResolvedExpr::RecordUpdate {
             type_name,
             base,
             updates,
+            ..
         } => {
             let rust_type = if type_name == "Tcp.Connection" {
                 "Tcp_Connection"
@@ -452,26 +412,18 @@ fn emit_expr_with_options(
                 .collect();
             format!("{} {{ {}, ..{} }}", rust_type, parts.join(", "), base_str)
         }
-        Expr::TailCall(boxed) => {
-            // TailCall outside of a TCO loop → emit as regular function call
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
-            let call_ctx = RustCallCtx { ctx, ectx };
-            match classify_tail_call_plan(target, "", &call_ctx) {
-                TailCallPlan::SelfCall | TailCallPlan::KnownFunction(_) => {
-                    emit_named_function_call(target, &bare_args, ctx, ectx)
-                }
-                TailCallPlan::Unknown(name) => emit_codegen_error_expr(format!(
-                    "Rust codegen: unknown tail call target {}",
-                    name
-                )),
-            }
+        ResolvedExpr::TailCall { target, args } => {
+            // TailCall outside of a TCO loop → emit as regular function call.
+            // The resolver already mapped the source target name to a `FnId`;
+            // recover the canonical "Module.fn" form for the emitter.
+            let target_name = ctx.symbol_table.fn_entry(*target).key.canonical();
+            emit_named_function_call(&target_name, args, ctx, ectx)
         }
     }
 }
 
 pub(super) fn emit_body_plan_for_rust(
-    plan: &BodyPlan<'_>,
+    plan: &ResolvedBodyPlan<'_>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
@@ -479,16 +431,16 @@ pub(super) fn emit_body_plan_for_rust(
 }
 
 fn emit_body_plan_for_rust_with_options(
-    plan: &BodyPlan<'_>,
+    plan: &ResolvedBodyPlan<'_>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
 ) -> String {
     match plan {
-        BodyPlan::SingleExpr(body_expr) => {
+        ResolvedBodyPlan::SingleExpr(body_expr) => {
             emit_body_expr_plan_with_options(body_expr, ctx, ectx, allow_callsite_inlining)
         }
-        BodyPlan::Block {
+        ResolvedBodyPlan::Block {
             stmts: _,
             bindings,
             tail,
@@ -518,47 +470,41 @@ fn emit_body_plan_for_rust_with_options(
 }
 
 fn emit_body_expr_plan_with_options(
-    plan: &BodyExprPlan<'_>,
+    plan: &ResolvedBodyExprPlan<'_>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
 ) -> String {
     match plan {
-        BodyExprPlan::Expr(expr) => {
+        ResolvedBodyExprPlan::Expr(expr) => {
             let code = emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining);
             // Field access on a borrowed param in return position needs .clone()
             // to produce an owned value (emit_expr produces `obj.field` without clone).
-            if let Expr::Attr(obj, _) = expr
-                && let Expr::Ident(name) | Expr::Resolved { name, .. } = &obj.node
+            if let ResolvedExpr::Attr(obj, _) = expr
+                && let ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } = &obj.node
                 && ectx.is_borrowed_param(name)
             {
                 return format!("{}.clone()", code);
             }
             code
         }
-        BodyExprPlan::Leaf(leaf) => {
+        ResolvedBodyExprPlan::Leaf(leaf) => {
             let code = emit_leaf_op_with_options(leaf, ctx, ectx, allow_callsite_inlining);
             // Field access on a borrowed param in return position needs .clone()
             // to produce an owned value.
-            if let LeafOp::FieldAccess { object, .. } = leaf
-                && let Expr::Ident(name) | Expr::Resolved { name, .. } = &object.node
+            if let ResolvedLeafOp::FieldAccess { object, .. } = leaf
+                && let ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } =
+                    &object.node
                 && ectx.is_borrowed_param(name)
             {
                 return format!("{}.clone()", code);
             }
             code
         }
-        BodyExprPlan::Call { target, args } => {
-            let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
-            emit_call_plan_with_args_with_options(
-                target,
-                &bare_args,
-                ctx,
-                ectx,
-                allow_callsite_inlining,
-            )
+        ResolvedBodyExprPlan::Call { callee, args } => {
+            emit_call_dispatch_with_options(callee, args, ctx, ectx, allow_callsite_inlining)
         }
-        BodyExprPlan::ForwardCall(plan) => {
+        ResolvedBodyExprPlan::ForwardCall(plan) => {
             emit_forward_call_plan_with_options(plan, ctx, ectx, allow_callsite_inlining)
         }
     }
@@ -590,27 +536,46 @@ fn emit_codegen_error_expr(message: String) -> String {
 }
 
 fn emit_fn_call_with_options(
-    fn_expr: &Expr,
-    args: &[Expr],
+    callee: &ResolvedCallee,
+    args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
 ) -> String {
-    let call_ctx = RustCallCtx { ctx, ectx };
-    let plan = classify_call_plan(fn_expr, &call_ctx);
+    let plan = call_plan_from_resolved_callee(callee, &ctx.symbol_table);
     match plan {
         CallPlan::Dynamic => {
-            let func = emit_expr_with_options(fn_expr, ctx, ectx, allow_callsite_inlining);
-            let arg_strs: Vec<String> = args.iter().map(|a| clone_arg(a, ctx, ectx)).collect();
+            // Only LocalSlot reaches here; the resolver maps source lambdas
+            // and dynamic callees to `ResolvedCallee::LocalSlot { name, .. }`
+            // / `Unresolved`. Recover the name for emission.
+            let func = match callee {
+                ResolvedCallee::LocalSlot { name, .. } => aver_name_to_rust(name),
+                ResolvedCallee::Unresolved { callee } => {
+                    emit_expr_with_options(&callee.node, ctx, ectx, allow_callsite_inlining)
+                }
+                _ => unreachable!("CallPlan::Dynamic only from LocalSlot/Unresolved"),
+            };
+            let arg_strs: Vec<String> =
+                args.iter().map(|a| clone_arg(&a.node, ctx, ectx)).collect();
             format!("{}({})", func, arg_strs.join(", "))
         }
         _ => emit_call_plan_with_args_with_options(&plan, args, ctx, ectx, allow_callsite_inlining),
     }
 }
 
+fn emit_call_dispatch_with_options(
+    callee: &ResolvedCallee,
+    args: &[Spanned<ResolvedExpr>],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+    allow_callsite_inlining: bool,
+) -> String {
+    emit_fn_call_with_options(callee, args, ctx, ectx, allow_callsite_inlining)
+}
+
 fn emit_call_plan_with_args_with_options(
     plan: &CallPlan,
-    args: &[Expr],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     _allow_callsite_inlining: bool,
@@ -623,32 +588,17 @@ fn emit_call_plan_with_args_with_options(
                     name
                 ))
             }),
-        CallPlan::Wrapper(kind) => {
-            let wrapper_name = match kind {
-                WrapperKind::ResultOk => "Result.Ok",
-                WrapperKind::ResultErr => "Result.Err",
-                WrapperKind::OptionSome => "Option.Some",
-            };
-            builtins::emit_builtin_call(wrapper_name, args, ctx, ectx).unwrap_or_else(|| {
-                emit_codegen_error_expr(format!(
-                    "Rust codegen: missing wrapper lowering for {}",
-                    wrapper_name
-                ))
-            })
+        CallPlan::Wrapper(_) | CallPlan::NoneValue | CallPlan::TypeConstructor { .. } => {
+            // Wrapper / None / TypeConstructor variants exist on `CallPlan`
+            // for the pre-Phase-E `Expr::FnCall` path. The resolver lifts
+            // every constructor call into `ResolvedExpr::Ctor`, so these
+            // never reach the call emitter. If they do, it's a bug in the
+            // resolver.
+            emit_codegen_error_expr(format!(
+                "Rust codegen: ctor-shaped CallPlan in call position: {:?}",
+                plan
+            ))
         }
-        CallPlan::NoneValue => {
-            if args.is_empty() {
-                "None".to_string()
-            } else {
-                emit_codegen_error_expr(
-                    "Rust codegen: Option.None cannot be called with arguments".to_string(),
-                )
-            }
-        }
-        CallPlan::TypeConstructor {
-            qualified_type_name,
-            variant_name,
-        } => emit_type_constructor_call(qualified_type_name, variant_name, args, ctx, ectx),
         CallPlan::Function(name) => emit_named_function_call(name, args, ctx, ectx),
         CallPlan::Dynamic => emit_codegen_error_expr(
             "Rust codegen: dynamic call passed to direct call emitter".to_string(),
@@ -657,53 +607,48 @@ fn emit_call_plan_with_args_with_options(
 }
 
 fn emit_forward_call_plan_with_options(
-    plan: &ForwardCallPlan,
+    plan: &crate::ir::hir::ResolvedForwardCallPlan<'_>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
 ) -> String {
-    let args: Vec<_> = plan.args.iter().map(forward_arg_to_expr).collect();
-    emit_call_plan_with_args_with_options(&plan.target, &args, ctx, ectx, allow_callsite_inlining)
-}
-
-fn forward_arg_to_expr(arg: &ForwardArg) -> Expr {
-    let ForwardArg::Local(name) = arg;
-    Expr::Ident(name.clone())
+    let target = call_plan_from_resolved_callee(plan.callee, &ctx.symbol_table);
+    emit_call_plan_with_args_with_options(&target, plan.args, ctx, ectx, allow_callsite_inlining)
 }
 
 fn emit_leaf_op_with_options(
-    leaf: &LeafOp<'_>,
+    leaf: &ResolvedLeafOp<'_>,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
 ) -> String {
     match leaf {
-        LeafOp::FieldAccess { object, field_name } => {
+        ResolvedLeafOp::FieldAccess { object, field_name } => {
             let object = emit_expr_with_options(&object.node, ctx, ectx, allow_callsite_inlining);
             format!("{}.{}", object, aver_name_to_rust(field_name))
         }
-        LeafOp::MapGet { map, key } => emit_leaf_builtin_call_with_options(
+        ResolvedLeafOp::MapGet { map, key } => emit_leaf_builtin_call_with_options(
             "Map.get",
-            &[&map.node, &key.node],
+            &[map, key],
             ctx,
             ectx,
             allow_callsite_inlining,
         ),
-        LeafOp::MapSet { map, key, value } => emit_leaf_builtin_call_with_options(
+        ResolvedLeafOp::MapSet { map, key, value } => emit_leaf_builtin_call_with_options(
             "Map.set",
-            &[&map.node, &key.node, &value.node],
+            &[map, key, value],
             ctx,
             ectx,
             allow_callsite_inlining,
         ),
-        LeafOp::VectorNew { size, fill } => emit_leaf_builtin_call_with_options(
+        ResolvedLeafOp::VectorNew { size, fill } => emit_leaf_builtin_call_with_options(
             "Vector.new",
-            &[&size.node, &fill.node],
+            &[size, fill],
             ctx,
             ectx,
             allow_callsite_inlining,
         ),
-        LeafOp::VectorSetOrDefaultSameVector {
+        ResolvedLeafOp::VectorSetOrDefaultSameVector {
             vector,
             index,
             value,
@@ -716,7 +661,7 @@ fn emit_leaf_op_with_options(
                 vector, index, value
             )
         }
-        LeafOp::VectorGetOrDefaultLiteral {
+        ResolvedLeafOp::VectorGetOrDefaultLiteral {
             vector,
             index,
             default_literal,
@@ -729,13 +674,13 @@ fn emit_leaf_op_with_options(
                 vector, index, default
             )
         }
-        LeafOp::IntModOrDefaultLiteral {
+        ResolvedLeafOp::IntModOrDefaultLiteral {
             a,
             b,
             default_literal,
         } => {
             // When divisor is a known non-zero literal, skip the zero check entirely.
-            if let Expr::Literal(Literal::Int(n)) = &b.node
+            if let ResolvedExpr::Literal(Literal::Int(n)) = &b.node
                 && *n != 0
             {
                 let a = emit_expr_with_options(&a.node, ctx, ectx, allow_callsite_inlining);
@@ -751,13 +696,13 @@ fn emit_leaf_op_with_options(
                 )
             }
         }
-        LeafOp::ListIndexGet { list, index } => {
+        ResolvedLeafOp::ListIndexGet { list, index } => {
             let list = emit_expr_with_options(&list.node, ctx, ectx, allow_callsite_inlining);
             let index = emit_expr_with_options(&index.node, ctx, ectx, allow_callsite_inlining);
             format!("{}.to_vec().get({} as usize).cloned()", list, index)
         }
-        LeafOp::NoneValue => "None".to_string(),
-        LeafOp::VariantConstructor {
+        ResolvedLeafOp::NoneValue => "None".to_string(),
+        ResolvedLeafOp::VariantConstructor {
             qualified_type_name,
             variant_name,
         } => {
@@ -772,7 +717,43 @@ fn emit_leaf_op_with_options(
                 format!("{}::{}", qualified_type_name, variant_name)
             }
         }
-        LeafOp::StaticRef(name) => {
+        ResolvedLeafOp::StaticRef(name) => {
+            // Refinement: when the dotted reference resolves to a known
+            // user-defined variant (`Shape.Point`,
+            // `Domain.Shape.Circle`), emit the Rust enum-variant form
+            // (`Shape::Point`) rather than the namespace-deref shape
+            // that's appropriate for static fn references
+            // (`Fibonacci::fib`). Mirrors the pre-Phase-E
+            // `classify_call_plan` → `VariantConstructor` dispatch
+            // that produced the same source.
+            if name == "Option.None" || name == "None" {
+                return "None".to_string();
+            }
+            if let Some((type_name, variant_name)) = name.rsplit_once('.') {
+                let is_user = |n: &str| crate::codegen::common::is_user_type(n, ctx);
+                if is_user(type_name) {
+                    return if let Some((prefix, _)) = resolve_module_call(name, ctx) {
+                        let module_path = module_prefix_to_rust_path(prefix);
+                        let bare_type = type_name
+                            .rsplit_once('.')
+                            .map(|(_, t)| t)
+                            .unwrap_or(type_name);
+                        format!("{}::{}::{}", module_path, bare_type, variant_name)
+                    } else {
+                        format!("{}::{}", type_name, variant_name)
+                    };
+                }
+                if let Some((_, bare_type)) = type_name.rsplit_once('.')
+                    && is_user(bare_type)
+                {
+                    return if let Some((prefix, _)) = resolve_module_call(name, ctx) {
+                        let module_path = module_prefix_to_rust_path(prefix);
+                        format!("{}::{}::{}", module_path, bare_type, variant_name)
+                    } else {
+                        format!("{}::{}", bare_type, variant_name)
+                    };
+                }
+            }
             if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
                 let module_path = module_prefix_to_rust_path(prefix);
                 format!("{}::{}", module_path, aver_name_to_rust(bare))
@@ -785,12 +766,15 @@ fn emit_leaf_op_with_options(
 
 fn emit_leaf_builtin_call_with_options(
     name: &str,
-    args: &[&Expr],
+    args: &[&Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     _allow_callsite_inlining: bool,
 ) -> String {
-    let owned_args = args.iter().map(|expr| (*expr).clone()).collect::<Vec<_>>();
+    let owned_args = args
+        .iter()
+        .map(|spanned| (*spanned).clone())
+        .collect::<Vec<_>>();
     builtins::emit_builtin_call(name, &owned_args, ctx, ectx).unwrap_or_else(|| {
         emit_codegen_error_expr(format!(
             "Rust codegen: missing leaf builtin lowering for {}",
@@ -799,59 +783,16 @@ fn emit_leaf_builtin_call_with_options(
     })
 }
 
-/// Check if a FnDef has self-tailcall (TCO) in its body.
-/// Returns true only if the function has self-recursive tail calls and NO mutual tail calls.
-/// Mutual-TCO functions get wrapper functions with `&T` params, so they should use borrow.
-#[allow(dead_code)]
-fn fn_def_has_only_self_tco(fd: &FnDef) -> bool {
-    let has_self = fn_def_has_tco(fd);
-    if !has_self {
-        return false;
-    }
-    // Check if there are tail calls to OTHER functions (mutual TCO)
-    !fn_def_has_mutual_tco(fd)
-}
-
-#[allow(dead_code)]
-fn fn_def_has_mutual_tco(fd: &FnDef) -> bool {
-    fn expr_has_other_tailcall(expr: &Expr, fn_name: &str) -> bool {
-        match expr {
-            Expr::TailCall(boxed) => boxed.target != fn_name,
-            Expr::Match { arms, .. } => arms
-                .iter()
-                .any(|arm| expr_has_other_tailcall(&arm.body.node, fn_name)),
-            _ => false,
-        }
-    }
-    fd.body.stmts().iter().any(|s| match s {
-        Stmt::Expr(e) => expr_has_other_tailcall(&e.node, &fd.name),
-        Stmt::Binding(_, _, e) => expr_has_other_tailcall(&e.node, &fd.name),
-    })
-}
-
-#[allow(dead_code)]
-fn fn_def_has_tco(fd: &FnDef) -> bool {
-    fn expr_has_self_tailcall(expr: &Expr, fn_name: &str) -> bool {
-        match expr {
-            Expr::TailCall(boxed) => boxed.target == fn_name,
-            Expr::Match { arms, .. } => arms
-                .iter()
-                .any(|arm| expr_has_self_tailcall(&arm.body.node, fn_name)),
-            _ => false,
-        }
-    }
-    fd.body.stmts().iter().any(|s| match s {
-        Stmt::Expr(e) => expr_has_self_tailcall(&e.node, &fd.name),
-        Stmt::Binding(_, _, e) => expr_has_self_tailcall(&e.node, &fd.name),
-    })
-}
-
 /// Compute borrow mask from a FnDef, checking for TCO.
 /// Must mirror actual emitted signature:
 /// - Mutual-TCO SCC members → wrapper with borrow-by-default (`&T`)
 /// - Self-TCO only (not in SCC) → loop with `mut T`, all-false mask
 /// - Non-TCO → borrow-by-default
-fn borrow_mask_from_fn_def(fd: &FnDef, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
+fn borrow_mask_from_fn_def(
+    fd: &crate::ast::FnDef,
+    arg_count: usize,
+    ctx: &CodegenContext,
+) -> Vec<bool> {
     // Mutual-TCO members are emitted as wrappers with borrow-by-default,
     // even if they also have self-TailCalls. Don't skip borrow for them.
     // Memo functions always use borrow-by-default (memo wrapper takes &T),
@@ -910,7 +851,7 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
 }
 
 /// Find a FnDef by name, checking top-level, modules (qualified), and all modules (unqualified).
-fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a FnDef> {
+fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a crate::ast::FnDef> {
     // Check top-level fn_defs
     if let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == name) {
         return Some(fd);
@@ -937,7 +878,7 @@ fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a Fn
 
 fn emit_named_function_call(
     name: &str,
-    args: &[Expr],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
@@ -947,9 +888,9 @@ fn emit_named_function_call(
         .enumerate()
         .map(|(i, a)| {
             if borrow_mask.get(i).copied().unwrap_or(false) {
-                borrow_arg(a, ctx, ectx)
+                borrow_arg(&a.node, ctx, ectx)
             } else {
-                clone_arg(a, ctx, ectx)
+                clone_arg(&a.node, ctx, ectx)
             }
         })
         .collect();
@@ -970,7 +911,7 @@ fn emit_named_function_call(
 fn emit_type_constructor_call(
     qualified_type_name: &str,
     variant_name: &str,
-    args: &[Expr],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
@@ -980,7 +921,7 @@ fn emit_type_constructor_call(
         .iter()
         .enumerate()
         .map(|(idx, a)| {
-            let arg = clone_arg(a, ctx, ectx);
+            let arg = clone_arg(&a.node, ctx, ectx);
             if boxed_positions.contains(&idx) {
                 format!("std::sync::Arc::new({})", arg)
             } else {
@@ -1013,9 +954,9 @@ fn emit_type_constructor_call(
 ///
 /// For borrowed params (`&T` from borrow-by-default), the default behavior is to
 /// produce an owned clone. Call sites for user functions override this via `borrow_arg`.
-pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
+pub(super) fn maybe_clone(code: String, expr: &ResolvedExpr, ectx: &EmitCtx) -> String {
     match expr {
-        Expr::Ident(name) | Expr::Resolved { name, .. } => {
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } => {
             if expr_skip_clone(expr, ectx) {
                 code
             } else if ectx.is_rc_wrapped(name) {
@@ -1035,9 +976,10 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
         // Field access on records: emit_expr produces `obj.field` without clone.
         // Clone here when ownership is needed (constructors, return, etc.).
         // When passed to a function expecting `&T`, `borrow_arg` handles it.
-        Expr::Attr(obj, _field) => {
+        ResolvedExpr::Attr(obj, _field) => {
             // Builtin namespace access (e.g. Int.abs) → no clone needed
-            if matches!(&obj.node, Expr::Ident(name) if is_builtin_namespace(name)) {
+            if matches!(&obj.node, ResolvedExpr::Ident(name) if crate::ir::is_builtin_namespace(name))
+            {
                 code
             } else {
                 format!("{}.clone()", code)
@@ -1049,56 +991,57 @@ pub(super) fn maybe_clone(code: String, expr: &Expr, ectx: &EmitCtx) -> String {
 
 /// Is this expression known to produce a numeric (Int/Float) value?
 /// Used to decide whether `+` needs `&` on the RHS (only strings do).
-fn expr_is_numeric(expr: &Expr, ectx: &EmitCtx) -> bool {
+fn expr_is_numeric(expr: &ResolvedExpr, ectx: &EmitCtx) -> bool {
     match expr {
-        Expr::Literal(Literal::Int(_) | Literal::Float(_)) => true,
-        Expr::Ident(name) | Expr::Resolved { name, .. } => {
+        ResolvedExpr::Literal(Literal::Int(_) | Literal::Float(_)) => true,
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } => {
             matches!(
                 ectx.local_types.get(name.as_str()),
                 Some(Type::Int | Type::Float)
             )
         }
         // Sub/Mul/Div always produce numeric results.
-        Expr::BinOp(op, _, _) => !matches!(op, BinOp::Add),
-        Expr::FnCall(fn_expr, _) => {
-            if let Some(dotted) = expr_to_dotted_name(&fn_expr.node) {
-                matches!(
-                    dotted.as_str(),
-                    "Int.abs"
-                        | "Int.min"
-                        | "Int.max"
-                        | "Float.abs"
-                        | "Float.floor"
-                        | "Float.ceil"
-                        | "Float.round"
-                        | "Float.min"
-                        | "Float.max"
-                        | "Float.sqrt"
-                        | "Float.pow"
-                        | "Float.sin"
-                        | "Float.cos"
-                        | "Float.atan2"
-                        | "Float.fromInt"
-                        | "List.len"
-                        | "Vector.len"
-                        | "Map.len"
-                        | "String.len"
-                        | "String.byteLength"
-                        | "Char.toCode"
-                )
-            } else {
-                false
-            }
-        }
+        ResolvedExpr::BinOp(op, _, _) => !matches!(op, BinOp::Add),
+        ResolvedExpr::Call(ResolvedCallee::Builtin(name), _) => matches!(
+            name.as_str(),
+            "Int.abs"
+                | "Int.min"
+                | "Int.max"
+                | "Float.abs"
+                | "Float.floor"
+                | "Float.ceil"
+                | "Float.round"
+                | "Float.min"
+                | "Float.max"
+                | "Float.sqrt"
+                | "Float.pow"
+                | "Float.sin"
+                | "Float.cos"
+                | "Float.atan2"
+                | "Float.fromInt"
+                | "List.len"
+                | "Vector.len"
+                | "Map.len"
+                | "String.len"
+                | "String.byteLength"
+                | "Char.toCode"
+        ),
         _ => false,
     }
 }
 
 /// Is a record field access known to return a Copy type?
 /// Looks up the record definition in the context to find the field's type.
-fn attr_result_is_copy(obj: &Expr, field: &str, ctx: &CodegenContext, ectx: &EmitCtx) -> bool {
+fn attr_result_is_copy(
+    obj: &ResolvedExpr,
+    field: &str,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> bool {
     let obj_type = match obj {
-        Expr::Ident(name) | Expr::Resolved { name, .. } => ectx.local_types.get(name),
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } => {
+            ectx.local_types.get(name)
+        }
         _ => None,
     };
     let record_name = match obj_type {
@@ -1127,10 +1070,10 @@ fn attr_result_is_copy(obj: &Expr, field: &str, ctx: &CodegenContext, ectx: &Emi
 /// For owned locals: pass `&x`.
 /// For Copy types: pass by value (no borrow needed).
 /// For AverStr: pass by value (cheap clone).
-pub(super) fn borrow_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+pub(super) fn borrow_arg(expr: &ResolvedExpr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let code = emit_expr(expr, ctx, ectx);
     match expr {
-        Expr::Ident(name) => {
+        ResolvedExpr::Ident(name) => {
             if ectx.is_copy(name) {
                 // Copy type: pass by value
                 code
@@ -1157,7 +1100,7 @@ pub(super) fn borrow_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> S
                 format!("&{}", code)
             }
         }
-        Expr::Resolved { name, .. } => {
+        ResolvedExpr::Resolved { name, .. } => {
             if ectx.is_copy(name) {
                 code
             } else if ectx
@@ -1196,19 +1139,19 @@ pub(super) fn borrow_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> S
 }
 
 /// Emit an expression as a function argument, cloning variables to prevent move errors.
-pub(super) fn clone_arg(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+pub(super) fn clone_arg(expr: &ResolvedExpr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     clone_arg_with_options(expr, ctx, ectx, true)
 }
 
 fn clone_arg_with_options(
-    expr: &Expr,
+    expr: &ResolvedExpr,
     ctx: &CodegenContext,
     ectx: &EmitCtx,
     allow_callsite_inlining: bool,
 ) -> String {
     let code = emit_expr_with_options(expr, ctx, ectx, allow_callsite_inlining);
     // Field access on record: check if the field type is Copy before cloning.
-    if let Expr::Attr(obj, field) = expr
+    if let ResolvedExpr::Attr(obj, field) = expr
         && attr_result_is_copy(&obj.node, field, ctx, ectx)
     {
         return code;
@@ -1217,25 +1160,12 @@ fn clone_arg_with_options(
 }
 
 fn emit_constructor(
-    name: &str,
-    arg: &Option<Box<Expr>>,
+    ctor: &ResolvedCtor,
+    args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> String {
-    let normalized_name = match name {
-        "Ok" => "Result.Ok",
-        "Err" => "Result.Err",
-        "Some" => "Option.Some",
-        "None" => "Option.None",
-        other => other,
-    };
-    let args: &[Expr] = match arg {
-        Some(inner) => std::slice::from_ref(inner.as_ref()),
-        None => &[],
-    };
-    let lower_ctx = RustCallCtx { ctx, ectx };
-
-    match classify_constructor_name(normalized_name, &lower_ctx) {
+    match semantic_constructor_from_resolved_ctor(ctor, &ctx.symbol_table) {
         SemanticConstructor::Wrapper(kind) => {
             let wrapper_name = match kind {
                 WrapperKind::ResultOk => "Result.Ok",
@@ -1254,25 +1184,34 @@ fn emit_constructor(
             qualified_type_name,
             variant_name,
         } => emit_type_constructor_call(&qualified_type_name, &variant_name, args, ctx, ectx),
-        SemanticConstructor::Unknown(_) => {
-            let inner = arg
-                .as_ref()
-                .map(|a| clone_arg(a, ctx, ectx))
+        SemanticConstructor::Unknown(name) => {
+            // Resolver fallback: typecheck rejected the program, and this
+            // ctor reference couldn't be classified. Emit the bare name as
+            // a unary function call as the legacy code did, so the
+            // generated Rust still typechecks for the recovery path.
+            let inner = args
+                .first()
+                .map(|a| clone_arg(&a.node, ctx, ectx))
                 .unwrap_or_else(|| "()".to_string());
             format!("{}({})", name, inner)
         }
     }
 }
 
-fn is_irrefutable_pattern(pat: &Pattern) -> bool {
+fn is_irrefutable_pattern(pat: &ResolvedPattern) -> bool {
     match pat {
-        Pattern::Wildcard | Pattern::Ident(_) => true,
-        Pattern::Tuple(pats) => pats.iter().all(is_irrefutable_pattern),
+        ResolvedPattern::Wildcard | ResolvedPattern::Ident(_) => true,
+        ResolvedPattern::Tuple(pats) => pats.iter().all(is_irrefutable_pattern),
         _ => false,
     }
 }
 
-fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+fn emit_match(
+    subject: &ResolvedExpr,
+    arms: &[ResolvedMatchArm],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> String {
     // Single-arm irrefutable match → `let` destructuring instead of `match`.
     // e.g. `match x: (a, b) -> expr` → `{ let (a, b) = x; expr }`
     if arms.len() == 1 && is_irrefutable_pattern(&arms[0].pattern) {
@@ -1281,8 +1220,8 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
         let pat = emit_pattern(&arm.pattern, false, ctx);
         let body = maybe_clone(emit_expr(&arm.body.node, ctx, ectx), &arm.body.node, ectx);
         return match &arm.pattern {
-            Pattern::Wildcard => body,
-            Pattern::Ident(name) => {
+            ResolvedPattern::Wildcard => body,
+            ResolvedPattern::Ident(name) => {
                 let name = aver_name_to_rust(name);
                 format!("{{ let {} = {}; {} }}", name, subj, body)
             }
@@ -1295,11 +1234,11 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
     // that would need clone rebindings across all match emission paths).
     let no_bindings = arms
         .iter()
-        .all(|arm| pattern_bindings(&arm.pattern).is_empty());
+        .all(|arm| resolved_pattern_bindings(&arm.pattern).is_empty());
     let match_on_ref = no_bindings
         && matches!(
             subject,
-            Expr::Ident(name) | Expr::Resolved { name, .. } if ectx.is_borrowed_param(name)
+            ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } if ectx.is_borrowed_param(name)
         );
     let subj = if match_on_ref {
         emit_expr(subject, ctx, ectx)
@@ -1369,21 +1308,21 @@ fn emit_match(subject: &Expr, arms: &[MatchArm], ctx: &CodegenContext, ectx: &Em
 /// If match has exactly two arms with `true` and `false` bool literal patterns,
 /// emit `if subject { true_body } else { false_body }` instead of a match.
 fn try_emit_bool_if_else(
-    subject: &Expr,
+    subject: &ResolvedExpr,
     subj: &str,
-    arms: &[MatchArm],
+    arms: &[ResolvedMatchArm],
     shape: crate::ir::BoolMatchShape,
     ctx: &CodegenContext,
     subj_ectx: &EmitCtx,
     ectx: &EmitCtx,
 ) -> Option<String> {
-    let (true_body, false_body, cond) = match classify_bool_subject_plan(subject) {
-        BoolSubjectPlan::Expr(_) => (
+    let (true_body, false_body, cond) = match classify_bool_subject_plan_resolved(subject) {
+        ResolvedBoolSubjectPlan::Expr(_) => (
             &arms[shape.true_arm_index].body,
             &arms[shape.false_arm_index].body,
             subj.to_string(),
         ),
-        BoolSubjectPlan::Compare {
+        ResolvedBoolSubjectPlan::Compare {
             lhs,
             rhs,
             op,
@@ -1421,24 +1360,28 @@ fn try_emit_bool_if_else(
     Some(format!("if {} {{ {} }} else {{ {} }}", cond, t, f))
 }
 
-fn subject_might_be_string(_subject: &Expr, _ctx: &CodegenContext) -> bool {
+fn subject_might_be_string(_subject: &ResolvedExpr, _ctx: &CodegenContext) -> bool {
     // Heuristic: if subject is an ident, we can't tell at codegen time
     // We'll rely on the patterns to decide
     true
 }
 
-fn subject_might_be_list(_subject: &Expr, _arms: &[MatchArm], _ctx: &CodegenContext) -> bool {
+fn subject_might_be_list(
+    _subject: &ResolvedExpr,
+    _arms: &[ResolvedMatchArm],
+    _ctx: &CodegenContext,
+) -> bool {
     true
 }
 
 pub(super) fn emit_dispatch_table_match<F>(
     subject: String,
-    arms: &[MatchArm],
+    arms: &[ResolvedMatchArm],
     shape: &DispatchTableShape,
     body_for_arm: F,
 ) -> String
 where
-    F: Fn(&MatchArm) -> String,
+    F: Fn(&ResolvedMatchArm) -> String,
 {
     // Fast path: if all entries are wrapper tags (Result/Option), emit a Rust `match`
     // with move bindings instead of if-chain + clone.  This is both shorter and faster
@@ -1476,12 +1419,12 @@ where
 /// wrapper tags (Result.Ok/Err, Option.Some/None).  Bindings are by move (no clone).
 fn try_emit_wrapper_match<F>(
     subject: &str,
-    arms: &[MatchArm],
+    arms: &[ResolvedMatchArm],
     shape: &DispatchTableShape,
     body_for_arm: &F,
 ) -> Option<String>
 where
-    F: Fn(&MatchArm) -> String,
+    F: Fn(&ResolvedMatchArm) -> String,
 {
     // All entries must be wrapper tags with payload bindings
     let all_wrappers = shape.entries.iter().all(|e| {
@@ -1562,9 +1505,9 @@ fn emit_dispatch_condition(subject_name: &str, pattern: &SemanticDispatchPattern
 
 fn emit_dispatch_arm_body(
     subject_name: &str,
-    arm: &MatchArm,
+    arm: &ResolvedMatchArm,
     entry: &DispatchArmPlan,
-    body_for_arm: &impl Fn(&MatchArm) -> String,
+    body_for_arm: &impl Fn(&ResolvedMatchArm) -> String,
 ) -> String {
     let body = body_for_arm(arm);
     match (&entry.pattern, &entry.binding) {
@@ -1588,9 +1531,9 @@ fn emit_dispatch_arm_body(
 
 fn emit_default_dispatch_arm(
     subject_name: &str,
-    arm: &MatchArm,
+    arm: &ResolvedMatchArm,
     default_arm: &DispatchDefaultPlan,
-    body_for_arm: &impl Fn(&MatchArm) -> String,
+    body_for_arm: &impl Fn(&ResolvedMatchArm) -> String,
 ) -> String {
     let body = body_for_arm(arm);
     match &default_arm.binding_name {
@@ -1604,14 +1547,14 @@ fn emit_default_dispatch_arm(
 
 pub(super) fn emit_list_match<F>(
     subject: String,
-    arms: &[MatchArm],
+    arms: &[ResolvedMatchArm],
     list_shape: Option<ListMatchShape>,
     allow_fast_macro: bool,
     ctx: &CodegenContext,
     body_for_arm: F,
 ) -> String
 where
-    F: Fn(&MatchArm) -> String,
+    F: Fn(&ResolvedMatchArm) -> String,
 {
     // Fast path: exactly [] and [h, ..t] → use aver_list_match! macro
     if allow_fast_macro
@@ -1628,21 +1571,21 @@ where
 /// Emit the aver_list_match! macro for the common []/[h,..t] two-arm pattern.
 fn try_emit_list_match_macro<F>(
     subject: &str,
-    arms: &[MatchArm],
+    arms: &[ResolvedMatchArm],
     list_shape: Option<ListMatchShape>,
     ctx: &CodegenContext,
     body_for_arm: &F,
 ) -> Option<String>
 where
-    F: Fn(&MatchArm) -> String,
+    F: Fn(&ResolvedMatchArm) -> String,
 {
     let shape = match list_shape {
         Some(shape) => shape,
-        None => classify_list_match_shape(arms)?,
+        None => classify_list_match_shape_resolved(arms)?,
     };
     let empty_arm = &arms[shape.empty_arm_index];
     let cons_arm = &arms[shape.cons_arm_index];
-    let Pattern::Cons(head, tail) = &cons_arm.pattern else {
+    let ResolvedPattern::Cons(head, tail) = &cons_arm.pattern else {
         return None;
     };
     // Both names must be real idents (not _) for the macro binding
@@ -1674,12 +1617,12 @@ where
 
 fn emit_list_match_arms<F>(
     subject_name: &str,
-    arms: &[MatchArm],
+    arms: &[ResolvedMatchArm],
     ctx: &CodegenContext,
     body_for_arm: &F,
 ) -> String
 where
-    F: Fn(&MatchArm) -> String,
+    F: Fn(&ResolvedMatchArm) -> String,
 {
     let Some((first, rest)) = arms.split_first() else {
         return "panic!(\"Aver Rust codegen: empty list match\")".to_string();
@@ -1693,11 +1636,11 @@ where
     };
 
     match &first.pattern {
-        Pattern::EmptyList => format!(
+        ResolvedPattern::EmptyList => format!(
             "if {}.is_empty() {{ {} }} else {{ {} }}",
             subject_name, body, fallback
         ),
-        Pattern::Cons(head, tail) => {
+        ResolvedPattern::Cons(head, tail) => {
             let head_pat = if head == "_" {
                 "_".to_string()
             } else {
@@ -1713,8 +1656,8 @@ where
                 head_pat, tail_pat, subject_name, body, fallback
             )
         }
-        Pattern::Wildcard => body,
-        Pattern::Ident(name) => {
+        ResolvedPattern::Wildcard => body,
+        ResolvedPattern::Ident(name) => {
             let name = aver_name_to_rust(name);
             format!("{{ let {} = {}.clone(); {} }}", name, subject_name, body)
         }
@@ -1728,7 +1671,7 @@ where
     }
 }
 
-fn emit_list_arm_body(arm: &MatchArm, ctx: &CodegenContext, body: String) -> String {
+fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String) -> String {
     let rebindings = emit_pattern_rebindings(&arm.pattern, ctx);
     if rebindings.is_empty() {
         body
@@ -1808,8 +1751,8 @@ pub(super) fn constructor_boxed_bindings(
 
 /// When matching on a reference (`&T`), pattern bindings are `&Inner`.
 /// Emit `let b = b.clone();` for each binding to produce owned values.
-fn emit_ref_match_rebindings(pattern: &Pattern) -> String {
-    let bindings = pattern_bindings(pattern);
+fn emit_ref_match_rebindings(pattern: &ResolvedPattern) -> String {
+    let bindings = resolved_pattern_bindings(pattern);
     if bindings.is_empty() {
         return String::new();
     }
@@ -1821,14 +1764,29 @@ fn emit_ref_match_rebindings(pattern: &Pattern) -> String {
     format!("{}\n            ", lines.join("\n            "))
 }
 
-fn emit_pattern_rebindings(pattern: &Pattern, ctx: &CodegenContext) -> String {
+fn emit_pattern_rebindings(pattern: &ResolvedPattern, ctx: &CodegenContext) -> String {
     let mut lines = Vec::new();
-    if let Pattern::Constructor(name, bindings) = pattern {
-        // Ok/Err/Some bindings are now moved (not ref), so no clone needed.
-        // Only Box-wrapped fields (recursive types) need deref.
-        for b in constructor_boxed_bindings(name, bindings, ctx) {
-            let b = aver_name_to_rust(&b);
-            lines.push(format!("let {} = (*{}).clone();", b, b));
+    if let ResolvedPattern::Ctor(ctor, bindings) = pattern {
+        // Constructor bindings: only Box-wrapped fields (recursive types) need deref.
+        // Look up the canonical "Type.Variant" name from the resolved ctor and feed it
+        // to constructor_boxed_bindings, which queries fn_sigs.
+        let semantic = semantic_constructor_from_resolved_ctor(ctor, &ctx.symbol_table);
+        let ctor_name = match semantic {
+            SemanticConstructor::TypeConstructor {
+                qualified_type_name,
+                variant_name,
+            } => format!("{}.{}", qualified_type_name, variant_name),
+            SemanticConstructor::Wrapper(_) | SemanticConstructor::NoneValue => {
+                // Wrapper / None ctors never carry Box-wrapped recursive fields.
+                String::new()
+            }
+            SemanticConstructor::Unknown(name) => name,
+        };
+        if !ctor_name.is_empty() {
+            for b in constructor_boxed_bindings(&ctor_name, bindings, ctx) {
+                let b = aver_name_to_rust(&b);
+                lines.push(format!("let {} = (*{}).clone();", b, b));
+            }
         }
     }
     if lines.is_empty() {
@@ -1837,3 +1795,19 @@ fn emit_pattern_rebindings(pattern: &Pattern, ctx: &CodegenContext) -> String {
         format!("{}\n            ", lines.join("\n            "))
     }
 }
+
+// Suppress unused-import warnings caused by reusing some IR items only in
+// specific dispatch paths.
+#[allow(dead_code)]
+fn _silence_intrinsic_import(_: BuiltinIntrinsic) {}
+
+#[allow(dead_code)]
+fn _resolved_to_dotted_unused(expr: &ResolvedExpr) -> Option<String> {
+    resolved_to_dotted(expr)
+}
+
+#[allow(dead_code)]
+fn _thin_kind_unused(_: ThinKind) {}
+
+#[allow(dead_code)]
+fn _resolved_stmt_unused(_: &ResolvedStmt) {}

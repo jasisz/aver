@@ -153,6 +153,15 @@ pub fn resolve_program(symbols: &SymbolTable, items: &[TopLevel]) -> Vec<Resolve
     items.iter().map(|i| resolve_top_level(&ctx, i)).collect()
 }
 
+/// Resolve a single `FnDef` against an existing [`ResolveCtx`]. Mirror
+/// of [`resolve_stmt_external`] for callers that need to lift a free-
+/// standing fn def into resolved HIR — used by `CodegenContext` to
+/// populate `resolved_fn_defs` per-scope (entry + each dep) without
+/// re-running the whole program-level resolver.
+pub fn resolve_fn_def_external(ctx: &ResolveCtx<'_>, fd: &FnDef) -> Option<ResolvedFnDef> {
+    resolve_fn_def(ctx, fd)
+}
+
 pub fn resolve_top_level(ctx: &ResolveCtx<'_>, item: &TopLevel) -> ResolvedTopLevel {
     match item {
         TopLevel::Module(m) => ResolvedTopLevel::Module(m.clone()),
@@ -442,6 +451,19 @@ fn classify_callee(ctx: &ResolveCtx<'_>, callee: &Spanned<Expr>) -> ResolvedCall
         Expr::Ident(name) => {
             if let Some(intrinsic) = BuiltinIntrinsic::from_name(name) {
                 return ResolvedCallee::Intrinsic(intrinsic);
+            }
+            // Some synthesised / pre-parsed shapes pack a fully
+            // qualified namespace method into a single `Ident`
+            // (`Ident("List.len")` rather than the parser's regular
+            // `Attr(Ident("List"), "len")`). Recognise the builtin
+            // namespace prefix so the resolver classifies them as
+            // `Builtin` rather than falling to `Unresolved` — keeps
+            // the source-shape classifier menu (`is_builtin_namespace`)
+            // honoured for both AST shapes.
+            if let Some((head, _)) = name.split_once('.')
+                && is_builtin_namespace(head)
+            {
+                return ResolvedCallee::Builtin(name.clone());
             }
             match ctx.resolve_fn_id(name) {
                 Some(id) => ResolvedCallee::Fn(id),

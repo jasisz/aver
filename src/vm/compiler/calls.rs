@@ -1,10 +1,10 @@
-use super::resolved_classify::{
-    ForwardSlot, ResolvedLeafOp, classify_forward_call_resolved, classify_leaf_op_resolved,
-    resolved_to_dotted,
-};
 use super::{CallTarget, CompileError, FnCompiler};
 use crate::ast::{Literal, Spanned};
 use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic, ResolvedCallee, ResolvedCtor, ResolvedExpr};
+use crate::ir::hir::{
+    ForwardSlot, ResolvedLeafOp, classify_forward_call_resolved, classify_leaf_op_resolved,
+    resolved_to_dotted,
+};
 use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;

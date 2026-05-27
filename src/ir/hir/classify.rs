@@ -1,25 +1,28 @@
-//! VM-local structural classifiers over [`ResolvedExpr`] /
+//! Shared structural classifiers over [`ResolvedExpr`] /
 //! [`ResolvedPattern`].
 //!
-//! The shared IR classifiers in `crate::ir::{calls, leaf, matches}`
-//! still operate on the pre-Phase-E `Expr` shape — they're consumed
-//! by the other backends (Rust, wasm-gc, Lean, Dafny, self-host)
-//! that haven't migrated yet. The VM compiler has moved to
-//! `ResolvedExpr` / `ResolvedPattern` (#147 phase E PR 7), so it
-//! needs parallel shape recognisers that don't drag a `&Expr`
-//! conversion through every fast path.
+//! The shared IR classifiers in `crate::ir::{calls, leaf, matches,
+//! body}` still operate on the pre-Phase-E `Expr` shape — they're
+//! consumed by the backends that haven't migrated yet (wasm-gc,
+//! Lean, Dafny, self-host). The VM compiler (#147 phase E PR 7) and
+//! the Rust codegen (#147 phase E PR 8) consume `ResolvedExpr` /
+//! `ResolvedPattern` directly, so they share this module's
+//! classifiers instead of threading a `&Expr` conversion through
+//! every fast path.
 //!
 //! These mirror the IR classifiers' optimisation menu 1-for-1
 //! (`Vector.get` → `LeafOp::FieldAccess`, dispatch-table arms →
-//! `MATCH_DISPATCH`, etc.) so the bytecode the VM emits is
-//! byte-identical to the pre-migration build. The IR classifiers
-//! stay the source of truth for the recognised shapes; this file
-//! re-encodes that menu against the resolved AST without re-doing
-//! the identity work the resolver pass already finished.
+//! `MATCH_DISPATCH`, etc.) so the bytecode / Rust source the
+//! backends emit is byte-identical to the pre-migration build.
+//! The IR classifiers stay the source of truth for the recognised
+//! shapes; this file re-encodes that menu against the resolved AST
+//! without re-doing the identity work the resolver pass already
+//! finished.
 
-use crate::ast::Literal;
+use crate::ast::{Literal, Spanned};
 use crate::ir::hir::{
-    BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedMatchArm, ResolvedPattern,
+    BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnBody, ResolvedFnDef,
+    ResolvedMatchArm, ResolvedPattern, ResolvedStmt,
 };
 use crate::ir::{
     BoolCompareOp, BoolMatchShape, DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
@@ -96,14 +99,15 @@ pub enum ResolvedBoolSubjectPlan<'a> {
 }
 
 /// Forward-call shape mirror — the resolved callee + per-arg
-/// forwarding slot when every arg is a `Resolved` local. The
-/// `callee` field is kept on the plan even though the current
-/// consumer re-fetches it from the original `Spanned<ResolvedExpr>`
-/// — keeps the shape self-describing for future readers.
+/// forwarding slot when every arg is a `Resolved` local. `args`
+/// carries the original [`crate::ast::Spanned<ResolvedExpr>`] borrows
+/// so the emitter can reuse the existing name + last-use stamp
+/// (which `ForwardSlot::Local { slot }` alone wouldn't preserve).
 #[allow(dead_code)]
 pub struct ResolvedForwardCallPlan<'a> {
     pub callee: &'a ResolvedCallee,
     pub forward_slots: Vec<ForwardSlot>,
+    pub args: &'a [crate::ast::Spanned<ResolvedExpr>],
 }
 
 pub enum ForwardSlot {
@@ -172,7 +176,9 @@ fn classify_field_access<'a>(
     // reference. The VM has full namespace state in its symbol
     // table, so the consumer (`compile_leaf_op`) can resolve the
     // dotted path at emit time. We pass through the dotted form so
-    // the existing emitter logic stays unchanged.
+    // the existing emitter logic stays unchanged. The Rust codegen
+    // refines this to `VariantConstructor` / `NoneValue` at emit
+    // time when the prefix is known to name a user type.
     dotted.map(ResolvedLeafOp::StaticRef)
 }
 
@@ -539,18 +545,18 @@ pub fn resolved_to_dotted(expr: &ResolvedExpr) -> Option<String> {
 }
 
 /// Map a [`ResolvedCallee`] (call-position) to a forward-call plan
-/// when every supplied arg is a slot-based `Resolved` reference.
+/// when every supplied arg is a slot-based `Resolved` reference or a
+/// bare `Ident` (the latter for `EmitCtx::is_local_value` style
+/// classification — local idents in the source-shape resolver).
 /// Returns `None` if the callee is dynamic / a wrapper with the
-/// wrong arity / has any non-local argument.
+/// wrong arity / has any non-local argument. `forward_slots` carries
+/// the resolved arg borrows so the emitter can reuse the original
+/// name + last-use stamp without synthesizing empty `Resolved` nodes.
 pub fn classify_forward_call_resolved<'a>(
     callee: &'a ResolvedCallee,
     args: &'a [crate::ast::Spanned<ResolvedExpr>],
 ) -> Option<ResolvedForwardCallPlan<'a>> {
     match callee {
-        // Intrinsics short-circuit the call pipeline well before
-        // the forward-call optimisation runs; they should never be
-        // a forward-call target. Same for LocalSlot (dynamic) and
-        // Unresolved (recovery shape).
         ResolvedCallee::Unresolved { .. } => return None,
         ResolvedCallee::LocalSlot { .. } => return None,
         ResolvedCallee::Intrinsic(_) => return None,
@@ -559,18 +565,253 @@ pub fn classify_forward_call_resolved<'a>(
 
     let forward_slots = args
         .iter()
-        .map(|arg| classify_forward_arg_resolved(&arg.node))
+        .map(classify_forward_arg_resolved)
         .collect::<Option<Vec<_>>>()?;
 
     Some(ResolvedForwardCallPlan {
         callee,
         forward_slots,
+        args,
     })
 }
 
-fn classify_forward_arg_resolved(expr: &ResolvedExpr) -> Option<ForwardSlot> {
-    match expr {
+fn classify_forward_arg_resolved(expr: &crate::ast::Spanned<ResolvedExpr>) -> Option<ForwardSlot> {
+    match &expr.node {
         ResolvedExpr::Resolved { slot, .. } => Some(ForwardSlot::Local { slot: *slot }),
         _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Body-shape classifiers — mirror of `crate::ir::body` against `ResolvedExpr`.
+// ---------------------------------------------------------------------------
+//
+// The Rust codegen (#147 phase E PR 8) uses these to drive its body-plan +
+// thin-fn-def emission paths. Same recognition menu as `body.rs`; identity
+// classification of callees / ctors is read off the resolved enums directly.
+
+pub use crate::ir::body::ThinKind;
+
+/// Resolved-form mirror of [`crate::ir::BodyExprPlan`].
+pub enum ResolvedBodyExprPlan<'a> {
+    Expr(&'a ResolvedExpr),
+    Leaf(ResolvedLeafOp<'a>),
+    Call {
+        callee: &'a ResolvedCallee,
+        args: &'a [Spanned<ResolvedExpr>],
+    },
+    ForwardCall(ResolvedForwardCallPlan<'a>),
+}
+
+/// Resolved-form mirror of [`crate::ir::BodyBindingPlan`].
+pub struct ResolvedBodyBindingPlan<'a> {
+    pub name: &'a str,
+    pub expr: ResolvedBodyExprPlan<'a>,
+}
+
+/// Resolved-form mirror of [`crate::ir::BodyPlan`].
+pub enum ResolvedBodyPlan<'a> {
+    SingleExpr(ResolvedBodyExprPlan<'a>),
+    Block {
+        stmts: &'a [ResolvedStmt],
+        bindings: Vec<ResolvedBodyBindingPlan<'a>>,
+        tail: ResolvedBodyExprPlan<'a>,
+    },
+}
+
+/// Resolved-form mirror of [`crate::ir::ThinBodyPlan`]. `params` mirrors
+/// `ResolvedFnDef::params` shape so consumers that look at param types
+/// see the resolved [`crate::ast::Type`] form rather than the source
+/// annotation string.
+pub struct ResolvedThinBodyPlan<'a> {
+    pub params: &'a [(String, crate::ast::Type)],
+    pub body: ResolvedBodyPlan<'a>,
+    pub kind: ThinKind,
+}
+
+pub fn classify_body_expr_plan_resolved<'a>(
+    expr: &'a ResolvedExpr,
+    is_user_type: &impl Fn(&str) -> bool,
+) -> ResolvedBodyExprPlan<'a> {
+    if let Some(leaf) = classify_leaf_op_resolved(expr, is_user_type) {
+        return ResolvedBodyExprPlan::Leaf(leaf);
+    }
+    if let ResolvedExpr::Call(callee, args) = expr {
+        if let Some(plan) = classify_forward_call_resolved(callee, args) {
+            return ResolvedBodyExprPlan::ForwardCall(plan);
+        }
+        // LocalSlot is "dynamic" — fall through to Expr passthrough.
+        // Unresolved keeps the source-shape "call" shape so the thin-fn
+        // classifier still recognises it as a direct call (matches
+        // pre-migration `classify_call_plan` returning `Function(name)`
+        // for any unknown bare ident).
+        if !matches!(callee, ResolvedCallee::LocalSlot { .. }) {
+            return ResolvedBodyExprPlan::Call { callee, args };
+        }
+    }
+    ResolvedBodyExprPlan::Expr(expr)
+}
+
+pub fn classify_body_plan_resolved<'a>(
+    body: &'a ResolvedFnBody,
+    is_user_type: &impl Fn(&str) -> bool,
+) -> Option<ResolvedBodyPlan<'a>> {
+    let stmts = body.stmts();
+    let (tail_stmt, prefix) = stmts.split_last()?;
+
+    let ResolvedStmt::Expr(tail_expr) = tail_stmt else {
+        return None;
+    };
+
+    if prefix.is_empty() {
+        return Some(ResolvedBodyPlan::SingleExpr(
+            classify_body_expr_plan_resolved(&tail_expr.node, is_user_type),
+        ));
+    }
+
+    let mut bindings = Vec::with_capacity(prefix.len());
+    for stmt in prefix {
+        let ResolvedStmt::Binding { name, value, .. } = stmt else {
+            return None;
+        };
+        bindings.push(ResolvedBodyBindingPlan {
+            name: name.as_str(),
+            expr: classify_body_expr_plan_resolved(&value.node, is_user_type),
+        });
+    }
+
+    Some(ResolvedBodyPlan::Block {
+        stmts,
+        bindings,
+        tail: classify_body_expr_plan_resolved(&tail_expr.node, is_user_type),
+    })
+}
+
+pub fn classify_thin_fn_def_resolved<'a>(
+    fd: &'a ResolvedFnDef,
+    is_user_type: &impl Fn(&str) -> bool,
+) -> Option<ResolvedThinBodyPlan<'a>> {
+    let body = classify_body_plan_resolved(&fd.body, is_user_type)?;
+    Some(ResolvedThinBodyPlan {
+        params: &fd.params,
+        kind: classify_thin_kind_resolved(&body, is_user_type)?,
+        body,
+    })
+}
+
+fn classify_thin_kind_resolved(
+    plan: &ResolvedBodyPlan<'_>,
+    is_user_type: &impl Fn(&str) -> bool,
+) -> Option<ThinKind> {
+    match plan {
+        ResolvedBodyPlan::SingleExpr(expr) => classify_thin_expr_kind_resolved(expr, is_user_type),
+        ResolvedBodyPlan::Block { bindings, tail, .. } => {
+            if bindings
+                .iter()
+                .all(|binding| body_expr_is_thin_binding_resolved(&binding.expr))
+            {
+                classify_thin_expr_kind_resolved(tail, is_user_type)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn classify_thin_expr_kind_resolved(
+    plan: &ResolvedBodyExprPlan<'_>,
+    _is_user_type: &impl Fn(&str) -> bool,
+) -> Option<ThinKind> {
+    match plan {
+        ResolvedBodyExprPlan::Leaf(_) => Some(ThinKind::Leaf),
+        ResolvedBodyExprPlan::Call { .. } => Some(ThinKind::Direct),
+        ResolvedBodyExprPlan::ForwardCall(_) => Some(ThinKind::Forward),
+        ResolvedBodyExprPlan::Expr(expr) => match expr {
+            ResolvedExpr::Match { arms, .. }
+                if classify_match_dispatch_plan_resolved(arms).is_some() =>
+            {
+                Some(ThinKind::Dispatch)
+            }
+            ResolvedExpr::TailCall { .. } => Some(ThinKind::Tail),
+            _ => None,
+        },
+    }
+}
+
+fn body_expr_is_thin_binding_resolved(plan: &ResolvedBodyExprPlan<'_>) -> bool {
+    match plan {
+        ResolvedBodyExprPlan::Leaf(_)
+        | ResolvedBodyExprPlan::Call { .. }
+        | ResolvedBodyExprPlan::ForwardCall(_) => true,
+        ResolvedBodyExprPlan::Expr(expr) => match expr {
+            ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) => true,
+            ResolvedExpr::Ctor(_, _) => true,
+            // Simple arithmetic on idents/literals (e.g. `nextPos = pos + 1`)
+            ResolvedExpr::BinOp(_, l, r) => {
+                is_simple_operand_resolved(&l.node) && is_simple_operand_resolved(&r.node)
+            }
+            // Simple call with ident/literal args (e.g. `reversed = List.reverse(acc)`)
+            ResolvedExpr::Call(_, args) => args.iter().all(|a| is_simple_operand_resolved(&a.node)),
+            _ => false,
+        },
+    }
+}
+
+fn is_simple_operand_resolved(expr: &ResolvedExpr) -> bool {
+    matches!(
+        expr,
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. }
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Identity adapters: ResolvedCallee/ResolvedCtor → existing CallPlan /
+// SemanticConstructor shapes. The Rust codegen still consumes the existing
+// enums for its constructor / dispatch emission; these adapters resolve the
+// typed identity through the [`SymbolTable`] so backends don't re-implement
+// canonical-name derivation.
+// ---------------------------------------------------------------------------
+
+use crate::ir::SymbolTable;
+use crate::ir::{CallPlan, SemanticConstructor, WrapperKind as IrWrapperKind};
+
+/// Map a [`ResolvedCallee`] to the existing [`CallPlan`] enum. The
+/// resolver lifts `Result.Ok` / `Option.None` / user variant calls into
+/// `ResolvedExpr::Ctor`, so they never appear here — wrapper / none /
+/// type-constructor variants of `CallPlan` are unreachable from this
+/// adapter.
+pub fn call_plan_from_resolved_callee(
+    callee: &ResolvedCallee,
+    symbol_table: &SymbolTable,
+) -> CallPlan {
+    match callee {
+        ResolvedCallee::Fn(id) => CallPlan::Function(symbol_table.fn_entry(*id).key.canonical()),
+        ResolvedCallee::Builtin(name) => CallPlan::Builtin(name.clone()),
+        ResolvedCallee::Intrinsic(intr) => CallPlan::Builtin(intr.name().to_string()),
+        ResolvedCallee::LocalSlot { .. } | ResolvedCallee::Unresolved { .. } => CallPlan::Dynamic,
+    }
+}
+
+/// Map a [`ResolvedCtor`] to the existing [`SemanticConstructor`] enum.
+pub fn semantic_constructor_from_resolved_ctor(
+    ctor: &ResolvedCtor,
+    symbol_table: &SymbolTable,
+) -> SemanticConstructor {
+    match ctor {
+        ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => {
+            SemanticConstructor::Wrapper(IrWrapperKind::ResultOk)
+        }
+        ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => {
+            SemanticConstructor::Wrapper(IrWrapperKind::ResultErr)
+        }
+        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => {
+            SemanticConstructor::Wrapper(IrWrapperKind::OptionSome)
+        }
+        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => SemanticConstructor::NoneValue,
+        ResolvedCtor::User { type_id, name, .. } => SemanticConstructor::TypeConstructor {
+            qualified_type_name: symbol_table.type_entry(*type_id).key.canonical(),
+            variant_name: name.clone(),
+        },
+        ResolvedCtor::Unresolved { name } => SemanticConstructor::Unknown(name.clone()),
     }
 }

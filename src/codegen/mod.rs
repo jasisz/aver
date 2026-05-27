@@ -173,6 +173,26 @@ pub struct CodegenContext {
     /// backend FnId/TypeId resolution) read it directly — no
     /// `Option` wrapper to unwrap at each callsite.
     pub symbol_table: crate::ir::SymbolTable,
+    /// Resolved-HIR forms of every entry-scope fn in `fn_defs`,
+    /// in the same source order. Lifted by `build_context` via
+    /// [`crate::ir::hir::resolve_fn_def_external`] against the
+    /// entry's [`ResolveCtx`]; #147 phase E PR 8 consumers (the
+    /// Rust backend's expression / pattern emitters) walk these
+    /// instead of the source-shape bodies in `fn_defs`. Items
+    /// whose name doesn't resolve through the symbol table (only
+    /// possible when typecheck rejected the program upstream)
+    /// are skipped from this list — codegen falls back to
+    /// `fn_defs` in those cases.
+    pub resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef>,
+    /// Per-dep resolved fn defs, parallel to `modules`. Each
+    /// entry in `resolved_module_fn_defs[i]` corresponds to
+    /// `modules[i].fn_defs` in source order — same skip-on-missing
+    /// rule as `resolved_fn_defs`. Lifted against the *entry's*
+    /// symbol table (pinned to the dep's prefix as the resolver's
+    /// `current_module`) so every scope shares a single `FnId` /
+    /// `TypeId` namespace, matching the VM compiler's
+    /// `integrate_module` shape.
+    pub resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>>,
 }
 
 /// Output files from a codegen backend.
@@ -453,6 +473,31 @@ pub fn build_context(
         );
     }
 
+    // Resolved-HIR lift of every fn def (entry + each dep), against
+    // the entry's symbol table. The Rust backend (#147 phase E PR 8)
+    // consumes these from `ctx.resolved_fn_defs` /
+    // `ctx.resolved_module_fn_defs`; tests + helper paths that build
+    // a ctx piecewise refresh them via `CodegenContext::refresh_facts`.
+    let resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef> = {
+        let entry_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
+        fn_defs
+            .iter()
+            .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&entry_ctx, fd))
+            .collect()
+    };
+    let resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>> = modules
+        .iter()
+        .map(|module| {
+            let mut module_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
+            module_ctx.current_module = Some(module.prefix.clone());
+            module
+                .fn_defs
+                .iter()
+                .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&module_ctx, fd))
+                .collect()
+        })
+        .collect();
+
     let ctx = CodegenContext {
         items,
         fn_sigs,
@@ -483,6 +528,8 @@ pub fn build_context(
         // (proof_lower / Lean / Rust / Dafny) read it directly off
         // ctx for opaque-ID lookups.
         symbol_table,
+        resolved_fn_defs,
+        resolved_module_fn_defs,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
@@ -575,6 +622,29 @@ impl CodegenContext {
         // for proof_lower below — it already resolved every FnId we
         // need for `recursive_fns` / `mutual_tco_members`.
         self.symbol_table = symbol_table;
+
+        // Refresh the resolved-HIR mirror of every fn def so the
+        // backend (#147 phase E PR 8) sees the same shape
+        // `build_context` would have produced from scratch.
+        let entry_resolve_ctx = crate::ir::hir::ResolveCtx::new(&self.symbol_table);
+        self.resolved_fn_defs = self
+            .fn_defs
+            .iter()
+            .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&entry_resolve_ctx, fd))
+            .collect();
+        self.resolved_module_fn_defs = self
+            .modules
+            .iter()
+            .map(|module| {
+                let mut module_ctx = crate::ir::hir::ResolveCtx::new(&self.symbol_table);
+                module_ctx.current_module = Some(module.prefix.clone());
+                module
+                    .fn_defs
+                    .iter()
+                    .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&module_ctx, fd))
+                    .collect()
+            })
+            .collect();
 
         // ProofIR's `fn_contracts` / `refined_types` are derived from
         // the just-recomputed item set + the recursion classifier, so
