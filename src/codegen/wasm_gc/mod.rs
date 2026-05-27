@@ -7,38 +7,50 @@
 //! Status: Phase 1 — module scaffold. `compile_to_wasm_gc` returns a
 //! placeholder error until a hello-world emitter lands in `module.rs`.
 //!
-//! ## Phase E (resolved AST) migration plan
+//! ## Phase E (resolved AST) migration — shipped
 //!
 //! Issue #147 phase E migrates every backend from consuming
 //! `crate::ast::Expr` / `FnBody` / `Pattern` to consuming the
-//! resolved-HIR shapes in `crate::ir::hir`. The wasm-gc backend is
-//! migrated across three PRs because it's the largest backend
-//! (~36k lines, 8 files actively walking `Expr`):
+//! resolved-HIR shapes in `crate::ir::hir`. The wasm-gc backend
+//! shipped across five PRs:
 //!
-//! - **PR 9** (foundation) — shared `CodegenContext::resolve_fn_def` /
-//!   `resolve_expr` / `resolve_stmt` / `resolve_pattern` methods
-//!   promoted from `rust/toplevel.rs`. No wasm-gc behaviour change;
-//!   gives the follow-up PRs a one-line lookup boundary.
-//! - **PR 9.1** — `body/emit.rs` (3.1k) migrates to take
-//!   `&Spanned<ResolvedExpr>`; cascades through `emit_list_literal`,
-//!   `emit_map_literal`, `emit_constructor`, `emit_match`,
-//!   `emit_tail_call`, etc. The remaining body subfiles
-//!   (`body/{slots, builtins, builtins_wasip2, infer, eq_helpers,
-//!   hash_helpers}.rs`) migrate alongside since they share the
-//!   `Spanned<Expr>` borrows.
-//! - **PR 9.2** — `module.rs` orchestration (6.3k),
-//!   `types_discovery.rs` / `types.rs` / `flatten.rs` (program-level
-//!   walkers that register types / fns before emit). After this PR
-//!   the wasm-gc backend reads `ctx.resolved_fn_defs` /
-//!   `resolved_module_fn_defs` exclusively; the `&FnDef` borrows in
-//!   `module.rs` survive only as the source-shape metadata that the
-//!   resolver doesn't reproduce (e.g. param annotation source
-//!   strings used by the WIT signature emitter).
+//! - **PR 9.0.1** — `body/infer.rs` type readers generic over
+//!   `Spanned<T: Debug>` so they work uniformly against
+//!   `Spanned<Expr>` and `Spanned<ResolvedExpr>`.
+//! - **PR 9** (foundation) — shared `CodegenContext::resolve_fn_def`
+//!   / `resolve_expr` / `resolve_stmt` / `resolve_pattern` methods.
+//!   Behaviour-neutral one-line lookup boundary for follow-ups.
+//! - **PR 9.1** — `body/emit.rs` (+ `body/{slots, builtins,
+//!   builtins_wasip2}.rs`) take `&Spanned<ResolvedExpr>`. The
+//!   `Expr::FnCall(Attr(Ident("X"), member), args)` recognition
+//!   tree collapses to `ResolvedCallee` / `ResolvedCtor` dispatch.
+//! - **PR 9.2** — `types_discovery.rs` / `types.rs` / `module.rs`
+//!   program-level walkers consume `&ResolvedFnDef` /
+//!   `&Spanned<ResolvedExpr>`. After this PR every walker /
+//!   emitter reads identity off the resolved HIR; the source-shape
+//!   `&FnDef` borrows survive only for signature metadata
+//!   (`fd.return_type` / `fd.params` as source strings, kept
+//!   verbatim for WIT signature emission and param-annotation
+//!   passthrough).
+//! - **PR 9.3a** — `CodegenContext::resolve_fn_def` keys lookup by
+//!   `FnKey`/`FnId` via `SymbolTable::fn_id_of`, not bare name.
+//!   Closes the bare-name-flat-search smell that worked only
+//!   because `flatten_multimodule` prefixes dep fn names.
+//! - **PR 9.3b** — [`view::WasmGcLinkedView`] promotes the post-
+//!   flatten resolver rebuild to a first-class backend-link stage.
+//!   The pipeline stays module-aware; wasm-gc owns its single-
+//!   module link view as a legal codegen concept, not a transitional
+//!   hack. `fn_def_by_id(FnId)` mirrors the FnId-keyed pattern
+//!   from PR 9.3a.
+//! - **PR 9.3c** — [`body::FnMap`] keyed by `FnId` only (was
+//!   `by_name: HashMap<String, FnEntry>` pre-9.3c). `Call(Fn(id))`
+//!   and `ResolvedExpr::TailCall { target }` dispatch through
+//!   `fn_map.by_id.get(&id)` so call lowering matches the FnId-
+//!   keyed identity layer end to end.
 //!
 //! The byte-identical gate for every wasm-gc snapshot
 //! (`order_total.wasm` md5 `61e45b325279e17e1b0d8dce3fde43f9`, the
-//! game suite, the wasip2 stress fixtures) holds across each PR — no
-//! generated wasm shifts until the migration is fully through.
+//! game suite, the wasip2 stress fixtures) held across each PR.
 
 use crate::ast::TopLevel;
 use crate::ir::AnalysisResult;

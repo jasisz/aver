@@ -457,21 +457,28 @@ pub(super) fn emit_expr(
                     )));
                 }
                 ResolvedCallee::Fn(id) => {
-                    let name = ctx.symbol_table.fn_entry(*id).key.name.clone();
-                    let entry = ctx.fn_map.by_name.get(&name);
-                    if entry.is_none() && ctx.self_local_slot(&name).is_some() {
-                        // Local slot of a `Fn(...) -> _` value — wasm-
-                        // gc doesn't emit higher-order calls. Same
-                        // semantics as pre-Phase-E.
-                        func.instruction(&Instruction::Unreachable);
-                        return Ok(());
+                    let entry = ctx.fn_map.by_id.get(id);
+                    if entry.is_none() {
+                        // Resolved fn id with no wasm fn idx — either
+                        // a `Fn(...) -> _` value parked in a local
+                        // slot (verify-only fns) or a typecheck-
+                        // rejected program that still reached emit.
+                        // Wasm-gc doesn't emit higher-order calls;
+                        // `unreachable` keeps validation polymorphic.
+                        let name = ctx.symbol_table.fn_entry(*id).key.name.clone();
+                        if ctx.self_local_slot(&name).is_some() {
+                            func.instruction(&Instruction::Unreachable);
+                            return Ok(());
+                        }
+                        return Err(WasmGcError::Validation(format!(
+                            "call to unknown fn `{name}` (FnId {:?})",
+                            id
+                        )));
                     }
+                    let entry = entry.expect("just checked");
                     for arg in args {
                         emit_expr(func, arg, slots, ctx)?;
                     }
-                    let entry = entry.ok_or(WasmGcError::Validation(format!(
-                        "call to unknown fn `{name}`"
-                    )))?;
                     func.instruction(&Instruction::Call(entry.wasm_idx));
                 }
                 ResolvedCallee::LocalSlot { .. } => {
@@ -491,10 +498,7 @@ pub(super) fn emit_expr(
             }
         }
         ResolvedExpr::Match { subject, arms } => emit_match(func, subject, arms, slots, ctx)?,
-        ResolvedExpr::TailCall { target, args } => {
-            let target_name = ctx.symbol_table.fn_entry(*target).key.name.clone();
-            emit_tail_call(func, &target_name, args, slots, ctx)?
-        }
+        ResolvedExpr::TailCall { target, args } => emit_tail_call(func, *target, args, slots, ctx)?,
         ResolvedExpr::RecordCreate {
             type_name, fields, ..
         } => emit_record_create(func, type_name, fields, slots, ctx)?,
@@ -3073,18 +3077,18 @@ pub(super) fn emit_int_match_cascade(
 /// `Unimplemented` so the user sees a clear bump line.
 pub(super) fn emit_tail_call(
     func: &mut Function,
-    target: &str,
+    target: crate::ir::FnId,
     args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    let entry = ctx
-        .fn_map
-        .by_name
-        .get(target)
-        .ok_or(WasmGcError::Validation(format!(
-            "tail call to unknown fn `{target}`"
-        )))?;
+    let entry = ctx.fn_map.by_id.get(&target).ok_or_else(|| {
+        let name = ctx.symbol_table.fn_entry(target).key.canonical();
+        WasmGcError::Validation(format!(
+            "tail call to unknown fn `{name}` (FnId {:?})",
+            target
+        ))
+    })?;
     for arg in args {
         emit_expr(func, arg, slots, ctx)?;
     }
@@ -3094,7 +3098,11 @@ pub(super) fn emit_tail_call(
     // Deep recursion will trash the stack with this on; only flip it
     // for shallow scenarios.
     let no_tail_call = std::env::var_os("AVER_WASM_GC_NO_TAIL_CALL").is_some();
-    let target_idx = if target == ctx.self_fn_name {
+    // Self-tail-call check via wasm fn idx — by_id lookup already
+    // yielded the entry, so `entry.wasm_idx == ctx.self_wasm_idx`
+    // iff `target` names the current fn. Skips the pre-PR-9.3c
+    // `target_name == ctx.self_fn_name` string compare.
+    let target_idx = if entry.wasm_idx == ctx.self_wasm_idx {
         ctx.self_wasm_idx
     } else {
         entry.wasm_idx
