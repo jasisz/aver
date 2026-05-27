@@ -2578,7 +2578,9 @@ mod tests {
                     predicate_param.to_string(),
                     QuantifierType::Plain("Int".to_string()),
                 )],
-                expr: crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Literal(Literal::Bool(true))),
+                expr: crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Literal(
+                    Literal::Bool(true),
+                )),
             },
             witness: Some(witness.to_string()),
         };
@@ -2657,7 +2659,9 @@ mod tests {
             predicate_param: param.to_string(),
             invariant: Predicate {
                 free_vars: vec![(param.to_string(), QuantifierType::Plain("Int".to_string()))],
-                expr: crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Literal(Literal::Bool(true))),
+                expr: crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Literal(
+                    Literal::Bool(true),
+                )),
             },
             witness: Some(witness.to_string()),
         };

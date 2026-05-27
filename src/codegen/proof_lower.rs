@@ -732,15 +732,9 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
         let law_scope: Option<String> = symbols
             .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
             .or_else(|| {
-                inputs
-                    .dep_modules
-                    .iter()
-                    .find_map(|m| {
-                        symbols.fn_id_of(&crate::ir::FnKey::in_module(
-                            m.prefix.clone(),
-                            &vb.fn_name,
-                        ))
-                    })
+                inputs.dep_modules.iter().find_map(|m| {
+                    symbols.fn_id_of(&crate::ir::FnKey::in_module(m.prefix.clone(), &vb.fn_name))
+                })
             })
             .and_then(|id| symbols.fn_entry(id).key.scope_str().map(|s| s.to_string()));
         let law_scope_ref = law_scope.as_deref();

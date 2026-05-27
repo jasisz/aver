@@ -731,14 +731,14 @@ fn emit_native_guarded_int_countdown_fn(
     // termination check. Plain `match` would leave the case-split
     // implicit (only an unnamed `casesOn` motive carries it) and
     // `omega` can't see it.
-    // Resolve the recursive fn's `FnId` via the symbol table so the
-    // rewriter pins targets by opaque identity, not bare name —
-    // critical anti-collision rule from #147 phase E. The native-
-    // guarded contract is entry-only by current model, so the lookup
-    // hits the entry slot directly.
-    let target_fn_id = ctx
-        .symbol_table
-        .fn_id_of(&crate::ir::FnKey::entry(&fd.name))
+    // Resolve the recursive fn's `FnId` via the same pointer-eq path
+    // `ProofIR.fn_contracts` was keyed by — `fn_id_for_decl` picks
+    // the owning module's prefix when `fd` came from a dep, the
+    // entry slot when it sits in `ctx.fn_defs`. Bare-name
+    // `FnKey::entry(fd.name)` would collide for any module-owned
+    // recursive fn whose bare name also exists at entry (the very
+    // class of bug #147 phase E is killing).
+    let target_fn_id = crate::codegen::common::fn_id_for_decl(ctx, fd)
         .unwrap_or_else(|| panic!("native-guarded fn {} missing FnId", fd.name));
     let rewritten_wc = crate::codegen::recursion::rewrite_native_guarded_calls_resolved_expr(
         wildcard_arm_body,
