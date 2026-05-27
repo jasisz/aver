@@ -2062,16 +2062,24 @@ pub(super) fn emit_module_with(
     // wired in the post-emit phase further down. Globals + their
     // start-fn init are gone.)
 
-    // Build the fn-name → wasm-fn-idx map. With K imports:
+    // Build the FnId → wasm-fn-idx map. With K imports:
     //   imports at idx 0..K
     //   _start at K
     //   user fn i at K+1+i
     //   builtin at K+1+N+m (assigned by builtin_registry already)
+    //
+    // `resolved_fn_defs` is position-aligned with `fn_defs`
+    // (`WasmGcLinkedView::build` errors if the resolver drops any
+    // fn), so `resolved_fn_defs[i].fn_id` is the FnId for
+    // `fn_defs[i]`. PR 9.3c switched this map from name-keyed to
+    // FnId-keyed — mirror of the FnKey/FnId dispatch shape in
+    // `CodegenContext::resolve_fn_def` (PR 9.3a).
     let start_wasm_idx = import_count;
-    let mut by_name: HashMap<String, FnEntry> = HashMap::new();
+    let mut by_id: HashMap<crate::ir::FnId, FnEntry> = HashMap::new();
     for (i, fd) in fn_defs.iter().enumerate() {
-        by_name.insert(
-            fd.name.clone(),
+        let rfd = &resolved_fn_defs[i];
+        by_id.insert(
+            rfd.fn_id,
             FnEntry {
                 wasm_idx: import_count + 1 + (i as u32),
                 return_type: fd.return_type.clone(),
@@ -2145,7 +2153,7 @@ pub(super) fn emit_module_with(
         }
     }
     let fn_map = FnMap {
-        by_name,
+        by_id,
         builtins: builtin_idx_lookup,
         effects: effect_idx_lookup.clone(),
         map_helpers: map_helpers_lookup,

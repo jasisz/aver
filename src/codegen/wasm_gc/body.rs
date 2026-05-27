@@ -46,9 +46,18 @@ use emit::emit_expr;
 use infer::aver_type_str_of;
 use slots::{SlotTable, count_value_params};
 
-/// Maps fn name → wasm fn index + return type. Built once per module.
+/// Maps fn identity → wasm fn index + return type. Built once per
+/// module in `module::emit_module_with`. PR 9.3c keyed dispatch by
+/// stable [`crate::ir::FnId`] (mirror of the FnKey-based
+/// `CodegenContext::resolve_fn_def` from PR 9.3a); pre-9.3c this
+/// field was `by_name: HashMap<String, FnEntry>`, which happened to
+/// work post-flatten only because every dep fn carried a module
+/// prefix in its name.
 pub(super) struct FnMap {
-    pub(super) by_name: std::collections::HashMap<String, FnEntry>,
+    /// FnId → wasm fn entry. `Call(Fn(id))` and the
+    /// `ResolvedExpr::TailCall { target }` dispatch read this
+    /// directly.
+    pub(super) by_id: std::collections::HashMap<crate::ir::FnId, FnEntry>,
     /// Dotted builtin name → wasm fn index. Populated by
     /// `module::emit_module` from the `BuiltinRegistry` so call
     /// sites can `call $builtin_idx` for `String.fromInt` etc.
@@ -137,6 +146,7 @@ impl FnMap {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct FnEntry {
     pub(super) wasm_idx: u32,
     /// Kept for symmetry with the other backends' fn-table entries —
