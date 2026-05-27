@@ -117,7 +117,7 @@ pub(super) struct TypeRegistry {
     pub(super) string_array_type_idx: Option<u32>,
     /// Per-byte-sequence passive data segment for `String` literals.
     /// Each unique literal in the program lands at one segment idx;
-    /// `Expr::Literal(Literal::Str(_))` lowers to `array.new_data
+    /// `ResolvedExpr::Literal(Literal::Str(_))` lowers to `array.new_data
     /// $string $segment_idx` with offset=0, size=len.
     pub(super) string_literals: Vec<Vec<u8>>,
     pub(super) string_literal_idx: HashMap<Vec<u8>, u32>,
@@ -164,7 +164,11 @@ impl TypeRegistry {
     /// them up). Also intern the `"cf-ipcountry"` string literal so
     /// the synthesised `aver_http_handle` wrapper has a valid data
     /// segment to source it from.
-    pub(super) fn build_with_handler(items: &[TopLevel], _handler_active: bool) -> Self {
+    pub(super) fn build_with_handler(
+        items: &[TopLevel],
+        resolved_fn_defs: &[crate::ir::hir::ResolvedFnDef],
+        _handler_active: bool,
+    ) -> Self {
         // _handler_active is consumed by `items_reference_name`
         // overrides below so the rest of the builder stays
         // unchanged.
@@ -255,13 +259,13 @@ impl TypeRegistry {
         // like `fn main() -> Int { _ = Time.unixMs(); 42 }`.
         let has_fn_defs = items.iter().any(|item| matches!(item, TopLevel::FnDef(_)));
         let needs_string = has_fn_defs
-            || items.iter().any(|item| match item {
-                TopLevel::FnDef(fd) => {
-                    fd.return_type.contains("String")
-                        || fd.params.iter().any(|(_, t)| t.contains("String"))
-                        || fn_body_produces_string(fd)
-                }
-                _ => false,
+            || resolved_fn_defs.iter().any(|fd| {
+                fd.return_type.display().contains("String")
+                    || fd
+                        .params
+                        .iter()
+                        .any(|(_, t)| t.display().contains("String"))
+                    || fn_body_produces_string(fd)
             });
         let string_array_type_idx = if needs_string {
             let idx = next_idx;
@@ -302,29 +306,22 @@ impl TypeRegistry {
         // canonical bench shape today.
         let mut vector_types: HashMap<String, u32> = HashMap::new();
         let mut vector_order: Vec<String> = Vec::new();
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
+        for fd in resolved_fn_defs {
+            collect_vectors_from_str(
+                &fd.return_type.display(),
+                &mut vector_types,
+                &mut vector_order,
+                &mut next_idx,
+            );
+            for (_, ty) in &fd.params {
                 collect_vectors_from_str(
-                    &fd.return_type,
-                    &mut vector_types,
-                    &mut vector_order,
-                    &mut next_idx,
-                );
-                for (_, ty) in &fd.params {
-                    collect_vectors_from_str(
-                        ty,
-                        &mut vector_types,
-                        &mut vector_order,
-                        &mut next_idx,
-                    );
-                }
-                collect_vectors_from_fn_body(
-                    fd,
+                    &ty.display(),
                     &mut vector_types,
                     &mut vector_order,
                     &mut next_idx,
                 );
             }
+            collect_vectors_from_fn_body(fd, &mut vector_types, &mut vector_order, &mut next_idx);
         }
         // Record field walks — `record { nums: Vector<Int> }` only
         // shows up in the record's field list, not in any fn
@@ -344,66 +341,71 @@ impl TypeRegistry {
         // rec group.
         let mut result_types: HashMap<String, u32> = HashMap::new();
         let mut result_order: Vec<String> = Vec::new();
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
+        for fd in resolved_fn_defs {
+            collect_results_from_str(
+                &fd.return_type.display(),
+                &mut result_types,
+                &mut result_order,
+                &mut next_idx,
+            );
+            for (_, ty) in &fd.params {
                 collect_results_from_str(
-                    &fd.return_type,
+                    &ty.display(),
                     &mut result_types,
                     &mut result_order,
                     &mut next_idx,
                 );
-                for (_, ty) in &fd.params {
+            }
+            collect_results_from_builtin_uses(
+                fd,
+                &mut result_types,
+                &mut result_order,
+                &mut next_idx,
+            );
+            // Walk binding annotations too — `let r: Result<Box, MyErr> = …`
+            // wouldn't be picked up by the builtin-uses scan (which only
+            // looks at known dotted calls like `Disk.readText`). Without this,
+            // user-typed `Result<custom, custom>` values fail to find their
+            // type slot at construction time.
+            use crate::ir::hir::{ResolvedFnBody, ResolvedStmt};
+            let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
+            for stmt in stmts {
+                if let ResolvedStmt::Binding {
+                    ty_ann: Some(annot),
+                    ..
+                } = stmt
+                {
                     collect_results_from_str(
-                        ty,
+                        &annot.display(),
                         &mut result_types,
                         &mut result_order,
                         &mut next_idx,
                     );
                 }
-                collect_results_from_builtin_uses(
-                    fd,
-                    &mut result_types,
-                    &mut result_order,
-                    &mut next_idx,
-                );
-                // Walk binding annotations too — `let r: Result<Box, MyErr> = …`
-                // wouldn't be picked up by the builtin-uses scan (which only
-                // looks at known dotted calls like `Disk.readText`). Without this,
-                // user-typed `Result<custom, custom>` values fail to find their
-                // type slot at construction time.
-                use crate::ast::{FnBody, Stmt};
-                let FnBody::Block(stmts) = fd.body.as_ref();
-                for stmt in stmts {
-                    if let Stmt::Binding(_, Some(annot), _) = stmt {
-                        collect_results_from_str(
-                            annot,
-                            &mut result_types,
-                            &mut result_order,
-                            &mut next_idx,
-                        );
-                    }
-                }
             }
         }
         let mut list_types: HashMap<String, u32> = HashMap::new();
         let mut list_order: Vec<String> = Vec::new();
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
+        for fd in resolved_fn_defs {
+            collect_lists_from_str(
+                &fd.return_type.display(),
+                &mut list_types,
+                &mut list_order,
+                &mut next_idx,
+            );
+            for (_, ty) in &fd.params {
                 collect_lists_from_str(
-                    &fd.return_type,
+                    &ty.display(),
                     &mut list_types,
                     &mut list_order,
                     &mut next_idx,
                 );
-                for (_, ty) in &fd.params {
-                    collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
-                }
-                // Body annotations — `nested: List<List<Int>> = [a, b]`
-                // adds `List<List<Int>>` even when no fn signature
-                // mentions it. Mirrors the same body-walk options
-                // and vectors already do.
-                collect_lists_from_fn_body(fd, &mut list_types, &mut list_order, &mut next_idx);
             }
+            // Body annotations — `nested: List<List<Int>> = [a, b]`
+            // adds `List<List<Int>>` even when no fn signature
+            // mentions it. Mirrors the same body-walk options
+            // and vectors already do.
+            collect_lists_from_fn_body(fd, &mut list_types, &mut list_order, &mut next_idx);
         }
         for (_, fields) in record_fields.iter() {
             for (_, ty) in fields {
@@ -452,29 +454,22 @@ impl TypeRegistry {
         // allocate a struct slot per unique `T`.
         let mut option_types: HashMap<String, u32> = HashMap::new();
         let mut option_order: Vec<String> = Vec::new();
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
+        for fd in resolved_fn_defs {
+            collect_options_from_str(
+                &fd.return_type.display(),
+                &mut option_types,
+                &mut option_order,
+                &mut next_idx,
+            );
+            for (_, ty) in &fd.params {
                 collect_options_from_str(
-                    &fd.return_type,
-                    &mut option_types,
-                    &mut option_order,
-                    &mut next_idx,
-                );
-                for (_, ty) in &fd.params {
-                    collect_options_from_str(
-                        ty,
-                        &mut option_types,
-                        &mut option_order,
-                        &mut next_idx,
-                    );
-                }
-                collect_options_from_fn_body(
-                    fd,
+                    &ty.display(),
                     &mut option_types,
                     &mut option_order,
                     &mut next_idx,
                 );
             }
+            collect_options_from_fn_body(fd, &mut option_types, &mut option_order, &mut next_idx);
         }
         // Record field walk — `record GameState { lastAiResult:
         // Option<AiResult> }` only spells `Option<AiResult>` in the
@@ -528,12 +523,10 @@ impl TypeRegistry {
                 collect_maps_from_str(ty, &mut pending_maps_for_options);
             }
         }
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
-                collect_maps_from_str(&fd.return_type, &mut pending_maps_for_options);
-                for (_, ty) in &fd.params {
-                    collect_maps_from_str(ty, &mut pending_maps_for_options);
-                }
+        for fd in resolved_fn_defs {
+            collect_maps_from_str(&fd.return_type.display(), &mut pending_maps_for_options);
+            for (_, ty) in &fd.params {
+                collect_maps_from_str(&ty.display(), &mut pending_maps_for_options);
             }
         }
         if handler_active
@@ -573,27 +566,29 @@ impl TypeRegistry {
                 collect_maps_from_str(ty, &mut pending_maps);
             }
         }
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
-                collect_maps_from_str(&fd.return_type, &mut pending_maps);
-                for (_, ty) in &fd.params {
-                    collect_maps_from_str(ty, &mut pending_maps);
+        for fd in resolved_fn_defs {
+            collect_maps_from_str(&fd.return_type.display(), &mut pending_maps);
+            for (_, ty) in &fd.params {
+                collect_maps_from_str(&ty.display(), &mut pending_maps);
+            }
+            // Walk let-binding annotations too — `let m: Map<Person, Int> =
+            // Map.set(…)` won't show up in fn signatures and the discovery
+            // walker would otherwise miss the canonical entirely. Mirrors
+            // what the Result walker added a few commits back.
+            use crate::ir::hir::{ResolvedFnBody, ResolvedStmt};
+            let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
+            for stmt in stmts {
+                if let ResolvedStmt::Binding {
+                    ty_ann: Some(annot),
+                    ..
+                } = stmt
+                {
+                    collect_maps_from_str(&annot.display(), &mut pending_maps);
                 }
-                // Walk let-binding annotations too — `let m: Map<Person, Int> =
-                // Map.set(…)` won't show up in fn signatures and the discovery
-                // walker would otherwise miss the canonical entirely. Mirrors
-                // what the Result walker added a few commits back.
-                use crate::ast::{FnBody, Stmt};
-                let FnBody::Block(stmts) = fd.body.as_ref();
-                for stmt in stmts {
-                    if let Stmt::Binding(_, Some(annot), _) = stmt {
-                        collect_maps_from_str(annot, &mut pending_maps);
-                    }
-                    let expr = match stmt {
-                        Stmt::Binding(_, _, e) | Stmt::Expr(e) => e,
-                    };
-                    collect_maps_from_expr(expr, &mut pending_maps);
-                }
+                let expr = match stmt {
+                    ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => e,
+                };
+                collect_maps_from_expr(expr, &mut pending_maps);
             }
         }
         // Dedup in encounter order.
@@ -675,23 +670,26 @@ impl TypeRegistry {
         // results/options.
         let mut tuple_types: HashMap<String, u32> = HashMap::new();
         let mut tuple_order: Vec<String> = Vec::new();
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
+        for fd in resolved_fn_defs {
+            collect_tuples_from_str(
+                &fd.return_type.display(),
+                &mut tuple_types,
+                &mut tuple_order,
+                &mut next_idx,
+            );
+            for (_, ty) in &fd.params {
                 collect_tuples_from_str(
-                    &fd.return_type,
+                    &ty.display(),
                     &mut tuple_types,
                     &mut tuple_order,
                     &mut next_idx,
                 );
-                for (_, ty) in &fd.params {
-                    collect_tuples_from_str(ty, &mut tuple_types, &mut tuple_order, &mut next_idx);
-                }
-                // Walk the body for `Expr::Tuple` literals — the
-                // canonical `Tuple<A,B>` for a `(a, b)` literal is
-                // built from the items' typed-AST element types and
-                // never has to appear in any signature.
-                collect_tuples_from_fn_body(fd, &mut tuple_types, &mut tuple_order, &mut next_idx);
             }
+            // Walk the body for `ResolvedExpr::Tuple` literals — the
+            // canonical `Tuple<A,B>` for a `(a, b)` literal is
+            // built from the items' typed-AST element types and
+            // never has to appear in any signature.
+            collect_tuples_from_fn_body(fd, &mut tuple_types, &mut tuple_order, &mut next_idx);
         }
         // Record fields can carry tuple types too.
         for (_, fields) in record_fields.iter() {
@@ -767,10 +765,8 @@ impl TypeRegistry {
         let mut string_literals: Vec<Vec<u8>> = Vec::new();
         let mut string_literal_idx: HashMap<Vec<u8>, u32> = HashMap::new();
         let _ = handler_active;
-        for item in items {
-            if let TopLevel::FnDef(fd) = item {
-                collect_string_literals_in_fn(fd, &mut string_literals, &mut string_literal_idx);
-            }
+        for fd in resolved_fn_defs {
+            collect_string_literals_in_fn(fd, &mut string_literals, &mut string_literal_idx);
         }
         // Note: caller_fn name registration moved out of `TypeRegistry`
         // — `body::CallerFnCollector` lazy-registers names during
@@ -784,13 +780,7 @@ impl TypeRegistry {
         // its bytes as a passive segment so the emitter has an idx
         // to pull at struct.new time, regardless of whether user
         // source ever spells the literal.
-        let int_mod_used = items.iter().any(|item| {
-            if let TopLevel::FnDef(fd) = item {
-                fn_body_calls_int_mod(fd)
-            } else {
-                false
-            }
-        });
+        let int_mod_used = resolved_fn_defs.iter().any(fn_body_calls_int_mod);
         if int_mod_used {
             let bytes = b"Division by zero".to_vec();
             string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
@@ -1225,29 +1215,22 @@ pub(super) fn parse_map_kv(canonical: &str) -> Option<(&str, &str)> {
 /// via a literal, an interpolation, or a String-producing builtin.
 /// Used by `TypeRegistry::build` to decide whether to allocate the
 /// `(array i8)` slot.
-fn fn_body_produces_string(fd: &crate::ast::FnDef) -> bool {
-    use crate::ast::{FnBody, Stmt};
-    let FnBody::Block(stmts) = fd.body.as_ref();
+fn fn_body_produces_string(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::{ResolvedFnBody, ResolvedStmt};
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(|s| match s {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_uses_string(&e.node),
+        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => expr_uses_string(&e.node),
     })
 }
 
-fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
-    use crate::ast::Expr;
+fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
     match expr {
-        Expr::FnCall(callee, args) => {
-            if let Expr::Attr(parent, member) = &callee.node {
-                let parent_name = match &parent.node {
-                    Expr::Ident(n) => Some(n.as_str()),
-                    Expr::Resolved { name, .. } => Some(name.as_str()),
-                    _ => None,
-                };
-                if let Some(p) = parent_name {
-                    let dotted = format!("{p}.{member}");
-                    if matches!(
-                        dotted.as_str(),
-                        "String.fromInt"
+        ResolvedExpr::Call(callee, args) => {
+            if let ResolvedCallee::Builtin(dotted) = callee
+                && matches!(
+                    dotted.as_str(),
+                    "String.fromInt"
                             | "String.fromFloat"
                             | "String.len"
                             | "String.length"
@@ -1309,29 +1292,28 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
                             | "Terminal.print"
                             | "Terminal.setColor"
                             | "Terminal.readKey"
-                    ) {
-                        return true;
-                    }
-                }
+                )
+            {
+                return true;
             }
-            expr_uses_string(&callee.node) || args.iter().any(|a| expr_uses_string(&a.node))
+            args.iter().any(|a| expr_uses_string(&a.node))
         }
-        Expr::BinOp(_, l, r) => expr_uses_string(&l.node) || expr_uses_string(&r.node),
-        Expr::Neg(inner) => expr_uses_string(&inner.node),
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::BinOp(_, l, r) => expr_uses_string(&l.node) || expr_uses_string(&r.node),
+        ResolvedExpr::Neg(inner) => expr_uses_string(&inner.node),
+        ResolvedExpr::Match { subject, arms } => {
             expr_uses_string(&subject.node) || arms.iter().any(|a| expr_uses_string(&a.body.node))
         }
-        Expr::TailCall(boxed) => boxed.args.iter().any(|a| expr_uses_string(&a.node)),
-        Expr::Attr(obj, _) => expr_uses_string(&obj.node),
-        Expr::Constructor(_, payload) => payload
-            .as_deref()
-            .is_some_and(|p| expr_uses_string(&p.node)),
-        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_uses_string(&e.node)),
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::TailCall { args, .. } => args.iter().any(|a| expr_uses_string(&a.node)),
+        ResolvedExpr::Attr(obj, _) => expr_uses_string(&obj.node),
+        ResolvedExpr::Ctor(_, args) => args.iter().any(|a| expr_uses_string(&a.node)),
+        ResolvedExpr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, e)| expr_uses_string(&e.node))
+        }
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             expr_uses_string(&base.node) || updates.iter().any(|(_, e)| expr_uses_string(&e.node))
         }
-        Expr::Literal(crate::ast::Literal::Str(_)) => true,
-        Expr::InterpolatedStr(_) => true,
+        ResolvedExpr::Literal(crate::ast::Literal::Str(_)) => true,
+        ResolvedExpr::InterpolatedStr(_) => true,
         _ => false,
     }
 }
@@ -1340,55 +1322,49 @@ fn expr_uses_string(expr: &crate::ast::Expr) -> bool {
 /// table. Both `Literal::Str` and the `Literal` parts of an
 /// `InterpolatedStr` count — each unique byte sequence gets a passive
 /// data segment.
-fn fn_body_calls_int_mod(fd: &crate::ast::FnDef) -> bool {
-    use crate::ast::{Expr, FnBody, Stmt};
-    fn walk(e: &Expr) -> bool {
+fn fn_body_calls_int_mod(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedStmt};
+    fn walk(e: &ResolvedExpr) -> bool {
         match e {
-            Expr::FnCall(callee, args) => {
-                let hit = if let Expr::Attr(parent, member) = &callee.node
-                    && let Expr::Ident(p) = &parent.node
-                {
-                    p == "Int" && member == "mod"
-                } else {
-                    false
-                };
-                hit || walk(&callee.node) || args.iter().any(|a| walk(&a.node))
+            ResolvedExpr::Call(callee, args) => {
+                let hit = matches!(callee, ResolvedCallee::Builtin(name) if name == "Int.mod");
+                hit || args.iter().any(|a| walk(&a.node))
             }
-            Expr::Match { subject, arms } => {
+            ResolvedExpr::Match { subject, arms } => {
                 walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
             }
-            Expr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
-            Expr::Neg(inner) => walk(&inner.node),
-            Expr::Attr(o, _) => walk(&o.node),
-            Expr::ErrorProp(i) => walk(&i.node),
-            Expr::TailCall(b) => b.args.iter().any(|a| walk(&a.node)),
-            Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
-                xs.iter().any(|x| walk(&x.node))
-            }
-            Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
-            Expr::RecordUpdate { base, updates, .. } => {
+            ResolvedExpr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            ResolvedExpr::Neg(inner) => walk(&inner.node),
+            ResolvedExpr::Attr(o, _) => walk(&o.node),
+            ResolvedExpr::ErrorProp(i) => walk(&i.node),
+            ResolvedExpr::TailCall { args, .. } => args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::List(xs)
+            | ResolvedExpr::Tuple(xs)
+            | ResolvedExpr::IndependentProduct(xs, _) => xs.iter().any(|x| walk(&x.node)),
+            ResolvedExpr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
+            ResolvedExpr::RecordUpdate { base, updates, .. } => {
                 walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
             }
-            Expr::Constructor(_, p) => p.as_deref().is_some_and(|x| walk(&x.node)),
+            ResolvedExpr::Ctor(_, args) => args.iter().any(|a| walk(&a.node)),
             _ => false,
         }
     }
-    let FnBody::Block(stmts) = fd.body.as_ref();
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(|stmt| match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => walk(&e.node),
+        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => walk(&e.node),
     })
 }
 
 fn collect_string_literals_in_fn(
-    fd: &crate::ast::FnDef,
+    fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut Vec<Vec<u8>>,
     idx: &mut HashMap<Vec<u8>, u32>,
 ) {
-    use crate::ast::{FnBody, Stmt};
-    let FnBody::Block(stmts) = fd.body.as_ref();
+    use crate::ir::hir::{ResolvedFnBody, ResolvedStmt};
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
         let expr = match stmt {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+            ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => &e.node,
         };
         collect_string_literals_in_expr(expr, out, idx);
     }
@@ -1403,77 +1379,77 @@ fn intern_literal(bytes: Vec<u8>, out: &mut Vec<Vec<u8>>, idx: &mut HashMap<Vec<
 }
 
 fn collect_string_literals_in_expr(
-    expr: &crate::ast::Expr,
+    expr: &crate::ir::hir::ResolvedExpr,
     out: &mut Vec<Vec<u8>>,
     idx: &mut HashMap<Vec<u8>, u32>,
 ) {
-    use crate::ast::{Expr, Literal, StrPart};
+    use crate::ast::Literal;
+    use crate::ir::hir::{ResolvedExpr, ResolvedStrPart};
     match expr {
-        Expr::Literal(Literal::Str(s)) => intern_literal(s.as_bytes().to_vec(), out, idx),
-        Expr::InterpolatedStr(parts) => {
+        ResolvedExpr::Literal(Literal::Str(s)) => intern_literal(s.as_bytes().to_vec(), out, idx),
+        ResolvedExpr::InterpolatedStr(parts) => {
             for p in parts {
                 match p {
-                    StrPart::Literal(s) => intern_literal(s.as_bytes().to_vec(), out, idx),
-                    StrPart::Parsed(inner) => {
+                    ResolvedStrPart::Literal(s) => intern_literal(s.as_bytes().to_vec(), out, idx),
+                    ResolvedStrPart::Parsed(inner) => {
                         collect_string_literals_in_expr(&inner.node, out, idx);
                     }
                 }
             }
         }
-        Expr::FnCall(callee, args) => {
-            collect_string_literals_in_expr(&callee.node, out, idx);
+        ResolvedExpr::Call(_, args) => {
             for a in args {
                 collect_string_literals_in_expr(&a.node, out, idx);
             }
         }
-        Expr::BinOp(_, l, r) => {
+        ResolvedExpr::BinOp(_, l, r) => {
             collect_string_literals_in_expr(&l.node, out, idx);
             collect_string_literals_in_expr(&r.node, out, idx);
         }
-        Expr::Neg(inner) => collect_string_literals_in_expr(&inner.node, out, idx),
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Neg(inner) => collect_string_literals_in_expr(&inner.node, out, idx),
+        ResolvedExpr::Match { subject, arms } => {
             collect_string_literals_in_expr(&subject.node, out, idx);
             for a in arms {
-                if let crate::ast::Pattern::Literal(Literal::Str(s)) = &a.pattern {
+                if let crate::ir::hir::ResolvedPattern::Literal(Literal::Str(s)) = &a.pattern {
                     intern_literal(s.as_bytes().to_vec(), out, idx);
                 }
                 collect_string_literals_in_expr(&a.body.node, out, idx);
             }
         }
-        Expr::TailCall(boxed) => {
-            for a in &boxed.args {
+        ResolvedExpr::TailCall { args, .. } => {
+            for a in args {
                 collect_string_literals_in_expr(&a.node, out, idx);
             }
         }
-        Expr::Attr(obj, _) => collect_string_literals_in_expr(&obj.node, out, idx),
-        Expr::ErrorProp(inner) => collect_string_literals_in_expr(&inner.node, out, idx),
-        Expr::Constructor(_, payload) => {
-            if let Some(p) = payload.as_deref() {
-                collect_string_literals_in_expr(&p.node, out, idx);
+        ResolvedExpr::Attr(obj, _) => collect_string_literals_in_expr(&obj.node, out, idx),
+        ResolvedExpr::ErrorProp(inner) => collect_string_literals_in_expr(&inner.node, out, idx),
+        ResolvedExpr::Ctor(_, args) => {
+            for a in args {
+                collect_string_literals_in_expr(&a.node, out, idx);
             }
         }
-        Expr::RecordCreate { fields, .. } => {
+        ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 collect_string_literals_in_expr(&e.node, out, idx);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             collect_string_literals_in_expr(&base.node, out, idx);
             for (_, e) in updates {
                 collect_string_literals_in_expr(&e.node, out, idx);
             }
         }
-        Expr::List(items) => {
+        ResolvedExpr::List(items) => {
             for item in items {
                 collect_string_literals_in_expr(&item.node, out, idx);
             }
         }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
             for item in items {
                 collect_string_literals_in_expr(&item.node, out, idx);
             }
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             for (k, v) in entries {
                 collect_string_literals_in_expr(&k.node, out, idx);
                 collect_string_literals_in_expr(&v.node, out, idx);
@@ -1846,99 +1822,96 @@ fn effect_implies_builtin_record(effect: &str, record_name: &str) -> bool {
 /// expressions to catch builtin calls like `String.chars` whose
 /// return type (`List<String>`) only appears as a stdlib signature.
 fn collect_lists_from_fn_body(
-    fd: &crate::ast::FnDef,
+    fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::{FnBody, Stmt};
-    let FnBody::Block(stmts) = fd.body.as_ref();
+    use crate::ir::hir::{ResolvedFnBody, ResolvedStmt};
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
-        if let Stmt::Binding(_, Some(annot), _) = stmt {
-            collect_lists_from_str(annot, out, order, next_idx);
+        if let ResolvedStmt::Binding {
+            ty_ann: Some(annot),
+            ..
+        } = stmt
+        {
+            collect_lists_from_str(&annot.display(), out, order, next_idx);
         }
         let expr = match stmt {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+            ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => &e.node,
         };
         collect_lists_from_expr(expr, out, order, next_idx);
     }
 }
 
 fn collect_lists_from_expr(
-    expr: &crate::ast::Expr,
+    expr: &crate::ir::hir::ResolvedExpr,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::Expr;
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
     match expr {
-        Expr::FnCall(callee, args) => {
+        ResolvedExpr::Call(callee, args) => {
             // `String.chars(s)` returns `List<String>` — register it
             // eagerly here since the canonical never appears in fn
             // signatures by itself.
-            if let Expr::Attr(parent, member) = &callee.node {
-                let parent_name = match &parent.node {
-                    Expr::Ident(n) => Some(n.as_str()),
-                    Expr::Resolved { name, .. } => Some(name.as_str()),
-                    _ => None,
-                };
-                if let Some(p) = parent_name {
-                    let dotted = format!("{p}.{member}");
-                    if dotted == "String.chars" {
-                        let canonical = "List<String>".to_string();
-                        if !out.contains_key(&canonical) {
-                            out.insert(canonical.clone(), *next_idx);
-                            order.push(canonical);
-                            *next_idx += 1;
-                        }
-                    }
+            if let ResolvedCallee::Builtin(name) = callee
+                && name == "String.chars"
+            {
+                let canonical = "List<String>".to_string();
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical);
+                    *next_idx += 1;
                 }
             }
-            collect_lists_from_expr(&callee.node, out, order, next_idx);
             for a in args {
                 collect_lists_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::BinOp(_, l, r) => {
+        ResolvedExpr::BinOp(_, l, r) => {
             collect_lists_from_expr(&l.node, out, order, next_idx);
             collect_lists_from_expr(&r.node, out, order, next_idx);
         }
-        Expr::Neg(inner) => collect_lists_from_expr(&inner.node, out, order, next_idx),
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Neg(inner) => collect_lists_from_expr(&inner.node, out, order, next_idx),
+        ResolvedExpr::Match { subject, arms } => {
             collect_lists_from_expr(&subject.node, out, order, next_idx);
             for arm in arms {
                 collect_lists_from_expr(&arm.body.node, out, order, next_idx);
             }
         }
-        Expr::TailCall(boxed) => {
-            for a in &boxed.args {
+        ResolvedExpr::TailCall { args, .. } => {
+            for a in args {
                 collect_lists_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::Attr(obj, _) => collect_lists_from_expr(&obj.node, out, order, next_idx),
-        Expr::RecordCreate { fields, .. } => {
+        ResolvedExpr::Attr(obj, _) => collect_lists_from_expr(&obj.node, out, order, next_idx),
+        ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 collect_lists_from_expr(&e.node, out, order, next_idx);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             collect_lists_from_expr(&base.node, out, order, next_idx);
             for (_, e) in updates {
                 collect_lists_from_expr(&e.node, out, order, next_idx);
             }
         }
-        Expr::Constructor(_, payload) => {
-            if let Some(p) = payload.as_deref() {
-                collect_lists_from_expr(&p.node, out, order, next_idx);
+        ResolvedExpr::Ctor(_, args) => {
+            for a in args {
+                collect_lists_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
             for it in items {
                 collect_lists_from_expr(&it.node, out, order, next_idx);
             }
         }
-        Expr::ErrorProp(inner) => collect_lists_from_expr(&inner.node, out, order, next_idx),
-        Expr::List(items) => {
+        ResolvedExpr::ErrorProp(inner) => {
+            collect_lists_from_expr(&inner.node, out, order, next_idx)
+        }
+        ResolvedExpr::List(items) => {
             for x in items {
                 collect_lists_from_expr(&x.node, out, order, next_idx);
             }

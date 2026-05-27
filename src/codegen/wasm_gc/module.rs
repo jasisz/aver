@@ -94,38 +94,34 @@ use super::wasip2_helpers::{
 use super::wat_helper;
 use crate::types::Type as AverType;
 
-use crate::ast::{Expr, FnDef, Stmt, TopLevel, TypeDef};
+use crate::ast::{FnDef, TopLevel, TypeDef};
 
-pub(super) fn emit_module_with(
+/// Resolved-HIR view of the wasm-gc backend's post-flatten compile
+/// unit. The pipeline-built `CodegenContext.resolved_fn_defs` is keyed
+/// against pre-flatten items (cross-module names like `Fractal.render`
+/// still reference their owning module); `flatten_multimodule` runs
+/// AFTER pipeline and rewrites those into single-module flat names
+/// (`Fractal_render`), so a fresh resolver pass against the flattened
+/// items is the source of truth this backend uses.
+///
+/// Naming the invariant in a helper is deliberate — calling code in
+/// `emit_module_with` reads `view.resolved_fn_defs` and the rebuild
+/// stays local to this backend. PR 9.3 (Phase E roadmap, #147) decides
+/// whether `flatten` moves into the pipeline so a shared
+/// `CodegenContext` covers wasm-gc too, or whether this backend keeps a
+/// formal post-flatten codegen view.
+struct FlattenedResolvedView {
+    symbol_table: crate::ir::SymbolTable,
+    resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef>,
+}
+
+fn build_flattened_resolved_view(
     items: &[TopLevel],
-    handler_name: Option<&str>,
-    target: super::TargetMode,
-) -> Result<Vec<u8>, WasmGcError> {
-    let registry = TypeRegistry::build_with_handler(items, handler_name.is_some());
-
-    // Lazy caller_fn name registry — populated during user-fn body
-    // emit by `emit_caller_fn_idx` call sites. Threaded into every
-    // `emit_fn_body` call via `EmitCtx::caller_fn_collector`. The
-    // post-emit phase reads `collector.names` to materialise the
-    // exported caller-fn name table (`__caller_fn_count` +
-    // `__caller_fn_name`) and the matching passive data segments.
-    let caller_fn_collector = std::cell::RefCell::new(super::body::CallerFnCollector::default());
-
-    let fn_defs: Vec<&FnDef> = items
-        .iter()
-        .filter_map(|it| match it {
-            TopLevel::FnDef(fd) => Some(fd),
-            _ => None,
-        })
-        .collect();
-
-    // Phase E PR 9.1 — build the resolver `SymbolTable` once and lift
-    // every `FnDef` to its resolved-HIR shape so `emit_fn_body` (and
-    // the dispatch sites it threads into) can read identity off
-    // `ResolvedExpr` / `ResolvedCallee` / `ResolvedCtor` directly.
-    // Wasm-gc emits a single flattened module — `dep_modules` is
-    // empty by construction; flatten.rs has already merged dep fns
-    // into `items`.
+    fn_defs: &[&FnDef],
+) -> Result<FlattenedResolvedView, WasmGcError> {
+    // Wasm-gc emits a single flattened module — `dep_modules` is empty
+    // by construction; `flatten_multimodule` has already merged dep
+    // fns into `items` with prefixed names.
     let symbol_table = crate::ir::SymbolTable::build(items, &[]);
     let resolve_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
     let resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef> = fn_defs
@@ -139,6 +135,40 @@ pub(super) fn emit_module_with(
             fn_defs.len()
         )));
     }
+    Ok(FlattenedResolvedView {
+        symbol_table,
+        resolved_fn_defs,
+    })
+}
+
+pub(super) fn emit_module_with(
+    items: &[TopLevel],
+    handler_name: Option<&str>,
+    target: super::TargetMode,
+) -> Result<Vec<u8>, WasmGcError> {
+    let fn_defs: Vec<&FnDef> = items
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+
+    let FlattenedResolvedView {
+        symbol_table,
+        resolved_fn_defs,
+    } = build_flattened_resolved_view(items, &fn_defs)?;
+
+    let registry =
+        TypeRegistry::build_with_handler(items, &resolved_fn_defs, handler_name.is_some());
+
+    // Lazy caller_fn name registry — populated during user-fn body
+    // emit by `emit_caller_fn_idx` call sites. Threaded into every
+    // `emit_fn_body` call via `EmitCtx::caller_fn_collector`. The
+    // post-emit phase reads `collector.names` to materialise the
+    // exported caller-fn name table (`__caller_fn_count` +
+    // `__caller_fn_name`) and the matching passive data segments.
+    let caller_fn_collector = std::cell::RefCell::new(super::body::CallerFnCollector::default());
 
     // Discover used pure-builtins. Walk every fn body looking for
     // `FnCall` whose callee is `Attr(_, "method")` and the dotted
@@ -149,7 +179,7 @@ pub(super) fn emit_module_with(
     let mut effect_registry = EffectRegistry::new();
     let mut eq_helpers_registry = EqHelperRegistry::new();
     let mut hash_helpers_registry = HashHelperRegistry::new();
-    for fd in &fn_defs {
+    for fd in &resolved_fn_defs {
         discover_builtins_in_fn(
             fd,
             &mut builtin_registry,
@@ -767,7 +797,7 @@ pub(super) fn emit_module_with(
     // 7) List / Vector.fromList / String.split-join helpers — per-T
     //    instantiation list ops, plus singleton split/join when the
     //    surface code uses them.
-    let needs_split_join = items_use_string_split_join(items);
+    let needs_split_join = fn_defs_use_string_split_join(&resolved_fn_defs);
     let mut list_helpers = super::lists::ListHelperRegistry::default();
     list_helpers.assign_slots(
         &registry.list_order,
@@ -4446,27 +4476,28 @@ fn emit_user_types(
 /// any wasm bytes get emitted, so slot allocation can run with the
 /// full set known.
 fn discover_builtins_in_fn(
-    fd: &FnDef,
+    fd: &crate::ir::hir::ResolvedFnDef,
     builtins: &mut BuiltinRegistry,
     effects: &mut EffectRegistry,
     eq_helpers: &mut EqHelperRegistry,
     type_registry: &TypeRegistry,
 ) {
-    let crate::ast::FnBody::Block(stmts) = fd.body.as_ref();
+    let crate::ir::hir::ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
         discover_builtins_in_stmt(stmt, builtins, effects, eq_helpers, type_registry);
     }
 }
 
 fn discover_builtins_in_stmt(
-    stmt: &Stmt,
+    stmt: &crate::ir::hir::ResolvedStmt,
     builtins: &mut BuiltinRegistry,
     effects: &mut EffectRegistry,
     eq_helpers: &mut EqHelperRegistry,
     type_registry: &TypeRegistry,
 ) {
     match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => {
+        crate::ir::hir::ResolvedStmt::Binding { value: e, .. }
+        | crate::ir::hir::ResolvedStmt::Expr(e) => {
             discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry)
         }
     }
@@ -4525,23 +4556,20 @@ fn register_nominal_in_type(
 }
 
 fn discover_builtins_in_expr(
-    expr: &Expr,
+    expr: &crate::ir::hir::ResolvedExpr,
     builtins: &mut BuiltinRegistry,
     effects: &mut EffectRegistry,
     eq_helpers: &mut EqHelperRegistry,
     type_registry: &TypeRegistry,
 ) {
-    use crate::ast::StrPart;
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStrPart};
     match expr {
-        Expr::FnCall(callee, args) => {
-            if let Expr::Attr(_parent, member) = &callee.node
-                && let Some(parent_name) = expr_to_dotted_head(&callee.node)
-            {
-                let dotted = format!("{parent_name}.{member}");
-                if let Some(name) = BuiltinName::from_dotted(&dotted) {
+        ResolvedExpr::Call(callee, args) => {
+            if let ResolvedCallee::Builtin(dotted) = callee {
+                if let Some(name) = BuiltinName::from_dotted(dotted) {
                     builtins.register(name);
                 }
-                if let Some(name) = EffectName::from_dotted(&dotted) {
+                if let Some(name) = EffectName::from_dotted(dotted) {
                     effects.register(name);
                 }
                 // `Args.get()` (no args, returns List<String>) lowers
@@ -4564,12 +4592,11 @@ fn discover_builtins_in_expr(
                     builtins.register(BuiltinName::IntModEuclid);
                 }
             }
-            discover_builtins_in_expr(&callee.node, builtins, effects, eq_helpers, type_registry);
             for arg in args {
                 discover_builtins_in_expr(&arg.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::BinOp(op, l, r) => {
+        ResolvedExpr::BinOp(op, l, r) => {
             // String `+` lowers to `__wasmgc_concat_n`; String `==`/`!=`
             // lower to `__wasmgc_string_eq`. Both helpers must be
             // registered up front so emit can `Call` them by index.
@@ -4620,10 +4647,10 @@ fn discover_builtins_in_expr(
             discover_builtins_in_expr(&l.node, builtins, effects, eq_helpers, type_registry);
             discover_builtins_in_expr(&r.node, builtins, effects, eq_helpers, type_registry);
         }
-        Expr::Neg(inner) => {
+        ResolvedExpr::Neg(inner) => {
             discover_builtins_in_expr(&inner.node, builtins, effects, eq_helpers, type_registry);
         }
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Match { subject, arms } => {
             discover_builtins_in_expr(&subject.node, builtins, effects, eq_helpers, type_registry);
             // String-subject match (`match path { "/" -> ... }`)
             // needs `StringEq` to compare each non-default arm's
@@ -4632,7 +4659,7 @@ fn discover_builtins_in_expr(
             if arms.iter().any(|a| {
                 matches!(
                     &a.pattern,
-                    crate::ast::Pattern::Literal(crate::ast::Literal::Str(_))
+                    crate::ir::hir::ResolvedPattern::Literal(crate::ast::Literal::Str(_))
                 )
             }) {
                 builtins.register(BuiltinName::StringEq);
@@ -4647,28 +4674,28 @@ fn discover_builtins_in_expr(
                 );
             }
         }
-        Expr::TailCall(boxed) => {
-            for arg in &boxed.args {
+        ResolvedExpr::TailCall { args, .. } => {
+            for arg in args {
                 discover_builtins_in_expr(&arg.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::Attr(obj, _) => {
+        ResolvedExpr::Attr(obj, _) => {
             discover_builtins_in_expr(&obj.node, builtins, effects, eq_helpers, type_registry)
         }
-        Expr::ErrorProp(inner) => {
+        ResolvedExpr::ErrorProp(inner) => {
             discover_builtins_in_expr(&inner.node, builtins, effects, eq_helpers, type_registry)
         }
-        Expr::Constructor(_, payload) => {
-            if let Some(p) = payload.as_deref() {
-                discover_builtins_in_expr(&p.node, builtins, effects, eq_helpers, type_registry);
+        ResolvedExpr::Ctor(_, args) => {
+            for a in args {
+                discover_builtins_in_expr(&a.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::RecordCreate { fields, .. } => {
+        ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             discover_builtins_in_expr(&base.node, builtins, effects, eq_helpers, type_registry);
             for (_, e) in updates {
                 discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry);
@@ -4680,7 +4707,7 @@ fn discover_builtins_in_expr(
         // part may also need `String.fromInt` (if its type is Int) —
         // we conservatively register that too; unused registrations
         // are stripped by `wasm-opt -Oz`.
-        Expr::InterpolatedStr(parts) => {
+        ResolvedExpr::InterpolatedStr(parts) => {
             // Variadic concat is mandatory; the per-type stringifiers
             // are registered conservatively whenever interpolation
             // exists in the program — unused registrations get DCE'd
@@ -4691,7 +4718,7 @@ fn discover_builtins_in_expr(
             builtins.register(BuiltinName::StringFromFloat);
             builtins.register(BuiltinName::StringFromBool);
             for p in parts {
-                if let StrPart::Parsed(inner) = p {
+                if let ResolvedStrPart::Parsed(inner) = p {
                     discover_builtins_in_expr(
                         &inner.node,
                         builtins,
@@ -4702,17 +4729,17 @@ fn discover_builtins_in_expr(
                 }
             }
         }
-        Expr::List(items) => {
+        ResolvedExpr::List(items) => {
             for item in items {
                 discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::Tuple(items) => {
+        ResolvedExpr::Tuple(items) => {
             for item in items {
                 discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::IndependentProduct(items, _) => {
             // `?!` and `!` lower as sequential evaluation in wasm-gc,
             // but the recorder still needs the structural-scope
             // markers (`enter_group`, `set_branch`, `exit_group`) so
@@ -4728,7 +4755,7 @@ fn discover_builtins_in_expr(
                 discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
             }
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             for (k, v) in entries {
                 discover_builtins_in_expr(&k.node, builtins, effects, eq_helpers, type_registry);
                 discover_builtins_in_expr(&v.node, builtins, effects, eq_helpers, type_registry);
@@ -4741,66 +4768,44 @@ fn discover_builtins_in_expr(
 /// True iff any reachable fn body calls `String.split` or `String.join`.
 /// Used to gate registration of the (T=String) split/join helpers in
 /// `lists::ListHelperRegistry::assign_slots`.
-fn items_use_string_split_join(items: &[TopLevel]) -> bool {
-    use crate::ast::{Expr, FnBody, Stmt};
-    fn walk(e: &Expr) -> bool {
+fn fn_defs_use_string_split_join(fn_defs: &[crate::ir::hir::ResolvedFnDef]) -> bool {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedStmt};
+    fn walk(e: &ResolvedExpr) -> bool {
         match e {
-            Expr::FnCall(callee, args) => {
-                if let Expr::Attr(_parent, member) = &callee.node
-                    && let Some(p) = expr_to_dotted_head(&callee.node)
-                    && p == "String"
-                    && (member == "split" || member == "join")
+            ResolvedExpr::Call(callee, args) => {
+                if let ResolvedCallee::Builtin(name) = callee
+                    && (name == "String.split" || name == "String.join")
                 {
                     return true;
                 }
-                walk(&callee.node) || args.iter().any(|a| walk(&a.node))
+                args.iter().any(|a| walk(&a.node))
             }
-            Expr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
-            Expr::Neg(inner) => walk(&inner.node),
-            Expr::Match { subject, arms } => {
+            ResolvedExpr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
+            ResolvedExpr::Neg(inner) => walk(&inner.node),
+            ResolvedExpr::Match { subject, arms } => {
                 walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
             }
-            Expr::TailCall(boxed) => boxed.args.iter().any(|a| walk(&a.node)),
-            Expr::Attr(obj, _) => walk(&obj.node),
-            Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
-            Expr::Constructor(_, payload) => {
-                payload.as_deref().map(|p| walk(&p.node)).unwrap_or(false)
-            }
-            Expr::List(items) => items.iter().any(|x| walk(&x.node)),
-            Expr::InterpolatedStr(_) => false,
+            ResolvedExpr::TailCall { args, .. } => args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::Attr(obj, _) => walk(&obj.node),
+            ResolvedExpr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
+            ResolvedExpr::Ctor(_, args) => args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::List(items) => items.iter().any(|x| walk(&x.node)),
+            ResolvedExpr::InterpolatedStr(_) => false,
             _ => false,
         }
     }
-    for item in items {
-        if let TopLevel::FnDef(fd) = item {
-            let FnBody::Block(stmts) = fd.body.as_ref();
-            for stmt in stmts {
-                let e = match stmt {
-                    Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
-                };
-                if walk(e) {
-                    return true;
-                }
+    for fd in fn_defs {
+        let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
+        for stmt in stmts {
+            let e = match stmt {
+                ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => &e.node,
+            };
+            if walk(e) {
+                return true;
             }
         }
     }
     false
-}
-
-/// Extract `Parent` from an `Attr(Parent, _)` callee — the parent is
-/// either an Ident or a Resolved local. Anything else (chained Attr,
-/// fn call result) returns None and the dispatch falls through to a
-/// regular fn call.
-fn expr_to_dotted_head(expr: &Expr) -> Option<&str> {
-    if let Expr::Attr(parent, _) = expr {
-        match &parent.node {
-            Expr::Ident(n) => Some(n.as_str()),
-            Expr::Resolved { name, .. } => Some(name.as_str()),
-            _ => None,
-        }
-    } else {
-        None
-    }
 }
 
 /// `__rt_list_string_cons(head, tail) -> list`. Lets the JS host
