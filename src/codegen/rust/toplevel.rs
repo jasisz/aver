@@ -555,16 +555,48 @@ fn collect_fn_local_types(fd: &FnDef, ctx: &CodegenContext) -> HashMap<String, T
     local_types
 }
 
+/// Collect local_types directly from a `ResolvedFnDef`'s already-
+/// parsed `params: Vec<(String, Type)>`. **Epic #180 Phase 3**: this
+/// is the typed-HIR path — no `ctx.fn_sigs.get(...)` side-channel,
+/// no `parse_type_str(string)` recompute. The resolved view's
+/// params are the canonical source of truth post-typecheck.
+fn collect_fn_local_types_from_resolved(
+    resolved: &crate::ir::hir::ResolvedFnDef,
+) -> HashMap<String, Type> {
+    resolved
+        .params
+        .iter()
+        .map(|(name, ty)| (name.clone(), ty.clone()))
+        .collect()
+}
+
 /// Build an EmitCtx for a function from its parameter types in fn_sigs.
 /// Uses borrow-by-default: non-Copy, non-Str params are tracked as borrowed.
 fn build_fn_ectx(fd: &FnDef, ctx: &CodegenContext, scope: Option<&str>) -> EmitCtx {
     EmitCtx::for_fn(collect_fn_local_types(fd, ctx)).with_scope(scope)
 }
 
+/// Typed-HIR variant of [`build_fn_ectx`]. Reads param types from the
+/// `ResolvedFnDef` directly — epic #180 Phase 3 migration path.
+fn build_fn_ectx_from_resolved(
+    resolved: &crate::ir::hir::ResolvedFnDef,
+    scope: Option<&str>,
+) -> EmitCtx {
+    EmitCtx::for_fn(collect_fn_local_types_from_resolved(resolved)).with_scope(scope)
+}
+
 /// Build an EmitCtx for a function WITHOUT borrow-by-default.
 /// Used for TCO and memo functions where params need to be owned/mutable.
 fn build_fn_ectx_no_borrow(fd: &FnDef, ctx: &CodegenContext, scope: Option<&str>) -> EmitCtx {
     EmitCtx::for_fn_no_borrow(collect_fn_local_types(fd, ctx)).with_scope(scope)
+}
+
+/// Typed-HIR variant of [`build_fn_ectx_no_borrow`].
+fn build_fn_ectx_no_borrow_from_resolved(
+    resolved: &crate::ir::hir::ResolvedFnDef,
+    scope: Option<&str>,
+) -> EmitCtx {
+    EmitCtx::for_fn_no_borrow(collect_fn_local_types_from_resolved(resolved)).with_scope(scope)
 }
 
 /// Emit a Rust function from an Aver FnDef.
@@ -642,10 +674,14 @@ fn emit_fn_def_with_visibility(
     // TCO functions need owned/mutable params, no borrow-by-default.
     // Memo functions always use borrow-by-default (memo wrapper takes &T).
     // Normal functions use borrow-by-default for non-Copy, non-Str params.
+    // **Epic #180 Phase 3**: read param types directly from the
+    // `ResolvedFnDef` (typed-HIR canonical source) instead of the
+    // legacy `ctx.fn_sigs.get(name)` + `parse_type_str(string)`
+    // side-channel chain.
     let ectx = if has_tco && !use_memo {
-        build_fn_ectx_no_borrow(fd, ctx, scope)
+        build_fn_ectx_no_borrow_from_resolved(resolved_fd, scope)
     } else {
-        build_fn_ectx(fd, ctx, scope)
+        build_fn_ectx_from_resolved(resolved_fd, scope)
     };
 
     let guest_args_name = if is_guest_entry {
