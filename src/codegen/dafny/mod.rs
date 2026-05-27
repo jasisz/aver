@@ -135,27 +135,41 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             .and_then(|fd| crate::codegen::common::fn_owning_scope_for(ctx, fd))
             .map(|s| s.to_string())
             .unwrap_or_default();
-        // Try native `decreases` tuple first — when every member has a
-        // sizeOf-measurable parameter and a classifier rank, the SCC
-        // emits as plain mutual functions and proofs over concrete
-        // values no longer hit the fuel-encoding's symbolic-unfolding
-        // ceiling (BigInt's 10⁹ pairs close as real samples instead of
-        // needing the literal-magnitude cutoff). Falls back to fuel
-        // when the SCC has a non-sizeOf member.
-        if let Some(code) = fuel::emit_mutual_native_decreases_group(&scc_fns, ctx) {
-            fuel_per_scope.entry(scope).or_default().push(code);
-            insert_fn_ids(&mut native_emitted, &scc_fns);
+        // Mutual SCC emit resolves fn bodies through `emit_fn_body` →
+        // `emit_expr_legacy`, which falls back to
+        // `ctx.active_module_scope()` when no explicit scope is passed.
+        // Wrap the fuel/native dispatch in `with_module_scope` so a
+        // module-owned mutual group doesn't resolve as if it were
+        // entry-scope (same shape as the pure-fn path in
+        // `route_pure_components_per_scope` below).
+        let scope_opt = if scope.is_empty() {
+            None
         } else {
-            match fuel::emit_mutual_fuel_group(&scc_fns, ctx) {
-                Some(code) => {
-                    fuel_per_scope.entry(scope).or_default().push(code);
-                    insert_fn_ids(&mut fuel_emitted, &scc_fns);
-                }
-                None => {
-                    insert_fn_ids(&mut axiom_fn_ids, &scc_fns);
+            Some(scope.as_str())
+        };
+        ctx.with_module_scope(scope_opt, || {
+            // Try native `decreases` tuple first — when every member has a
+            // sizeOf-measurable parameter and a classifier rank, the SCC
+            // emits as plain mutual functions and proofs over concrete
+            // values no longer hit the fuel-encoding's symbolic-unfolding
+            // ceiling (BigInt's 10⁹ pairs close as real samples instead of
+            // needing the literal-magnitude cutoff). Falls back to fuel
+            // when the SCC has a non-sizeOf member.
+            if let Some(code) = fuel::emit_mutual_native_decreases_group(&scc_fns, ctx) {
+                fuel_per_scope.entry(scope.clone()).or_default().push(code);
+                insert_fn_ids(&mut native_emitted, &scc_fns);
+            } else {
+                match fuel::emit_mutual_fuel_group(&scc_fns, ctx) {
+                    Some(code) => {
+                        fuel_per_scope.entry(scope.clone()).or_default().push(code);
+                        insert_fn_ids(&mut fuel_emitted, &scc_fns);
+                    }
+                    None => {
+                        insert_fn_ids(&mut axiom_fn_ids, &scc_fns);
+                    }
                 }
             }
-        }
+        });
     }
 
     let needs_axiom_for_error_prop = |fd: &FnDef| -> bool {

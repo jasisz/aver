@@ -557,7 +557,9 @@ impl CodegenContext {
     /// wrap their per-module emit calls with this so legacy
     /// resolve-on-demand adapters see the correct prefix.
     pub fn with_module_scope<R>(&self, scope: Option<&str>, f: impl FnOnce() -> R) -> R {
-        let prev = self.current_module_scope.replace(scope.map(|s| s.to_string()));
+        let prev = self
+            .current_module_scope
+            .replace(scope.map(|s| s.to_string()));
         let out = f();
         *self.current_module_scope.borrow_mut() = prev;
         out
