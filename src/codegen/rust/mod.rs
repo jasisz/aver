@@ -473,21 +473,45 @@ fn entry_module_sections(
         ));
     }
 
-    // temporary-migration-bridge: this loop emits every entry-scope
-    // fn def by walking the AST `ctx.fn_defs`. Identity-sensitive
-    // decisions inside the loop (`fn_id_for_decl`, mutual-TCO membership)
-    // already route through the symbol table → `FnId`, so cross-module
-    // bare-name collisions can't reach this site. PR D swaps the
-    // iteration substrate to `ctx.resolved_program.entry_fns()` once
-    // `emit_public_fn_def` accepts `&ResolvedFnDef`.
+    // Epic #170 Phase 4: emit each entry fn from a paired
+    // (`&FnDef`, `&ResolvedFnDef`) input. The AST view carries
+    // source-shape metadata the emitter still reads (param
+    // annotations, effects), the resolved view carries the body the
+    // expr emitter walks. `ctx.resolved_program.fn_by_id(fn_id)`
+    // is the identity-keyed lookup — no bare-name walk over the
+    // resolved list.
     for fd in &ctx.fn_defs {
-        let is_mutual = crate::codegen::common::fn_id_for_decl(ctx, fd)
-            .is_some_and(|id| ctx.mutual_tco_members.contains(&id));
+        let Some(fn_id) = crate::codegen::common::fn_id_for_decl(ctx, fd) else {
+            continue;
+        };
+        let is_mutual = ctx.mutual_tco_members.contains(&fn_id);
         if fd.name == "main" || is_mutual {
             continue;
         }
+        let Some(resolved_fd) = ctx.resolved_program.fn_by_id(fn_id) else {
+            // Synthetic FnDefs (memo wrappers, TCO hoists) inserted
+            // post-pipeline don't have a resolved twin yet — fall back
+            // to on-demand resolve for those. `temporary-migration-bridge`:
+            // PR E moves synthetic-fn resolve into a typed builder.
+            let resolved_owned = ctx.resolve_fn_def(fd, None);
+            let is_memo = ctx.memo_fns.contains(&fd.name);
+            sections.push(toplevel::emit_public_fn_def(
+                fd,
+                resolved_owned.as_ref(),
+                is_memo,
+                ctx,
+                None,
+            ));
+            continue;
+        };
         let is_memo = ctx.memo_fns.contains(&fd.name);
-        sections.push(toplevel::emit_public_fn_def(fd, is_memo, ctx, None));
+        sections.push(toplevel::emit_public_fn_def(
+            fd,
+            resolved_fd,
+            is_memo,
+            ctx,
+            None,
+        ));
     }
 
     if main_fn.is_some() || !top_level_stmts.is_empty() {
@@ -552,8 +576,24 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             continue;
         }
         let is_memo = ctx.memo_fns.contains(&fd.name);
+        // Same pair-API as the entry loop above. Module fns route
+        // through `fn_id_for_decl` (pointer-eq scope on `&FnDef`) →
+        // `resolved_program.fn_by_id(fn_id)` so a same-bare-name
+        // entry-scope twin never accidentally provides this body.
+        let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+            .and_then(|id| ctx.resolved_program.fn_by_id(id));
+        let resolved_owned = if resolved_fd.is_some() {
+            None
+        } else {
+            // temporary-migration-bridge: synthetic / mid-rewrite fns
+            // fall back to on-demand resolve in the dep scope.
+            Some(ctx.resolve_fn_def(fd, Some(&module.prefix)))
+        };
+        let resolved_ref: &crate::ir::hir::ResolvedFnDef =
+            resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
         sections.push(toplevel::emit_public_fn_def(
             fd,
+            resolved_ref,
             is_memo,
             ctx,
             Some(&module.prefix),
