@@ -8,7 +8,7 @@ mod shared;
 mod spec;
 
 use super::VerifyEmitMode;
-use super::expr::{aver_name_to_lean, emit_expr};
+use super::expr::{aver_name_to_lean, emit_expr_legacy};
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
@@ -182,8 +182,8 @@ pub fn emit_verify_law_forall_auto_proof(
                 vec![
                     format!(
                         "change {} = {}",
-                        emit_expr(unfolded_impl, ctx),
-                        emit_expr(unfolded_spec, ctx)
+                        emit_expr_legacy(unfolded_impl, ctx, None),
+                        emit_expr_legacy(unfolded_spec, ctx, None)
                     ),
                     "omega".to_string(),
                 ],
@@ -273,7 +273,7 @@ pub fn emit_verify_law_forall_auto_proof(
                     _ => unreachable!(),
                 };
                 let atom_arg = |e: &crate::ast::Spanned<crate::ast::Expr>| {
-                    let rendered = emit_expr(e, ctx);
+                    let rendered = emit_expr_legacy(e, ctx, None);
                     if rendered.contains(' ') && !rendered.starts_with('(') {
                         format!("({rendered})")
                     } else {
@@ -316,7 +316,7 @@ pub fn emit_verify_law_forall_auto_proof(
                 let extras_lean: Vec<String> =
                     extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
                 let atom_render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
-                    let rendered = emit_expr(e, ctx);
+                    let rendered = emit_expr_legacy(e, ctx, None);
                     if rendered.contains(' ') && !rendered.starts_with('(') {
                         format!("({rendered})")
                     } else {
@@ -373,7 +373,7 @@ pub fn emit_verify_law_forall_auto_proof(
             {
                 let outer_lean = aver_name_to_lean(outer_fn);
                 let atom_render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
-                    let rendered = emit_expr(e, ctx);
+                    let rendered = emit_expr_legacy(e, ctx, None);
                     if rendered.contains(' ') && !rendered.starts_with('(') {
                         format!("({rendered})")
                     } else {
@@ -488,7 +488,7 @@ fn emit_simp_omega_from_ir(
                             &g.param,
                             n,
                         );
-                        emit_expr(&substituted, ctx)
+                        emit_expr_legacy(&substituted, ctx, None)
                     }
                     None => format!("{n} ≥ 0"),
                 };

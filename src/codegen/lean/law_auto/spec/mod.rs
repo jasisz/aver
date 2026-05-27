@@ -8,7 +8,7 @@ use crate::ast::{Expr, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
-use super::super::expr::emit_expr;
+use super::super::expr::emit_expr_legacy;
 use super::shared::{body_terminal_expr, callee_matches_name, find_fn_def, law_simp_defs};
 use super::{AutoProof, intro_then};
 
@@ -164,7 +164,8 @@ pub(super) fn emit_spec_function_equivalence_law(
     let spec_fd = find_fn_def(ctx, &spec_ref.spec_fn_name)?;
     let impl_body = body_terminal_expr(impl_fd.body.as_ref())?;
     let spec_body = body_terminal_expr(spec_fd.body.as_ref())?;
-    let bodies_match_exactly = emit_expr(impl_body, ctx) == emit_expr(spec_body, ctx);
+    let bodies_match_exactly =
+        emit_expr_legacy(impl_body, ctx, None) == emit_expr_legacy(spec_body, ctx, None);
 
     let try_side = |impl_side: &Spanned<Expr>, spec_side: &Spanned<Expr>| -> Option<AutoProof> {
         let Expr::FnCall(impl_callee, impl_args) = &impl_side.node else {

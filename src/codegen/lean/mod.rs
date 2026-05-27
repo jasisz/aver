@@ -1227,49 +1227,52 @@ fn transpile_unified(
     let pure_per_scope = crate::codegen::common::route_pure_components_per_scope(
         ctx,
         toplevel::is_pure_fn,
-        |comp| {
-            let mut out: Vec<String> = Vec::new();
-            if comp.len() > 1 {
-                let code = match emit_mode {
-                    LeanEmitMode::Proof => {
-                        let all_supported = comp
-                            .iter()
-                            .all(|fd| crate::codegen::common::fn_contract_exists_for_fn(ctx, fd));
-                        if all_supported {
-                            toplevel::emit_mutual_group_proof(comp, ctx)
-                        } else {
-                            toplevel::emit_mutual_group(comp, ctx)
+        |comp, scope| {
+            let scope_opt = if scope.is_empty() { None } else { Some(scope) };
+            ctx.with_module_scope(scope_opt, || {
+                let mut out: Vec<String> = Vec::new();
+                if comp.len() > 1 {
+                    let code = match emit_mode {
+                        LeanEmitMode::Proof => {
+                            let all_supported = comp.iter().all(|fd| {
+                                crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
+                            });
+                            if all_supported {
+                                toplevel::emit_mutual_group_proof(comp, ctx)
+                            } else {
+                                toplevel::emit_mutual_group(comp, ctx)
+                            }
                         }
-                    }
-                    LeanEmitMode::Standard => toplevel::emit_mutual_group(comp, ctx),
-                };
-                out.push(code);
-                out.push(String::new());
-            } else if let Some(fd) = comp.first() {
-                let emitted = match emit_mode {
-                    LeanEmitMode::Proof => {
-                        let is_recursive = recursive_names.contains(&fd.name);
-                        // ProofIR's `fn_contracts` holds an entry only for
-                        // recursive fns the ContractLower stage could
-                        // classify. Recursive fns without a contract land
-                        // in `unclassified_fns` and fall through to the
-                        // partial/non-recursive emit.
-                        if is_recursive
-                            && !crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
-                        {
-                            toplevel::emit_fn_def(fd, &recursive_names, ctx)
-                        } else {
-                            toplevel::emit_fn_def_proof(fd, ctx)
-                        }
-                    }
-                    LeanEmitMode::Standard => toplevel::emit_fn_def(fd, &recursive_fns, ctx),
-                };
-                if let Some(code) = emitted {
+                        LeanEmitMode::Standard => toplevel::emit_mutual_group(comp, ctx),
+                    };
                     out.push(code);
                     out.push(String::new());
+                } else if let Some(fd) = comp.first() {
+                    let emitted = match emit_mode {
+                        LeanEmitMode::Proof => {
+                            let is_recursive = recursive_names.contains(&fd.name);
+                            // ProofIR's `fn_contracts` holds an entry only for
+                            // recursive fns the ContractLower stage could
+                            // classify. Recursive fns without a contract land
+                            // in `unclassified_fns` and fall through to the
+                            // partial/non-recursive emit.
+                            if is_recursive
+                                && !crate::codegen::common::fn_contract_exists_for_fn(ctx, fd)
+                            {
+                                toplevel::emit_fn_def(fd, &recursive_names, ctx)
+                            } else {
+                                toplevel::emit_fn_def_proof(fd, ctx)
+                            }
+                        }
+                        LeanEmitMode::Standard => toplevel::emit_fn_def(fd, &recursive_fns, ctx),
+                    };
+                    if let Some(code) = emitted {
+                        out.push(code);
+                        out.push(String::new());
+                    }
                 }
-            }
-            out
+                out
+            })
         },
     );
 
@@ -1308,24 +1311,27 @@ fn transpile_unified(
 
     for module in &ctx.modules {
         let mut body_sections: Vec<String> = Vec::new();
-        for td in &module.type_defs {
-            body_sections.push(toplevel::emit_type_def_in_scope(
-                td,
-                ctx,
-                Some(module.prefix.as_str()),
-            ));
-            if toplevel::is_recursive_type_def(td) {
-                body_sections.push(toplevel::emit_recursive_decidable_eq(
-                    toplevel::type_def_name(td),
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for td in &module.type_defs {
+                body_sections.push(toplevel::emit_type_def_in_scope(
+                    td,
+                    ctx,
+                    Some(module.prefix.as_str()),
                 ));
-                if matches!(emit_mode, LeanEmitMode::Proof)
-                    && let Some(measure) = toplevel::emit_recursive_measure(td, &recursive_types)
-                {
-                    body_sections.push(measure);
+                if toplevel::is_recursive_type_def(td) {
+                    body_sections.push(toplevel::emit_recursive_decidable_eq(
+                        toplevel::type_def_name(td),
+                    ));
+                    if matches!(emit_mode, LeanEmitMode::Proof)
+                        && let Some(measure) =
+                            toplevel::emit_recursive_measure(td, &recursive_types)
+                    {
+                        body_sections.push(measure);
+                    }
                 }
+                body_sections.push(String::new());
             }
-            body_sections.push(String::new());
-        }
+        });
         if let Some(scope_sections) = pure_per_scope.by_scope.get(&module.prefix) {
             body_sections.extend(scope_sections.clone());
         }
@@ -1560,6 +1566,7 @@ mod tests {
             symbol_table: crate::ir::SymbolTable::default(),
             resolved_fn_defs: Vec::new(),
             resolved_module_fn_defs: Vec::new(),
+            current_module_scope: std::cell::RefCell::new(None),
         }
     }
 
