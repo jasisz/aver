@@ -96,51 +96,6 @@ use crate::types::Type as AverType;
 
 use crate::ast::{FnDef, TopLevel, TypeDef};
 
-/// Resolved-HIR view of the wasm-gc backend's post-flatten compile
-/// unit. The pipeline-built `CodegenContext.resolved_fn_defs` is keyed
-/// against pre-flatten items (cross-module names like `Fractal.render`
-/// still reference their owning module); `flatten_multimodule` runs
-/// AFTER pipeline and rewrites those into single-module flat names
-/// (`Fractal_render`), so a fresh resolver pass against the flattened
-/// items is the source of truth this backend uses.
-///
-/// Naming the invariant in a helper is deliberate — calling code in
-/// `emit_module_with` reads `view.resolved_fn_defs` and the rebuild
-/// stays local to this backend. PR 9.3 (Phase E roadmap, #147) decides
-/// whether `flatten` moves into the pipeline so a shared
-/// `CodegenContext` covers wasm-gc too, or whether this backend keeps a
-/// formal post-flatten codegen view.
-struct FlattenedResolvedView {
-    symbol_table: crate::ir::SymbolTable,
-    resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef>,
-}
-
-fn build_flattened_resolved_view(
-    items: &[TopLevel],
-    fn_defs: &[&FnDef],
-) -> Result<FlattenedResolvedView, WasmGcError> {
-    // Wasm-gc emits a single flattened module — `dep_modules` is empty
-    // by construction; `flatten_multimodule` has already merged dep
-    // fns into `items` with prefixed names.
-    let symbol_table = crate::ir::SymbolTable::build(items, &[]);
-    let resolve_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
-    let resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef> = fn_defs
-        .iter()
-        .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&resolve_ctx, fd))
-        .collect();
-    if resolved_fn_defs.len() != fn_defs.len() {
-        return Err(WasmGcError::Validation(format!(
-            "wasm-gc resolver dropped {} of {} fn defs — typecheck must run before codegen",
-            fn_defs.len() - resolved_fn_defs.len(),
-            fn_defs.len()
-        )));
-    }
-    Ok(FlattenedResolvedView {
-        symbol_table,
-        resolved_fn_defs,
-    })
-}
-
 pub(super) fn emit_module_with(
     items: &[TopLevel],
     handler_name: Option<&str>,
@@ -154,10 +109,9 @@ pub(super) fn emit_module_with(
         })
         .collect();
 
-    let FlattenedResolvedView {
-        symbol_table,
-        resolved_fn_defs,
-    } = build_flattened_resolved_view(items, &fn_defs)?;
+    let view = super::view::WasmGcLinkedView::build(items, &fn_defs)?;
+    let symbol_table = view.symbol_table;
+    let resolved_fn_defs = view.resolved_fn_defs;
 
     let registry =
         TypeRegistry::build_with_handler(items, &resolved_fn_defs, handler_name.is_some());
