@@ -1019,14 +1019,31 @@ fn emit_fuelized_mutual_int_countdown_group(fns: &[&FnDef], ctx: &CodegenContext
 /// `List.length` is what `decreasing_tactic` knows how to chase),
 /// `sizeOf name` fallback for recursive ADTs. Sum across every
 /// sizeOf-relevant param.
-fn emit_native_termination_measure(fd: &FnDef) -> Option<String> {
+///
+/// Epic #180 Phase 4 — reads param types from the resolved fn def
+/// (already typed by the typechecker) instead of re-parsing the
+/// AST annotation string.
+fn emit_native_termination_measure(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
     let indices = crate::codegen::recursion::detect::sizeof_measure_param_indices(fd);
+    if indices.is_empty() {
+        return None;
+    }
+    // Pointer-eq scope so a same-bare-name twin never provides
+    // these param types. Synthetic / mid-rewrite fns fall back to
+    // on-demand resolve.
+    let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+        .and_then(|id| ctx.resolved_program.fn_by_id(id));
+    let resolved_owned = match resolved_fd {
+        Some(_) => None,
+        None => Some(ctx.resolve_fn_def(fd, None)),
+    };
+    let rfd: &crate::ir::hir::ResolvedFnDef =
+        resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
     let mut terms: Vec<String> = Vec::new();
     for idx in indices {
-        let (name, ty) = fd.params.get(idx)?;
-        let parsed = crate::codegen::common::parse_type_annotation(ty);
+        let (name, ty) = rfd.params.get(idx)?;
         let lean_name = aver_name_to_lean(name);
-        match parsed {
+        match ty {
             crate::types::Type::List(_) | crate::types::Type::Vector(_) => {
                 // `sizeOf` instead of `.length` so the user measure
                 // matches what Lean's mutual-block wf elaboration
@@ -1077,7 +1094,7 @@ fn emit_native_mutual_sizeof_group(fns: &[&FnDef], ctx: &CodegenContext) -> Opti
     }
     let mut measures: HashMap<String, String> = HashMap::new();
     for fd in fns {
-        let measure = emit_native_termination_measure(fd)?;
+        let measure = emit_native_termination_measure(fd, ctx)?;
         measures.insert(fd.name.clone(), measure);
     }
     if crate::codegen::recursion::detect::scc_has_growing_accumulator(fns) {
@@ -1475,11 +1492,14 @@ fn body_uses_error_prop(body: &FnBody) -> bool {
     })
 }
 
-fn fn_returns_result(fd: &FnDef) -> bool {
-    matches!(
-        crate::types::parse_type_str(&fd.return_type),
-        crate::types::Type::Result(_, _)
-    )
+/// Typed-HIR query: does this fn return `Result<_, _>`?
+///
+/// Epic #180 Phase 4 — reads the canonical type stamped on the
+/// resolved fn def directly instead of re-parsing the AST return
+/// type string. The typechecker has already produced the typed
+/// surface; backends just consume it.
+fn fn_returns_result_typed(rfd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    matches!(rfd.return_type, crate::types::Type::Result(_, _))
 }
 
 /// Emit one statement inside a Lean `do` block (used when the fn
@@ -1582,7 +1602,20 @@ fn emit_fn_body_result_do(body: &FnBody, ctx: &CodegenContext) -> String {
 }
 
 fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) -> String {
-    if fn_returns_result(fd) && body_uses_error_prop(body) {
+    // Pointer-eq scope (`fn_id_for_decl`) → resolved view by `FnId`
+    // so a same-bare-name entry/dep twin never accidentally
+    // provides this fn's return type. Synthetic FnDefs (memo
+    // wrappers, TCO hoists, mid-rewrite fns) the resolver never
+    // saw fall through to `ctx.resolve_fn_def`'s on-demand lift.
+    let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
+        .and_then(|id| ctx.resolved_program.fn_by_id(id));
+    let resolved_owned = match resolved_fd {
+        Some(_) => None,
+        None => Some(ctx.resolve_fn_def(fd, None)),
+    };
+    let rfd: &crate::ir::hir::ResolvedFnDef =
+        resolved_fd.unwrap_or_else(|| resolved_owned.as_ref().unwrap().as_ref());
+    if fn_returns_result_typed(rfd) && body_uses_error_prop(body) {
         emit_fn_body_result_do(body, ctx)
     } else {
         emit_fn_body(body, ctx)
