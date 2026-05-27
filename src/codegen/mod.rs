@@ -665,6 +665,17 @@ impl CodegenContext {
     /// wrappers, TCO hoist rewrites, test fixtures) which the
     /// resolver hasn't lifted upfront.
     ///
+    /// `scope` is the owning module prefix when `fd` came from a
+    /// dependency module's `module.fn_defs`, `None` when `fd` is part
+    /// of the entry's `ctx.fn_defs`. Lookup keys by
+    /// [`crate::ir::FnKey`] through the [`crate::ir::SymbolTable`] so
+    /// two modules that share a bare fn name (e.g. `Util.format` and
+    /// `Other.format`) resolve to their own [`crate::ir::FnId`]
+    /// without bare-name collisions. Pre-PR-9.3a this matched by
+    /// `rfd.name == fd.name` against a flat search of every resolved
+    /// table — fragile the moment flatten changes (or doesn't run)
+    /// and two scopes share a name.
+    ///
     /// Phase E shared lookup boundary — Rust codegen (PR 8) already
     /// consumes this through `rust::toplevel::resolved_fn_def_for`;
     /// wasm-gc / Lean / Dafny / self-host backends pick it up in
@@ -675,25 +686,46 @@ impl CodegenContext {
     pub fn resolve_fn_def<'a>(
         &'a self,
         fd: &'a FnDef,
+        scope: Option<&str>,
     ) -> std::borrow::Cow<'a, crate::ir::hir::ResolvedFnDef> {
+        use crate::ir::FnKey;
         use crate::ir::hir::{
             ResolveCtx, ResolvedFnBody, ResolvedFnDef, ResolvedStmt, resolve_fn_def_external,
         };
         use std::borrow::Cow;
-        if let Some(rfd) = self.resolved_fn_defs.iter().find(|rfd| rfd.name == fd.name) {
-            return Cow::Borrowed(rfd);
-        }
-        for module in &self.resolved_module_fn_defs {
-            if let Some(rfd) = module.iter().find(|rfd| rfd.name == fd.name) {
+
+        // Resolve identity via the symbol table — entry scope vs
+        // dependency module scope is the caller's stated context.
+        let key = match scope {
+            Some(prefix) => FnKey::in_module(prefix.to_string(), fd.name.clone()),
+            None => FnKey::entry(fd.name.clone()),
+        };
+        if let Some(fn_id) = self.symbol_table.fn_id_of(&key) {
+            // Resolved tables are dense in the order each scope's
+            // `build_context` populated them; the only authoritative
+            // way to find the right slot is `fn_id` equality.
+            if let Some(rfd) = self.resolved_fn_defs.iter().find(|rfd| rfd.fn_id == fn_id) {
                 return Cow::Borrowed(rfd);
             }
+            for module in &self.resolved_module_fn_defs {
+                if let Some(rfd) = module.iter().find(|rfd| rfd.fn_id == fn_id) {
+                    return Cow::Borrowed(rfd);
+                }
+            }
+            // Symbol table knew the key but resolver didn't lift a
+            // resolved entry. Falls through to the synthetic-fallback
+            // path below; in production this shouldn't happen.
         }
+
+        // Synthetic FnDef path — memo wrappers, TCO hoist rewrites,
+        // test fixtures the resolver never saw. Lift on demand
+        // against the entry's resolver context.
         let module_name = self.items.iter().find_map(|i| match i {
             TopLevel::Module(m) => Some(m.name.clone()),
             _ => None,
         });
         let mut rctx = ResolveCtx::new(&self.symbol_table);
-        rctx.current_module = module_name;
+        rctx.current_module = scope.map(String::from).or(module_name);
         let lifted = resolve_fn_def_external(&rctx, fd).unwrap_or_else(|| {
             let stmts: Vec<ResolvedStmt> = match fd.body.as_ref() {
                 crate::ast::FnBody::Block(stmts) => {

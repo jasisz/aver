@@ -460,7 +460,7 @@ fn entry_module_sections(
             continue;
         }
         let is_memo = ctx.memo_fns.contains(&fd.name);
-        sections.push(toplevel::emit_public_fn_def(fd, is_memo, ctx));
+        sections.push(toplevel::emit_public_fn_def(fd, is_memo, ctx, None));
     }
 
     if main_fn.is_some() || !top_level_stmts.is_empty() {
@@ -524,7 +524,12 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
             continue;
         }
         let is_memo = ctx.memo_fns.contains(&fd.name);
-        sections.push(toplevel::emit_public_fn_def(fd, is_memo, ctx));
+        sections.push(toplevel::emit_public_fn_def(
+            fd,
+            is_memo,
+            ctx,
+            Some(&module.prefix),
+        ));
     }
 
     sections
