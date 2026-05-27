@@ -550,6 +550,13 @@ fn extract_bool_arms(
 }
 
 /// Emit a statement as Lean 4 code.
+///
+/// **Currently unused** after epic #170 Phase 5 PR E2 dropped
+/// `emit_stmt_legacy` from the toplevel hot path (`emit_fn_body` /
+/// `emit_do_stmt` now inline the resolve + emit pair). Retained as
+/// the public resolved-stmt API for future callers (proof rewriters,
+/// LSP-mode renderers).
+#[allow(dead_code)]
 pub fn emit_stmt(stmt: &ResolvedStmt, ctx: &CodegenContext) -> String {
     match stmt {
         ResolvedStmt::Binding {
@@ -585,7 +592,9 @@ pub fn emit_expr_legacy(
 }
 
 /// Source-shape adapter for [`emit_stmt`]. See [`emit_expr_legacy`] for
-/// the scope-fallback rule.
+/// the scope-fallback rule. **Currently unused** post-PR-E2 — see
+/// [`emit_stmt`] doc.
+#[allow(dead_code)]
 pub fn emit_stmt_legacy(
     stmt: &crate::ast::Stmt,
     ctx: &CodegenContext,

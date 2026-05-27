@@ -1,7 +1,7 @@
 /// Top-level Aver items → Lean 4 items (defs, inductives, structures, examples).
 use std::collections::{HashMap, HashSet};
 
-use super::expr::{aver_name_to_lean, emit_expr_legacy, emit_stmt_legacy};
+use super::expr::{aver_name_to_lean, emit_expr_legacy};
 use super::law_auto::{emit_verify_law_forall_auto_proof, emit_verify_law_support_theorems};
 use super::recurrence::{
     detect_second_order_int_linear_recurrence, recurrence_nat_helper_name, render_affine_pair_expr,
@@ -1482,54 +1482,89 @@ fn fn_returns_result(fd: &FnDef) -> bool {
     )
 }
 
+/// Emit one statement inside a Lean `do` block (used when the fn
+/// body must thread `ErrorProp` through Lean's monadic chain).
+///
+/// **Epic #170 Phase 5 PR E2**: resolves each stmt once at the
+/// boundary through `ctx.resolve_stmt` (scope-aware) and routes the
+/// inner expression through `emit_expr` (resolved) instead of the
+/// `temporary-migration-bridge` `emit_expr_legacy` adapter. Keeps the
+/// fn-body emit path off the legacy resolve-on-demand surface in the
+/// hot path; the remaining `emit_expr_legacy` callsites in this
+/// module are all in proof-mode law/verify rewriters where the
+/// upstream rewriter still produces raw AST.
 fn emit_do_stmt(stmt: &Stmt, ctx: &CodegenContext, is_last: bool) -> String {
-    match stmt {
-        Stmt::Binding(name, _, expr) if matches!(&expr.node, Expr::ErrorProp(_)) => {
-            let Expr::ErrorProp(inner) = &expr.node else {
-                unreachable!()
-            };
-            format!(
-                "  let {} <- {}",
-                aver_name_to_lean(name),
-                emit_expr_legacy(inner, ctx, None)
-            )
+    use crate::ir::hir::ResolvedStmt;
+    let scope = ctx.active_module_scope();
+    let scope_ref = scope.as_deref();
+    // Detect `ErrorProp(inner)` BEFORE resolve so we can route the
+    // unwrapped inner through the monadic-bind / direct-emit branches
+    // the same way the legacy path did.
+    let (is_err_prop, target_for_resolve): (bool, std::borrow::Cow<'_, Spanned<Expr>>) = match stmt
+    {
+        Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+            if let Expr::ErrorProp(inner) = &expr.node {
+                (true, std::borrow::Cow::Owned((**inner).clone()))
+            } else {
+                (false, std::borrow::Cow::Borrowed(expr))
+            }
         }
-        Stmt::Binding(name, _, expr) => format!(
-            "  let {} := {}",
-            aver_name_to_lean(name),
-            emit_expr_legacy(expr, ctx, None)
-        ),
-        Stmt::Expr(expr) if matches!(&expr.node, Expr::ErrorProp(_)) && is_last => {
-            let Expr::ErrorProp(inner) = &expr.node else {
-                unreachable!()
-            };
-            format!("  {}", emit_expr_legacy(inner, ctx, None))
+    };
+    let resolved_expr = ctx.resolve_expr(target_for_resolve.as_ref(), scope_ref);
+    let expr_str = super::expr::emit_expr(&resolved_expr, ctx);
+    match (stmt, is_err_prop, is_last) {
+        (Stmt::Binding(name, _, _), true, _) => {
+            format!("  let {} <- {}", aver_name_to_lean(name), expr_str)
         }
-        Stmt::Expr(expr) if matches!(&expr.node, Expr::ErrorProp(_)) => {
-            let Expr::ErrorProp(inner) = &expr.node else {
-                unreachable!()
-            };
-            format!("  let _ <- {}", emit_expr_legacy(inner, ctx, None))
+        (Stmt::Binding(name, _, _), false, _) => {
+            // Re-resolve the full stmt so the inner expression keeps
+            // its proper `ResolvedStmt::Binding` shape (preserves
+            // the type annotation if it was present).
+            let resolved_stmt = ctx.resolve_stmt(stmt, scope_ref);
+            if let ResolvedStmt::Binding { name: n, value, .. } = &resolved_stmt {
+                format!(
+                    "  let {} := {}",
+                    aver_name_to_lean(n),
+                    super::expr::emit_expr(value, ctx)
+                )
+            } else {
+                format!("  let {} := {}", aver_name_to_lean(name), expr_str)
+            }
         }
-        Stmt::Expr(expr) if is_last => format!("  {}", emit_expr_legacy(expr, ctx, None)),
-        Stmt::Expr(expr) => format!("  let _ := {}", emit_expr_legacy(expr, ctx, None)),
+        (Stmt::Expr(_), true, true) => format!("  {}", expr_str),
+        (Stmt::Expr(_), true, false) => format!("  let _ <- {}", expr_str),
+        (Stmt::Expr(_), false, true) => format!("  {}", expr_str),
+        (Stmt::Expr(_), false, false) => format!("  let _ := {}", expr_str),
     }
 }
 
+/// Emit a Lean fn body (plain — no `do` notation).
+///
+/// **Epic #170 Phase 5 PR E2**: resolves each top-level stmt once at
+/// the boundary instead of calling the legacy adapter per expression.
+/// Same migration shape as [`emit_do_stmt`].
 fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
+    use crate::ir::hir::ResolvedStmt;
+    let scope = ctx.active_module_scope();
+    let scope_ref = scope.as_deref();
     let stmts = body.stmts();
     let mut lines = Vec::new();
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
-        match stmt {
-            Stmt::Binding(_, _, _) => {
-                lines.push(format!("  {}", emit_stmt_legacy(stmt, ctx, None)));
+        let resolved_stmt = ctx.resolve_stmt(stmt, scope_ref);
+        match &resolved_stmt {
+            ResolvedStmt::Binding { name, value, .. } => {
+                lines.push(format!(
+                    "  let {} := {}",
+                    aver_name_to_lean(name),
+                    super::expr::emit_expr(value, ctx)
+                ));
             }
-            Stmt::Expr(expr) => {
+            ResolvedStmt::Expr(expr) => {
                 if is_last {
-                    lines.push(format!("  {}", emit_expr_legacy(expr, ctx, None)));
+                    lines.push(format!("  {}", super::expr::emit_expr(expr, ctx)));
                 } else {
-                    lines.push(format!("  let _ := {}", emit_expr_legacy(expr, ctx, None)));
+                    lines.push(format!("  let _ := {}", super::expr::emit_expr(expr, ctx)));
                 }
             }
         }
