@@ -851,6 +851,15 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
 }
 
 /// Find a FnDef by name, checking top-level, modules (qualified), and all modules (unqualified).
+///
+/// **syntax-discovery-only** (epic #170 invariant): used by
+/// `callee_borrow_mask` to read param-type annotations from the AST
+/// `FnDef` for borrow-by-default inference. Identity-sensitive call
+/// dispatch already happens upstream via `ResolvedCallee::Fn(FnId)`
+/// — this lookup only recovers the AST view for downstream
+/// annotation reads. A future PR can route through
+/// `symbol_table.fn_id_of` + `resolved_program.fn_by_id` once the
+/// borrow-mask inference consumes resolved param types directly.
 fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a crate::ast::FnDef> {
     // Check top-level fn_defs
     if let Some(fd) = ctx.fn_defs.iter().find(|fd| fd.name == name) {

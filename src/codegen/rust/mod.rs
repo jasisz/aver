@@ -92,7 +92,21 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
     let has_http_server_types = has_http_server_runtime || needs_named_type(ctx, "HttpRequest");
     let has_terminal_types = has_terminal_runtime || needs_terminal_types;
 
+    // `main` fn lookup is identity-safe by parser invariant — only
+    // entry scope can declare it, and at most once. The view's
+    // `entry_fns()` enumerates the same set in the same source order,
+    // so iterating either substrate yields the same answer here.
+    // temporary-migration-bridge: downstream `render_root_main` still
+    // takes `Option<&FnDef>`; signature swap is a PR D follow-up.
     let main_fn = ctx.fn_defs.iter().find(|fd| fd.name == "main");
+    debug_assert_eq!(
+        main_fn.is_some(),
+        ctx.resolved_program
+            .entry_fns()
+            .any(|rfd| rfd.name == "main"),
+        "ctx.fn_defs and ctx.resolved_program.entry_fns() must agree on \
+         main fn presence (epic #170 Phase 1 invariant)"
+    );
     let top_level_stmts: Vec<_> = ctx
         .items
         .iter()
@@ -440,6 +454,11 @@ fn entry_module_sections(
     // unioned per-module sets); the index-keyed `groups` form still comes
     // from `find_mutual_tco_groups` because trampoline emission needs the
     // structural shape, not just the names.
+    // temporary-migration-bridge: `find_mutual_tco_groups` walks
+    // `&[&FnDef]` to detect tail-call SCCs against the raw AST body
+    // shape. Position-aligned with `ctx.resolved_program.entry_fns()`
+    // (both iterate the same source-ordered set). PR D migrates the
+    // SCC analyser to consume `ResolvedFnDef` bodies directly.
     let non_main_fns: Vec<&FnDef> = ctx.fn_defs.iter().filter(|fd| fd.name != "main").collect();
     let mutual_groups = toplevel::find_mutual_tco_groups(&non_main_fns);
 
@@ -454,6 +473,13 @@ fn entry_module_sections(
         ));
     }
 
+    // temporary-migration-bridge: this loop emits every entry-scope
+    // fn def by walking the AST `ctx.fn_defs`. Identity-sensitive
+    // decisions inside the loop (`fn_id_for_decl`, mutual-TCO membership)
+    // already route through the symbol table → `FnId`, so cross-module
+    // bare-name collisions can't reach this site. PR D swaps the
+    // iteration substrate to `ctx.resolved_program.entry_fns()` once
+    // `emit_public_fn_def` accepts `&ResolvedFnDef`.
     for fd in &ctx.fn_defs {
         let is_mutual = crate::codegen::common::fn_id_for_decl(ctx, fd)
             .is_some_and(|id| ctx.mutual_tco_members.contains(&id));
@@ -652,6 +678,94 @@ mod tests {
         )
     }
 
+    /// Multi-module ctx builder for cross-scope regression tests.
+    /// `entry_src` is the entry-module source; `dep_sources` is a
+    /// list of `(prefix, source)` for dep modules. The entry's
+    /// `depends [...]` list must mention every dep prefix.
+    fn ctx_from_multi(
+        entry_src: &str,
+        dep_sources: &[(&str, &str)],
+        project_name: &str,
+    ) -> crate::codegen::CodegenContext {
+        let mut entry_items = parse_source(entry_src).expect("entry source should parse");
+        crate::ir::pipeline::tco(&mut entry_items);
+
+        // Build `LoadedModule` views for the typechecker (`WithLoaded`
+        // mode walks the same shape an on-disk multi-file compile
+        // produces, so the typechecker sees dep symbols without
+        // touching the filesystem).
+        let loaded: Vec<crate::source::LoadedModule> = dep_sources
+            .iter()
+            .map(|(prefix, src)| {
+                let items = parse_source(src).expect("dep source should parse");
+                crate::source::LoadedModule {
+                    dep_name: prefix.to_string(),
+                    items,
+                    path: std::path::PathBuf::from(format!("{}.av", prefix)),
+                }
+            })
+            .collect();
+
+        let modules: Vec<crate::codegen::ModuleInfo> = loaded
+            .iter()
+            .map(|lm| {
+                let depends = lm
+                    .items
+                    .iter()
+                    .find_map(|i| match i {
+                        crate::ast::TopLevel::Module(m) => Some(m.depends.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                let type_defs = lm
+                    .items
+                    .iter()
+                    .filter_map(|i| match i {
+                        crate::ast::TopLevel::TypeDef(td) => Some(td.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let fn_defs = lm
+                    .items
+                    .iter()
+                    .filter_map(|i| match i {
+                        crate::ast::TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                crate::codegen::ModuleInfo {
+                    prefix: lm.dep_name.clone(),
+                    depends,
+                    type_defs,
+                    fn_defs,
+                    analysis: None,
+                }
+            })
+            .collect();
+
+        let tc = crate::ir::pipeline::typecheck(
+            &entry_items,
+            &crate::ir::TypecheckMode::WithLoaded(&loaded),
+        );
+        assert!(
+            tc.errors.is_empty(),
+            "entry+dep source should typecheck without errors: {:?}",
+            tc.errors
+        );
+        let symbol_table = crate::ir::SymbolTable::build(&entry_items, &modules);
+        let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &entry_items);
+        build_context(
+            entry_items,
+            &tc,
+            None,
+            HashSet::new(),
+            project_name.to_string(),
+            modules,
+            symbol_table,
+            resolved_items,
+        )
+    }
+
     fn generated_rust_entry_file(out: &crate::codegen::ProjectOutput) -> &str {
         out.files
             .iter()
@@ -666,6 +780,92 @@ mod tests {
             .iter()
             .find_map(|(name, content)| (name == path).then_some(content.as_str()))
             .unwrap_or_else(|| panic!("expected generated file '{}'", path))
+    }
+
+    #[test]
+    fn cross_module_same_bare_name_fns_resolve_via_qualified_path() {
+        // Epic #170 Phase 3: pins the architectural invariant that
+        // Rust codegen distinguishes same-bare-name fns across the
+        // entry module and a dep module by using the fully-qualified
+        // path for cross-module calls. The entry's `helper(n)` body
+        // is `n + 1`; the dep `Worker.helper(n)` body is `n + 100`.
+        // The emitted Rust must:
+        //   1. emit BOTH fn defs (one per module file)
+        //   2. emit `Worker.walk` body as a fully-qualified call to
+        //      `crate::aver_generated::worker::helper` — NOT a bare
+        //      `helper(n)` that the entry's `use worker::*` wildcard
+        //      shadow would silently mis-resolve.
+        //   3. emit `main`'s `Worker.walk(20)` as a fully-qualified
+        //      call too — same anti-shadow rule.
+        let mut ctx = ctx_from_multi(
+            r#"
+module Entry
+    depends [Worker]
+    intent = "Entry with own same-bare 'helper'."
+    effects []
+
+fn helper(n: Int) -> Int
+    n + 1
+
+fn main() -> Int
+    helper(10) + Worker.walk(20)
+"#,
+            &[(
+                "Worker",
+                r#"
+module Worker
+    exposes [walk]
+    intent = "Worker module with same-bare 'helper'."
+    effects []
+
+fn helper(n: Int) -> Int
+    n + 100
+
+fn walk(n: Int) -> Int
+    helper(n)
+"#,
+            )],
+            "cross_module_helper",
+        );
+
+        let out = transpile(&mut ctx);
+
+        let worker = generated_file(&out, "src/aver_generated/worker/mod.rs");
+        assert!(
+            worker.contains("pub fn helper"),
+            "Worker module must emit its OWN helper:\n{worker}"
+        );
+        assert!(
+            worker.contains("n + 100"),
+            "Worker.helper body must keep its OWN literal (100):\n{worker}"
+        );
+        // Critical anti-shadow check: Worker.walk calls Worker.helper
+        // through the canonical crate path, never bare `helper(n)`
+        // (which would resolve to whoever's in scope after
+        // `use worker::*`).
+        assert!(
+            worker.contains("crate::aver_generated::worker::helper"),
+            "Worker.walk must call its own helper via the canonical \
+             crate path (not bare-name `helper(n)`):\n{worker}"
+        );
+
+        let entry = generated_rust_entry_file(&out);
+        assert!(
+            entry.contains("pub fn helper"),
+            "Entry module must emit its OWN helper:\n{entry}"
+        );
+        assert!(
+            entry.contains("n + 1i64") || entry.contains("(n + 1i64)"),
+            "Entry.helper body must keep its OWN literal (1):\n{entry}"
+        );
+        // Entry's `Worker.walk(20)` must qualify through the crate
+        // path too — bare `walk(20)` would also be ambiguous against
+        // a hypothetical entry `walk`.
+        assert!(
+            entry.contains("crate::aver_generated::worker::walk"),
+            "main()'s Worker.walk(20) must qualify through the \
+             canonical crate path:\n{entry}"
+        );
     }
 
     #[test]
