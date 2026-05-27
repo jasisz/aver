@@ -119,6 +119,27 @@ pub(super) fn emit_module_with(
         })
         .collect();
 
+    // Phase E PR 9.1 — build the resolver `SymbolTable` once and lift
+    // every `FnDef` to its resolved-HIR shape so `emit_fn_body` (and
+    // the dispatch sites it threads into) can read identity off
+    // `ResolvedExpr` / `ResolvedCallee` / `ResolvedCtor` directly.
+    // Wasm-gc emits a single flattened module — `dep_modules` is
+    // empty by construction; flatten.rs has already merged dep fns
+    // into `items`.
+    let symbol_table = crate::ir::SymbolTable::build(items, &[]);
+    let resolve_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
+    let resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef> = fn_defs
+        .iter()
+        .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&resolve_ctx, fd))
+        .collect();
+    if resolved_fn_defs.len() != fn_defs.len() {
+        return Err(WasmGcError::Validation(format!(
+            "wasm-gc resolver dropped {} of {} fn defs — typecheck must run before codegen",
+            fn_defs.len() - resolved_fn_defs.len(),
+            fn_defs.len()
+        )));
+    }
+
     // Discover used pure-builtins. Walk every fn body looking for
     // `FnCall` whose callee is `Attr(_, "method")` and the dotted
     // form is a known builtin. Discovery happens before slot
@@ -2255,15 +2276,16 @@ pub(super) fn emit_module_with(
     // emit later in the code section calls `register` again with the
     // same names; the collector is idempotent so the idx assignment
     // matches what the call sites observed during this probe.
-    for (i, fd) in fn_defs.iter().enumerate() {
+    for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         let mut probe = Function::new([]);
         let _ = emit_fn_body(
             &mut probe,
-            fd,
+            &resolved_fn_defs[i],
             &fn_map,
             self_wasm_idx,
             &registry,
+            &symbol_table,
             &effect_idx_lookup,
             &caller_fn_collector,
             wasip2_lowering.as_ref(),
@@ -2476,17 +2498,18 @@ pub(super) fn emit_module_with(
         codes.function(&start);
     }
 
-    for (i, fd) in fn_defs.iter().enumerate() {
+    for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         // Dry run: discover extra locals by emitting into a throwaway
         // fn. Cheaper than threading a separate pre-pass.
         let mut probe = Function::new([]);
         let extra_locals_dry = emit_fn_body(
             &mut probe,
-            fd,
+            &resolved_fn_defs[i],
             &fn_map,
             self_wasm_idx,
             &registry,
+            &symbol_table,
             &effect_idx_lookup,
             &caller_fn_collector,
             wasip2_lowering.as_ref(),
@@ -2496,10 +2519,11 @@ pub(super) fn emit_module_with(
         let mut func = Function::new(local_groups);
         let _ = emit_fn_body(
             &mut func,
-            fd,
+            &resolved_fn_defs[i],
             &fn_map,
             self_wasm_idx,
             &registry,
+            &symbol_table,
             &effect_idx_lookup,
             &caller_fn_collector,
             wasip2_lowering.as_ref(),
