@@ -227,9 +227,12 @@ mod tests {
     #[test]
     fn list_len_annotates_empty_list_in_theorem_friendly_form() {
         let ctx = empty_ctx();
-        let emitted =
-            emit_builtin_call("List.len", &[Spanned::bare(ResolvedExpr::List(vec![]))], &ctx)
-                .expect("List.len should be emitted");
+        let emitted = emit_builtin_call(
+            "List.len",
+            &[Spanned::bare(ResolvedExpr::List(vec![]))],
+            &ctx,
+        )
+        .expect("List.len should be emitted");
 
         assert_eq!(emitted, "(([] : List Unit)).length");
     }

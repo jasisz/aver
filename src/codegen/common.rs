@@ -1756,17 +1756,7 @@ pub(crate) fn is_set_annotation(ann: &str) -> bool {
     is_set_type(&parse_type_annotation(ann))
 }
 
-/// Check if an expression is a compile-time Unit literal.
-pub(crate) fn is_unit_expr(expr: &crate::ast::Expr) -> bool {
-    matches!(expr, crate::ast::Expr::Literal(crate::ast::Literal::Unit))
-}
-
-/// Check if a spanned expression is a compile-time Unit literal.
-pub(crate) fn is_unit_expr_spanned(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
-    is_unit_expr(&expr.node)
-}
-
-/// Resolved-form mirror of [`is_unit_expr`]. Same Phase-E shape
+/// Resolved-form mirror of the historical AST helper. Same Phase-E shape
 /// (`ResolvedExpr::Literal(Unit)`); used by migrated backends.
 pub(crate) fn is_unit_expr_resolved(expr: &crate::ir::hir::ResolvedExpr) -> bool {
     matches!(

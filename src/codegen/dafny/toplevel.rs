@@ -4,7 +4,7 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::parse_type_annotation;
 use crate::types::Type;
 
-use super::expr::{aver_name_to_dafny, emit_expr};
+use super::expr::{aver_name_to_dafny, emit_expr_legacy};
 
 /// Emit a Dafny type from an Aver type annotation string.
 /// Ghost-predicate names emitted by `oracle_subtypes::dafny_subtype_predicates`
@@ -155,7 +155,7 @@ pub fn emit_type_def_in_scope(
             if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope)
                 && decl.carrier_type == "Int"
             {
-                let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
+                let predicate = super::expr::emit_expr_legacy(&decl.invariant.expr, ctx, None);
                 let bind = aver_name_to_dafny(&decl.predicate_param);
                 let witness = decl.witness.clone().unwrap_or_else(|| "0".to_string());
                 return Some(format!(
@@ -284,7 +284,7 @@ fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
     if stmts.len() == 1
         && let Stmt::Expr(expr) = &stmts[0]
     {
-        return emit_expr(expr, ctx);
+        return emit_expr_legacy(expr, ctx, None);
     }
 
     // For blocks with bindings, collect them and emit the last expression
@@ -294,7 +294,7 @@ fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
     for (i, stmt) in stmts.iter().enumerate() {
         match stmt {
             Stmt::Binding(name, type_ann, expr) => {
-                let mut val = emit_expr(expr, ctx);
+                let mut val = emit_expr_legacy(expr, ctx, None);
                 // Map<T, Unit> binding initialized with Map.empty → set literal
                 if let Some(ann) = type_ann
                     && crate::codegen::common::is_set_annotation(ann)
@@ -306,7 +306,7 @@ fn emit_block_as_expr(stmts: &[Stmt], ctx: &CodegenContext) -> String {
             }
             Stmt::Expr(expr) => {
                 if i == stmts.len() - 1 {
-                    final_expr = Some(emit_expr(expr, ctx));
+                    final_expr = Some(emit_expr_legacy(expr, ctx, None));
                 }
             }
         }
@@ -999,8 +999,8 @@ pub fn emit_law_samples(
             )
             .collect();
         for (idx, (lhs_rw, rhs_rw)) in rewritten.iter().enumerate() {
-            let l = emit_expr(lhs_rw, ctx);
-            let r = emit_expr(rhs_rw, ctx);
+            let l = emit_expr_legacy(lhs_rw, ctx, None);
+            let r = emit_expr_legacy(rhs_rw, ctx, None);
             let mut callees = std::collections::BTreeSet::new();
             collect_called_fns(lhs_rw, &mut callees);
             collect_called_fns(rhs_rw, &mut callees);
@@ -1094,8 +1094,8 @@ pub fn emit_law_samples(
             fn_name, law_name, suffix
         ));
         for (lhs_rw, rhs_rw) in &rewritten {
-            let l = emit_expr(lhs_rw, ctx);
-            let r = emit_expr(rhs_rw, ctx);
+            let l = emit_expr_legacy(lhs_rw, ctx, None);
+            let r = emit_expr_legacy(rhs_rw, ctx, None);
             // `{:split_here}` tells Dafny to check the preceding assert as
             // its own VC — without it, Z3 accumulates hypothesis state
             // across all samples in the method and occasionally times out
@@ -1459,8 +1459,8 @@ pub fn emit_verify_law(
         )
     };
 
-    let lhs = emit_expr(&law_lhs, ctx);
-    let rhs = emit_expr(&law_rhs, ctx);
+    let lhs = emit_expr_legacy(&law_lhs, ctx, None);
+    let rhs = emit_expr_legacy(&law_rhs, ctx, None);
 
     let mut lines = Vec::new();
     // Collect all functions used in the law for fuel annotations
@@ -1535,7 +1535,7 @@ pub fn emit_verify_law(
             ctx,
         );
         if !when_redundant {
-            let when_str = emit_expr(when_expr, ctx);
+            let when_str = emit_expr_legacy(when_expr, ctx, None);
             lines.push(format!("  requires {}", when_str));
         }
     }
@@ -1602,7 +1602,8 @@ pub fn emit_verify_law(
                 let guard = bindings
                     .iter()
                     .map(|(n, v)| {
-                        let val = literal_int_value(v).unwrap_or_else(|| emit_expr(v, ctx));
+                        let val =
+                            literal_int_value(v).unwrap_or_else(|| emit_expr_legacy(v, ctx, None));
                         format!("{} == {}", aver_name_to_dafny(n), val)
                     })
                     .collect::<Vec<_>>()
