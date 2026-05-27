@@ -1679,13 +1679,13 @@ fn emit_verify_trace_block_proofs(
         let lhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
             &fn_call,
             &synthetic_law,
-            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+            |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode.clone(),
         );
         let rhs_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
             right,
             &synthetic_law,
-            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+            |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode,
         );
 
@@ -1771,13 +1771,13 @@ fn emit_verify_law_block(
     let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law(
         &law.lhs,
         law,
-        |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+        |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
     );
     let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law(
         &law.rhs,
         law,
-        |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+        |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
         crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
     );
     // Refinement quantifier lift: when a given Int variable shows up
@@ -1824,7 +1824,7 @@ fn emit_verify_law_block(
         let oracle_projected = crate::codegen::common::rewrite_effectful_calls_in_law(
             expr,
             law,
-            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+            |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
         );
         // Refinement lift: bare references to lifted-given idents
@@ -2032,13 +2032,13 @@ fn emit_verify_law_block(
                 let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
                     left,
                     law,
-                    |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                    |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                     mode.clone(),
                 );
                 let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
                     right,
                     law,
-                    |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+                    |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
                     mode,
                 );
                 let left_str = emit_expr_legacy(&left_rw, ctx, None);
@@ -2101,13 +2101,13 @@ fn emit_verify_law_block(
         let left_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
             left,
             law,
-            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+            |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode.clone(),
         );
         let right_rw = crate::codegen::common::rewrite_effectful_calls_in_law(
             right,
             law,
-            |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
+            |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
             mode,
         );
         let left_str = emit_expr_legacy(&left_rw, ctx, None);
