@@ -1602,7 +1602,8 @@ pub fn emit_verify_law(
                 let guard = bindings
                     .iter()
                     .map(|(n, v)| {
-                        let val = literal_int_value(v).unwrap_or_else(|| emit_expr_legacy(v, ctx, None));
+                        let val =
+                            literal_int_value(v).unwrap_or_else(|| emit_expr_legacy(v, ctx, None));
                         format!("{} == {}", aver_name_to_dafny(n), val)
                     })
                     .collect::<Vec<_>>()

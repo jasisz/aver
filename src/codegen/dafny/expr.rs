@@ -364,7 +364,11 @@ fn emit_fn_call(
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
             let func = match module_prefix {
                 Some(prefix) if !ctx.modules.is_empty() => {
-                    format!("{}.{}", super::dafny_module_name(prefix), aver_name_to_dafny(bare))
+                    format!(
+                        "{}.{}",
+                        super::dafny_module_name(prefix),
+                        aver_name_to_dafny(bare)
+                    )
                 }
                 _ => aver_name_to_dafny(bare),
             };
@@ -635,8 +639,12 @@ fn emit_if_chain_inner(
 
 /// Check if any arm uses list patterns (EmptyList or Cons).
 fn has_list_patterns(arms: &[ResolvedMatchArm]) -> bool {
-    arms.iter()
-        .any(|arm| matches!(arm.pattern, ResolvedPattern::EmptyList | ResolvedPattern::Cons(_, _)))
+    arms.iter().any(|arm| {
+        matches!(
+            arm.pattern,
+            ResolvedPattern::EmptyList | ResolvedPattern::Cons(_, _)
+        )
+    })
 }
 
 /// Emit a match on a list (seq) as if-then-else with seq operations.
@@ -654,9 +662,12 @@ fn emit_list_match(
     let cons_arm = arms
         .iter()
         .find(|a| matches!(a.pattern, ResolvedPattern::Cons(_, _)));
-    let wildcard_arm = arms
-        .iter()
-        .find(|a| matches!(a.pattern, ResolvedPattern::Wildcard | ResolvedPattern::Ident(_)));
+    let wildcard_arm = arms.iter().find(|a| {
+        matches!(
+            a.pattern,
+            ResolvedPattern::Wildcard | ResolvedPattern::Ident(_)
+        )
+    });
 
     let empty_body = if let Some(arm) = empty_arm {
         emit_expr(&arm.body, ctx)
