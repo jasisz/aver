@@ -298,6 +298,7 @@ fn build_ctx(
         "playground".to_string(),
         vec![],
         pipeline_result.symbol_table,
+        pipeline_result.resolved_items,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;
@@ -394,6 +395,7 @@ fn build_project_ctx(
         "playground".to_string(),
         modules,
         pipeline_result.symbol_table,
+        pipeline_result.resolved_items,
     );
     if let Some(ir) = proof_ir {
         ctx.proof_ir = ir;

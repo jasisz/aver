@@ -739,6 +739,7 @@ mod tests {
             project_name.to_string(),
             vec![],
             pipeline_result.symbol_table,
+            pipeline_result.resolved_items,
         );
         if let Some(ir) = proof_ir {
             ctx.proof_ir = ir;

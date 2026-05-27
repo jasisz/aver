@@ -10,6 +10,7 @@ pub mod common;
 pub mod dafny;
 #[cfg(feature = "runtime")]
 pub mod lean;
+pub mod program_view;
 #[cfg(feature = "runtime")]
 pub mod proof_lower;
 #[cfg(feature = "runtime")]
@@ -201,6 +202,20 @@ pub struct CodegenContext {
     /// `TypeId` namespace, matching the VM compiler's
     /// `integrate_module` shape.
     pub resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>>,
+    /// Canonical resolved-program view of the whole codegen input —
+    /// entry items (post-pipeline `NameResolve`) + per-dep-module
+    /// resolved fn defs + `FnId`-keyed lookup.
+    ///
+    /// **Epic #170 Phase 1 invariant.** `resolved_program` is the
+    /// primary source of truth for backend codegen — `fn_defs`,
+    /// `type_defs`, `items`, `resolved_fn_defs`, and
+    /// `resolved_module_fn_defs` remain available as projection /
+    /// source metadata / migration cache, but consumers should reach
+    /// the view first when an `FnId` / `TypeId` is in hand. Subsequent
+    /// phases (#170 Phase 3+) migrate backends to iterate the view as
+    /// their primary input; this field is the foundation those PRs
+    /// build on.
+    pub resolved_program: crate::codegen::program_view::ResolvedProgramView,
 }
 
 /// Output files from a codegen backend.
@@ -225,6 +240,7 @@ pub struct ProjectOutput {
 /// one available. The ad-hoc test helpers that drive a stripped
 /// pipeline build their own via `SymbolTable::build(&items,
 /// &modules)` and pass it here.
+#[allow(clippy::too_many_arguments)]
 pub fn build_context(
     items: Vec<TopLevel>,
     tc_result: &TypeCheckResult,
@@ -233,6 +249,7 @@ pub fn build_context(
     project_name: String,
     modules: Vec<ModuleInfo>,
     symbol_table: crate::ir::SymbolTable,
+    resolved_items: Vec<crate::ir::hir::ResolvedTopLevel>,
 ) -> CodegenContext {
     let type_defs: Vec<TypeDef> = items
         .iter()
@@ -481,29 +498,25 @@ pub fn build_context(
         );
     }
 
-    // Resolved-HIR lift of every fn def (entry + each dep), against
-    // the entry's symbol table. The Rust backend (#147 phase E PR 8)
-    // consumes these from `ctx.resolved_fn_defs` /
-    // `ctx.resolved_module_fn_defs`; tests + helper paths that build
-    // a ctx piecewise refresh them via `CodegenContext::refresh_facts`.
-    let resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef> = {
-        let entry_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
-        fn_defs
-            .iter()
-            .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&entry_ctx, fd))
-            .collect()
-    };
-    let resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>> = modules
+    // Epic #170 Phase 1: build the canonical `ResolvedProgramView`
+    // once, from the pipeline's already-resolved entry items + the
+    // dep modules' AST fn defs. The view does the module-side
+    // resolution (pinning `ResolveCtx.current_module = Some(prefix)`)
+    // — that's the only producer in the codebase. `resolved_fn_defs`
+    // / `resolved_module_fn_defs` then project FROM the view rather
+    // than running an independent second resolve, eliminating the
+    // "two truths" hazard build_context carried since PR 9.
+    let resolved_program = crate::codegen::program_view::ResolvedProgramView::build(
+        resolved_items,
+        &modules,
+        &symbol_table,
+    );
+    let resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef> =
+        resolved_program.entry_fns().cloned().collect();
+    let resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>> = resolved_program
+        .modules
         .iter()
-        .map(|module| {
-            let mut module_ctx = crate::ir::hir::ResolveCtx::new(&symbol_table);
-            module_ctx.current_module = Some(module.prefix.clone());
-            module
-                .fn_defs
-                .iter()
-                .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&module_ctx, fd))
-                .collect()
-        })
+        .map(|m| m.fn_defs.clone())
         .collect();
 
     let ctx = CodegenContext {
@@ -539,6 +552,7 @@ pub fn build_context(
         resolved_fn_defs,
         resolved_module_fn_defs,
         current_module_scope: std::cell::RefCell::new(None),
+        resolved_program,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
@@ -653,27 +667,26 @@ impl CodegenContext {
         // need for `recursive_fns` / `mutual_tco_members`.
         self.symbol_table = symbol_table;
 
-        // Refresh the resolved-HIR mirror of every fn def so the
-        // backend (#147 phase E PR 8) sees the same shape
-        // `build_context` would have produced from scratch.
-        let entry_resolve_ctx = crate::ir::hir::ResolveCtx::new(&self.symbol_table);
-        self.resolved_fn_defs = self
-            .fn_defs
-            .iter()
-            .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&entry_resolve_ctx, fd))
-            .collect();
+        // Rebuild the canonical resolved view from the current items
+        // + modules (post-PR-A: this is the single source for resolved
+        // bodies). Entry-side resolved items are produced by
+        // `resolve_program`, then the view runs the per-dep-module
+        // resolve internally and indexes everything by `FnId`. The
+        // `resolved_fn_defs` / `resolved_module_fn_defs` mirrors below
+        // are projections of this view, kept for callsites that still
+        // walk them directly during the #170 backend-migration arc.
+        let entry_resolved_items = crate::ir::hir::resolve_program(&self.symbol_table, &self.items);
+        self.resolved_program = crate::codegen::program_view::ResolvedProgramView::build(
+            entry_resolved_items,
+            &self.modules,
+            &self.symbol_table,
+        );
+        self.resolved_fn_defs = self.resolved_program.entry_fns().cloned().collect();
         self.resolved_module_fn_defs = self
+            .resolved_program
             .modules
             .iter()
-            .map(|module| {
-                let mut module_ctx = crate::ir::hir::ResolveCtx::new(&self.symbol_table);
-                module_ctx.current_module = Some(module.prefix.clone());
-                module
-                    .fn_defs
-                    .iter()
-                    .filter_map(|fd| crate::ir::hir::resolve_fn_def_external(&module_ctx, fd))
-                    .collect()
-            })
+            .map(|m| m.fn_defs.clone())
             .collect();
 
         // ProofIR's `fn_contracts` / `refined_types` are derived from
@@ -731,20 +744,17 @@ impl CodegenContext {
             None => FnKey::entry(fd.name.clone()),
         };
         if let Some(fn_id) = self.symbol_table.fn_id_of(&key) {
-            // Resolved tables are dense in the order each scope's
-            // `build_context` populated them; the only authoritative
-            // way to find the right slot is `fn_id` equality.
-            if let Some(rfd) = self.resolved_fn_defs.iter().find(|rfd| rfd.fn_id == fn_id) {
+            // Canonical lookup goes through the resolved-program view —
+            // its `fn_by_id` index is the single FnId-keyed source for
+            // the resolved body, replacing the dual-walk over
+            // `resolved_fn_defs` + `resolved_module_fn_defs` that
+            // predated #170 Phase 1.
+            if let Some(rfd) = self.resolved_program.fn_by_id(fn_id) {
                 return Cow::Borrowed(rfd);
             }
-            for module in &self.resolved_module_fn_defs {
-                if let Some(rfd) = module.iter().find(|rfd| rfd.fn_id == fn_id) {
-                    return Cow::Borrowed(rfd);
-                }
-            }
-            // Symbol table knew the key but resolver didn't lift a
-            // resolved entry. Falls through to the synthetic-fallback
-            // path below; in production this shouldn't happen.
+            // Symbol table knew the key but the view didn't index it.
+            // Falls through to the synthetic-fallback path below; in
+            // production this shouldn't happen.
         }
 
         // Synthetic FnDef path — memo wrappers, TCO hoist rewrites,

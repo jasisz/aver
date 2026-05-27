@@ -639,6 +639,7 @@ mod tests {
         // SymbolTable so build_context can populate its FnId-keyed
         // sets. Cheap traversal, no analysis.
         let symbol_table = crate::ir::SymbolTable::build(&items, &[]);
+        let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
         build_context(
             items,
             &tc,
@@ -647,6 +648,7 @@ mod tests {
             project_name.to_string(),
             vec![],
             symbol_table,
+            resolved_items,
         )
     }
 
