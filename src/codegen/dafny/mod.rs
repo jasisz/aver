@@ -190,11 +190,14 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     let mut pure_per_scope = crate::codegen::common::route_pure_components_per_scope(
         ctx,
         |fd| fd.effects.is_empty() && fd.name != "main",
-        |comp, _scope| {
-            comp.iter()
-                .map(|fd| emit_pure_or_axiom(fd))
-                .filter(|s| !s.is_empty())
-                .collect()
+        |comp, scope| {
+            let scope_opt = if scope.is_empty() { None } else { Some(scope) };
+            ctx.with_module_scope(scope_opt, || {
+                comp.iter()
+                    .map(|fd| emit_pure_or_axiom(fd))
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
         },
     );
 
@@ -204,13 +207,15 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     // ---- Per-module files (collected into the shared module tree) ----
     for module in &ctx.modules {
         let mut sections: Vec<String> = Vec::new();
-        for td in &module.type_defs {
-            if let Some(code) =
-                toplevel::emit_type_def_in_scope(td, ctx, Some(module.prefix.as_str()))
-            {
-                sections.push(code);
+        ctx.with_module_scope(Some(module.prefix.as_str()), || {
+            for td in &module.type_defs {
+                if let Some(code) =
+                    toplevel::emit_type_def_in_scope(td, ctx, Some(module.prefix.as_str()))
+                {
+                    sections.push(code);
+                }
             }
-        }
+        });
         sections.extend(pure_per_scope.take(&module.prefix));
         if let Some(fuel) = fuel_per_scope.get(&module.prefix) {
             sections.extend(fuel.clone());
