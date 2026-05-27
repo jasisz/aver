@@ -1044,6 +1044,7 @@ mod tests {
             resolved_fn_defs: Vec::new(),
             resolved_module_fn_defs: Vec::new(),
             current_module_scope: std::cell::RefCell::new(None),
+            resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
         }
     }
 

@@ -2561,6 +2561,7 @@ fn build_codegen_context(
         name,
         modules,
         pipeline_result.symbol_table,
+        pipeline_result.resolved_items,
     );
     #[cfg(feature = "runtime")]
     if let Some(ir) = prebuilt_proof_ir {
@@ -4989,6 +4990,7 @@ mod tests {
             resolved_fn_defs: Vec::new(),
             resolved_module_fn_defs: Vec::new(),
             current_module_scope: std::cell::RefCell::new(None),
+            resolved_program: aver::codegen::program_view::ResolvedProgramView::default(),
         }
     }
 
