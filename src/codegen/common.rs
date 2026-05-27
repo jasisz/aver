@@ -952,6 +952,49 @@ pub fn find_refined_type<'a>(
     find_refined_type_with_key_scoped(ctx, name, None).map(|(_, d)| d)
 }
 
+/// Direct `TypeId` lookup against `ProofIR.refined_types`.
+///
+/// Epic #180 Phase 6 — preferred entry point for callers holding a
+/// typed `Type::Named { id: Some(_), .. }` reference (the
+/// typechecker / resolver canonicalises Named refs with `id` when
+/// the name binds to a declared type). Skips the
+/// name → `TypeKey` → `TypeId` chain that
+/// [`find_refined_type_with_key_scoped`] walks for bare-string
+/// callers — and is identity-safe across cross-module same-bare-
+/// name twins, since `TypeId` carries the module disambiguation.
+///
+/// Returns `None` for builtins / unresolved refs whose `id` was
+/// never stamped; callers should fall back to the name-based path
+/// in that case (see [`find_refined_type_for_named`] for the
+/// combined helper).
+pub fn find_refined_type_by_id(
+    ctx: &CodegenContext,
+    type_id: crate::ir::TypeId,
+) -> Option<&crate::ir::proof_ir::RefinedTypeDecl> {
+    ctx.proof_ir.refined_types.get(&type_id)
+}
+
+/// Refined-type lookup for a `Type::Named` ref. Prefers the
+/// id-direct path when `id: Some(_)` is stamped, falls back to the
+/// name-keyed resolution chain otherwise (builtins, unresolved
+/// refs).
+///
+/// Epic #180 Phase 6 — preferred over hand-rolled
+/// `Type::Named { name, .. }` destructure + `find_refined_type`
+/// at sites that consume `Spanned<ResolvedExpr>.ty()`.
+pub fn find_refined_type_for_named<'a>(
+    ctx: &'a CodegenContext,
+    named: &crate::types::Type,
+) -> Option<&'a crate::ir::proof_ir::RefinedTypeDecl> {
+    let crate::types::Type::Named { id, name } = named else {
+        return None;
+    };
+    match id {
+        Some(type_id) => find_refined_type_by_id(ctx, *type_id),
+        None => find_refined_type(ctx, name),
+    }
+}
+
 /// Scope-aware fn-contract resolver. `scope = Some(prefix)` directs
 /// bare-name lookups to that module's slot before falling back to
 /// entry / module-walk. Mirror of `find_refined_type_scoped` for fn
