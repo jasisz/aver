@@ -1,7 +1,11 @@
 /// Aver expressions → Dafny expression strings.
-use crate::ast::*;
+use crate::ast::{BinOp, Literal, Spanned};
 use crate::codegen::CodegenContext;
-use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_call};
+use crate::codegen::common::{is_user_type, resolve_module_call};
+use crate::ir::hir::{
+    BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedMatchArm, ResolvedPattern,
+    ResolvedStrPart,
+};
 
 /// Dafny reserved words.
 const DAFNY_RESERVED: &[&str] = &[
@@ -106,12 +110,12 @@ pub fn aver_name_to_dafny(name: &str) -> String {
     crate::codegen::common::escape_reserved_word(&normalized, DAFNY_RESERVED, "_")
 }
 
-/// Emit a Dafny expression from an Aver Spanned<Expr>.
-pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
+/// Emit a Dafny expression from a resolved Aver expression.
+pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     match &expr.node {
-        Expr::Literal(lit) => emit_literal(lit),
-        Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_dafny(name),
-        Expr::Attr(obj, field) => {
+        ResolvedExpr::Literal(lit) => emit_literal(lit),
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } => aver_name_to_dafny(name),
+        ResolvedExpr::Attr(obj, field) => {
             // Refinement-via-opaque records emit as Dafny subset types,
             // so projecting the carrier field is the identity (the
             // value *is* the underlying `int`).
@@ -122,7 +126,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             {
                 return emit_expr(obj, ctx);
             }
-            if let Expr::Ident(type_name) = &obj.node {
+            if let ResolvedExpr::Ident(type_name) = &obj.node {
                 if type_name == "Option" && field == "None" {
                     return "Option.None".to_string();
                 }
@@ -136,7 +140,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             // `is_user_type` because Aver allows `module Enemy` to coexist
             // with `record Enemy`. If the head is a known module prefix,
             // route through the renamed Dafny module (`Aver_Enemy.fn`).
-            if let Some(full_dotted) = expr_to_dotted_name_spanned(expr)
+            if let Some(full_dotted) = crate::ir::hir::resolved_to_dotted(&expr.node)
                 && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
             {
                 if let Some(dot_pos) = bare.find('.') {
@@ -152,7 +156,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 }
                 return bare_dafny;
             }
-            if let Expr::Ident(type_name) = &obj.node
+            if let ResolvedExpr::Ident(type_name) = &obj.node
                 && is_user_type(type_name, ctx)
             {
                 return format!("{}.{}", type_name, field);
@@ -160,14 +164,14 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             let obj_str = emit_expr(obj, ctx);
             format!("{}.{}", obj_str, aver_name_to_dafny(field))
         }
-        Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx),
-        Expr::Neg(inner) => {
+        ResolvedExpr::Call(callee, args) => emit_fn_call(callee, args, ctx),
+        ResolvedExpr::Neg(inner) => {
             // Dafny accepts `(-x)` uniformly for `int` and `real`,
             // unlike `0 - x` which fails when `x` is real (the literal
             // `0` is int and Dafny rejects mixed-type arithmetic).
             format!("(-{})", emit_expr(inner, ctx))
         }
-        Expr::BinOp(op, left, right) => {
+        ResolvedExpr::BinOp(op, left, right) => {
             let l = emit_expr(left, ctx);
             let r = emit_expr(right, ctx);
             // Float `/` lowers via `FloatDiv` so Aver's IEEE-754
@@ -194,22 +198,22 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             };
             format!("({} {} {})", l, op_str, r)
         }
-        Expr::Match { subject, arms, .. } => emit_match(subject, arms, ctx),
-        Expr::Constructor(name, arg) => emit_constructor(name, arg.as_deref(), ctx),
-        Expr::ErrorProp(_) => {
+        ResolvedExpr::Match { subject, arms } => emit_match(subject, arms, ctx),
+        ResolvedExpr::Ctor(ctor, args) => emit_constructor(ctor, args, ctx),
+        ResolvedExpr::ErrorProp(_) => {
             // ? operator requires early-return semantics (Err propagation).
             // Dafny pure functions cannot express this; functions using ? are
-            // skipped at the top-level emission stage.  If we get here, emit
+            // skipped at the top-level emission stage. If we get here, emit
             // a marker that makes the generated Dafny obviously wrong rather
             // than silently modelling a different program.
             "/* ERROR: ? operator not supported in Dafny pure functions */".to_string()
         }
-        Expr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx),
-        Expr::List(elems) => {
+        ResolvedExpr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx),
+        ResolvedExpr::List(elems) => {
             let items: Vec<String> = elems.iter().map(|e| emit_expr(e, ctx)).collect();
             format!("[{}]", items.join(", "))
         }
-        Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
+        ResolvedExpr::Tuple(elems) | ResolvedExpr::IndependentProduct(elems, _) => {
             // Oracle v1: plain `!` lifts to a Dafny tuple — schedule
             // invariance is a compiler-level claim, no extra machinery at
             // the expression site. `?!` also passes through the tuple form
@@ -222,12 +226,12 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             let items: Vec<String> = elems.iter().map(|e| emit_expr(e, ctx)).collect();
             format!("({})", items.join(", "))
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             if entries.is_empty() {
                 "map[]".to_string()
             } else if entries
                 .iter()
-                .all(|(_, v)| crate::codegen::common::is_unit_expr_spanned(v))
+                .all(|(_, v)| crate::codegen::common::is_unit_expr_resolved(&v.node))
             {
                 // Map<T, Unit> literal → set literal
                 let items: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
@@ -240,7 +244,9 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 format!("map[{}]", items.join(", "))
             }
         }
-        Expr::RecordCreate { type_name, fields } => {
+        ResolvedExpr::RecordCreate {
+            type_name, fields, ..
+        } => {
             // Int-carrier refinement records emit as a subset type
             // (`type X = n: int | P n`), so `X(value := k)` collapses
             // to just `k` — the value already inhabits the subset.
@@ -265,7 +271,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             let dafny_type_name = type_name.replace('.', "_");
             format!("{}({})", dafny_type_name, field_strs.join(", "))
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             let base_str = emit_expr(base, ctx);
             let update_strs: Vec<String> = updates
                 .iter()
@@ -275,19 +281,13 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 .collect();
             format!("{}.({})", base_str, update_strs.join(", "))
         }
-        Expr::TailCall(inner) => {
-            let TailCallData {
-                target: name, args, ..
-            } = inner.as_ref();
+        ResolvedExpr::TailCall { target, args } => {
+            let entry = ctx.symbol_table.fn_entry(*target);
+            let name = entry.key.name.as_str();
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
             format!("{}({})", aver_name_to_dafny(name), arg_strs.join(", "))
         }
     }
-}
-
-/// Helper to extract dotted name from a Spanned<Expr>.
-fn expr_to_dotted_name_spanned(expr: &Spanned<Expr>) -> Option<String> {
-    expr_to_dotted_name(&expr.node)
 }
 
 fn emit_literal(lit: &Literal) -> String {
@@ -312,48 +312,78 @@ fn emit_literal(lit: &Literal) -> String {
     }
 }
 
-fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenContext) -> String {
+fn emit_fn_call(
+    callee: &ResolvedCallee,
+    args: &[Spanned<ResolvedExpr>],
+    ctx: &CodegenContext,
+) -> String {
     use crate::codegen::builtins::recognize_builtin;
-    use crate::codegen::common::is_unit_expr_spanned;
+    use crate::codegen::common::is_unit_expr_resolved;
 
-    let dotted = expr_to_dotted_name_spanned(fn_expr);
-
-    // Map<T, Unit> set operations: intercept before generic builtin path
-    if let Some(name) = dotted.as_deref()
-        && name == "Map.set"
-        && args.len() == 3
-        && is_unit_expr_spanned(&args[2])
-    {
-        let m = emit_expr(&args[0], ctx);
-        let k = emit_expr(&args[1], ctx);
-        return format!("({} + {{{}}})", m, k);
-    }
-
-    if let Some(builtin) = dotted.as_deref().and_then(recognize_builtin) {
-        let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
-        return emit_dafny_builtin(builtin, &a);
-    }
-
-    // Oracle v1: BranchPath.* constructor calls map onto the underscore-
-    // named prelude functions (Dafny's dotted notation collides with
-    // record-member access on the BranchPath datatype).
-    if let Some(name) = dotted.as_deref() {
-        let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
-        match name {
-            "BranchPath.child" if a.len() == 2 => {
-                return format!("BranchPath_child({}, {})", a[0], a[1]);
+    match callee {
+        ResolvedCallee::Builtin(name) => {
+            // Map<T, Unit> set operations: intercept before generic builtin path
+            if name == "Map.set" && args.len() == 3 && is_unit_expr_resolved(&args[2].node) {
+                let m = emit_expr(&args[0], ctx);
+                let k = emit_expr(&args[1], ctx);
+                return format!("({} + {{{}}})", m, k);
             }
-            "BranchPath.parse" if a.len() == 1 => {
-                return format!("BranchPath_parse({})", a[0]);
+            if let Some(builtin) = recognize_builtin(name) {
+                let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
+                return emit_dafny_builtin(builtin, &a);
             }
-            _ => {}
+            // Oracle v1: BranchPath.* constructor calls map onto the
+            // underscore-named prelude functions (Dafny's dotted
+            // notation collides with record-member access on the
+            // BranchPath datatype).
+            let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
+            match name.as_str() {
+                "BranchPath.child" if a.len() == 2 => {
+                    return format!("BranchPath_child({}, {})", a[0], a[1]);
+                }
+                "BranchPath.parse" if a.len() == 1 => {
+                    return format!("BranchPath_parse({})", a[0]);
+                }
+                _ => {}
+            }
+            // Generic builtin fallback — render as dotted call.
+            format!("{}({})", aver_name_to_dafny(name), a.join(", "))
+        }
+        ResolvedCallee::Intrinsic(intr) => {
+            // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
+            // don't reach the Dafny backend in practice (Dafny emit
+            // doesn't see post-interp-lower buffer shapes), but the
+            // resolver carries them through; render as bare-name call.
+            let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
+            format!("{}({})", intr.name(), a.join(", "))
+        }
+        ResolvedCallee::Fn(fn_id) => {
+            let entry = ctx.symbol_table.fn_entry(*fn_id);
+            let bare = entry.key.name.as_str();
+            let module_prefix = entry.key.scope_str();
+            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
+            let func = match module_prefix {
+                Some(prefix) if !ctx.modules.is_empty() => {
+                    format!("{}.{}", super::dafny_module_name(prefix), aver_name_to_dafny(bare))
+                }
+                _ => aver_name_to_dafny(bare),
+            };
+            format!("{}({})", func, arg_strs.join(", "))
+        }
+        ResolvedCallee::LocalSlot { name, .. } => {
+            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
+            format!("{}({})", aver_name_to_dafny(name), arg_strs.join(", "))
+        }
+        ResolvedCallee::Unresolved { callee: inner } => {
+            // Typecheck-rejected callee — render the source-faithful
+            // expression as a regular call so the surrounding Dafny
+            // module still parses (verify driver surfaces the missing
+            // target separately).
+            let func = emit_expr(inner, ctx);
+            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
+            format!("{}({})", func, arg_strs.join(", "))
         }
     }
-
-    // Not a recognized builtin — generic function call
-    let fn_name = emit_expr(fn_expr, ctx);
-    let arg_strs: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
-    format!("{}({})", fn_name, arg_strs.join(", "))
 }
 
 fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> String {
@@ -480,7 +510,11 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
     }
 }
 
-fn emit_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_match(
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
+    ctx: &CodegenContext,
+) -> String {
     // Check if this is a list-pattern match (EmptyList / Cons arms)
     if has_list_patterns(arms) {
         return emit_list_match(subject, arms, ctx);
@@ -512,39 +546,43 @@ fn emit_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) 
 
 /// Should we emit this match as an if-then-else chain?
 /// Yes for matches on scalar values (int, bool, string literals) and wildcards.
-fn should_emit_as_if_chain(arms: &[MatchArm]) -> bool {
+fn should_emit_as_if_chain(arms: &[ResolvedMatchArm]) -> bool {
     arms.iter().all(|arm| {
         matches!(
             arm.pattern,
-            Pattern::Literal(_) | Pattern::Wildcard | Pattern::Ident(_)
+            ResolvedPattern::Literal(_) | ResolvedPattern::Wildcard | ResolvedPattern::Ident(_)
         )
     })
 }
 
 /// Check if arms form a bool match: `true -> ..., false -> ...` (in either order).
-fn is_bool_match(arms: &[MatchArm]) -> bool {
+fn is_bool_match(arms: &[ResolvedMatchArm]) -> bool {
     if arms.len() != 2 {
         return false;
     }
     let has_true = arms
         .iter()
-        .any(|a| matches!(&a.pattern, Pattern::Literal(Literal::Bool(true))));
+        .any(|a| matches!(&a.pattern, ResolvedPattern::Literal(Literal::Bool(true))));
     let has_false = arms
         .iter()
-        .any(|a| matches!(&a.pattern, Pattern::Literal(Literal::Bool(false))));
+        .any(|a| matches!(&a.pattern, ResolvedPattern::Literal(Literal::Bool(false))));
     has_true && has_false
 }
 
 /// Emit a bool match as `if subject then true_body else false_body`.
-fn emit_bool_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_bool_match(
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
+    ctx: &CodegenContext,
+) -> String {
     let subj = emit_expr(subject, ctx);
     let true_arm = arms
         .iter()
-        .find(|a| matches!(&a.pattern, Pattern::Literal(Literal::Bool(true))))
+        .find(|a| matches!(&a.pattern, ResolvedPattern::Literal(Literal::Bool(true))))
         .unwrap();
     let false_arm = arms
         .iter()
-        .find(|a| matches!(&a.pattern, Pattern::Literal(Literal::Bool(false))))
+        .find(|a| matches!(&a.pattern, ResolvedPattern::Literal(Literal::Bool(false))))
         .unwrap();
     let true_body = emit_expr(&true_arm.body, ctx);
     let false_body = emit_expr(&false_arm.body, ctx);
@@ -552,12 +590,21 @@ fn emit_bool_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenCont
 }
 
 /// Emit a match as a Dafny if-then-else chain.
-fn emit_if_chain(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_if_chain(
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
+    ctx: &CodegenContext,
+) -> String {
     let subj = emit_expr(subject, ctx);
     emit_if_chain_inner(&subj, arms, 0, ctx)
 }
 
-fn emit_if_chain_inner(subj: &str, arms: &[MatchArm], idx: usize, ctx: &CodegenContext) -> String {
+fn emit_if_chain_inner(
+    subj: &str,
+    arms: &[ResolvedMatchArm],
+    idx: usize,
+    ctx: &CodegenContext,
+) -> String {
     if idx >= arms.len() {
         return "/* unreachable */".to_string();
     }
@@ -566,14 +613,14 @@ fn emit_if_chain_inner(subj: &str, arms: &[MatchArm], idx: usize, ctx: &CodegenC
     let body = emit_expr(&arm.body, ctx);
 
     match &arm.pattern {
-        Pattern::Wildcard | Pattern::Ident(_) => {
-            if let Pattern::Ident(name) = &arm.pattern {
+        ResolvedPattern::Wildcard | ResolvedPattern::Ident(_) => {
+            if let ResolvedPattern::Ident(name) = &arm.pattern {
                 format!("(var {} := {}; {})", aver_name_to_dafny(name), subj, body)
             } else {
                 body
             }
         }
-        Pattern::Literal(lit) => {
+        ResolvedPattern::Literal(lit) => {
             let rest = emit_if_chain_inner(subj, arms, idx + 1, ctx);
 
             let lit_str = emit_literal(lit);
@@ -587,25 +634,29 @@ fn emit_if_chain_inner(subj: &str, arms: &[MatchArm], idx: usize, ctx: &CodegenC
 }
 
 /// Check if any arm uses list patterns (EmptyList or Cons).
-fn has_list_patterns(arms: &[MatchArm]) -> bool {
+fn has_list_patterns(arms: &[ResolvedMatchArm]) -> bool {
     arms.iter()
-        .any(|arm| matches!(arm.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
+        .any(|arm| matches!(arm.pattern, ResolvedPattern::EmptyList | ResolvedPattern::Cons(_, _)))
 }
 
 /// Emit a match on a list (seq) as if-then-else with seq operations.
-fn emit_list_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenContext) -> String {
+fn emit_list_match(
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
+    ctx: &CodegenContext,
+) -> String {
     let subj = emit_expr(subject, ctx);
 
     // Find empty-list arm and cons arm
     let empty_arm = arms
         .iter()
-        .find(|a| matches!(a.pattern, Pattern::EmptyList));
+        .find(|a| matches!(a.pattern, ResolvedPattern::EmptyList));
     let cons_arm = arms
         .iter()
-        .find(|a| matches!(a.pattern, Pattern::Cons(_, _)));
+        .find(|a| matches!(a.pattern, ResolvedPattern::Cons(_, _)));
     let wildcard_arm = arms
         .iter()
-        .find(|a| matches!(a.pattern, Pattern::Wildcard | Pattern::Ident(_)));
+        .find(|a| matches!(a.pattern, ResolvedPattern::Wildcard | ResolvedPattern::Ident(_)));
 
     let empty_body = if let Some(arm) = empty_arm {
         emit_expr(&arm.body, ctx)
@@ -616,7 +667,7 @@ fn emit_list_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenCont
     };
 
     let cons_body = if let Some(arm) = cons_arm {
-        if let Pattern::Cons(head, tail) = &arm.pattern {
+        if let ResolvedPattern::Cons(head, tail) = &arm.pattern {
             let head_name = aver_name_to_dafny(head);
             let tail_name = aver_name_to_dafny(tail);
             let body = emit_expr(&arm.body, ctx);
@@ -639,76 +690,118 @@ fn emit_list_match(subject: &Spanned<Expr>, arms: &[MatchArm], ctx: &CodegenCont
     )
 }
 
-fn emit_pattern(pattern: &Pattern) -> String {
+pub(crate) fn emit_pattern(pattern: &ResolvedPattern) -> String {
     match pattern {
-        Pattern::Wildcard => "_".to_string(),
-        Pattern::Literal(lit) => emit_literal(lit),
-        Pattern::Ident(name) => aver_name_to_dafny(name),
-        Pattern::EmptyList => "Nil".to_string(),
-        Pattern::Cons(head, tail) => {
+        ResolvedPattern::Wildcard => "_".to_string(),
+        ResolvedPattern::Literal(lit) => emit_literal(lit),
+        ResolvedPattern::Ident(name) => aver_name_to_dafny(name),
+        ResolvedPattern::EmptyList => "Nil".to_string(),
+        ResolvedPattern::Cons(head, tail) => {
             format!(
                 "Cons({}, {})",
                 aver_name_to_dafny(head),
                 aver_name_to_dafny(tail)
             )
         }
-        Pattern::Tuple(pats) => {
+        ResolvedPattern::Tuple(pats) => {
             let subs: Vec<String> = pats.iter().map(emit_pattern).collect();
             format!("({})", subs.join(", "))
         }
-        Pattern::Constructor(name, bindings) => {
-            let variant = if let Some(dot_pos) = name.rfind('.') {
-                &name[dot_pos + 1..]
-            } else {
-                name.as_str()
-            };
-            if bindings.is_empty() {
-                variant.to_string()
-            } else {
-                let subs: Vec<String> = bindings.iter().map(|b| aver_name_to_dafny(b)).collect();
-                format!("{}({})", variant, subs.join(", "))
-            }
-        }
+        ResolvedPattern::Ctor(ctor, bindings) => emit_ctor_pattern(ctor, bindings),
     }
 }
 
-fn emit_constructor(name: &str, arg: Option<&Spanned<Expr>>, ctx: &CodegenContext) -> String {
+fn emit_ctor_pattern(ctor: &ResolvedCtor, bindings: &[String]) -> String {
+    let variant = match ctor {
+        ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => "Ok".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => "Err".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => "Some".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => "None".to_string(),
+        ResolvedCtor::User { name, .. } => {
+            if let Some(dot_pos) = name.rfind('.') {
+                name[dot_pos + 1..].to_string()
+            } else {
+                name.clone()
+            }
+        }
+        ResolvedCtor::Unresolved { name } => {
+            if let Some(dot_pos) = name.rfind('.') {
+                name[dot_pos + 1..].to_string()
+            } else {
+                name.clone()
+            }
+        }
+    };
+    if bindings.is_empty() {
+        variant
+    } else {
+        let subs: Vec<String> = bindings.iter().map(|b| aver_name_to_dafny(b)).collect();
+        format!("{}({})", variant, subs.join(", "))
+    }
+}
+
+fn emit_constructor(
+    ctor: &ResolvedCtor,
+    args: &[Spanned<ResolvedExpr>],
+    ctx: &CodegenContext,
+) -> String {
     // In Dafny expression context, qualify constructors to avoid
     // ambiguity. User-defined types and the built-in `Result` /
     // `Option` are kept fully qualified — the latter because user code
     // can declare its own `enum ParseResult { Ok, Err }` with the same
     // variant names, and Dafny needs the discriminator to pick the
     // right datatype.
-    let qualified = if let Some(dot_pos) = name.rfind('.') {
-        let type_name = &name[..dot_pos];
-        let variant = &name[dot_pos + 1..];
-        if is_user_type(type_name, ctx) || type_name == "Result" || type_name == "Option" {
-            format!("{}.{}", type_name, variant)
-        } else {
-            variant.to_string()
+    let qualified = match ctor {
+        ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => "Result.Ok".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => "Result.Err".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => "Option.Some".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => return "Option.None".to_string(),
+        ResolvedCtor::User { type_id, name, .. } => {
+            let type_entry = ctx.symbol_table.type_entry(*type_id);
+            let type_name = type_entry.key.name.as_str();
+            let variant = if let Some(dot_pos) = name.rfind('.') {
+                &name[dot_pos + 1..]
+            } else {
+                name.as_str()
+            };
+            if is_user_type(type_name, ctx) {
+                format!("{}.{}", type_name, variant)
+            } else {
+                variant.to_string()
+            }
         }
-    } else {
-        name.to_string()
+        ResolvedCtor::Unresolved { name } => {
+            let (type_name, variant) = if let Some(dot_pos) = name.rfind('.') {
+                (&name[..dot_pos], &name[dot_pos + 1..])
+            } else {
+                ("", name.as_str())
+            };
+            if is_user_type(type_name, ctx) || type_name == "Result" || type_name == "Option" {
+                format!("{}.{}", type_name, variant)
+            } else {
+                variant.to_string()
+            }
+        }
     };
-    if let Some(a) = arg {
-        let arg_str = emit_expr(a, ctx);
-        format!("{}({})", qualified, arg_str)
-    } else {
+    if args.is_empty() {
         qualified
+    } else {
+        let arg_strs: Vec<String> = args.iter().map(|a| emit_expr(a, ctx)).collect();
+        format!("{}({})", qualified, arg_strs.join(", "))
     }
 }
 
-fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
+fn emit_interpolated_str(parts: &[ResolvedStrPart], ctx: &CodegenContext) -> String {
     let mut pieces = Vec::new();
     for part in parts {
         match part {
-            StrPart::Literal(s) => {
+            ResolvedStrPart::Literal(s) => {
                 pieces.push(format!(
                     "\"{}\"",
                     crate::codegen::common::escape_string_literal_unicode(s)
                 ));
             }
-            StrPart::Parsed(expr) => {
+            ResolvedStrPart::Parsed(expr) => {
                 pieces.push(format!("ToString({})", emit_expr(expr, ctx)));
             }
         }
@@ -718,4 +811,34 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
     } else {
         pieces.join(" + ")
     }
+}
+
+/// Source-shape adapter for callers that still hold a raw
+/// `Spanned<crate::ast::Expr>`. Resolves the expression on demand
+/// against the codegen context's symbol table; `scope` carries the
+/// owning module prefix when known, with `ctx.active_module_scope()`
+/// as the fallback when callers pass `None`.
+pub fn emit_expr_legacy(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    let active = ctx.active_module_scope();
+    let effective = scope.or(active.as_deref());
+    let resolved = ctx.resolve_expr(expr, effective);
+    emit_expr(&resolved, ctx)
+}
+
+/// Source-shape adapter for [`emit_pattern`]. See [`emit_expr_legacy`]
+/// for the scope-fallback rule.
+#[allow(dead_code)]
+pub fn emit_pattern_legacy(
+    pat: &crate::ast::Pattern,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    let active = ctx.active_module_scope();
+    let effective = scope.or(active.as_deref());
+    let resolved = ctx.resolve_pattern(pat, effective);
+    emit_pattern(&resolved)
 }
