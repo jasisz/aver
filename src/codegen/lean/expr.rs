@@ -34,8 +34,8 @@ pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
             // typechecker stamp on the host expression, then look
             // up the lifted-type decision the lowerer already made
             // in `ctx.proof_ir.refined_types`.
-            if let Some(crate::types::Type::Named { name: t_name, .. }) = obj.ty()
-                && let Some(decl) = crate::codegen::common::find_refined_type(ctx, t_name)
+            if let Some(ty) = obj.ty()
+                && let Some(decl) = crate::codegen::common::find_refined_type_for_named(ctx, ty)
                 && decl.carrier_type == "Int"
                 && field == &decl.carrier_field
             {
