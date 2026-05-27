@@ -169,6 +169,11 @@ impl<'a> ProofLowerInputs<'a> {
                     .iter()
                     .find(|m| m.fn_defs.iter().any(|d| std::ptr::eq(d, fd)))
                     .map(|m| m.prefix.as_str());
+                // **syntax-discovery-only** (epic #170 Phase 8
+                // guardrail): scope was just resolved via pointer-eq
+                // against dep modules — the `None` arm is the
+                // correct entry-scope key by construction (same
+                // shape as `fn_key_for_decl` in `codegen::common`).
                 let key = match scope {
                     Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), &fd.name),
                     None => crate::ir::FnKey::entry(&fd.name),
@@ -221,6 +226,12 @@ impl<'a> ProofLowerInputs<'a> {
             .pure_fns_in_scope(scope)
             .into_iter()
             .filter_map(|fd| {
+                // **syntax-discovery-only** (epic #170 Phase 8
+                // guardrail): scope is the caller's stated scope —
+                // `None` = entry, `Some(prefix)` = dep module. Both
+                // arms below are the correct key for the matching
+                // arm; bare-name keying is safe because the caller
+                // has already narrowed to a single scope.
                 let key = match scope {
                     Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), &fd.name),
                     None => crate::ir::FnKey::entry(&fd.name),

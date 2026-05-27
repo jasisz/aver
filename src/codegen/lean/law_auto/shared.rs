@@ -186,9 +186,14 @@ pub(super) fn expr_dotted_name(expr: &Spanned<Expr>) -> Option<String> {
     }
 }
 
+/// **syntax-discovery-only** (epic #170 Phase 7). Exact-match
+/// recognition of a callee's dotted source name. The previous
+/// suffix-match clause (`name.rsplit('.').next() == Some(target)`)
+/// was an identity leak — sibling fix to the one in
+/// `proof_lower::callee_matches_name`.
 pub(super) fn callee_matches_name(expr: &Spanned<Expr>, target: &str) -> bool {
     let Some(name) = expr_dotted_name(expr) else {
         return false;
     };
-    name == target || name.rsplit('.').next() == Some(target)
+    name == target
 }

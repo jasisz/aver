@@ -342,6 +342,11 @@ pub fn build_context(
             // No entry analysis: compute the per-scope SCC set inline
             // via `call_graph` and project to FnIds. Same effect as
             // running the analyze stage's mutual-TCO discovery.
+            // **syntax-discovery-only** (epic #170 Phase 8 guardrail):
+            // `entry_fns` is filtered from `fn_defs` — the entry-scope
+            // FnDef vec — so `FnKey::entry(&fd.name)` below is the
+            // correct keying by construction (every `fd` here is
+            // entry-scope).
             let entry_fns: Vec<&FnDef> = fn_defs.iter().filter(|fd| fd.name != "main").collect();
             for group in crate::call_graph::tailcall_scc_components(&entry_fns) {
                 if group.len() < 2 {
