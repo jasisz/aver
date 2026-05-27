@@ -79,10 +79,22 @@
 use crate::ast::{AnnotBool, BinOp, FnResolution, Literal, Module, Spanned, Type};
 use crate::ir::identity::{CtorId, FnId, TypeId};
 
+pub mod classify;
 pub mod dump;
 pub mod resolve;
+pub use classify::{
+    ForwardSlot, ResolvedBodyBindingPlan, ResolvedBodyExprPlan, ResolvedBodyPlan,
+    ResolvedBoolSubjectPlan, ResolvedForwardCallPlan, ResolvedLeafOp, ResolvedThinBodyPlan,
+    ThinKind, call_plan_from_resolved_callee, classify_body_expr_plan_resolved,
+    classify_body_plan_resolved, classify_bool_match_shape_resolved,
+    classify_bool_subject_plan_resolved, classify_dispatch_pattern_resolved,
+    classify_dispatch_table_shape_resolved, classify_forward_call_resolved,
+    classify_leaf_op_resolved, classify_list_match_shape_resolved,
+    classify_match_dispatch_plan_resolved, classify_thin_fn_def_resolved, resolved_to_dotted,
+    semantic_constructor_from_resolved_ctor,
+};
 pub use dump::{dump_resolved_expr, dump_resolved_program};
-pub use resolve::{ResolveCtx, resolve_program, resolve_top_level};
+pub use resolve::{ResolveCtx, resolve_fn_def_external, resolve_program, resolve_top_level};
 
 /// Count every `ResolvedCallee::Unresolved` and
 /// `ResolvedCtor::Unresolved` reachable from `fd`'s body. The Phase E

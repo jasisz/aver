@@ -4986,6 +4986,8 @@ mod tests {
             synthesized_buffered_fns: Vec::new(),
             proof_ir: aver::ir::ProofIR::default(),
             symbol_table: aver::ir::SymbolTable::default(),
+            resolved_fn_defs: Vec::new(),
+            resolved_module_fn_defs: Vec::new(),
         }
     }
 

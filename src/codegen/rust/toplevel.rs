@@ -1,17 +1,321 @@
 use super::emit_ctx::{EmitCtx, is_copy_type, should_borrow_param};
 use super::expr::{
-    aver_name_to_rust, classify_body_expr_plan_for_rust, classify_body_plan_for_rust,
-    classify_dispatch_plan_for_rust, classify_thin_fn_def_for_rust, clone_arg,
-    emit_body_plan_for_rust, emit_dispatch_table_match, emit_expr, emit_stmt,
+    aver_name_to_rust, classify_body_plan_for_rust, classify_dispatch_plan_for_rust,
+    classify_thin_fn_def_for_rust, clone_arg, emit_body_plan_for_rust, emit_expr, emit_stmt,
 };
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
+use crate::ir::hir::{
+    ResolveCtx, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedMatchArm, ResolvedPattern,
+    ResolvedStmt, resolve_fn_def_external,
+};
 use crate::ir::{BodyExprPlan, CallPlan, LeafOp, thin_kind_is_parent_thin_candidate};
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+
+/// Look up the resolved-HIR mirror of a source-shape `FnDef` previously
+/// stashed in `ctx.resolved_fn_defs` / `ctx.resolved_module_fn_defs`. If
+/// neither path covers `fd`, fall back to a fresh per-call resolver lift
+/// against the entry's symbol table — this happens for synthetic FnDefs
+/// inserted between `build_context` and emit (e.g. memo wrappers, TCO
+/// hoist rewrites) which the resolver hasn't lifted upfront.
+fn resolved_fn_def_for<'a>(
+    fd: &'a FnDef,
+    ctx: &'a CodegenContext,
+) -> std::borrow::Cow<'a, ResolvedFnDef> {
+    use std::borrow::Cow;
+    if let Some(rfd) = ctx.resolved_fn_defs.iter().find(|rfd| rfd.name == fd.name) {
+        return Cow::Borrowed(rfd);
+    }
+    for module in &ctx.resolved_module_fn_defs {
+        if let Some(rfd) = module.iter().find(|rfd| rfd.name == fd.name) {
+            return Cow::Borrowed(rfd);
+        }
+    }
+    let module_name = ctx.items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m.name.clone()),
+        _ => None,
+    });
+    let mut rctx = ResolveCtx::new(&ctx.symbol_table);
+    rctx.current_module = module_name;
+    let lifted = resolve_fn_def_external(&rctx, fd).unwrap_or_else(|| {
+        // Symbol-table lookup failed (typical for synthetic test FnDefs
+        // not registered in the program's `SymbolTable`). Synthesize
+        // the resolved fn def by lifting each body statement through
+        // [`resolved_stmt_on_demand`] — same shape the resolver
+        // would have produced if it had seen this fn. `fn_id` is left
+        // as a sentinel since no symbol-table entry maps to it.
+        let stmts: Vec<ResolvedStmt> = match fd.body.as_ref() {
+            FnBody::Block(stmts) => stmts
+                .iter()
+                .map(|s| resolved_stmt_on_demand(s, ctx))
+                .collect(),
+        };
+        ResolvedFnDef {
+            fn_id: crate::ir::FnId(u32::MAX),
+            name: fd.name.clone(),
+            line: fd.line,
+            params: fd
+                .params
+                .iter()
+                .map(|(n, ann)| (n.clone(), crate::types::parse_type_str(ann)))
+                .collect(),
+            return_type: crate::types::parse_type_str(&fd.return_type),
+            effects: fd.effects.clone(),
+            desc: fd.desc.clone(),
+            body: std::sync::Arc::new(ResolvedFnBody::Block(stmts)),
+            resolution: fd.resolution.clone(),
+        }
+    });
+    Cow::Owned(lifted)
+}
+
+/// Resolve a source-shape `Spanned<Expr>` on demand using the entry's
+/// resolver context — used by emit helpers that still walk `Expr` (TCO
+/// hoisting, mutual TCO, verify blocks) and need to feed the resolved
+/// shape into `emit_expr`. The `Spanned<ResolvedExpr>` carries the
+/// same line + type stamp as the input.
+fn resolved_expr_on_demand(expr: &Spanned<Expr>, ctx: &CodegenContext) -> Spanned<ResolvedExpr> {
+    let module_name = ctx.items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m.name.clone()),
+        _ => None,
+    });
+    let mut rctx = ResolveCtx::new(&ctx.symbol_table);
+    rctx.current_module = module_name;
+    let stmt = Stmt::Expr(expr.clone());
+    match crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt) {
+        crate::ir::hir::ResolvedStmt::Expr(s) => s,
+        crate::ir::hir::ResolvedStmt::Binding { value, .. } => value,
+    }
+}
+
+/// Same as [`resolved_expr_on_demand`] but for whole statements
+/// (`Binding(name, ty_ann, expr)` or `Expr(expr)`).
+fn resolved_stmt_on_demand(stmt: &Stmt, ctx: &CodegenContext) -> ResolvedStmt {
+    let module_name = ctx.items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m.name.clone()),
+        _ => None,
+    });
+    let mut rctx = ResolveCtx::new(&ctx.symbol_table);
+    rctx.current_module = module_name;
+    crate::ir::hir::resolve::resolve_stmt_external(&rctx, stmt)
+}
+
+/// Source-shape variant of [`emit_expr`] for emitters that still hold
+/// a pre-resolve [`Expr`] borrow (TCO hoisting / loop, mutual-TCO
+/// trampoline, memo wrapper, verify cases, main body). Lifts the
+/// expression on demand through the entry's resolver and dispatches
+/// through the migrated emitter. The cost is one resolver lift per
+/// call — cheap for the small subtrees these helpers walk.
+fn emit_expr_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    let spanned = Spanned::bare(expr.clone());
+    let resolved = resolved_expr_on_demand(&spanned, ctx);
+    emit_expr(&resolved.node, ctx, ectx)
+}
+
+/// `clone_arg`/`borrow_arg` analogue that takes a source-shape `&Expr`.
+fn clone_arg_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    let spanned = Spanned::bare(expr.clone());
+    let resolved = resolved_expr_on_demand(&spanned, ctx);
+    clone_arg(&resolved.node, ctx, ectx)
+}
+
+/// Source-shape [`CallLowerCtx`] adapter for the TCO hoisting helpers
+/// that still walk pre-resolve [`Expr`]. The adapter is intentionally
+/// minimal — these helpers only inspect shape (is-leaf, is-effect-
+/// free, is-forward-call); identity classification flows through the
+/// IR's `classify_*` family unchanged. See
+/// [`crate::ir::CallLowerCtx`].
+struct RustSourceCallCtx<'a, 'b> {
+    ctx: &'a CodegenContext,
+    ectx: &'b EmitCtx,
+}
+
+impl crate::ir::CallLowerCtx for RustSourceCallCtx<'_, '_> {
+    fn is_local_value(&self, name: &str) -> bool {
+        self.ectx.local_types.contains_key(name)
+    }
+    fn is_user_type(&self, name: &str) -> bool {
+        crate::codegen::common::is_user_type(name, self.ctx)
+    }
+    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
+        let mut best = None;
+        for (dot_idx, _) in dotted.match_indices('.') {
+            let prefix = &dotted[..dot_idx];
+            let suffix = &dotted[dot_idx + 1..];
+            if self.ctx.module_prefixes.contains(prefix)
+                && best.is_none_or(|existing: (&str, &str)| prefix.len() > existing.0.len())
+            {
+                best = Some((prefix, suffix));
+            }
+        }
+        best
+    }
+}
+
+fn classify_body_expr_plan_source<'a>(
+    expr: &'a Expr,
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> BodyExprPlan<'a> {
+    let lower_ctx = RustSourceCallCtx { ctx, ectx };
+    crate::ir::classify_body_expr_plan(expr, &lower_ctx)
+}
+
+/// Source-shape variant of [`super::expr::emit_stmt`] for sites that
+/// still walk pre-resolve [`Stmt`] (memo wrappers, TCO loop emit,
+/// trampoline arms, verify cases, main fn body). Lifts on-demand
+/// through [`resolved_stmt_on_demand`] and calls the migrated emit.
+fn emit_stmt_legacy(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    let resolved = resolved_stmt_on_demand(stmt, ctx);
+    emit_stmt(&resolved, ctx, ectx)
+}
+
+/// Source-shape variant of [`super::pattern::emit_pattern`].
+fn emit_pattern_legacy(pat: &Pattern, string_context: bool, ctx: &CodegenContext) -> String {
+    let resolved = resolved_pattern_on_demand(pat, ctx);
+    super::pattern::emit_pattern(&resolved, string_context, ctx)
+}
+
+fn resolved_pattern_on_demand(pat: &Pattern, ctx: &CodegenContext) -> ResolvedPattern {
+    let module_name = ctx.items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m.name.clone()),
+        _ => None,
+    });
+    let mut rctx = ResolveCtx::new(&ctx.symbol_table);
+    rctx.current_module = module_name;
+    // Resolve via a synthetic match arm wrapper: simplest path that
+    // doesn't expose a private resolver helper.
+    let synthetic_arm = MatchArm {
+        pattern: pat.clone(),
+        body: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),
+        binding_slots: std::sync::OnceLock::new(),
+    };
+    let stmt = Stmt::Expr(Spanned::bare(Expr::Match {
+        subject: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),
+        arms: vec![synthetic_arm],
+    }));
+    let resolved_stmt = crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt);
+    let ResolvedStmt::Expr(spanned) = resolved_stmt else {
+        unreachable!()
+    };
+    let ResolvedExpr::Match { arms, .. } = spanned.node else {
+        unreachable!()
+    };
+    arms.into_iter().next().unwrap().pattern
+}
+
+/// Legacy [`has_string_literal_patterns`] for source-shape MatchArm.
+fn has_string_literal_patterns_legacy(arms: &[MatchArm]) -> bool {
+    arms.iter()
+        .any(|arm| matches!(&arm.pattern, Pattern::Literal(Literal::Str(_))))
+}
+
+/// Legacy [`has_list_patterns`] for source-shape MatchArm.
+fn has_list_patterns_legacy(arms: &[MatchArm]) -> bool {
+    arms.iter()
+        .any(|arm| matches!(&arm.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
+}
+
+/// Lift a source-shape `MatchArm` slice into resolved form via the
+/// on-demand resolver. Used at the call sites that haven't migrated
+/// past `Expr` shape (TCO loop emit, mutual-TCO trampoline arms) but
+/// need to feed `&[ResolvedMatchArm]` to the migrated dispatch /
+/// list-match / pattern emit helpers.
+fn resolve_match_arms_on_demand(arms: &[MatchArm], ctx: &CodegenContext) -> Vec<ResolvedMatchArm> {
+    arms.iter()
+        .map(|arm| {
+            let pattern = resolved_pattern_on_demand(&arm.pattern, ctx);
+            let body = Box::new(resolved_expr_on_demand(&arm.body, ctx));
+            let binding_slots = std::sync::OnceLock::new();
+            if let Some(slots) = arm.binding_slots.get() {
+                let _ = binding_slots.set(slots.clone());
+            }
+            ResolvedMatchArm {
+                pattern,
+                body,
+                binding_slots,
+            }
+        })
+        .collect()
+}
+
+/// Source-shape variant of [`classify_dispatch_plan_for_rust`] for
+/// emitters that still hold source `MatchArm` slices.
+fn classify_dispatch_plan_for_rust_legacy(
+    arms: &[MatchArm],
+    ctx: &CodegenContext,
+    ectx: &EmitCtx,
+) -> Option<crate::ir::MatchDispatchPlan> {
+    let resolved = resolve_match_arms_on_demand(arms, ctx);
+    classify_dispatch_plan_for_rust(&resolved, ctx, ectx)
+}
+
+/// Source-shape variant of [`super::expr::emit_list_match`].
+fn emit_list_match_legacy<F>(
+    subject: String,
+    arms: &[MatchArm],
+    list_shape: Option<crate::ir::ListMatchShape>,
+    allow_fast_macro: bool,
+    ctx: &CodegenContext,
+    body_for_arm: F,
+) -> String
+where
+    F: Fn(&MatchArm) -> String,
+{
+    let resolved = resolve_match_arms_on_demand(arms, ctx);
+    super::expr::emit_list_match(
+        subject,
+        &resolved,
+        list_shape,
+        allow_fast_macro,
+        ctx,
+        |rarm| {
+            // Lookup the original arm by pattern equality (positional — same length, same order).
+            let idx = resolved
+                .iter()
+                .position(|r| std::ptr::eq(r, rarm))
+                .unwrap_or_else(|| {
+                    // Fallback to structural equality on pattern, since the closure invokes us with
+                    // a borrow into the same `resolved` vec.
+                    resolved
+                        .iter()
+                        .position(|r| r.pattern == rarm.pattern)
+                        .unwrap_or(0)
+                });
+            body_for_arm(&arms[idx])
+        },
+    )
+}
+
+/// Source-shape variant of [`super::expr::emit_dispatch_table_match`].
+fn emit_dispatch_table_match_legacy<F>(
+    subject: String,
+    arms: &[MatchArm],
+    shape: &crate::ir::DispatchTableShape,
+    ctx: &CodegenContext,
+    body_for_arm: F,
+) -> String
+where
+    F: Fn(&MatchArm) -> String,
+{
+    let resolved = resolve_match_arms_on_demand(arms, ctx);
+    super::expr::emit_dispatch_table_match(subject, &resolved, shape, |rarm| {
+        let idx = resolved
+            .iter()
+            .position(|r| std::ptr::eq(r, rarm))
+            .unwrap_or_else(|| {
+                resolved
+                    .iter()
+                    .position(|r| r.pattern == rarm.pattern)
+                    .unwrap_or(0)
+            });
+        body_for_arm(&arms[idx])
+    })
+}
 
 fn visibility_prefix(public: bool) -> &'static str {
     if public { "pub " } else { "" }
@@ -414,7 +718,9 @@ fn emit_fn_def_with_visibility(
     } else {
         None
     };
-    let optimized_thin_plan = classify_thin_fn_def_for_rust(fd, ctx, &ectx);
+    let resolved_fd_owned = resolved_fn_def_for(fd, ctx);
+    let resolved_fd = resolved_fd_owned.as_ref();
+    let optimized_thin_plan = classify_thin_fn_def_for_rust(resolved_fd, ctx, &ectx);
 
     if fd.effects.is_empty()
         && optimized_thin_plan
@@ -429,7 +735,7 @@ fn emit_fn_def_with_visibility(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        let mut wrapped_body = emit_fn_body(&fd.body, ctx, &ectx);
+        let mut wrapped_body = emit_fn_body(&resolved_fd.body, ctx, &ectx);
         if let Some((prog_name, module_fns_name)) = &self_host_state {
             wrapped_body = format!(
                 "crate::self_host_support::with_program_fn_store({}.fns.clone(), {}.clone(), || {{\n{}\n}})",
@@ -518,7 +824,7 @@ fn emit_fn_def_with_visibility(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        lines.push(emit_fn_body(&fd.body, ctx, &ectx));
+        lines.push(emit_fn_body(&resolved_fd.body, ctx, &ectx));
         lines.push("}".to_string());
     }
 
@@ -579,7 +885,7 @@ fn emit_fn_params_with_rc(
         .join(", ")
 }
 
-fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+fn emit_fn_body(body: &ResolvedFnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     if let Some(plan) = classify_body_plan_for_rust(body, ctx, ectx) {
         return format!(
             "    crate::cancel_checkpoint();\n    {}",
@@ -593,11 +899,11 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
         match stmt {
-            Stmt::Binding(name, type_ann, _) => {
+            ResolvedStmt::Binding { name, ty_ann, .. } => {
                 lines.push(format!("    {}", emit_stmt(stmt, ctx, ectx)));
-                let _ = (name, type_ann);
+                let _ = (name, ty_ann);
             }
-            Stmt::Expr(expr) => {
+            ResolvedStmt::Expr(expr) => {
                 if is_last {
                     lines.push(format!("    {}", emit_expr(&expr.node, ctx, ectx)));
                 } else {
@@ -967,7 +1273,7 @@ fn expr_is_loop_invariant(
                 .is_some_and(|dotted| dotted.chars().next().is_some_and(|c| c.is_uppercase()))
                 || expr_is_loop_invariant(&obj.node, stable_names, ctx, ectx)
         }
-        Expr::FnCall(_, args) => match classify_body_expr_plan_for_rust(expr, ctx, ectx) {
+        Expr::FnCall(_, args) => match classify_body_expr_plan_source(expr, ctx, ectx) {
             BodyExprPlan::Leaf(_) => args
                 .iter()
                 .all(|arg| expr_is_loop_invariant(&arg.node, stable_names, ctx, ectx)),
@@ -1052,7 +1358,7 @@ fn expr_is_hoistable_invariant(
         return false;
     }
 
-    match classify_body_expr_plan_for_rust(&expr.node, ctx, ectx) {
+    match classify_body_expr_plan_source(&expr.node, ctx, ectx) {
         BodyExprPlan::Leaf(
             LeafOp::StaticRef(_) | LeafOp::NoneValue | LeafOp::VariantConstructor { .. },
         ) => false,
@@ -1730,7 +2036,7 @@ fn emit_tco_fn(
         lines.push(format!(
             "    let {} = {};",
             hoist.temp_name,
-            emit_expr(hoist.expr, ctx, &ectx)
+            emit_expr_legacy(hoist.expr, ctx, &ectx)
         ));
     }
 
@@ -1775,7 +2081,7 @@ fn emit_tco_body(
                 lines.push(format!(
                     "        let {} = {};",
                     aver_name_to_rust(name),
-                    emit_expr(&expr.node, ctx, ectx)
+                    emit_expr_legacy(&expr.node, ctx, ectx)
                 ));
             }
             Stmt::Expr(expr) => {
@@ -1794,7 +2100,10 @@ fn emit_tco_body(
                         )
                     ));
                 } else {
-                    lines.push(format!("        {};", emit_expr(&expr.node, ctx, ectx)));
+                    lines.push(format!(
+                        "        {};",
+                        emit_expr_legacy(&expr.node, ctx, ectx)
+                    ));
                 }
             }
         }
@@ -1864,7 +2173,7 @@ fn emit_tco_expr(
         Expr::TailCall(boxed) => {
             let TailCallData { target, args, .. } = boxed.as_ref();
             if target != self_name || args.len() != params.len() {
-                return emit_expr(expr, ctx, ectx);
+                return emit_expr_legacy(expr, ctx, ectx);
             }
 
             // Self TCO — create temp vars, then reassign.
@@ -1878,7 +2187,7 @@ fn emit_tco_expr(
             // Just use the parent ectx directly.
             let arg_strs: Vec<String> = rewritten_args
                 .iter()
-                .map(|a| clone_arg(a, ctx, ectx))
+                .map(|a| clone_arg_legacy(a, ctx, ectx))
                 .collect();
 
             // Collect which params are being rebound (non-passthrough, non-identity).
@@ -1949,8 +2258,8 @@ fn emit_tco_expr(
             lines.join("\n")
         }
         Expr::Match { subject, arms, .. } => {
-            let subj = clone_arg(&subject.node, ctx, ectx);
-            let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
+            let subj = clone_arg_legacy(&subject.node, ctx, ectx);
+            let dispatch_plan = classify_dispatch_plan_for_rust_legacy(arms, ctx, ectx);
 
             // Bool match → if/else in TCO context
             if let Some(code) = try_emit_tco_bool_if_else(
@@ -1967,9 +2276,9 @@ fn emit_tco_expr(
                 return code;
             }
 
-            let needs_as_str = super::expr::has_string_literal_patterns(arms);
-            if super::expr::has_list_patterns(arms) {
-                return super::expr::emit_list_match(subj, arms, None, true, ctx, |arm| {
+            let needs_as_str = has_string_literal_patterns_legacy(arms);
+            if has_list_patterns_legacy(arms) {
+                return emit_list_match_legacy(subj, arms, None, true, ctx, |arm| {
                     emit_tco_expr(
                         &arm.body.node,
                         self_name,
@@ -1984,7 +2293,7 @@ fn emit_tco_expr(
             }
 
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-                return emit_dispatch_table_match(subj, arms, shape, |arm| {
+                return emit_dispatch_table_match_legacy(subj, arms, shape, ctx, |arm| {
                     emit_tco_expr(
                         &arm.body.node,
                         self_name,
@@ -2006,7 +2315,7 @@ fn emit_tco_expr(
 
             let mut arm_strs = Vec::new();
             for arm in arms {
-                let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
+                let pat = emit_pattern_legacy(&arm.pattern, needs_as_str, ctx);
                 let body = emit_tco_expr(
                     &arm.body.node,
                     self_name,
@@ -2051,10 +2360,10 @@ fn emit_tco_expr(
             if let Expr::Ident(name) = expr
                 && ectx.is_rc_wrapped(name)
             {
-                let code = emit_expr(expr, ctx, ectx);
+                let code = emit_expr_legacy(expr, ctx, ectx);
                 return format!("(*{}).clone()", code);
             }
-            emit_expr(expr, ctx, ectx)
+            emit_expr_legacy(expr, ctx, ectx)
         }
     }
 }
@@ -2303,7 +2612,7 @@ fn emit_trampoline_arm_body(
                 lines.push(format!(
                     "                let {} = {};",
                     aver_name_to_rust(name),
-                    emit_expr(&expr.node, ctx, ectx)
+                    emit_expr_legacy(&expr.node, ctx, ectx)
                 ));
             }
             Stmt::Expr(expr) => {
@@ -2322,7 +2631,7 @@ fn emit_trampoline_arm_body(
                 } else {
                     lines.push(format!(
                         "                {};",
-                        emit_expr(&expr.node, ctx, ectx)
+                        emit_expr_legacy(&expr.node, ctx, ectx)
                     ));
                 }
             }
@@ -2357,7 +2666,7 @@ fn emit_trampoline_expr(
                         // Skip args that are pass-through Rc params (Ident matching an rc_wrapped name)
                         !matches!(a, Expr::Ident(name) if ectx.is_rc_wrapped(name))
                     })
-                    .map(|a| clone_arg(a, ctx, ectx))
+                    .map(|a| clone_arg_legacy(a, ctx, ectx))
                     .collect();
                 if arg_strs.is_empty() {
                     format!("{}::{}", enum_name, variant)
@@ -2366,12 +2675,12 @@ fn emit_trampoline_expr(
                 }
             } else {
                 // External tail call → regular call + return
-                format!("return {}", emit_expr(expr, ctx, ectx))
+                format!("return {}", emit_expr_legacy(expr, ctx, ectx))
             }
         }
         Expr::Match { subject, arms, .. } => {
-            let subj = clone_arg(&subject.node, ctx, ectx);
-            let dispatch_plan = classify_dispatch_plan_for_rust(arms, ctx, ectx);
+            let subj = clone_arg_legacy(&subject.node, ctx, ectx);
+            let dispatch_plan = classify_dispatch_plan_for_rust_legacy(arms, ctx, ectx);
 
             // Bool match → if/else
             if let Some(code) = try_emit_trampoline_bool_if_else(
@@ -2387,8 +2696,8 @@ fn emit_trampoline_expr(
             }
 
             // List match
-            if super::expr::has_list_patterns(arms) {
-                return super::expr::emit_list_match(subj, arms, None, true, ctx, |arm| {
+            if has_list_patterns_legacy(arms) {
+                return emit_list_match_legacy(subj, arms, None, true, ctx, |arm| {
                     emit_trampoline_expr(
                         &arm.body.node,
                         enum_name,
@@ -2401,7 +2710,7 @@ fn emit_trampoline_expr(
             }
 
             if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-                return emit_dispatch_table_match(subj, arms, shape, |arm| {
+                return emit_dispatch_table_match_legacy(subj, arms, shape, ctx, |arm| {
                     emit_trampoline_expr(
                         &arm.body.node,
                         enum_name,
@@ -2413,7 +2722,7 @@ fn emit_trampoline_expr(
                 });
             }
 
-            let needs_as_str = super::expr::has_string_literal_patterns(arms);
+            let needs_as_str = has_string_literal_patterns_legacy(arms);
             let match_expr = if needs_as_str {
                 format!("&*{}", subj)
             } else {
@@ -2422,7 +2731,7 @@ fn emit_trampoline_expr(
 
             let mut arm_strs = Vec::new();
             for arm in arms {
-                let pat = super::pattern::emit_pattern(&arm.pattern, needs_as_str, ctx);
+                let pat = emit_pattern_legacy(&arm.pattern, needs_as_str, ctx);
                 let body = emit_trampoline_expr(
                     &arm.body.node,
                     enum_name,
@@ -2466,10 +2775,10 @@ fn emit_trampoline_expr(
             if let Expr::Ident(name) = expr
                 && ectx.is_rc_wrapped(name)
             {
-                let code = emit_expr(expr, ctx, ectx);
+                let code = emit_expr_legacy(expr, ctx, ectx);
                 return format!("return (*{}).clone()", code);
             }
-            format!("return {}", emit_expr(expr, ctx, ectx))
+            format!("return {}", emit_expr_legacy(expr, ctx, ectx))
         }
     }
 }
@@ -2614,12 +2923,12 @@ fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> 
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == stmts.len() - 1;
         match stmt {
-            Stmt::Binding(_, _, _) => parts.push(emit_stmt(stmt, ctx, ectx)),
+            Stmt::Binding(_, _, _) => parts.push(emit_stmt_legacy(stmt, ctx, ectx)),
             Stmt::Expr(expr) => {
                 if is_last {
-                    parts.push(emit_expr(&expr.node, ctx, ectx));
+                    parts.push(emit_expr_legacy(&expr.node, ctx, ectx));
                 } else {
-                    parts.push(format!("{};", emit_expr(&expr.node, ctx, ectx)));
+                    parts.push(format!("{};", emit_expr_legacy(&expr.node, ctx, ectx)));
                 }
             }
         }
@@ -2681,7 +2990,7 @@ fn emit_main_with_visibility(
     // Top-level statements first
     for stmt in top_stmts {
         let indent = if guest_wrap_main { "        " } else { "    " };
-        writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, &ectx)).unwrap();
+        writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &ectx)).unwrap();
     }
 
     // Main function body
@@ -2694,17 +3003,23 @@ fn emit_main_with_visibility(
                 match stmt {
                     Stmt::Binding(_, _, _) => {
                         let indent = if guest_wrap_main { "        " } else { "    " };
-                        writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, &main_ectx)).unwrap();
+                        writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &main_ectx))
+                            .unwrap();
                     }
                     Stmt::Expr(expr) => {
                         let indent = if guest_wrap_main { "        " } else { "    " };
-                        writeln!(out, "{}{}", indent, emit_expr(&expr.node, ctx, &main_ectx))
-                            .unwrap();
+                        writeln!(
+                            out,
+                            "{}{}",
+                            indent,
+                            emit_expr_legacy(&expr.node, ctx, &main_ectx)
+                        )
+                        .unwrap();
                     }
                 }
             } else {
                 let indent = if guest_wrap_main { "        " } else { "    " };
-                writeln!(out, "{}{}", indent, emit_stmt(stmt, ctx, &main_ectx)).unwrap();
+                writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &main_ectx)).unwrap();
             }
         }
     }
@@ -2736,8 +3051,8 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;
             let test_name = format!("test_{}_case_{}", fn_key, *counter);
-            let left_str = emit_expr(&left.node, ctx, &ectx);
-            let right_str = emit_expr(&right.node, ctx, &ectx);
+            let left_str = emit_expr_legacy(&left.node, ctx, &ectx);
+            let right_str = emit_expr_legacy(&right.node, ctx, &ectx);
 
             // Check if either side uses `?` operator
             let uses_error_prop =
@@ -2796,6 +3111,8 @@ mod tests {
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table: crate::ir::SymbolTable::default(),
+            resolved_fn_defs: Vec::new(),
+            resolved_module_fn_defs: Vec::new(),
         }
     }
 

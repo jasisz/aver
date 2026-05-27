@@ -201,6 +201,8 @@ mod tests {
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table: crate::ir::SymbolTable::default(),
+            resolved_fn_defs: Vec::new(),
+            resolved_module_fn_defs: Vec::new(),
         }
     }
 

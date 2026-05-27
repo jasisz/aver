@@ -1,48 +1,22 @@
 /// Aver patterns → Rust pattern strings.
-use crate::ast::*;
+use crate::ast::Literal;
 use crate::codegen::CodegenContext;
-use crate::codegen::common::{is_user_type, module_prefix_to_rust_path, resolve_module_call};
-use crate::ir::{CallLowerCtx, SemanticConstructor, WrapperKind, classify_constructor_name};
+use crate::codegen::common::{module_prefix_to_rust_path, resolve_module_call};
+use crate::ir::SemanticConstructor;
+use crate::ir::WrapperKind;
+use crate::ir::hir::{ResolvedCtor, ResolvedPattern, semantic_constructor_from_resolved_ctor};
 
-struct RustPatternCtx<'a> {
-    ctx: &'a CodegenContext,
-}
-
-impl CallLowerCtx for RustPatternCtx<'_> {
-    fn is_local_value(&self, _name: &str) -> bool {
-        false
-    }
-
-    fn is_user_type(&self, name: &str) -> bool {
-        is_user_type(name, self.ctx)
-    }
-
-    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
-        let mut best = None;
-        for (dot_idx, _) in dotted.match_indices('.') {
-            let prefix = &dotted[..dot_idx];
-            let suffix = &dotted[dot_idx + 1..];
-            if self.ctx.module_prefixes.contains(prefix)
-                && best.is_none_or(|existing: (&str, &str)| prefix.len() > existing.0.len())
-            {
-                best = Some((prefix, suffix));
-            }
-        }
-        best
-    }
-}
-
-/// Emit a Rust pattern from an Aver Pattern.
-pub fn emit_pattern(pat: &Pattern, string_context: bool, _ctx: &CodegenContext) -> String {
+/// Emit a Rust pattern from a resolved Aver pattern.
+pub fn emit_pattern(pat: &ResolvedPattern, string_context: bool, ctx: &CodegenContext) -> String {
     match pat {
-        Pattern::Wildcard => "_".to_string(),
-        Pattern::Literal(lit) => emit_literal_pattern(lit, string_context),
-        Pattern::Ident(name) => super::expr::aver_name_to_rust(name),
-        Pattern::EmptyList => {
+        ResolvedPattern::Wildcard => "_".to_string(),
+        ResolvedPattern::Literal(lit) => emit_literal_pattern(lit, string_context),
+        ResolvedPattern::Ident(name) => super::expr::aver_name_to_rust(name),
+        ResolvedPattern::EmptyList => {
             // Matches on .as_slice()
             "[]".to_string()
         }
-        Pattern::Cons(head, tail) => {
+        ResolvedPattern::Cons(head, tail) => {
             // [h, ..t] with wildcard-aware lowering.
             let h = super::expr::aver_name_to_rust(head);
             let t = super::expr::aver_name_to_rust(tail);
@@ -53,11 +27,11 @@ pub fn emit_pattern(pat: &Pattern, string_context: bool, _ctx: &CodegenContext) 
                 _ => format!("[{}, {} @ ..]", h, t),
             }
         }
-        Pattern::Tuple(pats) => {
-            let parts: Vec<String> = pats.iter().map(|p| emit_pattern(p, false, _ctx)).collect();
+        ResolvedPattern::Tuple(pats) => {
+            let parts: Vec<String> = pats.iter().map(|p| emit_pattern(p, false, ctx)).collect();
             format!("({})", parts.join(", "))
         }
-        Pattern::Constructor(name, bindings) => emit_constructor_pattern(name, bindings, _ctx),
+        ResolvedPattern::Ctor(ctor, bindings) => emit_constructor_pattern(ctor, bindings, ctx),
     }
 }
 
@@ -81,9 +55,12 @@ fn emit_literal_pattern(lit: &Literal, _string_context: bool) -> String {
     }
 }
 
-fn emit_constructor_pattern(name: &str, bindings: &[String], ctx: &CodegenContext) -> String {
-    let lower_ctx = RustPatternCtx { ctx };
-    match classify_constructor_name(name, &lower_ctx) {
+fn emit_constructor_pattern(
+    ctor: &ResolvedCtor,
+    bindings: &[String],
+    ctx: &CodegenContext,
+) -> String {
+    match semantic_constructor_from_resolved_ctor(ctor, &ctx.symbol_table) {
         SemanticConstructor::Wrapper(kind) => {
             let rust_ctor = match kind {
                 WrapperKind::ResultOk => "Ok",
@@ -106,14 +83,14 @@ fn emit_constructor_pattern(name: &str, bindings: &[String], ctx: &CodegenContex
                 emit_tuple_like_constructor_pattern(&rust_name, bindings)
             }
         }
-        SemanticConstructor::Unknown(_) => {
+        SemanticConstructor::Unknown(name) => {
             if name == "Tcp.Connection" {
                 return emit_record_or_variant_pattern("Tcp_Connection", bindings);
             }
             // Source syntax only produces qualified constructors here.
             // Keep the bare-name fallback for manually-constructed ASTs in tests.
             if !name.contains('.') {
-                return emit_record_or_variant_pattern(name, bindings);
+                return emit_record_or_variant_pattern(&name, bindings);
             }
             let rust_name = name.replace('.', "::");
             emit_tuple_like_constructor_pattern(&rust_name, bindings)

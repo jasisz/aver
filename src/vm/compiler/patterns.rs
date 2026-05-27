@@ -1,10 +1,10 @@
-use super::resolved_classify::{
-    ResolvedBoolSubjectPlan, classify_bool_subject_plan_resolved,
-    classify_dispatch_pattern_resolved, classify_match_dispatch_plan_resolved,
-};
 use super::{CompileError, FnCompiler};
 use crate::ast::{Literal, Spanned};
 use crate::ir::hir::{BuiltinCtor, ResolvedCtor, ResolvedExpr, ResolvedMatchArm, ResolvedPattern};
+use crate::ir::hir::{
+    ResolvedBoolSubjectPlan, classify_bool_subject_plan_resolved,
+    classify_dispatch_pattern_resolved, classify_match_dispatch_plan_resolved,
+};
 use crate::ir::{
     BoolCompareOp, BoolMatchShape, DispatchArmPlan, DispatchBindingPlan, DispatchLiteral,
     DispatchTableShape, MatchDispatchPlan, SemanticDispatchPattern, WrapperKind,

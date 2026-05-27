@@ -1,9 +1,10 @@
 /// Rust-specific emission context for type and borrow policy.
 ///
-/// Clone/move decisions now come from `last_use` annotations on `Expr::Resolved`
-/// nodes (set by `ir::last_use`), NOT from name-based liveness sets. EmitCtx
-/// provides only Rust-specific policy: Copy types, borrow semantics, Rc wrapping.
-use crate::ast::Expr;
+/// Clone/move decisions now come from `last_use` annotations on
+/// `ResolvedExpr::Resolved` nodes (set by `ir::last_use` and lifted by the
+/// resolver pass), NOT from name-based liveness sets. EmitCtx provides
+/// only Rust-specific policy: Copy types, borrow semantics, Rc wrapping.
+use crate::ir::hir::ResolvedExpr;
 use crate::types::Type;
 use std::collections::{HashMap, HashSet};
 
@@ -82,10 +83,10 @@ impl EmitCtx {
 /// Can this expression be moved (not cloned)?
 /// Checks `last_use` on Resolved nodes; Ident without local_types entry
 /// is treated as a global (always moveable).
-pub fn expr_can_move(expr: &Expr) -> bool {
+pub fn expr_can_move(expr: &ResolvedExpr) -> bool {
     match expr {
-        Expr::Resolved { last_use, .. } => last_use.0,
-        Expr::Ident(_) => true, // globals/namespaces never need clone
+        ResolvedExpr::Resolved { last_use, .. } => last_use.0,
+        ResolvedExpr::Ident(_) => true, // globals/namespaces never need clone
         _ => false,
     }
 }
@@ -94,13 +95,14 @@ pub fn expr_can_move(expr: &Expr) -> bool {
 /// True for: Copy types, last-use locals, globals/namespaces.
 /// False for: rc_wrapped, borrowed_params (need special clone paths).
 ///
-/// For `Expr::Ident`: in Rust codegen, Ident is used for both globals AND locals
-/// (resolver doesn't run). Check ectx to distinguish:
-/// - If name is in local_types → it's a local/param, apply rc_wrapped/borrowed checks
-/// - If name is NOT in local_types → it's a global/namespace, skip clone
-pub fn expr_skip_clone(expr: &Expr, ectx: &EmitCtx) -> bool {
+/// For `ResolvedExpr::Ident`: in Rust codegen, Ident is used for both
+/// globals AND locals (resolver still leaves bare globals as Ident).
+/// Check ectx to distinguish:
+/// - If name is in local_types → local/param, apply rc_wrapped/borrowed checks
+/// - If name is NOT in local_types → global/namespace, skip clone
+pub fn expr_skip_clone(expr: &ResolvedExpr, ectx: &EmitCtx) -> bool {
     match expr {
-        Expr::Resolved { name, last_use, .. } => {
+        ResolvedExpr::Resolved { name, last_use, .. } => {
             if ectx.rc_wrapped.contains(name.as_str()) {
                 return false;
             }
@@ -109,7 +111,7 @@ pub fn expr_skip_clone(expr: &Expr, ectx: &EmitCtx) -> bool {
             }
             last_use.0 || ectx.is_copy(name)
         }
-        Expr::Ident(name) => {
+        ResolvedExpr::Ident(name) => {
             // If not a known local, treat as global/namespace — skip clone
             if !ectx.local_types.contains_key(name.as_str()) {
                 return true;

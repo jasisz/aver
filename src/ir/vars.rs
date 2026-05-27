@@ -104,6 +104,44 @@ pub fn collect_vars_stmt(stmt: &Stmt) -> HashSet<String> {
     }
 }
 
+/// Get names bound by a resolved pattern — mirror of [`pattern_bindings`]
+/// for the resolved-HIR shape (#147 phase E). Rust + future migrated
+/// backends consume this so they don't need a source-shape `Pattern`
+/// around just to enumerate match-arm binding names.
+pub fn resolved_pattern_bindings(pat: &crate::ir::hir::ResolvedPattern) -> HashSet<String> {
+    use crate::ir::hir::ResolvedPattern;
+    let mut bindings = HashSet::new();
+    match pat {
+        ResolvedPattern::Ident(name) => {
+            if name != "_" {
+                bindings.insert(name.clone());
+            }
+        }
+        ResolvedPattern::Cons(head, tail) => {
+            if head != "_" {
+                bindings.insert(head.clone());
+            }
+            if tail != "_" {
+                bindings.insert(tail.clone());
+            }
+        }
+        ResolvedPattern::Ctor(_, fields) => {
+            for f in fields {
+                if f != "_" {
+                    bindings.insert(f.clone());
+                }
+            }
+        }
+        ResolvedPattern::Tuple(pats) => {
+            for p in pats {
+                bindings.extend(resolved_pattern_bindings(p));
+            }
+        }
+        ResolvedPattern::Wildcard | ResolvedPattern::Literal(_) | ResolvedPattern::EmptyList => {}
+    }
+    bindings
+}
+
 /// Get names bound by a pattern (for excluding from parent scope liveness).
 pub fn pattern_bindings(pat: &Pattern) -> HashSet<String> {
     let mut bindings = HashSet::new();

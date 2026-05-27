@@ -1,8 +1,9 @@
 use super::emit_ctx::EmitCtx;
 use super::expr::{clone_arg, emit_expr};
 /// Mapping of Aver builtin/namespace functions to Rust equivalents.
-use crate::ast::Expr;
+use crate::ast::Spanned;
 use crate::codegen::CodegenContext;
+use crate::ir::hir::ResolvedExpr;
 
 /// Try to emit a builtin call as Rust code.
 /// Returns `None` if the name is not a builtin (i.e. it's a user function).
@@ -184,7 +185,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
 
 fn emit_replay_effect_call(
     name: &str,
-    args: &[Expr],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
@@ -202,7 +203,7 @@ fn emit_replay_effect_call(
     let mut lines = Vec::new();
     lines.push("{".to_string());
     for (idx, arg) in args.iter().enumerate() {
-        let emitted = clone_arg(arg, ctx, ectx);
+        let emitted = clone_arg(&arg.node, ctx, ectx);
         lines.push(format!("    let {} = {};", temp_names[idx], emitted));
     }
     lines.push("    crate::cancel_checkpoint();".to_string());
@@ -248,7 +249,7 @@ fn emit_replay_effect_arg_json(name: &str, temp_names: &[String]) -> Vec<String>
 
 pub fn emit_builtin_call(
     name: &str,
-    args: &[Expr],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
@@ -268,21 +269,21 @@ pub fn emit_builtin_call(
     // Wrap Http/Disk/Env calls with policy checks when aver.toml policy is present.
     if ctx.policy.is_some() && !ctx.emit_replay_runtime {
         if name.starts_with("Http.") && !args.is_empty() {
-            let url_arg = emit_expr(&args[0], ctx, ectx);
+            let url_arg = emit_expr(&args[0].node, ctx, ectx);
             return Some(format!(
                 "{{ crate::cancel_checkpoint(); aver_policy::check_http(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, url_arg, result
             ));
         }
         if name.starts_with("Disk.") && !args.is_empty() {
-            let path_arg = emit_expr(&args[0], ctx, ectx);
+            let path_arg = emit_expr(&args[0].node, ctx, ectx);
             return Some(format!(
                 "{{ crate::cancel_checkpoint(); aver_policy::check_disk(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, path_arg, result
             ));
         }
         if name.starts_with("Env.") && !args.is_empty() {
-            let key_arg = emit_expr(&args[0], ctx, ectx);
+            let key_arg = emit_expr(&args[0].node, ctx, ectx);
             return Some(format!(
                 "{{ crate::cancel_checkpoint(); aver_policy::check_env(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
                 name, key_arg, result
@@ -299,11 +300,11 @@ pub fn emit_builtin_call(
 
 fn emit_builtin_call_inner(
     name: &str,
-    args: &[Expr],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
-    let emit_arg = |idx: usize| emit_expr(&args[idx], ctx, ectx);
+    let emit_arg = |idx: usize| emit_expr(&args[idx].node, ctx, ectx);
 
     match name {
         // ---- 0.15 Traversal: deforestation intrinsics ----
@@ -372,32 +373,32 @@ fn emit_builtin_call_inner(
 
         // ---- Result ----
         "Result.Ok" => {
-            let arg = clone_arg(&args[0], ctx, ectx);
+            let arg = clone_arg(&args[0].node, ctx, ectx);
             Some(format!("Ok({})", arg))
         }
         "Result.Err" => {
-            let arg = clone_arg(&args[0], ctx, ectx);
+            let arg = clone_arg(&args[0].node, ctx, ectx);
             Some(format!("Err({})", arg))
         }
         "Result.withDefault" => {
-            let result = clone_arg(&args[0], ctx, ectx);
-            let default = clone_arg(&args[1], ctx, ectx);
+            let result = clone_arg(&args[0].node, ctx, ectx);
+            let default = clone_arg(&args[1].node, ctx, ectx);
             Some(format!("{}.unwrap_or({})", result, default))
         }
 
         // ---- Option ----
         "Option.Some" => {
-            let arg = clone_arg(&args[0], ctx, ectx);
+            let arg = clone_arg(&args[0].node, ctx, ectx);
             Some(format!("Some({})", arg))
         }
         "Option.withDefault" => {
-            let opt = clone_arg(&args[0], ctx, ectx);
-            let default = clone_arg(&args[1], ctx, ectx);
+            let opt = clone_arg(&args[0].node, ctx, ectx);
+            let default = clone_arg(&args[1].node, ctx, ectx);
             Some(format!("{}.unwrap_or({})", opt, default))
         }
         "Option.toResult" => {
-            let opt = clone_arg(&args[0], ctx, ectx);
-            let err = clone_arg(&args[1], ctx, ectx);
+            let opt = clone_arg(&args[0].node, ctx, ectx);
+            let err = clone_arg(&args[1].node, ctx, ectx);
             Some(format!("{}.ok_or({})", opt, err))
         }
 
@@ -582,7 +583,7 @@ fn emit_builtin_call_inner(
 
         // ---- List ----
         "List.len" => {
-            if let Expr::List(items) = &args[0]
+            if let ResolvedExpr::List(items) = &args[0].node
                 && items.is_empty()
             {
                 Some("0i64".to_string())
@@ -592,8 +593,8 @@ fn emit_builtin_call_inner(
             }
         }
         "List.prepend" => {
-            let item = clone_arg(&args[0], ctx, ectx);
-            let list = clone_arg(&args[1], ctx, ectx);
+            let item = clone_arg(&args[0].node, ctx, ectx);
+            let list = clone_arg(&args[1].node, ctx, ectx);
             Some(format!("aver_rt::AverList::prepend({}, &{})", item, list))
         }
         "List.take" => {
@@ -611,12 +612,12 @@ fn emit_builtin_call_inner(
             ))
         }
         "List.concat" => {
-            let left = clone_arg(&args[0], ctx, ectx);
-            let right = clone_arg(&args[1], ctx, ectx);
+            let left = clone_arg(&args[0].node, ctx, ectx);
+            let right = clone_arg(&args[1].node, ctx, ectx);
             Some(format!("aver_rt::AverList::concat(&{}, &{})", left, right))
         }
         "List.reverse" => {
-            let list = emit_expr(&args[0], ctx, ectx);
+            let list = emit_expr(&args[0].node, ctx, ectx);
             Some(format!("{}.reverse()", list))
         }
         "List.contains" => {
@@ -634,7 +635,7 @@ fn emit_builtin_call_inner(
         }
         // ---- Map ----
         "Map.fromList" => {
-            let list = clone_arg(&args[0], ctx, ectx);
+            let list = clone_arg(&args[0].node, ctx, ectx);
             Some(format!(
                 "{{ let mut m = HashMap::new(); for (k, v) in {}.iter().cloned() {{ m = m.insert_owned(k, v); }} m }}",
                 list
@@ -653,9 +654,9 @@ fn emit_builtin_call_inner(
             Some(format!("{}.get(&{}).cloned()", map, key))
         }
         "Map.set" => {
-            let map = clone_arg(&args[0], ctx, ectx);
-            let key = clone_arg(&args[1], ctx, ectx);
-            let val = clone_arg(&args[2], ctx, ectx);
+            let map = clone_arg(&args[0].node, ctx, ectx);
+            let key = clone_arg(&args[1].node, ctx, ectx);
+            let val = clone_arg(&args[2].node, ctx, ectx);
             Some(format!("{}.insert_owned({}, {})", map, key, val))
         }
         "Map.has" => {
@@ -664,7 +665,7 @@ fn emit_builtin_call_inner(
             Some(format!("{}.contains_key(&{})", map, key))
         }
         "Map.remove" => {
-            let map = clone_arg(&args[0], ctx, ectx);
+            let map = clone_arg(&args[0].node, ctx, ectx);
             let key = emit_arg(1);
             Some(format!("{}.remove_owned(&{})", map, key))
         }
@@ -744,7 +745,7 @@ fn emit_builtin_call_inner(
         // ---- Vector ----
         "Vector.new" => {
             let size = emit_arg(0);
-            let default = clone_arg(&args[1], ctx, ectx);
+            let default = clone_arg(&args[1].node, ctx, ectx);
             Some(format!(
                 "aver_rt::AverVector::new({} as usize, {})",
                 size, default
@@ -756,9 +757,9 @@ fn emit_builtin_call_inner(
             Some(format!("{}.get({} as usize).cloned()", vec, idx))
         }
         "Vector.set" => {
-            let vec = clone_arg(&args[0], ctx, ectx);
+            let vec = clone_arg(&args[0].node, ctx, ectx);
             let idx = emit_arg(1);
-            let val = clone_arg(&args[2], ctx, ectx);
+            let val = clone_arg(&args[2].node, ctx, ectx);
             Some(format!("{}.set_owned({} as usize, {})", vec, idx, val))
         }
         "Vector.len" => {
@@ -993,11 +994,15 @@ fn emit_builtin_call_inner(
 
 /// For string-accepting methods (starts_with, contains, ends_with),
 /// emit a string literal as `"foo"` (no allocation) or variable as `arg.as_str()`.
-fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> String {
-    if let Expr::Literal(crate::ast::Literal::Str(s)) = expr {
+fn emit_str_arg_or_deref(
+    expr: &Spanned<ResolvedExpr>,
+    ectx: &EmitCtx,
+    ctx: &CodegenContext,
+) -> String {
+    if let ResolvedExpr::Literal(crate::ast::Literal::Str(s)) = &expr.node {
         format!("{:?}", s)
     } else {
-        let code = emit_expr(expr, ctx, ectx);
+        let code = emit_expr(&expr.node, ctx, ectx);
         format!("&*{}", code)
     }
 }
@@ -1005,9 +1010,10 @@ fn emit_str_arg_or_deref(expr: &Expr, ectx: &EmitCtx, ctx: &CodegenContext) -> S
 #[cfg(test)]
 mod tests {
     use super::emit_builtin_call;
-    use crate::ast::{AnnotBool, Expr, Literal, Spanned};
+    use crate::ast::{AnnotBool, Literal, Spanned};
     use crate::codegen::CodegenContext;
     use crate::codegen::rust::emit_ctx::EmitCtx;
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
     use crate::types::Type;
     use std::collections::{HashMap, HashSet};
 
@@ -1035,14 +1041,20 @@ mod tests {
             synthesized_buffered_fns: Vec::new(),
             proof_ir: crate::ir::ProofIR::default(),
             symbol_table: crate::ir::SymbolTable::default(),
+            resolved_fn_defs: Vec::new(),
+            resolved_module_fn_defs: Vec::new(),
         }
+    }
+
+    fn span(e: ResolvedExpr) -> Spanned<ResolvedExpr> {
+        Spanned::new(e, 0)
     }
 
     #[test]
     fn list_len_empty_literal_emits_typed_free_zero() {
         let emitted = emit_builtin_call(
             "List.len",
-            &[Expr::List(vec![])],
+            &[span(ResolvedExpr::List(vec![]))],
             &empty_ctx(),
             &EmitCtx::empty(),
         )
@@ -1055,30 +1067,37 @@ mod tests {
     fn http_post_preserves_nested_arg_liveness() {
         // With last_use-based clone/move: Resolved with last_use=false gets .clone(),
         // Resolved with last_use=true (or Ident) does not.
-        let config_not_last = Expr::Resolved {
+        let config_not_last = ResolvedExpr::Resolved {
             slot: 0,
             name: "config".to_string(),
             last_use: AnnotBool(false),
         };
-        let config_last = Expr::Resolved {
+        let config_last = ResolvedExpr::Resolved {
             slot: 0,
             name: "config".to_string(),
             last_use: AnnotBool(true),
         };
+        let call = |name: &str, args: Vec<Spanned<ResolvedExpr>>| -> ResolvedExpr {
+            ResolvedExpr::Call(
+                ResolvedCallee::Unresolved {
+                    callee: Box::new(span(ResolvedExpr::Ident(name.to_string()))),
+                },
+                args,
+            )
+        };
         let args = vec![
-            Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("queryUrl".to_string()))),
-                vec![Spanned::bare(config_not_last)],
-            ),
-            Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("sqlBody".to_string()))),
-                vec![Spanned::bare(Expr::Ident("sql".to_string()))],
-            ),
-            Expr::Literal(Literal::Str("application/json".to_string())),
-            Expr::List(vec![Spanned::bare(Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("authHeader".to_string()))),
-                vec![Spanned::bare(config_last)],
-            ))]),
+            span(call("queryUrl", vec![span(config_not_last)])),
+            span(call(
+                "sqlBody",
+                vec![span(ResolvedExpr::Ident("sql".to_string()))],
+            )),
+            span(ResolvedExpr::Literal(Literal::Str(
+                "application/json".to_string(),
+            ))),
+            span(ResolvedExpr::List(vec![span(call(
+                "authHeader",
+                vec![span(config_last)],
+            ))])),
         ];
         let mut local_types = HashMap::new();
         local_types.insert("config".to_string(), Type::named("DbConfig"));
@@ -1092,7 +1111,7 @@ mod tests {
         )
         .expect("Http.post should emit");
 
-        // First use: not last �� cloned
+        // First use: not last → cloned
         assert!(emitted.contains("queryUrl(config.clone())"));
         // Last use: borrowed param still needs clone to produce owned value
         assert!(emitted.contains("authHeader(config.clone())"));
