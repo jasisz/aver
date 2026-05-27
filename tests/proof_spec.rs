@@ -2193,7 +2193,12 @@ fn proof_export_module_owned_native_guarded_resolves_correct_fn_id() {
 
     let worker_lean = std::fs::read_to_string(out_dir.join("Worker.lean"))
         .expect("read Worker.lean (module-owned native-guarded emit must succeed)");
-    let entry_lean = std::fs::read_to_string(out_dir.join("entry.lean")).expect("read entry.lean");
+    // Entry file basename is project-name-derived; the proof exporter
+    // capitalises the project name to produce a Lean module ident
+    // (`entry.av` → `Entry.lean`). macOS APFS is case-insensitive so a
+    // lowercase path would silently match locally — on Linux CI it
+    // does not, so look up the canonical capitalised form.
+    let entry_lean = std::fs::read_to_string(out_dir.join("Entry.lean")).expect("read Entry.lean");
 
     // Both modules carry their OWN native-guarded aux def. If the
     // rewriter targeted the wrong FnId only one would emit, or both
