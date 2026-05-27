@@ -14,7 +14,7 @@ mod types;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{Expr, FnDef, Spanned, TopLevel, VerifyKind};
+use crate::ast::{FnDef, Spanned, TopLevel, VerifyKind};
 use crate::codegen::{CodegenContext, ProjectOutput};
 
 /// How verify blocks should be emitted in generated Lean.
@@ -782,12 +782,26 @@ fn lean_project_name(ctx: &CodegenContext) -> String {
     crate::codegen::common::entry_basename(ctx)
 }
 
-pub(super) fn bound_expr_to_lean(expr: &Spanned<Expr>) -> String {
+pub(super) fn bound_expr_to_lean(expr: &Spanned<crate::ir::hir::ResolvedExpr>) -> String {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
     match &expr.node {
-        Expr::Literal(crate::ast::Literal::Int(n)) => format!("{}", n),
-        Expr::Ident(name) => expr::aver_name_to_lean(name),
-        Expr::FnCall(f, args) => {
-            if let Some(dotted) = crate::codegen::common::expr_to_dotted_name(&f.node) {
+        ResolvedExpr::Literal(crate::ast::Literal::Int(n)) => format!("{}", n),
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } => {
+            expr::aver_name_to_lean(name)
+        }
+        ResolvedExpr::Call(callee, args) => {
+            // Bound expressions are linear arithmetic over the param —
+            // typically `List.len(xs)` or an int constant. The resolver
+            // lifts `List.len(...)` to `ResolvedCallee::Builtin`; user-fn
+            // refs in a bound expression would be a malformed metric
+            // anyway, so we only render builtins and fall through to
+            // `"0"` (the same fallback the original AST helper used for
+            // shapes it couldn't classify).
+            let dotted = match callee {
+                ResolvedCallee::Builtin(name) => Some(name.clone()),
+                _ => None,
+            };
+            if let Some(dotted) = dotted {
                 // List.len(xs) → xs.length in Lean
                 if dotted == "List.len" && args.len() == 1 {
                     return format!("{}.length", bound_expr_to_lean(&args[0]));
@@ -802,7 +816,7 @@ pub(super) fn bound_expr_to_lean(expr: &Spanned<Expr>) -> String {
                 "0".to_string()
             }
         }
-        Expr::Attr(obj, field) => format!(
+        ResolvedExpr::Attr(obj, field) => format!(
             "{}.{}",
             bound_expr_to_lean(obj),
             expr::aver_name_to_lean(field)

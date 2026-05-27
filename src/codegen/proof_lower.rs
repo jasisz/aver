@@ -192,6 +192,44 @@ impl<'a> ProofLowerInputs<'a> {
         out
     }
 
+    /// Scope of the dep module that owns `fd`, or `None` for entry
+    /// module fns. Pointer-eq match against `dep_modules`, mirroring
+    /// `crate::codegen::common::fn_owning_scope_for` but reading off
+    /// the lowering view (which doesn't carry a full `CodegenContext`).
+    pub fn fn_owning_scope(&self, fd: &FnDef) -> Option<&'a str> {
+        for m in self.dep_modules {
+            for f in &m.fn_defs {
+                if std::ptr::eq(f, fd) {
+                    return Some(m.prefix.as_str());
+                }
+            }
+        }
+        None
+    }
+
+    /// Resolve a raw-AST expression to its `ResolvedExpr` form under
+    /// the given scope. ProofIR stores resolved expressions (Phase E
+    /// PR 12 Scope A), so this helper is called at every producer
+    /// site that lifts a `Spanned<crate::ast::Expr>` slice from the
+    /// source into an IR field. Mirrors
+    /// `CodegenContext::resolve_expr` but reads only the
+    /// `symbol_table` carried on this view — proof lowering runs
+    /// inside the pipeline, before a full `CodegenContext` exists.
+    pub fn resolve_expr(
+        &self,
+        expr: &crate::ast::Spanned<crate::ast::Expr>,
+        scope: Option<&str>,
+    ) -> crate::ast::Spanned<crate::ir::hir::ResolvedExpr> {
+        use crate::ir::hir::{ResolveCtx, ResolvedStmt};
+        let mut rctx = ResolveCtx::new(self.symbol_table);
+        rctx.current_module = scope.map(String::from);
+        let stmt = crate::ast::Stmt::Expr(expr.clone());
+        match crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt) {
+            ResolvedStmt::Expr(s) => s,
+            ResolvedStmt::Binding { value, .. } => value,
+        }
+    }
+
     /// Names of every recursive user-defined type across entry + deps.
     pub fn recursive_type_names(&self) -> HashSet<String> {
         self.entry_items
@@ -327,7 +365,7 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 info.param_name.to_string(),
                 crate::ir::proof_ir::QuantifierType::Plain(info.carrier_type.to_string()),
             )],
-            expr: info.predicate.clone(),
+            expr: inputs.resolve_expr(info.predicate, module_prefix),
         };
         let witness = pick_witness(name, inputs, info.predicate, info.param_name, module_prefix);
         // Round-4 finding 1: a `None` witness means we couldn't
@@ -447,7 +485,7 @@ fn populate_fn_contracts_for_scope(
                         recursion: Some(RecursionContract::Fuel {
                             fuel_metric: crate::ir::FuelMetric::BoundMinusParamNatAbsPlusOne {
                                 param: param_name.clone(),
-                                bound: bound.clone(),
+                                bound: inputs.resolve_expr(bound, scope),
                             },
                         }),
                     },
@@ -616,7 +654,7 @@ fn populate_fn_contracts_for_scope(
                     countdown_param_name.clone(),
                     QuantifierType::Plain("Int".to_string()),
                 )],
-                expr: clause.clone(),
+                expr: inputs.resolve_expr(clause, scope),
             })
             .collect();
 
@@ -633,8 +671,8 @@ fn populate_fn_contracts_for_scope(
                     decrease: DecreaseProof::NatAbsCountdown,
                     body: NativeIntCountdownBody {
                         base_arm_literal: *base_arm_literal,
-                        base_arm_body: base_arm_body.clone(),
-                        wildcard_arm_body: wildcard_arm_body.clone(),
+                        base_arm_body: inputs.resolve_expr(base_arm_body, scope),
+                        wildcard_arm_body: inputs.resolve_expr(wildcard_arm_body, scope),
                     },
                 }),
             },
@@ -684,18 +722,42 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             })
             .collect();
 
+        // Scope for resolving the law's expressions: derived from the
+        // target fn's owning module, NOT hardcoded to entry. Today
+        // laws-in-modules isn't shipped, so the lookup falls back to
+        // entry for every fn; once dep modules carry their own verify
+        // blocks (open follow-up), the same resolution path serves
+        // both. Avoids re-introducing the "scope=None means entry"
+        // assumption the rest of phase E worked to eliminate.
+        let law_scope: Option<String> = symbols
+            .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
+            .or_else(|| {
+                inputs
+                    .dep_modules
+                    .iter()
+                    .find_map(|m| {
+                        symbols.fn_id_of(&crate::ir::FnKey::in_module(
+                            m.prefix.clone(),
+                            &vb.fn_name,
+                        ))
+                    })
+            })
+            .and_then(|id| symbols.fn_entry(id).key.scope_str().map(|s| s.to_string()));
+        let law_scope_ref = law_scope.as_deref();
+
         let premises: Vec<Predicate> = match &law.when {
             Some(when_expr) => vec![Predicate {
                 free_vars: quantifiers
                     .iter()
                     .map(|q| (q.name.clone(), q.binder_type.clone()))
                     .collect(),
-                expr: when_expr.clone(),
+                expr: inputs.resolve_expr(when_expr, law_scope_ref),
             }],
             None => Vec::new(),
         };
 
-        let strategy = classify_law_strategy(law, &vb.fn_name, inputs, &ir.refined_types);
+        let strategy =
+            classify_law_strategy(law, &vb.fn_name, inputs, &ir.refined_types, law_scope_ref);
 
         // Verify laws are entry-only per current model — see
         // `LawTheorem.fn_id` doc. The bare `vb.fn_name` resolves
@@ -712,8 +774,8 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             law_name: law.name.clone(),
             quantifiers,
             premises,
-            claim_lhs: law.lhs.clone(),
-            claim_rhs: law.rhs.clone(),
+            claim_lhs: inputs.resolve_expr(&law.lhs, law_scope_ref),
+            claim_rhs: inputs.resolve_expr(&law.rhs, law_scope_ref),
             strategy,
         });
     }
@@ -742,6 +804,7 @@ fn classify_law_strategy(
     fn_name: &str,
     inputs: &ProofLowerInputs,
     refined_types: &std::collections::HashMap<crate::ir::TypeId, crate::ir::RefinedTypeDecl>,
+    scope: Option<&str>,
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
@@ -796,7 +859,11 @@ fn classify_law_strategy(
     // Library axiom instances — Map.has-after-set, Map.get-after-set.
     // Specific shape, single-line `simpa using axiom` emit on Lean.
     if let Some((axiom, args)) = detect_map_set_axiom(law) {
-        return ProofStrategy::LibraryAxiom { axiom, args };
+        let resolved_args: Vec<_> = args.iter().map(|a| inputs.resolve_expr(a, scope)).collect();
+        return ProofStrategy::LibraryAxiom {
+            axiom,
+            args: resolved_args,
+        };
     }
     // Tracked-counter increment: specialised body template + `+ 1`
     // rhs. Checked before the more general MapUpdatePostcondition so
@@ -804,8 +871,8 @@ fn classify_law_strategy(
     if let Some(inc) = detect_map_key_tracked_increment(law, fn_name, inputs) {
         return ProofStrategy::MapKeyTrackedIncrement {
             outer_fn: inc.outer_fn,
-            map_arg: inc.map_arg,
-            key_arg: inc.key_arg,
+            map_arg: inputs.resolve_expr(&inc.map_arg, scope),
+            key_arg: inputs.resolve_expr(&inc.key_arg, scope),
         };
     }
     // Post-condition of an inline-defined map-update fn — case-split
@@ -814,8 +881,8 @@ fn classify_law_strategy(
         return ProofStrategy::MapUpdatePostcondition {
             outer_fn: post.outer_fn,
             kind: post.kind,
-            map_arg: post.map_arg,
-            key_arg: post.key_arg,
+            map_arg: inputs.resolve_expr(&post.map_arg, scope),
+            key_arg: inputs.resolve_expr(&post.key_arg, scope),
             extra_unfolds: post.extra_unfolds,
         };
     }
@@ -837,8 +904,8 @@ fn classify_law_strategy(
         detect_linear_int_spec_equivalence(law, fn_name, inputs)
     {
         return ProofStrategy::LinearIntSpecEquivalence {
-            unfolded_impl,
-            unfolded_spec,
+            unfolded_impl: inputs.resolve_expr(&unfolded_impl, scope),
+            unfolded_spec: inputs.resolve_expr(&unfolded_spec, scope),
         };
     }
     // Effectful counterpart — Oracle Lift normalises both sides
@@ -1262,9 +1329,10 @@ fn extract_smart_constructor_guard(
         if !arms_match_bool_ok_err(arms) {
             continue;
         }
+        let scope = inputs.fn_owning_scope(fd);
         return Some(crate::ir::SmartGuard {
             param: param_name.clone(),
-            predicate: (**subject).clone(),
+            predicate: inputs.resolve_expr(subject, scope),
         });
         // Reference the type to satisfy the MatchArm import.
         #[allow(unreachable_code)]

@@ -155,7 +155,7 @@ pub fn emit_type_def_in_scope(
             if let Some(decl) = crate::codegen::common::find_refined_type_scoped(ctx, name, scope)
                 && decl.carrier_type == "Int"
             {
-                let predicate = super::expr::emit_expr_legacy(&decl.invariant.expr, ctx, None);
+                let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
                 let bind = aver_name_to_dafny(&decl.predicate_param);
                 let witness = decl.witness.clone().unwrap_or_else(|| "0".to_string());
                 return Some(format!(
