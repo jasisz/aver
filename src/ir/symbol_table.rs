@@ -232,6 +232,36 @@ impl SymbolTable {
         self.type_index.get(key).copied()
     }
 
+    /// Resolve a *bare* type name (no module prefix) against every
+    /// scope in the table — entry first, then each dep module — and
+    /// return the unique match. Returns `None` when the name doesn't
+    /// resolve OR when two or more scopes legitimately share it
+    /// (ambiguous reference; caller must qualify).
+    ///
+    /// Phase-E cross-module ctor resolution: an Aver expression like
+    /// `Val.ValOk(x)` written from a module that doesn't host the
+    /// `Val` type still needs to resolve to the right `TypeId` so the
+    /// resolver can lift the call to `ResolvedCtor::User`. Pre-PR-8
+    /// the rust codegen worked around the gap by matching ctors by
+    /// raw string after the resolver had moved on; PR 8 made the
+    /// resolved-form classification authoritative, which exposed
+    /// this missing lookup. Adding it here keeps identity logic on
+    /// the symbol table where the rest of identity resolution lives.
+    pub fn type_id_by_bare_name(&self, name: &str) -> Option<TypeId> {
+        let mut found: Option<TypeId> = None;
+        for (key, id) in &self.type_index {
+            if key.name == name {
+                if found.is_some() {
+                    // Ambiguous bare reference across scopes; the
+                    // caller must qualify with a module prefix.
+                    return None;
+                }
+                found = Some(*id);
+            }
+        }
+        found
+    }
+
     /// Resolve a constructor by (owning type, variant name).
     pub fn ctor_id_of(&self, owning_type: TypeId, variant: &str) -> Option<CtorId> {
         self.ctor_index
@@ -482,5 +512,72 @@ mod tests {
         let entry_fn = table.fn_id_of(&FnKey::entry("entry_fn")).unwrap();
         assert_eq!(table.fn_entry(entry_fn).module, ModuleId::ENTRY);
         assert_eq!(table.module_entry(ModuleId::ENTRY).prefix, None);
+    }
+
+    #[test]
+    fn type_id_by_bare_name_resolves_unique_cross_module_type() {
+        // Phase-E PR 9.4: a callsite in module `A` referring to type
+        // `Val` declared in module `B` (no qualifier in source) gets
+        // the right `TypeId` via this fallback. The rule is: "bare
+        // type name from any scope resolves iff exactly one scope
+        // declares it".
+        let mod_a = module("A", vec![], vec![sum("Color", &["Red", "Blue"], 1)]);
+        let mod_b = module("B", vec![], vec![product("Val", 1)]);
+        let table = SymbolTable::build(&[], &[mod_a, mod_b]);
+        table.assert_consistent();
+
+        let val_id = table.type_id_by_bare_name("Val");
+        let qualified = table.type_id_of(&TypeKey::in_module("B", "Val"));
+        assert_eq!(val_id, qualified, "bare `Val` resolves to B.Val");
+        assert!(val_id.is_some());
+
+        let color_id = table.type_id_by_bare_name("Color");
+        assert_eq!(
+            color_id,
+            table.type_id_of(&TypeKey::in_module("A", "Color"))
+        );
+    }
+
+    #[test]
+    fn type_id_by_bare_name_returns_none_on_ambiguity() {
+        // Two modules each declaring a type called `T` — bare
+        // reference is ambiguous, caller must qualify. The cross-
+        // module ctor-classification path falls back to
+        // `Unresolved` here, which the typechecker then flags as a
+        // user-facing error (or the caller already qualified, in
+        // which case the higher-priority `TypeKey::in_module`
+        // lookup succeeded before this method ran).
+        let mod_a = module("A", vec![], vec![product("T", 1)]);
+        let mod_b = module("B", vec![], vec![product("T", 1)]);
+        let table = SymbolTable::build(&[], &[mod_a, mod_b]);
+        table.assert_consistent();
+
+        assert_eq!(table.type_id_by_bare_name("T"), None);
+
+        // Qualified lookups still resolve.
+        assert!(table.type_id_of(&TypeKey::in_module("A", "T")).is_some());
+        assert!(table.type_id_of(&TypeKey::in_module("B", "T")).is_some());
+    }
+
+    #[test]
+    fn type_id_by_bare_name_finds_entry_scope_type() {
+        // Bare lookup also reaches the entry scope when only the
+        // entry declares the type — same uniqueness rule.
+        let entry_type = product("Cfg", 1);
+        let mod_a = module("A", vec![], vec![sum("Other", &["X"], 1)]);
+        let table = SymbolTable::build(&[TopLevel::TypeDef(entry_type)], &[mod_a]);
+        table.assert_consistent();
+
+        let cfg = table.type_id_by_bare_name("Cfg");
+        assert_eq!(cfg, table.type_id_of(&TypeKey::entry("Cfg")));
+        assert!(cfg.is_some());
+    }
+
+    #[test]
+    fn type_id_by_bare_name_missing_name_is_none() {
+        let mod_a = module("A", vec![], vec![product("X", 1)]);
+        let table = SymbolTable::build(&[], &[mod_a]);
+        table.assert_consistent();
+        assert_eq!(table.type_id_by_bare_name("NotATypeAnywhere"), None);
     }
 }

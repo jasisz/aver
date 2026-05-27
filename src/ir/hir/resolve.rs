@@ -107,6 +107,20 @@ impl<'a> ResolveCtx<'a> {
     }
 
     /// Type-side equivalent of [`Self::resolve_fn_id`].
+    ///
+    /// Resolution order (first match wins):
+    /// 1. `prefix.name` matches `TypeKey::in_module(prefix, name)`.
+    /// 2. `prefix.name` with `prefix == current_module` matches the
+    ///    entry-scope `TypeKey::entry(name)` (Aver lets a
+    ///    self-referencing module spell its own type with the
+    ///    qualified form).
+    /// 3. Bare `name` in `current_module` (`TypeKey::in_module(current, name)`).
+    /// 4. Bare `name` in entry scope (`TypeKey::entry(name)`).
+    /// 5. Bare `name` searched across every scope via
+    ///    [`crate::ir::SymbolTable::type_id_by_bare_name`] — handles
+    ///    the cross-module case where module `A` references type
+    ///    `Val` declared in module `B` without qualification. Returns
+    ///    `None` when ambiguous (caller must qualify).
     pub fn resolve_type_id(&self, name: &str) -> Option<TypeId> {
         if let Some((prefix, n)) = name.rsplit_once('.') {
             if let Some(id) = self.symbols.type_id_of(&TypeKey::in_module(prefix, n)) {
@@ -123,7 +137,16 @@ impl<'a> ResolveCtx<'a> {
         {
             return Some(id);
         }
-        self.symbols.type_id_of(&TypeKey::entry(name))
+        if let Some(id) = self.symbols.type_id_of(&TypeKey::entry(name)) {
+            return Some(id);
+        }
+        // Cross-module bare-name fallback. Phase-E ctor resolution
+        // for `Val.ValOk(x)` written from a module that doesn't host
+        // `Val` (e.g. `Domain.Eval.Core` referencing
+        // `Domain.Value.Val`). `type_id_by_bare_name` returns `None`
+        // on ambiguity, so two scopes that share a type name still
+        // need a qualified reference.
+        self.symbols.type_id_by_bare_name(name)
     }
 
     /// Resolve a `"Type.Variant"` constructor reference to a

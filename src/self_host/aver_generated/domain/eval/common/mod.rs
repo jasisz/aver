@@ -14,9 +14,11 @@ use crate::*;
 pub fn evalVarFallback(name: AverStr, fns: &FnStore) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::eval::store::lookupFnOption(fns, name.clone()) {
-        Some(fd) => Ok(Val::ValFnRef(fd.name.clone())),
+        Some(fd) => Ok(crate::aver_generated::domain::value::Val::ValFnRef(
+            fd.name.clone(),
+        )),
         None => match crate::aver_generated::domain::builtins::splitDotted(name.clone()) {
-            Some(_) => Ok(Val::ValVariant(
+            Some(_) => Ok(crate::aver_generated::domain::value::Val::ValVariant(
                 crate::aver_generated::domain::ast::ctorNameToTag(name.clone()),
                 name,
                 aver_rt::AverList::empty(),
@@ -43,14 +45,14 @@ pub fn propagationPrefix() -> AverStr {
 /// Mark a language-level Result.Err so function boundaries can convert it back into a value.
 pub fn wrapPropagatedError(msg: AverStr) -> AverStr {
     crate::cancel_checkpoint();
-    (propagationPrefix() + &msg)
+    (crate::aver_generated::domain::eval::common::propagationPrefix() + &msg)
 }
 
 /// Return the propagated payload when the evaluator error is an internal ? marker.
 #[inline(always)]
 pub fn unwrapPropagatedError(err: AverStr) -> Option<AverStr> {
     crate::cancel_checkpoint();
-    let prefix = propagationPrefix();
+    let prefix = crate::aver_generated::domain::eval::common::propagationPrefix();
     if err.starts_with(&*prefix) {
         Some(
             (aver_rt::string_slice(
@@ -71,10 +73,14 @@ pub fn normalizeFnReturn(result: &Result<Val, AverStr>) -> Result<Val, AverStr> 
     crate::cancel_checkpoint();
     match result.clone() {
         Ok(v) => Ok(v),
-        Err(err) => match unwrapPropagatedError(err.clone()) {
-            Some(msg) => Ok(Val::ValErr(std::sync::Arc::new(Val::ValStr(msg)))),
-            None => Err(err),
-        },
+        Err(err) => {
+            match crate::aver_generated::domain::eval::common::unwrapPropagatedError(err.clone()) {
+                Some(msg) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+                    std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(msg)),
+                )),
+                None => Err(err),
+            }
+        }
     }
 }
 

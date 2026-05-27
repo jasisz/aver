@@ -30,10 +30,16 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverList<(Av
             }
             __MutualTco1::MergeOneField(mut k, mut v, mut rest, mut overrides, mut acc) => {
                 crate::cancel_checkpoint();
-                match findOverride(k.clone(), overrides.clone()) {
+                match crate::aver_generated::domain::eval::records::findOverride(
+                    k.clone(),
+                    overrides.clone(),
+                ) {
                     Some(newV) => __MutualTco1::MergeRecordFieldsAcc(
                         rest,
-                        removeOverride(k.clone(), &overrides),
+                        crate::aver_generated::domain::eval::records::removeOverride(
+                            k.clone(),
+                            &overrides,
+                        ),
                         aver_rt::AverList::prepend((k, newV), &acc),
                     ),
                     None => __MutualTco1::MergeRecordFieldsAcc(
@@ -82,7 +88,7 @@ pub fn mergeOneField(
 pub fn isRecordUpdate(name: AverStr, args: &aver_rt::AverList<Val>) -> bool {
     crate::cancel_checkpoint();
     if name.contains(".update") {
-        hasNamedRecord(args)
+        crate::aver_generated::domain::eval::records::hasNamedRecord(args)
     } else {
         false
     }
@@ -93,7 +99,7 @@ pub fn isRecordUpdate(name: AverStr, args: &aver_rt::AverList<Val>) -> bool {
 pub fn hasNamedRecord(args: &aver_rt::AverList<Val>) -> bool {
     crate::cancel_checkpoint();
     if ((args.len() as i64) == 2i64) {
-        isNamedSentinel(args)
+        crate::aver_generated::domain::eval::records::isNamedSentinel(args)
     } else {
         false
     }
@@ -106,7 +112,7 @@ pub fn isNamedSentinel(args: &aver_rt::AverList<Val>) -> bool {
     {
         let __list_subject = args.clone();
         if let Some((_, rest)) = aver_rt::list_uncons_cloned(&__list_subject) {
-            isNamedSentinelInner(&rest)
+            crate::aver_generated::domain::eval::records::isNamedSentinelInner(&rest)
         } else {
             if __list_subject.is_empty() {
                 false
@@ -122,7 +128,7 @@ pub fn isNamedSentinel(args: &aver_rt::AverList<Val>) -> bool {
 pub fn isNamedSentinelInner(rest: &aver_rt::AverList<Val>) -> bool {
     crate::cancel_checkpoint();
     aver_list_match!(rest.clone(), [] => false, [v, ignored] => match v {
-        Val::ValRecord(typeName, _) => {
+        crate::aver_generated::domain::value::Val::ValRecord(typeName, _) => {
             (&*typeName == "_named")
         },
         _ => {
@@ -135,7 +141,7 @@ pub fn isNamedSentinelInner(rest: &aver_rt::AverList<Val>) -> bool {
 #[inline(always)]
 pub fn doRecordUpdate(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
-    aver_list_match!(args.clone(), [] => Err(AverStr::from("record update requires (record, named fields)")), [baseVal, rest] => doRecordUpdateInner(&baseVal, &rest))
+    aver_list_match!(args.clone(), [] => Err(AverStr::from("record update requires (record, named fields)")), [baseVal, rest] => crate::aver_generated::domain::eval::records::doRecordUpdateInner(&baseVal, &rest))
 }
 
 /// Extract named fields from rest and apply update.
@@ -143,8 +149,8 @@ pub fn doRecordUpdate(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
 pub fn doRecordUpdateInner(baseVal: &Val, rest: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     aver_list_match!(rest.clone(), [] => Err(AverStr::from("record update requires named fields")), [namedVal, ignored] => match namedVal {
-        Val::ValRecord(_, namedFields) => {
-            applyRecordUpdate(baseVal, &namedFields)
+        crate::aver_generated::domain::value::Val::ValRecord(_, namedFields) => {
+            crate::aver_generated::domain::eval::records::applyRecordUpdate(baseVal, &namedFields)
         },
         _ => {
             Err(AverStr::from("record update requires named fields"))
@@ -159,10 +165,15 @@ pub fn applyRecordUpdate(
 ) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
     match baseVal.clone() {
-        Val::ValRecord(typeName, existingFields) => Ok(Val::ValRecord(
-            typeName,
-            mergeRecordFields(&existingFields, namedFields),
-        )),
+        crate::aver_generated::domain::value::Val::ValRecord(typeName, existingFields) => {
+            Ok(crate::aver_generated::domain::value::Val::ValRecord(
+                typeName,
+                crate::aver_generated::domain::eval::records::mergeRecordFields(
+                    &existingFields,
+                    namedFields,
+                ),
+            ))
+        }
         _ => Err(AverStr::from("update requires a record value")),
     }
 }
@@ -174,7 +185,11 @@ pub fn mergeRecordFields(
     overrides: &aver_rt::AverList<(AverStr, Val)>,
 ) -> aver_rt::AverList<(AverStr, Val)> {
     crate::cancel_checkpoint();
-    mergeRecordFieldsAcc(existing, overrides, &aver_rt::AverList::empty())
+    crate::aver_generated::domain::eval::records::mergeRecordFieldsAcc(
+        existing,
+        overrides,
+        &aver_rt::AverList::empty(),
+    )
 }
 
 /// Find a field value in the overrides list.
@@ -201,7 +216,11 @@ pub fn removeOverride(
     overrides: &aver_rt::AverList<(AverStr, Val)>,
 ) -> aver_rt::AverList<(AverStr, Val)> {
     crate::cancel_checkpoint();
-    removeOverrideAcc(k, overrides.clone(), aver_rt::AverList::empty())
+    crate::aver_generated::domain::eval::records::removeOverrideAcc(
+        k,
+        overrides.clone(),
+        aver_rt::AverList::empty(),
+    )
 }
 
 /// Accumulate non-matching fields, then concat remainder when match found.

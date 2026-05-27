@@ -729,7 +729,7 @@ impl CodegenContext {
         let lifted = resolve_fn_def_external(&rctx, fd).unwrap_or_else(|| {
             let stmts: Vec<ResolvedStmt> = match fd.body.as_ref() {
                 crate::ast::FnBody::Block(stmts) => {
-                    stmts.iter().map(|s| self.resolve_stmt(s)).collect()
+                    stmts.iter().map(|s| self.resolve_stmt(s, scope)).collect()
                 }
             };
             ResolvedFnDef {
@@ -751,23 +751,43 @@ impl CodegenContext {
         Cow::Owned(lifted)
     }
 
+    /// Entry module's name from `items` (the `module X` declaration's
+    /// X). `None` for ad-hoc test programs without a module decl.
+    fn entry_module_name(&self) -> Option<String> {
+        self.items.iter().find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.name.clone()),
+            _ => None,
+        })
+    }
+
     /// Resolve a source-shape `Spanned<Expr>` on demand using the
     /// entry's resolver context. Used by emit helpers that still walk
     /// `Expr` (TCO hoisting, mutual TCO, verify blocks, follow-up
     /// backends pre-migration) and need to feed the resolved shape
     /// into the migrated emitter. The returned `Spanned<ResolvedExpr>`
     /// carries the same line + type stamp as the input.
+    ///
+    /// `scope` is the owning module prefix when the caller knows
+    /// which dep module the expression lives in, `None` for entry-
+    /// scope code. Required for cross-module name resolution — e.g.,
+    /// a call site in module `A` referring to `Val.ValOk` declared
+    /// in module `B` only resolves to `ResolvedCtor::User` when the
+    /// resolver's `current_module` matches the call site's owning
+    /// scope. Pre-PR-9.4 the helper used the *entry* module name
+    /// uniformly, which broke cross-module ctor / fn classification
+    /// for the legacy emit paths (mutual TCO trampolines, TCO hoist
+    /// — they walked dep-module fn bodies but the resolver context
+    /// said "you're in the entry module"; the self-host regen
+    /// surfaced the gap when same-name shadowing across modules was
+    /// no longer an option).
     pub fn resolve_expr(
         &self,
         expr: &crate::ast::Spanned<crate::ast::Expr>,
+        scope: Option<&str>,
     ) -> crate::ast::Spanned<crate::ir::hir::ResolvedExpr> {
         use crate::ir::hir::{ResolveCtx, ResolvedStmt};
-        let module_name = self.items.iter().find_map(|i| match i {
-            TopLevel::Module(m) => Some(m.name.clone()),
-            _ => None,
-        });
         let mut rctx = ResolveCtx::new(&self.symbol_table);
-        rctx.current_module = module_name;
+        rctx.current_module = scope.map(String::from).or_else(|| self.entry_module_name());
         let stmt = crate::ast::Stmt::Expr(expr.clone());
         match crate::ir::hir::resolve::resolve_stmt_external(&rctx, &stmt) {
             ResolvedStmt::Expr(s) => s,
@@ -777,14 +797,14 @@ impl CodegenContext {
 
     /// Same as [`Self::resolve_expr`] but for whole statements
     /// (`Binding(name, ty_ann, expr)` or `Expr(expr)`).
-    pub fn resolve_stmt(&self, stmt: &crate::ast::Stmt) -> crate::ir::hir::ResolvedStmt {
+    pub fn resolve_stmt(
+        &self,
+        stmt: &crate::ast::Stmt,
+        scope: Option<&str>,
+    ) -> crate::ir::hir::ResolvedStmt {
         use crate::ir::hir::ResolveCtx;
-        let module_name = self.items.iter().find_map(|i| match i {
-            TopLevel::Module(m) => Some(m.name.clone()),
-            _ => None,
-        });
         let mut rctx = ResolveCtx::new(&self.symbol_table);
-        rctx.current_module = module_name;
+        rctx.current_module = scope.map(String::from).or_else(|| self.entry_module_name());
         crate::ir::hir::resolve::resolve_stmt_external(&rctx, stmt)
     }
 
@@ -793,15 +813,15 @@ impl CodegenContext {
     /// it through `resolve_stmt_external`, since the resolver doesn't
     /// expose a standalone pattern lifter — same workaround
     /// `rust/toplevel.rs` used pre-PR-9.
-    pub fn resolve_pattern(&self, pat: &crate::ast::Pattern) -> crate::ir::hir::ResolvedPattern {
+    pub fn resolve_pattern(
+        &self,
+        pat: &crate::ast::Pattern,
+        scope: Option<&str>,
+    ) -> crate::ir::hir::ResolvedPattern {
         use crate::ast::{Expr, Literal, MatchArm, Spanned, Stmt};
         use crate::ir::hir::{ResolveCtx, ResolvedExpr, ResolvedStmt};
-        let module_name = self.items.iter().find_map(|i| match i {
-            TopLevel::Module(m) => Some(m.name.clone()),
-            _ => None,
-        });
         let mut rctx = ResolveCtx::new(&self.symbol_table);
-        rctx.current_module = module_name;
+        rctx.current_module = scope.map(String::from).or_else(|| self.entry_module_name());
         let synthetic_arm = MatchArm {
             pattern: pat.clone(),
             body: Box::new(Spanned::bare(Expr::Literal(Literal::Unit))),

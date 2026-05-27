@@ -33,7 +33,7 @@ fn __mutual_tco_trampoline_1(
             }
             __MutualTco1::ParseFnBodyOneStmtFlat(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
-                let r = parseStmt(&tokens, pos)?;
+                let r = crate::aver_generated::domain::parser::parseStmt(&tokens, pos)?;
                 match r {
                     (stmt, pos2) => __MutualTco1::ParseFnBodyAfterStmtFlat(
                         tokens,
@@ -45,7 +45,7 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::ParseFnBodyAfterStmtFlat(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
                 match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
-                    Token::TkNewline => {
+                    crate::aver_generated::domain::token::Token::TkNewline => {
                         __MutualTco1::ParseFnBodyStmtsFlat(tokens, (pos + 1i64), acc)
                     }
                     _ => return Ok((acc, pos)),
@@ -110,14 +110,16 @@ fn __mutual_tco_trampoline_2(
                 let pos2 =
                     crate::aver_generated::domain::parser_match::skipNewlines(tokens.clone(), pos);
                 match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos2.clone()) {
-                    Token::TkDedent => return Ok((acc, (pos2 + 1i64))),
-                    Token::TkEof => return Ok((acc, pos2)),
+                    crate::aver_generated::domain::token::Token::TkDedent => {
+                        return Ok((acc, (pos2 + 1i64)));
+                    }
+                    crate::aver_generated::domain::token::Token::TkEof => return Ok((acc, pos2)),
                     _ => __MutualTco2::ParseFnBodyOneStmtIndented(tokens, pos2, acc),
                 }
             }
             __MutualTco2::ParseFnBodyOneStmtIndented(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
-                let r = parseStmt(&tokens, pos)?;
+                let r = crate::aver_generated::domain::parser::parseStmt(&tokens, pos)?;
                 match r {
                     (stmt, pos2) => __MutualTco2::ParseFnBodyStmtsIndented(
                         tokens,
@@ -205,17 +207,17 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Program, AverS
                     pos,
                 );
                 match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos2.clone()) {
-                    Token::TkEof => {
+                    crate::aver_generated::domain::token::Token::TkEof => {
                         return Ok(Program {
                             deps: deps,
                             fns: fns.reverse(),
                             stmts: stmts.reverse(),
                         });
                     }
-                    Token::TkFn => {
+                    crate::aver_generated::domain::token::Token::TkFn => {
                         __MutualTco3::ParseProgramFn(tokens, (pos2 + 1i64), deps, fns, stmts)
                     }
-                    Token::TkIdent(kw) => {
+                    crate::aver_generated::domain::token::Token::TkIdent(kw) => {
                         __MutualTco3::ParseProgramKeyword(tokens, pos2, deps, fns, stmts, kw)
                     }
                     _ => __MutualTco3::ParseProgramStmt(tokens, pos2, deps, fns, stmts),
@@ -302,7 +304,7 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Program, AverS
             }
             __MutualTco3::ParseProgramFn(mut tokens, mut pos, mut deps, mut fns, mut stmts) => {
                 crate::cancel_checkpoint();
-                let r = parseFnDef(&tokens, pos)?;
+                let r = crate::aver_generated::domain::parser::parseFnDef(&tokens, pos)?;
                 match r {
                     (fd, pos2) => __MutualTco3::ParseProgram(
                         tokens.clone(),
@@ -315,7 +317,7 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Program, AverS
             }
             __MutualTco3::ParseProgramStmt(mut tokens, mut pos, mut deps, mut fns, mut stmts) => {
                 crate::cancel_checkpoint();
-                let r = parseStmt(&tokens, pos)?;
+                let r = crate::aver_generated::domain::parser::parseStmt(&tokens, pos)?;
                 match r {
                     (st, pos2) => __MutualTco3::ParseProgram(
                         tokens.clone(),
@@ -420,8 +422,10 @@ pub fn parseStmt(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(Stmt, i
     crate::cancel_checkpoint();
     let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
     match t {
-        Token::TkIdent(name) => parseStmtAfterIdent(tokens, (pos + 1i64), name),
-        _ => parseStmtExpr(tokens, pos),
+        crate::aver_generated::domain::token::Token::TkIdent(name) => {
+            crate::aver_generated::domain::parser::parseStmtAfterIdent(tokens, (pos + 1i64), name)
+        }
+        _ => crate::aver_generated::domain::parser::parseStmtExpr(tokens, pos),
     }
 }
 
@@ -433,9 +437,17 @@ pub fn parseStmtAfterIdent(
 ) -> Result<(Stmt, i64), AverStr> {
     crate::cancel_checkpoint();
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos) {
-        Token::TkEq => parseBinding(tokens, (pos + 1i64), name),
-        Token::TkColon => parseBinding(tokens, skipTypeAnnotationAndEq(tokens, pos), name),
-        _ => parseStmtExprFrom(tokens, pos, name),
+        crate::aver_generated::domain::token::Token::TkEq => {
+            crate::aver_generated::domain::parser::parseBinding(tokens, (pos + 1i64), name)
+        }
+        crate::aver_generated::domain::token::Token::TkColon => {
+            crate::aver_generated::domain::parser::parseBinding(
+                tokens,
+                crate::aver_generated::domain::parser::skipTypeAnnotationAndEq(tokens, pos),
+                name,
+            )
+        }
+        _ => crate::aver_generated::domain::parser::parseStmtExprFrom(tokens, pos, name),
     }
 }
 
@@ -444,7 +456,7 @@ pub fn skipTypeAnnotationAndEq(tokens: &aver_rt::AverList<Token>, pos: i64) -> i
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::skipTypeAnnotation(tokens, pos);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos2.clone()) {
-        Token::TkEq => (pos2 + 1i64),
+        crate::aver_generated::domain::token::Token::TkEq => (pos2 + 1i64),
         _ => pos2,
     }
 }
@@ -460,8 +472,8 @@ pub fn parseBinding(
     {
         let (expr, pos2) = r;
         Ok((
-            Stmt::StmtBind(name, expr),
-            skipTrailingDedent(tokens, pos2, pos),
+            crate::aver_generated::domain::ast::Stmt::StmtBind(name, expr),
+            crate::aver_generated::domain::parser::skipTrailingDedent(tokens, pos2, pos),
         ))
     }
 }
@@ -469,9 +481,14 @@ pub fn parseBinding(
 /// If expression consumed an INDENT (multi-line), skip the trailing DEDENT.
 pub fn skipTrailingDedent(tokens: &aver_rt::AverList<Token>, pos: i64, startPos: i64) -> i64 {
     crate::cancel_checkpoint();
-    match countIndentsInRange(tokens.clone(), startPos, pos, 0i64) {
+    match crate::aver_generated::domain::parser::countIndentsInRange(
+        tokens.clone(),
+        startPos,
+        pos,
+        0i64,
+    ) {
         0i64 => pos,
-        n => skipNDedents(tokens.clone(), pos, n),
+        n => crate::aver_generated::domain::parser::skipNDedents(tokens.clone(), pos, n),
     }
 }
 
@@ -490,13 +507,13 @@ pub fn countIndentsInRange(
             count
         } else {
             match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
-                Token::TkIndent => {
+                crate::aver_generated::domain::token::Token::TkIndent => {
                     let __tmp3 = (count + 1i64);
                     pos = nextPos;
                     count = __tmp3;
                     continue;
                 }
-                Token::TkDedent => {
+                crate::aver_generated::domain::token::Token::TkDedent => {
                     let __tmp3 = (count - 1i64);
                     pos = nextPos;
                     count = __tmp3;
@@ -521,11 +538,11 @@ pub fn skipNDedents(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut n: i
             pos
         } else {
             match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
-                Token::TkNewline => {
+                crate::aver_generated::domain::token::Token::TkNewline => {
                     pos = nextPos;
                     continue;
                 }
-                Token::TkDedent => {
+                crate::aver_generated::domain::token::Token::TkDedent => {
                     let __tmp1 = nextPos;
                     let __tmp2 = (n - 1i64);
                     pos = __tmp1;
@@ -544,7 +561,10 @@ pub fn parseStmtExpr(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(Stm
     let r = crate::aver_generated::domain::parser::expr::parseExpr(tokens, pos)?;
     {
         let (expr, pos2) = r;
-        Ok((Stmt::StmtExpr(expr), skipTrailingDedent(tokens, pos2, pos)))
+        Ok((
+            crate::aver_generated::domain::ast::Stmt::StmtExpr(expr),
+            crate::aver_generated::domain::parser::skipTrailingDedent(tokens, pos2, pos),
+        ))
     }
 }
 
@@ -558,7 +578,7 @@ pub fn parseStmtExprFrom(
     let ir = crate::aver_generated::domain::parser::expr::parseIdentOrCall(tokens, pos, name)?;
     {
         let (expr, pos2) = ir;
-        parseStmtExprFromMul(tokens, pos2, &expr)
+        crate::aver_generated::domain::parser::parseStmtExprFromMul(tokens, pos2, &expr)
     }
 }
 
@@ -572,7 +592,7 @@ pub fn parseStmtExprFromMul(
     let mr = crate::aver_generated::domain::parser::expr::parseMulExprTail(tokens, pos, expr)?;
     {
         let (expr2, pos2) = mr;
-        parseStmtExprFromAdd(tokens, pos2, &expr2)
+        crate::aver_generated::domain::parser::parseStmtExprFromAdd(tokens, pos2, &expr2)
     }
 }
 
@@ -586,7 +606,7 @@ pub fn parseStmtExprFromAdd(
     let ar = crate::aver_generated::domain::parser::expr::parseAddExprTail(tokens, pos, expr)?;
     {
         let (expr2, pos2) = ar;
-        parseStmtExprFromCmp(tokens, pos2, &expr2)
+        crate::aver_generated::domain::parser::parseStmtExprFromCmp(tokens, pos2, &expr2)
     }
 }
 
@@ -600,7 +620,9 @@ pub fn parseStmtExprFromCmp(
     let cr = crate::aver_generated::domain::parser::expr::parseCmpExprTail(tokens, pos, expr)?;
     {
         let (expr2, pos2) = cr;
-        Ok(parseStmtExprFromQ(tokens, pos2, &expr2))
+        Ok(crate::aver_generated::domain::parser::parseStmtExprFromQ(
+            tokens, pos2, &expr2,
+        ))
     }
 }
 
@@ -610,7 +632,10 @@ pub fn parseStmtExprFromQ(tokens: &aver_rt::AverList<Token>, pos: i64, expr: &Ex
     let qr = crate::aver_generated::domain::parser::expr::parsePostfixQuestion(tokens, pos, expr);
     {
         let (expr2, pos2) = qr;
-        (Stmt::StmtExpr(expr2), pos2)
+        (
+            crate::aver_generated::domain::ast::Stmt::StmtExpr(expr2),
+            pos2,
+        )
     }
 }
 
@@ -619,7 +644,9 @@ pub fn parseFnDef(tokens: &aver_rt::AverList<Token>, pos: i64) -> Result<(FnDef,
     crate::cancel_checkpoint();
     let t = crate::aver_generated::domain::parser_match::tokenAt(tokens, pos);
     match t {
-        Token::TkIdent(name) => parseFnDefParams(tokens, (pos + 1i64), name),
+        crate::aver_generated::domain::token::Token::TkIdent(name) => {
+            crate::aver_generated::domain::parser::parseFnDefParams(tokens, (pos + 1i64), name)
+        }
         _ => Err(AverStr::from("Expected function name after 'fn'")),
     }
 }
@@ -639,7 +666,7 @@ pub fn parseFnDefParams(
     )?;
     {
         let (params, pos3) = pr;
-        parseFnDefBody(tokens, pos3, name, &params)
+        crate::aver_generated::domain::parser::parseFnDefBody(tokens, pos3, name, &params)
     }
 }
 
@@ -654,8 +681,15 @@ pub fn parseFnDefBody(
     let pos2 = crate::aver_generated::domain::parser_match::skipReturnType(tokens, pos);
     let pos3 = crate::aver_generated::domain::parser_match::skipNewlines(tokens.clone(), pos2);
     match crate::aver_generated::domain::parser_match::tokenAt(tokens, pos3.clone()) {
-        Token::TkIndent => parseFnDefBodyIndented(tokens, (pos3 + 1i64), name, params),
-        _ => parseFnDefBodyFlat(tokens, pos3, name, params),
+        crate::aver_generated::domain::token::Token::TkIndent => {
+            crate::aver_generated::domain::parser::parseFnDefBodyIndented(
+                tokens,
+                (pos3 + 1i64),
+                name,
+                params,
+            )
+        }
+        _ => crate::aver_generated::domain::parser::parseFnDefBodyFlat(tokens, pos3, name, params),
     }
 }
 
@@ -668,7 +702,11 @@ pub fn parseFnDefBodyIndented(
 ) -> Result<(FnDef, i64), AverStr> {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::skipDescAndEffects(tokens.clone(), pos);
-    let sr = parseFnBodyStmtsIndented(tokens, pos2, &aver_rt::AverList::empty())?;
+    let sr = crate::aver_generated::domain::parser::parseFnBodyStmtsIndented(
+        tokens,
+        pos2,
+        &aver_rt::AverList::empty(),
+    )?;
     {
         let (stmts, pos3) = sr;
         Ok((
@@ -695,7 +733,11 @@ pub fn parseFnDefBodyFlat(
 ) -> Result<(FnDef, i64), AverStr> {
     crate::cancel_checkpoint();
     let pos2 = crate::aver_generated::domain::parser_match::skipDescAndEffects(tokens.clone(), pos);
-    let sr = parseFnBodyStmtsFlat(tokens, pos2, &aver_rt::AverList::empty())?;
+    let sr = crate::aver_generated::domain::parser::parseFnBodyStmtsFlat(
+        tokens,
+        pos2,
+        &aver_rt::AverList::empty(),
+    )?;
     {
         let (stmts, pos3) = sr;
         Ok((
@@ -717,7 +759,7 @@ pub fn parseFnDefBodyFlat(
 #[inline(always)]
 pub fn parse(tokens: &aver_rt::AverList<Token>) -> Result<Program, AverStr> {
     crate::cancel_checkpoint();
-    parseProgram(
+    crate::aver_generated::domain::parser::parseProgram(
         tokens,
         0i64,
         &aver_rt::AverList::empty(),

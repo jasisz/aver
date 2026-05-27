@@ -17,6 +17,17 @@ pub struct EmitCtx {
     pub rc_wrapped: HashSet<String>,
     /// Parameters emitted as `&T` borrows (borrow-by-default for non-Copy, non-Str params).
     pub borrowed_params: HashSet<String>,
+    /// Owning module prefix for the function whose body this context
+    /// is emitting (`Some("Domain.Eval.Core")` inside a dep module's
+    /// fn body, `None` for entry-scope fns). Threaded into
+    /// `ctx.resolve_expr` / `ctx.resolve_stmt` / `ctx.resolve_pattern`
+    /// from the on-demand legacy emit helpers so cross-module ctor /
+    /// fn classification uses the right resolver `current_module`
+    /// instead of falling back to the entry's. Pre-PR-9.4 the legacy
+    /// helpers used the entry-module name uniformly, which silently
+    /// mis-resolved cross-module `Type.Variant(...)` calls inside
+    /// trampoline arms (self-host regen exposure).
+    pub current_module_scope: Option<String>,
 }
 
 impl EmitCtx {
@@ -26,6 +37,7 @@ impl EmitCtx {
             local_types: HashMap::new(),
             rc_wrapped: HashSet::new(),
             borrowed_params: HashSet::new(),
+            current_module_scope: None,
         }
     }
 
@@ -41,6 +53,7 @@ impl EmitCtx {
             local_types: param_types,
             rc_wrapped: HashSet::new(),
             borrowed_params,
+            current_module_scope: None,
         }
     }
 
@@ -50,7 +63,16 @@ impl EmitCtx {
             local_types: param_types,
             rc_wrapped: HashSet::new(),
             borrowed_params: HashSet::new(),
+            current_module_scope: None,
         }
+    }
+
+    /// Stamp the owning module prefix onto a context — chains
+    /// fluently after `for_fn` / `for_fn_no_borrow`. `None` for
+    /// entry-scope fns keeps the field default.
+    pub fn with_scope(mut self, scope: Option<&str>) -> Self {
+        self.current_module_scope = scope.map(String::from);
+        self
     }
 
     /// Is this variable a Copy type in Rust (i64, f64, bool, ())?
@@ -74,6 +96,7 @@ impl EmitCtx {
             local_types: self.local_types.clone(),
             rc_wrapped: rc,
             borrowed_params: self.borrowed_params.clone(),
+            current_module_scope: self.current_module_scope.clone(),
         }
     }
 }

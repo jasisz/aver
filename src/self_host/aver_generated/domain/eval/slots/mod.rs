@@ -7,7 +7,7 @@ use crate::*;
 #[inline(always)]
 pub fn buildSlotEnv(args: &aver_rt::AverList<Val>, slotCount: i64) -> aver_rt::AverVector<Val> {
     crate::cancel_checkpoint();
-    buildSlotEnvLoop(
+    crate::aver_generated::domain::eval::slots::buildSlotEnvLoop(
         args.clone(),
         aver_rt::AverVector::new(slotCount as usize, Val::ValUnit.clone()),
         0i64,
