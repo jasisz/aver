@@ -548,19 +548,32 @@ fn build_fn_ectx_no_borrow(fd: &FnDef, ctx: &CodegenContext) -> EmitCtx {
 }
 
 /// Emit a Rust function from an Aver FnDef.
+///
+/// `scope` is the owning module prefix when `fd` came from a
+/// dependency module (`module.fn_defs`), `None` when `fd` is part of
+/// the entry's `ctx.fn_defs`. Threaded into `ctx.resolve_fn_def` so
+/// the resolved lookup keys by `FnKey` instead of bare name — two
+/// modules that share a fn name (`Util.format` vs `Other.format`)
+/// pick up their own `FnId` without collision.
 #[allow(dead_code)]
-pub fn emit_fn_def(fd: &FnDef, is_memo: bool, ctx: &CodegenContext) -> String {
-    emit_fn_def_with_visibility(fd, is_memo, ctx, false)
+pub fn emit_fn_def(fd: &FnDef, is_memo: bool, ctx: &CodegenContext, scope: Option<&str>) -> String {
+    emit_fn_def_with_visibility(fd, is_memo, ctx, scope, false)
 }
 
-pub fn emit_public_fn_def(fd: &FnDef, is_memo: bool, ctx: &CodegenContext) -> String {
-    emit_fn_def_with_visibility(fd, is_memo, ctx, true)
+pub fn emit_public_fn_def(
+    fd: &FnDef,
+    is_memo: bool,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    emit_fn_def_with_visibility(fd, is_memo, ctx, scope, true)
 }
 
 fn emit_fn_def_with_visibility(
     fd: &FnDef,
     is_memo: bool,
     ctx: &CodegenContext,
+    scope: Option<&str>,
     public: bool,
 ) -> String {
     let mut lines = Vec::new();
@@ -606,7 +619,7 @@ fn emit_fn_def_with_visibility(
     } else {
         None
     };
-    let resolved_fd_owned = ctx.resolve_fn_def(fd);
+    let resolved_fd_owned = ctx.resolve_fn_def(fd, scope);
     let resolved_fd = resolved_fd_owned.as_ref();
     let optimized_thin_plan = classify_thin_fn_def_for_rust(resolved_fd, ctx, &ectx);
 
@@ -3299,7 +3312,7 @@ mod tests {
             (vec![Type::Int, Type::Int, Type::Int], Type::Int, vec![]),
         );
 
-        let emitted = emit_public_fn_def(&fd, false, &ctx);
+        let emitted = emit_public_fn_def(&fd, false, &ctx, None);
         assert!(emitted.contains("let __aver_inv0 = score(tag(pick));"));
         // Numeric add no longer uses &rhs
         assert!(emitted.contains("let __tmp1 = (acc + __aver_inv0);"));
@@ -3347,7 +3360,7 @@ mod tests {
         ctx.fn_sigs
             .insert("f".to_string(), (vec![Type::Float], Type::Float, vec![]));
 
-        let emitted = emit_public_fn_def(&fd, true, &ctx);
+        let emitted = emit_public_fn_def(&fd, true, &ctx, None);
         assert!(!emitted.contains("thread_local!"));
     }
 
@@ -3399,7 +3412,7 @@ mod tests {
             (vec![Type::named("Tree")], Type::Bool, vec![]),
         );
 
-        let emitted = emit_public_fn_def(&fd, true, &ctx);
+        let emitted = emit_public_fn_def(&fd, true, &ctx, None);
         assert!(emitted.contains("let __memo_key = t.clone();"));
         assert!(emitted.contains("get(&__memo_key)"));
         assert!(emitted.contains("insert(__memo_key, __result.clone())"));
@@ -3644,7 +3657,7 @@ mod tests {
             "first".to_string(),
             (vec![Type::Int, Type::Int], Type::Int, vec![]),
         );
-        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
+        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx, None);
         // Both modes now emit #[inline(always)] for thin wrappers
         assert!(semantic.contains("#[inline(always)]"));
         assert!(semantic.contains("pub fn swap(a: i64, b: i64) -> i64"));
@@ -3694,7 +3707,7 @@ mod tests {
                 vec![],
             ),
         );
-        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
+        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx, None);
         // Both modes now emit #[inline(always)] for leaf wrappers
         assert!(semantic.contains("#[inline(always)]"));
         // Vector param is now borrowed
@@ -3763,7 +3776,7 @@ mod tests {
                 vec![],
             ),
         );
-        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx);
+        let semantic = emit_public_fn_def(&fd, false, &semantic_ctx, None);
         // Both modes now emit #[inline(always)] for binding-block wrappers
         assert!(semantic.contains("#[inline(always)]"));
         assert!(semantic.contains("let cell = grid.get(idx as usize).cloned().unwrap_or(0i64);"));
