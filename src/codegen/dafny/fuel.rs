@@ -351,7 +351,10 @@ fn type_default(ty: &Type, ctx: &CodegenContext, visiting: &mut HashSet<String>)
                 .collect::<Option<_>>()?;
             format!("({})", parts.join(", "))
         }
-        Type::Named { name, .. } => named_type_default(name, ctx, visiting)?,
+        Type::Named { .. } => {
+            let key = crate::codegen::common::backend_named_type_key(ctx, ty)?;
+            named_type_default(&key, ctx, visiting)?
+        }
         Type::Fn(_, _, _) | Type::Var(_) | Type::Invalid => return None,
     })
 }
@@ -375,7 +378,26 @@ fn named_type_default(
     result
 }
 
+/// Locate a `TypeDef` by canonical or bare name.
+///
+/// Epic #180 Phase 6 — accepts dotted canonical keys
+/// (`"A.Shape"` for module-owned types) routed to the matching
+/// module's `type_defs` list, so cross-module same-bare-name
+/// types resolve to the correct declaration instead of the
+/// first-match-wins bare lookup. Bare keys (entry-scope types,
+/// builtins) still resolve via the entry → module-walk fallback
+/// chain.
 fn find_type_def<'a>(ctx: &'a CodegenContext, target: &str) -> Option<&'a TypeDef> {
+    if let Some((prefix, bare)) = target.rsplit_once('.') {
+        for m in &ctx.modules {
+            if m.prefix == prefix {
+                return m
+                    .type_defs
+                    .iter()
+                    .find(|td| crate::codegen::common::type_def_name(td) == bare);
+            }
+        }
+    }
     ctx.type_defs
         .iter()
         .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))

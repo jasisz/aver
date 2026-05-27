@@ -285,7 +285,22 @@ fn emit_type_def_with_visibility(td: &TypeDef, public: bool, ctx: &CodegenContex
 
 use crate::codegen::common::type_def_name;
 
+/// Locate a `TypeDef` by canonical or bare name.
+///
+/// Epic #180 Phase 6 — accepts dotted canonical keys
+/// (`"A.Shape"` for module-owned types) routed to the matching
+/// module's `type_defs` list, so cross-module same-bare-name
+/// types resolve to the correct declaration instead of the
+/// first-match-wins bare lookup. Bare keys still resolve via
+/// the entry → module-walk fallback chain.
 fn find_type_def<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a TypeDef> {
+    if let Some((prefix, bare)) = name.rsplit_once('.') {
+        for module in &ctx.modules {
+            if module.prefix == prefix {
+                return module.type_defs.iter().find(|td| type_def_name(td) == bare);
+            }
+        }
+    }
     ctx.type_defs
         .iter()
         .find(|td| type_def_name(td) == name)
@@ -316,7 +331,12 @@ fn rust_hash_eq_safe_type(
             .iter()
             .all(|item| rust_hash_eq_safe_type(item, ctx, visiting)),
         Type::Map(_, _) | Type::Fn(_, _, _) | Type::Var(_) | Type::Invalid => false,
-        Type::Named { name, .. } => rust_hash_eq_safe_named(name, ctx, visiting),
+        Type::Named { .. } => {
+            let Some(key) = crate::codegen::common::backend_named_type_key(ctx, ty) else {
+                return false;
+            };
+            rust_hash_eq_safe_named(&key, ctx, visiting)
+        }
     }
 }
 
@@ -348,7 +368,8 @@ fn rust_hash_eq_safe_named(
 
 fn type_can_derive_hash_eq(td: &TypeDef, ctx: &CodegenContext) -> bool {
     let mut visiting = HashSet::new();
-    rust_hash_eq_safe_named(type_def_name(td), ctx, &mut visiting)
+    let key = crate::codegen::common::backend_type_def_key(ctx, td);
+    rust_hash_eq_safe_named(&key, ctx, &mut visiting)
 }
 
 fn fn_supports_rust_memo(fd: &FnDef, ctx: &CodegenContext) -> bool {
