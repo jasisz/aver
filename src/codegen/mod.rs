@@ -93,8 +93,39 @@ impl ModuleInfo {
 }
 
 /// Collected context from the Aver program, shared across all backends.
+///
+/// # Invariant (epic #170 Phase 2)
+///
+/// **`resolved_program` is the primary backend input.** Every
+/// identity-sensitive decision (call/ctor/type lookup, fn-by-id
+/// dispatch, mutual-SCC analysis) belongs to that view; the
+/// pipeline produced it once and `build_context` projects it through.
+///
+/// The legacy AST-shape fields below — `items`, `fn_defs`,
+/// `type_defs`, `resolved_fn_defs`, `resolved_module_fn_defs` — are
+/// **source metadata / migration caches**, not independent sources
+/// of truth:
+///
+/// - `items`, `fn_defs`, `type_defs` retain source-shape spans and
+///   diagnostics; backends mid-migration still walk them. They are
+///   NOT the place to add new identity-sensitive logic.
+/// - `resolved_fn_defs` / `resolved_module_fn_defs` are projections
+///   of `resolved_program` kept for callsites that don't yet route
+///   through the `FnId` index. New code should reach
+///   `resolved_program.fn_by_id(fn_id)` instead.
+///
+/// Subsequent epic phases migrate backends (Rust, Lean, Dafny,
+/// wasm-gc) to iterate the view directly. New code in backends
+/// should default to the view. AST consumption requires a clear
+/// category in a code comment: `diagnostic-only`,
+/// `syntax-discovery-only`, `backend-link-stage`, or
+/// `temporary-migration-bridge`.
 pub struct CodegenContext {
     /// All top-level items (post-TCO transform, post-typecheck).
+    ///
+    /// **Source metadata** — kept for span / diagnostic / syntax
+    /// discovery access. Backends iterating fn bodies should reach
+    /// `resolved_program.entry_fns()` instead.
     pub items: Vec<TopLevel>,
     /// Function signatures: name → (param_types, return_type, effects).
     pub fn_sigs: HashMap<String, (Vec<crate::types::Type>, crate::types::Type, Vec<String>)>,
@@ -103,8 +134,23 @@ pub struct CodegenContext {
     /// Set of type names whose values are memo-safe.
     pub memo_safe_types: HashSet<String>,
     /// User-defined type definitions (for struct/enum generation).
+    ///
+    /// **Source metadata.** Type-id-keyed lookups go through
+    /// `symbol_table` (see [`Self::symbol_table`]); fn bodies that
+    /// need a resolved type reach it via `Type::Named(TypeId, _)`
+    /// after the typechecker stamps. This list stays for ergonomic
+    /// iteration over user-declared types in syntax-discovery sites
+    /// (e.g. cataloguing all `enum` declarations for the proof
+    /// pipeline's refinement detection).
     pub type_defs: Vec<TypeDef>,
     /// User-defined function definitions.
+    ///
+    /// **Source metadata.** Backends mid-migration walk this for
+    /// fn-signature shape; new identity-sensitive code reaches
+    /// `resolved_program.entry_fns()` / `fn_by_id(fn_id)` instead.
+    /// Synthesized FnDefs (memo wrappers, TCO hoists) appended after
+    /// the pipeline ran live here too; the on-demand resolver
+    /// (`Self::resolve_fn_def`) lifts them through the symbol table.
     pub fn_defs: Vec<FnDef>,
     /// Project/binary name.
     pub project_name: String,
@@ -175,15 +221,15 @@ pub struct CodegenContext {
     /// `Option` wrapper to unwrap at each callsite.
     pub symbol_table: crate::ir::SymbolTable,
     /// Resolved-HIR forms of every entry-scope fn in `fn_defs`,
-    /// in the same source order. Lifted by `build_context` via
-    /// [`crate::ir::hir::resolve_fn_def_external`] against the
-    /// entry's [`ResolveCtx`]; #147 phase E PR 8 consumers (the
-    /// Rust backend's expression / pattern emitters) walk these
-    /// instead of the source-shape bodies in `fn_defs`. Items
-    /// whose name doesn't resolve through the symbol table (only
-    /// possible when typecheck rejected the program upstream)
-    /// are skipped from this list — codegen falls back to
-    /// `fn_defs` in those cases.
+    /// in the same source order.
+    ///
+    /// **Compatibility projection of `resolved_program.entry_fns()`**
+    /// (epic #170 Phase 1). Position-aligned with the entry slice of
+    /// `resolved_program.entry_items`. New code should prefer
+    /// `resolved_program.entry_fns()` / `fn_by_id(fn_id)` so the
+    /// `FnId` index is the lookup mechanism. This vec stays for
+    /// callsites that haven't yet been migrated to the view; it will
+    /// be retired once Phase 3-6 migrate all backends.
     pub resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef>,
     /// Module scope currently active for name resolution. Set by a
     /// backend dispatcher before emitting a dep-module's fns so that
@@ -193,14 +239,16 @@ pub struct CodegenContext {
     /// Empty by default. Set with [`Self::with_module_scope`] in a
     /// scoped manner.
     pub current_module_scope: std::cell::RefCell<Option<String>>,
-    /// Per-dep resolved fn defs, parallel to `modules`. Each
-    /// entry in `resolved_module_fn_defs[i]` corresponds to
-    /// `modules[i].fn_defs` in source order — same skip-on-missing
-    /// rule as `resolved_fn_defs`. Lifted against the *entry's*
-    /// symbol table (pinned to the dep's prefix as the resolver's
-    /// `current_module`) so every scope shares a single `FnId` /
-    /// `TypeId` namespace, matching the VM compiler's
-    /// `integrate_module` shape.
+    /// Per-dep resolved fn defs, parallel to `modules`.
+    ///
+    /// **Compatibility projection of `resolved_program.modules[i].fn_defs`**
+    /// (epic #170 Phase 1). Position-aligned with `modules` for
+    /// callsites that index by `modules[i]`. New code should prefer
+    /// `resolved_program.module_fns(prefix)` or the global
+    /// `fn_by_id(fn_id)` index — that's where cross-module bare-name
+    /// disambiguation happens for free. Retired alongside
+    /// `resolved_fn_defs` once Phase 3-6 migrate the remaining
+    /// backends.
     pub resolved_module_fn_defs: Vec<Vec<crate::ir::hir::ResolvedFnDef>>,
     /// Canonical resolved-program view of the whole codegen input —
     /// entry items (post-pipeline `NameResolve`) + per-dep-module
@@ -589,15 +637,22 @@ impl CodegenContext {
 
 impl CodegenContext {
     /// Test-only bridge: recompute every derived fact
-    /// (`mutual_tco_members`, `recursive_fns`, `proof_ir`) from the
-    /// current `items` and `modules`. Used exclusively by unit tests
-    /// that construct a `CodegenContext` piecewise — pushing synthetic
-    /// `FnDef`s straight into the items list rather than going through
-    /// the parser and pipeline. Production code never needs this:
-    /// every derived fact is populated by the pipeline stages
-    /// (analyze, proof_lower) and propagated through `build_context`.
-    /// Calling `refresh_facts` on a production-built ctx is redundant
-    /// work that produces the same answer — leave it off the hot path.
+    /// (`mutual_tco_members`, `recursive_fns`, `proof_ir`,
+    /// `resolved_program`) from the current `items` and `modules`.
+    /// Used exclusively by unit tests that construct a
+    /// `CodegenContext` piecewise — pushing synthetic `FnDef`s
+    /// straight into the items list rather than going through the
+    /// parser and pipeline. Production code never needs this: every
+    /// derived fact is populated by the pipeline stages (analyze,
+    /// proof_lower) and propagated through `build_context`. Calling
+    /// `refresh_facts` on a production-built ctx is redundant work
+    /// that produces the same answer — leave it off the hot path.
+    ///
+    /// **Single-source-of-truth invariant** (epic #170 Phase 1+2):
+    /// rebuilds `resolved_program` once from the freshly-resolved
+    /// items, then derives `resolved_fn_defs` /
+    /// `resolved_module_fn_defs` as projections of that view. There
+    /// is no parallel resolve path here.
     pub fn refresh_facts(&mut self) {
         // Synthetic-ctx path must own its symbol table too — FnId-
         // keyed sets below resolve through it, same shape as the
