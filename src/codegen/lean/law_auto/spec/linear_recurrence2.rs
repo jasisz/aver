@@ -7,7 +7,7 @@ use crate::codegen::lean::recurrence::{
 };
 use crate::verify_law::canonical_spec_ref;
 
-use super::super::super::expr::{aver_name_to_lean, emit_expr};
+use super::super::super::expr::{aver_name_to_lean, emit_expr_legacy};
 use super::super::shared::find_fn_def;
 use super::super::{AutoProof, indent_lines};
 
@@ -22,9 +22,12 @@ pub(in super::super) fn emit_second_order_linear_recurrence_spec_equivalence_law
     let spec_fd = find_fn_def(ctx, &spec_ref.spec_fn_name)?;
     let impl_shape = detect_tailrec_int_linear_pair_wrapper(impl_fd)?;
     let spec_shape = detect_second_order_int_linear_recurrence(spec_fd)?;
-    if emit_expr(&impl_shape.negative_branch, ctx) != emit_expr(&spec_shape.negative_branch, ctx)
-        || emit_expr(&impl_shape.seed_prev, ctx) != emit_expr(&spec_shape.base0, ctx)
-        || emit_expr(&impl_shape.seed_curr, ctx) != emit_expr(&spec_shape.base1, ctx)
+    if emit_expr_legacy(&impl_shape.negative_branch, ctx, None)
+        != emit_expr_legacy(&spec_shape.negative_branch, ctx, None)
+        || emit_expr_legacy(&impl_shape.seed_prev, ctx, None)
+            != emit_expr_legacy(&spec_shape.base0, ctx, None)
+        || emit_expr_legacy(&impl_shape.seed_curr, ctx, None)
+            != emit_expr_legacy(&spec_shape.base1, ctx, None)
     {
         return None;
     }
@@ -45,8 +48,8 @@ pub(in super::super) fn emit_second_order_linear_recurrence_spec_equivalence_law
     let shift_theorem = format!("{theorem_base}__worker_nat_shift");
     let helper_nat_theorem = format!("{theorem_base}__helper_nat");
     let helper_seed_theorem = format!("{theorem_base}__helper_seed");
-    let base0 = emit_expr(&spec_shape.base0, ctx);
-    let base1 = emit_expr(&spec_shape.base1, ctx);
+    let base0 = emit_expr_legacy(&spec_shape.base0, ctx, None);
+    let base1 = emit_expr_legacy(&spec_shape.base1, ctx, None);
     let worker_step = render_affine_pair_expr(spec_shape.recurrence, "a", "b");
 
     let mut support_lines = Vec::new();

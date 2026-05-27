@@ -1,7 +1,7 @@
 /// Top-level Aver items → Lean 4 items (defs, inductives, structures, examples).
 use std::collections::{HashMap, HashSet};
 
-use super::expr::{aver_name_to_lean, emit_expr, emit_stmt};
+use super::expr::{aver_name_to_lean, emit_expr_legacy, emit_stmt_legacy};
 use super::law_auto::{emit_verify_law_forall_auto_proof, emit_verify_law_support_theorems};
 use super::recurrence::{
     detect_second_order_int_linear_recurrence, recurrence_nat_helper_name, render_affine_pair_expr,
@@ -107,7 +107,7 @@ fn emit_product_type(
     {
         let carrier_ty = type_annotation_to_lean(&decl.carrier_type);
         let param = aver_name_to_lean(&decl.predicate_param);
-        let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
+        let predicate = super::expr::emit_expr_legacy(&decl.invariant.expr, ctx, None);
         return format!("abbrev {name} := {{ {param} : {carrier_ty} // {predicate} }}");
     }
 
@@ -576,15 +576,15 @@ fn emit_nat_linear_recurrence_fn(
         emit_doc_comment(&fd.desc),
         vec![
             format!("private def {} : Nat -> {}", nat_helper_name, ret_type),
-            format!("  | 0 => {}", emit_expr(&shape.base0, ctx)),
-            format!("  | 1 => {}", emit_expr(&shape.base1, ctx)),
+            format!("  | 0 => {}", emit_expr_legacy(&shape.base0, ctx, None)),
+            format!("  | 1 => {}", emit_expr_legacy(&shape.base1, ctx, None)),
             format!("  | n + 2 => {}", nat_step),
             String::new(),
             format!("def {} ({} : Int) : {} :=", fn_name, lean_param, ret_type),
             format!(
                 "  if {} < 0 then {} else {} {}.toNat",
                 lean_param,
-                emit_expr(&shape.negative_branch, ctx),
+                emit_expr_legacy(&shape.negative_branch, ctx, None),
                 nat_helper_name,
                 lean_param
             ),
@@ -714,7 +714,7 @@ fn emit_native_guarded_int_countdown_fn(
     } else {
         precondition
             .iter()
-            .map(|p| format!("({})", emit_expr(p, ctx)))
+            .map(|p| format!("({})", emit_expr_legacy(p, ctx, None)))
             .collect::<Vec<_>>()
             .join(" ∧ ")
     };
@@ -736,8 +736,8 @@ fn emit_native_guarded_int_countdown_fn(
         &fd.name,
         &aux_name,
     );
-    let base_str = emit_expr(base_arm_body, ctx);
-    let rec_str = emit_expr(&rewritten_wc, ctx);
+    let base_str = emit_expr_legacy(base_arm_body, ctx, None);
+    let rec_str = emit_expr_legacy(&rewritten_wc, ctx, None);
     let arg_names = emit_fn_param_names(&fd.params);
 
     let mut lines = Vec::new();
@@ -1482,28 +1482,28 @@ fn emit_do_stmt(stmt: &Stmt, ctx: &CodegenContext, is_last: bool) -> String {
             format!(
                 "  let {} <- {}",
                 aver_name_to_lean(name),
-                emit_expr(inner, ctx)
+                emit_expr_legacy(inner, ctx, None)
             )
         }
         Stmt::Binding(name, _, expr) => format!(
             "  let {} := {}",
             aver_name_to_lean(name),
-            emit_expr(expr, ctx)
+            emit_expr_legacy(expr, ctx, None)
         ),
         Stmt::Expr(expr) if matches!(&expr.node, Expr::ErrorProp(_)) && is_last => {
             let Expr::ErrorProp(inner) = &expr.node else {
                 unreachable!()
             };
-            format!("  {}", emit_expr(inner, ctx))
+            format!("  {}", emit_expr_legacy(inner, ctx, None))
         }
         Stmt::Expr(expr) if matches!(&expr.node, Expr::ErrorProp(_)) => {
             let Expr::ErrorProp(inner) = &expr.node else {
                 unreachable!()
             };
-            format!("  let _ <- {}", emit_expr(inner, ctx))
+            format!("  let _ <- {}", emit_expr_legacy(inner, ctx, None))
         }
-        Stmt::Expr(expr) if is_last => format!("  {}", emit_expr(expr, ctx)),
-        Stmt::Expr(expr) => format!("  let _ := {}", emit_expr(expr, ctx)),
+        Stmt::Expr(expr) if is_last => format!("  {}", emit_expr_legacy(expr, ctx, None)),
+        Stmt::Expr(expr) => format!("  let _ := {}", emit_expr_legacy(expr, ctx, None)),
     }
 }
 
@@ -1514,13 +1514,13 @@ fn emit_fn_body(body: &FnBody, ctx: &CodegenContext) -> String {
         let is_last = i == stmts.len() - 1;
         match stmt {
             Stmt::Binding(_, _, _) => {
-                lines.push(format!("  {}", emit_stmt(stmt, ctx)));
+                lines.push(format!("  {}", emit_stmt_legacy(stmt, ctx, None)));
             }
             Stmt::Expr(expr) => {
                 if is_last {
-                    lines.push(format!("  {}", emit_expr(expr, ctx)));
+                    lines.push(format!("  {}", emit_expr_legacy(expr, ctx, None)));
                 } else {
-                    lines.push(format!("  let _ := {}", emit_expr(expr, ctx)));
+                    lines.push(format!("  let _ := {}", emit_expr_legacy(expr, ctx, None)));
                 }
             }
         }
@@ -1573,8 +1573,8 @@ pub fn emit_verify_block(
 
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
-        let left_str = emit_expr(left, ctx);
-        let right_str = emit_expr(right, ctx);
+        let left_str = emit_expr_legacy(left, ctx, None);
+        let right_str = emit_expr_legacy(right, ctx, None);
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 lines.push(format!(
@@ -1652,7 +1652,7 @@ fn emit_verify_trace_block_proofs(
         };
 
         let Some(fn_call) = result_fn_call else {
-            let lhs_summary = emit_expr(left, ctx);
+            let lhs_summary = emit_expr_legacy(left, ctx, None);
             lines.push(format!(
                 "-- verify {} trace case {}/{}: `{}` is runtime-only (see docs/oracle.md)",
                 vb.fn_name,
@@ -1680,8 +1680,8 @@ fn emit_verify_trace_block_proofs(
             mode,
         );
 
-        let lhs_str = emit_expr(&lhs_rw, ctx);
-        let rhs_str = emit_expr(&rhs_rw, ctx);
+        let lhs_str = emit_expr_legacy(&lhs_rw, ctx, None);
+        let rhs_str = emit_expr_legacy(&rhs_rw, ctx, None);
 
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
@@ -1804,8 +1804,8 @@ fn emit_verify_law_block(
     } else {
         crate::codegen::common::strip_refinement_wrappers(&law_rhs, &lifted_vars, ctx)
     };
-    let lhs_template = emit_expr(&law_lhs, ctx);
-    let rhs_template = emit_expr(&law_rhs, ctx);
+    let lhs_template = emit_expr_legacy(&law_lhs, ctx, None);
+    let rhs_template = emit_expr_legacy(&law_rhs, ctx, None);
     // The `when` clause references the same oracle bindings the law
     // body does, so it needs the same subtype projection. Without this
     // a `when rng(root, 0, 1, 6) >= 1` clause would emit `rng ...`
@@ -1826,7 +1826,7 @@ fn emit_verify_law_block(
         // `LE Natural` / `OfNat Natural 10` in Lean.
         let val_projected =
             crate::codegen::common::project_lifted_idents_to_val(&oracle_projected, &lifted_vars);
-        emit_expr(&val_projected, ctx)
+        emit_expr_legacy(&val_projected, ctx, None)
     });
     let quant_params = law
         .givens
@@ -1885,7 +1885,10 @@ fn emit_verify_law_block(
         ));
     }
     if let Some(when_expr) = &law.when {
-        lines.push(format!("-- when {}", emit_expr(when_expr, ctx)));
+        lines.push(format!(
+            "-- when {}",
+            emit_expr_legacy(when_expr, ctx, None)
+        ));
     }
     // Issue #128: singleton-domain givens + RHS that references no
     // given + IR didn't pin a strategy that closes the constant-RHS
@@ -2029,12 +2032,12 @@ fn emit_verify_law_block(
                     |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
                     mode,
                 );
-                let left_str = emit_expr(&left_rw, ctx);
-                let right_str = emit_expr(&right_rw, ctx);
+                let left_str = emit_expr_legacy(&left_rw, ctx, None);
+                let right_str = emit_expr_legacy(&right_rw, ctx, None);
                 if let Some(guard) = law.sample_guards.get(idx) {
                     format!(
                         "({} = true -> {} = {})",
-                        emit_expr(guard, ctx),
+                        emit_expr_legacy(guard, ctx, None),
                         left_str,
                         right_str
                     )
@@ -2098,12 +2101,12 @@ fn emit_verify_law_block(
             |n| ctx.fn_defs.iter().find(|fd| fd.name == n),
             mode,
         );
-        let left_str = emit_expr(&left_rw, ctx);
-        let right_str = emit_expr(&right_rw, ctx);
+        let left_str = emit_expr_legacy(&left_rw, ctx, None);
+        let right_str = emit_expr_legacy(&right_rw, ctx, None);
         let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
             format!(
                 "{} = true -> {} = {}",
-                emit_expr(guard, ctx),
+                emit_expr_legacy(guard, ctx, None),
                 left_str,
                 right_str
             )
@@ -2189,7 +2192,7 @@ fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) ->
             "[{}]",
             values
                 .iter()
-                .map(|v| emit_expr(v, ctx))
+                .map(|v| emit_expr_legacy(v, ctx, None))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -2210,10 +2213,10 @@ fn law_given_domain_prop(given: &VerifyGiven, ctx: &CodegenContext) -> String {
     let values = law_given_domain_values(&given.domain);
     match values.as_slice() {
         [] => "False".to_string(),
-        [value] => format!("{given_name} = {}", emit_expr(value, ctx)),
+        [value] => format!("{given_name} = {}", emit_expr_legacy(value, ctx, None)),
         _ => values
             .iter()
-            .map(|value| format!("{given_name} = {}", emit_expr(value, ctx)))
+            .map(|value| format!("{given_name} = {}", emit_expr_legacy(value, ctx, None)))
             .collect::<Vec<_>>()
             .join(" ∨ "),
     }

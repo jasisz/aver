@@ -1766,6 +1766,15 @@ pub(crate) fn is_unit_expr_spanned(expr: &crate::ast::Spanned<crate::ast::Expr>)
     is_unit_expr(&expr.node)
 }
 
+/// Resolved-form mirror of [`is_unit_expr`]. Same Phase-E shape
+/// (`ResolvedExpr::Literal(Unit)`); used by migrated backends.
+pub(crate) fn is_unit_expr_resolved(expr: &crate::ir::hir::ResolvedExpr) -> bool {
+    matches!(
+        expr,
+        crate::ir::hir::ResolvedExpr::Literal(crate::ast::Literal::Unit)
+    )
+}
+
 /// Escape an Aver identifier if it collides with a target language reserved word.
 ///
 /// `affix` is appended as a suffix (e.g. `"_"` for Dafny, `"'"` for Lean).
@@ -2260,7 +2269,7 @@ pub(crate) fn route_pure_components_per_scope<F, G>(
 ) -> PerScopeSections
 where
     F: Fn(&FnDef) -> bool,
-    G: FnMut(&[&FnDef]) -> Vec<String>,
+    G: FnMut(&[&FnDef], &str) -> Vec<String>,
 {
     let mut by_scope: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
@@ -2270,9 +2279,9 @@ where
          scope: String,
          by_scope: &mut std::collections::HashMap<String, Vec<String>>| {
             let comps = crate::call_graph::ordered_fn_components(&fns, &ctx.module_prefixes);
-            let bucket = by_scope.entry(scope).or_default();
+            let bucket = by_scope.entry(scope.clone()).or_default();
             for comp in comps {
-                bucket.extend(emit(&comp));
+                bucket.extend(emit(&comp, scope.as_str()));
             }
         };
 
@@ -2555,6 +2564,7 @@ mod tests {
             symbol_table,
             resolved_fn_defs: Vec::new(),
             resolved_module_fn_defs: Vec::new(),
+            current_module_scope: std::cell::RefCell::new(None),
         };
         ctx.proof_ir
             .refined_types

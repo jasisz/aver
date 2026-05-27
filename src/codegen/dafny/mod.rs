@@ -190,7 +190,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     let mut pure_per_scope = crate::codegen::common::route_pure_components_per_scope(
         ctx,
         |fd| fd.effects.is_empty() && fd.name != "main",
-        |comp| {
+        |comp, _scope| {
             comp.iter()
                 .map(|fd| emit_pure_or_axiom(fd))
                 .filter(|s| !s.is_empty())

@@ -184,6 +184,14 @@ pub struct CodegenContext {
     /// are skipped from this list — codegen falls back to
     /// `fn_defs` in those cases.
     pub resolved_fn_defs: Vec<crate::ir::hir::ResolvedFnDef>,
+    /// Module scope currently active for name resolution. Set by a
+    /// backend dispatcher before emitting a dep-module's fns so that
+    /// legacy resolve-on-demand adapters (e.g. Lean's
+    /// `emit_expr_legacy`) thread the right scope into
+    /// `resolve_expr` / `resolve_stmt` instead of defaulting to entry.
+    /// Empty by default. Set with [`Self::with_module_scope`] in a
+    /// scoped manner.
+    pub current_module_scope: std::cell::RefCell<Option<String>>,
     /// Per-dep resolved fn defs, parallel to `modules`. Each
     /// entry in `resolved_module_fn_defs[i]` corresponds to
     /// `modules[i].fn_defs` in source order — same skip-on-missing
@@ -530,6 +538,7 @@ pub fn build_context(
         symbol_table,
         resolved_fn_defs,
         resolved_module_fn_defs,
+        current_module_scope: std::cell::RefCell::new(None),
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
@@ -541,6 +550,25 @@ pub fn build_context(
     // stays `default()` here for those callers until they explicitly
     // refresh.
     ctx
+}
+
+impl CodegenContext {
+    /// Set `current_module_scope` for the duration of `f`. Backends
+    /// wrap their per-module emit calls with this so legacy
+    /// resolve-on-demand adapters see the correct prefix.
+    pub fn with_module_scope<R>(&self, scope: Option<&str>, f: impl FnOnce() -> R) -> R {
+        let prev = self.current_module_scope.replace(scope.map(|s| s.to_string()));
+        let out = f();
+        *self.current_module_scope.borrow_mut() = prev;
+        out
+    }
+
+    /// Snapshot of the active module scope. Cloned so callers may
+    /// pass `as_deref()` into resolver/emitter APIs without holding
+    /// the `RefCell` borrow.
+    pub fn active_module_scope(&self) -> Option<String> {
+        self.current_module_scope.borrow().clone()
+    }
 }
 
 impl CodegenContext {

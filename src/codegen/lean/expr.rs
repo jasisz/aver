@@ -2,28 +2,32 @@
 use super::builtins;
 use super::pattern::emit_pattern;
 use super::shared::to_lower_first;
-use crate::ast::*;
+use crate::ast::{BinOp, Literal, Spanned};
 use crate::codegen::CodegenContext;
-use crate::codegen::common::{expr_to_dotted_name, is_user_type, resolve_module_call};
+use crate::codegen::common::{is_user_type, resolve_module_call};
+use crate::ir::hir::{
+    BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedMatchArm, ResolvedPattern,
+    ResolvedStmt, ResolvedStrPart,
+};
 
 /// Emit a Lean 4 expression from an Aver Expr.
-pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
+pub fn emit_expr(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     match &expr.node {
-        Expr::Literal(lit) => emit_literal(lit),
+        ResolvedExpr::Literal(lit) => emit_literal(lit),
         // Synthetic ident injected by the proof-mode recursion lowerer
         // (`recursion::rewrite_native_guarded_calls`) to mark a position
         // where Lean needs an `(by omega)` proof obligation for the
-        // recursive-call precondition. Stays a plain Aver `Expr::Ident`
+        // recursive-call precondition. Stays a plain Aver `ResolvedExpr::Ident`
         // through the AST so Dafny's emit path (which doesn't inject this
         // sentinel) and the type checker (already done before codegen)
         // never see it.
-        Expr::Ident(name) | Expr::Resolved { name, .. }
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. }
             if name == crate::codegen::recursion::OMEGA_PROOF_SENTINEL =>
         {
             "(by omega)".to_string()
         }
-        Expr::Ident(name) | Expr::Resolved { name, .. } => aver_name_to_lean(name),
-        Expr::Attr(obj, field) => {
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } => aver_name_to_lean(name),
+        ResolvedExpr::Attr(obj, field) => {
             // Refinement-via-opaque records emit as Lean `Subtype`,
             // so the carrier field projects through `.val` instead
             // of the source-named `.carrier_field`. Detect by the
@@ -36,14 +40,17 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 && field == &decl.carrier_field
             {
                 let obj_str = emit_expr(obj, ctx);
-                let needs_parens = !matches!(&obj.node, Expr::Ident(_) | Expr::Resolved { .. });
+                let needs_parens = !matches!(
+                    &obj.node,
+                    ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. }
+                );
                 return if needs_parens {
                     format!("({obj_str}).val")
                 } else {
                     format!("{obj_str}.val")
                 };
             }
-            if let Expr::Ident(type_name) = &obj.node {
+            if let ResolvedExpr::Ident(type_name) = &obj.node {
                 // Option.None → none
                 if type_name == "Option" && field == "None" {
                     return "none".to_string();
@@ -61,7 +68,7 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 }
             }
             // Check module-qualified reference
-            if let Some(full_dotted) = expr_to_dotted_name(&expr.node)
+            if let Some(full_dotted) = crate::ir::hir::resolved_to_dotted(&expr.node)
                 && let Some((prefix, bare)) = resolve_module_call(&full_dotted, ctx)
             {
                 if let Some(dot_pos) = bare.find('.') {
@@ -78,16 +85,17 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 return bare_lean;
             }
             let obj_str = emit_expr(obj, ctx);
-            let needs_parens = !matches!(&obj.node, Expr::Ident(_) | Expr::Attr(_, _));
+            let needs_parens =
+                !matches!(&obj.node, ResolvedExpr::Ident(_) | ResolvedExpr::Attr(_, _));
             if needs_parens {
                 format!("({}).{}", obj_str, aver_name_to_lean(field))
             } else {
                 format!("{}.{}", obj_str, aver_name_to_lean(field))
             }
         }
-        Expr::FnCall(fn_expr, args) => emit_fn_call(fn_expr, args, ctx),
-        Expr::Neg(inner) => format!("(-{})", emit_expr(inner, ctx)),
-        Expr::BinOp(op, left, right) => {
+        ResolvedExpr::Call(callee, args) => emit_fn_call(callee, args, ctx),
+        ResolvedExpr::Neg(inner) => format!("(-{})", emit_expr(inner, ctx)),
+        ResolvedExpr::BinOp(op, left, right) => {
             let l = emit_expr(left, ctx);
             let r = emit_expr(right, ctx);
             let op_str = match op {
@@ -104,15 +112,15 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             };
             format!("({} {} {})", l, op_str, r)
         }
-        Expr::Match { subject, arms } => emit_match(subject, arms, expr.line, ctx),
-        Expr::Constructor(name, arg) => emit_constructor(name, arg, ctx),
-        Expr::ErrorProp(inner) => {
+        ResolvedExpr::Match { subject, arms } => emit_match(subject, arms, expr.line, ctx),
+        ResolvedExpr::Ctor(ctor, args) => emit_constructor(ctor, args, ctx),
+        ResolvedExpr::ErrorProp(inner) => {
             // ? operator — unwrap Except using withDefault
             let inner_str = emit_expr(inner, ctx);
             format!("(({}).withDefault default)", inner_str)
         }
-        Expr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx),
-        Expr::List(elements) => {
+        ResolvedExpr::InterpolatedStr(parts) => emit_interpolated_str(parts, ctx),
+        ResolvedExpr::List(elements) => {
             if elements.is_empty() {
                 "[]".to_string()
             } else {
@@ -120,19 +128,19 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 format!("[{}]", parts.join(", "))
             }
         }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
             // Oracle v1: passed through as a tuple; `?!` semantic fold
             // is deferred (coordinates with the outer `Result.Ok(...)`
             // wrapper the typechecker forces).
             let parts: Vec<String> = items.iter().map(|e| emit_expr(e, ctx)).collect();
             format!("({})", parts.join(", "))
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             if entries.is_empty() {
                 "[]".to_string()
             } else if entries
                 .iter()
-                .all(|(_, v)| crate::codegen::common::is_unit_expr(&v.node))
+                .all(|(_, v)| crate::codegen::common::is_unit_expr_resolved(&v.node))
             {
                 // Map<T, Unit> literal → set literal
                 let parts: Vec<String> = entries.iter().map(|(k, _)| emit_expr(k, ctx)).collect();
@@ -145,7 +153,9 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 format!("[{}]", parts.join(", "))
             }
         }
-        Expr::RecordCreate { type_name, fields } => {
+        ResolvedExpr::RecordCreate {
+            type_name, fields, ..
+        } => {
             // Refinement-via-opaque types emit as Lean `Subtype`,
             // so construction is `⟨value, proof⟩`. The proof
             // obligation is whatever predicate the smart
@@ -190,10 +200,11 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
             let lean_type_name = type_name.replace('.', "_");
             format!("{{ {} : {} }}", parts.join(", "), lean_type_name)
         }
-        Expr::RecordUpdate {
+        ResolvedExpr::RecordUpdate {
             type_name: _,
             base,
             updates,
+            ..
         } => {
             let base_str = emit_expr(base, ctx);
             let parts: Vec<String> = updates
@@ -204,30 +215,33 @@ pub fn emit_expr(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
                 .collect();
             format!("{{ {} with {} }}", base_str, parts.join(", "))
         }
-        Expr::TailCall(boxed) => {
-            // TailCall is an internal optimization — emit as regular call
-            let TailCallData { target, args, .. } = boxed.as_ref();
+        ResolvedExpr::TailCall { target, args } => {
+            // TailCall is an internal optimization — emit as regular call.
+            // Resolve FnId → canonical name via the symbol table, then
+            // strip the module prefix because Lean's emit doesn't
+            // qualify intra-module recursive calls.
+            let target_name = ctx.symbol_table.fn_entry(*target).key.name.clone();
             let parts: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
             if parts.is_empty() {
-                aver_name_to_lean(target)
+                aver_name_to_lean(&target_name)
             } else {
-                format!("{} {}", aver_name_to_lean(target), parts.join(" "))
+                format!("{} {}", aver_name_to_lean(&target_name), parts.join(" "))
             }
         }
     }
 }
 
 /// Emit an expression wrapped in parens if it's a compound expression.
-fn emit_expr_atom(expr: &Spanned<Expr>, ctx: &CodegenContext) -> String {
+fn emit_expr_atom(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> String {
     let s = emit_expr(expr, ctx);
     match &expr.node {
-        Expr::Literal(Literal::Int(i)) if *i < 0 => format!("({})", s),
-        Expr::Literal(Literal::Float(f)) if *f < 0.0 => format!("({})", s),
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::List(_)
-        | Expr::Tuple(_)
-        | Expr::IndependentProduct(_, _) => s,
+        ResolvedExpr::Literal(Literal::Int(i)) if *i < 0 => format!("({})", s),
+        ResolvedExpr::Literal(Literal::Float(f)) if *f < 0.0 => format!("({})", s),
+        ResolvedExpr::Literal(_)
+        | ResolvedExpr::Ident(_)
+        | ResolvedExpr::List(_)
+        | ResolvedExpr::Tuple(_)
+        | ResolvedExpr::IndependentProduct(_, _) => s,
         _ => {
             if s.starts_with('(')
                 || s.starts_with('[')
@@ -264,126 +278,137 @@ fn escape_lean_string(s: &str) -> String {
     crate::codegen::common::escape_string_literal(s)
 }
 
-fn emit_fn_call(fn_expr: &Spanned<Expr>, args: &[Spanned<Expr>], ctx: &CodegenContext) -> String {
-    let fn_name = expr_to_dotted_name(&fn_expr.node);
-
-    if let Some(name) = &fn_name {
-        // Check builtin
-        if let Some(lean_code) = builtins::emit_builtin_call(name, args, ctx) {
-            return lean_code;
-        }
-
-        // Oracle v1: BranchPath constructors render through the structure
-        // definitions in LEAN_PRELUDE_BRANCH_PATH.
-        let arg_strs_owned: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
-        match name.as_str() {
-            "BranchPath.child" if arg_strs_owned.len() == 2 => {
-                return format!(
-                    "BranchPath.child {} {}",
-                    arg_strs_owned[0], arg_strs_owned[1]
-                );
+fn emit_fn_call(
+    callee: &ResolvedCallee,
+    args: &[Spanned<ResolvedExpr>],
+    ctx: &CodegenContext,
+) -> String {
+    // Resolved-form classification — preserves the pre-Phase-E
+    // dispatch order: builtin special-cases, Oracle BranchPath
+    // hand-shapes, module-qualified, then plain ident.
+    match callee {
+        ResolvedCallee::Builtin(name) => {
+            if let Some(lean_code) = builtins::emit_builtin_call(name, args, ctx) {
+                return lean_code;
             }
-            "BranchPath.parse" if arg_strs_owned.len() == 1 => {
-                return format!("BranchPath.parse {}", arg_strs_owned[0]);
-            }
-            _ => {}
-        }
-
-        // Module-qualified call
-        if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
-            if let Some(dot_pos) = bare.find('.') {
-                let type_name = &bare[..dot_pos];
-                let variant_name = &bare[dot_pos + 1..];
-                if is_user_type(type_name, ctx) {
-                    let arg_strs: Vec<String> =
-                        args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            // Oracle v1: BranchPath ctors render through structure
+            // definitions in LEAN_PRELUDE_BRANCH_PATH.
+            let arg_strs_owned: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            match name.as_str() {
+                "BranchPath.child" if arg_strs_owned.len() == 2 => {
                     return format!(
-                        "{}.{} {}",
-                        type_name,
-                        to_lower_first(variant_name),
-                        arg_strs.join(" ")
+                        "BranchPath.child {} {}",
+                        arg_strs_owned[0], arg_strs_owned[1]
                     );
                 }
+                "BranchPath.parse" if arg_strs_owned.len() == 1 => {
+                    return format!("BranchPath.parse {}", arg_strs_owned[0]);
+                }
+                _ => {}
             }
-            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
-            let qualified = if !ctx.modules.is_empty() {
-                format!("{}.{}", prefix, aver_name_to_lean(bare))
+            // Generic builtin fallback: render dotted with each arg
+            // as a Lean atom.
+            if arg_strs_owned.is_empty() {
+                aver_name_to_lean(name)
             } else {
-                aver_name_to_lean(bare)
+                format!("{} {}", aver_name_to_lean(name), arg_strs_owned.join(" "))
+            }
+        }
+        ResolvedCallee::Intrinsic(intr) => {
+            // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
+            // don't reach the Lean backend in practice (Lean emit
+            // doesn't see post-interp-lower buffer shapes), but the
+            // resolver carries them through; render as bare-name
+            // call so the diagnostic stays traceable.
+            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            if arg_strs.is_empty() {
+                intr.name().to_string()
+            } else {
+                format!("{} {}", intr.name(), arg_strs.join(" "))
+            }
+        }
+        ResolvedCallee::Fn(fn_id) => {
+            let entry = ctx.symbol_table.fn_entry(*fn_id);
+            let bare = entry.key.name.as_str();
+            let module_prefix = entry.key.scope_str();
+            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            let func = match module_prefix {
+                Some(prefix) if !ctx.modules.is_empty() => {
+                    format!("{}.{}", prefix, aver_name_to_lean(bare))
+                }
+                _ => aver_name_to_lean(bare),
             };
             if arg_strs.is_empty() {
-                return qualified;
-            }
-            return format!("{} {}", qualified, arg_strs.join(" "));
-        }
-
-        // User-defined type constructor: Shape.Circle(r)
-        if let Some(dot_pos) = name.find('.') {
-            let type_name = &name[..dot_pos];
-            let variant_name = &name[dot_pos + 1..];
-            if is_user_type(type_name, ctx) {
-                let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
-                if arg_strs.is_empty() {
-                    return format!("{}.{}", type_name, to_lower_first(variant_name));
-                }
-                return format!(
-                    "{}.{} {}",
-                    type_name,
-                    to_lower_first(variant_name),
-                    arg_strs.join(" ")
-                );
+                func
+            } else {
+                format!("{} {}", func, arg_strs.join(" "))
             }
         }
-    }
-
-    // Regular function call — curried application
-    let func = emit_expr(fn_expr, ctx);
-    let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
-    if arg_strs.is_empty() {
-        func
-    } else {
-        format!("{} {}", func, arg_strs.join(" "))
-    }
-}
-
-fn emit_constructor(name: &str, arg: &Option<Box<Spanned<Expr>>>, ctx: &CodegenContext) -> String {
-    // Accept both bare and qualified forms — parser / lifter may
-    // produce either. Aver's `Result.Ok(x)` and `Ok(x)` are the same
-    // wrapper semantically; same for Option.
-    match name {
-        "Ok" | "Result.Ok" => {
-            let inner = arg
-                .as_ref()
-                .map(|a| emit_expr_atom(a, ctx))
-                .unwrap_or_else(|| "()".to_string());
-            format!("Except.ok {}", inner)
+        ResolvedCallee::LocalSlot { name, .. } => {
+            // First-class fn value bound to a local — curry application.
+            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            let func = aver_name_to_lean(name);
+            if arg_strs.is_empty() {
+                func
+            } else {
+                format!("{} {}", func, arg_strs.join(" "))
+            }
         }
-        "Err" | "Result.Err" => {
-            let inner = arg
-                .as_ref()
-                .map(|a| emit_expr_atom(a, ctx))
-                .unwrap_or_else(|| "()".to_string());
-            format!("Except.error {}", inner)
-        }
-        "Some" | "Option.Some" => {
-            let inner = arg
-                .as_ref()
-                .map(|a| emit_expr_atom(a, ctx))
-                .unwrap_or_else(|| "()".to_string());
-            format!("some {}", inner)
-        }
-        "None" | "Option.None" => "none".to_string(),
-        _ => {
-            let inner = arg
-                .as_ref()
-                .map(|a| emit_expr_atom(a, ctx))
-                .unwrap_or_else(|| "()".to_string());
-            format!("{} {}", name, inner)
+        ResolvedCallee::Unresolved { callee: inner } => {
+            // Typecheck-rejected callee — render the source-faithful
+            // expression as a curry'd call so the surrounding Lean
+            // proof still typechecks (verify driver surfaces the
+            // missing target separately).
+            let func = emit_expr(inner, ctx);
+            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            if arg_strs.is_empty() {
+                func
+            } else {
+                format!("{} {}", func, arg_strs.join(" "))
+            }
         }
     }
 }
 
-fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
+fn emit_constructor(
+    ctor: &ResolvedCtor,
+    args: &[Spanned<ResolvedExpr>],
+    ctx: &CodegenContext,
+) -> String {
+    let inner_str = || -> String {
+        args.first()
+            .map(|a| emit_expr_atom(a, ctx))
+            .unwrap_or_else(|| "()".to_string())
+    };
+    match ctor {
+        ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => format!("Except.ok {}", inner_str()),
+        ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => {
+            format!("Except.error {}", inner_str())
+        }
+        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => format!("some {}", inner_str()),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => "none".to_string(),
+        ResolvedCtor::User { type_id, name, .. } => {
+            // User ctor: `Type.variant` in Lean. Lean convention is
+            // lowercase variant names; type stays as written.
+            let type_name = ctx.symbol_table.type_entry(*type_id).key.name.clone();
+            let variant = to_lower_first(name);
+            let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
+            if arg_strs.is_empty() {
+                format!("{}.{}", type_name, variant)
+            } else {
+                format!("{}.{} {}", type_name, variant, arg_strs.join(" "))
+            }
+        }
+        ResolvedCtor::Unresolved { name } => {
+            // Typecheck-rejected ctor — surface the source name as a
+            // call expression so the surrounding emit still produces
+            // a parseable Lean term.
+            format!("{} {}", name, inner_str())
+        }
+    }
+}
+
+fn emit_interpolated_str(parts: &[ResolvedStrPart], ctx: &CodegenContext) -> String {
     if parts.is_empty() {
         return "\"\"".to_string();
     }
@@ -392,10 +417,10 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
     result.push_str("s!\"");
     for part in parts {
         match part {
-            StrPart::Literal(s) => {
+            ResolvedStrPart::Literal(s) => {
                 result.push_str(&escape_lean_string(s));
             }
-            StrPart::Parsed(expr) => {
+            ResolvedStrPart::Parsed(expr) => {
                 result.push('{');
                 result.push_str(&emit_expr(expr, ctx));
                 result.push('}');
@@ -407,8 +432,8 @@ fn emit_interpolated_str(parts: &[StrPart], ctx: &CodegenContext) -> String {
 }
 
 fn emit_match(
-    subject: &Spanned<Expr>,
-    arms: &[MatchArm],
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     line: usize,
     ctx: &CodegenContext,
 ) -> String {
@@ -468,7 +493,7 @@ fn emit_match(
     // preserving wrapper-return emit untouched.
     let needs_eq_binder = matches!(
         &subject.node,
-        Expr::Ident(_) | Expr::Resolved { .. } | Expr::Attr(_, _)
+        ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } | ResolvedExpr::Attr(_, _)
     );
     if needs_eq_binder {
         let eq_name = format!("h_{}", line);
@@ -484,22 +509,21 @@ fn emit_match(
 /// surrounding `if`'s predicate as a hypothesis. Used to decide
 /// when the enclosing Bool match should emit dependent-`if h :
 /// cond then …`.
-fn true_body_uses_refinement_subtype(expr: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+fn true_body_uses_refinement_subtype(expr: &Spanned<ResolvedExpr>, ctx: &CodegenContext) -> bool {
     match &expr.node {
-        Expr::RecordCreate { type_name, .. } => {
+        ResolvedExpr::RecordCreate { type_name, .. } => {
             crate::codegen::common::find_refined_type(ctx, type_name)
                 .map(|decl| decl.carrier_type == "Int")
                 .unwrap_or(false)
         }
-        Expr::FnCall(callee, args) => {
-            true_body_uses_refinement_subtype(callee, ctx)
-                || args
-                    .iter()
-                    .any(|a| true_body_uses_refinement_subtype(a, ctx))
-        }
-        Expr::Constructor(_, Some(arg)) => true_body_uses_refinement_subtype(arg, ctx),
-        Expr::Attr(o, _) => true_body_uses_refinement_subtype(o, ctx),
-        Expr::Match { arms, .. } => arms
+        ResolvedExpr::Call(_, args) => args
+            .iter()
+            .any(|a| true_body_uses_refinement_subtype(a, ctx)),
+        ResolvedExpr::Ctor(_, args) => args
+            .iter()
+            .any(|a| true_body_uses_refinement_subtype(a, ctx)),
+        ResolvedExpr::Attr(o, _) => true_body_uses_refinement_subtype(o, ctx),
+        ResolvedExpr::Match { arms, .. } => arms
             .iter()
             .any(|arm| true_body_uses_refinement_subtype(&arm.body, ctx)),
         _ => false,
@@ -507,7 +531,9 @@ fn true_body_uses_refinement_subtype(expr: &Spanned<Expr>, ctx: &CodegenContext)
 }
 
 /// If all arms are `true -> expr` and `false -> expr`, return (true_body, false_body).
-fn extract_bool_arms(arms: &[MatchArm]) -> Option<(&Spanned<Expr>, &Spanned<Expr>)> {
+fn extract_bool_arms(
+    arms: &[ResolvedMatchArm],
+) -> Option<(&Spanned<ResolvedExpr>, &Spanned<ResolvedExpr>)> {
     if arms.len() != 2 {
         return None;
     }
@@ -515,8 +541,8 @@ fn extract_bool_arms(arms: &[MatchArm]) -> Option<(&Spanned<Expr>, &Spanned<Expr
     let mut false_body = None;
     for arm in arms {
         match &arm.pattern {
-            Pattern::Literal(Literal::Bool(true)) => true_body = Some(arm.body.as_ref()),
-            Pattern::Literal(Literal::Bool(false)) => false_body = Some(arm.body.as_ref()),
+            ResolvedPattern::Literal(Literal::Bool(true)) => true_body = Some(arm.body.as_ref()),
+            ResolvedPattern::Literal(Literal::Bool(false)) => false_body = Some(arm.body.as_ref()),
             _ => return None,
         }
     }
@@ -524,15 +550,65 @@ fn extract_bool_arms(arms: &[MatchArm]) -> Option<(&Spanned<Expr>, &Spanned<Expr
 }
 
 /// Emit a statement as Lean 4 code.
-pub fn emit_stmt(stmt: &Stmt, ctx: &CodegenContext) -> String {
+pub fn emit_stmt(stmt: &ResolvedStmt, ctx: &CodegenContext) -> String {
     match stmt {
-        Stmt::Binding(name, type_ann, expr) => {
-            let val = emit_expr(expr, ctx);
-            let _ = type_ann;
+        ResolvedStmt::Binding {
+            name,
+            ty_ann: _,
+            value,
+        } => {
+            let val = emit_expr(value, ctx);
             format!("let {} := {}", aver_name_to_lean(name), val)
         }
-        Stmt::Expr(expr) => emit_expr(expr, ctx),
+        ResolvedStmt::Expr(expr) => emit_expr(expr, ctx),
     }
+}
+
+/// Source-shape adapter for callers that still hold a raw
+/// `Spanned<crate::ast::Expr>` (TCO / mutual-TCO bodies, law_auto
+/// proof generation, recursion fuel emit, the various AST walks in
+/// `toplevel.rs`). Resolves the expression on demand against the
+/// codegen context's symbol table — `scope` carries the owning
+/// module prefix when known (`None` for entry-scope code), same
+/// shape as PR 9.4's `EmitCtx::current_module_scope` in rust
+/// codegen. The migrated `emit_expr` core stays
+/// `ResolvedExpr`-only.
+pub fn emit_expr_legacy(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    let active = ctx.active_module_scope();
+    let effective = scope.or(active.as_deref());
+    let resolved = ctx.resolve_expr(expr, effective);
+    emit_expr(&resolved, ctx)
+}
+
+/// Source-shape adapter for [`emit_stmt`]. See [`emit_expr_legacy`] for
+/// the scope-fallback rule.
+pub fn emit_stmt_legacy(
+    stmt: &crate::ast::Stmt,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    let active = ctx.active_module_scope();
+    let effective = scope.or(active.as_deref());
+    let resolved = ctx.resolve_stmt(stmt, effective);
+    emit_stmt(&resolved, ctx)
+}
+
+/// Source-shape adapter for [`emit_pattern`]. See [`emit_expr_legacy`]
+/// for the scope-fallback rule.
+#[allow(dead_code)]
+pub fn emit_pattern_legacy(
+    pat: &crate::ast::Pattern,
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+) -> String {
+    let active = ctx.active_module_scope();
+    let effective = scope.or(active.as_deref());
+    let resolved = ctx.resolve_pattern(pat, effective);
+    super::pattern::emit_pattern(&resolved)
 }
 
 /// Convert an Aver identifier to a valid Lean 4 identifier.

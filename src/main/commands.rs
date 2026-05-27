@@ -4988,6 +4988,7 @@ mod tests {
             symbol_table: aver::ir::SymbolTable::default(),
             resolved_fn_defs: Vec::new(),
             resolved_module_fn_defs: Vec::new(),
+            current_module_scope: std::cell::RefCell::new(None),
         }
     }
 
