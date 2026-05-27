@@ -86,13 +86,18 @@ pub(super) fn collect_vectors_from_str(
 /// targets the curated set the bench scenarios use; broader auto-
 /// discovery would mean reading `types::checker::builtins` directly.
 pub(super) fn collect_results_from_builtin_uses(
-    fd: &crate::ast::FnDef,
+    fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::{Expr, FnBody, Stmt};
-    fn walk(e: &Expr, out: &mut HashMap<String, u32>, order: &mut Vec<String>, next_idx: &mut u32) {
+    use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedStmt};
+    fn walk(
+        e: &ResolvedExpr,
+        out: &mut HashMap<String, u32>,
+        order: &mut Vec<String>,
+        next_idx: &mut u32,
+    ) {
         let mut intern = |canonical: &str| {
             if !out.contains_key(canonical) {
                 out.insert(canonical.to_string(), *next_idx);
@@ -101,11 +106,8 @@ pub(super) fn collect_results_from_builtin_uses(
             }
         };
         match e {
-            Expr::FnCall(callee, args) => {
-                if let Expr::Attr(parent, member) = &callee.node
-                    && let Expr::Ident(p) = &parent.node
-                {
-                    let dotted = format!("{}.{}", p, member);
+            ResolvedExpr::Call(callee, args) => {
+                if let crate::ir::hir::ResolvedCallee::Builtin(dotted) = callee {
                     match dotted.as_str() {
                         "Float.fromString" => intern("Result<Float,String>"),
                         "Int.fromString" | "Int.mod" | "Byte.fromHex" => {
@@ -135,46 +137,45 @@ pub(super) fn collect_results_from_builtin_uses(
                         _ => {}
                     }
                 }
-                walk(&callee.node, out, order, next_idx);
                 for a in args {
                     walk(&a.node, out, order, next_idx);
                 }
             }
-            Expr::BinOp(_, l, r) => {
+            ResolvedExpr::BinOp(_, l, r) => {
                 walk(&l.node, out, order, next_idx);
                 walk(&r.node, out, order, next_idx);
             }
-            Expr::Neg(inner) => walk(&inner.node, out, order, next_idx),
-            Expr::Match { subject, arms } => {
+            ResolvedExpr::Neg(inner) => walk(&inner.node, out, order, next_idx),
+            ResolvedExpr::Match { subject, arms } => {
                 walk(&subject.node, out, order, next_idx);
                 for arm in arms {
                     walk(&arm.body.node, out, order, next_idx);
                 }
             }
-            Expr::TailCall(boxed) => {
-                for a in &boxed.args {
+            ResolvedExpr::TailCall { args, .. } => {
+                for a in args {
                     walk(&a.node, out, order, next_idx);
                 }
             }
-            Expr::Attr(obj, _) => walk(&obj.node, out, order, next_idx),
-            Expr::ErrorProp(inner) => walk(&inner.node, out, order, next_idx),
-            Expr::Constructor(_, payload) => {
-                if let Some(p) = payload.as_deref() {
-                    walk(&p.node, out, order, next_idx);
+            ResolvedExpr::Attr(obj, _) => walk(&obj.node, out, order, next_idx),
+            ResolvedExpr::ErrorProp(inner) => walk(&inner.node, out, order, next_idx),
+            ResolvedExpr::Ctor(_, args) => {
+                for a in args {
+                    walk(&a.node, out, order, next_idx);
                 }
             }
-            Expr::RecordCreate { fields, .. } => {
+            ResolvedExpr::RecordCreate { fields, .. } => {
                 for (_, e) in fields {
                     walk(&e.node, out, order, next_idx);
                 }
             }
-            Expr::RecordUpdate { base, updates, .. } => {
+            ResolvedExpr::RecordUpdate { base, updates, .. } => {
                 walk(&base.node, out, order, next_idx);
                 for (_, e) in updates {
                     walk(&e.node, out, order, next_idx);
                 }
             }
-            Expr::List(items) => {
+            ResolvedExpr::List(items) => {
                 for x in items {
                     walk(&x.node, out, order, next_idx);
                 }
@@ -182,10 +183,10 @@ pub(super) fn collect_results_from_builtin_uses(
             _ => {}
         }
     }
-    let FnBody::Block(stmts) = fd.body.as_ref();
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
         let expr = match stmt {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+            ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => &e.node,
         };
         walk(expr, out, order, next_idx);
     }
@@ -270,49 +271,55 @@ pub(super) fn collect_tuples_from_str(
     }
 }
 
-/// Walk a fn body for `Expr::Tuple` literals — register each unique
+/// Walk a fn body for `ResolvedExpr::Tuple` literals — register each unique
 /// `Tuple<A,B>` derived from the items' stamped types. Mirrors the
 /// body walks already done for `List`/`Option`/`Vector` discovery.
 pub(super) fn collect_tuples_from_fn_body(
-    fd: &crate::ast::FnDef,
+    fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::{FnBody, Stmt};
-    let FnBody::Block(stmts) = fd.body.as_ref();
+    use crate::ir::hir::{ResolvedFnBody, ResolvedStmt};
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
-        if let Stmt::Binding(_, Some(annot), _) = stmt {
-            collect_tuples_from_str(annot, out, order, next_idx);
+        if let ResolvedStmt::Binding {
+            ty_ann: Some(annot),
+            ..
+        } = stmt
+        {
+            collect_tuples_from_str(&annot.display(), out, order, next_idx);
         }
         let expr = match stmt {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => e,
+            ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => e,
         };
         collect_tuples_from_expr(expr, out, order, next_idx);
     }
 }
 
 pub(super) fn collect_tuples_from_expr(
-    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    expr: &crate::ast::Spanned<crate::ir::hir::ResolvedExpr>,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::Expr;
+    use crate::ir::hir::ResolvedExpr;
     // Register the canonical for this node first if it's a tuple
     // literal — derived from the items' stamped types so nested
     // `(a, (b, c))` registers both inner and outer canonicals.
-    // `Expr::IndependentProduct` (the `(...)!` form) lowers as a
+    // `ResolvedExpr::IndependentProduct` (the `(...)!` form) lowers as a
     // tuple under wasm-gc and shares the same canonical shape.
     // `(...)?!` (unwrap=true) is a tuple of unwrapped Ok types —
     // strip the Result<_,_> wrapper from each stamped element type
     // before building the canonical.
-    let tuple_items_with_unwrap: Option<(&Vec<crate::ast::Spanned<crate::ast::Expr>>, bool)> =
-        match &expr.node {
-            Expr::Tuple(xs) => Some((xs, false)),
-            Expr::IndependentProduct(xs, unwrap) => Some((xs, *unwrap)),
-            _ => None,
-        };
+    let tuple_items_with_unwrap: Option<(
+        &Vec<crate::ast::Spanned<crate::ir::hir::ResolvedExpr>>,
+        bool,
+    )> = match &expr.node {
+        ResolvedExpr::Tuple(xs) => Some((xs, false)),
+        ResolvedExpr::IndependentProduct(xs, unwrap) => Some((xs, *unwrap)),
+        _ => None,
+    };
     if let Some((items, unwrap)) = tuple_items_with_unwrap
         && items.len() >= 2
     {
@@ -353,57 +360,56 @@ pub(super) fn collect_tuples_from_expr(
     }
     // Recurse into sub-expressions.
     match &expr.node {
-        Expr::FnCall(callee, args) => {
-            collect_tuples_from_expr(callee, out, order, next_idx);
+        ResolvedExpr::Call(_, args) => {
             for a in args {
                 collect_tuples_from_expr(a, out, order, next_idx);
             }
         }
-        Expr::BinOp(_, l, r) => {
+        ResolvedExpr::BinOp(_, l, r) => {
             collect_tuples_from_expr(l, out, order, next_idx);
             collect_tuples_from_expr(r, out, order, next_idx);
         }
-        Expr::Neg(inner) => collect_tuples_from_expr(inner, out, order, next_idx),
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Neg(inner) => collect_tuples_from_expr(inner, out, order, next_idx),
+        ResolvedExpr::Match { subject, arms } => {
             collect_tuples_from_expr(subject, out, order, next_idx);
             for arm in arms {
                 collect_tuples_from_expr(&arm.body, out, order, next_idx);
             }
         }
-        Expr::TailCall(boxed) => {
-            for a in &boxed.args {
+        ResolvedExpr::TailCall { args, .. } => {
+            for a in args {
                 collect_tuples_from_expr(a, out, order, next_idx);
             }
         }
-        Expr::Attr(obj, _) => collect_tuples_from_expr(obj, out, order, next_idx),
-        Expr::ErrorProp(inner) => collect_tuples_from_expr(inner, out, order, next_idx),
-        Expr::Constructor(_, payload) => {
-            if let Some(p) = payload.as_deref() {
-                collect_tuples_from_expr(p, out, order, next_idx);
+        ResolvedExpr::Attr(obj, _) => collect_tuples_from_expr(obj, out, order, next_idx),
+        ResolvedExpr::ErrorProp(inner) => collect_tuples_from_expr(inner, out, order, next_idx),
+        ResolvedExpr::Ctor(_, args) => {
+            for a in args {
+                collect_tuples_from_expr(a, out, order, next_idx);
             }
         }
-        Expr::RecordCreate { fields, .. } => {
+        ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 collect_tuples_from_expr(e, out, order, next_idx);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             collect_tuples_from_expr(base, out, order, next_idx);
             for (_, e) in updates {
                 collect_tuples_from_expr(e, out, order, next_idx);
             }
         }
-        Expr::List(items) => {
+        ResolvedExpr::List(items) => {
             for x in items {
                 collect_tuples_from_expr(x, out, order, next_idx);
             }
         }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
             for x in items {
                 collect_tuples_from_expr(x, out, order, next_idx);
             }
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             for (k, v) in entries {
                 collect_tuples_from_expr(k, out, order, next_idx);
                 collect_tuples_from_expr(v, out, order, next_idx);
@@ -555,102 +561,99 @@ pub(super) fn collect_options_from_str(
 /// `Option<V>` where V is read off `Map<K,V>` — so the body walk is
 /// the primary discovery path.
 pub(super) fn collect_options_from_fn_body(
-    fd: &crate::ast::FnDef,
+    fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::{FnBody, Stmt};
-    let FnBody::Block(stmts) = fd.body.as_ref();
+    use crate::ir::hir::{ResolvedFnBody, ResolvedStmt};
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
-        if let Stmt::Binding(_, Some(annot), _) = stmt {
-            collect_options_from_str(annot, out, order, next_idx);
+        if let ResolvedStmt::Binding {
+            ty_ann: Some(annot),
+            ..
+        } = stmt
+        {
+            collect_options_from_str(&annot.display(), out, order, next_idx);
         }
         let expr = match stmt {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+            ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => &e.node,
         };
         collect_options_from_expr(expr, out, order, next_idx);
     }
 }
 
 pub(super) fn collect_options_from_expr(
-    expr: &crate::ast::Expr,
+    expr: &crate::ir::hir::ResolvedExpr,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::Expr;
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
     match expr {
-        Expr::FnCall(callee, args) => {
+        ResolvedExpr::Call(callee, args) => {
             // `String.charAt(s, i)` and `Char.fromCode(code)` both
             // declare `Option<String>` as their return type, but the
             // canonical never appears anywhere else — eager-register
             // it here so the builtin's emit can resolve the slot.
-            if let Expr::Attr(parent, member) = &callee.node {
-                let parent_name = match &parent.node {
-                    Expr::Ident(n) => Some(n.as_str()),
-                    Expr::Resolved { name, .. } => Some(name.as_str()),
-                    _ => None,
-                };
-                if let Some(p) = parent_name {
-                    let dotted = format!("{p}.{member}");
-                    if matches!(
-                        dotted.as_str(),
-                        "String.charAt" | "Char.fromCode" | "Terminal.readKey" | "Env.get"
-                    ) {
-                        let canonical = "Option<String>".to_string();
-                        if !out.contains_key(&canonical) {
-                            out.insert(canonical.clone(), *next_idx);
-                            order.push(canonical);
-                            *next_idx += 1;
-                        }
-                    }
+            if let ResolvedCallee::Builtin(dotted) = callee
+                && matches!(
+                    dotted.as_str(),
+                    "String.charAt" | "Char.fromCode" | "Terminal.readKey" | "Env.get"
+                )
+            {
+                let canonical = "Option<String>".to_string();
+                if !out.contains_key(&canonical) {
+                    out.insert(canonical.clone(), *next_idx);
+                    order.push(canonical);
+                    *next_idx += 1;
                 }
             }
-            collect_options_from_expr(&callee.node, out, order, next_idx);
             for a in args {
                 collect_options_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::BinOp(_, l, r) => {
+        ResolvedExpr::BinOp(_, l, r) => {
             collect_options_from_expr(&l.node, out, order, next_idx);
             collect_options_from_expr(&r.node, out, order, next_idx);
         }
-        Expr::Neg(inner) => collect_options_from_expr(&inner.node, out, order, next_idx),
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Neg(inner) => collect_options_from_expr(&inner.node, out, order, next_idx),
+        ResolvedExpr::Match { subject, arms } => {
             collect_options_from_expr(&subject.node, out, order, next_idx);
             for arm in arms {
                 collect_options_from_expr(&arm.body.node, out, order, next_idx);
             }
         }
-        Expr::TailCall(boxed) => {
-            for a in &boxed.args {
+        ResolvedExpr::TailCall { args, .. } => {
+            for a in args {
                 collect_options_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::Attr(obj, _) => collect_options_from_expr(&obj.node, out, order, next_idx),
-        Expr::RecordCreate { fields, .. } => {
+        ResolvedExpr::Attr(obj, _) => collect_options_from_expr(&obj.node, out, order, next_idx),
+        ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 collect_options_from_expr(&e.node, out, order, next_idx);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             collect_options_from_expr(&base.node, out, order, next_idx);
             for (_, e) in updates {
                 collect_options_from_expr(&e.node, out, order, next_idx);
             }
         }
-        Expr::Constructor(_, payload) => {
-            if let Some(p) = payload.as_deref() {
-                collect_options_from_expr(&p.node, out, order, next_idx);
+        ResolvedExpr::Ctor(_, args) => {
+            for a in args {
+                collect_options_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
             for it in items {
                 collect_options_from_expr(&it.node, out, order, next_idx);
             }
         }
-        Expr::ErrorProp(inner) => collect_options_from_expr(&inner.node, out, order, next_idx),
+        ResolvedExpr::ErrorProp(inner) => {
+            collect_options_from_expr(&inner.node, out, order, next_idx)
+        }
         _ => {}
     }
 }
@@ -662,33 +665,37 @@ pub(super) fn collect_options_from_expr(
 /// bench spells out `Vector<Int>` in fn signatures so this body walk
 /// is a defensive backstop, not the primary discovery path.
 pub(super) fn collect_vectors_from_fn_body(
-    fd: &crate::ast::FnDef,
+    fd: &crate::ir::hir::ResolvedFnDef,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::{FnBody, Stmt};
-    let FnBody::Block(stmts) = fd.body.as_ref();
+    use crate::ir::hir::{ResolvedFnBody, ResolvedStmt};
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
-        if let Stmt::Binding(_, Some(annot), _) = stmt {
-            collect_vectors_from_str(annot, out, order, next_idx);
+        if let ResolvedStmt::Binding {
+            ty_ann: Some(annot),
+            ..
+        } = stmt
+        {
+            collect_vectors_from_str(&annot.display(), out, order, next_idx);
         }
         let expr = match stmt {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => &e.node,
+            ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => &e.node,
         };
         collect_vectors_from_expr(expr, out, order, next_idx);
     }
 }
 
 pub(super) fn collect_vectors_from_expr(
-    expr: &crate::ast::Expr,
+    expr: &crate::ir::hir::ResolvedExpr,
     out: &mut HashMap<String, u32>,
     order: &mut Vec<String>,
     next_idx: &mut u32,
 ) {
-    use crate::ast::{Expr, StrPart};
+    use crate::ir::hir::{ResolvedExpr, ResolvedStrPart};
     match expr {
-        Expr::FnCall(callee, args) => {
+        ResolvedExpr::Call(callee, args) => {
             // `Vector.new(n, fill)` instantiates `Vector<T>` where `T` is
             // the *type* of the fill arg — and crucially, that may itself
             // be a Vector (`Vector.new(3, inner_vec)` produces
@@ -698,22 +705,19 @@ pub(super) fn collect_vectors_from_expr(
             // no slot, codegen errors with "instantiation `Vector<…>`
             // was not registered". Mirrors the InterpolatedStr / `+`
             // branches that pre-register `Vector<String>` from a stamp.
-            if let Expr::Attr(parent, member) = &callee.node
-                && member == "new"
-                && let Expr::Ident(p) = &parent.node
-                && p == "Vector"
+            if let crate::ir::hir::ResolvedCallee::Builtin(name) = callee
+                && name == "Vector.new"
                 && args.len() == 2
                 && let Some(fill_ty) = args[1].ty()
             {
                 let canonical = format!("Vector<{}>", fill_ty.display());
                 collect_vectors_from_str(&canonical, out, order, next_idx);
             }
-            collect_vectors_from_expr(&callee.node, out, order, next_idx);
             for a in args {
                 collect_vectors_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::BinOp(op, l, r) => {
+        ResolvedExpr::BinOp(op, l, r) => {
             // String `+` lowers to `__wasmgc_concat_n`, which takes a
             // `Vector<String>` (array of String refs). Register that
             // canonical eagerly when we see the operator on String
@@ -726,42 +730,44 @@ pub(super) fn collect_vectors_from_expr(
             collect_vectors_from_expr(&l.node, out, order, next_idx);
             collect_vectors_from_expr(&r.node, out, order, next_idx);
         }
-        Expr::Neg(inner) => collect_vectors_from_expr(&inner.node, out, order, next_idx),
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Neg(inner) => collect_vectors_from_expr(&inner.node, out, order, next_idx),
+        ResolvedExpr::Match { subject, arms } => {
             collect_vectors_from_expr(&subject.node, out, order, next_idx);
             for arm in arms {
                 collect_vectors_from_expr(&arm.body.node, out, order, next_idx);
             }
         }
-        Expr::TailCall(boxed) => {
-            for a in &boxed.args {
+        ResolvedExpr::TailCall { args, .. } => {
+            for a in args {
                 collect_vectors_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::Attr(obj, _) => collect_vectors_from_expr(&obj.node, out, order, next_idx),
-        Expr::RecordCreate { fields, .. } => {
+        ResolvedExpr::Attr(obj, _) => collect_vectors_from_expr(&obj.node, out, order, next_idx),
+        ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 collect_vectors_from_expr(&e.node, out, order, next_idx);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             collect_vectors_from_expr(&base.node, out, order, next_idx);
             for (_, e) in updates {
                 collect_vectors_from_expr(&e.node, out, order, next_idx);
             }
         }
-        Expr::Constructor(_, payload) => {
-            if let Some(p) = payload.as_deref() {
-                collect_vectors_from_expr(&p.node, out, order, next_idx);
+        ResolvedExpr::Ctor(_, args) => {
+            for a in args {
+                collect_vectors_from_expr(&a.node, out, order, next_idx);
             }
         }
-        Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::Tuple(items) | ResolvedExpr::IndependentProduct(items, _) => {
             for it in items {
                 collect_vectors_from_expr(&it.node, out, order, next_idx);
             }
         }
-        Expr::ErrorProp(inner) => collect_vectors_from_expr(&inner.node, out, order, next_idx),
-        Expr::InterpolatedStr(parts) => {
+        ResolvedExpr::ErrorProp(inner) => {
+            collect_vectors_from_expr(&inner.node, out, order, next_idx)
+        }
+        ResolvedExpr::InterpolatedStr(parts) => {
             // Interpolation lowers to an `array.new_fixed (array (ref
             // null $string)) N` + variadic concat. The array type
             // shares a slot with `Vector<String>` (same wasm shape),
@@ -769,7 +775,7 @@ pub(super) fn collect_vectors_from_expr(
             // mentions Vector<String>.
             collect_vectors_from_str("Vector<String>", out, order, next_idx);
             for p in parts {
-                if let StrPart::Parsed(inner) = p {
+                if let ResolvedStrPart::Parsed(inner) = p {
                     collect_vectors_from_expr(&inner.node, out, order, next_idx);
                 }
             }
@@ -826,58 +832,63 @@ pub(super) fn collect_maps_from_str(type_str: &str, out: &mut Vec<String>) {
 /// nested literals / fn args / match arms all get their stamps
 /// harvested.
 pub(super) fn collect_maps_from_expr(
-    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    expr: &crate::ast::Spanned<crate::ir::hir::ResolvedExpr>,
     out: &mut Vec<String>,
 ) {
-    use crate::ast::Expr;
+    use crate::ir::hir::ResolvedExpr;
     if let Some(ty) = expr.ty() {
         let display = ty.display();
         collect_maps_from_str(&display, out);
     }
     match &expr.node {
-        Expr::FnCall(callee, args) => {
-            collect_maps_from_expr(callee, out);
+        ResolvedExpr::Call(_, args) => {
             for a in args {
                 collect_maps_from_expr(a, out);
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::List(items)
+        | ResolvedExpr::Tuple(items)
+        | ResolvedExpr::IndependentProduct(items, _) => {
             for it in items {
                 collect_maps_from_expr(it, out);
             }
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             for (k, v) in entries {
                 collect_maps_from_expr(k, out);
                 collect_maps_from_expr(v, out);
             }
         }
-        Expr::RecordCreate { fields, .. } => {
+        ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, v) in fields {
                 collect_maps_from_expr(v, out);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             collect_maps_from_expr(base, out);
             for (_, v) in updates {
                 collect_maps_from_expr(v, out);
             }
         }
-        Expr::Constructor(_, Some(arg)) => collect_maps_from_expr(arg, out),
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Ctor(_, args) => {
+            for a in args {
+                collect_maps_from_expr(a, out);
+            }
+        }
+        ResolvedExpr::Match { subject, arms } => {
             collect_maps_from_expr(subject, out);
             for arm in arms {
                 collect_maps_from_expr(&arm.body, out);
             }
         }
-        Expr::BinOp(_, l, r) => {
+        ResolvedExpr::BinOp(_, l, r) => {
             collect_maps_from_expr(l, out);
             collect_maps_from_expr(r, out);
         }
-        Expr::Neg(inner) => collect_maps_from_expr(inner, out),
-        Expr::Attr(e, _) | Expr::ErrorProp(e) => collect_maps_from_expr(e, out),
-        Expr::TailCall(tc) => {
-            for a in &tc.args {
+        ResolvedExpr::Neg(inner) => collect_maps_from_expr(inner, out),
+        ResolvedExpr::Attr(e, _) | ResolvedExpr::ErrorProp(e) => collect_maps_from_expr(e, out),
+        ResolvedExpr::TailCall { args, .. } => {
+            for a in args {
                 collect_maps_from_expr(a, out);
             }
         }
