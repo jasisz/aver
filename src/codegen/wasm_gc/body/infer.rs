@@ -57,9 +57,7 @@ pub(super) fn arm_is_result_pattern(arm: &MatchArm) -> bool {
 /// source-shape dotted name. Allowed dead until the wasm-gc match
 /// emitters migrate in the follow-up PRs of #147 phase E.
 #[allow(dead_code)]
-pub(super) fn arm_is_option_pattern_resolved(
-    arm: &crate::ir::hir::ResolvedMatchArm,
-) -> bool {
+pub(super) fn arm_is_option_pattern_resolved(arm: &crate::ir::hir::ResolvedMatchArm) -> bool {
     use crate::ir::hir::{BuiltinCtor, ResolvedCtor, ResolvedPattern};
     matches!(
         &arm.pattern,
@@ -74,9 +72,7 @@ pub(super) fn arm_is_option_pattern_resolved(
 /// until the wasm-gc match emitters migrate in the follow-up PRs of
 /// #147 phase E.
 #[allow(dead_code)]
-pub(super) fn arm_is_result_pattern_resolved(
-    arm: &crate::ir::hir::ResolvedMatchArm,
-) -> bool {
+pub(super) fn arm_is_result_pattern_resolved(arm: &crate::ir::hir::ResolvedMatchArm) -> bool {
     use crate::ir::hir::{BuiltinCtor, ResolvedCtor, ResolvedPattern};
     matches!(
         &arm.pattern,
