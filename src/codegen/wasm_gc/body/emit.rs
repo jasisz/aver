@@ -3,16 +3,49 @@
 
 use wasm_encoder::{Function, Instruction, ValType};
 
-use crate::ast::{BinOp, Expr, Literal, MatchArm, Pattern, Spanned};
+use crate::ast::{BinOp, Literal, Spanned};
+use crate::ir::hir::{
+    BuiltinCtor, ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedMatchArm, ResolvedPattern,
+};
 
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::builtins::{emit_dotted_builtin, emit_interpolated_str};
 use super::infer::{
-    arm_is_option_pattern, arm_is_result_pattern, aver_type_canonical, aver_type_str_of,
-    wasm_type_of,
+    arm_is_option_pattern_resolved, arm_is_result_pattern_resolved, aver_type_canonical,
+    aver_type_str_of, wasm_type_of,
 };
 use super::{EmitCtx, SlotTable};
+
+/// Source-level dotted name for a [`ResolvedCtor`]. Reconstructs the
+/// `"Result.Ok"` / `"Option.None"` / `"Module.User.Circle"` form that
+/// the registry / dispatch logic was keyed on pre-PR-9.1. User ctors
+/// resolve their parent type via the [`SymbolTable`] threaded into
+/// [`EmitCtx`].
+pub(super) fn ctor_dotted_name(ctor: &ResolvedCtor, ctx: &EmitCtx<'_>) -> String {
+    match ctor {
+        ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => "Result.Ok".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => "Result.Err".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => "Option.Some".to_string(),
+        ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => "Option.None".to_string(),
+        ResolvedCtor::User { type_id, name, .. } => {
+            let parent = ctx.symbol_table.type_entry(*type_id).key.name.clone();
+            format!("{parent}.{name}")
+        }
+        ResolvedCtor::Unresolved { name } => name.clone(),
+    }
+}
+
+/// True iff `expr` is the literal `Option.None` constructor reference
+/// — handles both call form (`Option.None`) and the bare-attr / bare-
+/// ident shape now lowered through [`ResolvedExpr::Ctor`] with zero
+/// args.
+fn is_option_none_expr(expr: &ResolvedExpr) -> bool {
+    matches!(
+        expr,
+        ResolvedExpr::Ctor(ResolvedCtor::Builtin(BuiltinCtor::OptionNone), args) if args.is_empty()
+    )
+}
 
 /// Emit a "default value" of the given Aver primitive / ref type onto
 /// the wasm stack. Used by `Option.None` constructor to satisfy
@@ -89,7 +122,7 @@ pub(super) fn emit_default_value(
 /// emitted from a match arm.
 pub(super) fn emit_option_constructor(
     func: &mut Function,
-    payload: Option<&Spanned<Expr>>,
+    payload: Option<&Spanned<ResolvedExpr>>,
     t_aver_hint: Option<&str>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -142,22 +175,22 @@ pub(super) fn emit_option_constructor(
 /// function pushes one value (or zero for `Unit`) for every call.
 pub(super) fn emit_expr(
     func: &mut Function,
-    expr: &Spanned<Expr>,
+    expr: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     match &expr.node {
-        Expr::Literal(Literal::Int(n)) => {
+        ResolvedExpr::Literal(Literal::Int(n)) => {
             func.instruction(&Instruction::I64Const(*n));
         }
-        Expr::Literal(Literal::Float(f)) => {
+        ResolvedExpr::Literal(Literal::Float(f)) => {
             func.instruction(&Instruction::F64Const((*f).into()));
         }
-        Expr::Literal(Literal::Bool(b)) => {
+        ResolvedExpr::Literal(Literal::Bool(b)) => {
             func.instruction(&Instruction::I32Const(if *b { 1 } else { 0 }));
         }
-        Expr::Literal(Literal::Unit) => {}
-        Expr::Literal(Literal::Str(s)) => {
+        ResolvedExpr::Literal(Literal::Unit) => {}
+        ResolvedExpr::Literal(Literal::Str(s)) => {
             // String literal → passive data segment; emit
             // `array.new_data $string $seg` with offset=0, size=len.
             let bytes = s.as_bytes();
@@ -180,19 +213,19 @@ pub(super) fn emit_expr(
                 array_data_index: seg_idx,
             });
         }
-        Expr::InterpolatedStr(parts) => {
+        ResolvedExpr::InterpolatedStr(parts) => {
             emit_interpolated_str(func, parts, slots, ctx)?;
         }
-        Expr::List(items) => {
+        ResolvedExpr::List(items) => {
             emit_list_literal(func, expr, items, slots, ctx)?;
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             emit_map_literal(func, entries, slots, ctx)?;
         }
-        Expr::Tuple(items) => {
+        ResolvedExpr::Tuple(items) => {
             emit_tuple_literal(func, items, slots, ctx)?;
         }
-        Expr::IndependentProduct(items, unwrap) => {
+        ResolvedExpr::IndependentProduct(items, unwrap) => {
             // wasm-gc has no parallelism (no `std::thread::scope`
             // analogue), so both `(a, b, c)!` and `(a, b, c)?!` lower
             // as sequential evaluation. `!` (unwrap=false) is just a
@@ -218,15 +251,15 @@ pub(super) fn emit_expr(
             }
             emit_group_call(func, ctx, "__record_exit_group");
         }
-        Expr::Ident(_) => {
+        ResolvedExpr::Ident(_) => {
             return Err(WasmGcError::Unimplemented(
                 "bare Ident reached emitter (resolver should have produced Resolved)",
             ));
         }
-        Expr::Resolved { slot, .. } => {
+        ResolvedExpr::Resolved { slot, .. } => {
             func.instruction(&Instruction::LocalGet(*slot as u32));
         }
-        Expr::BinOp(op, l, r) => {
+        ResolvedExpr::BinOp(op, l, r) => {
             // Read operand types from typed AST. Aver's type checker
             // has already proven both operands have the same type, so
             // peeking at the LHS suffices.
@@ -353,7 +386,7 @@ pub(super) fn emit_expr(
                 func.instruction(&inst);
             }
         }
-        Expr::Neg(inner) => {
+        ResolvedExpr::Neg(inner) => {
             // Numeric unary minus. Float uses `f64.neg` which preserves
             // the IEEE sign bit (so `-0.0` survives the round trip);
             // Int has no dedicated instruction and lowers to
@@ -369,148 +402,117 @@ pub(super) fn emit_expr(
                 func.instruction(&Instruction::I64Sub);
             }
         }
-        Expr::FnCall(callee, args) => {
-            // `Type.Variant(args)` parses as `FnCall(Attr(_, name),
-            // args)` — route to struct.new when `name` is a known
-            // variant, otherwise check for a dotted builtin, otherwise
-            // a real fn call.
-            if let Expr::Attr(parent, member) = &callee.node {
-                // Built-in Option constructors come through here as
-                // `Option.Some(v)` / `Option.None`. Catch them before
-                // user-variant lookup because Option isn't a TypeDef.
-                // Other `Option.<method>` calls (`withDefault`, etc.)
-                // fall through to the dotted-builtin dispatch below.
-                if let Expr::Ident(p) = &parent.node
-                    && p == "Option"
-                    && (member == "Some" || member == "None")
-                {
-                    return match member.as_str() {
-                        "Some" if args.len() == 1 => {
-                            emit_option_constructor(func, Some(&args[0]), None, slots, ctx)
+        ResolvedExpr::Call(callee, args) => {
+            match callee {
+                ResolvedCallee::Builtin(name) => {
+                    // `List.prepend(head, tail)` — direct Cons cell.
+                    if name == "List.prepend" && args.len() == 2 {
+                        return emit_list_prepend(func, &args[0], &args[1], slots, ctx);
+                    }
+                    // `List.empty()` — null ref of the surrounding
+                    // list type.
+                    if name == "List.empty" && args.is_empty() {
+                        return emit_list_empty(func, ctx);
+                    }
+                    // Generic `Parent.member(args)` dotted-builtin
+                    // dispatch (Console.* / Float.* / Map.* / Vector.*
+                    // / wasip2 effects / etc.). Split the canonical
+                    // string back into `parent` + `method` for the
+                    // existing dispatch shape — the resolver pass
+                    // joined them into a single name.
+                    let (parent, member) = name.rsplit_once('.').ok_or_else(|| {
+                        WasmGcError::Validation(format!(
+                            "ResolvedCallee::Builtin `{name}` is not in `Parent.method` form"
+                        ))
+                    })?;
+                    return emit_dotted_builtin(func, parent, member, args, slots, ctx);
+                }
+                ResolvedCallee::Intrinsic(intr) => {
+                    // Compiler-synthesised `__buf_*` / `__to_str`
+                    // intrinsics. Route them through the same dotted-
+                    // builtin dispatch as registered builtins —
+                    // pre-Phase-E these reached the emitter as
+                    // `Expr::FnCall(Ident("__buf_*"), args)` and fell
+                    // into the `ctx.fn_map.builtins` lookup branch in
+                    // `emit_dotted_builtin`. The intrinsic carries its
+                    // canonical name; the dispatch keys by that.
+                    let name = intr.name();
+                    // The dotted-builtin dispatcher splits on the
+                    // final `.`; synthesised intrinsics are bare
+                    // (`__buf_new`), so route them through the
+                    // registered-builtin fast path by passing an
+                    // empty parent. `emit_dotted_builtin` looks up
+                    // `fn_map.builtins.get(&dotted)` first — for that
+                    // we need the raw intrinsic name. Take the path
+                    // directly here instead of asking the dispatcher.
+                    if let Some(&wasm_idx) = ctx.fn_map.builtins.get(name) {
+                        for arg in args {
+                            emit_expr(func, arg, slots, ctx)?;
                         }
-                        "None" => {
-                            // Read T from the typed AST first; use the
-                            // Type::Invalid-recovery reader so post-
-                            // error gradual-typing branches still
-                            // resolve to a concrete Option<T>.
-                            let stamped_canonical =
-                                aver_type_canonical(expr, ctx.return_type, ctx.registry);
-                            let hint: String = if let Some(inner) = stamped_canonical
-                                .strip_prefix("Option<")
-                                .and_then(|s| s.strip_suffix('>'))
-                            {
-                                inner.to_string()
-                            } else {
-                                ctx.return_type.to_string()
-                            };
-                            emit_option_constructor(func, None, Some(&hint), slots, ctx)
-                        }
-                        _ => Err(WasmGcError::Validation(format!(
-                            "Option.{member} with {} args is not a valid constructor",
-                            args.len()
-                        ))),
-                    };
+                        func.instruction(&Instruction::Call(wasm_idx));
+                        return Ok(());
+                    }
+                    return Err(WasmGcError::Validation(format!(
+                        "intrinsic `{name}` not registered in fn_map.builtins"
+                    )));
                 }
-                if let Expr::Ident(p) = &parent.node
-                    && p == "Result"
-                    && (member == "Ok" || member == "Err")
-                {
-                    return emit_result_constructor(func, member, args.first(), slots, ctx);
+                ResolvedCallee::Fn(id) => {
+                    let name = ctx.symbol_table.fn_entry(*id).key.name.clone();
+                    let entry = ctx.fn_map.by_name.get(&name);
+                    if entry.is_none() && ctx.self_local_slot(&name).is_some() {
+                        // Local slot of a `Fn(...) -> _` value — wasm-
+                        // gc doesn't emit higher-order calls. Same
+                        // semantics as pre-Phase-E.
+                        func.instruction(&Instruction::Unreachable);
+                        return Ok(());
+                    }
+                    for arg in args {
+                        emit_expr(func, arg, slots, ctx)?;
+                    }
+                    let entry = entry.ok_or(WasmGcError::Validation(format!(
+                        "call to unknown fn `{name}`"
+                    )))?;
+                    func.instruction(&Instruction::Call(entry.wasm_idx));
                 }
-                // `List.prepend(head, tail)` — direct Cons cell.
-                if let Expr::Ident(p) = &parent.node
-                    && p == "List"
-                    && member == "prepend"
-                    && args.len() == 2
-                {
-                    return emit_list_prepend(func, &args[0], &args[1], slots, ctx);
+                ResolvedCallee::LocalSlot { .. } => {
+                    // First-class fn value bound to a local — wasm-gc
+                    // is validation-polymorphic via `Unreachable`.
+                    // Verify-only fns reach this; bare `_start` never
+                    // executes the trap.
+                    func.instruction(&Instruction::Unreachable);
+                    return Ok(());
                 }
-                // `List.empty()` — null ref of the surrounding list type.
-                if let Expr::Ident(p) = &parent.node
-                    && p == "List"
-                    && member == "empty"
-                    && args.is_empty()
-                {
-                    return emit_list_empty(func, ctx);
-                }
-                // `Foo.Bar(args...)` — sum-type variant constructor.
-                // Disambiguate by parent so two sumtypes sharing a
-                // bare variant name (e.g. `Query.ProviderSummary` vs
-                // `QueryOutput.ProviderSummary`) pick up their own
-                // concrete struct idx.
-                let parent_ident = match &parent.node {
-                    Expr::Ident(n) => Some(n.as_str()),
-                    Expr::Resolved { name, .. } => Some(name.as_str()),
-                    _ => None,
-                };
-                let info = parent_ident
-                    .and_then(|p| ctx.registry.variant_in(p, member))
-                    .or_else(|| ctx.registry.variant(member))
-                    .cloned();
-                if let Some(info) = info {
-                    return emit_constructor_with_args(func, &info, args, slots, ctx);
-                }
-                // Builtins: `Type.method(args...)` shape. We support
-                // a curated set today (the ones bench scenarios use);
-                // anything else surfaces as Unimplemented.
-                if let Some(parent_name) = parent_ident {
-                    return emit_dotted_builtin(func, parent_name, member, args, slots, ctx);
+                ResolvedCallee::Unresolved { callee: inner } => {
+                    return Err(WasmGcError::Validation(format!(
+                        "unresolved callee reached wasm-gc emit: {:?}",
+                        inner.node
+                    )));
                 }
             }
-            let name = match &callee.node {
-                Expr::Ident(n) => n.as_str(),
-                Expr::Resolved { name, .. } => name.as_str(),
-                _ => {
-                    return Err(WasmGcError::Unimplemented(
-                        "phase 3b — exotic callee shape (chained Attr, lambda, etc.)",
-                    ));
-                }
-            };
-            // Resolve before evaluating args — if `name` is a local
-            // (binding/param of a `Fn(...) -> _` shape, only ever
-            // reachable through verify-only fns) the wasm-gc backend
-            // doesn't emit a higher-order call. Emit `unreachable`,
-            // which wasm validation treats as polymorphic — the
-            // surrounding block's result type can be anything. Body is
-            // dead from a `_start` perspective so the trap never fires.
-            let entry = ctx.fn_map.by_name.get(name);
-            if entry.is_none() && ctx.self_local_slot(name).is_some() {
-                func.instruction(&Instruction::Unreachable);
-                return Ok(());
-            }
-            for arg in args {
-                emit_expr(func, arg, slots, ctx)?;
-            }
-            let entry = entry.ok_or(WasmGcError::Validation(format!(
-                "call to unknown fn `{name}`"
-            )))?;
-            func.instruction(&Instruction::Call(entry.wasm_idx));
         }
-        Expr::Match { subject, arms } => emit_match(func, subject, arms, slots, ctx)?,
-        Expr::TailCall(boxed) => emit_tail_call(func, &boxed.target, &boxed.args, slots, ctx)?,
-        Expr::RecordCreate { type_name, fields } => {
-            emit_record_create(func, type_name, fields, slots, ctx)?
+        ResolvedExpr::Match { subject, arms } => emit_match(func, subject, arms, slots, ctx)?,
+        ResolvedExpr::TailCall { target, args } => {
+            let target_name = ctx.symbol_table.fn_entry(*target).key.name.clone();
+            emit_tail_call(func, &target_name, args, slots, ctx)?
         }
-        Expr::RecordUpdate {
+        ResolvedExpr::RecordCreate {
+            type_name, fields, ..
+        } => emit_record_create(func, type_name, fields, slots, ctx)?,
+        ResolvedExpr::RecordUpdate {
             type_name,
             base,
             updates,
+            ..
         } => emit_record_update(func, type_name, base, updates, slots, ctx)?,
-        Expr::Attr(obj, field) => {
+        ResolvedExpr::Attr(obj, field) => {
             // `Option.None` lands here as a bare attribute reference
             // (parser doesn't synthesise a FnCall for nullary
-            // constructors). Catch it before falling into struct field
-            // access, which would never resolve.
-            if let Expr::Ident(p) = &obj.node
+            // constructors, and the resolver passes Attr through
+            // structurally without re-classifying nullary built-ins).
+            if let ResolvedExpr::Ident(p) = &obj.node
                 && p == "Option"
                 && field == "None"
             {
-                // Read T from the typed AST: type checker stamps every
-                // `Option.None` with the inferred Option<T>. Use the
-                // Type::Invalid-recovery canonical reader so post-error
-                // gradual-typing branches still resolve to a concrete
-                // instantiation (single-instantiation fallback or
-                // enclosing-fn return-type carry-through).
                 let stamped_canonical = aver_type_canonical(expr, ctx.return_type, ctx.registry);
                 let hint: String = if let Some(inner) = stamped_canonical
                     .strip_prefix("Option<")
@@ -521,32 +523,69 @@ pub(super) fn emit_expr(
                     ctx.return_type.to_string()
                 };
                 emit_option_constructor(func, None, Some(&hint), slots, ctx)?;
-            } else if let Expr::Ident(parent) = &obj.node
+            } else if let ResolvedExpr::Ident(parent) = &obj.node
                 && let Some(info) = ctx.registry.variant_in(parent, field).cloned()
                 && info.fields.is_empty()
             {
                 // `Tag.Red` etc. — Attr access on a user-defined sum
-                // type's name resolves to a nullary variant constructor.
-                // The FnCall path already does this for `Tag.Red()`;
-                // mirror it for the bare-attr form so the variant can
-                // be used in any value position (Map K, fn arg, return
-                // expr) without a trailing `()`.
+                // type's name resolves to a nullary variant
+                // constructor. The Ctor arm already does this for
+                // `Tag.Red()`; mirror it for the bare-attr form.
                 emit_constructor_with_args(func, &info, &[], slots, ctx)?;
             } else {
                 emit_attr_get(func, obj, field, slots, ctx)?;
             }
         }
-        Expr::Constructor(name, payload) => {
-            emit_constructor(func, expr, name, payload.as_deref(), slots, ctx)?
-        }
-        Expr::ErrorProp(inner) => emit_error_prop(func, inner, slots, ctx)?,
-        #[allow(unreachable_patterns)]
-        other => {
-            eprintln!("UNIMPL EMIT shape={:?}", other);
-            return Err(WasmGcError::Unimplemented(
-                "expression shape outside phase 2/3/4",
-            ));
-        }
+        ResolvedExpr::Ctor(ctor, args) => match ctor {
+            ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => {
+                if args.len() != 1 {
+                    return Err(WasmGcError::Validation(format!(
+                        "Option.Some constructor requires 1 arg, got {}",
+                        args.len()
+                    )));
+                }
+                emit_option_constructor(func, Some(&args[0]), None, slots, ctx)?;
+            }
+            ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => {
+                // Read T from the typed AST first; use the Type::
+                // Invalid-recovery reader so post-error gradual-typing
+                // branches still resolve to a concrete Option<T>.
+                let stamped_canonical = aver_type_canonical(expr, ctx.return_type, ctx.registry);
+                let hint: String = if let Some(inner) = stamped_canonical
+                    .strip_prefix("Option<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
+                    inner.to_string()
+                } else {
+                    ctx.return_type.to_string()
+                };
+                emit_option_constructor(func, None, Some(&hint), slots, ctx)?;
+            }
+            ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => {
+                emit_result_constructor(func, "Ok", args.first(), slots, ctx)?;
+            }
+            ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => {
+                emit_result_constructor(func, "Err", args.first(), slots, ctx)?;
+            }
+            ResolvedCtor::User { type_id, name, .. } => {
+                let parent = ctx.symbol_table.type_entry(*type_id).key.name.clone();
+                let info = ctx
+                    .registry
+                    .variant_in(&parent, name)
+                    .or_else(|| ctx.registry.variant(name))
+                    .cloned()
+                    .ok_or(WasmGcError::Validation(format!(
+                        "unknown variant `{parent}.{name}` in constructor"
+                    )))?;
+                emit_constructor_with_args(func, &info, args, slots, ctx)?;
+            }
+            ResolvedCtor::Unresolved { name } => {
+                return Err(WasmGcError::Validation(format!(
+                    "unresolved ctor `{name}` reached wasm-gc emit"
+                )));
+            }
+        },
+        ResolvedExpr::ErrorProp(inner) => emit_error_prop(func, inner, slots, ctx)?,
     }
     Ok(())
 }
@@ -568,7 +607,7 @@ pub(super) fn emit_expr(
 /// reachable site, so a miss surfaces as `None` and the call falls
 /// through to the default arm where wasm validation will catch the
 /// type mismatch.
-fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
+fn sum_or_record_eq_fn(operand: &Spanned<ResolvedExpr>, ctx: &EmitCtx<'_>) -> Option<u32> {
     let ty = operand.ty()?;
     match ty {
         crate::types::Type::Named { name, .. } => {
@@ -640,12 +679,15 @@ fn sum_or_record_eq_fn(operand: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32
     }
 }
 
-fn nullary_variant_idx(expr: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
+fn nullary_variant_idx(expr: &Spanned<ResolvedExpr>, ctx: &EmitCtx<'_>) -> Option<u32> {
     match &expr.node {
-        Expr::Attr(obj, field) => {
+        // Bare `Tag.Red` form (resolver doesn't lift bare attr access
+        // to Ctor — only `Tag.Red()` parses as FnCall, only
+        // `Constructor("...", None)` reaches the Ctor arm).
+        ResolvedExpr::Attr(obj, field) => {
             let parent = match &obj.node {
-                Expr::Ident(p) => p.as_str(),
-                Expr::Resolved { name, .. } => name.as_str(),
+                ResolvedExpr::Ident(p) => p.as_str(),
+                ResolvedExpr::Resolved { name, .. } => name.as_str(),
                 _ => return None,
             };
             let info = ctx.registry.variant(field)?;
@@ -655,26 +697,15 @@ fn nullary_variant_idx(expr: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
                 None
             }
         }
-        Expr::FnCall(callee, args) if args.is_empty() => {
-            if let Expr::Attr(obj, field) = &callee.node {
-                let parent = match &obj.node {
-                    Expr::Ident(p) => p.as_str(),
-                    Expr::Resolved { name, .. } => name.as_str(),
-                    _ => return None,
-                };
-                let info = ctx.registry.variant(field)?;
-                if info.parent == parent && info.fields.is_empty() {
-                    Some(info.type_idx)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }
-        Expr::Constructor(name, payload) if payload.is_none() => {
-            let bare = name.rsplit('.').next().unwrap_or(name);
-            let info = ctx.registry.variant(bare)?;
+        // Resolved `Tag.Red(args)` calls — the resolver lifts the
+        // FnCall(Attr) shape into Ctor when the dotted name resolves
+        // to a user ctor. Match the nullary case here.
+        ResolvedExpr::Ctor(ResolvedCtor::User { type_id, name, .. }, args) if args.is_empty() => {
+            let parent_name = ctx.symbol_table.type_entry(*type_id).key.name.clone();
+            let info = ctx
+                .registry
+                .variant_in(&parent_name, name)
+                .or_else(|| ctx.registry.variant(name))?;
             if info.fields.is_empty() {
                 Some(info.type_idx)
             } else {
@@ -691,8 +722,8 @@ fn nullary_variant_idx(expr: &Spanned<Expr>, ctx: &EmitCtx<'_>) -> Option<u32> {
 /// surface; same O(total_len) bytes copied.
 pub(super) fn emit_string_concat2(
     func: &mut Function,
-    lhs: &Spanned<Expr>,
-    rhs: &Spanned<Expr>,
+    lhs: &Spanned<ResolvedExpr>,
+    rhs: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -728,8 +759,8 @@ pub(super) fn emit_string_concat2(
 /// optionally invert with `i32.eqz` for `!=`.
 pub(super) fn emit_string_eq(
     func: &mut Function,
-    lhs: &Spanned<Expr>,
-    rhs: &Spanned<Expr>,
+    lhs: &Spanned<ResolvedExpr>,
+    rhs: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
     invert: bool,
@@ -770,7 +801,7 @@ pub(super) fn emit_string_eq(
 /// `expr_needs_scratch` predicate is updated to cover this case).
 pub(super) fn emit_error_prop(
     func: &mut Function,
-    inner: &Spanned<Expr>,
+    inner: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -885,7 +916,7 @@ pub(super) fn emit_error_prop(
 pub(super) fn emit_record_create(
     func: &mut Function,
     type_name: &str,
-    fields: &[(String, Spanned<Expr>)],
+    fields: &[(String, Spanned<ResolvedExpr>)],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -942,7 +973,7 @@ pub(super) fn emit_record_create(
         // would otherwise default to `ctx.return_type` or the first
         // registered list canonical — both wrong when the field's
         // declared type is e.g. `List<List<Point>>`.
-        if let Expr::List(items) = &provided.1.node
+        if let ResolvedExpr::List(items) = &provided.1.node
             && items.is_empty()
         {
             let canonical: String = decl_ty.chars().filter(|c| !c.is_whitespace()).collect();
@@ -957,23 +988,6 @@ pub(super) fn emit_record_create(
     }
     func.instruction(&Instruction::StructNew(type_idx));
     Ok(())
-}
-
-/// True iff `expr` is the literal `Option.None` constructor reference
-/// (either as `Expr::Attr(Ident("Option"), "None")` or as a
-/// `Constructor("Option.None", None)` after pipeline rewrites).
-fn is_option_none_expr(expr: &Expr) -> bool {
-    match expr {
-        Expr::Attr(obj, field) => {
-            field == "None" && matches!(&obj.node, Expr::Ident(name) if name == "Option")
-        }
-        Expr::Constructor(name, payload) => {
-            payload.is_none()
-                && (name == "Option.None"
-                    || name.rsplit('.').next() == Some("None") && name.starts_with("Option"))
-        }
-        _ => false,
-    }
 }
 
 /// Lower `RecordUpdate { type_name, base, updates }` to a fresh
@@ -992,8 +1006,8 @@ fn is_option_none_expr(expr: &Expr) -> bool {
 pub(super) fn emit_record_update(
     func: &mut Function,
     type_name: &str,
-    base: &Spanned<Expr>,
-    updates: &[(String, Spanned<Expr>)],
+    base: &Spanned<ResolvedExpr>,
+    updates: &[(String, Spanned<ResolvedExpr>)],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1027,7 +1041,7 @@ pub(super) fn emit_record_update(
                 emit_option_constructor(func, None, Some(inner.trim()), slots, ctx)?;
                 continue;
             }
-            if let Expr::List(items) = &override_expr.node
+            if let ResolvedExpr::List(items) = &override_expr.node
                 && items.is_empty()
             {
                 let canonical: String = decl_ty.chars().filter(|c| !c.is_whitespace()).collect();
@@ -1064,7 +1078,7 @@ pub(super) fn emit_record_update(
 /// backend just reads the stamp.
 pub(super) fn emit_attr_get(
     func: &mut Function,
-    obj: &Spanned<Expr>,
+    obj: &Spanned<ResolvedExpr>,
     field: &str,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -1115,7 +1129,7 @@ pub(super) fn emit_attr_get(
 pub(super) fn emit_result_constructor(
     func: &mut Function,
     variant: &str,
-    payload: Option<&Spanned<Expr>>,
+    payload: Option<&Spanned<ResolvedExpr>>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1190,8 +1204,8 @@ pub(super) fn emit_result_constructor(
 /// `List.prepend(head, tail)` → `struct.new $list_T head tail`.
 pub(super) fn emit_list_prepend(
     func: &mut Function,
-    head: &Spanned<Expr>,
-    tail: &Spanned<Expr>,
+    head: &Spanned<ResolvedExpr>,
+    tail: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1255,7 +1269,7 @@ pub(super) fn emit_list_empty(func: &mut Function, ctx: &EmitCtx<'_>) -> Result<
 /// `E`. We rely on those invariants here.
 pub(super) fn emit_independent_product_unwrap(
     func: &mut Function,
-    items: &[Spanned<Expr>],
+    items: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1428,7 +1442,7 @@ fn emit_branch_marker(func: &mut Function, ctx: &EmitCtx<'_>, branch_idx: u32) {
 /// `enter_group` / `exit_group` are emitted by the caller arm.
 fn emit_tuple_literal_with_branch_markers(
     func: &mut Function,
-    items: &[Spanned<Expr>],
+    items: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1459,7 +1473,7 @@ fn emit_tuple_literal_with_branch_markers(
 
 pub(super) fn emit_tuple_literal(
     func: &mut Function,
-    items: &[Spanned<Expr>],
+    items: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1491,7 +1505,7 @@ pub(super) fn emit_tuple_literal(
 
 pub(super) fn emit_map_literal(
     func: &mut Function,
-    entries: &[(Spanned<Expr>, Spanned<Expr>)],
+    entries: &[(Spanned<ResolvedExpr>, Spanned<ResolvedExpr>)],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1534,8 +1548,8 @@ pub(super) fn emit_map_literal(
 
 pub(super) fn emit_list_literal(
     func: &mut Function,
-    outer: &Spanned<Expr>,
-    items: &[Spanned<Expr>],
+    outer: &Spanned<ResolvedExpr>,
+    items: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1557,7 +1571,7 @@ pub(super) fn emit_list_literal(
             // the enclosing fn's return type when it parses as
             // `List<T>` and the first item lacks its own resolvable
             // type — this gives the correct T for both shapes.
-            let needs_hint = matches!(&first.node, Expr::List(xs) if xs.is_empty())
+            let needs_hint = matches!(&first.node, ResolvedExpr::List(xs) if xs.is_empty())
                 || is_option_none_expr(&first.node);
             let elem_ty = if needs_hint {
                 let ret: String = ctx
@@ -1641,7 +1655,7 @@ pub(super) fn emit_list_literal(
             continue;
         }
         if let Some(elem) = elem_ty.as_deref()
-            && let Expr::List(xs) = &item.node
+            && let ResolvedExpr::List(xs) = &item.node
             && xs.is_empty()
             && let Some(list_idx) = ctx.registry.list_type_idx(elem)
         {
@@ -1666,13 +1680,13 @@ pub(super) fn emit_list_literal(
 /// corresponding ident binding. `_` skips the bind.
 pub(super) fn emit_tuple_match(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arm: &MatchArm,
+    subject: &Spanned<ResolvedExpr>,
+    arm: &ResolvedMatchArm,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let pat_items = match &arm.pattern {
-        Pattern::Tuple(items) => items.as_slice(),
+        ResolvedPattern::Tuple(items) => items.as_slice(),
         _ => {
             return Err(WasmGcError::Validation(
                 "emit_tuple_match called on non-Tuple pattern".into(),
@@ -1699,7 +1713,7 @@ pub(super) fn emit_tuple_match(
     // tuple destructure currently only supports flat `Pattern::Ident`
     // items (multi-binding nested tuples land elsewhere).
     for (field_idx, (pat, &slot)) in pat_items.iter().zip(arm_slots.iter()).enumerate() {
-        if matches!(pat, Pattern::Ident(_)) && slot != u16::MAX {
+        if matches!(pat, ResolvedPattern::Ident(_)) && slot != u16::MAX {
             func.instruction(&Instruction::LocalGet(scratch));
             func.instruction(&Instruction::RefCastNonNull(
                 wasm_encoder::HeapType::Concrete(tuple_idx),
@@ -1732,8 +1746,8 @@ pub(super) fn emit_tuple_match(
 /// than silently mis-emitting.
 pub(super) fn emit_tuple_constructor_match(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arms: &[MatchArm],
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -1778,7 +1792,7 @@ fn emit_tuple_constructor_arm_cascade(
     scratch: u32,
     tuple_idx: u32,
     elems: &[String],
-    arms: &[MatchArm],
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -1793,8 +1807,8 @@ fn emit_tuple_constructor_arm_cascade(
     }
     let arm = &arms[0];
     match &arm.pattern {
-        Pattern::Wildcard => emit_expr(func, &arm.body, slots, ctx),
-        Pattern::Ident(_) => {
+        ResolvedPattern::Wildcard => emit_expr(func, &arm.body, slots, ctx),
+        ResolvedPattern::Ident(_) => {
             if let Some(arm_slots) = arm.binding_slots.get()
                 && let Some(&slot) = arm_slots.first()
                 && slot != u16::MAX
@@ -1804,7 +1818,7 @@ fn emit_tuple_constructor_arm_cascade(
             }
             emit_expr(func, &arm.body, slots, ctx)
         }
-        Pattern::Tuple(items) => {
+        ResolvedPattern::Tuple(items) => {
             if items.len() != elems.len() {
                 return Err(WasmGcError::Validation(format!(
                     "tuple match arm has {} sub-patterns, subject is a {}-tuple",
@@ -1818,8 +1832,9 @@ fn emit_tuple_constructor_arm_cascade(
             // when no constructor tests are present.
             let mut tests_emitted = 0u32;
             for (i, pat) in items.iter().enumerate() {
-                if let Pattern::Constructor(name, _) = pat {
-                    let bare = name.rsplit('.').next().unwrap_or(name);
+                if let ResolvedPattern::Ctor(ctor, _) = pat {
+                    let name = ctor_dotted_name(ctor, ctx);
+                    let bare = name.rsplit('.').next().unwrap_or(&name);
                     let elem_canonical: String =
                         elems[i].chars().filter(|c| !c.is_whitespace()).collect();
                     let res_idx = ctx.registry.result_type_idx(&elem_canonical).ok_or(
@@ -1876,7 +1891,7 @@ fn emit_tuple_constructor_arm_cascade(
             let mut slot_idx = 0;
             for (i, pat) in items.iter().enumerate() {
                 match pat {
-                    Pattern::Ident(_) => {
+                    ResolvedPattern::Ident(_) => {
                         let slot = arm_slots[slot_idx];
                         slot_idx += 1;
                         if slot != u16::MAX {
@@ -1891,8 +1906,9 @@ fn emit_tuple_constructor_arm_cascade(
                             func.instruction(&Instruction::LocalSet(slot as u32));
                         }
                     }
-                    Pattern::Constructor(name, bindings) => {
-                        let bare = name.rsplit('.').next().unwrap_or(name);
+                    ResolvedPattern::Ctor(ctor, bindings) => {
+                        let name = ctor_dotted_name(ctor, ctx);
+                        let bare = name.rsplit('.').next().unwrap_or(&name);
                         let elem_canonical: String =
                             elems[i].chars().filter(|c| !c.is_whitespace()).collect();
                         let res_idx_opt = ctx.registry.result_type_idx(&elem_canonical);
@@ -1958,8 +1974,8 @@ fn emit_tuple_constructor_arm_cascade(
 /// the head and tail. Subject must be a registered `List<T>`.
 pub(super) fn emit_list_match(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arms: &[MatchArm],
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -1976,13 +1992,13 @@ pub(super) fn emit_list_match(
             "List match: subject type `{subject_ty}` is not a registered List<T>"
         )))?;
 
-    let mut empty_arm: Option<&MatchArm> = None;
-    let mut cons_arm: Option<&MatchArm> = None;
+    let mut empty_arm: Option<&ResolvedMatchArm> = None;
+    let mut cons_arm: Option<&ResolvedMatchArm> = None;
     for arm in arms {
         match &arm.pattern {
-            Pattern::EmptyList => empty_arm = Some(arm),
-            Pattern::Cons(_, _) => cons_arm = Some(arm),
-            Pattern::Wildcard => {
+            ResolvedPattern::EmptyList => empty_arm = Some(arm),
+            ResolvedPattern::Cons(_, _) => cons_arm = Some(arm),
+            ResolvedPattern::Wildcard => {
                 if empty_arm.is_none() {
                     empty_arm = Some(arm);
                 } else if cons_arm.is_none() {
@@ -2007,7 +2023,7 @@ pub(super) fn emit_list_match(
     func.instruction(&Instruction::If(block_ty));
     emit_expr(func, &empty_arm.body, slots, ctx)?;
     func.instruction(&Instruction::Else);
-    if let Pattern::Cons(_head_name, _tail_name) = &cons_arm.pattern {
+    if let ResolvedPattern::Cons(_head_name, _tail_name) = &cons_arm.pattern {
         let arm_slots = cons_arm.binding_slots.get().ok_or(WasmGcError::Validation(
             "Cons match arm reached emit without resolver-allocated binding_slots".into(),
         ))?;
@@ -2046,8 +2062,8 @@ pub(super) fn emit_list_match(
 /// field 2 (E).
 pub(super) fn emit_result_match(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arms: &[MatchArm],
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -2064,19 +2080,16 @@ pub(super) fn emit_result_match(
             "Result match: subject type `{subject_ty}` is not a registered Result<T,E>"
         )))?;
 
-    let mut ok_arm: Option<&MatchArm> = None;
-    let mut err_arm: Option<&MatchArm> = None;
+    let mut ok_arm: Option<&ResolvedMatchArm> = None;
+    let mut err_arm: Option<&ResolvedMatchArm> = None;
     for arm in arms {
         match &arm.pattern {
-            Pattern::Constructor(name, _) => {
-                let bare = name.rsplit('.').next().unwrap_or(name);
-                if bare == "Ok" {
-                    ok_arm = Some(arm);
-                } else if bare == "Err" {
-                    err_arm = Some(arm);
-                }
-            }
-            Pattern::Wildcard => {
+            ResolvedPattern::Ctor(ctor, _) => match ctor {
+                ResolvedCtor::Builtin(BuiltinCtor::ResultOk) => ok_arm = Some(arm),
+                ResolvedCtor::Builtin(BuiltinCtor::ResultErr) => err_arm = Some(arm),
+                _ => {}
+            },
+            ResolvedPattern::Wildcard => {
                 if err_arm.is_none() {
                     err_arm = Some(arm);
                 } else if ok_arm.is_none() {
@@ -2107,7 +2120,7 @@ pub(super) fn emit_result_match(
     func.instruction(&Instruction::I32Const(1));
     func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(block_ty));
-    if let Pattern::Constructor(_, _) = &ok_arm.pattern
+    if let ResolvedPattern::Ctor(_, _) = &ok_arm.pattern
         && let Some(arm_slots) = ok_arm.binding_slots.get()
         && let Some(&slot) = arm_slots.first()
         && slot != u16::MAX
@@ -2124,7 +2137,7 @@ pub(super) fn emit_result_match(
     }
     emit_expr(func, &ok_arm.body, slots, ctx)?;
     func.instruction(&Instruction::Else);
-    if let Pattern::Constructor(_, _) = &err_arm.pattern
+    if let ResolvedPattern::Ctor(_, _) = &err_arm.pattern
         && let Some(arm_slots) = err_arm.binding_slots.get()
         && let Some(&slot) = arm_slots.first()
         && slot != u16::MAX
@@ -2152,9 +2165,9 @@ pub(super) fn emit_result_match(
 /// the wasm stack.
 pub(super) fn emit_map_get_match_fused(
     func: &mut Function,
-    map: &Spanned<Expr>,
-    key: &Spanned<Expr>,
-    arms: &[MatchArm],
+    map: &Spanned<ResolvedExpr>,
+    key: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -2170,19 +2183,16 @@ pub(super) fn emit_map_get_match_fused(
         )))?;
 
     // Locate the Some / None arms (wildcard counts as None catch-all).
-    let mut some_arm: Option<&MatchArm> = None;
-    let mut none_arm: Option<&MatchArm> = None;
+    let mut some_arm: Option<&ResolvedMatchArm> = None;
+    let mut none_arm: Option<&ResolvedMatchArm> = None;
     for arm in arms {
         match &arm.pattern {
-            Pattern::Constructor(name, _) => {
-                let bare = name.rsplit('.').next().unwrap_or(name);
-                if bare == "Some" {
-                    some_arm = Some(arm);
-                } else if bare == "None" {
-                    none_arm = Some(arm);
-                }
-            }
-            Pattern::Wildcard => {
+            ResolvedPattern::Ctor(ctor, _) => match ctor {
+                ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => some_arm = Some(arm),
+                ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => none_arm = Some(arm),
+                _ => {}
+            },
+            ResolvedPattern::Wildcard => {
                 if none_arm.is_none() {
                     none_arm = Some(arm);
                 } else if some_arm.is_none() {
@@ -2206,7 +2216,7 @@ pub(super) fn emit_map_get_match_fused(
     // binding slot (if any); the value is harmlessly dead in the
     // None branch (we always pop, regardless of which arm fires —
     // wasm requires a balanced stack across the branch boundary).
-    if let Pattern::Constructor(_, _) = &some_arm.pattern
+    if let ResolvedPattern::Ctor(_, _) = &some_arm.pattern
         && let Some(arm_slots) = some_arm.binding_slots.get()
         && let Some(&slot) = arm_slots.first()
         && slot != u16::MAX
@@ -2236,8 +2246,8 @@ pub(super) fn emit_map_get_match_fused(
 ///    `struct.get $option_T 1`; None arm emits its body directly.
 pub(super) fn emit_option_match(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arms: &[MatchArm],
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -2259,19 +2269,16 @@ pub(super) fn emit_option_match(
 
     // Locate Some / None arms. Wildcard arm acts as the None
     // catch-all — same convention the variant dispatcher uses.
-    let mut some_arm: Option<&MatchArm> = None;
-    let mut none_arm: Option<&MatchArm> = None;
+    let mut some_arm: Option<&ResolvedMatchArm> = None;
+    let mut none_arm: Option<&ResolvedMatchArm> = None;
     for arm in arms {
         match &arm.pattern {
-            Pattern::Constructor(name, _) => {
-                let bare = name.rsplit('.').next().unwrap_or(name);
-                if bare == "Some" {
-                    some_arm = Some(arm);
-                } else if bare == "None" {
-                    none_arm = Some(arm);
-                }
-            }
-            Pattern::Wildcard => {
+            ResolvedPattern::Ctor(ctor, _) => match ctor {
+                ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => some_arm = Some(arm),
+                ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => none_arm = Some(arm),
+                _ => {}
+            },
+            ResolvedPattern::Wildcard => {
                 if none_arm.is_none() {
                     none_arm = Some(arm);
                 } else if some_arm.is_none() {
@@ -2306,7 +2313,7 @@ pub(super) fn emit_option_match(
 
     // Some branch: extract value into the bound slot (if any), then
     // emit body.
-    if let Pattern::Constructor(_, _) = &some_arm.pattern
+    if let ResolvedPattern::Ctor(_, _) = &some_arm.pattern
         && let Some(arm_slots) = some_arm.binding_slots.get()
         && let Some(&slot) = arm_slots.first()
         && slot != u16::MAX
@@ -2344,8 +2351,8 @@ pub(super) fn emit_option_match(
 /// catch-all is the final else.
 pub(super) fn emit_string_match(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arms: &[MatchArm],
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -2384,10 +2391,10 @@ pub(super) fn emit_string_match(
     // Split arms: literal-string arms first (in source order), then
     // a single default (wildcard or non-literal pattern). The type
     // checker already proved exhaustivity.
-    let mut literal_arms: Vec<(&str, &MatchArm)> = Vec::new();
-    let mut default_arm: Option<&MatchArm> = None;
+    let mut literal_arms: Vec<(&str, &ResolvedMatchArm)> = Vec::new();
+    let mut default_arm: Option<&ResolvedMatchArm> = None;
     for arm in arms {
-        if let Pattern::Literal(Literal::Str(s)) = &arm.pattern {
+        if let ResolvedPattern::Literal(Literal::Str(s)) = &arm.pattern {
             literal_arms.push((s.as_str(), arm));
         } else if default_arm.is_none() {
             default_arm = Some(arm);
@@ -2479,8 +2486,8 @@ pub(super) fn emit_string_literal_bytes(
 
 pub(super) fn emit_variant_dispatch(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arms: &[MatchArm],
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -2498,7 +2505,7 @@ pub(super) fn emit_variant_dispatch(
 
 pub(super) fn emit_variant_arm_cascade(
     func: &mut Function,
-    arms: &[MatchArm],
+    arms: &[ResolvedMatchArm],
     block_ty: wasm_encoder::BlockType,
     subject_scratch: u32,
     slots: &SlotTable,
@@ -2523,8 +2530,9 @@ pub(super) fn emit_variant_arm_cascade(
     // emit its body. Else recurse on the rest.
     let arm = &arms[0];
     match &arm.pattern {
-        Pattern::Constructor(name, _) => {
-            let bare = name.rsplit('.').next().unwrap_or(name);
+        ResolvedPattern::Ctor(ctor, _) => {
+            let name = ctor_dotted_name(ctor, ctx);
+            let bare = name.rsplit('.').next().unwrap_or(&name);
             let parent_hint = name.rsplit_once('.').map(|(p, _)| p);
             // Prefer the parent-disambiguated lookup so two sumtypes
             // sharing a bare variant name (e.g. `Query.ProviderSummary`
@@ -2547,7 +2555,7 @@ pub(super) fn emit_variant_arm_cascade(
             emit_variant_arm_cascade(func, &arms[1..], block_ty, subject_scratch, slots, ctx)?;
             func.instruction(&Instruction::End);
         }
-        Pattern::Wildcard => {
+        ResolvedPattern::Wildcard => {
             // Wildcard before the end — just emit it (rest unreachable).
             return emit_arm_body(func, arm, subject_scratch, slots, ctx);
         }
@@ -2565,13 +2573,14 @@ pub(super) fn emit_variant_arm_cascade(
 /// pattern decides what to extract.
 pub(super) fn emit_arm_body(
     func: &mut Function,
-    arm: &MatchArm,
+    arm: &ResolvedMatchArm,
     subject_scratch: u32,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    if let Pattern::Constructor(name, bindings) = &arm.pattern {
-        let bare = name.rsplit('.').next().unwrap_or(name);
+    if let ResolvedPattern::Ctor(ctor, bindings) = &arm.pattern {
+        let name = ctor_dotted_name(ctor, ctx);
+        let bare = name.rsplit('.').next().unwrap_or(&name);
         let parent_hint = name.rsplit_once('.').map(|(p, _)| p);
         let info = parent_hint
             .and_then(|p| ctx.registry.variant_in(p, bare))
@@ -2633,19 +2642,20 @@ pub(super) fn emit_arm_body(
 /// lands in phase 3b.
 pub(super) fn emit_single_variant_match(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arm: &MatchArm,
+    subject: &Spanned<ResolvedExpr>,
+    arm: &ResolvedMatchArm,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let (constructor, bindings) = match &arm.pattern {
-        Pattern::Constructor(c, b) => (c.as_str(), b.as_slice()),
+        ResolvedPattern::Ctor(c, b) => (ctor_dotted_name(c, ctx), b.as_slice()),
         _ => {
             return Err(WasmGcError::Validation(
                 "emit_single_variant_match called on non-Constructor pattern".into(),
             ));
         }
     };
+    let constructor = constructor.as_str();
     let body = arm.body.as_ref();
     let arm_slots = arm.binding_slots.get().ok_or(WasmGcError::Validation(
         "single-arm match reached emit without resolver-allocated binding_slots".into(),
@@ -2772,7 +2782,7 @@ pub(super) fn emit_single_variant_match(
 pub(super) fn emit_constructor_with_args(
     func: &mut Function,
     info: &super::super::types::VariantInfo,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -2795,81 +2805,6 @@ pub(super) fn emit_constructor_with_args(
     Ok(())
 }
 
-/// Lower `Constructor(name, Some(payload))` or nullary `Constructor(name, None)`
-/// to `struct.new $variant_type_idx`. Variants are positional (no field
-/// names), so payload values are pushed in source order before
-/// `struct.new`.
-pub(super) fn emit_constructor(
-    func: &mut Function,
-    outer: &Spanned<Expr>,
-    name: &str,
-    payload: Option<&Spanned<Expr>>,
-    slots: &SlotTable,
-    ctx: &EmitCtx<'_>,
-) -> Result<(), WasmGcError> {
-    // Built-in `Option` constructors don't go through `TypeRegistry`'s
-    // variant table (Option isn't a TypeDef). Route them to the
-    // dedicated emitter that picks the right monomorphised slot.
-    let bare = name.rsplit('.').next().unwrap_or(name);
-    if name == "Option.Some" || (bare == "Some" && name.starts_with("Option")) {
-        return emit_option_constructor(func, payload, None, slots, ctx);
-    }
-    if name == "Option.None" || (bare == "None" && name.starts_with("Option")) {
-        // Read T off the typed outer expr (Option<T> stamped by the
-        // type checker), with the Type::Invalid-recovery reader so
-        // post-error gradual-typing branches still resolve.
-        let stamped_canonical = aver_type_canonical(outer, ctx.return_type, ctx.registry);
-        let hint: String = if let Some(inner) = stamped_canonical
-            .strip_prefix("Option<")
-            .and_then(|s| s.strip_suffix('>'))
-        {
-            inner.to_string()
-        } else {
-            ctx.return_type.to_string()
-        };
-        return emit_option_constructor(func, None, Some(&hint), slots, ctx);
-    }
-    if name == "Result.Ok" || (bare == "Ok" && name.starts_with("Result")) {
-        return emit_result_constructor(func, "Ok", payload, slots, ctx);
-    }
-    if name == "Result.Err" || (bare == "Err" && name.starts_with("Result")) {
-        return emit_result_constructor(func, "Err", payload, slots, ctx);
-    }
-    // Constructor names can be dotted (`Foo.Bar`) or bare (`Bar`).
-    // Prefer the parent-disambiguated lookup when the dotted form is
-    // available so two sumtypes sharing a bare variant name don't
-    // collide.
-    let bare = name.rsplit('.').next().unwrap_or(name);
-    let parent_hint = name.rsplit_once('.').map(|(p, _)| p);
-    let info = parent_hint
-        .and_then(|p| ctx.registry.variant_in(p, bare))
-        .or_else(|| ctx.registry.variant(bare))
-        .ok_or(WasmGcError::Validation(format!(
-            "unknown variant constructor `{name}`"
-        )))?;
-    // Aver's AST treats single-payload constructors as `Some(expr)` —
-    // multi-field variants come through as `Some(Tuple(...))`. Phase
-    // 3a only handles the single-payload case directly; tuple-payload
-    // variants need phase 3b (Tuple lowering) to come online.
-    let payload_count = info.fields.len();
-    if payload_count == 0 {
-        // Nullary constructor — empty struct.
-        func.instruction(&Instruction::StructNew(info.type_idx));
-        return Ok(());
-    }
-    if payload_count > 1 {
-        return Err(WasmGcError::Unimplemented(
-            "phase 3b — multi-field variant constructors (need Tuple lowering)",
-        ));
-    }
-    let payload = payload.ok_or(WasmGcError::Validation(format!(
-        "variant `{name}` expects 1 payload but got 0"
-    )))?;
-    emit_expr(func, payload, slots, ctx)?;
-    func.instruction(&Instruction::StructNew(info.type_idx));
-    Ok(())
-}
-
 /// Lower `match subject { arm0; arm1; ...; default }` into a cascade
 /// of `if`/`else` blocks. Phase-4 shape:
 /// - subject must be `Int` or `Bool`,
@@ -2883,8 +2818,8 @@ pub(super) fn emit_constructor(
 /// Bool subjects (single `if` over the boolean).
 pub(super) fn emit_match(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    arms: &[MatchArm],
+    subject: &Spanned<ResolvedExpr>,
+    arms: &[ResolvedMatchArm],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -2913,13 +2848,13 @@ pub(super) fn emit_match(
         }
         // Find which arm is `true` and which is `false`. Wildcard
         // counts as the "other" branch.
-        let mut true_body: Option<&Spanned<Expr>> = None;
-        let mut false_body: Option<&Spanned<Expr>> = None;
+        let mut true_body: Option<&Spanned<ResolvedExpr>> = None;
+        let mut false_body: Option<&Spanned<ResolvedExpr>> = None;
         for arm in arms {
             match &arm.pattern {
-                Pattern::Literal(Literal::Bool(true)) => true_body = Some(&arm.body),
-                Pattern::Literal(Literal::Bool(false)) => false_body = Some(&arm.body),
-                Pattern::Wildcard => {
+                ResolvedPattern::Literal(Literal::Bool(true)) => true_body = Some(&arm.body),
+                ResolvedPattern::Literal(Literal::Bool(false)) => false_body = Some(&arm.body),
+                ResolvedPattern::Wildcard => {
                     if true_body.is_none() {
                         true_body = Some(&arm.body);
                     } else {
@@ -2951,15 +2886,17 @@ pub(super) fn emit_match(
     // List match — `[] -> ...; [head, ..tail] -> ...`. Subject is
     // `(ref null $list_T)`; empty = ref.is_null, cons = struct.get
     // head/tail.
-    if arms
-        .iter()
-        .any(|a| matches!(&a.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
-    {
+    if arms.iter().any(|a| {
+        matches!(
+            &a.pattern,
+            ResolvedPattern::EmptyList | ResolvedPattern::Cons(_, _)
+        )
+    }) {
         return emit_list_match(func, subject, arms, block_ty, slots, ctx);
     }
 
     // Built-in `Result<T, E>` match — tag-based, two payload fields.
-    if arms.iter().any(arm_is_result_pattern) {
+    if arms.iter().any(arm_is_result_pattern_resolved) {
         return emit_result_match(func, subject, arms, block_ty, slots, ctx);
     }
 
@@ -2967,16 +2904,13 @@ pub(super) fn emit_match(
     // first field. Detected up-front because Option isn't in the
     // user-variant table and the subject is always a (ref null
     // $option_T).
-    if arms.iter().any(arm_is_option_pattern) {
+    if arms.iter().any(arm_is_option_pattern_resolved) {
         // Fused shape: `match Map.get(m, k) { Option.Some(v) -> ...;
         // Option.None -> ... }` lowers via the per-(K,V) get_pair
         // helper — multi-result `(found, value)` return — without
         // ever allocating an Option<V>.
-        if let Expr::FnCall(callee, fn_args) = &subject.node
-            && let Expr::Attr(parent, member) = &callee.node
-            && let Expr::Ident(p) = &parent.node
-            && p == "Map"
-            && member == "get"
+        if let ResolvedExpr::Call(ResolvedCallee::Builtin(name), fn_args) = &subject.node
+            && name == "Map.get"
             && fn_args.len() == 2
         {
             return emit_map_get_match_fused(
@@ -2996,7 +2930,7 @@ pub(super) fn emit_match(
     // `(ref null $tuple_A_B_..._N)`; struct.get its fields into
     // bindings. Variadic arity (any N >= 2).
     if arms.len() == 1
-        && let Pattern::Tuple(items) = &arms[0].pattern
+        && let ResolvedPattern::Tuple(items) = &arms[0].pattern
         && items.len() >= 2
     {
         return emit_tuple_match(func, subject, &arms[0], slots, ctx);
@@ -3007,12 +2941,12 @@ pub(super) fn emit_match(
     // tests AND'd into one verdict; bindings extract from the
     // per-element variant struct on the matching branch.
     if arms.iter().any(|a| {
-        matches!(&a.pattern, Pattern::Tuple(items)
-            if items.iter().any(|i| matches!(i, Pattern::Constructor(_, _))))
+        matches!(&a.pattern, ResolvedPattern::Tuple(items)
+            if items.iter().any(|i| matches!(i, ResolvedPattern::Ctor(_, _))))
     }) && arms.last().is_some_and(|a| {
         matches!(
             &a.pattern,
-            Pattern::Wildcard | Pattern::Ident(_) | Pattern::Tuple(_)
+            ResolvedPattern::Wildcard | ResolvedPattern::Ident(_) | ResolvedPattern::Tuple(_)
         )
     }) {
         return emit_tuple_constructor_match(func, subject, arms, block_ty, slots, ctx);
@@ -3022,7 +2956,7 @@ pub(super) fn emit_match(
     // Common in newtype-style sum types; cast + extract directly without
     // a dispatch test.
     if arms.len() == 1
-        && let Pattern::Constructor(_, _) = &arms[0].pattern
+        && let ResolvedPattern::Ctor(_, _) = &arms[0].pattern
     {
         return emit_single_variant_match(func, subject, &arms[0], slots, ctx);
     }
@@ -3031,7 +2965,7 @@ pub(super) fn emit_match(
     // cascade against the variant struct types.
     let has_constructor_arm = arms
         .iter()
-        .any(|a| matches!(a.pattern, Pattern::Constructor(_, _)));
+        .any(|a| matches!(a.pattern, ResolvedPattern::Ctor(_, _)));
     if has_constructor_arm {
         return emit_variant_dispatch(func, subject, arms, block_ty, slots, ctx);
     }
@@ -3064,11 +2998,11 @@ pub(super) fn emit_match(
     //
     // This keeps phase 4 contained — phase 5 cleanup can switch to a
     // proper temp-local once we add a per-fn local-allocator.
-    let mut wildcard_body: Option<&Spanned<Expr>> = None;
-    let mut typed_arms: Vec<(i64, &Spanned<Expr>)> = Vec::new();
+    let mut wildcard_body: Option<&Spanned<ResolvedExpr>> = None;
+    let mut typed_arms: Vec<(i64, &Spanned<ResolvedExpr>)> = Vec::new();
     for arm in arms {
         match &arm.pattern {
-            Pattern::Literal(Literal::Int(n)) => typed_arms.push((*n, &arm.body)),
+            ResolvedPattern::Literal(Literal::Int(n)) => typed_arms.push((*n, &arm.body)),
             // First wildcard wins. Aver match semantics is
             // first-applicable-arm; a plain `wildcard_body =
             // Some(...)` here let *later* wildcards overwrite the
@@ -3080,7 +3014,7 @@ pub(super) fn emit_match(
             // seed: VM returned the terminal arm's value, wasm-gc
             // applied the trailing `(-countDown((n-1)))` arm and
             // produced the negated value.
-            Pattern::Wildcard => {
+            ResolvedPattern::Wildcard => {
                 wildcard_body.get_or_insert(&arm.body);
             }
             _ => {
@@ -3100,9 +3034,9 @@ pub(super) fn emit_match(
 
 pub(super) fn emit_int_match_cascade(
     func: &mut Function,
-    subject: &Spanned<Expr>,
-    typed_arms: &[(i64, &Spanned<Expr>)],
-    wildcard: &Spanned<Expr>,
+    subject: &Spanned<ResolvedExpr>,
+    typed_arms: &[(i64, &Spanned<ResolvedExpr>)],
+    wildcard: &Spanned<ResolvedExpr>,
     block_ty: wasm_encoder::BlockType,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -3140,7 +3074,7 @@ pub(super) fn emit_int_match_cascade(
 pub(super) fn emit_tail_call(
     func: &mut Function,
     target: &str,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {

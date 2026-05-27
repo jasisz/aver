@@ -15,7 +15,7 @@
 
 use wasm_encoder::ValType;
 
-use crate::ast::{MatchArm, Pattern, Spanned};
+use crate::ast::Spanned;
 use crate::types::Type;
 
 use super::super::WasmGcError;
@@ -25,38 +25,13 @@ use super::super::types::{TypeRegistry, aver_to_wasm};
 // Match-arm shape predicates (schema-level — no type inference involved)
 // ---------------------------------------------------------------------------
 
-/// True when a match arm matches against `Option.Some(_)` or
+/// True when a match arm matches against `Option.Some(_)` /
 /// `Option.None`. Used to opt the surrounding match into the
 /// dedicated tag-based dispatch path (instead of the generic
-/// `ref.test` cascade for user variants).
-pub(super) fn arm_is_option_pattern(arm: &MatchArm) -> bool {
-    if let Pattern::Constructor(name, _) = &arm.pattern {
-        let bare = name.rsplit('.').next().unwrap_or(name);
-        return name == "Option.Some"
-            || name == "Option.None"
-            || ((bare == "Some" || bare == "None") && name.starts_with("Option"));
-    }
-    false
-}
-
-/// True when a match arm targets `Result.Ok(_)` or `Result.Err(_)`.
-pub(super) fn arm_is_result_pattern(arm: &MatchArm) -> bool {
-    if let Pattern::Constructor(name, _) = &arm.pattern {
-        let bare = name.rsplit('.').next().unwrap_or(name);
-        return name == "Result.Ok"
-            || name == "Result.Err"
-            || ((bare == "Ok" || bare == "Err") && name.starts_with("Result"));
-    }
-    false
-}
-
-/// Resolved-form mirror of [`arm_is_option_pattern`] for emitters that
-/// have already migrated to walk [`crate::ir::hir::ResolvedMatchArm`].
-/// The pattern shape comparison happens against
-/// [`crate::ir::hir::ResolvedCtor::Builtin`] variants instead of the
-/// source-shape dotted name. Allowed dead until the wasm-gc match
-/// emitters migrate in the follow-up PRs of #147 phase E.
-#[allow(dead_code)]
+/// `ref.test` cascade for user variants). Reads identity off
+/// [`crate::ir::hir::ResolvedCtor::Builtin`] — post Phase E PR 9.1
+/// every reachable arm carries the typed ctor, so the pre-resolve
+/// source-shape variant is gone.
 pub(super) fn arm_is_option_pattern_resolved(arm: &crate::ir::hir::ResolvedMatchArm) -> bool {
     use crate::ir::hir::{BuiltinCtor, ResolvedCtor, ResolvedPattern};
     matches!(
@@ -68,10 +43,9 @@ pub(super) fn arm_is_option_pattern_resolved(arm: &crate::ir::hir::ResolvedMatch
     )
 }
 
-/// Resolved-form mirror of [`arm_is_result_pattern`]. Allowed dead
-/// until the wasm-gc match emitters migrate in the follow-up PRs of
-/// #147 phase E.
-#[allow(dead_code)]
+/// True when a match arm matches against `Result.Ok(_)` /
+/// `Result.Err(_)`. Same Phase E shape as
+/// [`arm_is_option_pattern_resolved`].
 pub(super) fn arm_is_result_pattern_resolved(arm: &crate::ir::hir::ResolvedMatchArm) -> bool {
     use crate::ir::hir::{BuiltinCtor, ResolvedCtor, ResolvedPattern};
     matches!(

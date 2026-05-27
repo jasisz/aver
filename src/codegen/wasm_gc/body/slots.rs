@@ -10,12 +10,19 @@ use std::collections::{HashMap, HashSet};
 
 use wasm_encoder::ValType;
 
-use crate::ast::{Expr, FnBody, FnDef, Literal, Pattern, Spanned, Stmt};
+use crate::ast::{Literal, Spanned};
+use crate::ir::hir::{
+    ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedPattern, ResolvedStmt,
+    ResolvedStrPart,
+};
+use crate::types::Type;
 
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::FnMap;
-use super::infer::{arm_is_option_pattern, arm_is_result_pattern, aver_type_str_of};
+use super::infer::{
+    arm_is_option_pattern_resolved, arm_is_result_pattern_resolved, aver_type_str_of,
+};
 
 /// Per-fn slot table — one entry per local (param or binding) in
 /// resolver-allocation order. Slot N maps to `wasm local N`.
@@ -99,7 +106,7 @@ impl SlotTable {
     /// AST (`Spanned::ty()`), builds a dense `Vec<ValType>` indexed by
     /// slot number.
     pub(super) fn build_for_fn(
-        fd: &FnDef,
+        fd: &ResolvedFnDef,
         registry: &TypeRegistry,
         _fn_map: &FnMap,
     ) -> Result<Self, WasmGcError> {
@@ -137,7 +144,7 @@ impl SlotTable {
             // body that touches anything beyond the parameters will
             // surface the gap as a wasm validation error.
             for (_, ty) in &fd.params {
-                let v = aver_to_wasm(ty, Some(registry))
+                let v = aver_to_wasm(&ty.display(), Some(registry))
                     .unwrap_or(None)
                     .unwrap_or(ValType::I32);
                 by_slot.push(v);
@@ -293,314 +300,198 @@ impl SlotTable {
 /// True if the body reaches an `Args.get()` call (no args). The inline
 /// expansion needs four scratch slots; they're only worth reserving
 /// when actually used.
-pub(super) fn fn_needs_args_get_scratch(fd: &FnDef) -> bool {
-    let FnBody::Block(stmts) = fd.body.as_ref();
+pub(super) fn fn_needs_args_get_scratch(fd: &ResolvedFnDef) -> bool {
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(stmt_reaches_args_get_no_args)
 }
 
-fn stmt_reaches_args_get_no_args(stmt: &Stmt) -> bool {
+fn stmt_reaches_args_get_no_args(stmt: &ResolvedStmt) -> bool {
     match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_reaches_args_get_no_args(&e.node),
+        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
+            expr_reaches_args_get_no_args(&value.node)
+        }
     }
 }
 
-fn expr_reaches_args_get_no_args(expr: &Expr) -> bool {
+/// Shared walker over a [`ResolvedExpr`] that returns `true` when any
+/// reachable [`ResolvedExpr::Call`] matches the predicate. Builtin
+/// callees are recognised by their `ResolvedCallee::Builtin(name)`
+/// canonical string; user fns / intrinsics never match the
+/// short-circuit predicate (they don't expose Args/Console/Env/Random
+/// builtins). Replaces the four near-identical walkers from the
+/// pre-Phase-E shape.
+fn expr_reaches_builtin_call<F>(expr: &ResolvedExpr, matches: &F) -> bool
+where
+    F: Fn(&str, &[Spanned<ResolvedExpr>]) -> bool,
+{
     match expr {
-        Expr::FnCall(callee, args) => {
-            if args.is_empty()
-                && let Expr::Attr(parent, member) = &callee.node
-                && let Expr::Ident(p) = &parent.node
-                && p == "Args"
-                && member == "get"
+        ResolvedExpr::Call(callee, args) => {
+            if let ResolvedCallee::Builtin(name) = callee
+                && matches(name.as_str(), args)
             {
                 return true;
             }
-            expr_reaches_args_get_no_args(&callee.node)
-                || args.iter().any(|a| expr_reaches_args_get_no_args(&a.node))
+            args.iter()
+                .any(|a| expr_reaches_builtin_call(&a.node, matches))
         }
-        Expr::BinOp(_, l, r) => {
-            expr_reaches_args_get_no_args(&l.node) || expr_reaches_args_get_no_args(&r.node)
+        ResolvedExpr::BinOp(_, l, r) => {
+            expr_reaches_builtin_call(&l.node, matches)
+                || expr_reaches_builtin_call(&r.node, matches)
         }
-        Expr::Neg(inner) => expr_reaches_args_get_no_args(&inner.node),
-        Expr::Match { subject, arms } => {
-            expr_reaches_args_get_no_args(&subject.node)
+        ResolvedExpr::Neg(inner) => expr_reaches_builtin_call(&inner.node, matches),
+        ResolvedExpr::Match { subject, arms } => {
+            expr_reaches_builtin_call(&subject.node, matches)
                 || arms
                     .iter()
-                    .any(|a| expr_reaches_args_get_no_args(&a.body.node))
+                    .any(|a| expr_reaches_builtin_call(&a.body.node, matches))
         }
-        Expr::TailCall(boxed) => boxed
-            .args
+        ResolvedExpr::TailCall { args, .. } => args
             .iter()
-            .any(|a| expr_reaches_args_get_no_args(&a.node)),
-        Expr::Attr(obj, _) => expr_reaches_args_get_no_args(&obj.node),
-        Expr::ErrorProp(inner) => expr_reaches_args_get_no_args(&inner.node),
-        Expr::Constructor(_, payload) => payload
-            .as_deref()
-            .is_some_and(|p| expr_reaches_args_get_no_args(&p.node)),
-        Expr::RecordCreate { fields, .. } => fields
+            .any(|a| expr_reaches_builtin_call(&a.node, matches)),
+        ResolvedExpr::Attr(obj, _) => expr_reaches_builtin_call(&obj.node, matches),
+        ResolvedExpr::ErrorProp(inner) => expr_reaches_builtin_call(&inner.node, matches),
+        ResolvedExpr::Ctor(_, args) => args
             .iter()
-            .any(|(_, e)| expr_reaches_args_get_no_args(&e.node)),
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_reaches_args_get_no_args(&base.node)
+            .any(|a| expr_reaches_builtin_call(&a.node, matches)),
+        ResolvedExpr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, e)| expr_reaches_builtin_call(&e.node, matches)),
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+            expr_reaches_builtin_call(&base.node, matches)
                 || updates
                     .iter()
-                    .any(|(_, e)| expr_reaches_args_get_no_args(&e.node))
+                    .any(|(_, e)| expr_reaches_builtin_call(&e.node, matches))
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(|e| expr_reaches_args_get_no_args(&e.node))
-        }
-        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
-            expr_reaches_args_get_no_args(&k.node) || expr_reaches_args_get_no_args(&v.node)
+        ResolvedExpr::List(items)
+        | ResolvedExpr::Tuple(items)
+        | ResolvedExpr::IndependentProduct(items, _) => items
+            .iter()
+            .any(|e| expr_reaches_builtin_call(&e.node, matches)),
+        ResolvedExpr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_reaches_builtin_call(&k.node, matches)
+                || expr_reaches_builtin_call(&v.node, matches)
         }),
-        Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
-            if let crate::ast::StrPart::Parsed(inner) = p {
-                expr_reaches_args_get_no_args(&inner.node)
+        ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|p| {
+            if let ResolvedStrPart::Parsed(inner) = p {
+                expr_reaches_builtin_call(&inner.node, matches)
             } else {
                 false
             }
         }),
         _ => false,
     }
+}
+
+fn expr_reaches_args_get_no_args(expr: &ResolvedExpr) -> bool {
+    expr_reaches_builtin_call(expr, &|name, args| name == "Args.get" && args.is_empty())
 }
 
 /// True if the body reaches at least one `Console.print` /
 /// `Console.error` / `Console.warn` call. Used to gate the i32 scratch
 /// slot that the wasip2 call-site lowering uses to cache the
 /// `__rt_string_to_lm` byte-length return for the retptr computation.
-pub(super) fn fn_needs_console_print_wasip2_scratch(fd: &FnDef) -> bool {
-    let FnBody::Block(stmts) = fd.body.as_ref();
+pub(super) fn fn_needs_console_print_wasip2_scratch(fd: &ResolvedFnDef) -> bool {
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(stmt_reaches_console_print)
 }
 
-fn stmt_reaches_console_print(stmt: &Stmt) -> bool {
+fn stmt_reaches_console_print(stmt: &ResolvedStmt) -> bool {
     match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_reaches_console_print(&e.node),
+        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
+            expr_reaches_console_print(&value.node)
+        }
     }
 }
 
-fn expr_reaches_console_print(expr: &Expr) -> bool {
-    match expr {
-        Expr::FnCall(callee, args) => {
-            if let Expr::Attr(parent, member) = &callee.node
-                && let Expr::Ident(p) = &parent.node
-                && p == "Console"
-                && matches!(member.as_str(), "print" | "error" | "warn")
-            {
-                return true;
-            }
-            expr_reaches_console_print(&callee.node)
-                || args.iter().any(|a| expr_reaches_console_print(&a.node))
-        }
-        Expr::BinOp(_, l, r) => {
-            expr_reaches_console_print(&l.node) || expr_reaches_console_print(&r.node)
-        }
-        Expr::Neg(inner) => expr_reaches_console_print(&inner.node),
-        Expr::Match { subject, arms } => {
-            expr_reaches_console_print(&subject.node)
-                || arms
-                    .iter()
-                    .any(|a| expr_reaches_console_print(&a.body.node))
-        }
-        Expr::TailCall(boxed) => boxed
-            .args
-            .iter()
-            .any(|a| expr_reaches_console_print(&a.node)),
-        Expr::Attr(obj, _) => expr_reaches_console_print(&obj.node),
-        Expr::ErrorProp(inner) => expr_reaches_console_print(&inner.node),
-        Expr::Constructor(_, payload) => payload
-            .as_deref()
-            .is_some_and(|p| expr_reaches_console_print(&p.node)),
-        Expr::RecordCreate { fields, .. } => fields
-            .iter()
-            .any(|(_, e)| expr_reaches_console_print(&e.node)),
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_reaches_console_print(&base.node)
-                || updates
-                    .iter()
-                    .any(|(_, e)| expr_reaches_console_print(&e.node))
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(|e| expr_reaches_console_print(&e.node))
-        }
-        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
-            expr_reaches_console_print(&k.node) || expr_reaches_console_print(&v.node)
-        }),
-        Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
-            if let crate::ast::StrPart::Parsed(inner) = p {
-                expr_reaches_console_print(&inner.node)
-            } else {
-                false
-            }
-        }),
-        _ => false,
-    }
+fn expr_reaches_console_print(expr: &ResolvedExpr) -> bool {
+    expr_reaches_builtin_call(expr, &|name, _| {
+        matches!(name, "Console.print" | "Console.error" | "Console.warn")
+    })
 }
 
 /// True if the body reaches at least one `Env.get(name)` call.
 /// Used to gate the wasip2 `[retptr, key_len]` scratch pair.
-pub(super) fn fn_needs_env_get_wasip2_scratch(fd: &FnDef) -> bool {
-    let FnBody::Block(stmts) = fd.body.as_ref();
+pub(super) fn fn_needs_env_get_wasip2_scratch(fd: &ResolvedFnDef) -> bool {
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(stmt_reaches_env_get)
 }
 
-fn stmt_reaches_env_get(stmt: &Stmt) -> bool {
+fn stmt_reaches_env_get(stmt: &ResolvedStmt) -> bool {
     match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_reaches_env_get(&e.node),
+        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
+            expr_reaches_env_get(&value.node)
+        }
     }
 }
 
-fn expr_reaches_env_get(expr: &Expr) -> bool {
-    match expr {
-        Expr::FnCall(callee, args) => {
-            if let Expr::Attr(parent, member) = &callee.node
-                && let Expr::Ident(p) = &parent.node
-                && p == "Env"
-                && member == "get"
-            {
-                return true;
-            }
-            expr_reaches_env_get(&callee.node) || args.iter().any(|a| expr_reaches_env_get(&a.node))
-        }
-        Expr::BinOp(_, l, r) => expr_reaches_env_get(&l.node) || expr_reaches_env_get(&r.node),
-        Expr::Neg(inner) => expr_reaches_env_get(&inner.node),
-        Expr::Match { subject, arms } => {
-            expr_reaches_env_get(&subject.node)
-                || arms.iter().any(|a| expr_reaches_env_get(&a.body.node))
-        }
-        Expr::TailCall(boxed) => boxed.args.iter().any(|a| expr_reaches_env_get(&a.node)),
-        Expr::Attr(obj, _) => expr_reaches_env_get(&obj.node),
-        Expr::ErrorProp(inner) => expr_reaches_env_get(&inner.node),
-        Expr::Constructor(_, payload) => payload
-            .as_deref()
-            .is_some_and(|p| expr_reaches_env_get(&p.node)),
-        Expr::RecordCreate { fields, .. } => {
-            fields.iter().any(|(_, e)| expr_reaches_env_get(&e.node))
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_reaches_env_get(&base.node)
-                || updates.iter().any(|(_, e)| expr_reaches_env_get(&e.node))
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(|e| expr_reaches_env_get(&e.node))
-        }
-        Expr::MapLiteral(entries) => entries
-            .iter()
-            .any(|(k, v)| expr_reaches_env_get(&k.node) || expr_reaches_env_get(&v.node)),
-        Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
-            if let crate::ast::StrPart::Parsed(inner) = p {
-                expr_reaches_env_get(&inner.node)
-            } else {
-                false
-            }
-        }),
-        _ => false,
-    }
+fn expr_reaches_env_get(expr: &ResolvedExpr) -> bool {
+    expr_reaches_builtin_call(expr, &|name, _| name == "Env.get")
 }
 
 /// True if the body reaches at least one `Random.int(min, max)` call.
 /// Gates the wasip2 i64 scratch slot that stashes `min` once so the
 /// call-site lowering doesn't double-evaluate it.
-pub(super) fn fn_needs_random_int_wasip2_scratch(fd: &FnDef) -> bool {
-    let FnBody::Block(stmts) = fd.body.as_ref();
+pub(super) fn fn_needs_random_int_wasip2_scratch(fd: &ResolvedFnDef) -> bool {
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(stmt_reaches_random_int)
 }
 
-fn stmt_reaches_random_int(stmt: &Stmt) -> bool {
+fn stmt_reaches_random_int(stmt: &ResolvedStmt) -> bool {
     match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_reaches_random_int(&e.node),
+        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
+            expr_reaches_random_int(&value.node)
+        }
     }
 }
 
-fn expr_reaches_random_int(expr: &Expr) -> bool {
-    match expr {
-        Expr::FnCall(callee, args) => {
-            if let Expr::Attr(parent, member) = &callee.node
-                && let Expr::Ident(p) = &parent.node
-                && p == "Random"
-                && member == "int"
-            {
-                return true;
-            }
-            expr_reaches_random_int(&callee.node)
-                || args.iter().any(|a| expr_reaches_random_int(&a.node))
-        }
-        Expr::BinOp(_, l, r) => {
-            expr_reaches_random_int(&l.node) || expr_reaches_random_int(&r.node)
-        }
-        Expr::Neg(inner) => expr_reaches_random_int(&inner.node),
-        Expr::Match { subject, arms } => {
-            expr_reaches_random_int(&subject.node)
-                || arms.iter().any(|a| expr_reaches_random_int(&a.body.node))
-        }
-        Expr::TailCall(boxed) => boxed.args.iter().any(|a| expr_reaches_random_int(&a.node)),
-        Expr::Attr(obj, _) => expr_reaches_random_int(&obj.node),
-        Expr::ErrorProp(inner) => expr_reaches_random_int(&inner.node),
-        Expr::Constructor(_, payload) => payload
-            .as_deref()
-            .is_some_and(|p| expr_reaches_random_int(&p.node)),
-        Expr::RecordCreate { fields, .. } => {
-            fields.iter().any(|(_, e)| expr_reaches_random_int(&e.node))
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_reaches_random_int(&base.node)
-                || updates
-                    .iter()
-                    .any(|(_, e)| expr_reaches_random_int(&e.node))
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            items.iter().any(|e| expr_reaches_random_int(&e.node))
-        }
-        Expr::MapLiteral(entries) => entries
-            .iter()
-            .any(|(k, v)| expr_reaches_random_int(&k.node) || expr_reaches_random_int(&v.node)),
-        Expr::InterpolatedStr(parts) => parts.iter().any(|p| {
-            if let crate::ast::StrPart::Parsed(inner) = p {
-                expr_reaches_random_int(&inner.node)
-            } else {
-                false
-            }
-        }),
-        _ => false,
-    }
+fn expr_reaches_random_int(expr: &ResolvedExpr) -> bool {
+    expr_reaches_builtin_call(expr, &|name, _| name == "Random.int")
 }
 
 /// True if the body has at least one multi-arm `match` whose arms are
 /// `Pattern::Constructor` against a non-newtype variant. Single-arm
 /// matches and newtype matches don't need a scratch (the cast is
 /// elided), so we only allocate when really necessary.
-pub(super) fn fn_needs_subject_scratch(fd: &FnDef, registry: &TypeRegistry) -> bool {
-    let FnBody::Block(stmts) = fd.body.as_ref();
+pub(super) fn fn_needs_subject_scratch(fd: &ResolvedFnDef, registry: &TypeRegistry) -> bool {
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(|s| stmt_needs_scratch(s, registry))
 }
 
-pub(super) fn stmt_needs_scratch(stmt: &Stmt, registry: &TypeRegistry) -> bool {
+pub(super) fn stmt_needs_scratch(stmt: &ResolvedStmt, registry: &TypeRegistry) -> bool {
     match stmt {
-        Stmt::Binding(_, _, e) | Stmt::Expr(e) => expr_needs_scratch(&e.node, registry),
+        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
+            expr_needs_scratch(&value.node, registry)
+        }
     }
 }
 
 #[allow(clippy::only_used_in_recursion)]
-pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
+pub(super) fn expr_needs_scratch(expr: &ResolvedExpr, registry: &TypeRegistry) -> bool {
     match expr {
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Match { subject, arms } => {
             if expr_needs_scratch(&subject.node, registry) {
                 return true;
             }
             // Built-in Option dispatch needs a scratch (subject ref is
             // read multiple times: tag check, value extraction).
-            if arms.iter().any(arm_is_option_pattern) {
+            if arms.iter().any(arm_is_option_pattern_resolved) {
                 return true;
             }
-            if arms.iter().any(arm_is_result_pattern) {
+            if arms.iter().any(arm_is_result_pattern_resolved) {
+                return true;
+            }
+            if arms.iter().any(|a| {
+                matches!(
+                    &a.pattern,
+                    ResolvedPattern::EmptyList | ResolvedPattern::Cons(_, _)
+                )
+            }) {
                 return true;
             }
             if arms
                 .iter()
-                .any(|a| matches!(&a.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
+                .any(|a| matches!(&a.pattern, ResolvedPattern::Tuple(_)))
             {
-                return true;
-            }
-            if arms.iter().any(|a| matches!(&a.pattern, Pattern::Tuple(_))) {
                 return true;
             }
             // String-subject match (`match s { "literal" -> ... }`)
@@ -608,7 +499,7 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             // each literal — needs a scratch slot.
             if arms
                 .iter()
-                .any(|a| matches!(&a.pattern, Pattern::Literal(Literal::Str(_))))
+                .any(|a| matches!(&a.pattern, ResolvedPattern::Literal(Literal::Str(_))))
             {
                 return true;
             }
@@ -625,64 +516,48 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
             // "no scratch reserved".
             if arms
                 .iter()
-                .any(|a| matches!(a.pattern, Pattern::Constructor(_, _)))
+                .any(|a| matches!(&a.pattern, ResolvedPattern::Ctor(_, _)))
             {
                 return true;
             }
             arms.iter()
                 .any(|a| expr_needs_scratch(&a.body.node, registry))
         }
-        Expr::BinOp(_, l, r) => {
+        ResolvedExpr::BinOp(_, l, r) => {
             expr_needs_scratch(&l.node, registry) || expr_needs_scratch(&r.node, registry)
         }
-        Expr::Neg(inner) => expr_needs_scratch(&inner.node, registry),
-        Expr::FnCall(callee, args) => {
-            // `Option.withDefault(opt, default)` falls back to the
-            // boxed path when the inner shape isn't a fused
-            // Vector/Map. The boxed emitter stashes the Option in the
-            // scratch slot for tag inspection. Conservatively reserve
-            // scratch for any Option.withDefault call — the cost of
-            // an unused scratch local is one wasm value, the cost of
-            // missing it is a validation crash.
-            if let Expr::Attr(parent, member) = &callee.node
-                && let Expr::Ident(p) = &parent.node
-                && ((p == "Option" || p == "Result") && member == "withDefault")
+        ResolvedExpr::Neg(inner) => expr_needs_scratch(&inner.node, registry),
+        ResolvedExpr::Call(callee, args) => {
+            // `Option.withDefault(opt, default)` / `Result.withDefault`
+            // / `Option.toResult` — conservatively reserve scratch; the
+            // boxed emitters stash the Option/Result for tag inspection.
+            if let ResolvedCallee::Builtin(name) = callee
+                && matches!(
+                    name.as_str(),
+                    "Option.withDefault" | "Result.withDefault" | "Option.toResult"
+                )
             {
                 return true;
             }
-            // `Option.toResult(opt, err)` inspects the Option's tag
-            // and re-uses the value field on the Some arm — same
-            // scratch-slot story as withDefault.
-            if let Expr::Attr(parent, member) = &callee.node
-                && let Expr::Ident(p) = &parent.node
-                && p == "Option"
-                && member == "toResult"
-            {
-                return true;
-            }
-            expr_needs_scratch(&callee.node, registry)
-                || args.iter().any(|a| expr_needs_scratch(&a.node, registry))
+            args.iter().any(|a| expr_needs_scratch(&a.node, registry))
         }
-        Expr::TailCall(boxed) => boxed
-            .args
-            .iter()
-            .any(|a| expr_needs_scratch(&a.node, registry)),
-        Expr::Attr(obj, _) => expr_needs_scratch(&obj.node, registry),
+        ResolvedExpr::TailCall { args, .. } => {
+            args.iter().any(|a| expr_needs_scratch(&a.node, registry))
+        }
+        ResolvedExpr::Attr(obj, _) => expr_needs_scratch(&obj.node, registry),
         // `subject?` stashes the Result in scratch, reads tag, and
         // either unwraps field 1 or returns the whole subject.
-        Expr::ErrorProp(_) => true,
-        Expr::Constructor(_, payload) => payload
-            .as_deref()
-            .is_some_and(|p| expr_needs_scratch(&p.node, registry)),
-        Expr::RecordCreate { fields, .. } => fields
+        ResolvedExpr::ErrorProp(_) => true,
+        ResolvedExpr::Ctor(_, args) => args.iter().any(|a| expr_needs_scratch(&a.node, registry)),
+        ResolvedExpr::RecordCreate { fields, .. } => fields
             .iter()
             .any(|(_, e)| expr_needs_scratch(&e.node, registry)),
         // List literal with elements uses the scratch slot for the
         // running tail during the right-fold; empty literal lowers to
         // a single ref.null and doesn't need it.
-        Expr::List(items) if !items.is_empty() => true,
-        Expr::List(items) => items.iter().any(|e| expr_needs_scratch(&e.node, registry)),
-        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+        ResolvedExpr::List(items) if !items.is_empty() => true,
+        ResolvedExpr::List(items) => items.iter().any(|e| expr_needs_scratch(&e.node, registry)),
+        ResolvedExpr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
             expr_needs_scratch(&k.node, registry) || expr_needs_scratch(&v.node, registry)
         }),
         // `(...)?!` (unwrap=true) stashes each element's Result in the
@@ -691,16 +566,32 @@ pub(super) fn expr_needs_scratch(expr: &Expr, registry: &TypeRegistry) -> bool {
         // just one per element. Bare `(...)!` (unwrap=false) doesn't
         // need scratch — elements are emitted positionally into the
         // tuple struct.
-        Expr::IndependentProduct(items, unwrap) => {
+        ResolvedExpr::IndependentProduct(items, unwrap) => {
             *unwrap || items.iter().any(|e| expr_needs_scratch(&e.node, registry))
         }
-        Expr::Tuple(items) => items.iter().any(|e| expr_needs_scratch(&e.node, registry)),
+        ResolvedExpr::Tuple(items) => items.iter().any(|e| expr_needs_scratch(&e.node, registry)),
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
+            expr_needs_scratch(&base.node, registry)
+                || updates
+                    .iter()
+                    .any(|(_, e)| expr_needs_scratch(&e.node, registry))
+        }
+        ResolvedExpr::InterpolatedStr(parts) => parts.iter().any(|p| {
+            if let ResolvedStrPart::Parsed(inner) = p {
+                expr_needs_scratch(&inner.node, registry)
+            } else {
+                false
+            }
+        }),
         _ => false,
     }
 }
 
-pub(super) fn count_value_params(params: &[(String, String)]) -> usize {
-    params.iter().filter(|(_, ty)| ty.trim() != "Unit").count()
+pub(super) fn count_value_params(params: &[(String, Type)]) -> usize {
+    params
+        .iter()
+        .filter(|(_, ty)| ty.display().trim() != "Unit")
+        .count()
 }
 
 /// Walks the fn body collecting whitespace-stripped `Vector<T>`
@@ -708,23 +599,23 @@ pub(super) fn count_value_params(params: &[(String, String)]) -> usize {
 /// has a `Vector<T>` type stamp. Drives the per-fn allocation of
 /// scratch locals consumed by the clone-on-write emit in
 /// `emit_vector_set_or_default` / `emit_vector_set_boxed`.
-fn collect_vector_set_canonicals(fd: &FnDef, out: &mut HashSet<String>) {
-    let FnBody::Block(stmts) = fd.body.as_ref();
+fn collect_vector_set_canonicals(fd: &ResolvedFnDef, out: &mut HashSet<String>) {
+    let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
         match stmt {
-            Stmt::Binding(_, _, e) | Stmt::Expr(e) => walk_expr_for_vector_set(e, out),
+            ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => {
+                walk_expr_for_vector_set(value, out)
+            }
         }
     }
 }
 
-fn walk_expr_for_vector_set(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
+fn walk_expr_for_vector_set(expr: &Spanned<ResolvedExpr>, out: &mut HashSet<String>) {
     match &expr.node {
-        Expr::FnCall(callee, args) => {
+        ResolvedExpr::Call(callee, args) => {
             // Direct `Vector.set(v, i, x)`.
-            if let Expr::Attr(parent, member) = &callee.node
-                && let Expr::Ident(p) = &parent.node
-                && p == "Vector"
-                && member == "set"
+            if let ResolvedCallee::Builtin(name) = callee
+                && name == "Vector.set"
                 && args.len() == 3
             {
                 let vec_aver = aver_type_str_of(&args[0]);
@@ -733,59 +624,60 @@ fn walk_expr_for_vector_set(expr: &Spanned<Expr>, out: &mut HashSet<String>) {
                     out.insert(canonical);
                 }
             }
-            walk_expr_for_vector_set(callee, out);
             for a in args {
                 walk_expr_for_vector_set(a, out);
             }
         }
-        Expr::BinOp(_, l, r) => {
+        ResolvedExpr::BinOp(_, l, r) => {
             walk_expr_for_vector_set(l, out);
             walk_expr_for_vector_set(r, out);
         }
-        Expr::Neg(inner) => walk_expr_for_vector_set(inner, out),
-        Expr::Match { subject, arms } => {
+        ResolvedExpr::Neg(inner) => walk_expr_for_vector_set(inner, out),
+        ResolvedExpr::Match { subject, arms } => {
             walk_expr_for_vector_set(subject, out);
             for arm in arms {
                 walk_expr_for_vector_set(&arm.body, out);
             }
         }
-        Expr::TailCall(boxed) => {
-            for a in &boxed.args {
+        ResolvedExpr::TailCall { args, .. } => {
+            for a in args {
                 walk_expr_for_vector_set(a, out);
             }
         }
-        Expr::Attr(obj, _) => walk_expr_for_vector_set(obj, out),
-        Expr::ErrorProp(inner) => walk_expr_for_vector_set(inner, out),
-        Expr::Constructor(_, payload) => {
-            if let Some(p) = payload.as_deref() {
-                walk_expr_for_vector_set(p, out);
+        ResolvedExpr::Attr(obj, _) => walk_expr_for_vector_set(obj, out),
+        ResolvedExpr::ErrorProp(inner) => walk_expr_for_vector_set(inner, out),
+        ResolvedExpr::Ctor(_, args) => {
+            for a in args {
+                walk_expr_for_vector_set(a, out);
             }
         }
-        Expr::RecordCreate { fields, .. } => {
+        ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
                 walk_expr_for_vector_set(e, out);
             }
         }
-        Expr::RecordUpdate { base, updates, .. } => {
+        ResolvedExpr::RecordUpdate { base, updates, .. } => {
             walk_expr_for_vector_set(base, out);
             for (_, e) in updates {
                 walk_expr_for_vector_set(e, out);
             }
         }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+        ResolvedExpr::List(items)
+        | ResolvedExpr::Tuple(items)
+        | ResolvedExpr::IndependentProduct(items, _) => {
             for e in items {
                 walk_expr_for_vector_set(e, out);
             }
         }
-        Expr::MapLiteral(entries) => {
+        ResolvedExpr::MapLiteral(entries) => {
             for (k, v) in entries {
                 walk_expr_for_vector_set(k, out);
                 walk_expr_for_vector_set(v, out);
             }
         }
-        Expr::InterpolatedStr(parts) => {
+        ResolvedExpr::InterpolatedStr(parts) => {
             for p in parts {
-                if let crate::ast::StrPart::Parsed(inner) = p {
+                if let ResolvedStrPart::Parsed(inner) = p {
                     walk_expr_for_vector_set(inner, out);
                 }
             }

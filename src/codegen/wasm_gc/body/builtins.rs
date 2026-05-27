@@ -5,8 +5,8 @@
 
 use wasm_encoder::{Function, Instruction, ValType};
 
-use crate::ast::{Expr, Spanned};
-use crate::ir::{LeafOp, classify_leaf_op};
+use crate::ast::Spanned;
+use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStrPart};
 
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
@@ -37,7 +37,7 @@ pub(super) fn emit_dotted_builtin(
     func: &mut Function,
     parent: &str,
     method: &str,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -665,7 +665,7 @@ pub(super) fn emit_args_get_inline(
 pub(super) fn emit_map_kv_call(
     func: &mut Function,
     method: &str,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -749,7 +749,7 @@ pub(super) fn emit_map_kv_call(
 /// signatures so any reachable instantiation registers).
 pub(super) fn emit_vector_new(
     func: &mut Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -798,7 +798,7 @@ pub(super) fn emit_vector_new(
 /// today it surfaces as Unimplemented.
 pub(super) fn emit_option_with_default(
     func: &mut Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -816,31 +816,37 @@ pub(super) fn emit_option_with_default(
     // `IntModOrDefaultLiteral`) lights up across every backend
     // automatically. The classifier is re-run on the parent call
     // because `Option.withDefault` is the shape's outer shell.
-    let outer_call = Expr::FnCall(
-        Box::new(Spanned::new(
-            Expr::Attr(
-                Box::new(Spanned::new(Expr::Ident("Option".into()), 0)),
-                "withDefault".into(),
-            ),
-            0,
-        )),
+    use crate::ir::hir::classify::{ResolvedLeafOp, classify_leaf_op_resolved};
+    let outer_call = ResolvedExpr::Call(
+        ResolvedCallee::Builtin("Option.withDefault".into()),
         args.to_vec(),
     );
-    if let Some(leaf) = classify_leaf_op(&outer_call, ctx) {
+    let is_user_type = |name: &str| {
+        ctx.registry.records.contains_key(name)
+            || ctx.registry.variants.contains_key(name)
+            || ctx
+                .registry
+                .variants
+                .values()
+                .flat_map(|vs| vs.iter())
+                .any(|info| info.parent == name)
+    };
+    if let Some(leaf) = classify_leaf_op_resolved(&outer_call, &is_user_type) {
         match leaf {
-            LeafOp::VectorSetOrDefaultSameVector {
+            ResolvedLeafOp::VectorSetOrDefaultSameVector {
                 vector,
                 index,
                 value,
             } => {
                 return emit_vector_set_or_default(func, vector, index, value, slots, ctx);
             }
-            LeafOp::VectorGetOrDefaultLiteral {
+            ResolvedLeafOp::VectorGetOrDefaultLiteral {
                 vector,
                 index,
                 default_literal,
             } => {
-                let default_spanned = Spanned::new(Expr::Literal(default_literal.clone()), 0);
+                let default_spanned =
+                    Spanned::new(ResolvedExpr::Literal(default_literal.clone()), 0);
                 return emit_vector_get_or_default(
                     func,
                     vector,
@@ -857,11 +863,8 @@ pub(super) fn emit_option_with_default(
     // `Option.withDefault(Map.get(m, k), default)` — Map fusion isn't
     // in `LeafOp` (legacy backends use runtime helpers and don't need
     // a per-shape leaf), so handle it locally.
-    if let Expr::FnCall(inner_callee, inner_args) = &opt_arg.node
-        && let Expr::Attr(parent, member) = &inner_callee.node
-        && let Expr::Ident(p) = &parent.node
-        && p == "Map"
-        && member == "get"
+    if let ResolvedExpr::Call(ResolvedCallee::Builtin(name), inner_args) = &opt_arg.node
+        && name == "Map.get"
         && inner_args.len() == 2
     {
         return emit_map_get_or_default(
@@ -889,7 +892,7 @@ pub(super) fn emit_option_with_default(
 /// hitting it route through pattern match instead).
 pub(super) fn emit_result_with_default(
     func: &mut Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -908,11 +911,8 @@ pub(super) fn emit_result_with_default(
     // expect a struct ref where there's only an i64 on the stack.
     // Emit the safe form here: if `b == 0` push `default`, else push
     // `__int_mod_euclid(a, b)`.
-    if let Expr::FnCall(callee, inner_args) = &res_arg.node
-        && let Expr::Attr(parent, member) = &callee.node
-        && let Expr::Ident(p) = &parent.node
-        && p == "Int"
-        && member == "mod"
+    if let ResolvedExpr::Call(ResolvedCallee::Builtin(name), inner_args) = &res_arg.node
+        && name == "Int.mod"
         && inner_args.len() == 2
     {
         let block_ty = wasm_encoder::BlockType::Result(ValType::I64);
@@ -996,8 +996,8 @@ pub(super) fn emit_result_with_default(
 /// inferred Option<T>, E from the err argument's type.
 pub(super) fn emit_option_to_result(
     func: &mut Function,
-    opt_arg: &Spanned<Expr>,
-    err_arg: &Spanned<Expr>,
+    opt_arg: &Spanned<ResolvedExpr>,
+    err_arg: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1074,8 +1074,8 @@ pub(super) fn emit_option_to_result(
 
 pub(super) fn emit_option_with_default_boxed(
     func: &mut Function,
-    opt_arg: &Spanned<Expr>,
-    default_arg: &Spanned<Expr>,
+    opt_arg: &Spanned<ResolvedExpr>,
+    default_arg: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1134,9 +1134,9 @@ pub(super) fn emit_option_with_default_boxed(
 /// allocates on the hot lookup path.
 pub(super) fn emit_map_get_or_default(
     func: &mut Function,
-    map: &Spanned<Expr>,
-    key: &Spanned<Expr>,
-    default: &Spanned<Expr>,
+    map: &Spanned<ResolvedExpr>,
+    key: &Spanned<ResolvedExpr>,
+    default: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1168,9 +1168,9 @@ pub(super) fn emit_map_get_or_default(
 /// calls `Vector.set` on.
 pub(super) fn emit_vector_set_or_default(
     func: &mut Function,
-    vector: &Spanned<Expr>,
-    index: &Spanned<Expr>,
-    value: &Spanned<Expr>,
+    vector: &Spanned<ResolvedExpr>,
+    index: &Spanned<ResolvedExpr>,
+    value: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1279,11 +1279,10 @@ pub(super) fn emit_vector_set_or_default(
 /// once it lands (interleave separators, then call this helper).
 pub(super) fn emit_interpolated_str(
     func: &mut Function,
-    parts: &[crate::ast::StrPart],
+    parts: &[ResolvedStrPart],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
-    use crate::ast::StrPart;
     let string_type_idx = ctx
         .registry
         .string_array_type_idx
@@ -1313,7 +1312,7 @@ pub(super) fn emit_interpolated_str(
         ))?;
     for part in parts {
         match part {
-            StrPart::Literal(s) => {
+            ResolvedStrPart::Literal(s) => {
                 let bytes = s.as_bytes();
                 let seg_idx =
                     ctx.registry
@@ -1328,7 +1327,7 @@ pub(super) fn emit_interpolated_str(
                     array_data_index: seg_idx,
                 });
             }
-            StrPart::Parsed(inner) => {
+            ResolvedStrPart::Parsed(inner) => {
                 let aver_ty = aver_type_str_of(inner);
                 emit_expr(func, inner, slots, ctx)?;
                 match aver_ty.trim() {
@@ -1386,9 +1385,9 @@ pub(super) fn emit_interpolated_str(
 /// type is the vector's element type (Aver guarantees `default` agrees).
 pub(super) fn emit_vector_get_or_default(
     func: &mut Function,
-    vector: &Spanned<Expr>,
-    index: &Spanned<Expr>,
-    default: &Spanned<Expr>,
+    vector: &Spanned<ResolvedExpr>,
+    index: &Spanned<ResolvedExpr>,
+    default: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1440,7 +1439,7 @@ pub(super) fn emit_vector_get_or_default(
 /// canonical comes from `infer_aver_type(list)`.
 pub(super) fn emit_list_op_call(
     func: &mut Function,
-    list_arg: &Spanned<Expr>,
+    list_arg: &Spanned<ResolvedExpr>,
     op: &str,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -1474,8 +1473,8 @@ pub(super) fn emit_list_op_call(
 /// and the call surfaces a clear error.
 pub(super) fn emit_list_op_call_2(
     func: &mut Function,
-    list_arg: &Spanned<Expr>,
-    second_arg: &Spanned<Expr>,
+    list_arg: &Spanned<ResolvedExpr>,
+    second_arg: &Spanned<ResolvedExpr>,
     op: &str,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
@@ -1513,7 +1512,7 @@ pub(super) fn emit_list_op_call_2(
 /// list's element type (must be `Tuple<K, V>`).
 pub(super) fn emit_map_from_list_call(
     func: &mut Function,
-    list_arg: &Spanned<Expr>,
+    list_arg: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1542,8 +1541,8 @@ pub(super) fn emit_map_from_list_call(
 /// element types.
 pub(super) fn emit_list_zip_call(
     func: &mut Function,
-    la: &Spanned<Expr>,
-    lb: &Spanned<Expr>,
+    la: &Spanned<ResolvedExpr>,
+    lb: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1572,7 +1571,7 @@ pub(super) fn emit_list_zip_call(
 /// registered for the matching `List<T>` canonical.
 pub(super) fn emit_vec_from_list_call(
     func: &mut Function,
-    list_arg: &Spanned<Expr>,
+    list_arg: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1596,7 +1595,7 @@ pub(super) fn emit_vec_from_list_call(
 /// build the list canonical from it.
 pub(super) fn emit_vec_to_list_call(
     func: &mut Function,
-    vec_arg: &Spanned<Expr>,
+    vec_arg: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1627,8 +1626,8 @@ pub(super) fn emit_vec_to_list_call(
 /// `Option.withDefault(Vector.get(...), default)` shape).
 pub(super) fn emit_vector_get_boxed(
     func: &mut Function,
-    vector: &Spanned<Expr>,
-    index: &Spanned<Expr>,
+    vector: &Spanned<ResolvedExpr>,
+    index: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1701,9 +1700,9 @@ pub(super) fn emit_vector_get_boxed(
 /// argument that forced the copy.)
 pub(super) fn emit_vector_set_boxed(
     func: &mut Function,
-    vector: &Spanned<Expr>,
-    index: &Spanned<Expr>,
-    value: &Spanned<Expr>,
+    vector: &Spanned<ResolvedExpr>,
+    index: &Spanned<ResolvedExpr>,
+    value: &Spanned<ResolvedExpr>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {

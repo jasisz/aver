@@ -29,8 +29,10 @@ use wasm_encoder::{Function, Instruction, ValType};
 use super::WasmGcError;
 use super::types::TypeRegistry;
 
-use crate::ast::{FnBody, FnDef, Stmt};
 use crate::ir::CallLowerCtx;
+use crate::ir::SymbolTable;
+use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
+use crate::types::Type;
 
 mod builtins;
 mod builtins_wasip2;
@@ -156,26 +158,33 @@ pub(super) struct FnEntry {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_fn_body(
     func: &mut Function,
-    fd: &FnDef,
+    rfd: &ResolvedFnDef,
     fn_map: &FnMap,
     self_wasm_idx: u32,
     registry: &TypeRegistry,
+    symbol_table: &SymbolTable,
     effect_idx_lookup: &HashMap<String, u32>,
     caller_fn_collector: &std::cell::RefCell<CallerFnCollector>,
     wasip2_lowering: Option<&Wasip2Lowering>,
 ) -> Result<Vec<ValType>, WasmGcError> {
-    let slots = SlotTable::build_for_fn(fd, registry, fn_map)?;
-    let FnBody::Block(stmts) = fd.body.as_ref();
+    let slots = SlotTable::build_for_fn(rfd, registry, fn_map)?;
+    let ResolvedFnBody::Block(stmts) = rfd.body.as_ref();
     let last_idx = stmts.len().saturating_sub(1);
+
+    // Source-shape canonical of the enclosing fn's return type. Many
+    // emit helpers (Option.None hint, ErrorProp enclosing fixup, list
+    // empty literal fallback) want the string form once; compute it
+    // here so the per-emit-site reads stay a cheap `&str`.
+    let return_type_str = rfd.return_type.display();
 
     // Precollect every `let`-bound name so `CallLowerCtx::is_local_value`
     // can recognise locals without a parallel type table — the wasm-gc
     // backend's IR shape recognition (`classify_leaf_op` /
     // `classify_call_plan`) only needs the name, not the type.
     let mut binding_names: HashSet<String> = HashSet::new();
-    fn collect_names(stmts: &[Stmt], out: &mut HashSet<String>) {
+    fn collect_names(stmts: &[ResolvedStmt], out: &mut HashSet<String>) {
         for s in stmts {
-            if let Stmt::Binding(name, _, _) = s {
+            if let ResolvedStmt::Binding { name, .. } = s {
                 out.insert(name.clone());
             }
         }
@@ -185,11 +194,12 @@ pub(super) fn emit_fn_body(
     let ctx = EmitCtx {
         fn_map,
         self_wasm_idx,
-        self_fn_name: fd.name.as_str(),
-        return_type: fd.return_type.as_str(),
+        self_fn_name: rfd.name.as_str(),
+        return_type: &return_type_str,
         registry,
-        resolution: fd.resolution.as_ref(),
-        params: &fd.params,
+        symbol_table,
+        resolution: rfd.resolution.as_ref(),
+        params: &rfd.params,
         binding_names: &binding_names,
         effect_idx_lookup,
         caller_fn_collector,
@@ -199,9 +209,9 @@ pub(super) fn emit_fn_body(
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i == last_idx;
         match stmt {
-            Stmt::Binding(name, _annot, expr) => {
-                emit_expr(func, expr, &slots, &ctx)?;
-                let produces_value = aver_type_str_of(expr).trim() != "Unit";
+            ResolvedStmt::Binding { name, value, .. } => {
+                emit_expr(func, value, &slots, &ctx)?;
+                let produces_value = aver_type_str_of(value).trim() != "Unit";
                 if name == "_" {
                     // `_ = expr` — sequence-only binding. Drop the
                     // value (if any) and move on; the resolver
@@ -223,7 +233,7 @@ pub(super) fn emit_fn_body(
                     func.instruction(&Instruction::LocalSet(slot));
                 }
             }
-            Stmt::Expr(spanned) => {
+            ResolvedStmt::Expr(spanned) => {
                 emit_expr(func, spanned, &slots, &ctx)?;
                 // Whether the expression leaves a value on the stack
                 // is decided structurally (typecheck stamps `Unit` on
@@ -237,12 +247,12 @@ pub(super) fn emit_fn_body(
                     func.instruction(&Instruction::Drop);
                 }
                 if is_last {
-                    if fd.return_type.trim() == "Unit" && produces_value {
+                    if return_type_str.trim() == "Unit" && produces_value {
                         func.instruction(&Instruction::Drop);
-                    } else if fd.return_type.trim() != "Unit" && !produces_value {
+                    } else if return_type_str.trim() != "Unit" && !produces_value {
                         return Err(WasmGcError::Validation(format!(
                             "fn `{}` returns {} but trailing expression yields no value",
-                            fd.name, fd.return_type
+                            rfd.name, return_type_str
                         )));
                     }
                 }
@@ -251,7 +261,7 @@ pub(super) fn emit_fn_body(
     }
     func.instruction(&Instruction::End);
 
-    Ok(slots.extra_locals(count_value_params(&fd.params)))
+    Ok(slots.extra_locals(count_value_params(&rfd.params)))
 }
 
 /// Lazy-populated registry of caller_fn names actually emitted by the
@@ -290,16 +300,23 @@ pub(super) struct EmitCtx<'a> {
     pub(super) self_fn_name: &'a str,
     pub(super) return_type: &'a str,
     pub(super) registry: &'a TypeRegistry,
+    /// Shared resolver symbol table — used by emit-site dispatch to
+    /// turn a `ResolvedCallee::Fn(FnId)` / `ResolvedCtor::User { type_id, .. }`
+    /// back into the canonical name the wasm fn-map / variant registry
+    /// is keyed by. Phase E PR 9.1 threaded this in so the migration
+    /// could read identity off the resolved AST directly instead of
+    /// re-deriving from source strings.
+    pub(super) symbol_table: &'a SymbolTable,
     /// Resolver's local-name → slot map for the current fn. `None`
     /// when the fn was emitted without `resolution` populated (the
     /// pipeline always populates it for production paths; tests may
     /// pre-resolve manually).
     pub(super) resolution: Option<&'a crate::ast::FnResolution>,
-    /// Param name → declared aver type. Used by `CallLowerCtx` for
+    /// Param name → resolved aver type. Used by `CallLowerCtx` for
     /// local-name recognition; the typed-AST refactor (Step 3) made
     /// the *type* portion redundant for emit, but the param list is
     /// still the source of truth for "is this name a param?".
-    pub(super) params: &'a [(String, String)],
+    pub(super) params: &'a [(String, Type)],
     /// Set of `let`-bound local names (no type information attached —
     /// types come from `Spanned::ty()` at the use site). Powers
     /// `CallLowerCtx::is_local_value` for the shared IR-level shape
@@ -565,9 +582,9 @@ impl<'a> EmitCtx<'a> {
     /// and `Map.set` (picks the `set_in_place` helper). Anonymous
     /// expressions land here as a transient stack value with no
     /// binding to alias against, which counts as uniquely owned.
-    pub(super) fn arg_uniquely_owned(&self, arg: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    pub(super) fn arg_uniquely_owned(&self, arg: &crate::ast::Spanned<ResolvedExpr>) -> bool {
         match &arg.node {
-            crate::ast::Expr::Resolved { slot, last_use, .. } => {
+            ResolvedExpr::Resolved { slot, last_use, .. } => {
                 last_use.0 && !self.is_aliased_slot(*slot)
             }
             _ => true,

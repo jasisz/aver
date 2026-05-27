@@ -11,7 +11,8 @@
 
 use wasm_encoder::Instruction;
 
-use crate::ast::{Expr, Spanned};
+use crate::ast::Spanned;
+use crate::ir::hir::ResolvedExpr;
 
 use super::super::WasmGcError;
 use super::emit::emit_expr;
@@ -39,7 +40,7 @@ use super::{EmitCtx, SlotTable};
 pub(super) fn emit_console_print_wasip2(
     func: &mut wasm_encoder::Function,
     method: &str,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -238,7 +239,7 @@ pub(super) fn emit_args_get_wasip2(
 /// > itself so call sites don't need to.
 pub(super) fn emit_env_get_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -322,7 +323,7 @@ pub(super) fn emit_env_get_wasip2(
 /// emitted on wasip2 with imports, so the page-1 LM is available.
 pub(super) fn emit_time_unix_ms_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
@@ -377,7 +378,7 @@ pub(super) fn emit_time_unix_ms_wasip2(
 /// to be reused immediately afterwards.
 pub(super) fn emit_time_now_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
@@ -434,7 +435,7 @@ pub(super) fn emit_time_now_wasip2(
 /// instruction: `Call $__rt_console_read_line`.
 pub(super) fn emit_console_read_line_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
@@ -467,7 +468,7 @@ pub(super) fn emit_console_read_line_wasip2(
 /// implementation detail.
 pub(super) fn emit_time_sleep_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -497,7 +498,7 @@ pub(super) fn emit_time_sleep_wasip2(
 /// `false` on no-preopens / Err / wasi-error; `true` on Ok.
 pub(super) fn emit_disk_exists_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -527,7 +528,7 @@ pub(super) fn emit_disk_exists_wasip2(
 /// light `__rt_tcp_ping` wrapper.
 pub(super) fn emit_tcp_ping_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -556,7 +557,7 @@ pub(super) fn emit_tcp_ping_wasip2(
 /// helper.
 pub(super) fn emit_tcp_send_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -583,7 +584,7 @@ pub(super) fn emit_tcp_send_wasip2(
 /// on `--target wasip2`. Pushes conn and calls the helper.
 pub(super) fn emit_tcp_read_line_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -609,7 +610,7 @@ pub(super) fn emit_tcp_read_line_wasip2(
 /// `__rt_tcp_write_line` helper.
 pub(super) fn emit_tcp_write_line_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -638,7 +639,7 @@ pub(super) fn emit_tcp_write_line_wasip2(
 /// ref onto the stack and calls the `__rt_tcp_close` helper.
 pub(super) fn emit_tcp_close_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -669,7 +670,7 @@ pub(super) fn emit_tcp_close_wasip2(
 /// Phase 4.2.2+ — this dispatcher stays put.
 pub(super) fn emit_tcp_connect_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -698,7 +699,7 @@ pub(super) fn emit_tcp_connect_wasip2(
 
 pub(super) fn emit_disk_read_text_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -733,7 +734,7 @@ pub(super) fn emit_disk_read_text_wasip2(
 /// shape via `aver/random_int`).
 pub(super) fn emit_random_int_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -793,7 +794,7 @@ pub(super) fn emit_random_int_wasip2(
 /// bits with no exponent bits set.
 pub(super) fn emit_random_float_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
@@ -829,7 +830,7 @@ pub(super) fn emit_random_float_wasip2(
 /// blocking-write-and-flush + per-call resource drops.
 pub(super) fn emit_disk_write_text_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -860,7 +861,7 @@ pub(super) fn emit_disk_write_text_wasip2(
 /// `__rt_disk_delete` (single wasi `unlink-file-at` underneath).
 pub(super) fn emit_disk_delete_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -886,7 +887,7 @@ pub(super) fn emit_disk_delete_wasip2(
 /// Phase 1.5.4 — `Disk.deleteDir(path) -> Result<Unit, String>`.
 pub(super) fn emit_disk_delete_dir_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -912,7 +913,7 @@ pub(super) fn emit_disk_delete_dir_wasip2(
 /// Phase 1.5.4 — `Disk.makeDir(path) -> Result<Unit, String>`.
 pub(super) fn emit_disk_make_dir_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -939,7 +940,7 @@ pub(super) fn emit_disk_make_dir_wasip2(
 /// emitter as `__rt_disk_write_text` flipped to append mode.
 pub(super) fn emit_disk_append_text_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -969,7 +970,7 @@ pub(super) fn emit_disk_append_text_wasip2(
 /// read-directory + entry-iteration loop + drops.
 pub(super) fn emit_disk_list_dir_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1006,7 +1007,7 @@ fn emit_http_simple_method_wasip2(
     method_name: &str,
     method_tag: i32,
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1066,7 +1067,7 @@ fn emit_http_body_method_wasip2(
     method_name: &str,
     method_tag: i32,
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1095,7 +1096,7 @@ fn emit_http_body_method_wasip2(
 
 pub(super) fn emit_http_get_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1104,7 +1105,7 @@ pub(super) fn emit_http_get_wasip2(
 
 pub(super) fn emit_http_head_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1113,7 +1114,7 @@ pub(super) fn emit_http_head_wasip2(
 
 pub(super) fn emit_http_delete_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1122,7 +1123,7 @@ pub(super) fn emit_http_delete_wasip2(
 
 pub(super) fn emit_http_post_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1131,7 +1132,7 @@ pub(super) fn emit_http_post_wasip2(
 
 pub(super) fn emit_http_put_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1140,7 +1141,7 @@ pub(super) fn emit_http_put_wasip2(
 
 pub(super) fn emit_http_patch_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<Expr>],
+    args: &[Spanned<ResolvedExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
