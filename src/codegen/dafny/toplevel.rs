@@ -22,6 +22,66 @@ pub fn emit_type(type_str: &str) -> String {
     type_to_dafny(&parse_type_annotation(type_str))
 }
 
+/// Render a typed `Type` directly to its Dafny representation —
+/// skips the `parse_type_annotation(string)` round-trip.
+///
+/// Epic #180 Phase 5 — feed typed types from `ResolvedFnDef`
+/// (params + return_type) into the Dafny renderer instead of
+/// re-parsing the AST annotation strings the typechecker already
+/// canonicalised. `emit_type(&str)` stays for callers whose
+/// source is a raw string (e.g. given declarations referring to
+/// effect type names).
+pub fn emit_type_from(ty: &Type) -> String {
+    type_to_dafny(ty)
+}
+
+/// Resolve a `&FnDef` to its canonical `ResolvedFnDef` for emit.
+///
+/// Tries the pointer-eq → `FnId` → resolved-program path first
+/// (canonical for source-declared fns). If the symbol-table key
+/// matches a DIFFERENT shape (effect-lifted synthetics share the
+/// bare name with the source fn but carry extra BranchPath /
+/// oracle params), the param-count gate trips and we fall back
+/// to `ctx.resolve_fn_def`'s synthetic-lift path which derives
+/// the typed surface from the given `fd` directly.
+///
+/// Same fallback pattern Rust (PR D, #185) and Lean (Phase 4,
+/// #186) established, plus the synthetic-shape guard the Dafny
+/// effect-lifting path needs.
+fn resolved_view_for_emit<'a>(
+    fd: &'a FnDef,
+    ctx: &'a CodegenContext,
+) -> std::borrow::Cow<'a, crate::ir::hir::ResolvedFnDef> {
+    // Canonical path: pointer-eq scope → `FnId` → resolved view.
+    // The param-count guard rejects a same-bare-name pre-lift twin
+    // for effect-lifted synthetic fns (which carry extra
+    // BranchPath / oracle params not present in the source fd).
+    let canonical = crate::codegen::common::fn_id_for_decl(ctx, fd)
+        .and_then(|id| ctx.resolved_program.fn_by_id(id))
+        .filter(|rfd| rfd.params.len() == fd.params.len());
+    if let Some(rfd) = canonical {
+        return std::borrow::Cow::Borrowed(rfd);
+    }
+    // Synthetic-shape fn — lift from `fd` directly through the
+    // resolver context. `ctx.resolve_fn_def` would re-hit the same
+    // symbol-table cache and return the pre-lift twin again, so
+    // bypass it and call the external lift path with the actual
+    // post-lift `fd`.
+    let module_name = ctx.items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m.name.clone()),
+        _ => None,
+    });
+    let mut rctx = crate::ir::hir::ResolveCtx::new(&ctx.symbol_table);
+    rctx.current_module = module_name;
+    if let Some(lifted) = crate::ir::hir::resolve_fn_def_external(&rctx, fd) {
+        return std::borrow::Cow::Owned(lifted);
+    }
+    // Last resort: `ctx.resolve_fn_def` carries its own
+    // hand-built fallback for fds the resolver can't lift at all
+    // (parse errors, unregistered names). Defer to it.
+    ctx.resolve_fn_def(fd, None)
+}
+
 /// Convert a fully-resolved Aver `Type` to a Dafny type string.
 /// Used by Oracle v1 to render oracle-signature types for effectful
 /// law lemmas where the given's declared "type" is an effect reference
@@ -186,14 +246,16 @@ pub fn emit_type_def_in_scope(
 /// reference it, but the verifier won't unfold it, so soundness-
 /// sensitive downstream reasoning about its value becomes user-
 /// supplied lemmas. Mirrors Lean's `partial def` fallback.
-pub fn emit_fn_def_axiom(fd: &FnDef) -> String {
+pub fn emit_fn_def_axiom(fd: &FnDef, ctx: &CodegenContext) -> String {
     let name = aver_name_to_dafny(&fd.name);
-    let params: Vec<String> = fd
+    let rfd_holder = resolved_view_for_emit(fd, ctx);
+    let rfd: &crate::ir::hir::ResolvedFnDef = rfd_holder.as_ref();
+    let params: Vec<String> = rfd
         .params
         .iter()
-        .map(|(pname, ptype)| format!("{}: {}", aver_name_to_dafny(pname), emit_type(ptype)))
+        .map(|(pname, ptype)| format!("{}: {}", aver_name_to_dafny(pname), emit_type_from(ptype)))
         .collect();
-    let ret_type = emit_type(&fd.return_type);
+    let ret_type = emit_type_from(&rfd.return_type);
 
     let mut lines = Vec::new();
     if let Some(desc) = &fd.desc {
@@ -215,13 +277,16 @@ pub fn emit_fn_def_axiom(fd: &FnDef) -> String {
 pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
     let name = aver_name_to_dafny(&fd.name);
 
-    let params: Vec<String> = fd
+    let rfd_holder = resolved_view_for_emit(fd, ctx);
+    let rfd: &crate::ir::hir::ResolvedFnDef = rfd_holder.as_ref();
+
+    let params: Vec<String> = rfd
         .params
         .iter()
-        .map(|(pname, ptype)| format!("{}: {}", aver_name_to_dafny(pname), emit_type(ptype)))
+        .map(|(pname, ptype)| format!("{}: {}", aver_name_to_dafny(pname), emit_type_from(ptype)))
         .collect();
 
-    let ret_type = emit_type(&fd.return_type);
+    let ret_type = emit_type_from(&rfd.return_type);
 
     let lowered = lower_pure_question_bang_for_emit(fd);
     let body_ast = lowered

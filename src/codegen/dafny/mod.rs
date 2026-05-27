@@ -184,11 +184,11 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
     };
     let emit_pure_or_axiom = |fd: &FnDef| -> String {
         if needs_axiom_for_error_prop(fd) {
-            toplevel::emit_fn_def_axiom(fd)
+            toplevel::emit_fn_def_axiom(fd, ctx)
         } else if id_in(&fuel_emitted, fd) || id_in(&native_emitted, fd) {
             String::new()
         } else if id_in(&axiom_fn_ids, fd) {
-            toplevel::emit_fn_def_axiom(fd)
+            toplevel::emit_fn_def_axiom(fd, ctx)
         } else {
             toplevel::emit_fn_def(fd, ctx)
         }
