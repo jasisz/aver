@@ -2105,6 +2105,154 @@ fn proof_export_cross_module_recursive_fns_get_per_module_fn_contracts() {
 }
 
 #[test]
+fn proof_export_module_owned_native_guarded_resolves_correct_fn_id() {
+    // PR 12 Scope A finalization: the Lean native-guarded emit path
+    // (`emit_native_guarded_int_countdown_fn`) used to derive the
+    // recursive fn's `FnId` via `FnKey::entry(&fd.name)`. For any
+    // module-owned native-guarded recursive fn that would either
+    // panic on the missing entry slot, or silently target an
+    // entry-scope same-bare-name fn. After the followup commit the
+    // lookup goes through `fn_id_for_decl(ctx, fd)` — pointer-eq
+    // scope, the same path `ProofIR.fn_contracts` keys by.
+    //
+    // This test exercises the specific bug class: two same-bare
+    // `down(n: Int) -> Int` native-guarded fns, one in a dep module
+    // and one at entry. Both classify as `IntCountdownGuarded`, both
+    // emit `def down__aux`, and the rewriter pins each one's
+    // recursive call to its OWN `FnId` rather than crossing wires.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-module-native-guarded");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    // Worker.av: closed-world (not exposed) `down` countdown with a
+    // public `run` calling `down(n)` under a `n >= 0` guard so the
+    // classifier accepts it as IntCountdownGuarded.
+    std::fs::write(
+        root.join("Worker.av"),
+        "module Worker\n\
+         \x20   exposes [run]\n\
+         \x20   intent = \"Closed-world native-guarded countdown.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn down(n: Int) -> Int\n\
+         \x20   ? \"Countdown to 0.\"\n\
+         \x20   match n\n\
+         \x20       0 -> 1\n\
+         \x20       _ -> down(n - 1)\n\
+         \n\
+         fn run(n: Int) -> Int\n\
+         \x20   ? \"Public entry; guards n >= 0 before down.\"\n\
+         \x20   match n < 0\n\
+         \x20       true  -> 0\n\
+         \x20       false -> down(n)\n",
+    )
+    .expect("write Worker.av");
+    // Entry: same-bare `down` with the SAME body shape so both
+    // classify as IntCountdownGuarded. If the rewriter pinned by
+    // bare name the entry's `down__aux` would consume Worker.down's
+    // FnId (or vice versa) and the rewritten body would call the
+    // wrong target.
+    std::fs::write(
+        root.join("entry.av"),
+        "module Entry\n\
+         \x20   depends [Worker]\n\
+         \x20   intent = \"Same-bare-name native-guarded countdown alongside Worker.down.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn down(n: Int) -> Int\n\
+         \x20   ? \"Entry's own countdown — bare-name twin of Worker.down.\"\n\
+         \x20   match n\n\
+         \x20       0 -> 2\n\
+         \x20       _ -> down(n - 1)\n\
+         \n\
+         fn launch(n: Int) -> Int\n\
+         \x20   ? \"Guards n >= 0 before calling Entry.down.\"\n\
+         \x20   match n < 0\n\
+         \x20       true  -> 0\n\
+         \x20       false -> down(n)\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   launch(3) + Worker.run(5)\n",
+    )
+    .expect("write entry.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed (expected to succeed without FnKey::entry panic):\n{}",
+        format_output(&proof)
+    );
+
+    let worker_lean = std::fs::read_to_string(out_dir.join("Worker.lean"))
+        .expect("read Worker.lean (module-owned native-guarded emit must succeed)");
+    // Entry file basename is project-name-derived; the proof exporter
+    // capitalises the project name to produce a Lean module ident
+    // (`entry.av` → `Entry.lean`). macOS APFS is case-insensitive so a
+    // lowercase path would silently match locally — on Linux CI it
+    // does not, so look up the canonical capitalised form.
+    let entry_lean = std::fs::read_to_string(out_dir.join("Entry.lean")).expect("read Entry.lean");
+
+    // Both modules carry their OWN native-guarded aux def. If the
+    // rewriter targeted the wrong FnId only one would emit, or both
+    // would inline the same body.
+    assert!(
+        worker_lean.contains("def down__aux"),
+        "Worker.lean must contain its own native-guarded aux def:\n{worker_lean}"
+    );
+    assert!(
+        entry_lean.contains("def down__aux"),
+        "entry.lean must contain its own native-guarded aux def:\n{entry_lean}"
+    );
+    // The hard regression assertion: the rewritten body MUST contain
+    // the aux call carrying the `(by omega)` OMEGA_PROOF_SENTINEL
+    // tail. With the pre-fix bare-name `FnKey::entry("down")` lookup
+    // Worker.down's body would walk past every callsite (the entry
+    // FnId never matches Worker.down's resolved `ResolvedCallee::Fn`
+    // calls), so the recursive `down(n - 1)` stays unchanged and
+    // Lean's termination check loses the precondition handle. Pin
+    // both files: Worker AND entry produce the rewritten aux call.
+    assert!(
+        worker_lean.contains("down__aux (n - 1) (by omega)"),
+        "Worker.down__aux body must contain the rewritten recursive call \
+         `down__aux (n - 1) (by omega)` — the rewriter dropped it:\n{worker_lean}"
+    );
+    assert!(
+        entry_lean.contains("down__aux (n - 1) (by omega)"),
+        "entry.down__aux body must contain the rewritten recursive call \
+         `down__aux (n - 1) (by omega)` — the rewriter dropped it:\n{entry_lean}"
+    );
+    // Worker's base arm is `0 -> 1`; entry's is `0 -> 2`. If the
+    // rewriter cross-wired the targets the base literal would leak
+    // across files.
+    let worker_idx = worker_lean
+        .find("def down__aux")
+        .expect("down__aux present in Worker.lean");
+    let worker_aux = &worker_lean[worker_idx..];
+    assert!(
+        worker_aux.contains("then 1"),
+        "Worker.down__aux must keep its OWN base arm literal (1):\n{worker_aux}"
+    );
+    let entry_idx = entry_lean
+        .find("def down__aux")
+        .expect("down__aux present in entry.lean");
+    let entry_aux = &entry_lean[entry_idx..];
+    assert!(
+        entry_aux.contains("then 2"),
+        "entry.down__aux must keep its OWN base arm literal (2):\n{entry_aux}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn proof_export_cross_module_differentiated_recursion_shapes_emit_per_module() {
     // Round-6 finding (audit of round 5): the prior test had both
     // modules use the SAME recursion shape (IntCountdown), so even
