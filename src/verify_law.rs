@@ -10,6 +10,62 @@ pub mod expand;
 
 pub type FnSigMap = HashMap<String, (Vec<Type>, Type, Vec<String>)>;
 
+/// Bare-name → `&FnDef` index for the **entry module only**.
+///
+/// # Why a typed wrapper instead of raw `HashMap<String, &FnDef>`?
+///
+/// **Entry-only verify exception** (epic #170 Phase 5 deferred follow-up):
+/// every helper-law-hint and contextual-helper-hint walker in this
+/// module operates exclusively on top-level entry fn defs, because
+/// `verify <name>` parses `name` as a single source `Ident` (see
+/// `src/parser/blocks.rs::parse_verify`). The parser does NOT accept
+/// dotted verify targets, so dep-module fns are unreachable from the
+/// verify-law surface today. Bare-name keying is therefore
+/// identity-safe by the parser invariant.
+///
+/// The typed wrapper exists so any future change that tries to
+/// thread dep-module fns through this surface trips the compiler: a
+/// `HashMap<String, &FnDef>` from a dep module won't coerce into
+/// `EntryFnIndex`, forcing the contributor to confront the keying
+/// question explicitly. When module-scoped verify ships, the right
+/// migration is to drop this wrapper in favour of an `FnId`-keyed
+/// view sourced from `CodegenContext.resolved_program`.
+///
+/// **temporary-migration-bridge**: deferred per epic #170 audit (no
+/// live trigger today; documented in
+/// `project_phase_e_scope_b_deferred` memory).
+pub struct EntryFnIndex<'a> {
+    inner: HashMap<String, &'a FnDef>,
+}
+
+impl<'a> EntryFnIndex<'a> {
+    /// Build the index by walking entry-scope `TopLevel` items.
+    /// Dep modules are intentionally NOT considered — see type doc.
+    pub fn from_entry_items(items: &'a [TopLevel]) -> Self {
+        let inner = items
+            .iter()
+            .filter_map(|item| {
+                if let TopLevel::FnDef(fd) = item {
+                    Some((fd.name.clone(), fd))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Self { inner }
+    }
+
+    /// Bare-name lookup. Safe by parser invariant — see type doc.
+    pub fn get(&self, name: &str) -> Option<&&'a FnDef> {
+        self.inner.get(name)
+    }
+
+    /// Existence check. Same identity contract as [`Self::get`].
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.inner.contains_key(name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedLawFunction {
     pub name: String,
@@ -88,16 +144,7 @@ pub fn collect_missing_helper_law_hints(
     items: &[TopLevel],
     fn_sigs: &FnSigMap,
 ) -> Vec<MissingHelperLawHint> {
-    let fn_defs = items
-        .iter()
-        .filter_map(|item| {
-            if let TopLevel::FnDef(fd) = item {
-                Some((fd.name.clone(), fd))
-            } else {
-                None
-            }
-        })
-        .collect::<HashMap<_, _>>();
+    let fn_defs = EntryFnIndex::from_entry_items(items);
     let verified_law_functions = items
         .iter()
         .filter_map(|item| {
@@ -143,16 +190,7 @@ pub fn collect_contextual_helper_law_hints(
     items: &[TopLevel],
     fn_sigs: &FnSigMap,
 ) -> Vec<ContextualHelperLawHint> {
-    let fn_defs = items
-        .iter()
-        .filter_map(|item| {
-            if let TopLevel::FnDef(fd) = item {
-                Some((fd.name.clone(), fd))
-            } else {
-                None
-            }
-        })
-        .collect::<HashMap<_, _>>();
+    let fn_defs = EntryFnIndex::from_entry_items(items);
     let contextual_law_targets = items
         .iter()
         .filter_map(|item| {
@@ -198,7 +236,7 @@ pub fn contextual_helper_law_message(hint: &ContextualHelperLawHint) -> String {
 fn missing_helper_law_hint_for_block(
     vb: &VerifyBlock,
     law: &VerifyLaw,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     verified_law_functions: &HashSet<String>,
     fn_sigs: &FnSigMap,
 ) -> Option<MissingHelperLawHint> {
@@ -235,7 +273,7 @@ fn missing_helper_law_hint_for_block(
 fn contextual_helper_law_hint_for_block(
     vb: &VerifyBlock,
     law: &VerifyLaw,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     contextual_law_targets: &HashSet<String>,
     fn_sigs: &FnSigMap,
 ) -> Option<ContextualHelperLawHint> {
@@ -265,7 +303,7 @@ fn contextual_helper_law_hint_for_block(
 
 fn direct_pure_user_calls_in_law(
     law: &VerifyLaw,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
 ) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
@@ -276,7 +314,7 @@ fn direct_pure_user_calls_in_law(
 
 fn top_level_direct_pure_call_in_law(
     law: &VerifyLaw,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
 ) -> Option<String> {
     direct_pure_user_call_name(&law.lhs, fn_defs, fn_sigs)
@@ -285,7 +323,7 @@ fn top_level_direct_pure_call_in_law(
 
 fn contextual_roundtrip_parser_name(
     law: &VerifyLaw,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
 ) -> Option<String> {
     let given = law.givens.first()?;
@@ -294,7 +332,7 @@ fn contextual_roundtrip_parser_name(
 
 fn frontier_helper_calls(
     root_name: &str,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
 ) -> BTreeSet<String> {
     let mut current =
@@ -321,7 +359,7 @@ fn frontier_helper_calls(
 
 fn wrapper_dispatch_root(
     fn_name: &str,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
 ) -> Option<String> {
     let fd = fn_defs.get(fn_name)?;
@@ -335,7 +373,7 @@ fn wrapper_dispatch_root(
 
 fn direct_pure_fn_callees_matching_return(
     fn_name: &str,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
 ) -> BTreeSet<String> {
     let Some((_, return_type, _)) = fn_sigs.get(fn_name) else {
@@ -366,7 +404,7 @@ fn direct_pure_fn_callees_matching_return(
 
 fn collect_direct_pure_user_calls(
     expr: &Spanned<Expr>,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
     out: &mut BTreeSet<String>,
 ) {
@@ -443,7 +481,7 @@ fn collect_direct_pure_user_calls(
 
 fn direct_pure_user_call_name(
     expr: &Spanned<Expr>,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
 ) -> Option<String> {
     let Expr::FnCall(callee, _) = &expr.node else {
@@ -475,7 +513,7 @@ fn dotted_name(expr: &Spanned<Expr>) -> Option<String> {
 fn detect_roundtrip_layers(
     law: &VerifyLaw,
     given_name: &str,
-    fn_defs: &HashMap<String, &FnDef>,
+    fn_defs: &EntryFnIndex<'_>,
     fn_sigs: &FnSigMap,
 ) -> Option<(String, String)> {
     if law.givens.len() != 1 {
@@ -485,7 +523,7 @@ fn detect_roundtrip_layers(
     fn detect_roundtrip_side(
         expr: &Spanned<Expr>,
         given_name: &str,
-        fn_defs: &HashMap<String, &FnDef>,
+        fn_defs: &EntryFnIndex<'_>,
         fn_sigs: &FnSigMap,
     ) -> Option<(String, String)> {
         let Expr::FnCall(parser_callee, parser_args) = &expr.node else {
