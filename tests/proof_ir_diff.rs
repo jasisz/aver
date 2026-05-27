@@ -109,7 +109,7 @@ fn legacy_decision(ctx: &CodegenContext, type_name: &str) -> Option<LegacyDecl> 
         carrier_type: info.carrier_type.to_string(),
         carrier_field: info.carrier_field.to_string(),
         predicate_param: info.param_name.to_string(),
-        predicate_repr: spanned_repr(info.predicate),
+        predicate_repr: spanned_repr_ast(&inputs, info.predicate, None),
     })
 }
 
@@ -121,11 +121,26 @@ struct LegacyDecl {
     predicate_repr: String,
 }
 
-/// Stable AST fingerprint for cross-check. Uses Debug output —
-/// fine for this test because both legacy and new path read the
-/// SAME `Spanned<Expr>` node out of the same AST.
-fn spanned_repr(expr: &Spanned<aver::ast::Expr>) -> String {
+/// Stable IR-form fingerprint for cross-check. Uses Debug output —
+/// the migrated path (Phase E PR 12 Scope A) now stores
+/// `Spanned<ResolvedExpr>` in ProofIR, so the cross-check resolves
+/// the legacy `Spanned<ast::Expr>` slice through the same
+/// `ProofLowerInputs::resolve_expr` the producer uses, then compares
+/// IR-form Debug strings on both sides.
+fn spanned_repr(expr: &Spanned<aver::ir::hir::ResolvedExpr>) -> String {
     format!("{:?}", expr.node)
+}
+
+/// Helper for legacy paths that still hold raw `Spanned<ast::Expr>`.
+/// Resolves through the same `inputs.resolve_expr` the IR producer
+/// calls so both sides print in the same IR shape for the diff.
+fn spanned_repr_ast(
+    inputs: &aver::codegen::proof_lower::ProofLowerInputs,
+    expr: &Spanned<aver::ast::Expr>,
+    scope: Option<&str>,
+) -> String {
+    let resolved = inputs.resolve_expr(expr, scope);
+    format!("{:?}", resolved.node)
 }
 
 fn assert_equiv(src: &str, type_names: &[&str]) {
@@ -382,10 +397,11 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
         legacy_precondition.len(),
         "precondition arity mismatch with legacy plan"
     );
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
     for (lifted, legacy) in precondition.iter().zip(legacy_precondition.iter()) {
         assert_eq!(
             spanned_repr(&lifted.expr),
-            spanned_repr(legacy),
+            spanned_repr_ast(&inputs, legacy, None),
             "precondition clause AST diverges from legacy"
         );
         assert_eq!(
@@ -409,10 +425,13 @@ fn fib_tr_native_contract_matches_legacy_recursion_plan() {
         unreachable!();
     };
     assert_eq!(body.base_arm_literal, *legacy_lit);
-    assert_eq!(spanned_repr(&body.base_arm_body), spanned_repr(legacy_base));
+    assert_eq!(
+        spanned_repr(&body.base_arm_body),
+        spanned_repr_ast(&inputs, legacy_base, None)
+    );
     assert_eq!(
         spanned_repr(&body.wildcard_arm_body),
-        spanned_repr(legacy_wild),
+        spanned_repr_ast(&inputs, legacy_wild, None),
     );
 }
 
@@ -535,7 +554,11 @@ fn int_ascending_lowers_to_bound_fuel_contract() {
         })
         .expect("climb FnDef");
     assert_eq!(param, &fd.params[*legacy_idx].0);
-    assert_eq!(spanned_repr(bound), spanned_repr(legacy_bound));
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+    assert_eq!(
+        spanned_repr(bound),
+        spanned_repr_ast(&inputs, legacy_bound, None)
+    );
 }
 
 #[test]

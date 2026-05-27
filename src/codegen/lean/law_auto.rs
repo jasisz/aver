@@ -8,7 +8,7 @@ mod shared;
 mod spec;
 
 use super::VerifyEmitMode;
-use super::expr::{aver_name_to_lean, emit_expr_legacy};
+use super::expr::aver_name_to_lean;
 use crate::ast::{VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
@@ -182,8 +182,8 @@ pub fn emit_verify_law_forall_auto_proof(
                 vec![
                     format!(
                         "change {} = {}",
-                        emit_expr_legacy(unfolded_impl, ctx, None),
-                        emit_expr_legacy(unfolded_spec, ctx, None)
+                        super::expr::emit_expr(unfolded_impl, ctx),
+                        super::expr::emit_expr(unfolded_spec, ctx)
                     ),
                     "omega".to_string(),
                 ],
@@ -272,8 +272,8 @@ pub fn emit_verify_law_forall_auto_proof(
                     "Map.get_set_self" => "AverMap.get_set_self",
                     _ => unreachable!(),
                 };
-                let atom_arg = |e: &crate::ast::Spanned<crate::ast::Expr>| {
-                    let rendered = emit_expr_legacy(e, ctx, None);
+                let atom_arg = |e: &crate::ast::Spanned<crate::ir::hir::ResolvedExpr>| {
+                    let rendered = super::expr::emit_expr(e, ctx);
                     if rendered.contains(' ') && !rendered.starts_with('(') {
                         format!("({rendered})")
                     } else {
@@ -315,8 +315,8 @@ pub fn emit_verify_law_forall_auto_proof(
                 let outer_lean = aver_name_to_lean(outer_fn);
                 let extras_lean: Vec<String> =
                     extra_unfolds.iter().map(|n| aver_name_to_lean(n)).collect();
-                let atom_render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
-                    let rendered = emit_expr_legacy(e, ctx, None);
+                let atom_render = |e: &crate::ast::Spanned<crate::ir::hir::ResolvedExpr>| {
+                    let rendered = super::expr::emit_expr(e, ctx);
                     if rendered.contains(' ') && !rendered.starts_with('(') {
                         format!("({rendered})")
                     } else {
@@ -372,8 +372,8 @@ pub fn emit_verify_law_forall_auto_proof(
             }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
             {
                 let outer_lean = aver_name_to_lean(outer_fn);
-                let atom_render = |e: &crate::ast::Spanned<crate::ast::Expr>| {
-                    let rendered = emit_expr_legacy(e, ctx, None);
+                let atom_render = |e: &crate::ast::Spanned<crate::ir::hir::ResolvedExpr>| {
+                    let rendered = super::expr::emit_expr(e, ctx);
                     if rendered.contains(' ') && !rendered.starts_with('(') {
                         format!("({rendered})")
                     } else {
@@ -483,12 +483,12 @@ fn emit_simp_omega_from_ir(
             .map(|n| {
                 let predicate = match smart_guard {
                     Some(g) => {
-                        let substituted = crate::codegen::common::substitute_ident_in_expr(
+                        let substituted = crate::codegen::common::substitute_ident_in_resolved_expr(
                             &g.predicate,
                             &g.param,
                             n,
                         );
-                        emit_expr_legacy(&substituted, ctx, None)
+                        super::expr::emit_expr(&substituted, ctx)
                     }
                     None => format!("{n} ≥ 0"),
                 };

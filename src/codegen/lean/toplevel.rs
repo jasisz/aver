@@ -107,7 +107,7 @@ fn emit_product_type(
     {
         let carrier_ty = type_annotation_to_lean(&decl.carrier_type);
         let param = aver_name_to_lean(&decl.predicate_param);
-        let predicate = super::expr::emit_expr_legacy(&decl.invariant.expr, ctx, None);
+        let predicate = super::expr::emit_expr(&decl.invariant.expr, ctx);
         return format!("abbrev {name} := {{ {param} : {carrier_ty} // {predicate} }}");
     }
 
@@ -692,9 +692,9 @@ fn emit_native_guarded_int_countdown_fn(
     ctx: &CodegenContext,
     param_index: usize,
     base_arm_literal: i64,
-    base_arm_body: &Spanned<Expr>,
-    wildcard_arm_body: &Spanned<Expr>,
-    precondition: &[Spanned<Expr>],
+    base_arm_body: &Spanned<crate::ir::hir::ResolvedExpr>,
+    wildcard_arm_body: &Spanned<crate::ir::hir::ResolvedExpr>,
+    precondition: &[Spanned<crate::ir::hir::ResolvedExpr>],
 ) -> String {
     let aux_name = native_aux_name(&fd.name);
     let main_name = aver_name_to_lean(&fd.name);
@@ -714,7 +714,7 @@ fn emit_native_guarded_int_countdown_fn(
     } else {
         precondition
             .iter()
-            .map(|p| format!("({})", emit_expr_legacy(p, ctx, None)))
+            .map(|p| format!("({})", super::expr::emit_expr(p, ctx)))
             .collect::<Vec<_>>()
             .join(" ∧ ")
     };
@@ -731,13 +731,22 @@ fn emit_native_guarded_int_countdown_fn(
     // termination check. Plain `match` would leave the case-split
     // implicit (only an unnamed `casesOn` motive carries it) and
     // `omega` can't see it.
-    let rewritten_wc = crate::codegen::recursion::rewrite_native_guarded_calls_expr(
+    // Resolve the recursive fn's `FnId` via the same pointer-eq path
+    // `ProofIR.fn_contracts` was keyed by — `fn_id_for_decl` picks
+    // the owning module's prefix when `fd` came from a dep, the
+    // entry slot when it sits in `ctx.fn_defs`. Bare-name
+    // `FnKey::entry(fd.name)` would collide for any module-owned
+    // recursive fn whose bare name also exists at entry (the very
+    // class of bug #147 phase E is killing).
+    let target_fn_id = crate::codegen::common::fn_id_for_decl(ctx, fd)
+        .unwrap_or_else(|| panic!("native-guarded fn {} missing FnId", fd.name));
+    let rewritten_wc = crate::codegen::recursion::rewrite_native_guarded_calls_resolved_expr(
         wildcard_arm_body,
-        &fd.name,
+        target_fn_id,
         &aux_name,
     );
-    let base_str = emit_expr_legacy(base_arm_body, ctx, None);
-    let rec_str = emit_expr_legacy(&rewritten_wc, ctx, None);
+    let base_str = super::expr::emit_expr(base_arm_body, ctx);
+    let rec_str = super::expr::emit_expr(&rewritten_wc, ctx);
     let arg_names = emit_fn_param_names(&fd.params);
 
     let mut lines = Vec::new();
@@ -1292,7 +1301,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
         // param somehow vanished (shouldn't happen — populator just
         // pulled it from fd.params).
         if let Some(param_index) = fd.params.iter().position(|(n, _)| n == param) {
-            let precondition_clauses: Vec<crate::ast::Spanned<crate::ast::Expr>> =
+            let precondition_clauses: Vec<crate::ast::Spanned<crate::ir::hir::ResolvedExpr>> =
                 precondition.iter().map(|p| p.expr.clone()).collect();
             return Some(emit_native_guarded_int_countdown_fn(
                 fd,

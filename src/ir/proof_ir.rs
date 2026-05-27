@@ -91,7 +91,7 @@ pub struct UnclassifiedFn {
 #[derive(Debug, Clone)]
 pub struct SmartGuard {
     pub param: String,
-    pub predicate: Spanned<crate::ast::Expr>,
+    pub predicate: Spanned<crate::ir::hir::ResolvedExpr>,
 }
 
 /// A refinement-lifted user type — opaque record with a single
@@ -230,9 +230,9 @@ pub struct NativeIntCountdownBody {
     /// value is carried as data rather than baked into the marker.
     pub base_arm_literal: i64,
     /// AST for the base arm's body (`match p { 0 -> THIS; _ -> ... }`).
-    pub base_arm_body: Spanned<crate::ast::Expr>,
+    pub base_arm_body: Spanned<crate::ir::hir::ResolvedExpr>,
     /// AST for the wildcard arm's body — the recursive call site.
-    pub wildcard_arm_body: Spanned<crate::ast::Expr>,
+    pub wildcard_arm_body: Spanned<crate::ir::hir::ResolvedExpr>,
 }
 
 /// Fuel metric for the fallback fuel-encoded emit path.
@@ -246,7 +246,7 @@ pub enum FuelMetric {
     /// Dafny: `emit_expr` over int subset).
     BoundMinusParamNatAbsPlusOne {
         param: String,
-        bound: Spanned<crate::ast::Expr>,
+        bound: Spanned<crate::ir::hir::ResolvedExpr>,
     },
     /// `xs.length + 1` — List/String structural recursion.
     SeqLenPlusOne { param: String },
@@ -314,8 +314,8 @@ pub struct LawTheorem {
     /// LHS = RHS claim. Wrapper-stripped, lifted-var-aware (bare
     /// idents for arg positions, `.val` projections inside
     /// comparator BinOps if the lowerer determined this is needed).
-    pub claim_lhs: Spanned<crate::ast::Expr>,
-    pub claim_rhs: Spanned<crate::ast::Expr>,
+    pub claim_lhs: Spanned<crate::ir::hir::ResolvedExpr>,
+    pub claim_rhs: Spanned<crate::ir::hir::ResolvedExpr>,
     pub strategy: ProofStrategy,
 }
 
@@ -451,7 +451,7 @@ pub enum ProofStrategy {
         /// Arguments in the order the axiom expects. For Map
         /// axioms: `[m, k, v]` (the map, key, value the axiom
         /// reasons about).
-        args: Vec<Spanned<crate::ast::Expr>>,
+        args: Vec<Spanned<crate::ir::hir::ResolvedExpr>>,
     },
     /// Post-condition of an inline-defined map-update fn. The outer
     /// fn `outer(m, k)` has body shape `let v = Map.get m k; match v
@@ -471,9 +471,9 @@ pub enum ProofStrategy {
         /// Which post-condition the law asserts.
         kind: MapUpdatePostconditionKind,
         /// The map argument as it appears at the law's call site.
-        map_arg: Spanned<crate::ast::Expr>,
+        map_arg: Spanned<crate::ir::hir::ResolvedExpr>,
         /// The key argument as it appears at the law's call site.
-        key_arg: Spanned<crate::ast::Expr>,
+        key_arg: Spanned<crate::ir::hir::ResolvedExpr>,
         /// Additional helper-fn source names to unfold on top of
         /// `outer_fn` — only used for `GetAfter`, where the rhs's
         /// `Option.Some(...)` typically wraps the prior value via a
@@ -503,9 +503,9 @@ pub enum ProofStrategy {
         /// Source name of the outer increment fn.
         outer_fn: String,
         /// The map argument as it appears at the law's call site.
-        map_arg: Spanned<crate::ast::Expr>,
+        map_arg: Spanned<crate::ir::hir::ResolvedExpr>,
         /// The key argument as it appears at the law's call site.
-        key_arg: Spanned<crate::ast::Expr>,
+        key_arg: Spanned<crate::ir::hir::ResolvedExpr>,
     },
     /// Functional equivalence between an impl fn and a (declared)
     /// spec fn — the law states `impl(args) == spec(args)` and the
@@ -547,10 +547,10 @@ pub enum ProofStrategy {
     LinearIntSpecEquivalence {
         /// Impl body with formal params substituted by call-site
         /// args. Linear-arithmetic-only after substitution.
-        unfolded_impl: Spanned<crate::ast::Expr>,
+        unfolded_impl: Spanned<crate::ir::hir::ResolvedExpr>,
         /// Spec body with formal params substituted by call-site
         /// args. Linear-arithmetic-only after substitution.
-        unfolded_spec: Spanned<crate::ast::Expr>,
+        unfolded_spec: Spanned<crate::ir::hir::ResolvedExpr>,
     },
     /// Functional equivalence between an effectful impl fn and a
     /// spec fn. Same "claim states `impl(args) == spec(args)`"
@@ -625,5 +625,5 @@ pub struct Predicate {
     /// The expression. Already in the target variable space (e.g.
     /// caller-derived predicates have had caller-arg names
     /// substituted to callee-param names).
-    pub expr: Spanned<crate::ast::Expr>,
+    pub expr: Spanned<crate::ir::hir::ResolvedExpr>,
 }

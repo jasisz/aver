@@ -539,6 +539,139 @@ pub fn rewrite_native_guarded_calls_expr(
     Spanned::new(new_node, line)
 }
 
+/// `ResolvedExpr` mirror of [`rewrite_native_guarded_calls_expr`].
+/// The proof-mode `IntCountdownGuarded` shape stores the rewritten
+/// arms on `ProofIR` (now resolved), so the rewriter that lifts
+/// `fn(args)` to `aux_name(args, OMEGA_PROOF_SENTINEL)` works in
+/// resolved space too.
+///
+/// Target detection: callers pass `target_fn_id` — the opaque
+/// [`crate::ir::FnId`] of the recursive fn the lowerer pinned. Every
+/// `ResolvedCallee::Fn(callee_id)` / `TailCall { target, .. }` site
+/// is compared by id, so two same-bare-name fns across modules can't
+/// cross-rewrite by accident — same anti-collision rule as the rest
+/// of #147 phase E.
+///
+/// Synthesised aux call: emitted as
+/// `ResolvedCallee::Unresolved { callee: Ident(aux_name) }` rather
+/// than `Builtin(...)` because `aux_name` is a codegen-only helper
+/// (no entry in the program's symbol table); `Unresolved` is exactly
+/// the variant the resolver uses for names it can't classify, and
+/// the Lean expr emitter already renders the inner ident verbatim.
+pub fn rewrite_native_guarded_calls_resolved_expr(
+    expr: &Spanned<crate::ir::hir::ResolvedExpr>,
+    target_fn_id: crate::ir::FnId,
+    aux_name: &str,
+) -> Spanned<crate::ir::hir::ResolvedExpr> {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedMatchArm, ResolvedStrPart};
+    let line = expr.line;
+    let rec = |e: &Spanned<ResolvedExpr>| {
+        rewrite_native_guarded_calls_resolved_expr(e, target_fn_id, aux_name)
+    };
+    let synth_aux_callee = |line: usize| -> ResolvedCallee {
+        ResolvedCallee::Unresolved {
+            callee: Box::new(Spanned::new(
+                ResolvedExpr::Ident(aux_name.to_string()),
+                line,
+            )),
+        }
+    };
+    let new_node = match &expr.node {
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
+            return expr.clone();
+        }
+        ResolvedExpr::Attr(obj, field) => ResolvedExpr::Attr(Box::new(rec(obj)), field.clone()),
+        ResolvedExpr::Call(callee, args) => {
+            let rewritten_args: Vec<Spanned<ResolvedExpr>> = args.iter().map(&rec).collect();
+            let target_matches =
+                matches!(callee, ResolvedCallee::Fn(callee_id) if *callee_id == target_fn_id);
+            if target_matches {
+                let mut call_args = rewritten_args;
+                call_args.push(Spanned::new(
+                    ResolvedExpr::Ident(OMEGA_PROOF_SENTINEL.to_string()),
+                    line,
+                ));
+                ResolvedExpr::Call(synth_aux_callee(line), call_args)
+            } else {
+                ResolvedExpr::Call(callee.clone(), rewritten_args)
+            }
+        }
+        ResolvedExpr::BinOp(op, left, right) => {
+            ResolvedExpr::BinOp(*op, Box::new(rec(left)), Box::new(rec(right)))
+        }
+        ResolvedExpr::Neg(inner) => ResolvedExpr::Neg(Box::new(rec(inner))),
+        ResolvedExpr::Match { subject, arms } => ResolvedExpr::Match {
+            subject: Box::new(rec(subject)),
+            arms: arms
+                .iter()
+                .map(|arm| ResolvedMatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: Box::new(rec(&arm.body)),
+                    binding_slots: std::sync::OnceLock::new(),
+                })
+                .collect(),
+        },
+        ResolvedExpr::Ctor(ctor, args) => {
+            ResolvedExpr::Ctor(ctor.clone(), args.iter().map(&rec).collect())
+        }
+        ResolvedExpr::ErrorProp(inner) => ResolvedExpr::ErrorProp(Box::new(rec(inner))),
+        ResolvedExpr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
+            parts
+                .iter()
+                .map(|p| match p {
+                    ResolvedStrPart::Literal(_) => p.clone(),
+                    ResolvedStrPart::Parsed(inner) => ResolvedStrPart::Parsed(Box::new(rec(inner))),
+                })
+                .collect(),
+        ),
+        ResolvedExpr::List(items) => ResolvedExpr::List(items.iter().map(&rec).collect()),
+        ResolvedExpr::Tuple(items) => ResolvedExpr::Tuple(items.iter().map(&rec).collect()),
+        ResolvedExpr::IndependentProduct(items, flag) => {
+            ResolvedExpr::IndependentProduct(items.iter().map(&rec).collect(), *flag)
+        }
+        ResolvedExpr::MapLiteral(entries) => {
+            ResolvedExpr::MapLiteral(entries.iter().map(|(k, v)| (rec(k), rec(v))).collect())
+        }
+        ResolvedExpr::RecordCreate {
+            type_id,
+            type_name,
+            fields,
+        } => ResolvedExpr::RecordCreate {
+            type_id: *type_id,
+            type_name: type_name.clone(),
+            fields: fields.iter().map(|(n, v)| (n.clone(), rec(v))).collect(),
+        },
+        ResolvedExpr::RecordUpdate {
+            type_id,
+            type_name,
+            base,
+            updates,
+        } => ResolvedExpr::RecordUpdate {
+            type_id: *type_id,
+            type_name: type_name.clone(),
+            base: Box::new(rec(base)),
+            updates: updates.iter().map(|(n, v)| (n.clone(), rec(v))).collect(),
+        },
+        ResolvedExpr::TailCall { target, args } => {
+            let rewritten_args: Vec<Spanned<ResolvedExpr>> = args.iter().map(&rec).collect();
+            if *target == target_fn_id {
+                let mut call_args = rewritten_args;
+                call_args.push(Spanned::new(
+                    ResolvedExpr::Ident(OMEGA_PROOF_SENTINEL.to_string()),
+                    line,
+                ));
+                ResolvedExpr::Call(synth_aux_callee(line), call_args)
+            } else {
+                ResolvedExpr::TailCall {
+                    target: *target,
+                    args: rewritten_args,
+                }
+            }
+        }
+    };
+    Spanned::new(new_node, line)
+}
+
 /// Body-level wrapper around [`rewrite_native_guarded_calls_expr`].
 pub fn rewrite_native_guarded_calls_body(body: &FnBody, fn_name: &str, aux_name: &str) -> FnBody {
     FnBody::Block(

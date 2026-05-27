@@ -566,6 +566,142 @@ pub fn flatten_bool_and_conjuncts(expr: &Spanned<Expr>) -> Vec<Spanned<Expr>> {
     vec![expr.clone()]
 }
 
+/// `ResolvedExpr` mirror of [`flatten_bool_and_conjuncts`]. After the
+/// resolver lifts `Bool.and(a, b)` into
+/// `ResolvedExpr::Call(ResolvedCallee::Builtin("Bool.and"), args)`,
+/// the same recursive split holds.
+pub fn flatten_bool_and_conjuncts_resolved(
+    expr: &Spanned<crate::ir::hir::ResolvedExpr>,
+) -> Vec<Spanned<crate::ir::hir::ResolvedExpr>> {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
+    if let ResolvedExpr::Call(ResolvedCallee::Builtin(name), args) = &expr.node
+        && name == "Bool.and"
+        && args.len() == 2
+    {
+        let mut out = flatten_bool_and_conjuncts_resolved(&args[0]);
+        out.extend(flatten_bool_and_conjuncts_resolved(&args[1]));
+        return out;
+    }
+    vec![expr.clone()]
+}
+
+/// `ResolvedExpr` mirror of [`predicate_syntactic_eq`].
+pub fn predicate_syntactic_eq_resolved(
+    a: &Spanned<crate::ir::hir::ResolvedExpr>,
+    b: &Spanned<crate::ir::hir::ResolvedExpr>,
+) -> bool {
+    use crate::ir::hir::ResolvedExpr;
+    match (&a.node, &b.node) {
+        (ResolvedExpr::BinOp(op_a, la, ra), ResolvedExpr::BinOp(op_b, lb, rb)) => {
+            if op_a == op_b
+                && predicate_syntactic_eq_resolved(la, lb)
+                && predicate_syntactic_eq_resolved(ra, rb)
+            {
+                return true;
+            }
+            if let Some(swapped) = swap_comparison_operands_op(op_a)
+                && &swapped == op_b
+                && predicate_syntactic_eq_resolved(la, rb)
+                && predicate_syntactic_eq_resolved(ra, lb)
+            {
+                return true;
+            }
+            false
+        }
+        _ => a.node == b.node,
+    }
+}
+
+/// `ResolvedExpr` mirror of [`substitute_ident_in_expr`]. Rewrites
+/// every `Ident(from)` / `Resolved { name: from, .. }` leaf to
+/// `Ident(to)` — the slot identity (if any) is dropped because the
+/// substitution targets a free variable name that doesn't have a
+/// slot in the resolver's local table. Used by proof-mode
+/// `when`-redundancy check + smart-guard predicate substitution
+/// after the IR carries pre-resolved expressions.
+pub fn substitute_ident_in_resolved_expr(
+    expr: &Spanned<crate::ir::hir::ResolvedExpr>,
+    from: &str,
+    to: &str,
+) -> Spanned<crate::ir::hir::ResolvedExpr> {
+    use crate::ir::hir::{ResolvedExpr, ResolvedMatchArm, ResolvedStrPart};
+    let line = expr.line;
+    let rec = |e: &Spanned<ResolvedExpr>| substitute_ident_in_resolved_expr(e, from, to);
+    let new_node = match &expr.node {
+        ResolvedExpr::Ident(name) | ResolvedExpr::Resolved { name, .. } if name == from => {
+            ResolvedExpr::Ident(to.to_string())
+        }
+        ResolvedExpr::Literal(_) | ResolvedExpr::Ident(_) | ResolvedExpr::Resolved { .. } => {
+            return expr.clone();
+        }
+        ResolvedExpr::Attr(obj, field) => ResolvedExpr::Attr(Box::new(rec(obj)), field.clone()),
+        ResolvedExpr::Call(callee, args) => {
+            ResolvedExpr::Call(callee.clone(), args.iter().map(&rec).collect())
+        }
+        ResolvedExpr::BinOp(op, left, right) => {
+            ResolvedExpr::BinOp(*op, Box::new(rec(left)), Box::new(rec(right)))
+        }
+        ResolvedExpr::Neg(inner) => ResolvedExpr::Neg(Box::new(rec(inner))),
+        ResolvedExpr::Match { subject, arms } => ResolvedExpr::Match {
+            subject: Box::new(rec(subject)),
+            arms: arms
+                .iter()
+                .map(|arm| ResolvedMatchArm {
+                    pattern: arm.pattern.clone(),
+                    body: Box::new(rec(&arm.body)),
+                    binding_slots: std::sync::OnceLock::new(),
+                })
+                .collect(),
+        },
+        ResolvedExpr::Ctor(ctor, args) => {
+            ResolvedExpr::Ctor(ctor.clone(), args.iter().map(&rec).collect())
+        }
+        ResolvedExpr::ErrorProp(inner) => ResolvedExpr::ErrorProp(Box::new(rec(inner))),
+        ResolvedExpr::InterpolatedStr(parts) => ResolvedExpr::InterpolatedStr(
+            parts
+                .iter()
+                .map(|p| match p {
+                    ResolvedStrPart::Literal(_) => p.clone(),
+                    ResolvedStrPart::Parsed(inner) => ResolvedStrPart::Parsed(Box::new(rec(inner))),
+                })
+                .collect(),
+        ),
+        ResolvedExpr::List(items) => ResolvedExpr::List(items.iter().map(&rec).collect()),
+        ResolvedExpr::Tuple(items) => ResolvedExpr::Tuple(items.iter().map(&rec).collect()),
+        ResolvedExpr::IndependentProduct(items, flag) => {
+            ResolvedExpr::IndependentProduct(items.iter().map(&rec).collect(), *flag)
+        }
+        ResolvedExpr::MapLiteral(entries) => {
+            ResolvedExpr::MapLiteral(entries.iter().map(|(k, v)| (rec(k), rec(v))).collect())
+        }
+        ResolvedExpr::RecordCreate {
+            type_id,
+            type_name,
+            fields,
+        } => ResolvedExpr::RecordCreate {
+            type_id: *type_id,
+            type_name: type_name.clone(),
+            fields: fields.iter().map(|(n, v)| (n.clone(), rec(v))).collect(),
+        },
+        ResolvedExpr::RecordUpdate {
+            type_id,
+            type_name,
+            base,
+            updates,
+        } => ResolvedExpr::RecordUpdate {
+            type_id: *type_id,
+            type_name: type_name.clone(),
+            base: Box::new(rec(base)),
+            updates: updates.iter().map(|(n, v)| (n.clone(), rec(v))).collect(),
+        },
+        ResolvedExpr::TailCall { target, args } => ResolvedExpr::TailCall {
+            target: *target,
+            args: args.iter().map(&rec).collect(),
+        },
+    };
+    Spanned::new(new_node, line)
+}
+
 /// Walk `expr` and rename every `Ident(from)` / `Resolved { name: from
 /// }` to `Ident(to)`. Lives here (not in `recursion`) because three
 /// proof-mode predicate sources reach for the same substitution:
@@ -712,7 +848,15 @@ pub fn when_is_redundant_with_refinement_lifts(
     if lifted_vars.is_empty() {
         return false;
     }
-    let when_conjuncts = flatten_bool_and_conjuncts(when_expr);
+    // The `when` clause arrives as raw AST (verify block parses
+    // straight from source); the refinement invariants on the other
+    // side now ride [`crate::ir::hir::ResolvedExpr`] (Phase E PR 12
+    // Scope A). Resolve the `when` once and run the conjunct
+    // comparison in resolved space so identity holds modulo the
+    // resolver's canonicalisation (e.g. `Bool.and` lifts to
+    // `ResolvedCallee::Builtin("Bool.and")` on both sides).
+    let resolved_when = ctx.resolve_expr(when_expr, ctx.active_module_scope().as_deref());
+    let when_conjuncts = flatten_bool_and_conjuncts_resolved(&resolved_when);
     // Flatten BOTH sides — IntRange-style refinement predicates carry a
     // compound `Bool.and(n >= 0, n <= 100)` invariant; without
     // flattening, a `when Bool.and(a >= 0, a <= 100)` user clause
@@ -726,17 +870,17 @@ pub fn when_is_redundant_with_refinement_lifts(
     // two modules with distinct predicates would share whichever
     // walked first. `find_refined_type` reads from
     // `proof_ir.refined_types` keyed by canonical `Module.Name`.
-    let mut lifted_predicates: Vec<Spanned<Expr>> = Vec::new();
+    let mut lifted_predicates: Vec<Spanned<crate::ir::hir::ResolvedExpr>> = Vec::new();
     for (given_name, refined_type) in lifted_vars {
         let Some(decl) = find_refined_type(ctx, refined_type) else {
             return false;
         };
-        let substituted = substitute_ident_in_expr(
+        let substituted = substitute_ident_in_resolved_expr(
             &decl.invariant.expr,
             decl.predicate_param.as_str(),
             given_name,
         );
-        lifted_predicates.extend(flatten_bool_and_conjuncts(&substituted));
+        lifted_predicates.extend(flatten_bool_and_conjuncts_resolved(&substituted));
     }
     if when_conjuncts.len() != lifted_predicates.len() {
         return false;
@@ -744,7 +888,7 @@ pub fn when_is_redundant_with_refinement_lifts(
     let mut matched = vec![false; lifted_predicates.len()];
     for wc in &when_conjuncts {
         let Some(idx) = (0..lifted_predicates.len())
-            .find(|&i| !matched[i] && predicate_syntactic_eq(wc, &lifted_predicates[i]))
+            .find(|&i| !matched[i] && predicate_syntactic_eq_resolved(wc, &lifted_predicates[i]))
         else {
             return false;
         };
@@ -2434,7 +2578,9 @@ mod tests {
                     predicate_param.to_string(),
                     QuantifierType::Plain("Int".to_string()),
                 )],
-                expr: sb(Expr::Literal(Literal::Bool(true))),
+                expr: crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Literal(
+                    Literal::Bool(true),
+                )),
             },
             witness: Some(witness.to_string()),
         };
@@ -2513,7 +2659,9 @@ mod tests {
             predicate_param: param.to_string(),
             invariant: Predicate {
                 free_vars: vec![(param.to_string(), QuantifierType::Plain("Int".to_string()))],
-                expr: sb(Expr::Literal(Literal::Bool(true))),
+                expr: crate::ast::Spanned::bare(crate::ir::hir::ResolvedExpr::Literal(
+                    Literal::Bool(true),
+                )),
             },
             witness: Some(witness.to_string()),
         };
