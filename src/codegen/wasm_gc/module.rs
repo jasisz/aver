@@ -851,6 +851,10 @@ pub(super) fn emit_module_with(
             grow_type: idx.grow_type,
             from_lm_fn: next_fn(),
             to_lm_fn: next_fn(),
+            // `println_to_lm` reuses `to_lm_type` — same `(s: ref
+            // string) -> i32` shape. The body writes `'\n'` at
+            // LM[len] before returning `len + 1`.
+            println_to_lm_fn: next_fn(),
             pages_fn: next_fn(),
             grow_fn: next_fn(),
         })
@@ -1695,6 +1699,9 @@ pub(super) fn emit_module_with(
     if let Some(b) = &bridge {
         funcs.function(b.from_lm_type);
         funcs.function(b.to_lm_type);
+        // println_to_lm reuses the to_lm wasm type (same
+        // `(s: ref string) -> i32` signature).
+        funcs.function(b.to_lm_type);
         funcs.function(b.pages_type);
         funcs.function(b.grow_type);
     }
@@ -2019,6 +2026,7 @@ pub(super) fn emit_module_with(
                 stdout_handle_global: wasip2_globals.as_ref().and_then(|g| g.stdout_handle),
                 stderr_handle_global: wasip2_globals.as_ref().and_then(|g| g.stderr_handle),
                 str_to_lm_fn_idx: bridge.as_ref().map(|b| b.to_lm_fn),
+                println_to_lm_fn_idx: bridge.as_ref().map(|b| b.println_to_lm_fn),
                 clocks_now_fn_idx: wasip2_imports
                     .lookup_wasm_fn_idx(Wasip2ImportSlot::ClocksWallClockNow),
                 random_u64_fn_idx: wasip2_imports
@@ -6322,6 +6330,7 @@ struct BridgeIndices {
     grow_type: u32,
     from_lm_fn: u32,
     to_lm_fn: u32,
+    println_to_lm_fn: u32,
     pages_fn: u32,
     grow_fn: u32,
 }
@@ -6481,6 +6490,88 @@ fn emit_bridge_bodies(codes: &mut CodeSection, registry: &TypeRegistry) -> Resul
     "#
     );
     codes.function(&wat_helper::compile_wat_helper(&to_lm_wat)?);
+
+    // println_to_lm(s) → i32 (= s.len + 1). Same shape as `to_lm`
+    // plus a `'\n'` (0x0A) byte at LM[len] before returning. Used
+    // by `Console.print` / `Console.error` / `Console.warn` on
+    // `--target wasip2` so the `Console.* == println!` semantic
+    // VM and AverBridge ship lives at the bridge layer instead of
+    // every call site appending the newline by hand. Body is a
+    // textual edit of `to_lm` with the trailing `local.get $len`
+    // swapped for "store '\n' at LM[len]; return len + 1".
+    let println_to_lm_wat = format!(
+        r#"
+        (module
+          {padding}
+          (type $string (array (mut i8)))
+          (memory 1)
+          (func (export "helper") (param $s (ref null $string)) (result i32)
+            (local $len i32)
+            (local $i i32)
+            (local $needed i32)
+            (local $current i32)
+            local.get $s
+            array.len
+            local.set $len
+
+            ;; needed = (len + 1 + 65535) >> 16
+            local.get $len
+            i32.const 1
+            i32.add
+            i32.const 65535
+            i32.add
+            i32.const 16
+            i32.shr_u
+            local.set $needed
+
+            memory.size
+            local.set $current
+
+            local.get $needed
+            local.get $current
+            i32.gt_u
+            (if
+              (then
+                local.get $needed
+                local.get $current
+                i32.sub
+                memory.grow
+                drop))
+
+            i32.const 0
+            local.set $i
+            (block $break
+              (loop $next
+                local.get $i
+                local.get $len
+                i32.ge_u
+                br_if $break
+
+                local.get $i
+                local.get $s
+                local.get $i
+                array.get_u $string
+                i32.store8
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $next))
+
+            ;; LM[len] = '\n' (0x0A)
+            local.get $len
+            i32.const 10
+            i32.store8
+
+            ;; return len + 1
+            local.get $len
+            i32.const 1
+            i32.add)
+        )
+    "#
+    );
+    codes.function(&wat_helper::compile_wat_helper(&println_to_lm_wat)?);
 
     // pages() -> i32 (= memory.size). Trivially small; wasm-encoder.
     let mut pages = wasm_encoder::Function::new([]);
