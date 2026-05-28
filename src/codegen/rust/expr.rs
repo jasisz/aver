@@ -1723,10 +1723,21 @@ pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> H
     let Some(decl) = find_ctor_owning_type(name, ctx) else {
         return out;
     };
+    // Bare-name suffix of the owning type — for a dep-module type like
+    // `ast.Expr` the field annotation in the .av source is `Expr`, not
+    // `ast.Expr`, so the id-less fallback must compare against the
+    // bare suffix as well.
+    let owning_bare = decl
+        .owning_type_name
+        .as_deref()
+        .map(|n| n.rsplit_once('.').map(|(_, b)| b).unwrap_or(n));
     for (idx, field_ty) in decl.field_types.iter().enumerate() {
         let matches = match (decl.owning_type_id, field_ty.named_id()) {
             (Some(r), Some(p)) => r == p,
-            _ => field_ty.named_name() == decl.owning_type_name.as_deref(),
+            _ => {
+                field_ty.named_name() == decl.owning_type_name.as_deref()
+                    || field_ty.named_name() == owning_bare
+            }
         };
         if matches {
             out.insert(idx);

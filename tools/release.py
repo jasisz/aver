@@ -243,25 +243,34 @@ def regenerate_playground(dry_run: bool) -> None:
         print("  [dry-run] would run: python3 tools/website/rebuild_playground.py")
         return
 
-    # Build release binary for playground
-    run(["cargo", "build", "--release", "--features", "wasm"])
-    run([
-        sys.executable,
-        str(REPO_ROOT / "tools" / "website" / "rebuild_playground.py"),
-        "--aver-bin", str(REPO_ROOT / "target" / "release" / "aver"),
-    ])
+    rebuild = REPO_ROOT / "tools" / "website" / "rebuild_playground.py"
+    aver_bin = REPO_ROOT / "target" / "release" / "aver"
+
+    # `wasm-pack build --features playground --no-default-features` (inside
+    # `rebuild_playground.py:build_compiler`) flips the workspace feature
+    # set, which invalidates cargo's feature cache for `aver-lang` and
+    # rebuilds `target/release/aver` without the `wasm` feature. So we
+    # split into three steps: build the compiler bundle, restore the
+    # wasm-capable aver bin, then run the per-game wasm-gc compile.
+    run([sys.executable, str(rebuild), "--skip-build", "--skip-html"])
+    run(["cargo", "build", "--release", "--bin", "aver", "--features", "wasm"])
+    run([sys.executable, str(rebuild), "--skip-compiler", "--aver-bin", str(aver_bin)])
 
 
 def verify(dry_run: bool) -> None:
-    print("Running verification...")
+    print("Running verification...", flush=True)
     if dry_run:
         print("  [dry-run] would run: cargo fmt --check, clippy, test, bench scenarios, edge compile")
         return
 
+    print("  verify: cargo fmt", flush=True)
     run(["cargo", "fmt"])
     # Skip generated self-host code in clippy (same as CI)
+    print("  verify: cargo clippy --workspace (no aver-lang)", flush=True)
     run(["cargo", "clippy", "--workspace", "--all-targets", "--exclude", "aver-lang", "--", "-D", "warnings"])
+    print("  verify: cargo clippy -p aver-lang --features wasm", flush=True)
     run(["cargo", "clippy", "-p", "aver-lang", "--lib", "--bin", "aver", "--features", "wasm", "--", "-D", "warnings"])
+    print("  verify: cargo test --features wasm", flush=True)
     run(["cargo", "test", "--features", "wasm"])
 
     # Bench smoke. Runs every scenario in `bench/scenarios/` end-to-end on
