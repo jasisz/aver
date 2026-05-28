@@ -25,13 +25,6 @@ pub use replay_support::*;
 
 mod self_host_support;
 
-// Generated Rust from `aver compile self_hosted/main.av --target rust`.
-// The macro expansion of `aver_list_match!` always wraps each arm body
-// in `{ ... }`, even when the body is already a block-like return — so
-// `unused_braces` lights up across every file in the tree. It's a
-// template artifact, not actionable at the source level, so silence it
-// locally to keep `cargo clippy --all-targets -- -D warnings` clean.
-#[allow(unused_braces)]
 pub mod aver_generated;
 
 fn main() {

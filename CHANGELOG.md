@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.22.0 "Lift" — UNRELEASED
+## 0.22.0 "Lift" — 2026-05-28
 
 > _Aver source stays ordinary. The proof export lifts it to the backend's native mathematical shape — refinements become subtypes, mutual recursion becomes a structural block, every verify-law passes through one classifier, and Dafny closes more obligations on its own._
 
@@ -38,6 +38,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Examples
 
 - **New `examples/refinement/`** collects the canonical refinement-via-opaque demos: `Natural`, `Positive`, `IntRange`, `NonNegFloat`, `Email`, `BigInt`. Each exercises a different point in the design space.
+
+### Hardening
+
+- **Functions with wildcard `_` parameters (`fn f(_: Int)`) compile and run cleanly on every backend.** Pre-Lift the resolver short-circuited `_` and never claimed a slot for it, so `local_count` stayed at zero while callsites still pushed one value per source-level param — `aver verify` on a program like `fn ignore(_: Int) -> Int = 42` then `ignore(7) => 42` deterministically panicked inside the VM dispatch loop. The resolver now allocates a slot for every param regardless of name; wildcard params still skip the scope map so the body cannot read them, but the frame layout matches what callsites push. Found by `fuzz_verify_runner` AFL nightly.
 
 ## 0.21.1 — 2026-05-21
 
