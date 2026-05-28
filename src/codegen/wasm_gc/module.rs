@@ -4479,12 +4479,14 @@ fn register_nominal_in_type(
 ) {
     let canonical: String = t.display().chars().filter(|c| !c.is_whitespace()).collect();
     match t {
-        // temporary-migration-bridge: wasm-gc `TypeRegistry` is
-        // still string-keyed by bare `TypeDef.name` (flatten strips
-        // module prefixes from field types). Canonical-key
-        // migration for wasm-gc is a separate scope; until then
-        // bare-name keying is consistent within the registry's
-        // post-flatten namespace.
+        // temporary-migration-bridge: wasm-gc `TypeRegistry` keys
+        // dep types by bare `TypeDef.name` for non-colliding bare
+        // names (the common case post #180 Phase 6 PR 3) and by
+        // canonical `Prefix.Name` for cross-module same-bare-name
+        // collisions. The bare-name lookup below hits the registry
+        // for the non-colliding path; eq-helper registration on the
+        // collision path is a follow-up (would need a typed key
+        // resolved against the post-flatten symbol table).
         AverType::Named { name, .. } => {
             if type_registry.record_fields.contains_key(name) {
                 eq_helpers.register_transitive(name, EqKind::Record, type_registry);
@@ -4587,10 +4589,12 @@ fn discover_builtins_in_expr(
             // helper — register on discovery so the slot is allocated
             // before emit runs the BinOp dispatch.
             //
-            // temporary-migration-bridge: wasm-gc `TypeRegistry`
-            // still string-keyed; see the canonical-key migration
-            // note on `register_nominal_in_type`. Bare-name lookup
-            // is consistent within the post-flatten namespace.
+            // temporary-migration-bridge: same shape as the comment
+            // on `register_nominal_in_type` — bare-name lookup hits
+            // the registry for non-colliding dep types post #180
+            // Phase 6 PR 3; collision-case eq-helpers route through
+            // canonical `Prefix.Name` keys and need a typed lookup
+            // (follow-up scope).
             use crate::ast::BinOp as Op;
             if matches!(op, Op::Eq | Op::Neq)
                 && let Some(t) = l.ty()

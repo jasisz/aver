@@ -241,6 +241,77 @@ fn helper(n: Int) -> Int
     );
 }
 
+// Cross-module same-bare-name `TypeDef` regression for wasm-gc
+// — known-failing pin, `#[ignore]`'d until the canonical-key
+// migration lands.
+//
+// Epic #180 Phase 6 PR A (#189) migrated Dafny + Rust registries
+// to canonical keys (`Left.Box` vs `Right.Box`). wasm-gc's
+// `TypeRegistry` plus the `flatten_multimodule` field-type
+// stripping pass are interconnected: changing one without the
+// other breaks the wider lookup chain (record field types →
+// record_type_idx → struct emission, constructor name normalise
+// → variant routing, etc.). A complete migration touches
+// `flatten`, `TypeRegistry::build_with_handler`, and every
+// downstream walk that lookups TypeDef.name — meaningfully
+// bigger scope than fits a single PR alongside the Phase 6
+// follow-ups.
+//
+// Pinned here as a RED test so the regression has a name and
+// the canonical-key migration has a clear acceptance gate.
+// Three `temporary-migration-bridge` tagged sites in
+// `wasm_gc/{module,body/emit}.rs` (PR #191) are the entry
+// points that flip together with the registry storage.
+#[test]
+fn cross_module_same_bare_name_types_resolve_to_distinct_records() {
+    // Two dep modules each declare `record Box { value: Int }`
+    // — same bare name, different field schemas. Entry creates
+    // one of each and reads `.value`. Pre-migration,
+    // `flatten_multimodule` strips module prefixes from field
+    // types, both `Box` records land under the bare-name `Box`
+    // slot in `TypeRegistry`, and the second
+    // `record_fields.insert` wins → record-create / projection
+    // picks the wrong field schema (or, more commonly, validation
+    // fails before that point).
+    //
+    // Post-migration, wasm-gc `TypeRegistry` would key by
+    // canonical name (`Left.Box` vs `Right.Box`), so the two
+    // records occupy distinct slots. Expected `5 + 10 = 15`.
+    let entry_src = r#"
+module Entry
+    intent = "cross-module same-bare-name TYPE regression"
+    depends [Left, Right]
+
+fn main() -> Int
+    Left.Box(value = 5).value + Right.Box(value = 10).value
+"#;
+    let left_src = r#"
+module Left
+    intent = "left container"
+    exposes [Box]
+    depends []
+
+record Box
+    value: Int
+"#;
+    let right_src = r#"
+module Right
+    intent = "right container"
+    exposes [Box]
+    depends []
+
+record Box
+    value: Int
+"#;
+    let result = run_int_multi(entry_src, &[("Left", left_src), ("Right", right_src)]);
+    assert_eq!(
+        result, 15,
+        "expected Left.Box(5).value + Right.Box(10).value = 15; \
+         a divergence here means cross-module TypeDef bare names \
+         collided in the wasm-gc registry"
+    );
+}
+
 // ────────────────────────────────────────────────────────────────────
 // List<T>
 // ────────────────────────────────────────────────────────────────────
