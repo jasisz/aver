@@ -94,7 +94,7 @@ fn main() {
         );
         let analysis = pipeline.analysis.as_ref();
 
-        let vm_outcome = run_vm(&items, analysis);
+        let vm_outcome = run_vm(&pipeline.resolved_items, &pipeline.symbol_table, analysis);
         let wasm_outcome = run_wasm_gc(&items, analysis);
 
         match (vm_outcome, wasm_outcome) {
@@ -125,12 +125,16 @@ fn main() {
 /// Compile `items` against the VM, run `main`, capture stdout +
 /// return value. `None` on any compile / runtime / panic failure;
 /// `Some(outcome)` when the run completed cleanly.
-fn run_vm(items: &[TopLevel], analysis: Option<&aver::ir::AnalysisResult>) -> Option<BackendOutcome> {
+fn run_vm(
+    items: &[aver::ir::hir::ResolvedTopLevel],
+    symbols: &aver::ir::SymbolTable,
+    analysis: Option<&aver::ir::AnalysisResult>,
+) -> Option<BackendOutcome> {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut arena = aver::nan_value::Arena::new();
         aver::vm::register_service_types(&mut arena);
         let (code, globals) =
-            aver::vm::compile_program_with_modules(items, &mut arena, None, "", analysis)
+            aver::vm::compile_program_with_modules(items, symbols, &mut arena, None, "", analysis)
                 .ok()?;
         let mut machine = aver::vm::VM::new(code, globals, arena);
         machine.set_cli_args(Vec::new());
