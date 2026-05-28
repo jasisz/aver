@@ -8,6 +8,66 @@
 //! metadata (spans, diagnostics, syntax-discovery), not as the
 //! authoritative backend input.
 //!
+//! # Current Typed HIR boundary (post epic #180)
+//!
+//! Aver's **Typed HIR** is a query layer, not a duplicate IR enum. Its
+//! two structural primitives — what backends mean when they reach for
+//! "the typed program" — are:
+//!
+//! 1. [`ResolvedProgramView`] (this struct). The canonical post-name-
+//!    resolution program: every `FnDef` projected through
+//!    [`crate::ir::hir::ResolvedFnDef`] with typed
+//!    `params: Vec<(String, Type)>` and `return_type: Type`, indexed
+//!    by opaque [`crate::ir::FnId`]. Backends ask
+//!    "what does this fn look like?" through `fn_by_id` or
+//!    `entry_fns()` / `module_fns(prefix)` and get typed answers.
+//! 2. Stamped [`crate::ast::Spanned`]`<`[`crate::ir::hir::ResolvedExpr`]`>`.
+//!    Every reachable body expression in a well-typed program has
+//!    `.ty().is_some()` after the typechecker stamps and the
+//!    resolver propagates. Backends read inferred types per node
+//!    without re-running inference.
+//!
+//! Together they answer "what name does this refer to?" (resolved
+//! HIR via `FnId` / `TypeId` / `CtorId`) and "what type does this
+//! expression have?" (typed slot via `Spanned::ty()`).
+//!
+//! Conscious exceptions still walking `ast::*` directly (each
+//! documented at the call site):
+//!
+//! - **`verify_law` helper walkers** ([`crate::verify_law`]). The
+//!   helper-law / contextual-helper hint walkers operate on
+//!   entry-only AST `FnDef`s through [`crate::verify_law::EntryFnIndex`].
+//!   The parser invariant (`verify <name>` only accepts a single
+//!   `Ident`) keeps the identity-safe contract; migration to FnId
+//!   keying is gated on module-scoped verify shipping.
+//! - **Lean / Dafny proof + law spec emitters**. Several recognisers
+//!   (`emit_*_spec_equivalence_law`, `direct_call` AST shape match)
+//!   keep walking `Spanned<Expr>` source-shape because the proof IR
+//!   is keyed on syntactic surfaces the user wrote, not the resolver-
+//!   canonicalised form. `emit_expr_legacy` is the explicit adapter.
+//! - **wasm-gc post-link view** ([`crate::codegen::wasm_gc::view`]).
+//!   The wasm-gc backend collapses N modules into one emit unit via
+//!   `flatten_multimodule`, then rebuilds its own
+//!   [`crate::ir::SymbolTable`] + resolver pass over the flattened
+//!   slice. The post-link namespace is the identity layer in that
+//!   backend; the documented `backend-link-stage` category covers it.
+//!
+//! Trigger-driven follow-up (NOT scoped to #180):
+//!
+//! - **MIR / Core IR**. Per-expression effects, SSA / CFG / explicit
+//!   ownership / effect tracking per instruction belong to a separate
+//!   epic. Typed HIR is the substrate they lower from; build the IR
+//!   when an inliner / monomorphiser / cross-scope optimiser needs it.
+//! - **`TypedProgramView` wrapper**. Combining `resolved_program`'s
+//!   `FnId` index with the typed expression slot into one query
+//!   surface (`view.fn_by_id(id).body_expr_type(span)` or similar)
+//!   would tighten the contract but adds no semantic value today —
+//!   wait for a real consumer.
+//! - **Module-scoped verify → FnId keyed `verify_law`**. The
+//!   `EntryFnIndex` newtype is the tripwire that forces the
+//!   contributor to address keying when the parser starts accepting
+//!   dotted verify targets.
+//!
 //! ## Construction
 //!
 //! Built once at the codegen boundary:
