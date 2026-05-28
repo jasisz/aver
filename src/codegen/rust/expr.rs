@@ -815,7 +815,9 @@ fn borrow_mask_from_fn_def(
 
 /// Look up whether the callee's i-th parameter is borrowed (`&T`).
 /// Returns a Vec of booleans, one per parameter, indicating borrow status.
-/// Uses fn_sigs first, falls back to FnDef type annotations from the AST.
+/// Uses the resolved-program view for typed param types; falls back to
+/// `FnDef` AST annotations when the callee isn't in the view (only TCO
+/// status reads from the AST `FnDef`).
 /// TCO functions (self or mutual) never use borrow-by-default.
 fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
     // First, try to find the FnDef to check for TCO (which overrides everything)
@@ -824,30 +826,27 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
         return borrow_mask_from_fn_def(fd, arg_count, ctx);
     }
 
-    // No FnDef found, try fn_sigs (type-checker resolved types)
+    // No FnDef found — read param types from the resolved-program
+    // view. The qualified lookup hits cross-module callsites that
+    // arrive as bare dotted names; the bare-name fallback covers
+    // entry-scope synthesised wrappers.
     let lookup_name = if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
         crate::visibility::qualified_name(prefix, bare)
     } else {
         name.to_string()
     };
-
-    // temporary-migration-bridge: `ctx.fn_sigs` borrow-decision
-    // fallback for callees that haven't been threaded through
-    // the resolved-program view (cross-module callsites where
-    // only the dotted source name is in scope). Slated for
-    // removal with Phase 7 of #180.
-    if let Some((param_types, _, _)) = ctx
-        .fn_sigs
-        .get(&lookup_name)
-        .or_else(|| ctx.fn_sigs.get(name))
-    {
-        // Without FnDef we can't check TCO status, but self-TCO functions
-        // always resolve via find_fn_def_by_name above, so this path is safe
-        // for borrow-by-default on all non-scalar types including Named.
-        return param_types
+    let resolved = crate::codegen::common::fn_id_for_dotted_name(ctx, &lookup_name)
+        .or_else(|| crate::codegen::common::fn_id_for_dotted_name(ctx, name))
+        .and_then(|id| ctx.resolved_program.fn_by_id(id));
+    if let Some(rfd) = resolved {
+        // Self-TCO functions always resolve via `find_fn_def_by_name`
+        // above, so this path is safe for borrow-by-default on all
+        // non-scalar types including Named.
+        return rfd
+            .params
             .iter()
             .take(arg_count)
-            .map(should_borrow_param)
+            .map(|(_, ty)| should_borrow_param(ty))
             .collect();
     }
 
@@ -1709,39 +1708,25 @@ fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String
     }
 }
 
-// temporary-migration-bridge: constructor-boxed-positions
-// detection still consults `ctx.fn_sigs` because constructors
-// are registered under dotted source names (`"Type.Variant"`)
-// and the cross-module suffix fallback hasn't been threaded
-// through the resolved-program view yet. Identity comparison
-// for the param-vs-return Named ref already prefers `TypeId`
-// via `Type::named_id()` further down (PR #189).
+/// Recursive-position detection for a record/variant constructor:
+/// returns the indices of constructor fields whose declared type is
+/// the constructor's owning type itself (the boxed-positions a
+/// `Tree.Node(left: Tree, value: Int, right: Tree)` lowers under in
+/// the Rust backend via `Arc::new(...)` to keep the type sized).
+///
+/// #180 Phase 7: routes through `find_ctor_owning_type` (which walks
+/// `ctx.symbol_table` + `ctx.items` / `ctx.modules`) instead of the
+/// legacy `ctx.fn_sigs` keyed by dotted source name. Identity-safe
+/// across cross-module same-bare-name twins via `TypeId` equality.
 pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> HashSet<usize> {
-    let sig = ctx.fn_sigs.get(name).or_else(|| {
-        // Cross-module constructors: "Type.Variant" may be registered as
-        // "Module.Type.Variant" in fn_sigs. Search by suffix.
-        let suffix = format!(".{}", name);
-        ctx.fn_sigs
-            .iter()
-            .find(|(k, _)| k.ends_with(&suffix))
-            .map(|(_, v)| v)
-    });
     let mut out = HashSet::new();
-    let Some((params, ret, _)) = sig else {
+    let Some(decl) = find_ctor_owning_type(name, ctx) else {
         return out;
     };
-    let Some(ret_name) = ret.named_name() else {
-        return out;
-    };
-    let ret_id = ret.named_id();
-    // Epic #180 Phase 6 — prefer `TypeId` equality when both
-    // sides carry a stamp, fall back to `name` for `id: None`
-    // refs (synthetic / unresolved ctor sigs). Identity-safe
-    // across cross-module same-bare-name twins.
-    for (idx, param) in params.iter().enumerate() {
-        let matches = match (ret_id, param.named_id()) {
+    for (idx, field_ty) in decl.field_types.iter().enumerate() {
+        let matches = match (decl.owning_type_id, field_ty.named_id()) {
             (Some(r), Some(p)) => r == p,
-            _ => param.named_name() == Some(ret_name),
+            _ => field_ty.named_name() == decl.owning_type_name.as_deref(),
         };
         if matches {
             out.insert(idx);
@@ -1750,33 +1735,131 @@ pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> H
     out
 }
 
+/// Constructor declaration view — the constructor's field types +
+/// the canonical identity of the type the constructor belongs to.
+/// Built by walking `TypeDef`s in `ctx.items` and dep modules.
+struct CtorDecl {
+    /// Parsed field types in declaration order. Carry stamped
+    /// `Type::Named.id` when the field references a known nominal
+    /// type post-resolver — `parse_type_str` reads them off the
+    /// source annotation, and `Type::named_id()` reflects whatever
+    /// the type-string resolver populated.
+    field_types: Vec<crate::types::Type>,
+    /// Owning type's `TypeId` (when registered in the symbol
+    /// table) — preferred identity primitive for recursive-field
+    /// detection.
+    owning_type_id: Option<crate::ir::TypeId>,
+    /// Owning type's canonical name — fallback identity when
+    /// `owning_type_id` isn't stamped (synthetic typedefs, refs not
+    /// indexed by the table).
+    owning_type_name: Option<String>,
+}
+
+fn find_ctor_owning_type(name: &str, ctx: &CodegenContext) -> Option<CtorDecl> {
+    use crate::ast::{TopLevel, TypeDef};
+
+    let consider =
+        |type_name: &str, ctor_name: &str, fields: Vec<crate::types::Type>| -> CtorDecl {
+            let owning_type_id = ctx
+                .symbol_table
+                .type_id_of(&crate::ir::TypeKey::entry(type_name))
+                .or_else(|| {
+                    // The bare lookup didn't hit — try as `Module.Name`
+                    // for module-scoped types whose key carries an
+                    // explicit prefix.
+                    type_name.rsplit_once('.').and_then(|(prefix, bare)| {
+                        ctx.symbol_table
+                            .type_id_of(&crate::ir::TypeKey::in_module(prefix.to_string(), bare))
+                    })
+                });
+            let _ = ctor_name;
+            CtorDecl {
+                field_types: fields,
+                owning_type_id,
+                owning_type_name: Some(type_name.to_string()),
+            }
+        };
+
+    // Constructor name shapes the source may produce:
+    //   - `Shape.Circle` (entry sum type)
+    //   - `MyModule.Shape.Circle` (module sum type — dotted parent)
+    //   - `Box` (entry product / single-ctor type)
+    //   - `MyModule.Box` (module product)
+    //
+    // Walk every typedef across entry + dep modules and match either
+    // the bare-name product form or the `parent.variant` sum form.
+    let walk_one = |td: &TypeDef, scope: Option<&str>| -> Option<CtorDecl> {
+        match td {
+            TypeDef::Sum {
+                name: parent,
+                variants,
+                ..
+            } => {
+                let parent_full = match scope {
+                    Some(prefix) => format!("{prefix}.{parent}"),
+                    None => parent.clone(),
+                };
+                for v in variants {
+                    let bare_form = format!("{parent}.{}", v.name);
+                    let full_form = format!("{parent_full}.{}", v.name);
+                    if name == bare_form || name == full_form {
+                        let fields = v
+                            .fields
+                            .iter()
+                            .map(|t| crate::types::parse_type_str(t))
+                            .collect();
+                        return Some(consider(&parent_full, &v.name, fields));
+                    }
+                }
+                None
+            }
+            TypeDef::Product {
+                name: parent,
+                fields,
+                ..
+            } => {
+                let parent_full = match scope {
+                    Some(prefix) => format!("{prefix}.{parent}"),
+                    None => parent.clone(),
+                };
+                if name == parent || name == parent_full {
+                    let fts = fields
+                        .iter()
+                        .map(|(_, t)| crate::types::parse_type_str(t))
+                        .collect();
+                    return Some(consider(&parent_full, parent, fts));
+                }
+                None
+            }
+        }
+    };
+
+    for item in &ctx.items {
+        if let TopLevel::TypeDef(td) = item
+            && let Some(decl) = walk_one(td, None)
+        {
+            return Some(decl);
+        }
+    }
+    for m in &ctx.modules {
+        for td in &m.type_defs {
+            if let Some(decl) = walk_one(td, Some(&m.prefix)) {
+                return Some(decl);
+            }
+        }
+    }
+    None
+}
+
 pub(super) fn constructor_boxed_bindings(
     name: &str,
     bindings: &[String],
     ctx: &CodegenContext,
 ) -> Vec<String> {
-    let mut sig_name = None;
-    if ctx.fn_sigs.contains_key(name) {
-        sig_name = Some(name.to_string());
-    } else {
-        // Cross-module constructors: bare or dotted name may be registered
-        // with a module prefix in fn_sigs. Search by suffix.
-        let suffix = format!(".{}", name);
-        let mut matches = ctx
-            .fn_sigs
-            .keys()
-            .filter(|k| k.ends_with(&suffix))
-            .cloned()
-            .collect::<Vec<_>>();
-        matches.sort();
-        if matches.len() == 1 {
-            sig_name = matches.into_iter().next();
-        }
-    }
-    let Some(sig_name) = sig_name else {
-        return Vec::new();
-    };
-    let boxed = constructor_boxed_positions(&sig_name, ctx);
+    // `constructor_boxed_positions` walks `TypeDef`s directly post-#180
+    // Phase 7, so the dotted-vs-bare ambiguity is resolved by the type
+    // walker rather than by canonicalising the constructor name here.
+    let boxed = constructor_boxed_positions(name, ctx);
     bindings
         .iter()
         .enumerate()
