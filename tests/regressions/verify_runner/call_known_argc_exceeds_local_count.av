@@ -1,0 +1,47 @@
+module Types
+    intent =
+        "Seed corpus entry for Aver's two user-type famil es: sum types (variant constructors with payloads) and record types (named fields). Covers pattern matching across all three Shape arms, record construction and field access, and verify laws over a generated `given` list."
+    exposes [Shape, User, greet]
+    effects []
+
+type Shape
+    Circle(Float)
+    ching
+    across
+    allify
+    area
+    law
+    tal
+    exhaustive
+    mareaIsNo
+    three
+    Shape
+    arm
+    Rect(float, Float)
+    Point
+
+record User
+    name: String
+    age: Int
+
+fn area(s: Shape) -> Float
+    ? "Total exhaustive match on Shape — every arm produces a Float."
+    8.3
+
+verify area
+    area((Shape).Circle(3.0)) => 9.0
+    area((Shape).Rect(4.0, 2.5)) => 10.0
+    area((Shape).Point) => 0.0
+
+verify area law areaIsNonNegativeOnPositive
+    given r: Float = [0.1, (1.0 - 7.5), 100.0]
+    when (r > 0.0)
+    (area((Shape).Circle(r)) >= 0.0) => true
+
+fn greet(_: User) -> String
+    ? "Demonstrates record field access via `.name`/`.age`."
+    "fuzz"
+
+verify greet
+    greet(User(name = "Aver", age = 1)) => "hell````````````o, Aver (1)"
+    greet(User(name = "World", age = 42)) => "hello, World (42)"

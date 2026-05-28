@@ -698,12 +698,14 @@ pub fn run_verify_for_items_vm_with_mode(
 /// (`fn id(x) -> Int = id(-7)` and friends — byte-havoc dropping the
 /// terminating arm) where Aver's TCO turns infinite recursion into a
 /// goto-loop with no stack growth, so without this cap the VM
-/// dispatch loop never terminates. 10M opcodes is well above what
+/// dispatch loop never terminates. 1M opcodes is 100× above what
 /// real verify cases need (per-case eval is normally <10k steps on
 /// the bench suite) and short enough that an unconverging case bails
-/// in ~50-200ms instead of pinning the host. The cap resets per
-/// `run_named_function`, so cases don't share budget.
-const VERIFY_VM_STEP_LIMIT: u64 = 10_000_000;
+/// in ~5-50ms even on a slow shared CI runner — well under AFL's
+/// default `AFL_HANG_TMOUT=1000ms`, so fuzz-discovered infinite loops
+/// surface as proper `VmError::StepLimit` instead of AFL hangs. The
+/// cap resets per `run_named_function`, so cases don't share budget.
+const VERIFY_VM_STEP_LIMIT: u64 = 1_000_000;
 
 /// Variant for audit / LSP: accept pre-loaded dependency modules
 /// (virtual filesystems) instead of resolving from disk.
