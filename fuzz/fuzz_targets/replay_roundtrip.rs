@@ -33,8 +33,8 @@
 #[path = "common.rs"]
 mod common;
 
-use aver::ast::TopLevel;
-use aver::ir::{PipelineConfig, TypecheckMode};
+use aver::ir::hir::ResolvedTopLevel;
+use aver::ir::{PipelineConfig, SymbolTable, TypecheckMode};
 use aver::replay::JsonValue;
 use std::panic::AssertUnwindSafe;
 
@@ -77,7 +77,7 @@ fn main() {
         }
         c.record_typecheck_clean();
 
-        let _ = aver::ir::pipeline::run(
+        let pipeline_result = aver::ir::pipeline::run(
             &mut items,
             PipelineConfig {
                 typecheck: Some(TypecheckMode::Full { base_dir: None }),
@@ -87,7 +87,11 @@ fn main() {
 
         // First run: record. Captures the canonical (stdout,
         // value, trace) triple the replay must reproduce.
-        let Some(record) = run_vm(&items, RecordMode::Record) else {
+        let Some(record) = run_vm(
+            &pipeline_result.resolved_items,
+            &pipeline_result.symbol_table,
+            RecordMode::Record,
+        ) else {
             return;
         };
         let trace = match record.recorded_effects.as_ref() {
@@ -97,7 +101,11 @@ fn main() {
 
         // Second run: replay against the recorded trace. Same
         // program, fresh VM, recorder swapped for replayer.
-        let Some(replay) = run_vm(&items, RecordMode::Replay(trace)) else {
+        let Some(replay) = run_vm(
+            &pipeline_result.resolved_items,
+            &pipeline_result.symbol_table,
+            RecordMode::Replay(trace),
+        ) else {
             // Replay refused / panicked under catch_unwind. Real
             // bug class — record produced a trace the replay
             // can't consume.
@@ -131,12 +139,17 @@ enum RecordMode {
     Replay(Vec<aver::replay::EffectRecord>),
 }
 
-fn run_vm(items: &[TopLevel], mode: RecordMode) -> Option<RunOutcome> {
+fn run_vm(
+    items: &[ResolvedTopLevel],
+    symbols: &SymbolTable,
+    mode: RecordMode,
+) -> Option<RunOutcome> {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut arena = aver::nan_value::Arena::new();
         aver::vm::register_service_types(&mut arena);
         let (code, globals) =
-            aver::vm::compile_program_with_modules(items, &mut arena, None, "", None).ok()?;
+            aver::vm::compile_program_with_modules(items, symbols, &mut arena, None, "", None)
+                .ok()?;
         let mut machine = aver::vm::VM::new(code, globals, arena);
         machine.set_cli_args(Vec::new());
         let want_record = match &mode {
