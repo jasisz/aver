@@ -163,14 +163,21 @@ jobs:
         # ensures the AFL llvm passes are compiled — a half-baked
         # cache restore can leave the binary present but the
         # instrumentation source missing.
+        #
+        # Version pin: 0.18.2 (released 2026-05-11) panics on
+        # `config --build` with `could not copy directory
+        # cargo-afl-common-0.18.2/AFLplusplus` — every nightly fuzz
+        # run since 2026-05-27 failed with this panic at install
+        # time, never executing any fuzz target. Pin to the last
+        # known-good version until upstream ships a fix.
         run: |
           if ! command -v cargo-afl >/dev/null; then
-            cargo install cargo-afl --locked
+            cargo install cargo-afl --version 0.18.1 --locked
           fi
           cargo afl --version
           if ! cargo afl config --build --force; then
             echo "cargo-afl source missing — force-reinstalling"
-            cargo install cargo-afl --locked --force
+            cargo install cargo-afl --version 0.18.1 --locked --force
             cargo afl config --build --force
           fi
 
