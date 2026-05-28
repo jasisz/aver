@@ -1557,7 +1557,6 @@ mod tests {
     fn empty_ctx() -> CodegenContext {
         CodegenContext {
             items: vec![],
-            fn_sigs: HashMap::new(),
             memo_fns: HashSet::new(),
             memo_safe_types: HashSet::new(),
             type_defs: vec![],

@@ -127,8 +127,6 @@ pub struct CodegenContext {
     /// discovery access. Backends iterating fn bodies should reach
     /// `resolved_program.entry_fns()` instead.
     pub items: Vec<TopLevel>,
-    /// Function signatures: name → (param_types, return_type, effects).
-    pub fn_sigs: HashMap<String, (Vec<crate::types::Type>, crate::types::Type, Vec<String>)>,
     /// Functions eligible for auto-memoization.
     pub memo_fns: HashSet<String>,
     /// Set of type names whose values are memo-safe.
@@ -428,49 +426,6 @@ pub fn build_context(
         }
     }
 
-    // Start with checker's fn_sigs (exposed API), then add signatures for
-    // ALL module functions (including private helpers) via SymbolRegistry.
-    // Codegen emits full module implementations, so it needs signatures for
-    // intra-module calls that the checker intentionally omits.
-    let mut fn_sigs = tc_result.fn_sigs.clone();
-    {
-        let pairs: Vec<(String, Vec<TopLevel>)> = modules
-            .iter()
-            .map(|m| {
-                let items: Vec<TopLevel> = m
-                    .fn_defs
-                    .iter()
-                    .map(|fd| TopLevel::FnDef(fd.clone()))
-                    .chain(m.type_defs.iter().map(|td| TopLevel::TypeDef(td.clone())))
-                    .collect();
-                (m.prefix.clone(), items)
-            })
-            .collect();
-        let registry = crate::visibility::SymbolRegistry::from_modules_all(&pairs);
-        for entry in &registry.entries {
-            if fn_sigs.contains_key(&entry.canonical_name) {
-                continue;
-            }
-            if let crate::visibility::SymbolKind::Function {
-                params,
-                return_type,
-                effects,
-                ..
-            } = &entry.kind
-            {
-                let parsed_params: Vec<crate::types::Type> = params
-                    .iter()
-                    .map(|(_, ty_str)| crate::types::parse_type_str(ty_str))
-                    .collect();
-                let ret = crate::types::parse_type_str(return_type);
-                fn_sigs.insert(
-                    entry.canonical_name.clone(),
-                    (parsed_params, ret, effects.clone()),
-                );
-            }
-        }
-    }
-
     // Detection layer for buffer-build sinks + fusion sites. The
     // ACTUAL rewrite + synthesis must happen BEFORE the resolver
     // pass (callers run it via `ir::run_buffer_build_pass` between
@@ -499,57 +454,6 @@ pub fn build_context(
         .filter(|fd| fd.name.ends_with("__buffered"))
         .cloned()
         .collect();
-    // 0.15 Traversal — register signatures for the four buffer-build
-    // internal intrinsics. Without these in fn_sigs, downstream
-    // `infer_aver_type` on `__buf_append(...)` etc. returns None and
-    // `expr_is_heap_ptr` falls through to false — meaning TCO
-    // compaction doesn't retain the buffer pointer across GC, the
-    // buffer object gets relocated by collect_end, and the next
-    // iteration reads through the stale pointer producing
-    // `memory access out of bounds` traps. Buffer parses to
-    // Type::Named("Buffer") which is_heap_type accepts.
-    {
-        let buffer_ty = || crate::types::Type::named("Buffer");
-        let str_ty = || crate::types::Type::Str;
-        let int_ty = || crate::types::Type::Int;
-        let intrinsic_sigs: &[(&str, Vec<crate::types::Type>, crate::types::Type)] = &[
-            ("__buf_new", vec![int_ty()], buffer_ty()),
-            ("__buf_append", vec![buffer_ty(), str_ty()], buffer_ty()),
-            (
-                "__buf_append_sep_unless_first",
-                vec![buffer_ty(), str_ty()],
-                buffer_ty(),
-            ),
-            ("__buf_finalize", vec![buffer_ty()], str_ty()),
-        ];
-        for (name, params, ret) in intrinsic_sigs {
-            fn_sigs.insert(name.to_string(), (params.clone(), ret.clone(), vec![]));
-        }
-    }
-
-    // Inject signatures for synthesized variants into fn_sigs so the
-    // WASM emitter's type-section pass produces correct param/return
-    // wasm types (the fallback path emits `all-i64` which breaks
-    // validation when a body calls intrinsics with i32 buffer ptrs).
-    for fd in synthesized_buffered_fns.iter() {
-        if fn_sigs.contains_key(&fd.name) {
-            continue;
-        }
-        let param_types: Vec<crate::types::Type> = fd
-            .params
-            .iter()
-            .map(|(_, ty_str)| crate::types::parse_type_str(ty_str))
-            .collect();
-        let ret = crate::types::parse_type_str(&fd.return_type);
-        fn_sigs.insert(
-            fd.name.clone(),
-            (
-                param_types,
-                ret,
-                fd.effects.iter().map(|e| e.node.clone()).collect(),
-            ),
-        );
-    }
 
     // Epic #170 Phase 1: build the canonical `ResolvedProgramView`
     // once, from the pipeline's already-resolved entry items + the
@@ -574,7 +478,6 @@ pub fn build_context(
 
     let ctx = CodegenContext {
         items,
-        fn_sigs,
         memo_fns,
         memo_safe_types: tc_result.memo_safe_types.clone(),
         type_defs,
@@ -978,5 +881,138 @@ impl CodegenContext {
             unreachable!()
         };
         arms.into_iter().next().unwrap().pattern
+    }
+}
+
+fn fn_sigs_projection_typedef(
+    out: &mut crate::verify_law::FnSigMap,
+    td: &crate::ast::TypeDef,
+    scope: Option<&str>,
+) {
+    match td {
+        crate::ast::TypeDef::Sum {
+            name: parent,
+            variants,
+            ..
+        } => {
+            let parent_full = match scope {
+                Some(prefix) => format!("{prefix}.{parent}"),
+                None => parent.clone(),
+            };
+            for v in variants {
+                let key = format!("{parent_full}.{}", v.name);
+                let fields = v
+                    .fields
+                    .iter()
+                    .map(|t| crate::types::parse_type_str(t))
+                    .collect();
+                let ret = crate::types::Type::named(parent_full.clone());
+                out.entry(key).or_insert((fields, ret, Vec::new()));
+            }
+        }
+        crate::ast::TypeDef::Product {
+            name: parent,
+            fields,
+            ..
+        } => {
+            let parent_full = match scope {
+                Some(prefix) => format!("{prefix}.{parent}"),
+                None => parent.clone(),
+            };
+            let fts = fields
+                .iter()
+                .map(|(_, t)| crate::types::parse_type_str(t))
+                .collect();
+            let ret = crate::types::Type::named(parent_full.clone());
+            out.entry(parent_full).or_insert((fts, ret, Vec::new()));
+        }
+    }
+}
+
+impl CodegenContext {
+    /// Build a fresh `(params, ret, effects)` map projected from
+    /// `resolved_program` + the codegen ctx's auxiliary inputs.
+    ///
+    /// Epic #180 Phase 7 PR 2 — replaces the dropped `ctx.fn_sigs`
+    /// side channel for consumers (`verify_law` helper-law walkers,
+    /// the Lean `canonical_spec_ref` checks, builtin-record discovery
+    /// `needs_named_type`) that still take a bare `&FnSigMap` and
+    /// want a unified query surface. Each call walks `resolved_
+    /// program.entry_fns()` + every module's resolved fn defs plus
+    /// the synthesised `__buf_*` intrinsics and `__buffered` variants
+    /// the codegen pipeline registered side-band. Bare-name keys
+    /// (entry fns) and dotted canonical keys (`Module.fn`,
+    /// `Module.Type.Variant`) appear in the same map — matching the
+    /// shape the legacy storage carried, so consumer code stays
+    /// keyed by source-level name.
+    ///
+    /// Callers materialise the map on demand; there is no
+    /// invalidation contract because the underlying `resolved_
+    /// program` is rebuilt deterministically from the same inputs
+    /// each time. The cost is one HashMap allocation + a walk of
+    /// every resolved fn def — small relative to the codegen pass
+    /// it appears in.
+    pub fn fn_sigs_projection(&self) -> crate::verify_law::FnSigMap {
+        use crate::verify_law::FnSigMap;
+        let mut out: FnSigMap = FnSigMap::new();
+
+        // Entry-scope resolved fns — keyed by their bare name.
+        for rfd in self.resolved_program.entry_fns() {
+            let params: Vec<crate::types::Type> =
+                rfd.params.iter().map(|(_, t)| t.clone()).collect();
+            let effects: Vec<String> = rfd.effects.iter().map(|e| e.node.clone()).collect();
+            out.entry(rfd.name.clone())
+                .or_insert((params, rfd.return_type.clone(), effects));
+        }
+        // Module-scoped resolved fns — keyed by `Module.fn`. Mirrors
+        // how the legacy fn_sigs population used the SymbolRegistry's
+        // canonical_name field (qualified for module-owned, bare for
+        // entry).
+        for m in &self.resolved_program.modules {
+            for rfd in &m.fn_defs {
+                let key = format!("{}.{}", m.prefix, rfd.name);
+                let params: Vec<crate::types::Type> =
+                    rfd.params.iter().map(|(_, t)| t.clone()).collect();
+                let effects: Vec<String> = rfd.effects.iter().map(|e| e.node.clone()).collect();
+                out.entry(key)
+                    .or_insert((params, rfd.return_type.clone(), effects));
+            }
+        }
+
+        // Constructor sigs: every variant + product typedef across
+        // entry items and dep modules registers a callable with
+        // (field_types, owning_type, no effects). The typechecker
+        // exposed these through `tc_result.fn_sigs`; project them
+        // here from the same TypeDef shapes so consumers keyed on
+        // constructor names (e.g. `Shape.Circle`) keep matching.
+        for item in &self.items {
+            if let TopLevel::TypeDef(td) = item {
+                fn_sigs_projection_typedef(&mut out, td, None);
+            }
+        }
+        for m in &self.modules {
+            for td in &m.type_defs {
+                fn_sigs_projection_typedef(&mut out, td, Some(&m.prefix));
+            }
+        }
+
+        // Synthesised `__buf_*` intrinsics — wired up in codegen
+        // setup (see the pre-Phase-7 fn_sigs population block) so
+        // downstream traversal-fusion emit can resolve their types.
+        // Mirror the same shapes here so any consumer that previously
+        // saw them in `ctx.fn_sigs` still finds them post-drop.
+        let buf = || crate::types::Type::named("Buffer");
+        let int = || crate::types::Type::Int;
+        let s = || crate::types::Type::Str;
+        out.entry("__buf_new".into())
+            .or_insert((vec![int()], buf(), vec![]));
+        out.entry("__buf_append".into())
+            .or_insert((vec![buf(), s()], buf(), vec![]));
+        out.entry("__buf_append_sep_unless_first".into())
+            .or_insert((vec![buf(), s()], buf(), vec![]));
+        out.entry("__buf_finalize".into())
+            .or_insert((vec![buf()], s(), vec![]));
+
+        out
     }
 }

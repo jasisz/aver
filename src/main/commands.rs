@@ -4678,7 +4678,8 @@ fn cmd_proof_lean(
             format!("warning[{}:1]: {}", issue.line, issue.message).yellow()
         );
     }
-    let missing_helper_hints = collect_missing_helper_law_hints(&ctx.items, &ctx.fn_sigs);
+    let missing_helper_hints =
+        collect_missing_helper_law_hints(&ctx.items, &ctx.fn_sigs_projection());
     for hint in missing_helper_hints {
         eprintln!(
             "{}",
@@ -4690,7 +4691,8 @@ fn cmd_proof_lean(
             .yellow()
         );
     }
-    let contextual_helper_hints = collect_contextual_helper_law_hints(&ctx.items, &ctx.fn_sigs);
+    let contextual_helper_hints =
+        collect_contextual_helper_law_hints(&ctx.items, &ctx.fn_sigs_projection());
     for hint in contextual_helper_hints {
         eprintln!(
             "{}",
@@ -4966,7 +4968,6 @@ mod tests {
     fn empty_codegen_ctx() -> CodegenContext {
         CodegenContext {
             items: vec![],
-            fn_sigs: HashMap::new(),
             memo_fns: HashSet::new(),
             memo_safe_types: HashSet::new(),
             type_defs: vec![],

@@ -2782,7 +2782,6 @@ mod tests {
 
         let mut ctx = CodegenContext {
             items,
-            fn_sigs: HashMap::new(),
             memo_fns: HashSet::new(),
             memo_safe_types: HashSet::new(),
             type_defs: Vec::new(),
