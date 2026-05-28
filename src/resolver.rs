@@ -101,11 +101,14 @@ fn resolve_fn(fd: &mut FnDef, type_info: &TypeInfo) {
     let mut state = ResolverState::new(type_info);
 
     // Params live in the outermost scope and own slots 0..N-1.
+    // `declare_param` (not `declare`) so wildcard `_` params still claim
+    // a slot — callsites push one value per declared param onto the
+    // stack regardless of source name, so `local_count` must match
+    // `params.len()` even when some params are unbound.
     state.scopes.push(HashMap::new());
     for (param_name, ty_str) in &fd.params {
         let ty = crate::types::parse_type_str_strict(ty_str).unwrap_or(Type::Invalid);
-        let slot = state.declare(param_name, ty);
-        state.last_alloc.insert(param_name.clone(), slot);
+        state.declare_param(param_name, ty);
     }
 
     // Walk body — clone, mutate, replace. Same Arc::make_mut cadence as
@@ -190,6 +193,23 @@ impl<'a> ResolverState<'a> {
             scope.insert(name.to_string(), slot);
         }
         self.last_alloc.insert(name.to_string(), slot);
+        slot
+    }
+
+    /// Like `declare`, but always allocates a slot — including for `_`.
+    /// Used for fn parameters: callsites push one value per declared
+    /// param onto the stack regardless of source name, so the callee
+    /// frame must reserve a slot per param to keep stack/locals aligned.
+    /// Wildcard params still skip the scope + `last_alloc` insert (the
+    /// body cannot read them).
+    fn declare_param(&mut self, name: &str, ty: Type) -> u16 {
+        let slot = self.alloc(ty);
+        if name != "_" {
+            if let Some(scope) = self.scopes.last_mut() {
+                scope.insert(name.to_string(), slot);
+            }
+            self.last_alloc.insert(name.to_string(), slot);
+        }
         slot
     }
 
@@ -437,6 +457,42 @@ mod tests {
             }
             other => panic!("unexpected body: {:?}", other),
         }
+    }
+
+    #[test]
+    fn wildcard_param_still_claims_slot() {
+        // AFL nightly fuzz_verify_runner regression: `fn f(_: Int)` used
+        // to leave `local_count == 0` while callsites still pushed 1
+        // arg, so CALL_KNOWN saw `local_count(0) - argc(1)` and the VM
+        // panicked on unsigned-sub overflow. `declare_param` now
+        // always allocates the slot — wildcard name skips the scope
+        // map insert, but the slot space matches `params.len()`.
+        let mut fd = FnDef {
+            name: "ignore".to_string(),
+            line: 1,
+            params: vec![("_".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Literal(
+                Literal::Int(42),
+            )))),
+            resolution: None,
+        };
+        resolve_fn(
+            &mut fd,
+            &TypeInfo {
+                variants: HashMap::new(),
+                variant_parents: HashMap::new(),
+                records: HashMap::new(),
+            },
+        );
+        let res = fd.resolution.as_ref().unwrap();
+        assert_eq!(res.local_count, 1, "wildcard param must claim a slot");
+        assert!(
+            !res.local_slots.contains_key("_"),
+            "wildcard param must not bind a readable name"
+        );
     }
 
     #[test]
