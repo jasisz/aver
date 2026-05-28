@@ -430,7 +430,14 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             )],
             expr: inputs.resolve_expr(info.predicate, module_prefix),
         };
-        let witness = pick_witness(name, inputs, info.predicate, info.param_name, module_prefix);
+        let witness = pick_witness(
+            name,
+            canonical_key,
+            inputs,
+            info.predicate,
+            info.param_name,
+            module_prefix,
+        );
         // Round-4 finding 1: a `None` witness means we couldn't
         // exhibit any inhabitant satisfying the predicate. Inserting
         // the slot anyway makes Dafny silently fall back to
@@ -3046,6 +3053,7 @@ fn matches_identity_side(
 /// `[0, 1, -1]` and returning the first satisfier.
 fn pick_witness(
     type_name: &str,
+    type_id: crate::ir::TypeId,
     inputs: &ProofLowerInputs,
     predicate: &Spanned<Expr>,
     param_name: &str,
@@ -3060,7 +3068,11 @@ fn pick_witness(
     // the witness invariant.
     let smart_ctor_name: Option<String> = match scope {
         None => inputs.entry_items.iter().find_map(|item| match item {
-            TopLevel::FnDef(fd) if smart_ctor_matches(fd, type_name) => Some(fd.name.clone()),
+            TopLevel::FnDef(fd)
+                if smart_ctor_matches(fd, type_id, type_name, inputs.symbol_table, scope) =>
+            {
+                Some(fd.name.clone())
+            }
             _ => None,
         }),
         Some(prefix) => inputs
@@ -3070,7 +3082,9 @@ fn pick_witness(
             .and_then(|m| {
                 m.fn_defs
                     .iter()
-                    .find(|fd| smart_ctor_matches(fd, type_name))
+                    .find(|fd| {
+                        smart_ctor_matches(fd, type_id, type_name, inputs.symbol_table, scope)
+                    })
                     .map(|fd| fd.name.clone())
             }),
     };
@@ -3173,19 +3187,63 @@ fn collect_int_literals(expr: &Spanned<Expr>, out: &mut Vec<i64>) {
     }
 }
 
-fn smart_ctor_matches(fd: &FnDef, type_name: &str) -> bool {
-    // Parse the return type instead of `starts_with`-matching its
-    // textual form — `Result<Nat, E>` would otherwise also match a
-    // type_name of `Natural` or any other `Nat*` prefix because the
-    // raw text starts with the same characters.
+/// Does `fd` look like a smart constructor for `type_id` (1-param
+/// fn whose return type is `Result<T, _>` where `T` is the
+/// refined nominal)?
+///
+/// Epic #180 Phase 6 follow-up — id-aware comparison. The raw
+/// `name`-equality path used to silently accept a smart ctor
+/// from module B whose return type was `Result<A.Natural, _>`
+/// when looking for module B's own `Natural`, because the
+/// inner Named's bare `name` field was just `"Natural"` and
+/// both shapes match on string. Resolving the inner Named
+/// through the symbol table within the current scope hands us
+/// the actual `TypeId` and lets us compare opaque identities.
+///
+/// `type_name` stays in the signature as the fallback for
+/// builtins / unresolved refs the symbol table doesn't index
+/// (matches the [`crate::codegen::common::backend_named_type_key`]
+/// fallback semantics).
+fn smart_ctor_matches(
+    fd: &FnDef,
+    type_id: crate::ir::TypeId,
+    type_name: &str,
+    symbols: &crate::ir::SymbolTable,
+    scope: Option<&str>,
+) -> bool {
     if fd.params.len() != 1 {
         return false;
     }
     let parsed = crate::types::parse_type_str(&fd.return_type);
-    matches!(
-        parsed,
-        crate::types::Type::Result(ok, _) if matches!(&*ok, crate::types::Type::Named { name: n, .. } if n == type_name)
-    )
+    let crate::types::Type::Result(ok, _) = parsed else {
+        return false;
+    };
+    let crate::types::Type::Named { name: n, .. } = &*ok else {
+        return false;
+    };
+    // Prefer id-direct: resolve the inner Named's name against
+    // the symbol table within the current scope, then compare
+    // `TypeId`s. Identity-safe across cross-module same-bare-name
+    // twins by construction.
+    let name_is_qualified = n.contains('.');
+    let resolved_id = if name_is_qualified {
+        n.rsplit_once('.').and_then(|(prefix, bare)| {
+            symbols.type_id_of(&crate::ir::TypeKey::in_module(prefix.to_string(), bare))
+        })
+    } else if let Some(prefix) = scope {
+        symbols
+            .type_id_of(&crate::ir::TypeKey::in_module(
+                prefix.to_string(),
+                n.clone(),
+            ))
+            .or_else(|| symbols.type_id_of(&crate::ir::TypeKey::entry(n.clone())))
+    } else {
+        symbols.type_id_of(&crate::ir::TypeKey::entry(n.clone()))
+    };
+    match resolved_id {
+        Some(id) => id == type_id,
+        None => n == type_name,
+    }
 }
 
 fn is_result_ok(expr: &Expr) -> bool {
