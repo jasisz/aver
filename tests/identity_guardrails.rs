@@ -1,15 +1,21 @@
 //! Identity-keying guardrails for the codegen layer.
 //!
-//! Epic #170 Phase 8 — the final acceptance gate. This test scans
-//! the codebase for the patterns the epic eliminated and fails the
-//! build if any of them reappear without an explicit
-//! "this is OK because …" comment.
+//! Epic #170 Phase 8 + Epic #180 Phase 8 — the acceptance gate
+//! for typed-identity hygiene. This test scans the codebase for
+//! the patterns past epics eliminated and fails the build if any
+//! of them reappear without an explicit "this is OK because …"
+//! comment.
 //!
 //! ## Rationale
 //!
-//! Phases 1–7 of #170 moved every identity-sensitive lookup off
-//! bare-string keying to typed IDs (`FnId` / `TypeId` / `CtorId`).
-//! The patterns below were the smell-shapes the audit found —
+//! Epic #170 moved every identity-sensitive *function* lookup off
+//! bare-string keying to typed IDs (`FnId` / `CtorId`). Epic
+//! #180 extended the same discipline to *types*: `TypeId` for
+//! nominal identity, `Spanned<ResolvedExpr>.ty()` for the typed
+//! query layer, and helpers like `backend_named_type_key` for
+//! registry routing.
+//!
+//! The patterns below were the smell-shapes those audits found —
 //! removing them once isn't enough, because a contributor unaware
 //! of the epic could re-introduce them in a future PR. The test
 //! enforces "you can do this, but you must say WHY out loud in a
@@ -34,6 +40,11 @@
 //!   `flatten_multimodule`). The link stage's namespace is the
 //!   identity layer; bare-name lookups against it are safe by the
 //!   stage's own invariant.
+//! - `display-only` — pattern matches a `Type::Named { name, .. }`
+//!   only to render the name into a backend output string (e.g.
+//!   Lean / Dafny / Rust type-name emission, where `name` IS the
+//!   right surface and `id` carries no display information). Use
+//!   for renderers, never for routing / lookup decisions.
 //! - `temporary-migration-bridge` — pattern is acknowledged as
 //!   debt with a known follow-up scope. New code MUST NOT add this
 //!   category; existing tagged sites stay until their migration
@@ -78,6 +89,7 @@ const ALLOWED_CATEGORIES: &[&str] = &[
     "diagnostic-only",
     "syntax-discovery-only",
     "backend-link-stage",
+    "display-only",
     "temporary-migration-bridge",
 ];
 
@@ -105,6 +117,22 @@ const BANNED_PATTERNS: &[BannedPattern] = &[
     BannedPattern {
         needle: ".rsplit('.').next() == Some(",
         label: "suffix match on dotted name — accepts Foo.target as 'target'",
+    },
+    // Epic #180 Phase 8 — typed-HIR / Type::Named id-awareness.
+    BannedPattern {
+        needle: "::Named { name",
+        label: "Type::Named { name, .. } — destructure ignores `id`. Use \
+                backend_named_type_key(ctx, ty) / find_refined_type_for_named, \
+                or pattern-match `Type::Named { id, name }` and prefer id when \
+                stamped. Display renderers / syntax-discovery walks tag with \
+                the matching category",
+    },
+    BannedPattern {
+        needle: "ctx.fn_sigs.get(",
+        label: "ctx.fn_sigs.get(name) — string-keyed fn signature side channel. \
+                Prefer ctx.resolve_fn_def(fd, scope) for ResolvedFnDef.params / \
+                return_type, or the resolved-program view. fn_sigs is slated \
+                for removal in Phase 7 of #180",
     },
 ];
 

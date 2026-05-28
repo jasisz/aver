@@ -3218,6 +3218,11 @@ fn smart_ctor_matches(
     let crate::types::Type::Result(ok, _) = parsed else {
         return false;
     };
+    // syntax-discovery-only: pulls the inner Named's `name` out
+    // of the raw `parse_type_str` parse to feed into the
+    // symbol-table resolution below. The identity decision is
+    // the `TypeId` comparison built from that name plus scope;
+    // the bare `name` is just an intermediate handle.
     let crate::types::Type::Named { name: n, .. } = &*ok else {
         return false;
     };

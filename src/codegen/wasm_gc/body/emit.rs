@@ -614,6 +614,13 @@ pub(super) fn emit_expr(
 fn sum_or_record_eq_fn(operand: &Spanned<ResolvedExpr>, ctx: &EmitCtx<'_>) -> Option<u32> {
     let ty = operand.ty()?;
     match ty {
+        // temporary-migration-bridge: wasm-gc `TypeRegistry`
+        // (record_fields / variants / newtype_underlying) is still
+        // string-keyed by bare `TypeDef.name`. `flatten_multimodule`
+        // strips module prefixes from field types, so the registry
+        // and this lookup operate in the post-strip namespace where
+        // bare-name keying is consistent. Canonical-key migration
+        // is its own scope (paired flatten changes required).
         crate::types::Type::Named { name, .. } => {
             // Newtypes already lower to their underlying primitive —
             // no helper needed (the default i64/f64 eq handles them).

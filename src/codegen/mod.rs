@@ -118,8 +118,8 @@ impl ModuleInfo {
 /// wasm-gc) to iterate the view directly. New code in backends
 /// should default to the view. AST consumption requires a clear
 /// category in a code comment: `diagnostic-only`,
-/// `syntax-discovery-only`, `backend-link-stage`, or
-/// `temporary-migration-bridge`.
+/// `syntax-discovery-only`, `backend-link-stage`, `display-only`,
+/// or `temporary-migration-bridge`.
 pub struct CodegenContext {
     /// All top-level items (post-TCO transform, post-typecheck).
     ///

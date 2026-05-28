@@ -656,6 +656,13 @@ fn needs_named_type(ctx: &CodegenContext, wanted: &str) -> bool {
     })
 }
 
+// syntax-discovery-only: walks ALL fn signatures asking "does
+// any param / return type contain a Named ref with this exact
+// bare-string name?" Callers pass builtin record names
+// (`"HttpResponse"`, `"Tcp.Connection"`, `"Terminal.Size"`)
+// whose typed registration carries no `id` — those refs are
+// matched by the name surface they were declared with. The
+// query is a discovery walk, not an identity decision.
 fn type_contains_named(ty: &Type, wanted: &str) -> bool {
     match ty {
         Type::Named { name, .. } => name == wanted,
