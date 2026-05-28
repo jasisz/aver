@@ -110,14 +110,23 @@ pub(super) fn emit_console_print_wasip2(
     func.instruction(&Instruction::GlobalSet(handle_global));
     func.instruction(&Instruction::End);
 
-    // Step 2: marshal s → LM[0..len], stash len.
-    let str_to_lm = lowering.str_to_lm_fn_idx.ok_or_else(|| {
+    // Step 2: marshal s + trailing '\n' through the println_to_lm
+    // helper. Single Call writes the string bytes to LM[0..len],
+    // appends `'\n'` at LM[len], and returns `len + 1`. VM and
+    // wasm-gc AverBridge both treat `Console.print(s)` as
+    // `println!(s)` (see `services::console::write_stdout` /
+    // `write_stderr_*`); having a dedicated println helper keeps
+    // that semantic at the bridge level instead of patching the
+    // length post-hoc at every call site, and lets the chunked
+    // write below stay shape-identical with Disk.* / Http.* (the
+    // non-newline consumers of plain `__rt_string_to_lm`).
+    let println_to_lm = lowering.println_to_lm_fn_idx.ok_or_else(|| {
         WasmGcError::Validation(
-            "Console.* on wasip2: __rt_string_to_lm fn idx missing — bridge not allocated".into(),
+            "Console.* on wasip2: __rt_println_to_lm fn idx missing — bridge not allocated".into(),
         )
     })?;
     emit_expr(func, &args[0], slots, ctx)?;
-    func.instruction(&Instruction::Call(str_to_lm));
+    func.instruction(&Instruction::Call(println_to_lm));
     func.instruction(&Instruction::LocalSet(len_local));
 
     // Step 3: defensive memory.grow(1) so retptr+12 stays in-bounds

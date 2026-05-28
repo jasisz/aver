@@ -382,6 +382,14 @@ pub(super) struct Wasip2Lowering {
     /// Aver `(ref null $string)` to LM[0..len]. `Some(...)` when
     /// any string-marshalling effect (i.e., `Console.*`) is wired.
     pub(super) str_to_lm_fn_idx: Option<u32>,
+    /// `__rt_println_to_lm` helper wasm fn idx. Same shape as
+    /// `str_to_lm_fn_idx` but also writes `'\n'` at LM[len] before
+    /// returning `len + 1`. Allocated alongside the JS-bridge
+    /// helpers when any string-marshalling effect is wired; used
+    /// only by `Console.print` / `Console.error` / `Console.warn`
+    /// on `--target wasip2` to honour the VM and AverBridge
+    /// `Console.* == println!` semantic at the bridge layer.
+    pub(super) println_to_lm_fn_idx: Option<u32>,
 
     // ── Phase 1.4: Time.unixMs / Random.{int, float} ───────────
     /// `wasi:clocks/wall-clock.now` imported wasm fn idx.

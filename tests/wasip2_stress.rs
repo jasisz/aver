@@ -36,7 +36,7 @@
 
 #![cfg(feature = "wasip2")]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -50,13 +50,13 @@ fn tempdir(prefix: &str) -> PathBuf {
     dir
 }
 
-fn write_fixture(dir: &PathBuf, name: &str, source: &str) -> PathBuf {
+fn write_fixture(dir: &Path, name: &str, source: &str) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, source).expect("write fixture");
     path
 }
 
-fn run_wasip2(dir: &PathBuf, fixture: &PathBuf, args: &[&str]) -> std::process::Output {
+fn run_wasip2(dir: &Path, fixture: &Path, args: &[&str]) -> std::process::Output {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let mut cmd = Command::new(aver_bin);
     cmd.current_dir(dir).arg("run").arg("--wasip2").arg(fixture);
@@ -162,7 +162,7 @@ fn main() -> Unit
         Result.Err(_) -> Console.print("cleanup err")
 "#;
     let fixture = write_fixture(&dir, "large.av", src);
-    let payload: String = std::iter::repeat('x').take(50_000).collect();
+    let payload = "x".repeat(50_000);
     let out = run_wasip2(&dir, &fixture, &[&payload]);
     assert_ok(&out, "large.av");
     let s = stdout(&out);
@@ -198,18 +198,25 @@ fn main() -> Unit
     // 5000 bytes — over the 4096-byte single-call cap. Pre-fix
     // this trapped with "Buffer too large for blocking-write-
     // and-flush". Post-fix the chunked-write loop walks it in
-    // 4096-byte slices.
-    let payload: String = std::iter::repeat('y').take(5_000).collect();
+    // 4096-byte slices. The `+ 1` covers the trailing newline
+    // the `__rt_println_to_lm` bridge helper appends so the
+    // wasip2 `Console.print` matches VM / AverBridge's `println!`
+    // semantic (see PR #204).
+    let payload = "y".repeat(5_000);
     let out = run_wasip2(&dir, &fixture, &[&payload]);
     assert_ok(&out, "print.av");
     let s = stdout(&out);
     assert_eq!(
         s.len(),
-        5_000,
-        "expected exactly 5000 bytes printed, got {} bytes",
+        5_001,
+        "expected exactly 5001 bytes printed (5000 'y' + '\\n'), got {} bytes",
         s.len()
     );
-    assert!(s.chars().all(|c| c == 'y'), "expected all y's");
+    assert!(s.ends_with('\n'), "expected trailing newline");
+    assert!(
+        s[..5_000].chars().all(|c| c == 'y'),
+        "expected first 5000 bytes to all be 'y'"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
