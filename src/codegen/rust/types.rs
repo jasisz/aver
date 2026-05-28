@@ -36,6 +36,10 @@ pub fn type_to_rust(ty: &Type) -> String {
                  This indicates unresolved typing leaked into codegen."
             )
         }
+        // display-only: rendering the Rust type identifier string
+        // — `name` IS the right surface, `id` carries no display
+        // information. Identity-sensitive routing happens at the
+        // call layer (see `backend_named_type_key`).
         Type::Named { name, .. } => {
             // Dotted names like Tcp.Connection → not supported in transpilation
             if name.contains('.') {

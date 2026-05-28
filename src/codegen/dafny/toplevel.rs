@@ -131,6 +131,11 @@ fn type_to_dafny(ty: &Type) -> String {
         // the dependent module; already-qualified user types
         // (`Level.Room`) need the module-segment prefixed with `Aver_`
         // so the qualifier matches the renamed Dafny module.
+        //
+        // display-only: rendering the Dafny type identifier string.
+        // `name` IS the right surface here. Identity-sensitive
+        // routing already happens upstream via
+        // `backend_named_type_key`; this arm only emits text.
         Type::Named { name, .. } => {
             if crate::codegen::builtin_records::find(name).is_some() {
                 name.replace('.', "_")

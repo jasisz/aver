@@ -4479,6 +4479,12 @@ fn register_nominal_in_type(
 ) {
     let canonical: String = t.display().chars().filter(|c| !c.is_whitespace()).collect();
     match t {
+        // temporary-migration-bridge: wasm-gc `TypeRegistry` is
+        // still string-keyed by bare `TypeDef.name` (flatten strips
+        // module prefixes from field types). Canonical-key
+        // migration for wasm-gc is a separate scope; until then
+        // bare-name keying is consistent within the registry's
+        // post-flatten namespace.
         AverType::Named { name, .. } => {
             if type_registry.record_fields.contains_key(name) {
                 eq_helpers.register_transitive(name, EqKind::Record, type_registry);
@@ -4580,6 +4586,11 @@ fn discover_builtins_in_expr(
             // Sum/record `==`/`!=` need a per-type `__eq_<TypeName>`
             // helper — register on discovery so the slot is allocated
             // before emit runs the BinOp dispatch.
+            //
+            // temporary-migration-bridge: wasm-gc `TypeRegistry`
+            // still string-keyed; see the canonical-key migration
+            // note on `register_nominal_in_type`. Bare-name lookup
+            // is consistent within the post-flatten namespace.
             use crate::ast::BinOp as Op;
             if matches!(op, Op::Eq | Op::Neq)
                 && let Some(t) = l.ty()

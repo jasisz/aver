@@ -372,6 +372,11 @@ fn type_can_derive_hash_eq(td: &TypeDef, ctx: &CodegenContext) -> bool {
     rust_hash_eq_safe_named(&key, ctx, &mut visiting)
 }
 
+// temporary-migration-bridge: `ctx.fn_sigs` side channel is
+// slated for removal in Phase 7 of #180 (projection from
+// `ResolvedProgramView` + typed `.ty()`). This memo-eligibility
+// check is identity-safe today because `fd.name` is unambiguous
+// in the entry scope where memo wrappers are synthesised.
 fn fn_supports_rust_memo(fd: &FnDef, ctx: &CodegenContext) -> bool {
     ctx.fn_sigs.get(&fd.name).is_some_and(|(params, _, _)| {
         params.iter().all(|param| {
@@ -558,6 +563,12 @@ fn emit_product_type(
 }
 
 /// Collect local_types from function signature or annotations.
+///
+/// temporary-migration-bridge: `ctx.fn_sigs` side channel is
+/// slated for removal in Phase 7 of #180. Synthetic / mid-
+/// rewrite fns the resolved-view path doesn't index fall back
+/// here; the typed `collect_fn_local_types_from_resolved` is
+/// the preferred entry point for resolved fn defs.
 fn collect_fn_local_types(fd: &FnDef, ctx: &CodegenContext) -> HashMap<String, Type> {
     let mut local_types = HashMap::new();
     if let Some((param_types, _, _)) = ctx.fn_sigs.get(&fd.name) {
@@ -1221,6 +1232,11 @@ fn passthrough_param_names(
         .collect()
 }
 
+// temporary-migration-bridge: `ctx.fn_sigs` lookup for the
+// effects slot. Slated for removal in Phase 7 of #180 (effects
+// projected from `ResolvedFnDef.effects`). Today's bare-name
+// lookup is consistent with the entry-scope assumption the
+// memo wrapper synthesis already makes.
 fn lookup_call_effects<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a Vec<String>> {
     if let Some((_, _, effects)) = ctx.fn_sigs.get(name) {
         return Some(effects);

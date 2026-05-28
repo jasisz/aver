@@ -831,6 +831,11 @@ fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec
         name.to_string()
     };
 
+    // temporary-migration-bridge: `ctx.fn_sigs` borrow-decision
+    // fallback for callees that haven't been threaded through
+    // the resolved-program view (cross-module callsites where
+    // only the dotted source name is in scope). Slated for
+    // removal with Phase 7 of #180.
     if let Some((param_types, _, _)) = ctx
         .fn_sigs
         .get(&lookup_name)
@@ -1704,6 +1709,13 @@ fn emit_list_arm_body(arm: &ResolvedMatchArm, ctx: &CodegenContext, body: String
     }
 }
 
+// temporary-migration-bridge: constructor-boxed-positions
+// detection still consults `ctx.fn_sigs` because constructors
+// are registered under dotted source names (`"Type.Variant"`)
+// and the cross-module suffix fallback hasn't been threaded
+// through the resolved-program view yet. Identity comparison
+// for the param-vs-return Named ref already prefers `TypeId`
+// via `Type::named_id()` further down (PR #189).
 pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> HashSet<usize> {
     let sig = ctx.fn_sigs.get(name).or_else(|| {
         // Cross-module constructors: "Type.Variant" may be registered as
