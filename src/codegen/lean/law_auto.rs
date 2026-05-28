@@ -523,7 +523,7 @@ pub fn emit_verify_law_support_theorems(
     ctx: &CodegenContext,
     _theorem_base: &str,
 ) -> Vec<String> {
-    collect_missing_helper_law_hints(&ctx.items, &ctx.fn_sigs_projection())
+    collect_missing_helper_law_hints(&ctx.items, ctx)
         .into_iter()
         .find(|hint| hint.line == vb.line && hint.fn_name == vb.fn_name)
         .map(|hint| {

@@ -159,7 +159,7 @@ pub(super) fn emit_spec_function_equivalence_law(
         return Some(proof);
     }
 
-    let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs_projection())?;
+    let spec_ref = canonical_spec_ref(&vb.fn_name, law, ctx)?;
     let impl_fd = find_fn_def(ctx, &vb.fn_name)?;
     let spec_fd = find_fn_def(ctx, &spec_ref.spec_fn_name)?;
     let impl_body = body_terminal_expr(impl_fd.body.as_ref())?;
