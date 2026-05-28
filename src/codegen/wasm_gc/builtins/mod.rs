@@ -1679,7 +1679,20 @@ fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcErr
                 ;; end_pos = 21
                 i32.const 21 local.set $end_pos)
               (else
-                ;; Find shortest N (1..15).
+                ;; Find shortest N (1..17). 17 is the maximum number
+                ;; of fractional digits any IEEE 754 f64 value
+                ;; needs for a round-trip-unique representation —
+                ;; matches Rust's `f64::to_string` shortest-
+                ;; roundtrip (Ryu/Grisu). Bumped from 15 in PR #203
+                ;; because the prior cap diverged from VM / Rust /
+                ;; wasip2 output by one digit on values in the
+                ;; [0.1, 10) range, e.g. golden-ratio `Float.fromInt
+                ;; (fib(n + 1)) / Float.fromInt(fib(n))` from
+                ;; `examples/data/fibonacci.av` printed
+                ;; `1.618181818181818` on wasm-gc vs
+                ;; `1.6181818181818182` on VM. For values outside
+                ;; that range the overflow guard below fires first,
+                ;; so the cap is effectively unreachable.
                 f64.const 1 local.set $pow
                 i32.const 0 local.set $n
 
@@ -1693,7 +1706,7 @@ fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcErr
                     ;; `(((-0.5772) * (-61.8024)) * (-877.8128))` ≈
                     ;; -31313.64 the loop converges late enough that
                     ;; `abs_val * 10^N` crosses 2^63 (~9.22e18) before
-                    ;; N hits the 15-digit cap below, and the next
+                    ;; N hits the 17-digit cap below, and the next
                     ;; `trunc_f64_s` traps with "wasm trap: integer
                     ;; overflow". Bail out of the loop with the
                     ;; current $scaled / $pow / $n when the next
@@ -1726,7 +1739,7 @@ fn emit_string_from_float(registry: &TypeRegistry) -> Result<Function, WasmGcErr
                     br_if $ndone
 
                     local.get $n
-                    i32.const 15
+                    i32.const 17
                     i32.ge_s
                     br_if $ndone
 

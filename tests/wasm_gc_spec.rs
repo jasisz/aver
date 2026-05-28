@@ -241,6 +241,36 @@ fn helper(n: Int) -> Int
     );
 }
 
+// `String.fromFloat` shortest-roundtrip on a 17-significant-digit
+// f64 — pins the WAT helper's frac-digit cap at 17 (was 15 pre-#203,
+// which truncated `1.6181818181818182` to `1.618181818181818` and
+// surfaced as a VM↔wasm-gc parity divergence on every Aver source
+// that printed a Float of ≥16 fractional digits — e.g. the
+// `goldenApprox(n) = Float.fromInt(fib(n + 1)) / Float.fromInt(fib(n))`
+// line in `examples/data/fibonacci.av`).
+//
+// Rust's `f64::to_string` rounds the golden-ratio approximation
+// to exactly `"1.6181818181818182"` (18 chars). The helper now
+// matches.
+#[test]
+fn string_from_float_emits_17_digit_shortest_roundtrip() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "String.fromFloat shortest-roundtrip"
+    depends []
+
+fn main() -> Int
+    String.len(String.fromFloat(1.6181818181818182))
+"#
+        ),
+        18,
+        "expected 18-char `1.6181818181818182` shortest-roundtrip; \
+         a shorter result means the WAT helper's frac-digit cap \
+         regressed below 17",
+    );
+}
+
 // Cross-module same-bare-name `TypeDef` regression for wasm-gc
 // — known-failing pin, `#[ignore]`'d until the canonical-key
 // migration lands.
