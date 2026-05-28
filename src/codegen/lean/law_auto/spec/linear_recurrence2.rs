@@ -17,7 +17,7 @@ pub(in super::super) fn emit_second_order_linear_recurrence_spec_equivalence_law
     ctx: &CodegenContext,
     _intro_names: &[String],
 ) -> Option<AutoProof> {
-    let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs)?;
+    let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs_projection())?;
     let impl_fd = find_fn_def(ctx, &vb.fn_name)?;
     let spec_fd = find_fn_def(ctx, &spec_ref.spec_fn_name)?;
     let impl_shape = detect_tailrec_int_linear_pair_wrapper(impl_fd)?;

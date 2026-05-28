@@ -135,7 +135,7 @@ pub(super) fn emit_simp_normalized_spec_equivalence_law(
     ctx: &CodegenContext,
     intro_names: &[String],
 ) -> Option<AutoProof> {
-    let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs)?;
+    let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs_projection())?;
     let impl_fd = find_fn_def(ctx, &vb.fn_name)?;
     let spec_fd = find_fn_def(ctx, &spec_ref.spec_fn_name)?;
     let impl_body = body_terminal_expr(impl_fd.body.as_ref())?;

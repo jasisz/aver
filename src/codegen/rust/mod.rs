@@ -651,8 +651,25 @@ fn is_shared_runtime_type(td: &TypeDef) -> bool {
 }
 
 fn needs_named_type(ctx: &CodegenContext, wanted: &str) -> bool {
-    ctx.fn_sigs.values().any(|(params, ret, _effects)| {
-        params.iter().any(|p| type_contains_named(p, wanted)) || type_contains_named(ret, wanted)
+    // Walks resolved fn defs (entry + every dep module). The wasm-gc
+    // counterpart `items_reference_name` uses the same shape — a
+    // substring scan over signature surface — so the discovery
+    // semantics stay identical post #180 Phase 7 fn_sigs drop.
+    let scan = |params: &[(String, Type)], ret: &Type| -> bool {
+        params.iter().any(|(_, p)| type_contains_named(p, wanted))
+            || type_contains_named(ret, wanted)
+    };
+    if ctx
+        .resolved_program
+        .entry_fns()
+        .any(|rfd| scan(&rfd.params, &rfd.return_type))
+    {
+        return true;
+    }
+    ctx.resolved_program.modules.iter().any(|m| {
+        m.fn_defs
+            .iter()
+            .any(|rfd| scan(&rfd.params, &rfd.return_type))
     })
 }
 

@@ -3100,17 +3100,16 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
 mod tests {
     use super::*;
     use crate::ast::{
-        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, TypeDef, TypeVariant,
+        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, TopLevel, TypeDef,
+        TypeVariant,
     };
     use crate::codegen::CodegenContext;
-    use crate::types::Type;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use std::sync::Arc as Rc;
 
     fn empty_ctx() -> CodegenContext {
         CodegenContext {
             items: vec![],
-            fn_sigs: HashMap::new(),
             memo_fns: HashSet::new(),
             memo_safe_types: HashSet::new(),
             type_defs: vec![],
@@ -3479,8 +3478,9 @@ mod tests {
             resolution: None,
         };
         let mut ctx = empty_ctx();
-        ctx.fn_sigs
-            .insert("f".to_string(), (vec![Type::Float], Type::Float, vec![]));
+        ctx.items.push(TopLevel::FnDef(fd.clone()));
+        ctx.fn_defs.push(fd.clone());
+        ctx.refresh_facts();
 
         let emitted = {
             let r = ctx.resolve_fn_def(&fd, None);
@@ -3776,15 +3776,25 @@ mod tests {
             resolution: None,
         };
 
+        let first = FnDef {
+            name: "first".to_string(),
+            line: 1,
+            params: vec![
+                ("a".to_string(), "Int".to_string()),
+                ("b".to_string(), "Int".to_string()),
+            ],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Ident(
+                "a".to_string(),
+            )))),
+            resolution: None,
+        };
         let mut semantic_ctx = empty_ctx();
-        semantic_ctx.fn_sigs.insert(
-            "swap".to_string(),
-            (vec![Type::Int, Type::Int], Type::Int, vec![]),
-        );
-        semantic_ctx.fn_sigs.insert(
-            "first".to_string(),
-            (vec![Type::Int, Type::Int], Type::Int, vec![]),
-        );
+        semantic_ctx.items = vec![TopLevel::FnDef(first.clone()), TopLevel::FnDef(fd.clone())];
+        semantic_ctx.fn_defs = vec![first, fd.clone()];
+        semantic_ctx.refresh_facts();
         let semantic = {
             let r = semantic_ctx.resolve_fn_def(&fd, None);
             emit_public_fn_def(&fd, r.as_ref(), false, &semantic_ctx, None)
@@ -3830,14 +3840,9 @@ mod tests {
         };
 
         let mut semantic_ctx = empty_ctx();
-        semantic_ctx.fn_sigs.insert(
-            "cellAt".to_string(),
-            (
-                vec![Type::Vector(Box::new(Type::Int)), Type::Int],
-                Type::Int,
-                vec![],
-            ),
-        );
+        semantic_ctx.items = vec![TopLevel::FnDef(fd.clone())];
+        semantic_ctx.fn_defs = vec![fd.clone()];
+        semantic_ctx.refresh_facts();
         let semantic = {
             let r = semantic_ctx.resolve_fn_def(&fd, None);
             emit_public_fn_def(&fd, r.as_ref(), false, &semantic_ctx, None)
@@ -3902,14 +3907,9 @@ mod tests {
         };
 
         let mut semantic_ctx = empty_ctx();
-        semantic_ctx.fn_sigs.insert(
-            "cellAtPlusOne".to_string(),
-            (
-                vec![Type::Vector(Box::new(Type::Int)), Type::Int],
-                Type::Int,
-                vec![],
-            ),
-        );
+        semantic_ctx.items = vec![TopLevel::FnDef(fd.clone())];
+        semantic_ctx.fn_defs = vec![fd.clone()];
+        semantic_ctx.refresh_facts();
         let semantic = {
             let r = semantic_ctx.resolve_fn_def(&fd, None);
             emit_public_fn_def(&fd, r.as_ref(), false, &semantic_ctx, None)

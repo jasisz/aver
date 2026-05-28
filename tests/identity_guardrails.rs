@@ -128,11 +128,12 @@ const BANNED_PATTERNS: &[BannedPattern] = &[
                 the matching category",
     },
     BannedPattern {
-        needle: "ctx.fn_sigs.get(",
-        label: "ctx.fn_sigs.get(name) — string-keyed fn signature side channel. \
-                Prefer ctx.resolve_fn_def(fd, scope) for ResolvedFnDef.params / \
-                return_type, or the resolved-program view. fn_sigs is slated \
-                for removal in Phase 7 of #180",
+        needle: "ctx.fn_sigs.",
+        label: "ctx.fn_sigs.* — string-keyed fn signature side channel removed \
+                in Phase 7 of #180. Prefer ctx.resolve_fn_def(fd, scope) for \
+                ResolvedFnDef.params / return_type, ctx.resolved_program for \
+                the resolved-program view, or ctx.fn_sigs_projection() for a \
+                fresh fn-sig map (verify_law / law_auto consumers)",
     },
 ];
 
