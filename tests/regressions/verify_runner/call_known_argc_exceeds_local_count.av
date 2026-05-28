@@ -1,0 +1,8 @@
+module M
+    effects []
+
+fn ignore(_: Int) -> Int
+    42
+
+verify ignore
+    ignore(7) => 42

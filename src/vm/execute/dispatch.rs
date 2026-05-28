@@ -441,7 +441,14 @@ impl VM {
 
                     let target = self.code.get(target_fn_id);
                     let new_bp = self.stack.len() - argc;
-                    for _ in 0..(target.local_count as usize - argc) {
+                    let target_lc = target.local_count as usize;
+                    if target_lc < argc {
+                        return Err(VmError::runtime(format!(
+                            "CALL_KNOWN to fn_id {} with argc={} exceeds local_count={}",
+                            target_fn_id, argc, target_lc,
+                        )));
+                    }
+                    for _ in 0..(target_lc - argc) {
                         self.stack.push(NanValue::UNIT);
                     }
 
@@ -631,7 +638,14 @@ impl VM {
 
                     let target = self.code.get(target_fn_id);
                     let new_bp = self.stack.len() - argc;
-                    for _ in 0..(target.local_count as usize - argc) {
+                    let target_lc = target.local_count as usize;
+                    if target_lc < argc {
+                        return Err(VmError::runtime(format!(
+                            "CALL_VALUE to fn_id {} with argc={} exceeds local_count={}",
+                            target_fn_id, argc, target_lc,
+                        )));
+                    }
+                    for _ in 0..(target_lc - argc) {
                         self.stack.push(NanValue::UNIT);
                     }
 
