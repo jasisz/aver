@@ -614,31 +614,31 @@ pub(super) fn emit_expr(
 fn sum_or_record_eq_fn(operand: &Spanned<ResolvedExpr>, ctx: &EmitCtx<'_>) -> Option<u32> {
     let ty = operand.ty()?;
     match ty {
-        // temporary-migration-bridge: wasm-gc `TypeRegistry` keys
-        // dep types by bare `TypeDef.name` for non-colliding bare
-        // names (the common case post #180 Phase 6 PR 3) and by
-        // canonical `Prefix.Name` for cross-module same-bare-name
-        // collisions. The bare-name lookup below hits the registry
-        // for the non-colliding path; collision-case eq dispatch is
-        // a follow-up (would need a typed key resolved against the
-        // post-flatten symbol table).
-        crate::types::Type::Named { name, .. } => {
+        // Resolve the registry key through the post-flatten symbol
+        // table: non-colliding dep types map to their bare
+        // `TypeDef.name`; cross-module same-bare-name collisions map
+        // to their renamed canonical `Prefix.Name` (#180 Phase 6 PR 3).
+        crate::types::Type::Named { id, name } => {
+            let key: String = match id {
+                Some(type_id) => ctx.symbol_table.type_entry(*type_id).key.canonical(),
+                None => name.clone(),
+            };
             // Newtypes already lower to their underlying primitive —
             // no helper needed (the default i64/f64 eq handles them).
-            if ctx.registry.newtype_underlying(name).is_some() {
+            if ctx.registry.newtype_underlying(&key).is_some() {
                 return None;
             }
-            let is_record = ctx.registry.record_fields.contains_key(name);
+            let is_record = ctx.registry.record_fields.contains_key(&key);
             let is_sum = ctx
                 .registry
                 .variants
                 .values()
                 .flat_map(|v| v.iter())
-                .any(|v| &v.parent == name);
+                .any(|v| v.parent == key);
             if !is_record && !is_sum {
                 return None;
             }
-            ctx.fn_map.eq_helpers.get(name).copied()
+            ctx.fn_map.eq_helpers.get(&key).copied()
         }
         // Generic carriers — `Option<X>`, `Result<X,Y>`, `Tuple<…>`
         // have per-instantiation `__eq_<canonical>` helpers since

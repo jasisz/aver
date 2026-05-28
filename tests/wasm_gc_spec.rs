@@ -312,6 +312,58 @@ record Box
     );
 }
 
+// Cross-module same-bare-name `==`/`!=` dispatch — exercises the
+// canonical-key routing through `named_type_registry_key` at the three
+// `temporary-migration-bridge` eq-helper sites (`register_nominal_in_
+// type`, the `BinOp Eq/Neq` arm of `discover_builtins_in_expr`,
+// `sum_or_record_eq_fn`). Pre-#180-Phase-6-PR-3 these resolved the
+// per-type `__eq_<Box>` slot by the bare `Type::Named.name` of the
+// operand's stamped type — fine for non-colliding dep types, but in
+// the collision case the registry had renamed `Left.Box` / `Right.Box`
+// canonical entries and the bare lookup would miss, leaving the eq
+// helper unregistered and the BinOp emit unable to dispatch.
+#[test]
+fn cross_module_same_bare_name_records_dispatch_eq_via_canonical_key() {
+    let entry_src = r#"
+module Entry
+    intent = "cross-module same-bare-name == dispatch"
+    depends [Left, Right]
+
+fn main() -> Int
+    a = Left.Box(value = 7)
+    b = Left.Box(value = 7)
+    c = Right.Box(value = 7)
+    d = Right.Box(value = 9)
+    match Bool.and(a == b, c != d)
+        true -> 1
+        false -> 0
+"#;
+    let left_src = r#"
+module Left
+    intent = "left container"
+    exposes [Box]
+    depends []
+
+record Box
+    value: Int
+"#;
+    let right_src = r#"
+module Right
+    intent = "right container"
+    exposes [Box]
+    depends []
+
+record Box
+    value: Int
+"#;
+    let result = run_int_multi(entry_src, &[("Left", left_src), ("Right", right_src)]);
+    assert_eq!(
+        result, 1,
+        "expected Left.Box eq + Right.Box neq to dispatch through canonical \
+         per-type __eq_<X> helpers post #180 Phase 6 PR 3 — got {result}"
+    );
+}
+
 // ────────────────────────────────────────────────────────────────────
 // List<T>
 // ────────────────────────────────────────────────────────────────────
