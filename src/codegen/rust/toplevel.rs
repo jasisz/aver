@@ -372,17 +372,23 @@ fn type_can_derive_hash_eq(td: &TypeDef, ctx: &CodegenContext) -> bool {
     rust_hash_eq_safe_named(&key, ctx, &mut visiting)
 }
 
-// temporary-migration-bridge: `ctx.fn_sigs` side channel is
-// slated for removal in Phase 7 of #180 (projection from
-// `ResolvedProgramView` + typed `.ty()`). This memo-eligibility
-// check is identity-safe today because `fd.name` is unambiguous
-// in the entry scope where memo wrappers are synthesised.
+/// Memo-eligibility predicate: a fn supports the Rust memoization
+/// wrapper only if every one of its declared param types is hash+eq
+/// safe in the Rust lowering. Reads param types directly from the
+/// `ResolvedFnDef` (typed-HIR canonical source) — #180 Phase 7's
+/// projection of `ctx.fn_sigs` onto the resolved view. Memo wrappers
+/// are synthesised in the entry scope, so the `&FnDef` is unambiguous;
+/// `fn_id_for_decl` resolves it through the symbol-table-keyed view.
 fn fn_supports_rust_memo(fd: &FnDef, ctx: &CodegenContext) -> bool {
-    ctx.fn_sigs.get(&fd.name).is_some_and(|(params, _, _)| {
-        params.iter().all(|param| {
-            let mut visiting = HashSet::new();
-            rust_hash_eq_safe_type(param, ctx, &mut visiting)
-        })
+    let Some(fn_id) = crate::codegen::common::fn_id_for_decl(ctx, fd) else {
+        return false;
+    };
+    let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
+        return false;
+    };
+    rfd.params.iter().all(|(_, param)| {
+        let mut visiting = HashSet::new();
+        rust_hash_eq_safe_type(param, ctx, &mut visiting)
     })
 }
 
@@ -562,29 +568,22 @@ fn emit_product_type(
     out.trim_end().to_string()
 }
 
-/// Collect local_types from function signature or annotations.
+/// Collect local_types from function signature.
 ///
-/// temporary-migration-bridge: `ctx.fn_sigs` side channel is
-/// slated for removal in Phase 7 of #180. Synthetic / mid-
-/// rewrite fns the resolved-view path doesn't index fall back
-/// here; the typed `collect_fn_local_types_from_resolved` is
-/// the preferred entry point for resolved fn defs.
+/// #180 Phase 7: routes through the `ResolvedProgramView` (already-
+/// parsed typed params) when the fn resolves through the symbol
+/// table. Synthetic / mid-rewrite fns the resolved-view path doesn't
+/// index fall back to `parse_type_str` on the AST annotations.
 fn collect_fn_local_types(fd: &FnDef, ctx: &CodegenContext) -> HashMap<String, Type> {
-    let mut local_types = HashMap::new();
-    if let Some((param_types, _, _)) = ctx.fn_sigs.get(&fd.name) {
-        for (i, (name, _)) in fd.params.iter().enumerate() {
-            if let Some(ty) = param_types.get(i) {
-                local_types.insert(name.clone(), ty.clone());
-            }
-        }
-    } else {
-        // Fallback: parse type annotations directly
-        for (name, type_ann) in &fd.params {
-            let ty = crate::types::parse_type_str(type_ann);
-            local_types.insert(name.clone(), ty);
-        }
+    let resolved = crate::codegen::common::fn_id_for_decl(ctx, fd)
+        .and_then(|id| ctx.resolved_program.fn_by_id(id));
+    if let Some(rfd) = resolved {
+        return collect_fn_local_types_from_resolved(rfd);
     }
-    local_types
+    fd.params
+        .iter()
+        .map(|(name, type_ann)| (name.clone(), crate::types::parse_type_str(type_ann)))
+        .collect()
 }
 
 /// Collect local_types directly from a `ResolvedFnDef`'s already-
@@ -1232,26 +1231,35 @@ fn passthrough_param_names(
         .collect()
 }
 
-// temporary-migration-bridge: `ctx.fn_sigs` lookup for the
-// effects slot. Slated for removal in Phase 7 of #180 (effects
-// projected from `ResolvedFnDef.effects`). Today's bare-name
-// lookup is consistent with the entry-scope assumption the
-// memo wrapper synthesis already makes.
-fn lookup_call_effects<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a Vec<String>> {
-    if let Some((_, _, effects)) = ctx.fn_sigs.get(name) {
-        return Some(effects);
+/// Resolve the declared effect list of a callee by source-level
+/// name. #180 Phase 7: routes through the `ResolvedProgramView` —
+/// `fn_id_for_dotted_name` handles the bare/dotted split, then the
+/// fn's resolved effects are read off `ResolvedFnDef.effects`. The
+/// suffix fallback survives for callsites that haven't been threaded
+/// through a `FnKey` yet (entry-scope synthesised wrappers calling
+/// dep fns by bare name).
+///
+/// Returns `Some([])` for known pure fns, `Some([Console.print, …])`
+/// for declared effects, or `None` when the name doesn't resolve.
+fn lookup_call_effects(name: &str, ctx: &CodegenContext) -> Option<Vec<String>> {
+    if let Some(fn_id) = crate::codegen::common::fn_id_for_dotted_name(ctx, name)
+        && let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id)
+    {
+        return Some(rfd.effects.iter().map(|e| e.node.clone()).collect());
     }
-
+    // Suffix fallback: a bare name (or one without an exact key)
+    // matches against module-scoped fns sharing the bare suffix.
+    // Returns a unique match only — ambiguity (two modules with the
+    // same bare fn) keeps the legacy behaviour of returning `None`.
     let bare = name.rsplit('.').next().unwrap_or(name);
-    let suffix = format!(".{}", bare);
-    let mut matches = ctx
-        .fn_sigs
-        .iter()
-        .filter_map(|(candidate, (_, _, effects))| {
-            (candidate == name || candidate == bare || candidate.ends_with(&suffix))
-                .then_some(effects)
-        })
-        .collect::<Vec<_>>();
+    let mut matches: Vec<Vec<String>> = Vec::new();
+    for m in &ctx.resolved_program.modules {
+        for rfd in &m.fn_defs {
+            if rfd.name == bare {
+                matches.push(rfd.effects.iter().map(|e| e.node.clone()).collect());
+            }
+        }
+    }
     if matches.len() == 1 {
         matches.pop()
     } else {
@@ -3416,14 +3424,12 @@ mod tests {
 
         let mut ctx = empty_ctx();
         ctx.fn_defs = vec![helper_tag.clone(), helper_score.clone(), fd.clone()];
-        ctx.fn_sigs
-            .insert("tag".to_string(), (vec![Type::Int], Type::Int, vec![]));
-        ctx.fn_sigs
-            .insert("score".to_string(), (vec![Type::Int], Type::Int, vec![]));
-        ctx.fn_sigs.insert(
-            "sumAreas".to_string(),
-            (vec![Type::Int, Type::Int, Type::Int], Type::Int, vec![]),
-        );
+        ctx.items = vec![
+            TopLevel::FnDef(helper_tag.clone()),
+            TopLevel::FnDef(helper_score.clone()),
+            TopLevel::FnDef(fd.clone()),
+        ];
+        ctx.refresh_facts();
 
         let emitted = {
             let r = ctx.resolve_fn_def(&fd, None);
@@ -3525,11 +3531,11 @@ mod tests {
         };
 
         let mut ctx = empty_ctx();
-        ctx.type_defs.push(td);
-        ctx.fn_sigs.insert(
-            "member".to_string(),
-            (vec![Type::named("Tree")], Type::Bool, vec![]),
-        );
+        ctx.type_defs.push(td.clone());
+        ctx.items.push(TopLevel::TypeDef(td));
+        ctx.items.push(TopLevel::FnDef(fd.clone()));
+        ctx.fn_defs.push(fd.clone());
+        ctx.refresh_facts();
 
         let emitted = {
             let r = ctx.resolve_fn_def(&fd, None);
