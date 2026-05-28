@@ -80,7 +80,11 @@ jobs:
     name: Fuzz nightly (${{ matrix.target }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 60 min (was 45) — `fuzz_codegen_wasip2` build+seed+fuzz+pack
+    # totals ~44-45 min on a GitHub-hosted runner, so the previous
+    # cap caught it at the hard limit roughly every other nightly.
+    # Other targets finish in 30-42 min and stay well under.
+    timeout-minutes: 60
     permissions:
       # `gh run download` needs `actions:read` to enumerate previous
       # workflow runs and pull their artifacts.
