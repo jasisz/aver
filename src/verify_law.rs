@@ -8,6 +8,32 @@ use crate::types::Type;
 
 pub mod expand;
 
+/// `name → (params, return_type, effects)` map carrying the fn / ctor
+/// signatures the verify-law helpers query when classifying a law's
+/// callees.
+///
+/// # Parallel-scope cleanup deferred after epic #180 close
+///
+/// Epic #180 Phase 7 dropped `CodegenContext.fn_sigs` as a stored side
+/// channel (PRs #193, #194) — codegen consumers now reach into the
+/// `ResolvedProgramView` directly or materialise the map on demand via
+/// [`crate::codegen::CodegenContext::fn_sigs_projection`]. The
+/// `FnSigMap` type alias survives because the 18 verify-law functions
+/// below still take it as a parameter; callers build it on demand and
+/// pass it through. The shape is semantically identical to what
+/// `ctx.fn_sigs` carried pre-Phase-7, so the rewrite is interface
+/// tightening (introduce a small `FnSigOracle` trait, or pass
+/// `&CodegenContext` directly so the verify_law helpers project on
+/// access) and not a soundness change. Tracked as parallel-scope
+/// cleanup — not blocking on any user-visible behavior, run-loop
+/// driven when an LSP / inliner / monomorph trigger lands.
+///
+/// Similarly, [`crate::types::checker::TypeCheckResult::fn_sigs`]
+/// stays exposed by the typechecker; it's the upstream source of
+/// truth that diagnostics + the codegen projection both consume.
+/// Removing the field would force the typechecker to expose a
+/// different shape (probably an iterator over typed fn sigs); same
+/// trigger-driven scope.
 pub type FnSigMap = HashMap<String, (Vec<Type>, Type, Vec<String>)>;
 
 /// Bare-name → `&FnDef` index for the **entry module only**.
