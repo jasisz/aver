@@ -140,6 +140,7 @@ pub(super) fn emit_module_with(
             &mut effect_registry,
             &mut eq_helpers_registry,
             &registry,
+            &symbol_table,
         );
     }
     // Sweep nominal element types of every registered List / Vector
@@ -4443,10 +4444,18 @@ fn discover_builtins_in_fn(
     effects: &mut EffectRegistry,
     eq_helpers: &mut EqHelperRegistry,
     type_registry: &TypeRegistry,
+    symbol_table: &crate::ir::SymbolTable,
 ) {
     let crate::ir::hir::ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     for stmt in stmts {
-        discover_builtins_in_stmt(stmt, builtins, effects, eq_helpers, type_registry);
+        discover_builtins_in_stmt(
+            stmt,
+            builtins,
+            effects,
+            eq_helpers,
+            type_registry,
+            symbol_table,
+        );
     }
 }
 
@@ -4456,12 +4465,46 @@ fn discover_builtins_in_stmt(
     effects: &mut EffectRegistry,
     eq_helpers: &mut EqHelperRegistry,
     type_registry: &TypeRegistry,
+    symbol_table: &crate::ir::SymbolTable,
 ) {
     match stmt {
         crate::ir::hir::ResolvedStmt::Binding { value: e, .. }
-        | crate::ir::hir::ResolvedStmt::Expr(e) => {
-            discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry)
-        }
+        | crate::ir::hir::ResolvedStmt::Expr(e) => discover_builtins_in_expr(
+            &e.node,
+            builtins,
+            effects,
+            eq_helpers,
+            type_registry,
+            symbol_table,
+        ),
+    }
+}
+
+/// Recursively walks `t` and registers every nominal record/sum it
+/// reaches in `eq_helpers`. Needed for `==` on collection types
+/// whose element/key/value type is nominal — `List<Tree>`,
+/// `Map<Color, Tree>`, `Option<Box>`, etc. Without this, the
+/// helper-body emit (`emit_list_eq`, `emit_record_eq_inline`,
+/// `emit_eq_record`) would dispatch by `Call(__eq_<Tree>)` against
+/// an unregistered slot.
+/// Canonical wasm-gc `TypeRegistry` key for a `Type::Named` reference.
+///
+/// Resolves the bare/canonical name of a nominal type by routing through
+/// the post-flatten `SymbolTable` when the typechecker stamped a `TypeId`.
+/// Returns the registry key shape `TypeRegistry::build_with_handler`
+/// inserts under: bare for non-colliding dep types (where the wasm-gc
+/// link stage keeps the `TypeDef.name` as written) and canonical
+/// `Prefix.Name` for the cross-module same-bare-name collision case
+/// (where #180 Phase 6 PR 3's `flatten_multimodule` renamed the dep
+/// `TypeDef.name`). Falls back to `name` for builtins / unresolved refs
+/// whose `id` is `None`.
+fn named_type_registry_key(symbol_table: &crate::ir::SymbolTable, ty: &AverType) -> Option<String> {
+    match ty {
+        AverType::Named {
+            id: Some(type_id), ..
+        } => Some(symbol_table.type_entry(*type_id).key.canonical()),
+        AverType::Named { id: None, name } => Some(name.clone()),
+        _ => None,
     }
 }
 
@@ -4476,48 +4519,46 @@ fn register_nominal_in_type(
     t: &AverType,
     eq_helpers: &mut EqHelperRegistry,
     type_registry: &super::types::TypeRegistry,
+    symbol_table: &crate::ir::SymbolTable,
 ) {
     let canonical: String = t.display().chars().filter(|c| !c.is_whitespace()).collect();
     match t {
-        // temporary-migration-bridge: wasm-gc `TypeRegistry` is
-        // still string-keyed by bare `TypeDef.name` (flatten strips
-        // module prefixes from field types). Canonical-key
-        // migration for wasm-gc is a separate scope; until then
-        // bare-name keying is consistent within the registry's
-        // post-flatten namespace.
-        AverType::Named { name, .. } => {
-            if type_registry.record_fields.contains_key(name) {
-                eq_helpers.register_transitive(name, EqKind::Record, type_registry);
+        AverType::Named { .. } => {
+            let Some(key) = named_type_registry_key(symbol_table, t) else {
+                return;
+            };
+            if type_registry.record_fields.contains_key(&key) {
+                eq_helpers.register_transitive(&key, EqKind::Record, type_registry);
             } else if type_registry
                 .variants
                 .values()
                 .flat_map(|v| v.iter())
-                .any(|v| &v.parent == name)
+                .any(|v| v.parent == key)
             {
-                eq_helpers.register_transitive(name, EqKind::Sum, type_registry);
+                eq_helpers.register_transitive(&key, EqKind::Sum, type_registry);
             }
         }
         AverType::Option(inner) => {
             eq_helpers.register_transitive(&canonical, EqKind::OptionEq, type_registry);
-            register_nominal_in_type(inner, eq_helpers, type_registry);
+            register_nominal_in_type(inner, eq_helpers, type_registry, symbol_table);
         }
         AverType::Result(ok, err) => {
             eq_helpers.register_transitive(&canonical, EqKind::ResultEq, type_registry);
-            register_nominal_in_type(ok, eq_helpers, type_registry);
-            register_nominal_in_type(err, eq_helpers, type_registry);
+            register_nominal_in_type(ok, eq_helpers, type_registry, symbol_table);
+            register_nominal_in_type(err, eq_helpers, type_registry, symbol_table);
         }
         AverType::Tuple(items) => {
             eq_helpers.register_transitive(&canonical, EqKind::TupleEq, type_registry);
             for item in items {
-                register_nominal_in_type(item, eq_helpers, type_registry);
+                register_nominal_in_type(item, eq_helpers, type_registry, symbol_table);
             }
         }
         AverType::List(inner) | AverType::Vector(inner) => {
-            register_nominal_in_type(inner, eq_helpers, type_registry);
+            register_nominal_in_type(inner, eq_helpers, type_registry, symbol_table);
         }
         AverType::Map(k, v) => {
-            register_nominal_in_type(k, eq_helpers, type_registry);
-            register_nominal_in_type(v, eq_helpers, type_registry);
+            register_nominal_in_type(k, eq_helpers, type_registry, symbol_table);
+            register_nominal_in_type(v, eq_helpers, type_registry, symbol_table);
         }
         _ => {}
     }
@@ -4529,6 +4570,7 @@ fn discover_builtins_in_expr(
     effects: &mut EffectRegistry,
     eq_helpers: &mut EqHelperRegistry,
     type_registry: &TypeRegistry,
+    symbol_table: &crate::ir::SymbolTable,
 ) {
     use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedStrPart};
     match expr {
@@ -4561,7 +4603,14 @@ fn discover_builtins_in_expr(
                 }
             }
             for arg in args {
-                discover_builtins_in_expr(&arg.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &arg.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
         ResolvedExpr::BinOp(op, l, r) => {
@@ -4585,26 +4634,26 @@ fn discover_builtins_in_expr(
             }
             // Sum/record `==`/`!=` need a per-type `__eq_<TypeName>`
             // helper — register on discovery so the slot is allocated
-            // before emit runs the BinOp dispatch.
-            //
-            // temporary-migration-bridge: wasm-gc `TypeRegistry`
-            // still string-keyed; see the canonical-key migration
-            // note on `register_nominal_in_type`. Bare-name lookup
-            // is consistent within the post-flatten namespace.
+            // before emit runs the BinOp dispatch. Use the typed-key
+            // resolver so non-colliding dep types resolve to their
+            // registry-bare key and the cross-module same-bare-name
+            // collision case (#180 Phase 6 PR 3) resolves to the
+            // renamed canonical `Prefix.Name` key.
             use crate::ast::BinOp as Op;
             if matches!(op, Op::Eq | Op::Neq)
                 && let Some(t) = l.ty()
-                && let AverType::Named { name, .. } = t
+                && matches!(t, AverType::Named { .. })
+                && let Some(key) = named_type_registry_key(symbol_table, t)
             {
-                if type_registry.record_fields.contains_key(name) {
-                    eq_helpers.register_transitive(name, EqKind::Record, type_registry);
+                if type_registry.record_fields.contains_key(&key) {
+                    eq_helpers.register_transitive(&key, EqKind::Record, type_registry);
                 } else if type_registry
                     .variants
                     .values()
                     .flat_map(|v| v.iter())
-                    .any(|v| &v.parent == name)
+                    .any(|v| v.parent == key)
                 {
-                    eq_helpers.register_transitive(name, EqKind::Sum, type_registry);
+                    eq_helpers.register_transitive(&key, EqKind::Sum, type_registry);
                 }
             }
             // List / Vector / Map / Option / Result / Tuple `==` —
@@ -4615,16 +4664,44 @@ fn discover_builtins_in_expr(
             if matches!(op, Op::Eq | Op::Neq)
                 && let Some(t) = l.ty()
             {
-                register_nominal_in_type(t, eq_helpers, type_registry);
+                register_nominal_in_type(t, eq_helpers, type_registry, symbol_table);
             }
-            discover_builtins_in_expr(&l.node, builtins, effects, eq_helpers, type_registry);
-            discover_builtins_in_expr(&r.node, builtins, effects, eq_helpers, type_registry);
+            discover_builtins_in_expr(
+                &l.node,
+                builtins,
+                effects,
+                eq_helpers,
+                type_registry,
+                symbol_table,
+            );
+            discover_builtins_in_expr(
+                &r.node,
+                builtins,
+                effects,
+                eq_helpers,
+                type_registry,
+                symbol_table,
+            );
         }
         ResolvedExpr::Neg(inner) => {
-            discover_builtins_in_expr(&inner.node, builtins, effects, eq_helpers, type_registry);
+            discover_builtins_in_expr(
+                &inner.node,
+                builtins,
+                effects,
+                eq_helpers,
+                type_registry,
+                symbol_table,
+            );
         }
         ResolvedExpr::Match { subject, arms } => {
-            discover_builtins_in_expr(&subject.node, builtins, effects, eq_helpers, type_registry);
+            discover_builtins_in_expr(
+                &subject.node,
+                builtins,
+                effects,
+                eq_helpers,
+                type_registry,
+                symbol_table,
+            );
             // String-subject match (`match path { "/" -> ... }`)
             // needs `StringEq` to compare each non-default arm's
             // literal against the subject. Register it eagerly when
@@ -4644,34 +4721,80 @@ fn discover_builtins_in_expr(
                     effects,
                     eq_helpers,
                     type_registry,
+                    symbol_table,
                 );
             }
         }
         ResolvedExpr::TailCall { args, .. } => {
             for arg in args {
-                discover_builtins_in_expr(&arg.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &arg.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
-        ResolvedExpr::Attr(obj, _) => {
-            discover_builtins_in_expr(&obj.node, builtins, effects, eq_helpers, type_registry)
-        }
-        ResolvedExpr::ErrorProp(inner) => {
-            discover_builtins_in_expr(&inner.node, builtins, effects, eq_helpers, type_registry)
-        }
+        ResolvedExpr::Attr(obj, _) => discover_builtins_in_expr(
+            &obj.node,
+            builtins,
+            effects,
+            eq_helpers,
+            type_registry,
+            symbol_table,
+        ),
+        ResolvedExpr::ErrorProp(inner) => discover_builtins_in_expr(
+            &inner.node,
+            builtins,
+            effects,
+            eq_helpers,
+            type_registry,
+            symbol_table,
+        ),
         ResolvedExpr::Ctor(_, args) => {
             for a in args {
-                discover_builtins_in_expr(&a.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &a.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
         ResolvedExpr::RecordCreate { fields, .. } => {
             for (_, e) in fields {
-                discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &e.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
         ResolvedExpr::RecordUpdate { base, updates, .. } => {
-            discover_builtins_in_expr(&base.node, builtins, effects, eq_helpers, type_registry);
+            discover_builtins_in_expr(
+                &base.node,
+                builtins,
+                effects,
+                eq_helpers,
+                type_registry,
+                symbol_table,
+            );
             for (_, e) in updates {
-                discover_builtins_in_expr(&e.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &e.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
         // `InterpolatedStr` lowers to `array.new_fixed` + the variadic
@@ -4698,18 +4821,33 @@ fn discover_builtins_in_expr(
                         effects,
                         eq_helpers,
                         type_registry,
+                        symbol_table,
                     );
                 }
             }
         }
         ResolvedExpr::List(items) => {
             for item in items {
-                discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &item.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
         ResolvedExpr::Tuple(items) => {
             for item in items {
-                discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &item.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
         ResolvedExpr::IndependentProduct(items, _) => {
@@ -4725,13 +4863,34 @@ fn discover_builtins_in_expr(
             effects.register(EffectName::RecordSetBranch);
             effects.register(EffectName::RecordExitGroup);
             for item in items {
-                discover_builtins_in_expr(&item.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &item.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
         ResolvedExpr::MapLiteral(entries) => {
             for (k, v) in entries {
-                discover_builtins_in_expr(&k.node, builtins, effects, eq_helpers, type_registry);
-                discover_builtins_in_expr(&v.node, builtins, effects, eq_helpers, type_registry);
+                discover_builtins_in_expr(
+                    &k.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
+                discover_builtins_in_expr(
+                    &v.node,
+                    builtins,
+                    effects,
+                    eq_helpers,
+                    type_registry,
+                    symbol_table,
+                );
             }
         }
         _ => {}
