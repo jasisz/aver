@@ -29,7 +29,7 @@ pub(super) fn emit_linear_int_omega_spec_equivalence_law(
         return None;
     }
 
-    let spec_ref = canonical_spec_ref(&vb.fn_name, law, &ctx.fn_sigs_projection())?;
+    let spec_ref = canonical_spec_ref(&vb.fn_name, law, ctx)?;
     let impl_fd = find_fn_def(ctx, &vb.fn_name)?;
     let spec_fd = find_fn_def(ctx, &spec_ref.spec_fn_name)?;
     if impl_fd.return_type != "Int" || spec_fd.return_type != "Int" {

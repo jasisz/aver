@@ -884,135 +884,105 @@ impl CodegenContext {
     }
 }
 
-fn fn_sigs_projection_typedef(
-    out: &mut crate::verify_law::FnSigMap,
-    td: &crate::ast::TypeDef,
-    scope: Option<&str>,
-) {
-    match td {
-        crate::ast::TypeDef::Sum {
-            name: parent,
-            variants,
-            ..
-        } => {
-            let parent_full = match scope {
-                Some(prefix) => format!("{prefix}.{parent}"),
-                None => parent.clone(),
-            };
-            for v in variants {
-                let key = format!("{parent_full}.{}", v.name);
-                let fields = v
-                    .fields
-                    .iter()
-                    .map(|t| crate::types::parse_type_str(t))
-                    .collect();
-                let ret = crate::types::Type::named(parent_full.clone());
-                out.entry(key).or_insert((fields, ret, Vec::new()));
+/// Per-key projection of the legacy `fn_sigs` map: routes a source-
+/// level name through `resolved_program` first (entry + every dep
+/// module's resolved fns), then walks `TypeDef`s for constructor sigs,
+/// then handles the synthesised `__buf_*` intrinsics. Lets a
+/// `CodegenContext` answer `FnSigOracle::fn_sig` without materialising
+/// the whole `FnSigMap` up front — the verify-law helpers query
+/// individual names, so per-key resolution is cheaper than per-call
+/// rebuild.
+fn codegen_ctx_fn_sig(ctx: &CodegenContext, name: &str) -> Option<crate::verify_law::FnSigInfo> {
+    use crate::verify_law::FnSigInfo;
+
+    if let Some(fn_id) = crate::codegen::common::fn_id_for_dotted_name(ctx, name)
+        && let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id)
+    {
+        return Some(FnSigInfo {
+            return_type: rfd.return_type.clone(),
+            is_pure: rfd.effects.is_empty(),
+        });
+    }
+
+    // Constructor lookup: `Type.Variant` (entry sum), `Module.Type.
+    // Variant` (module sum), `Box` (entry product), `Module.Box`
+    // (module product). Walks the same `TypeDef` surfaces the
+    // legacy fn_sigs population did via SymbolRegistry.
+    let walk = |td: &crate::ast::TypeDef, scope: Option<&str>| -> Option<FnSigInfo> {
+        match td {
+            crate::ast::TypeDef::Sum {
+                name: parent,
+                variants,
+                ..
+            } => {
+                let parent_full = match scope {
+                    Some(prefix) => format!("{prefix}.{parent}"),
+                    None => parent.clone(),
+                };
+                for v in variants {
+                    let bare = format!("{parent}.{}", v.name);
+                    let full = format!("{parent_full}.{}", v.name);
+                    if name == bare || name == full {
+                        return Some(FnSigInfo {
+                            return_type: crate::types::Type::named(parent_full.clone()),
+                            is_pure: true,
+                        });
+                    }
+                }
+                None
+            }
+            crate::ast::TypeDef::Product { name: parent, .. } => {
+                let parent_full = match scope {
+                    Some(prefix) => format!("{prefix}.{parent}"),
+                    None => parent.clone(),
+                };
+                if name == parent || name == parent_full {
+                    return Some(FnSigInfo {
+                        return_type: crate::types::Type::named(parent_full),
+                        is_pure: true,
+                    });
+                }
+                None
             }
         }
-        crate::ast::TypeDef::Product {
-            name: parent,
-            fields,
-            ..
-        } => {
-            let parent_full = match scope {
-                Some(prefix) => format!("{prefix}.{parent}"),
-                None => parent.clone(),
-            };
-            let fts = fields
-                .iter()
-                .map(|(_, t)| crate::types::parse_type_str(t))
-                .collect();
-            let ret = crate::types::Type::named(parent_full.clone());
-            out.entry(parent_full).or_insert((fts, ret, Vec::new()));
+    };
+    for item in &ctx.items {
+        if let TopLevel::TypeDef(td) = item
+            && let Some(info) = walk(td, None)
+        {
+            return Some(info);
         }
+    }
+    for m in &ctx.modules {
+        for td in &m.type_defs {
+            if let Some(info) = walk(td, Some(&m.prefix)) {
+                return Some(info);
+            }
+        }
+    }
+
+    // Synthesised `__buf_*` intrinsics — the deforestation pipeline
+    // emits these as opaque callables; verify-law walkers may surface
+    // a reference if a user's law body sketches the buffer pipeline.
+    match name {
+        "__buf_new" => Some(FnSigInfo {
+            return_type: crate::types::Type::named("Buffer"),
+            is_pure: true,
+        }),
+        "__buf_append" | "__buf_append_sep_unless_first" => Some(FnSigInfo {
+            return_type: crate::types::Type::named("Buffer"),
+            is_pure: true,
+        }),
+        "__buf_finalize" => Some(FnSigInfo {
+            return_type: crate::types::Type::Str,
+            is_pure: true,
+        }),
+        _ => None,
     }
 }
 
-impl CodegenContext {
-    /// Build a fresh `(params, ret, effects)` map projected from
-    /// `resolved_program` + the codegen ctx's auxiliary inputs.
-    ///
-    /// Epic #180 Phase 7 PR 2 — replaces the dropped `ctx.fn_sigs`
-    /// side channel for consumers (`verify_law` helper-law walkers,
-    /// the Lean `canonical_spec_ref` checks, builtin-record discovery
-    /// `needs_named_type`) that still take a bare `&FnSigMap` and
-    /// want a unified query surface. Each call walks `resolved_
-    /// program.entry_fns()` + every module's resolved fn defs plus
-    /// the synthesised `__buf_*` intrinsics and `__buffered` variants
-    /// the codegen pipeline registered side-band. Bare-name keys
-    /// (entry fns) and dotted canonical keys (`Module.fn`,
-    /// `Module.Type.Variant`) appear in the same map — matching the
-    /// shape the legacy storage carried, so consumer code stays
-    /// keyed by source-level name.
-    ///
-    /// Callers materialise the map on demand; there is no
-    /// invalidation contract because the underlying `resolved_
-    /// program` is rebuilt deterministically from the same inputs
-    /// each time. The cost is one HashMap allocation + a walk of
-    /// every resolved fn def — small relative to the codegen pass
-    /// it appears in.
-    pub fn fn_sigs_projection(&self) -> crate::verify_law::FnSigMap {
-        use crate::verify_law::FnSigMap;
-        let mut out: FnSigMap = FnSigMap::new();
-
-        // Entry-scope resolved fns — keyed by their bare name.
-        for rfd in self.resolved_program.entry_fns() {
-            let params: Vec<crate::types::Type> =
-                rfd.params.iter().map(|(_, t)| t.clone()).collect();
-            let effects: Vec<String> = rfd.effects.iter().map(|e| e.node.clone()).collect();
-            out.entry(rfd.name.clone())
-                .or_insert((params, rfd.return_type.clone(), effects));
-        }
-        // Module-scoped resolved fns — keyed by `Module.fn`. Mirrors
-        // how the legacy fn_sigs population used the SymbolRegistry's
-        // canonical_name field (qualified for module-owned, bare for
-        // entry).
-        for m in &self.resolved_program.modules {
-            for rfd in &m.fn_defs {
-                let key = format!("{}.{}", m.prefix, rfd.name);
-                let params: Vec<crate::types::Type> =
-                    rfd.params.iter().map(|(_, t)| t.clone()).collect();
-                let effects: Vec<String> = rfd.effects.iter().map(|e| e.node.clone()).collect();
-                out.entry(key)
-                    .or_insert((params, rfd.return_type.clone(), effects));
-            }
-        }
-
-        // Constructor sigs: every variant + product typedef across
-        // entry items and dep modules registers a callable with
-        // (field_types, owning_type, no effects). The typechecker
-        // exposed these through `tc_result.fn_sigs`; project them
-        // here from the same TypeDef shapes so consumers keyed on
-        // constructor names (e.g. `Shape.Circle`) keep matching.
-        for item in &self.items {
-            if let TopLevel::TypeDef(td) = item {
-                fn_sigs_projection_typedef(&mut out, td, None);
-            }
-        }
-        for m in &self.modules {
-            for td in &m.type_defs {
-                fn_sigs_projection_typedef(&mut out, td, Some(&m.prefix));
-            }
-        }
-
-        // Synthesised `__buf_*` intrinsics — wired up in codegen
-        // setup (see the pre-Phase-7 fn_sigs population block) so
-        // downstream traversal-fusion emit can resolve their types.
-        // Mirror the same shapes here so any consumer that previously
-        // saw them in `ctx.fn_sigs` still finds them post-drop.
-        let buf = || crate::types::Type::named("Buffer");
-        let int = || crate::types::Type::Int;
-        let s = || crate::types::Type::Str;
-        out.entry("__buf_new".into())
-            .or_insert((vec![int()], buf(), vec![]));
-        out.entry("__buf_append".into())
-            .or_insert((vec![buf(), s()], buf(), vec![]));
-        out.entry("__buf_append_sep_unless_first".into())
-            .or_insert((vec![buf(), s()], buf(), vec![]));
-        out.entry("__buf_finalize".into())
-            .or_insert((vec![buf()], s(), vec![]));
-
-        out
+impl crate::verify_law::FnSigOracle for CodegenContext {
+    fn fn_sig(&self, name: &str) -> Option<crate::verify_law::FnSigInfo> {
+        codegen_ctx_fn_sig(self, name)
     }
 }

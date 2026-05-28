@@ -8,33 +8,49 @@ use crate::types::Type;
 
 pub mod expand;
 
-/// `name → (params, return_type, effects)` map carrying the fn / ctor
-/// signatures the verify-law helpers query when classifying a law's
-/// callees.
+/// Legacy `name → (params, return_type, effects)` map carrying the fn /
+/// ctor signatures the verify-law helpers query.
 ///
-/// # Parallel-scope cleanup deferred after epic #180 close
-///
-/// Epic #180 Phase 7 dropped `CodegenContext.fn_sigs` as a stored side
-/// channel (PRs #193, #194) — codegen consumers now reach into the
-/// `ResolvedProgramView` directly or materialise the map on demand via
-/// [`crate::codegen::CodegenContext::fn_sigs_projection`]. The
-/// `FnSigMap` type alias survives because the 18 verify-law functions
-/// below still take it as a parameter; callers build it on demand and
-/// pass it through. The shape is semantically identical to what
-/// `ctx.fn_sigs` carried pre-Phase-7, so the rewrite is interface
-/// tightening (introduce a small `FnSigOracle` trait, or pass
-/// `&CodegenContext` directly so the verify_law helpers project on
-/// access) and not a soundness change. Tracked as parallel-scope
-/// cleanup — not blocking on any user-visible behavior, run-loop
-/// driven when an LSP / inliner / monomorph trigger lands.
-///
-/// Similarly, [`crate::types::checker::TypeCheckResult::fn_sigs`]
-/// stays exposed by the typechecker; it's the upstream source of
-/// truth that diagnostics + the codegen projection both consume.
-/// Removing the field would force the typechecker to expose a
-/// different shape (probably an iterator over typed fn sigs); same
-/// trigger-driven scope.
+/// Kept as a type alias for callers (mostly tests) that still build the
+/// map literally; production code reaches the verify-law surface
+/// through [`FnSigOracle`] now, which `FnSigMap` also implements. Epic
+/// #180 Phase 7 closed the side-channel storage path — see PRs #193 /
+/// #194 / this PR's history.
 pub type FnSigMap = HashMap<String, (Vec<Type>, Type, Vec<String>)>;
+
+/// What every verify-law helper needs to know about a fn or ctor
+/// reachable from a `verify ... law ...` block: its return type and
+/// whether it has any declared effects (purity). Cheap to derive at
+/// the call site — either from the legacy [`FnSigMap`] or directly
+/// from a [`CodegenContext`]'s resolved view.
+#[derive(Debug, Clone)]
+pub struct FnSigInfo {
+    pub return_type: Type,
+    pub is_pure: bool,
+}
+
+/// Look up a fn / ctor signature by source-level name.
+///
+/// Epic #180 Phase 7 closing refactor: verify-law helpers used to take
+/// `&FnSigMap` directly, which forced every caller to materialise the
+/// map on demand. Switching to a trait lets a
+/// [`crate::codegen::CodegenContext`] pass itself as the oracle — the
+/// resolved-program view answers per-key queries without rebuilding
+/// the map up front. `FnSigMap` keeps its `impl FnSigOracle` for
+/// backward compat with tests that prefer to build a literal sig map.
+pub trait FnSigOracle {
+    fn fn_sig(&self, name: &str) -> Option<FnSigInfo>;
+}
+
+impl FnSigOracle for FnSigMap {
+    fn fn_sig(&self, name: &str) -> Option<FnSigInfo> {
+        let (_, return_type, effects) = self.get(name)?;
+        Some(FnSigInfo {
+            return_type: return_type.clone(),
+            is_pure: effects.is_empty(),
+        })
+    }
+}
 
 /// Bare-name → `&FnDef` index for the **entry module only**.
 ///
@@ -119,22 +135,22 @@ pub struct ContextualHelperLawHint {
     pub missing_helpers: Vec<String>,
 }
 
-pub fn named_law_function(law: &VerifyLaw, fn_sigs: &FnSigMap) -> Option<NamedLawFunction> {
-    let (_, _, effects) = fn_sigs.get(&law.name)?;
+pub fn named_law_function(law: &VerifyLaw, fn_sigs: &dyn FnSigOracle) -> Option<NamedLawFunction> {
+    let info = fn_sigs.fn_sig(&law.name)?;
     Some(NamedLawFunction {
         name: law.name.clone(),
-        is_pure: effects.is_empty(),
+        is_pure: info.is_pure,
     })
 }
 
-pub fn declared_spec_ref(law: &VerifyLaw, fn_sigs: &FnSigMap) -> Option<VerifyLawSpecRef> {
+pub fn declared_spec_ref(law: &VerifyLaw, fn_sigs: &dyn FnSigOracle) -> Option<VerifyLawSpecRef> {
     let named = named_law_function(law, fn_sigs)?;
     named.is_pure.then_some(VerifyLawSpecRef {
         spec_fn_name: named.name,
     })
 }
 
-pub fn law_spec_ref(law: &VerifyLaw, fn_sigs: &FnSigMap) -> Option<VerifyLawSpecRef> {
+pub fn law_spec_ref(law: &VerifyLaw, fn_sigs: &dyn FnSigOracle) -> Option<VerifyLawSpecRef> {
     let spec = declared_spec_ref(law, fn_sigs)?;
     law_calls_function(law, &spec.spec_fn_name).then_some(spec)
 }
@@ -142,7 +158,7 @@ pub fn law_spec_ref(law: &VerifyLaw, fn_sigs: &FnSigMap) -> Option<VerifyLawSpec
 pub fn canonical_spec_ref(
     fn_name: &str,
     law: &VerifyLaw,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Option<VerifyLawSpecRef> {
     let spec = law_spec_ref(law, fn_sigs)?;
     canonical_spec_shape(fn_name, law, &spec.spec_fn_name).then_some(spec)
@@ -168,7 +184,7 @@ pub fn canonical_spec_shape(fn_name: &str, law: &VerifyLaw, spec_fn_name: &str) 
 
 pub fn collect_missing_helper_law_hints(
     items: &[TopLevel],
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Vec<MissingHelperLawHint> {
     let fn_defs = EntryFnIndex::from_entry_items(items);
     let verified_law_functions = items
@@ -214,7 +230,7 @@ pub fn missing_helper_law_message(hint: &MissingHelperLawHint) -> String {
 
 pub fn collect_contextual_helper_law_hints(
     items: &[TopLevel],
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Vec<ContextualHelperLawHint> {
     let fn_defs = EntryFnIndex::from_entry_items(items);
     let contextual_law_targets = items
@@ -264,7 +280,7 @@ fn missing_helper_law_hint_for_block(
     law: &VerifyLaw,
     fn_defs: &EntryFnIndex<'_>,
     verified_law_functions: &HashSet<String>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Option<MissingHelperLawHint> {
     if law.when.is_none() || law.givens.len() != 1 {
         return None;
@@ -301,7 +317,7 @@ fn contextual_helper_law_hint_for_block(
     law: &VerifyLaw,
     fn_defs: &EntryFnIndex<'_>,
     contextual_law_targets: &HashSet<String>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Option<ContextualHelperLawHint> {
     let parser_name = contextual_roundtrip_parser_name(law, fn_defs, fn_sigs)?;
     let root_parser_name = wrapper_dispatch_root(&parser_name, fn_defs, fn_sigs)
@@ -330,7 +346,7 @@ fn contextual_helper_law_hint_for_block(
 fn direct_pure_user_calls_in_law(
     law: &VerifyLaw,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     collect_direct_pure_user_calls(&law.lhs, fn_defs, fn_sigs, &mut out);
@@ -341,7 +357,7 @@ fn direct_pure_user_calls_in_law(
 fn top_level_direct_pure_call_in_law(
     law: &VerifyLaw,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Option<String> {
     direct_pure_user_call_name(&law.lhs, fn_defs, fn_sigs)
         .or_else(|| direct_pure_user_call_name(&law.rhs, fn_defs, fn_sigs))
@@ -350,7 +366,7 @@ fn top_level_direct_pure_call_in_law(
 fn contextual_roundtrip_parser_name(
     law: &VerifyLaw,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Option<String> {
     let given = law.givens.first()?;
     detect_roundtrip_layers(law, &given.name, fn_defs, fn_sigs).map(|(parser_name, _)| parser_name)
@@ -359,7 +375,7 @@ fn contextual_roundtrip_parser_name(
 fn frontier_helper_calls(
     root_name: &str,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> BTreeSet<String> {
     let mut current =
         wrapper_dispatch_root(root_name, fn_defs, fn_sigs).unwrap_or_else(|| root_name.to_string());
@@ -386,7 +402,7 @@ fn frontier_helper_calls(
 fn wrapper_dispatch_root(
     fn_name: &str,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Option<String> {
     let fd = fn_defs.get(fn_name)?;
     let tail = fd.body.tail_expr()?;
@@ -400,9 +416,9 @@ fn wrapper_dispatch_root(
 fn direct_pure_fn_callees_matching_return(
     fn_name: &str,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> BTreeSet<String> {
-    let Some((_, return_type, _)) = fn_sigs.get(fn_name) else {
+    let Some(caller_info) = fn_sigs.fn_sig(fn_name) else {
         return BTreeSet::new();
     };
     let Some(fd) = fn_defs.get(fn_name) else {
@@ -421,8 +437,8 @@ fn direct_pure_fn_callees_matching_return(
         .into_iter()
         .filter(|callee| {
             callee != fn_name
-                && fn_sigs.get(callee).is_some_and(|(_, callee_ret, effects)| {
-                    effects.is_empty() && callee_ret == return_type
+                && fn_sigs.fn_sig(callee).is_some_and(|callee_info| {
+                    callee_info.is_pure && callee_info.return_type == caller_info.return_type
                 })
         })
         .collect()
@@ -431,7 +447,7 @@ fn direct_pure_fn_callees_matching_return(
 fn collect_direct_pure_user_calls(
     expr: &Spanned<Expr>,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
     out: &mut BTreeSet<String>,
 ) {
     match &expr.node {
@@ -491,9 +507,7 @@ fn collect_direct_pure_user_calls(
         Expr::TailCall(boxed) => {
             let TailCallData { target, args, .. } = boxed.as_ref();
             if fn_defs.contains_key(target)
-                && fn_sigs
-                    .get(target)
-                    .is_some_and(|(_, _, effects)| effects.is_empty())
+                && fn_sigs.fn_sig(target).is_some_and(|info| info.is_pure)
             {
                 out.insert(target.clone());
             }
@@ -508,7 +522,7 @@ fn collect_direct_pure_user_calls(
 fn direct_pure_user_call_name(
     expr: &Spanned<Expr>,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Option<String> {
     let Expr::FnCall(callee, _) = &expr.node else {
         return None;
@@ -518,8 +532,8 @@ fn direct_pure_user_call_name(
         return None;
     }
     fn_sigs
-        .get(&name)
-        .is_some_and(|(_, _, effects)| effects.is_empty())
+        .fn_sig(&name)
+        .is_some_and(|info| info.is_pure)
         .then_some(name)
 }
 
@@ -540,7 +554,7 @@ fn detect_roundtrip_layers(
     law: &VerifyLaw,
     given_name: &str,
     fn_defs: &EntryFnIndex<'_>,
-    fn_sigs: &FnSigMap,
+    fn_sigs: &dyn FnSigOracle,
 ) -> Option<(String, String)> {
     if law.givens.len() != 1 {
         return None;
@@ -550,7 +564,7 @@ fn detect_roundtrip_layers(
         expr: &Spanned<Expr>,
         given_name: &str,
         fn_defs: &EntryFnIndex<'_>,
-        fn_sigs: &FnSigMap,
+        fn_sigs: &dyn FnSigOracle,
     ) -> Option<(String, String)> {
         let Expr::FnCall(parser_callee, parser_args) = &expr.node else {
             return None;
@@ -586,14 +600,14 @@ fn detect_roundtrip_layers(
             return None;
         }
         if !fn_sigs
-            .get(&parser_name)
-            .is_some_and(|(_, _, effects)| effects.is_empty())
+            .fn_sig(&parser_name)
+            .is_some_and(|info| info.is_pure)
         {
             return None;
         }
         if !fn_sigs
-            .get(&serializer_name)
-            .is_some_and(|(_, _, effects)| effects.is_empty())
+            .fn_sig(&serializer_name)
+            .is_some_and(|info| info.is_pure)
         {
             return None;
         }

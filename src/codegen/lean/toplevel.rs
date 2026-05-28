@@ -1809,9 +1809,8 @@ fn emit_verify_law_block(
     // runtime-only marker — matches the cases-form trace block
     // behavior in `emit_verify_trace_block_proofs`. The `aver verify`
     // runtime path still exercises the law under the given stubs.
-    let fn_sigs = ctx.fn_sigs_projection();
     if crate::codegen::common::law_lhs_has_trace_projection(&law.lhs) {
-        let header = match canonical_spec_ref(&vb.fn_name, law, &fn_sigs) {
+        let header = match canonical_spec_ref(&vb.fn_name, law, ctx) {
             Some(spec_ref) => format!(
                 "-- verify law {}.spec {}: trace-projection LHS is runtime-only (see docs/oracle.md)",
                 fn_name, spec_ref.spec_fn_name,
@@ -1823,7 +1822,7 @@ fn emit_verify_law_block(
         };
         return (header, case_index_start + vb.cases.len());
     }
-    let spec_ref = canonical_spec_ref(&vb.fn_name, law, &fn_sigs);
+    let spec_ref = canonical_spec_ref(&vb.fn_name, law, ctx);
     let theorem_base = match &spec_ref {
         Some(spec_ref) => format!(
             "{}_eq_{}",
