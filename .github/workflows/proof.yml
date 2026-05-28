@@ -68,7 +68,14 @@ jobs:
         # the job.
         uses: dafny-lang/setup-dafny-action@v1.9.1
         with:
-          dafny-version: 4.9.0
+          # 4.11.0: 4.9.0 leaves 2 quicksort postconditions un-
+          # discharged on top of the 5-budget (left: 7, right: 5)
+          # and drifts on rle in the same direction; 4.11.0's SMT
+          # encoding closes both within budget on the same source.
+          # Bumping in lockstep with the macOS Homebrew Dafny used
+          # by local contributors keeps `cargo test --test
+          # proof_spec` behaviour identical between dev + CI.
+          dafny-version: 4.11.0
 
       - name: Verify `dafny` reachable
         run: dafny --version
