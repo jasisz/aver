@@ -520,6 +520,12 @@ pub struct ProgramShape {
     /// so consumers don't have to recompute Tarjan to ask
     /// "is this fn part of a mutual-recursion group?".
     pub sccs: HashSet<FnId>,
+    /// Whole-module typed patterns (stage 6 of #232). Populated by
+    /// [`analyze_program_with_modules`]; [`analyze_program`] leaves
+    /// this empty since it only sees the resolved-fn snapshot, not
+    /// the source items needed to detect module-level shapes like
+    /// `RefinementSmartConstructor`.
+    pub patterns: Vec<ModulePattern>,
 }
 
 impl ProgramShape {
@@ -559,5 +565,187 @@ pub fn analyze_program(resolved_fns: &[&ResolvedFnDef]) -> ProgramShape {
         per_fn.insert(fd.fn_id, FnRecognition { primary, labels });
     }
 
-    ProgramShape { per_fn, sccs }
+    ProgramShape {
+        per_fn,
+        sccs,
+        patterns: Vec::new(),
+    }
+}
+
+/// Same as [`analyze_program`] but also detects module-level patterns
+/// (`ModulePattern::RefinementSmartConstructor`, …) by walking the
+/// source `items` and dep modules. Callers that have both the
+/// resolved-fn snapshot and the source items should prefer this.
+pub fn analyze_program_with_modules(
+    resolved_fns: &[&ResolvedFnDef],
+    entry_items: &[crate::ast::TopLevel],
+    dep_modules: &[crate::codegen::ModuleInfo],
+) -> ProgramShape {
+    let mut shape = analyze_program(resolved_fns);
+    shape.patterns = detect_module_patterns(entry_items, dep_modules);
+    shape
+}
+
+// ─── Module-level typed patterns (stage 6 of #232) ───────────────────────────
+
+/// A `ModulePattern` is a *recognized structural fact* about a whole
+/// module's surface — the level above per-fn archetypes — carrying the
+/// **typed payload** downstream consumers need to act on it.
+///
+/// The first variant is `RefinementSmartConstructor`, the canonical
+/// `refinement-via-opaque` shape (single-field record + validating
+/// smart constructor) the proof export already recognizes via
+/// [`crate::codegen::common::refinement_info_for`]. Stage 6 lifts the
+/// recognition into the analysis tier so other consumers (`aver shape`
+/// LSP, future inliner, monomorphizer) don't each re-walk the AST to
+/// ask the same question.
+///
+/// Peer-review note from issue #232: "kind == SmartConstructor is too
+/// compressed to be source of truth for proof routing — proof needs
+/// typed payload". This enum carries that payload (carrier field +
+/// type, constructor fn name, predicate expression).
+///
+/// Stage 6a (this commit) only **detects** the pattern; the proof
+/// export still walks via the legacy `refinement_info_for` API.
+/// Stage 6b refactors that fn into a thin adapter over
+/// `ProgramShape::patterns`. Stage 6c+ adds the next pattern
+/// (`WrapperOverRecursion`, `ResultPipelineChain`, …).
+#[derive(Debug, Clone)]
+pub enum ModulePattern {
+    /// `refinement-via-opaque` shape: a single-field
+    /// `record T { <carrier_field>: <carrier_type> }` paired with a
+    /// validating smart constructor
+    ///   `fn <constructor_fn>(<param_name>: <carrier_type>) -> Result<T, _>`
+    ///   `    match <predicate>`
+    ///   `        true  -> Result.Ok(T(<carrier_field> = <param_name>))`
+    ///   `        false -> Result.Err("...")`
+    RefinementSmartConstructor {
+        /// Source-level type name (`"Natural"`, `"Positive"`, …).
+        /// FnId / TypeId migration deferred — name keys match what
+        /// the current `refinement_info_for` adapter uses.
+        type_name: String,
+        /// Carrier-field name (e.g. `"value"`). Lean projects through
+        /// `.val` on a `Subtype`; this is the field that gets renamed
+        /// in the lifted view.
+        carrier_field: String,
+        /// Carrier type annotation as written in the record field
+        /// (`"Int"`, `"Float"`, …). Backends emit it as the subset's
+        /// underlying type.
+        carrier_type: String,
+        /// Source-level name of the smart constructor (`"fromInt"`).
+        constructor_fn: String,
+        /// Parameter name on the smart constructor signature
+        /// (`"n"` in `fromInt(n: Int) -> Result<Natural, _>`). Used
+        /// when substituting the law's quantified variable into the
+        /// predicate.
+        param_name: String,
+        /// Cloned bool predicate the smart constructor branches on —
+        /// the body's `match <predicate>` subject. Owned so
+        /// `ProgramShape` doesn't borrow source items.
+        predicate: crate::ast::Spanned<crate::ast::Expr>,
+    },
+}
+
+/// Walk entry items + dep modules and emit every typed
+/// `ModulePattern` we can recognize. Used by `analyze_program_with_modules`
+/// to populate `ProgramShape.patterns`.
+///
+/// Mirrors the recognition rules in
+/// `codegen::common::refinement_info_for_walk` so downstream consumers
+/// see the same set of refinement records; Stage 6b will retire the
+/// legacy fn and route through this output.
+pub fn detect_module_patterns(
+    entry_items: &[crate::ast::TopLevel],
+    dep_modules: &[crate::codegen::ModuleInfo],
+) -> Vec<ModulePattern> {
+    use crate::ast::{Expr, Stmt, TopLevel, TypeDef};
+
+    let mut out = Vec::new();
+
+    // Collect candidate single-field records keyed by name.
+    let mut single_field_records: Vec<(&str, &str, &str)> = Vec::new(); // (type_name, carrier_field, carrier_type)
+    for td in entry_items.iter().filter_map(|i| match i {
+        TopLevel::TypeDef(td) => Some(td),
+        _ => None,
+    }) {
+        if let TypeDef::Product { name, fields, .. } = td
+            && fields.len() == 1
+        {
+            let (fname, ftype) = &fields[0];
+            single_field_records.push((name.as_str(), fname.as_str(), ftype.as_str()));
+        }
+    }
+    for m in dep_modules {
+        for td in &m.type_defs {
+            if let TypeDef::Product { name, fields, .. } = td
+                && fields.len() == 1
+            {
+                let (fname, ftype) = &fields[0];
+                single_field_records.push((name.as_str(), fname.as_str(), ftype.as_str()));
+            }
+        }
+    }
+
+    if single_field_records.is_empty() {
+        return out;
+    }
+
+    // Walk fns looking for the smart-constructor shape per candidate
+    // record. Mirrors `refinement_info_for_walk`: return type
+    // `Result<TypeName, _>`, exactly one param, body is a single
+    // `match <pred>` with two arms, bool-shaped `true -> Ok` /
+    // `false -> Err` referencing the carrier field + param.
+    let entry_fns: Vec<&crate::ast::FnDef> = entry_items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+    let module_fns: Vec<&crate::ast::FnDef> =
+        dep_modules.iter().flat_map(|m| m.fn_defs.iter()).collect();
+
+    for (type_name, carrier_field, carrier_type) in &single_field_records {
+        for fd in entry_fns.iter().chain(module_fns.iter()) {
+            if !fd.return_type.starts_with("Result<") {
+                continue;
+            }
+            if !fd.return_type[7..].starts_with(*type_name) {
+                continue;
+            }
+            if fd.params.len() != 1 {
+                continue;
+            }
+            let (param_name, _) = &fd.params[0];
+            let stmts = fd.body.stmts();
+            if stmts.len() != 1 {
+                continue;
+            }
+            let Stmt::Expr(body_expr) = &stmts[0] else {
+                continue;
+            };
+            let Expr::Match { subject, arms } = &body_expr.node else {
+                continue;
+            };
+            if !crate::codegen::common::is_refinement_bool_ok_err_match(
+                arms,
+                type_name,
+                carrier_field,
+                param_name,
+            ) {
+                continue;
+            }
+            out.push(ModulePattern::RefinementSmartConstructor {
+                type_name: (*type_name).to_string(),
+                carrier_field: (*carrier_field).to_string(),
+                carrier_type: (*carrier_type).to_string(),
+                constructor_fn: fd.name.clone(),
+                param_name: param_name.clone(),
+                predicate: (**subject).clone(),
+            });
+            break;
+        }
+    }
+
+    out
 }
