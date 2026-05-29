@@ -275,19 +275,21 @@ pub fn counters() -> &'static Counters {
 //
 // Anything malformed → `None`, target falls back to single-file.
 // Names are lowercased and rendered as `<name>.av` files under a
-// fresh tempdir; entry's directory becomes the `module_root`.
+// deterministically-named directory keyed on `hash(data)`. Same input
+// → same directory path → AFL's coverage map stays stable. A fresh
+// random tempdir would mean every exec sees different paths inside
+// `LoadedModule.path` / Aver error messages, which AFL reads as
+// path-noise jitter and ends up tagging the target as
+// non-deterministic — slows convergence and dilutes the crash signal.
 
 const MULTIMODULE_MAGIC: &[u8; 4] = &[0xA7, 0xE2, 0x40, 0x01];
 
 pub struct MultiModuleSetup {
-    /// RAII tempdir — clean on drop, lives at least as long as the
-    /// returned struct.
-    pub tmp_dir: tempfile::TempDir,
-    /// Path to the entry .av file inside `tmp_dir`.
+    /// Path to the entry .av file inside the deterministic dir.
     pub entry_path: std::path::PathBuf,
     /// Module root for `--module-root` / `find_module_file` lookups
     /// — same directory as the entry, since all synthetic files
-    /// land flat at the tmpdir root.
+    /// land flat at the dir root.
     pub module_root: std::path::PathBuf,
     /// Raw entry source — handed to targets that only need the
     /// bytes (e.g. `parse_bytes`, `replay_codec`).
@@ -308,7 +310,21 @@ pub fn try_multimodule_input(data: &[u8]) -> Option<MultiModuleSetup> {
         return None;
     }
 
-    let tmp_dir = tempfile::tempdir().ok()?;
+    // Deterministic directory name keyed on `hash(data)` — see the
+    // module-level comment above for why this matters for AFL
+    // stability. We don't drop the directory at the end of the fn:
+    // the next exec with this input will reuse the same dir
+    // (idempotent overwrite per file), and the OS reclaims `/tmp`
+    // on reboot. Persistent-mode AFL workers benefit from the
+    // warm filesystem cache too.
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    let dir_hash = hasher.finish();
+    let dir = std::env::temp_dir().join(format!("aver-fuzz-mm-{dir_hash:016x}"));
+    std::fs::create_dir_all(&dir).ok()?;
+
     let mut file_paths: Vec<std::path::PathBuf> = Vec::with_capacity(n_files as usize);
 
     for _ in 0..n_files {
@@ -341,7 +357,7 @@ pub fn try_multimodule_input(data: &[u8]) -> Option<MultiModuleSetup> {
         let body = std::str::from_utf8(&data[pos..pos + body_len]).ok()?;
         pos += body_len;
 
-        let file_path = tmp_dir.path().join(format!("{name}.av"));
+        let file_path = dir.join(format!("{name}.av"));
         std::fs::write(&file_path, body).ok()?;
         file_paths.push(file_path);
     }
@@ -354,13 +370,8 @@ pub fn try_multimodule_input(data: &[u8]) -> Option<MultiModuleSetup> {
     let entry_source = std::fs::read_to_string(&entry_path).ok()?;
 
     Some(MultiModuleSetup {
-        tmp_dir,
         entry_path,
-        module_root: std::path::PathBuf::from("."), // overridden below
+        module_root: dir,
         entry_source,
-    })
-    .map(|mut setup| {
-        setup.module_root = setup.tmp_dir.path().to_path_buf();
-        setup
     })
 }

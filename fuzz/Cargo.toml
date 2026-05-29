@@ -30,10 +30,6 @@ aver-lang = { path = "..", default-features = false, features = ["runtime", "was
 # the same minor as `aver-lang`'s optional dep so the workspace
 # resolver picks a single version.
 wasmparser = "0.248"
-# RAII tempdir for the multi-module fuzz harness — every target's
-# `try_multimodule_input` writes a synthetic file tree under here
-# and the tempdir cleans itself up when the fuzz callback returns.
-tempfile = "3"
 
 [[bin]]
 name = "fuzz_parse_bytes"
