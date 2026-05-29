@@ -1232,8 +1232,10 @@ pub struct RenderOptions {
 
 pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
     let mut out = String::new();
-    out.push_str(&format!("Module: {}\n", report.module));
-    out.push_str(&format!("  Kind:  {}\n\n", report.kind.as_str()));
+    // Header: `Module:` and `Kind:` share the value column. `Module:` is
+    // 7 chars + space, `Kind:` is 5 chars + 3 spaces — same total width.
+    out.push_str(&format!("Module:  {}\n", report.module));
+    out.push_str(&format!("Kind:    {}\n\n", report.kind.as_str()));
     out.push_str("  ModuleShape:\n");
     out.push_str(&format!(
         "    purity        {}\n",
@@ -1256,42 +1258,52 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
         report.shape.api_shape.as_str()
     ));
 
-    out.push_str(&format!(
-        "  Verification:   {} {} block{}, {}/{} fns covered\n\n",
-        report.verify.blocks,
-        match report.verify.level {
-            VerifyLevel::None => "(no)",
-            VerifyLevel::Cases => "cases",
-            VerifyLevel::Laws => "law",
-            VerifyLevel::Trace => "trace",
-            VerifyLevel::Mixed => "mixed",
-        },
-        if report.verify.blocks == 1 { "" } else { "s" },
-        report.verify.covered_fns,
-        report.verify.eligible_fns,
-    ));
-
-    out.push_str(&format!(
-        "  Histogram ({} fns):\n",
-        report.histogram.total_fns
-    ));
-    let sorted = report.histogram.sorted();
-    let name_w = sorted
-        .iter()
-        .map(|(n, _, _)| n.len())
-        .max()
-        .unwrap_or(0)
-        .max(20);
-    for (name, count, pct) in &sorted {
-        let bar = histogram_bar(*pct, 20);
+    // Verification: collapse the zero-block case to a single line — the
+    // "0 (no) blocks, 0/0 fns covered" reading was confusing.
+    if report.verify.blocks == 0 {
+        out.push_str("  Verification:  no verify blocks\n\n");
+    } else {
         out.push_str(&format!(
-            "    {:<width$}  {}  {:>3.0}%  ({})\n",
-            name,
-            bar,
-            pct,
-            count,
-            width = name_w,
+            "  Verification:  {} {} block{}, {}/{} fns covered\n\n",
+            report.verify.blocks,
+            match report.verify.level {
+                VerifyLevel::None => "(no)",
+                VerifyLevel::Cases => "cases",
+                VerifyLevel::Laws => "law",
+                VerifyLevel::Trace => "trace",
+                VerifyLevel::Mixed => "mixed",
+            },
+            if report.verify.blocks == 1 { "" } else { "s" },
+            report.verify.covered_fns,
+            report.verify.eligible_fns,
         ));
+    }
+
+    if report.histogram.total_fns == 0 {
+        out.push_str("  Histogram:     no classifiable fns (module only has `main` or no fns)\n");
+    } else {
+        out.push_str(&format!(
+            "  Histogram ({} fns):\n",
+            report.histogram.total_fns
+        ));
+        let sorted = report.histogram.sorted();
+        let name_w = sorted
+            .iter()
+            .map(|(n, _, _)| n.len())
+            .max()
+            .unwrap_or(0)
+            .max(20);
+        for (name, count, pct) in &sorted {
+            let bar = histogram_bar(*pct, 20);
+            out.push_str(&format!(
+                "    {:<width$}  {}  {:>3.0}%  ({})\n",
+                name,
+                bar,
+                pct,
+                count,
+                width = name_w,
+            ));
+        }
     }
     if let Some(verdict) = &report.layer {
         out.push_str(&format!(

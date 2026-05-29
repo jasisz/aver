@@ -71,8 +71,8 @@ fn redis_is_service_client() {
 fn render_text_includes_kind_and_layer() {
     let r = analyze("examples/services/redis.av");
     let text = shape::render_text(&r, &RenderOptions { summary: false });
-    assert!(text.contains("Module: Redis"));
-    assert!(text.contains("Kind:  ServiceClient"));
+    assert!(text.contains("Module:  Redis"));
+    assert!(text.contains("Kind:    ServiceClient"));
     assert!(text.contains("ModuleShape:"));
     assert!(text.contains("purity        ClassifiedEffectful"));
     assert!(text.contains("type_surface  RuntimeHandle"));
