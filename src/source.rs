@@ -339,8 +339,8 @@ fn load_module_recursive_for_compile(
     })?;
     let source =
         std::fs::read_to_string(&path).map_err(|e| format!("Read '{}': {}", path.display(), e))?;
-    let mut items = parse_source(&source)
-        .map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
+    let mut items =
+        parse_source(&source).map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
     require_module_declaration(&items, path.to_str().unwrap_or(name))?;
 
     let neutral_policy = crate::ir::NeutralAllocPolicy;
