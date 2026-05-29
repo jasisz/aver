@@ -28,8 +28,8 @@
 // warnings rather than scatter `#[allow]` on every helper.
 #![allow(dead_code)]
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct Counters {
     pub target: &'static str,
@@ -250,4 +250,117 @@ fn expr_metrics(root: &aver::ast::Spanned<aver::ast::Expr>, base_depth: u64) -> 
 pub fn counters() -> &'static Counters {
     static COUNTERS: OnceLock<Counters> = OnceLock::new();
     COUNTERS.get_or_init(|| Counters::new(env!("CARGO_BIN_NAME")))
+}
+
+// ── Multi-module fuzz harness ──────────────────────────────────────────
+//
+// Every target's `afl::fuzz!` callback gets the same opaque `&[u8]`
+// slice. By default that slice is treated as the entry source for a
+// single-file Aver program. With the multi-module dispatcher below,
+// inputs that start with a 4-byte magic prefix get parsed as a small
+// multi-file project — entry + 1..3 dep modules — and the target
+// runs against the synthetic tmpdir instead. Inputs without the
+// prefix fall through to the existing single-file path unchanged.
+//
+// Format (all little-endian where applicable):
+//
+//   <MAGIC: 4 bytes 0xA7 0xE2 0x40 0x01>
+//   <n_files: u8 in 1..=4>
+//   for each file:
+//     <name_len: u8 in 1..=20>
+//     <name: name_len bytes, ASCII letters/digits/dot only>
+//     <body_len: u16 little-endian>
+//     <body: body_len bytes, UTF-8 source>
+//   <entry_idx: u8 in 0..n_files>
+//
+// Anything malformed → `None`, target falls back to single-file.
+// Names are lowercased and rendered as `<name>.av` files under a
+// fresh tempdir; entry's directory becomes the `module_root`.
+
+const MULTIMODULE_MAGIC: &[u8; 4] = &[0xA7, 0xE2, 0x40, 0x01];
+
+pub struct MultiModuleSetup {
+    /// RAII tempdir — clean on drop, lives at least as long as the
+    /// returned struct.
+    pub tmp_dir: tempfile::TempDir,
+    /// Path to the entry .av file inside `tmp_dir`.
+    pub entry_path: std::path::PathBuf,
+    /// Module root for `--module-root` / `find_module_file` lookups
+    /// — same directory as the entry, since all synthetic files
+    /// land flat at the tmpdir root.
+    pub module_root: std::path::PathBuf,
+    /// Raw entry source — handed to targets that only need the
+    /// bytes (e.g. `parse_bytes`, `replay_codec`).
+    pub entry_source: String,
+}
+
+pub fn try_multimodule_input(data: &[u8]) -> Option<MultiModuleSetup> {
+    if data.len() < MULTIMODULE_MAGIC.len() + 2 {
+        return None;
+    }
+    if &data[..MULTIMODULE_MAGIC.len()] != MULTIMODULE_MAGIC {
+        return None;
+    }
+    let mut pos = MULTIMODULE_MAGIC.len();
+    let n_files = *data.get(pos)?;
+    pos += 1;
+    if !(1..=4).contains(&n_files) {
+        return None;
+    }
+
+    let tmp_dir = tempfile::tempdir().ok()?;
+    let mut file_paths: Vec<std::path::PathBuf> = Vec::with_capacity(n_files as usize);
+
+    for _ in 0..n_files {
+        let name_len = *data.get(pos)? as usize;
+        pos += 1;
+        if !(1..=20).contains(&name_len) || pos + name_len > data.len() {
+            return None;
+        }
+        let name_bytes = &data[pos..pos + name_len];
+        pos += name_len;
+        if !name_bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'.')
+        {
+            return None;
+        }
+        if name_bytes[0] == b'.' || name_bytes[name_len - 1] == b'.' {
+            return None;
+        }
+        let name = std::str::from_utf8(name_bytes).ok()?.to_ascii_lowercase();
+
+        if pos + 2 > data.len() {
+            return None;
+        }
+        let body_len = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
+        pos += 2;
+        if pos + body_len > data.len() {
+            return None;
+        }
+        let body = std::str::from_utf8(&data[pos..pos + body_len]).ok()?;
+        pos += body_len;
+
+        let file_path = tmp_dir.path().join(format!("{name}.av"));
+        std::fs::write(&file_path, body).ok()?;
+        file_paths.push(file_path);
+    }
+
+    let entry_idx = *data.get(pos)? as usize;
+    if entry_idx >= file_paths.len() {
+        return None;
+    }
+    let entry_path = file_paths[entry_idx].clone();
+    let entry_source = std::fs::read_to_string(&entry_path).ok()?;
+
+    Some(MultiModuleSetup {
+        tmp_dir,
+        entry_path,
+        module_root: std::path::PathBuf::from("."), // overridden below
+        entry_source,
+    })
+    .map(|mut setup| {
+        setup.module_root = setup.tmp_dir.path().to_path_buf();
+        setup
+    })
 }

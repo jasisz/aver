@@ -50,14 +50,28 @@ fn main() {
         }
         let c = common::counters();
         c.record_exec();
-        let Ok(source) = std::str::from_utf8(data) else {
-            return;
+
+        // Multi-module dispatch — codegen with cross-module ctor /
+        // type-identity is exactly the path that surfaced #208
+        // (Arc-wrap missing on dep-module recursive variants).
+        let setup_holder = common::try_multimodule_input(data);
+        let (source, base_dir): (&str, Option<&str>) = match &setup_holder {
+            Some(setup) => (setup.entry_source.as_str(), setup.module_root.to_str()),
+            None => {
+                let Ok(s) = std::str::from_utf8(data) else {
+                    return;
+                };
+                (s, None)
+            }
         };
+
         let mut lexer = aver::lexer::Lexer::new(source);
         let Ok(tokens) = lexer.tokenize() else { return };
         c.record_lex_ok();
         let mut parser = aver::parser::Parser::new(tokens);
-        let Ok(mut items) = parser.parse() else { return };
+        let Ok(mut items) = parser.parse() else {
+            return;
+        };
         let (nodes, depth) = common::ast_metrics(&items);
         c.record_parse_ok(nodes, depth);
 
@@ -78,10 +92,19 @@ fn main() {
         let _result = aver::ir::pipeline::run(
             &mut items,
             PipelineConfig {
-                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                typecheck: Some(TypecheckMode::Full { base_dir }),
                 ..Default::default()
             },
         );
+
+        // Multi-module: flatten dep modules into `items` so
+        // `compile_to_wasm_gc` (which expects a single flat AST per
+        // its doc comment in src/runtime/wasm_gc.rs) sees them.
+        if let Some(root) = base_dir {
+            if let Ok(dep_modules) = aver::source::load_compile_deps(&items, root) {
+                aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+            }
+        }
 
         // Emit wasm-gc bytes. Two failure modes are legitimate
         // adversarial-input outcomes:
@@ -123,9 +146,7 @@ fn main() {
             // caught by the runtime and counted as a normal
             // exit. The input bytes that produced this are
             // preserved in AFL's crash artifact.
-            eprintln!(
-                "wasm-gc codegen produced invalid module from typechecked source"
-            );
+            eprintln!("wasm-gc codegen produced invalid module from typechecked source");
             std::process::abort();
         }
     });

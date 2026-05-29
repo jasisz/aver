@@ -24,9 +24,21 @@ fn main() {
     afl::fuzz!(|data: &[u8]| {
         let c = common::counters();
         c.record_exec();
-        let Ok(source) = std::str::from_utf8(data) else {
-            return;
+
+        // Multi-module dispatch — even the bare parser exercises
+        // distinct paths on dotted module names + `depends [...]`
+        // declarations the single-file shape never produces.
+        let setup_holder = common::try_multimodule_input(data);
+        let source: &str = match &setup_holder {
+            Some(setup) => setup.entry_source.as_str(),
+            None => {
+                let Ok(s) = std::str::from_utf8(data) else {
+                    return;
+                };
+                s
+            }
         };
+
         let mut lexer = aver::lexer::Lexer::new(source);
         let Ok(tokens) = lexer.tokenize() else { return };
         c.record_lex_ok();

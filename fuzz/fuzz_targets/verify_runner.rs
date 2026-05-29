@@ -32,6 +32,25 @@ fn main() {
         }
         let c = common::counters();
         c.record_exec();
+
+        // Multi-module dispatch: inputs prefixed with the magic byte
+        // sequence get parsed as a small multi-file project and run
+        // through the verify pipeline with the synthetic tmpdir as
+        // module root. Catches cross-module fn / type-identity bugs
+        // (#208 + #213 class) that single-file fuzzing can't surface.
+        if let Some(setup) = common::try_multimodule_input(data) {
+            let _ = aver::diagnostics::vm_verify::run_verify_for_items_vm(
+                match aver::source::parse_source(&setup.entry_source) {
+                    Ok(items) => items,
+                    Err(_) => return,
+                },
+                None,
+                setup.module_root.to_str(),
+                setup.entry_path.to_str().unwrap_or("multi.av"),
+            );
+            return;
+        }
+
         let Ok(source) = std::str::from_utf8(data) else {
             return;
         };
@@ -39,7 +58,9 @@ fn main() {
         let Ok(tokens) = lexer.tokenize() else { return };
         c.record_lex_ok();
         let mut parser = aver::parser::Parser::new(tokens);
-        let Ok(mut items) = parser.parse() else { return };
+        let Ok(mut items) = parser.parse() else {
+            return;
+        };
         let (nodes, depth) = common::ast_metrics(&items);
         c.record_parse_ok(nodes, depth);
 
