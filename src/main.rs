@@ -24,6 +24,8 @@ mod replay_cmd;
 mod run_wasip2;
 #[path = "main/run_wasm_gc.rs"]
 mod run_wasm_gc;
+#[path = "main/shape_cmd.rs"]
+mod shape_cmd;
 #[path = "main/shared.rs"]
 mod shared;
 #[path = "main/why_cmd.rs"]
@@ -232,6 +234,14 @@ fn main() {
                 *depth,
                 *budget,
             );
+        }
+        Commands::Shape {
+            file,
+            module_root,
+            summary,
+            json,
+        } => {
+            shape_cmd::cmd_shape(file, module_root.as_deref(), *summary, *json);
         }
         Commands::Compile {
             file,
