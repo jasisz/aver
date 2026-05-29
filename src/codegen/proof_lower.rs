@@ -116,6 +116,13 @@ pub struct ProofLowerInputs<'a> {
     /// pass `None` and fall through to legacy key-typed maps
     /// (transitional during phase E migration).
     pub symbol_table: &'a crate::ir::SymbolTable,
+    /// Optional `ProgramShape` substrate (Stage 6b of #232). When
+    /// `Some`, `refinement_info_for` reads from the typed
+    /// `ModulePattern::RefinementSmartConstructor` entries instead of
+    /// re-walking the AST. `None` keeps the legacy walk path —
+    /// preserved for test fixtures that build `ProofLowerInputs` by
+    /// hand without going through the pipeline.
+    pub program_shape: Option<&'a crate::analysis::shape::ProgramShape>,
 }
 
 impl<'a> ProofLowerInputs<'a> {
@@ -130,6 +137,7 @@ impl<'a> ProofLowerInputs<'a> {
             module_prefixes: &ctx.module_prefixes,
             recursive_fns: &ctx.recursive_fns,
             symbol_table: &ctx.symbol_table,
+            program_shape: ctx.program_shape.as_ref(),
         }
     }
 

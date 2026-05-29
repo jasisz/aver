@@ -666,12 +666,34 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         };
         let module_prefixes: std::collections::HashSet<String> =
             cfg.dep_modules.iter().map(|m| m.prefix.clone()).collect();
+        // Stage 6b of #232: build ProgramShape once here so
+        // refinement_info_for and other proof-lower detectors read
+        // from typed patterns instead of rewalking the AST. The
+        // module-level patterns (RefinementSmartConstructor) walk
+        // dep modules' source-level FnDefs directly; the per-fn
+        // archetype facts here only see entry-module resolved fns,
+        // which is enough for the current refinement adapter (dep
+        // modules don't expose ResolvedFnDef to the pipeline yet).
+        let entry_resolved_fns: Vec<&crate::ir::hir::ResolvedFnDef> = result
+            .resolved_items
+            .iter()
+            .filter_map(|t| match t {
+                crate::ir::hir::ResolvedTopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        let program_shape = crate::analysis::shape::analyze_program_with_modules(
+            &entry_resolved_fns,
+            items,
+            cfg.dep_modules,
+        );
         let inputs = crate::codegen::proof_lower::ProofLowerInputs {
             entry_items: items,
             dep_modules: cfg.dep_modules,
             module_prefixes: &module_prefixes,
             recursive_fns: &recursive_fns_owned,
             symbol_table: symbols,
+            program_shape: Some(&program_shape),
         };
         let mut ir = result.proof_ir.take().unwrap_or_default();
         if cfg.run_refinement_lower {

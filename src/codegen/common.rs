@@ -84,6 +84,120 @@ fn refinement_info_for_walk<'a>(
     // module by prefix.
     scope_filter: Option<Option<&str>>,
 ) -> Option<RefinementInfo<'a>> {
+    // Stage 6b of #232: when the caller threaded a `ProgramShape`
+    // through `ProofLowerInputs.program_shape`, look up the typed
+    // pattern directly instead of walking the AST. The
+    // `detection_payload_matches_refinement_info_for` test guards
+    // that the two paths return the same carrier/predicate, so this
+    // adapter is behavior-preserving.
+    if let Some(shape) = inputs.program_shape
+        && let Some(info) = refinement_info_from_shape(shape, inputs, type_name, scope_filter)
+    {
+        return Some(info);
+    }
+    refinement_info_for_walk_legacy(type_name, inputs, scope_filter)
+}
+
+/// Stage 6b adapter: pick the typed `RefinementSmartConstructor`
+/// pattern from `ProgramShape.patterns` and project it back into the
+/// legacy `RefinementInfo<'a>` shape (with `&'a Spanned<Expr>`
+/// predicate). The predicate is borrowed from the matching smart
+/// constructor's body in `inputs.entry_items` / `inputs.dep_modules` —
+/// the pattern's owned clone is only used for the cross-check test.
+fn refinement_info_from_shape<'a>(
+    shape: &crate::analysis::shape::ProgramShape,
+    inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
+    type_name: &str,
+    scope_filter: Option<Option<&str>>,
+) -> Option<RefinementInfo<'a>> {
+    use crate::analysis::shape::ModulePattern;
+
+    let pattern_match = shape.patterns.iter().find_map(|p| {
+        let ModulePattern::RefinementSmartConstructor {
+            scope,
+            type_name: ptn,
+            constructor_fn,
+            ..
+        } = p;
+        if ptn != type_name {
+            return None;
+        }
+        let scope_ok = match (scope_filter, scope.as_deref()) {
+            (None, _) => true,
+            (Some(None), None) => true,
+            (Some(None), Some(_)) => false,
+            (Some(Some(want)), Some(have)) => want == have,
+            (Some(Some(_)), None) => false,
+        };
+        if !scope_ok {
+            return None;
+        }
+        Some((scope.clone(), constructor_fn.clone()))
+    })?;
+
+    let (scope, constructor_fn) = pattern_match;
+
+    let (carrier_field, carrier_type) = match scope.as_deref() {
+        None => inputs.entry_items.iter().find_map(|i| match i {
+            TopLevel::TypeDef(TypeDef::Product { name, fields, .. })
+                if name == type_name && fields.len() == 1 =>
+            {
+                let (fname, ftype) = &fields[0];
+                Some((fname.as_str(), ftype.as_str()))
+            }
+            _ => None,
+        }),
+        Some(prefix) => inputs
+            .dep_modules
+            .iter()
+            .find(|m| m.prefix == prefix)
+            .and_then(|m| {
+                m.type_defs.iter().find_map(|td| match td {
+                    TypeDef::Product { name, fields, .. }
+                        if name == type_name && fields.len() == 1 =>
+                    {
+                        let (fname, ftype) = &fields[0];
+                        Some((fname.as_str(), ftype.as_str()))
+                    }
+                    _ => None,
+                })
+            }),
+    }?;
+
+    let constructor_fd: &'a FnDef = match scope.as_deref() {
+        None => inputs.entry_items.iter().find_map(|i| match i {
+            TopLevel::FnDef(fd) if fd.name == constructor_fn => Some(fd),
+            _ => None,
+        }),
+        Some(prefix) => inputs
+            .dep_modules
+            .iter()
+            .find(|m| m.prefix == prefix)
+            .and_then(|m| m.fn_defs.iter().find(|fd| fd.name == constructor_fn)),
+    }?;
+
+    let (param_name, _) = constructor_fd.params.first()?;
+    let stmts = constructor_fd.body.stmts();
+    let Stmt::Expr(body_expr) = stmts.first()? else {
+        return None;
+    };
+    let Expr::Match { subject, .. } = &body_expr.node else {
+        return None;
+    };
+
+    Some(RefinementInfo {
+        carrier_type,
+        carrier_field,
+        param_name,
+        predicate: subject,
+    })
+}
+
+fn refinement_info_for_walk_legacy<'a>(
+    type_name: &str,
+    inputs: &crate::codegen::proof_lower::ProofLowerInputs<'a>,
+    scope_filter: Option<Option<&str>>,
+) -> Option<RefinementInfo<'a>> {
     let entry_only = matches!(scope_filter, Some(None));
     let module_only_prefix = match scope_filter {
         Some(Some(p)) => Some(p),

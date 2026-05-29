@@ -620,6 +620,13 @@ pub enum ModulePattern {
     ///   `        true  -> Result.Ok(T(<carrier_field> = <param_name>))`
     ///   `        false -> Result.Err("...")`
     RefinementSmartConstructor {
+        /// Where this pattern lives: `None` = entry items,
+        /// `Some(prefix)` = dep module with that prefix. Lets the
+        /// scope-aware adapter (`refinement_info_for_in_scope`) pick
+        /// the predicate from the right module when two modules
+        /// declare a refined record with the same bare name
+        /// (e.g. `A.Natural` vs `B.Natural`).
+        scope: Option<String>,
         /// Source-level type name (`"Natural"`, `"Positive"`, …).
         /// FnId / TypeId migration deferred — name keys match what
         /// the current `refinement_info_for` adapter uses.
@@ -662,8 +669,29 @@ pub fn detect_module_patterns(
 
     let mut out = Vec::new();
 
-    // Collect candidate single-field records keyed by name.
-    let mut single_field_records: Vec<(&str, &str, &str)> = Vec::new(); // (type_name, carrier_field, carrier_type)
+    // Per-scope candidate records. `scope = None` = entry items,
+    // `scope = Some(prefix)` = dep module. The smart-constructor
+    // walk searches inside the same scope as the record — that's the
+    // `refinement-via-opaque` invariant (constructor lives next to
+    // the carrier field, since `exposes opaque` hides the field from
+    // other modules).
+    struct CandidateRecord<'a> {
+        scope: Option<String>,
+        type_name: &'a str,
+        carrier_field: &'a str,
+        carrier_type: &'a str,
+        fns: Vec<&'a crate::ast::FnDef>,
+    }
+
+    let entry_fns: Vec<&crate::ast::FnDef> = entry_items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::FnDef(fd) => Some(fd),
+            _ => None,
+        })
+        .collect();
+
+    let mut candidates: Vec<CandidateRecord<'_>> = Vec::new();
     for td in entry_items.iter().filter_map(|i| match i {
         TopLevel::TypeDef(td) => Some(td),
         _ => None,
@@ -672,21 +700,34 @@ pub fn detect_module_patterns(
             && fields.len() == 1
         {
             let (fname, ftype) = &fields[0];
-            single_field_records.push((name.as_str(), fname.as_str(), ftype.as_str()));
+            candidates.push(CandidateRecord {
+                scope: None,
+                type_name: name.as_str(),
+                carrier_field: fname.as_str(),
+                carrier_type: ftype.as_str(),
+                fns: entry_fns.clone(),
+            });
         }
     }
     for m in dep_modules {
+        let module_fns: Vec<&crate::ast::FnDef> = m.fn_defs.iter().collect();
         for td in &m.type_defs {
             if let TypeDef::Product { name, fields, .. } = td
                 && fields.len() == 1
             {
                 let (fname, ftype) = &fields[0];
-                single_field_records.push((name.as_str(), fname.as_str(), ftype.as_str()));
+                candidates.push(CandidateRecord {
+                    scope: Some(m.prefix.clone()),
+                    type_name: name.as_str(),
+                    carrier_field: fname.as_str(),
+                    carrier_type: ftype.as_str(),
+                    fns: module_fns.clone(),
+                });
             }
         }
     }
 
-    if single_field_records.is_empty() {
+    if candidates.is_empty() {
         return out;
     }
 
@@ -694,19 +735,17 @@ pub fn detect_module_patterns(
     // record. Mirrors `refinement_info_for_walk`: return type
     // `Result<TypeName, _>`, exactly one param, body is a single
     // `match <pred>` with two arms, bool-shaped `true -> Ok` /
-    // `false -> Err` referencing the carrier field + param.
-    let entry_fns: Vec<&crate::ast::FnDef> = entry_items
-        .iter()
-        .filter_map(|i| match i {
-            TopLevel::FnDef(fd) => Some(fd),
-            _ => None,
-        })
-        .collect();
-    let module_fns: Vec<&crate::ast::FnDef> =
-        dep_modules.iter().flat_map(|m| m.fn_defs.iter()).collect();
-
-    for (type_name, carrier_field, carrier_type) in &single_field_records {
-        for fd in entry_fns.iter().chain(module_fns.iter()) {
+    // `false -> Err` referencing the carrier field + param. The fn
+    // must live in the same scope as the carrier record.
+    for candidate in &candidates {
+        let CandidateRecord {
+            scope,
+            type_name,
+            carrier_field,
+            carrier_type,
+            fns,
+        } = candidate;
+        for fd in fns {
             if !fd.return_type.starts_with("Result<") {
                 continue;
             }
@@ -736,6 +775,7 @@ pub fn detect_module_patterns(
                 continue;
             }
             out.push(ModulePattern::RefinementSmartConstructor {
+                scope: scope.clone(),
                 type_name: (*type_name).to_string(),
                 carrier_field: (*carrier_field).to_string(),
                 carrier_type: (*carrier_type).to_string(),
