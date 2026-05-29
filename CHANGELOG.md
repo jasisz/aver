@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.22.1 — 2026-05-29
+
+### Hardening
+
+- **`aver verify` works on multi-module programs.** 0.22.0 shipped with a regression: running `aver verify <entry>` on any program that declared `depends [...]` failed with `"missing VM symbol for exposed function Foo.Bar.baz"`. Every multi-module example under `examples/refinement/` (including the refinement-via-opaque flagship that Lift introduced), `examples/apps/notepad/`, and `projects/payment_ops/` hit it; `aver run`, `aver compile`, and `aver verify --wasm-gc` were unaffected. The VM verify path now loads dep modules the same way the other paths already do (both the disk-loader CLI shape and the pre-loaded playground/LSP shape).
+
 ## 0.22.0 "Lift" — 2026-05-28
 
 > _Aver source stays ordinary. The proof export lifts it to the backend's native mathematical shape — refinements become subtypes, mutual recursion becomes a structural block, every verify-law passes through one classifier, and Dafny closes more obligations on its own._

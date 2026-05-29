@@ -22,12 +22,10 @@ fn fetch(url: String) -> Result<HttpResponse, String>
     Http.get(url)
 
 fn checkStatus(url: String) -> Result<Int, String>
-    ? "Returns Ok(status code as Int) or Err(transport error)."
+    ? "Returns Ok(status code as Int) or Err(transport error). `?` propagates the Err shape from the underlying Http.get."
     ! [Http.get]
-    result = Http.get(url)
-    match result
-        Result.Ok(resp) -> Result.Ok(resp.status)
-        Result.Err(msg) -> Result.Err(msg)
+    resp = Http.get(url)?
+    Result.Ok(resp.status)
 
 fn post(url: String, payload: String, token: String) -> Result<HttpResponse, String>
     ? "POST JSON with a Bearer token. Builds the Authorization header explicitly."

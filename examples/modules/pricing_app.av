@@ -6,10 +6,9 @@ module PricingApp
     effects [Console]
 
 fn applyDiscount(price: Float, rawDiscount: Float) -> Result<Float, String>
-    ? "Constructs discount, applies it to price."
-    match Modules.Pricing.Discount.mkDiscount(rawDiscount)
-        Result.Err(e) -> Result.Err(e)
-        Result.Ok(d) -> Result.Ok(price - price * (Modules.Pricing.Discount.percent(d) / 100.0))
+    ? "Constructs discount, applies it to price. Uses `?` to short-circuit on construction failure."
+    d = Modules.Pricing.Discount.mkDiscount(rawDiscount)?
+    Result.Ok(price - price * (Modules.Pricing.Discount.percent(d) / 100.0))
 
 verify applyDiscount
     applyDiscount(100.0, 50.0)  => Result.Ok(50.0)
