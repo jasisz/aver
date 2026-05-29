@@ -12,8 +12,7 @@ pub fn cmd_shape(file: &str, module_root: Option<&str>, summary: bool, json: boo
                 let value = shape::render_json(&report);
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&value)
-                        .unwrap_or_else(|_| value.to_string())
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
                 );
             } else {
                 let text = shape::render_text(&report, &RenderOptions { summary });

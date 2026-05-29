@@ -311,7 +311,7 @@ pub const ARCHETYPE_ORDER: &[&str] = &[
 
 pub fn primary_label(labels: &[&str]) -> &'static str {
     for &want in ARCHETYPE_ORDER {
-        if labels.iter().any(|l| *l == want) {
+        if labels.contains(&want) {
             return want;
         }
     }
@@ -320,10 +320,7 @@ pub fn primary_label(labels: &[&str]) -> &'static str {
 
 // ─── Call-graph SCC (multi-node strongly connected components) ───────────────
 
-pub fn compute_sccs(
-    fns: &[&ResolvedFnDef],
-    facts_by_id: &HashMap<FnId, &Facts>,
-) -> HashSet<FnId> {
+pub fn compute_sccs(fns: &[&ResolvedFnDef], facts_by_id: &HashMap<FnId, &Facts>) -> HashSet<FnId> {
     let mut graph: HashMap<FnId, Vec<FnId>> = HashMap::new();
     let fn_ids: HashSet<FnId> = fns.iter().map(|f| f.fn_id).collect();
     for fd in fns {
@@ -344,6 +341,7 @@ pub fn compute_sccs(
     let mut lowlinks: HashMap<FnId, u32> = HashMap::new();
     let mut multi_scc: HashSet<FnId> = HashSet::new();
 
+    #[allow(clippy::too_many_arguments)]
     fn strongconnect(
         v: FnId,
         graph: &HashMap<FnId, Vec<FnId>>,
@@ -470,8 +468,12 @@ impl Purity {
     pub fn description(&self) -> &'static str {
         match self {
             Purity::Pure => "no effects declared",
-            Purity::ClassifiedEffectful => "all effects are Oracle-classified (one-shot req/resp shape)",
-            Purity::ShellEffectful => "contains at least one shell/lifecycle effect (e.g. HttpServer.listen) — Oracle skips by design",
+            Purity::ClassifiedEffectful => {
+                "all effects are Oracle-classified (one-shot req/resp shape)"
+            }
+            Purity::ShellEffectful => {
+                "contains at least one shell/lifecycle effect (e.g. HttpServer.listen) — Oracle skips by design"
+            }
         }
     }
 }
@@ -553,7 +555,9 @@ impl Kind {
             Kind::Orchestration => "classified effects with main entry point",
             Kind::ServiceClient => "classified effects threaded through a runtime handle",
             Kind::EffectfulLibrary => "effectful library — exposed surface, no main",
-            Kind::EffectfulShell => "shell/lifecycle effects (e.g. HttpServer.listen) — long-running, not Oracle-classified",
+            Kind::EffectfulShell => {
+                "shell/lifecycle effects (e.g. HttpServer.listen) — long-running, not Oracle-classified"
+            }
         }
     }
 }
@@ -893,10 +897,7 @@ pub struct ShapeReport {
     pub fns: Vec<FnShape>,
 }
 
-pub fn analyze_path(
-    path: &Path,
-    module_root_hint: Option<&str>,
-) -> Result<ShapeReport, String> {
+pub fn analyze_path(path: &Path, module_root_hint: Option<&str>) -> Result<ShapeReport, String> {
     let source = std::fs::read_to_string(path).map_err(|e| format!("read: {}", e))?;
     let mut items = crate::source::parse_source(&source).map_err(|e| format!("parse: {}", e))?;
 
@@ -924,7 +925,11 @@ pub fn analyze_path(
     if let Some(tc) = pipeline_result.typecheck.as_ref()
         && !tc.errors.is_empty()
     {
-        let first = tc.errors.first().map(|e| e.message.clone()).unwrap_or_default();
+        let first = tc
+            .errors
+            .first()
+            .map(|e| e.message.clone())
+            .unwrap_or_default();
         return Err(format!("typecheck errors: {first}"));
     }
 
@@ -1042,18 +1047,19 @@ fn is_runtime_handle_type(t: &Type) -> bool {
 fn walk_type_named(t: &Type, pred: &dyn Fn(&str) -> bool) -> bool {
     match t {
         Type::Named { name, .. } => pred(name),
-        Type::Result(a, b) | Type::Map(a, b) => walk_type_named(a, pred) || walk_type_named(b, pred),
+        Type::Result(a, b) | Type::Map(a, b) => {
+            walk_type_named(a, pred) || walk_type_named(b, pred)
+        }
         Type::Option(a) | Type::List(a) | Type::Vector(a) => walk_type_named(a, pred),
         Type::Tuple(xs) => xs.iter().any(|x| walk_type_named(x, pred)),
-        Type::Fn(args, ret, _) => args.iter().any(|a| walk_type_named(a, pred)) || walk_type_named(ret, pred),
+        Type::Fn(args, ret, _) => {
+            args.iter().any(|a| walk_type_named(a, pred)) || walk_type_named(ret, pred)
+        }
         _ => false,
     }
 }
 
-fn compute_verify_report(
-    items: &[TopLevel],
-    resolved_fns: &[&ResolvedFnDef],
-) -> VerifyReport {
+fn compute_verify_report(items: &[TopLevel], resolved_fns: &[&ResolvedFnDef]) -> VerifyReport {
     use crate::ast::VerifyKind;
     let mut blocks = 0usize;
     let mut covered: HashSet<String> = HashSet::new();
@@ -1108,8 +1114,10 @@ fn derive_shape(
     use crate::types::checker::effect_classification::is_classified;
 
     let any_effect = !effects.is_empty();
-    let all_classified =
-        any_effect && effects.iter().all(|e| is_classified_effect_or_namespace(e, &is_classified));
+    let all_classified = any_effect
+        && effects
+            .iter()
+            .all(|e| is_classified_effect_or_namespace(e, &is_classified));
     let purity = if !any_effect {
         Purity::Pure
     } else if all_classified {
@@ -1178,8 +1186,14 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
     out.push_str(&format!("Module: {}\n", report.module));
     out.push_str(&format!("  Kind:  {}\n\n", report.kind.as_str()));
     out.push_str("  ModuleShape:\n");
-    out.push_str(&format!("    purity        {}\n", report.shape.purity.as_str()));
-    out.push_str(&format!("    entry         {}\n", report.shape.entry.as_str()));
+    out.push_str(&format!(
+        "    purity        {}\n",
+        report.shape.purity.as_str()
+    ));
+    out.push_str(&format!(
+        "    entry         {}\n",
+        report.shape.entry.as_str()
+    ));
     out.push_str(&format!(
         "    state_shape   {}\n",
         report.shape.state_shape.as_str()

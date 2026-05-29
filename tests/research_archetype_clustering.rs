@@ -23,9 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use aver::ast::TopLevel;
-use aver::diagnostics::shape::{
-    Facts, classify, compute_sccs, extract_facts, primary_label,
-};
+use aver::diagnostics::shape::{Facts, classify, compute_sccs, extract_facts, primary_label};
 use aver::ir::hir::{ResolvedFnDef, ResolvedTopLevel};
 use aver::ir::{FnId, PipelineConfig, TypecheckMode};
 use aver::types::Type;
@@ -602,4 +600,3 @@ fn collect_av(dir: &Path, out: &mut Vec<PathBuf>) {
         }
     }
 }
-

@@ -100,7 +100,15 @@ fn render_json_has_facts_vector_kind_and_layer() {
     let r = analyze("examples/services/redis.av");
     let json = shape::render_json(&r);
     let obj = json.as_object().expect("json must be an object");
-    for key in ["module", "facts", "vector", "kind", "histogram", "layer", "fns"] {
+    for key in [
+        "module",
+        "facts",
+        "vector",
+        "kind",
+        "histogram",
+        "layer",
+        "fns",
+    ] {
         assert!(obj.contains_key(key), "json missing key: {key}");
     }
     assert_eq!(obj["module"], "Redis");
