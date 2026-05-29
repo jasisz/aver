@@ -1001,7 +1001,7 @@ pub(super) fn cmd_run_vm(
         session_recording_to_string_pretty,
     };
 
-    let module_root = super::shared::resolve_module_root_for_entry(file, module_root_override);
+    let module_root = super::shared::resolve_module_root(module_root_override);
     let source = match super::shared::read_file(file) {
         Ok(s) => s,
         Err(e) => {

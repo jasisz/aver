@@ -83,7 +83,7 @@ fn build_component_bytes(
     use aver::codegen::{wasip2 as wasip2_codegen, wasm_gc};
     use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 
-    let module_root = super::shared::resolve_module_root_for_entry(file, module_root_override);
+    let module_root = super::shared::resolve_module_root(module_root_override);
     let source = super::shared::read_file(file).map_err(|e| e.to_string())?;
     let mut items = super::shared::parse_file(&source).map_err(|e| e.to_string())?;
 

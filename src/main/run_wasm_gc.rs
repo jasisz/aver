@@ -15,7 +15,7 @@ use aver::runtime::wasm_gc as rt;
 #[cfg(feature = "wasm")]
 use super::shared;
 #[cfg(feature = "wasm")]
-use super::shared::{parse_file, read_file, resolve_module_root_for_entry};
+use super::shared::{parse_file, read_file, resolve_module_root};
 
 #[cfg(feature = "wasm")]
 use super::commands::{flatten_multimodule, load_compile_deps};
@@ -135,7 +135,7 @@ pub(super) fn try_run_wasm_gc(
 ) -> Result<rt::RunOutcome, String> {
     use aver::ir::{NeutralAllocPolicy, PipelineConfig, TypecheckMode};
 
-    let module_root = resolve_module_root_for_entry(file, module_root_override);
+    let module_root = resolve_module_root(module_root_override);
     let source = read_file(file)?;
     let mut items = parse_file(&source)?;
     let neutral_policy = NeutralAllocPolicy;
