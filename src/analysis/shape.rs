@@ -651,6 +651,38 @@ pub enum ModulePattern {
         /// `ProgramShape` doesn't borrow source items.
         predicate: crate::ast::Spanned<crate::ast::Expr>,
     },
+    /// `wrapper-over-recursion` shape: a non-recursive `wrapper_fn` whose
+    /// body's only recursive call is to a self-recursive `inner_fn`
+    /// living in the same scope, with `inner_fn` taking the wrapper's
+    /// parameters as a prefix (literally, as `Ident` args) plus at
+    /// least one additional argument (typically an accumulator initial
+    /// value). `fib(n) -> fibTR(n, 0, 1)` is the canonical example;
+    /// `aver fmt` / proof export use this to route the wrapper through
+    /// the inner's induction certificate.
+    ///
+    /// Conservative detection rules (stage 6c):
+    /// - wrapper is itself non-recursive (no self-call)
+    /// - exactly one inner call to a self-recursive same-scope fn
+    /// - every wrapper parameter appears literally (`Ident`) somewhere
+    ///   in the inner's argument list
+    /// - inner's arity is strictly greater than the wrapper's arity
+    ///
+    /// These rules keep false positives near zero on the shipped
+    /// corpus; mutual recursion across fns isn't claimed yet
+    /// (`inner_fn` must self-recurse, not participate in a larger SCC).
+    WrapperOverRecursion {
+        /// Scope of the wrapper (`None` = entry, `Some(prefix)` = dep
+        /// module). `inner_scope` is always equal to `wrapper_scope`
+        /// in stage 6c — cross-module wrappers aren't claimed.
+        wrapper_scope: Option<String>,
+        /// Source-level wrapper fn name (the outer, non-recursive one).
+        wrapper_fn: String,
+        /// Scope of the recursive inner fn. Mirrors `wrapper_scope`
+        /// while stage 6c keeps this same-scope-only.
+        inner_scope: Option<String>,
+        /// Source-level inner fn name (the recursive one).
+        inner_fn: String,
+    },
 }
 
 /// Walk entry items + dep modules and emit every typed
@@ -727,10 +759,6 @@ pub fn detect_module_patterns(
         }
     }
 
-    if candidates.is_empty() {
-        return out;
-    }
-
     // Walk fns looking for the smart-constructor shape per candidate
     // record. Mirrors `refinement_info_for_walk`: return type
     // `Result<TypeName, _>`, exactly one param, body is a single
@@ -787,5 +815,226 @@ pub fn detect_module_patterns(
         }
     }
 
+    // Stage 6c of #232: `WrapperOverRecursion` per-scope detection.
+    // Each scope is searched independently (entry items, then each
+    // dep module) — cross-module wrappers aren't claimed yet.
+    detect_wrapper_over_recursion(None, &entry_fns, &mut out);
+    for m in dep_modules {
+        let fns: Vec<&crate::ast::FnDef> = m.fn_defs.iter().collect();
+        detect_wrapper_over_recursion(Some(m.prefix.clone()), &fns, &mut out);
+    }
+
     out
+}
+
+/// Per-scope detector for [`ModulePattern::WrapperOverRecursion`].
+/// Builds the self-recursive set for `fns` (fns that call themselves
+/// by name anywhere in their body), then walks each non-recursive fn's
+/// body looking for exactly one qualifying inner call. See the variant
+/// docs on `WrapperOverRecursion` for the detection contract.
+fn detect_wrapper_over_recursion(
+    scope: Option<String>,
+    fns: &[&crate::ast::FnDef],
+    out: &mut Vec<ModulePattern>,
+) {
+    if fns.is_empty() {
+        return;
+    }
+
+    let mut recursive: HashSet<String> = HashSet::new();
+    for fd in fns {
+        if body_calls_name(&fd.body, &fd.name) {
+            recursive.insert(fd.name.clone());
+        }
+    }
+    if recursive.is_empty() {
+        return;
+    }
+
+    for fd in fns {
+        if recursive.contains(&fd.name) {
+            continue;
+        }
+        if fd.params.is_empty() {
+            continue;
+        }
+        let outer_params: Vec<&str> = fd.params.iter().map(|(n, _)| n.as_str()).collect();
+        let mut hits: Vec<String> = Vec::new();
+        collect_qualifying_inner_calls(&fd.body, &outer_params, &recursive, &mut hits);
+        hits.sort();
+        hits.dedup();
+        if hits.len() != 1 {
+            continue;
+        }
+        let inner = hits.into_iter().next().unwrap();
+        out.push(ModulePattern::WrapperOverRecursion {
+            wrapper_scope: scope.clone(),
+            wrapper_fn: fd.name.clone(),
+            inner_scope: scope.clone(),
+            inner_fn: inner,
+        });
+    }
+}
+
+/// Whether `body` contains any `FnCall(Ident(name), _)` reachable
+/// through expression nesting. Used to build the self-recursive set
+/// and to find qualifying inner calls.
+fn body_calls_name(body: &crate::ast::FnBody, name: &str) -> bool {
+    for stmt in body.stmts() {
+        let expr = match stmt {
+            crate::ast::Stmt::Binding(_, _, e) => e,
+            crate::ast::Stmt::Expr(e) => e,
+        };
+        if expr_calls_name(expr, name) {
+            return true;
+        }
+    }
+    false
+}
+
+fn expr_calls_name(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            if let Expr::Ident(n) = &callee.node
+                && n == name
+            {
+                return true;
+            }
+            if expr_calls_name(callee, name) {
+                return true;
+            }
+            args.iter().any(|a| expr_calls_name(a, name))
+        }
+        Expr::TailCall(td) => td.target == name || td.args.iter().any(|a| expr_calls_name(a, name)),
+        Expr::Match { subject, arms } => {
+            if expr_calls_name(subject, name) {
+                return true;
+            }
+            arms.iter().any(|a| expr_calls_name(&a.body, name))
+        }
+        Expr::BinOp(_, l, r) => expr_calls_name(l, name) || expr_calls_name(r, name),
+        Expr::Neg(e) | Expr::Attr(e, _) | Expr::ErrorProp(e) => expr_calls_name(e, name),
+        Expr::Constructor(_, Some(e)) => expr_calls_name(e, name),
+        Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
+            xs.iter().any(|x| expr_calls_name(x, name))
+        }
+        Expr::MapLiteral(pairs) => pairs
+            .iter()
+            .any(|(k, v)| expr_calls_name(k, name) || expr_calls_name(v, name)),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_calls_name(e, name)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_calls_name(base, name) || updates.iter().any(|(_, e)| expr_calls_name(e, name))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ast::StrPart::Parsed(e) => expr_calls_name(e, name),
+            crate::ast::StrPart::Literal(_) => false,
+        }),
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {
+            false
+        }
+    }
+}
+
+/// Walk `body` and push every inner-fn name that satisfies the
+/// `WrapperOverRecursion` qualification rules: callee is a same-scope
+/// self-recursive fn in `recursive`, arity strictly greater than
+/// `outer_params.len()`, and every outer-param name appears literally
+/// as an `Ident` argument somewhere in the call's argument list.
+fn collect_qualifying_inner_calls(
+    body: &crate::ast::FnBody,
+    outer_params: &[&str],
+    recursive: &HashSet<String>,
+    out: &mut Vec<String>,
+) {
+    for stmt in body.stmts() {
+        let expr = match stmt {
+            crate::ast::Stmt::Binding(_, _, e) => e,
+            crate::ast::Stmt::Expr(e) => e,
+        };
+        collect_qualifying_in_expr(expr, outer_params, recursive, out);
+    }
+}
+
+fn collect_qualifying_in_expr(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    outer_params: &[&str],
+    recursive: &HashSet<String>,
+    out: &mut Vec<String>,
+) {
+    use crate::ast::Expr;
+    if let Expr::FnCall(callee, args) = &expr.node
+        && let Expr::Ident(name) = &callee.node
+        && recursive.contains(name)
+        && args.len() > outer_params.len()
+    {
+        let mut arg_idents: HashSet<&str> = HashSet::new();
+        for a in args {
+            if let Expr::Ident(n) = &a.node {
+                arg_idents.insert(n.as_str());
+            }
+        }
+        if outer_params.iter().all(|p| arg_idents.contains(*p)) {
+            out.push(name.clone());
+        }
+    }
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            collect_qualifying_in_expr(callee, outer_params, recursive, out);
+            for a in args {
+                collect_qualifying_in_expr(a, outer_params, recursive, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            collect_qualifying_in_expr(subject, outer_params, recursive, out);
+            for a in arms {
+                collect_qualifying_in_expr(&a.body, outer_params, recursive, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_qualifying_in_expr(l, outer_params, recursive, out);
+            collect_qualifying_in_expr(r, outer_params, recursive, out);
+        }
+        Expr::Neg(e) | Expr::Attr(e, _) | Expr::ErrorProp(e) => {
+            collect_qualifying_in_expr(e, outer_params, recursive, out);
+        }
+        Expr::Constructor(_, Some(e)) => {
+            collect_qualifying_in_expr(e, outer_params, recursive, out);
+        }
+        Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
+            for x in xs {
+                collect_qualifying_in_expr(x, outer_params, recursive, out);
+            }
+        }
+        Expr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                collect_qualifying_in_expr(k, outer_params, recursive, out);
+                collect_qualifying_in_expr(v, outer_params, recursive, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_qualifying_in_expr(e, outer_params, recursive, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_qualifying_in_expr(base, outer_params, recursive, out);
+            for (_, e) in updates {
+                collect_qualifying_in_expr(e, outer_params, recursive, out);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let crate::ast::StrPart::Parsed(e) = p {
+                    collect_qualifying_in_expr(e, outer_params, recursive, out);
+                }
+            }
+        }
+        Expr::TailCall(td) => {
+            for a in &td.args {
+                collect_qualifying_in_expr(a, outer_params, recursive, out);
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {}
+    }
 }

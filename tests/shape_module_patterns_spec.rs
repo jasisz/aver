@@ -6,7 +6,6 @@
 //! stage 6b adapter migration is behavior-preserving).
 
 use aver::analysis::shape::{ModulePattern, detect_module_patterns};
-use aver::ast::TopLevel;
 
 fn detect_in_file(path: &str) -> Vec<ModulePattern> {
     let source = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
@@ -23,8 +22,12 @@ fn detect_in_file(path: &str) -> Vec<ModulePattern> {
 #[test]
 fn natural_module_emits_one_refinement_pattern() {
     let patterns = detect_in_file("examples/refinement/natural/natural.av");
+    let refinements: Vec<_> = patterns
+        .iter()
+        .filter(|p| matches!(p, ModulePattern::RefinementSmartConstructor { .. }))
+        .collect();
     assert_eq!(
-        patterns.len(),
+        refinements.len(),
         1,
         "expected exactly one RefinementSmartConstructor on Natural; got {patterns:?}"
     );
@@ -34,7 +37,10 @@ fn natural_module_emits_one_refinement_pattern() {
         carrier_type,
         constructor_fn,
         ..
-    } = &patterns[0];
+    } = refinements[0]
+    else {
+        unreachable!()
+    };
     assert_eq!(type_name, "Natural");
     assert_eq!(carrier_field, "value");
     assert_eq!(carrier_type, "Int");
@@ -44,28 +50,47 @@ fn natural_module_emits_one_refinement_pattern() {
 #[test]
 fn positive_module_emits_one_refinement_pattern() {
     let patterns = detect_in_file("examples/refinement/positive/positive.av");
-    assert_eq!(patterns.len(), 1);
-    let ModulePattern::RefinementSmartConstructor { type_name, .. } = &patterns[0];
+    let refinements: Vec<_> = patterns
+        .iter()
+        .filter(|p| matches!(p, ModulePattern::RefinementSmartConstructor { .. }))
+        .collect();
+    assert_eq!(refinements.len(), 1);
+    let ModulePattern::RefinementSmartConstructor { type_name, .. } = refinements[0] else {
+        unreachable!()
+    };
     assert_eq!(type_name, "Positive");
 }
 
 #[test]
 fn int_range_module_emits_one_refinement_pattern() {
     let patterns = detect_in_file("examples/refinement/int_range/int_range.av");
-    assert_eq!(patterns.len(), 1);
-    let ModulePattern::RefinementSmartConstructor { type_name, .. } = &patterns[0];
+    let refinements: Vec<_> = patterns
+        .iter()
+        .filter(|p| matches!(p, ModulePattern::RefinementSmartConstructor { .. }))
+        .collect();
+    assert_eq!(refinements.len(), 1);
+    let ModulePattern::RefinementSmartConstructor { type_name, .. } = refinements[0] else {
+        unreachable!()
+    };
     assert_eq!(type_name, "IntRange");
 }
 
 #[test]
 fn nonneg_float_module_emits_one_refinement_pattern() {
     let patterns = detect_in_file("examples/refinement/nonneg_float/nonneg_float.av");
-    assert_eq!(patterns.len(), 1);
+    let refinements: Vec<_> = patterns
+        .iter()
+        .filter(|p| matches!(p, ModulePattern::RefinementSmartConstructor { .. }))
+        .collect();
+    assert_eq!(refinements.len(), 1);
     let ModulePattern::RefinementSmartConstructor {
         type_name,
         carrier_type,
         ..
-    } = &patterns[0];
+    } = refinements[0]
+    else {
+        unreachable!()
+    };
     assert_eq!(type_name, "NonNegFloat");
     assert_eq!(carrier_type, "Float");
 }
@@ -88,13 +113,20 @@ fn detection_payload_matches_refinement_info_for() {
     // they agree before the migration lands.
     let path = "examples/refinement/natural/natural.av";
     let patterns = detect_in_file(path);
+    let pattern = patterns
+        .iter()
+        .find(|p| matches!(p, ModulePattern::RefinementSmartConstructor { .. }))
+        .expect("Natural module must produce a RefinementSmartConstructor");
     let ModulePattern::RefinementSmartConstructor {
         type_name,
         carrier_field,
         carrier_type,
         param_name,
         ..
-    } = &patterns[0];
+    } = pattern
+    else {
+        unreachable!()
+    };
 
     // The legacy adapter takes `ProofLowerInputs`; mirror what
     // codegen does to build one for a single file.
@@ -123,7 +155,54 @@ fn detection_payload_matches_refinement_info_for() {
     // structure is enough to confirm agreement without bringing in
     // a full AST equality impl.
     assert_eq!(format!("{:?}", legacy.predicate), {
-        let ModulePattern::RefinementSmartConstructor { predicate, .. } = &patterns[0];
+        let ModulePattern::RefinementSmartConstructor { predicate, .. } = pattern else {
+            unreachable!()
+        };
         format!("{:?}", predicate)
     });
+}
+
+// ─── Stage 6c: WrapperOverRecursion ─────────────────────────────────────────
+
+#[test]
+fn fibonacci_module_pins_fib_over_fibtr_wrapper() {
+    let patterns = detect_in_file("examples/data/fibonacci.av");
+    let wrappers: Vec<_> = patterns
+        .iter()
+        .filter_map(|p| match p {
+            ModulePattern::WrapperOverRecursion {
+                wrapper_fn,
+                inner_fn,
+                wrapper_scope,
+                inner_scope,
+            } => Some((
+                wrapper_scope.clone(),
+                wrapper_fn.clone(),
+                inner_scope.clone(),
+                inner_fn.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    // `fib(n) -> fibTR(n, 0, 1)` is the canonical match. The
+    // accumulator-record wrapper `buildFibStats -> buildFibStatsTR`
+    // doesn't qualify under stage 6c's literal-Ident rule (its inner
+    // args are `n + 1` and a record literal, not bare params).
+    assert!(
+        wrappers.contains(&(None, "fib".to_string(), None, "fibTR".to_string())),
+        "expected fib→fibTR wrapper; got {wrappers:?}"
+    );
+}
+
+#[test]
+fn refinement_module_emits_no_wrapper_pattern() {
+    let patterns = detect_in_file("examples/refinement/natural/natural.av");
+    let wrappers: Vec<_> = patterns
+        .iter()
+        .filter(|p| matches!(p, ModulePattern::WrapperOverRecursion { .. }))
+        .collect();
+    assert!(
+        wrappers.is_empty(),
+        "refinement module has no recursive inner fns; got {wrappers:?}"
+    );
 }
