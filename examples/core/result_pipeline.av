@@ -1,0 +1,123 @@
+module ResultPipeline
+    intent =
+        "Worked example for `?` propagation: a chain of fallible steps"
+        "where every Err in the middle aborts the whole pipeline with the"
+        "same error value, and the happy path stays linear. The shape"
+        "Aver code reaches for when a `let x = step()?` chain is more"
+        "readable than nested `match` arms."
+    exposes [validateAndCombine]
+    effects []
+
+// Domain — three smart-constructor steps, each returning Result. They
+// don't matter much in isolation; the point is composing them.
+
+fn parsePositive(s: String) -> Result<Int, String>
+    ? "Parse and reject non-positive integers."
+    match Int.fromString(s)
+        Result.Err(msg) -> Result.Err("not an int: {msg}")
+        Result.Ok(n)    -> match (n > 0)
+            true  -> Result.Ok(n)
+            false -> Result.Err("expected positive, got {n}")
+
+verify parsePositive
+    parsePositive("7")  => Result.Ok(7)
+    parsePositive("0")  => Result.Err("expected positive, got 0")
+    parsePositive("-3") => Result.Err("expected positive, got -3")
+    parsePositive("x")  => Result.Err("not an int: Cannot parse 'x' as Int")
+
+fn doubled(n: Int) -> Result<Int, String>
+    ? "Double the input, fail if the result would overflow Aver's bounded i64."
+    match (n > 4611686018427387903)
+        true  -> Result.Err("overflow when doubling {n}")
+        false -> Result.Ok(n * 2)
+
+verify doubled
+    doubled(7)   => Result.Ok(14)
+    doubled(0)   => Result.Ok(0)
+    doubled(4611686018427387904) => Result.Err("overflow when doubling 4611686018427387904")
+
+fn capAtThousand(n: Int) -> Result<Int, String>
+    ? "Reject values above 1000."
+    match (n > 1000)
+        true  -> Result.Err("over cap: {n}")
+        false -> Result.Ok(n)
+
+verify capAtThousand
+    capAtThousand(7)    => Result.Ok(7)
+    capAtThousand(1001) => Result.Err("over cap: 1001")
+
+// The composition — this is the file's whole point. `?` propagates the
+// first Err it sees with its own value; the surrounding fn keeps the
+// linear shape it would have if every step couldn't fail.
+//
+// Compare with the equivalent manual chain (kept below as
+// `validateAndCombineNoOp` for side-by-side reading): four arms of
+// `Result.Err(e) -> Result.Err(e)` collapse to four `?` operators.
+
+fn validateAndCombine(a: String, b: String) -> Result<Int, String>
+    ? "Parse two positive ints, double each, cap at 1000, return the sum. The first failing step short-circuits and carries its error to the caller."
+    x = parsePositive(a)?
+    y = parsePositive(b)?
+    xd = doubled(x)?
+    yd = doubled(y)?
+    xc = capAtThousand(xd)?
+    yc = capAtThousand(yd)?
+    Result.Ok(xc + yc)
+
+verify validateAndCombine
+    validateAndCombine("3", "5")   => Result.Ok(16)
+    validateAndCombine("3", "x")   => Result.Err("not an int: Cannot parse 'x' as Int")
+    validateAndCombine("-3", "5")  => Result.Err("expected positive, got -3")
+    validateAndCombine("600", "5") => Result.Err("over cap: 1200")
+    validateAndCombine("3", "600") => Result.Err("over cap: 1200")
+
+// Counter-example: the same fn written without `?`. Four manual
+// Err -> Err arms; the happy path drifts off the right edge of the
+// screen instead of staying at the top level. Both versions verify
+// against the same `validateAndCombine` cases — they're behaviourally
+// identical, just one is two screens shorter than the other.
+
+fn validateAndCombineNoOp(a: String, b: String) -> Result<Int, String>
+    ? "Manual chain of `match Result.Err -> Result.Err` arms. Kept for side-by-side comparison with the `?` version above. Real Aver code should prefer `?` whenever the Err branch is pure pass-through."
+    match parsePositive(a)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(x)  -> match parsePositive(b)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(y)  -> match doubled(x)
+                Result.Err(e) -> Result.Err(e)
+                Result.Ok(xd) -> match doubled(y)
+                    Result.Err(e) -> Result.Err(e)
+                    Result.Ok(yd) -> match capAtThousand(xd)
+                        Result.Err(e) -> Result.Err(e)
+                        Result.Ok(xc) -> match capAtThousand(yd)
+                            Result.Err(e) -> Result.Err(e)
+                            Result.Ok(yc) -> Result.Ok(xc + yc)
+
+verify validateAndCombineNoOp
+    validateAndCombineNoOp("3", "5")   => Result.Ok(16)
+    validateAndCombineNoOp("3", "x")   => Result.Err("not an int: Cannot parse 'x' as Int")
+    validateAndCombineNoOp("-3", "5")  => Result.Err("expected positive, got -3")
+    validateAndCombineNoOp("600", "5") => Result.Err("over cap: 1200")
+    validateAndCombineNoOp("3", "600") => Result.Err("over cap: 1200")
+
+// When NOT to reach for `?`
+// ─────────────────────────
+//
+// `?` is short-circuit Err propagation: it returns the Err value
+// unchanged. It's a great fit when:
+//
+//   - every Err arm in the chain is `Result.Err(e) -> Result.Err(e)`
+//     with no transformation, and
+//   - the surrounding fn's Err type matches the step's Err type.
+//
+// Use a manual `match` instead when:
+//
+//   - the Err needs a transform — adding context, mapping to a domain
+//     error type, redacting a message. Example from `examples/data/
+//     json.av`: parseValue's `ParseResult.Err(msg, p)` gets rewritten to
+//     `Result.Err(msg + " at position " + String.fromInt(p))` before
+//     leaving fromString — a real transform, not pass-through.
+//   - the Err arm should branch on the error value (retry, fall back to
+//     a default, log + continue).
+//   - the step returns a non-Result sum type (`ParseResult.Ok / Err(msg,
+//     p)` etc.); `?` only operates on `Result<T, E>`.
