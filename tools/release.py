@@ -243,18 +243,17 @@ def regenerate_playground(dry_run: bool) -> None:
         print("  [dry-run] would run: python3 tools/website/rebuild_playground.py")
         return
 
-    rebuild = REPO_ROOT / "tools" / "website" / "rebuild_playground.py"
-    aver_bin = REPO_ROOT / "target" / "release" / "aver"
-
-    # `wasm-pack build --features playground --no-default-features` (inside
-    # `rebuild_playground.py:build_compiler`) flips the workspace feature
-    # set, which invalidates cargo's feature cache for `aver-lang` and
-    # rebuilds `target/release/aver` without the `wasm` feature. So we
-    # split into three steps: build the compiler bundle, restore the
-    # wasm-capable aver bin, then run the per-game wasm-gc compile.
-    run([sys.executable, str(rebuild), "--skip-build", "--skip-html"])
+    # `rebuild_playground.py` restores the wasm-capable aver bin
+    # itself after `wasm-pack` invalidates cargo's feature cache
+    # (the script's `main` re-runs `cargo build --release --bin aver
+    // --features wasm` between `build_compiler` and `build_wasm`).
+    # Pre-build once so the wasm-pack invocation has a warm cache
+    # to invalidate — saves a few minutes on cold runs.
     run(["cargo", "build", "--release", "--bin", "aver", "--features", "wasm"])
-    run([sys.executable, str(rebuild), "--skip-compiler", "--aver-bin", str(aver_bin)])
+    run([
+        sys.executable,
+        str(REPO_ROOT / "tools" / "website" / "rebuild_playground.py"),
+    ])
 
 
 def verify(dry_run: bool) -> None:
