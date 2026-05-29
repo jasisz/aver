@@ -1415,11 +1415,15 @@ pub fn render_json(report: &ShapeReport) -> serde_json::Value {
 /// Outcome of analyzing a single file inside a corpus walk. Files that
 /// fail typecheck or parse get the error attached instead of being
 /// silently skipped — the corpus view should show what's broken.
+///
+/// `report` is boxed because `ShapeReport` carries the full per-fn
+/// listing — a large size delta between the two variants would inflate
+/// every `Vec<CorpusEntry>` with padding (clippy's `large_enum_variant`).
 #[derive(Debug, Clone)]
 pub enum CorpusEntry {
     Analyzed {
         rel_path: String,
-        report: ShapeReport,
+        report: Box<ShapeReport>,
     },
     Skipped {
         rel_path: String,
@@ -1453,7 +1457,7 @@ pub fn analyze_dir(
         match analyze_path_with(&path, Some(&effective_module_root), fingerprints, basis) {
             Ok(report) => entries.push(CorpusEntry::Analyzed {
                 rel_path: rel,
-                report,
+                report: Box::new(report),
             }),
             Err(reason) => entries.push(CorpusEntry::Skipped {
                 rel_path: rel,
