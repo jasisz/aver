@@ -289,6 +289,123 @@ fn load_recursive(
     Ok(())
 }
 
+/// Load every dep module declared by `items`'s `Module.depends`, plus
+/// every transitive dep, into `codegen::ModuleInfo` records ready to
+/// hand to `PipelineConfig.dep_modules`.
+///
+/// Each dep goes through the same canonical pipeline as the entry —
+/// `pipeline::run` with `TypecheckMode::Full { base_dir: module_root }`,
+/// `run_interp_lower: false`, `run_buffer_build: false`, and the
+/// neutral alloc policy. Type errors in any dep surface as `Err`.
+///
+/// Callers that need the legacy `commands.rs` shape (run_interp_lower /
+/// run_buffer_build / self_host_mode flags) still own their local copy;
+/// every other call site — `vm_verify`, `wasm_gc_verify`, `bench/runner`,
+/// the research test — should go through here so the dep-loading
+/// contract stays in one place.
+pub fn load_compile_deps(
+    items: &[TopLevel],
+    module_root: &str,
+) -> Result<Vec<crate::codegen::ModuleInfo>, String> {
+    let module = items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m),
+        _ => None,
+    });
+    let Some(module) = module else {
+        return Ok(vec![]);
+    };
+    let mut result = Vec::new();
+    let mut loaded = HashSet::new();
+    for dep_name in &module.depends {
+        load_module_recursive_for_compile(dep_name, module_root, &mut result, &mut loaded)?;
+    }
+    Ok(result)
+}
+
+fn load_module_recursive_for_compile(
+    name: &str,
+    module_root: &str,
+    result: &mut Vec<crate::codegen::ModuleInfo>,
+    loaded: &mut HashSet<String>,
+) -> Result<(), String> {
+    if !loaded.insert(name.to_string()) {
+        return Ok(());
+    }
+    let path = find_module_file(name, module_root).ok_or_else(|| {
+        format!(
+            "Cannot find module '{}' in module root '{}'",
+            name, module_root
+        )
+    })?;
+    let source =
+        std::fs::read_to_string(&path).map_err(|e| format!("Read '{}': {}", path.display(), e))?;
+    let mut items =
+        parse_source(&source).map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
+    require_module_declaration(&items, path.to_str().unwrap_or(name))?;
+
+    let neutral_policy = crate::ir::NeutralAllocPolicy;
+    let pipeline_result = crate::ir::pipeline::run(
+        &mut items,
+        crate::ir::PipelineConfig {
+            typecheck: Some(crate::ir::TypecheckMode::Full {
+                base_dir: Some(module_root),
+            }),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            alloc_policy: Some(&neutral_policy),
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = pipeline_result.typecheck.as_ref()
+        && !tc.errors.is_empty()
+    {
+        return Err(format!(
+            "Type errors in dependency module '{}':\n{}",
+            name,
+            tc.errors
+                .iter()
+                .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    let transitive: Vec<String> = items
+        .iter()
+        .find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.depends.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    for dep in &transitive {
+        load_module_recursive_for_compile(dep, module_root, result, loaded)?;
+    }
+
+    let depends = transitive;
+    let type_defs: Vec<_> = items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::TypeDef(td) => Some(td.clone()),
+            _ => None,
+        })
+        .collect();
+    let fn_defs: Vec<_> = items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+            _ => None,
+        })
+        .collect();
+    result.push(crate::codegen::ModuleInfo {
+        prefix: name.to_string(),
+        depends,
+        type_defs,
+        fn_defs,
+        analysis: pipeline_result.analysis,
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_source, require_module_declaration};

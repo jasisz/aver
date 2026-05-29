@@ -79,7 +79,7 @@ fn run_vm(manifest: &Manifest) -> Result<BenchReport, RunError> {
     // compile` already do — without it the resolver classifies
     // `Module.fn(...)` callsites as `Passthrough` and the VM compiler
     // later errors out with "missing VM symbol for exposed function".
-    let dep_modules = load_compile_deps(&items, &module_root)
+    let dep_modules = crate::source::load_compile_deps(&items, &module_root)
         .map_err(|e| RunError::Setup(format!("load deps: {}", e)))?;
 
     let passes_applied = std::cell::RefCell::new(Vec::<String>::new());
@@ -758,118 +758,5 @@ fn compute_visible_allocs(manifest: &Manifest) -> Option<usize> {
     Some(crate::ir::count_alloc_sites_in_program(&items, &policy))
 }
 
-// ── Dependency loader ──────────────────────────────────────────────────
-//
-// Mirror of `wasm_gc_verify::load_compile_deps` so the bench harness
-// runs the same multi-module setup that `aver run` / `aver compile`
-// already use. Without these dep modules in `PipelineConfig`, the
-// entry's `SymbolTable` never sees cross-module fns and the VM
-// compiler later errors with "missing VM symbol for exposed function".
-// Followup: extract this + the two copies in commands.rs and
-// wasm_gc_verify.rs into one shared util in `crate::source` or
-// `crate::ir`.
-
-fn load_compile_deps(
-    items: &[TopLevel],
-    module_root: &str,
-) -> Result<Vec<crate::codegen::ModuleInfo>, String> {
-    let module = items.iter().find_map(|i| match i {
-        TopLevel::Module(m) => Some(m),
-        _ => None,
-    });
-    let Some(module) = module else {
-        return Ok(vec![]);
-    };
-    let mut result = Vec::new();
-    let mut loaded = std::collections::HashSet::new();
-    for dep_name in &module.depends {
-        load_module_recursive(dep_name, module_root, &mut result, &mut loaded)?;
-    }
-    Ok(result)
-}
-
-fn load_module_recursive(
-    name: &str,
-    module_root: &str,
-    result: &mut Vec<crate::codegen::ModuleInfo>,
-    loaded: &mut std::collections::HashSet<String>,
-) -> Result<(), String> {
-    if !loaded.insert(name.to_string()) {
-        return Ok(());
-    }
-
-    let path = crate::source::find_module_file(name, module_root).ok_or_else(|| {
-        format!(
-            "Cannot find module '{}' in module root '{}'",
-            name, module_root
-        )
-    })?;
-    let source =
-        std::fs::read_to_string(&path).map_err(|e| format!("Read '{}': {}", path.display(), e))?;
-    let mut items = crate::source::parse_source(&source)
-        .map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
-    crate::source::require_module_declaration(&items, path.to_str().unwrap_or(name))?;
-
-    let neutral_policy = crate::ir::NeutralAllocPolicy;
-    let pipeline_result = crate::ir::pipeline::run(
-        &mut items,
-        crate::ir::PipelineConfig {
-            typecheck: Some(crate::ir::TypecheckMode::Full {
-                base_dir: Some(module_root),
-            }),
-            run_interp_lower: false,
-            run_buffer_build: false,
-            alloc_policy: Some(&neutral_policy),
-            ..Default::default()
-        },
-    );
-    if let Some(tc) = pipeline_result.typecheck.as_ref()
-        && !tc.errors.is_empty()
-    {
-        return Err(format!(
-            "Type errors in dependency module '{}':\n{}",
-            name,
-            tc.errors
-                .iter()
-                .map(|e| format!("  {}:{}: {}", e.line, e.col, e.message))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
-
-    let transitive: Vec<String> = items
-        .iter()
-        .find_map(|i| match i {
-            TopLevel::Module(m) => Some(m.depends.clone()),
-            _ => None,
-        })
-        .unwrap_or_default();
-    for dep in &transitive {
-        load_module_recursive(dep, module_root, result, loaded)?;
-    }
-
-    let depends = transitive;
-    let type_defs: Vec<_> = items
-        .iter()
-        .filter_map(|i| match i {
-            TopLevel::TypeDef(td) => Some(td.clone()),
-            _ => None,
-        })
-        .collect();
-    let fn_defs: Vec<_> = items
-        .iter()
-        .filter_map(|i| match i {
-            TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
-            _ => None,
-        })
-        .collect();
-
-    result.push(crate::codegen::ModuleInfo {
-        prefix: name.to_string(),
-        depends,
-        type_defs,
-        fn_defs,
-        analysis: pipeline_result.analysis,
-    });
-    Ok(())
-}
+// Dependency loader is now in `crate::source::load_compile_deps`
+// — see the callsite at the top of `run_vm`.
