@@ -2535,6 +2535,28 @@ fn detect_induction_target(
     law: &crate::ast::VerifyLaw,
     inputs: &ProofLowerInputs,
 ) -> Option<String> {
+    // Stage 7 of #232: read the eligibility set from `ProgramShape`
+    // when threaded through `ProofLowerInputs`. The shape pass
+    // computes the same direct-rec + not-indirect-rec predicate
+    // once per compilation; the inline scan below is the
+    // pre-shape fallback so callers without a shape (legacy test
+    // fixtures, tools that build `ProofLowerInputs` by hand) keep
+    // working unchanged.
+    if let Some(shape) = inputs.program_shape {
+        for given in &law.givens {
+            if shape.inductable_sum_types.contains(&given.type_name) {
+                return Some(given.name.clone());
+            }
+        }
+        return None;
+    }
+    detect_induction_target_legacy(law, inputs)
+}
+
+fn detect_induction_target_legacy(
+    law: &crate::ast::VerifyLaw,
+    inputs: &ProofLowerInputs,
+) -> Option<String> {
     use crate::ast::TypeDef;
     for given in &law.givens {
         let Some(TypeDef::Sum {
@@ -2545,9 +2567,6 @@ fn detect_induction_target(
         else {
             continue;
         };
-        // Require at least one variant to reference the type
-        // itself — that's the recursion the induction case-split
-        // pivots on.
         let direct_rec = variants.iter().any(|variant| {
             variant.fields.iter().any(|field| {
                 let f = field.trim();
@@ -2561,8 +2580,6 @@ fn detect_induction_target(
         if !direct_rec {
             continue;
         }
-        // Reject indirect-recursion (e.g. via Option<Self> in a
-        // way the backend can't case-split cleanly).
         if has_indirect_rec_variants(variants, type_name) {
             continue;
         }
