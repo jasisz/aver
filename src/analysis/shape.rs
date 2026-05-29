@@ -931,8 +931,14 @@ fn detect_match_dispatcher_fold(
         let Expr::Match { subject, arms } = &body_expr.node else {
             continue;
         };
-        let Expr::Ident(subj_name) = &subject.node else {
-            continue;
+        // Pre-pipeline: subject is `Expr::Ident(name)`. Post-pipeline:
+        // the resolver rewrites local/param idents to
+        // `Expr::Resolved { name, .. }`. Both forms identify the
+        // matched parameter.
+        let subj_name = match &subject.node {
+            Expr::Ident(n) => n.as_str(),
+            Expr::Resolved { name, .. } => name.as_str(),
+            _ => continue,
         };
         if !fd.params.iter().any(|(n, _)| n == subj_name) {
             continue;
@@ -950,7 +956,7 @@ fn detect_match_dispatcher_fold(
         out.push(ModulePattern::MatchDispatcherFold {
             scope: scope.clone(),
             fn_name: fd.name.clone(),
-            list_param: subj_name.clone(),
+            list_param: subj_name.to_string(),
         });
     }
 }
@@ -1215,20 +1221,44 @@ fn collect_qualifying_in_expr(
     out: &mut Vec<String>,
 ) {
     use crate::ast::Expr;
-    if let Expr::FnCall(callee, args) = &expr.node
-        && let Expr::Ident(name) = &callee.node
-        && recursive.contains(name)
-        && args.len() > outer_params.len()
-    {
+    let try_qualify = |callee: &str, args: &[crate::ast::Spanned<Expr>], out: &mut Vec<String>| {
+        if !recursive.contains(callee) {
+            return;
+        }
+        if args.len() <= outer_params.len() {
+            return;
+        }
+        // Pre-pipeline args are `Expr::Ident(name)`; post-pipeline the
+        // resolver rewrites local/param idents to
+        // `Expr::Resolved { name, .. }`. Both shapes need to count.
         let mut arg_idents: HashSet<&str> = HashSet::new();
         for a in args {
-            if let Expr::Ident(n) = &a.node {
-                arg_idents.insert(n.as_str());
+            match &a.node {
+                Expr::Ident(n) => {
+                    arg_idents.insert(n.as_str());
+                }
+                Expr::Resolved { name, .. } => {
+                    arg_idents.insert(name.as_str());
+                }
+                _ => {}
             }
         }
         if outer_params.iter().all(|p| arg_idents.contains(*p)) {
-            out.push(name.clone());
+            out.push(callee.to_string());
         }
+    };
+    if let Expr::FnCall(callee, args) = &expr.node
+        && let Expr::Ident(name) = &callee.node
+    {
+        try_qualify(name, args, out);
+    }
+    // Post-pipeline AST: tail-position calls become `TailCall`,
+    // which loses the `FnCall(Ident, ...)` wrapper. The
+    // `fib(n) -> fibTR(n, 0, 1)` shape is a typical case — pipeline
+    // recognizes the tail call inside the `match` arm even though
+    // `fib` itself isn't recursive.
+    if let Expr::TailCall(td) = &expr.node {
+        try_qualify(&td.target, &td.args, out);
     }
     match &expr.node {
         Expr::FnCall(callee, args) => {

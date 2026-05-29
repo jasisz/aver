@@ -32,7 +32,7 @@ use crate::types::Type;
 // walker + renderers + `aver.toml` bridges. Internal use of the
 // recognition API in this file goes through `crate::analysis::shape`
 // directly (see imports below).
-use crate::analysis::shape::{Archetype, analyze_program};
+use crate::analysis::shape::{Archetype, ModulePattern, analyze_program_with_modules};
 
 // ─── ModuleShape vector + derived Kind ───────────────────────────────────────
 
@@ -625,6 +625,12 @@ pub struct ShapeReport {
     pub histogram: Histogram,
     pub layer: Option<LayerVerdict>,
     pub fns: Vec<FnShape>,
+    /// Module-level typed patterns recognized by `analysis::shape`
+    /// (stage 6 of #232). Populated from `program_shape.patterns`;
+    /// the renderer surfaces them in their own section so callers see
+    /// every refinement / wrapper / pipeline / renderer / fold the
+    /// substrate identified.
+    pub patterns: Vec<ModulePattern>,
 }
 
 pub fn analyze_path(path: &Path, module_root_hint: Option<&str>) -> Result<ShapeReport, String> {
@@ -740,12 +746,15 @@ pub fn analyze_source_with(
         })
         .collect();
 
-    // Stage 4 of #232: recognition substrate. `analyze_program` runs
-    // facts walk + SCC + classify in one go and returns the per-fn
-    // ProgramShape. Presentation tier (this fn) just adds the
-    // module-level Kind / verify / histogram / Layer scaffolding on
-    // top — the actual per-fn recognition no longer lives here.
-    let program_shape = analyze_program(&resolved_fns);
+    // Stage 4/6 of #232: recognition substrate.
+    // `analyze_program_with_modules` runs facts walk + SCC + classify
+    // and also populates `patterns` (module-level typed patterns:
+    // `RefinementSmartConstructor`, `WrapperOverRecursion`,
+    // `ResultPipelineChain`, `RendererFormatter`,
+    // `MatchDispatcherFold`). Presentation tier reads both —
+    // per-fn archetypes drive the histogram + Kind / Layer
+    // scaffolding; patterns get their own section in the renderer.
+    let program_shape = analyze_program_with_modules(&resolved_fns, &items, &dep_modules);
 
     let exposes_set: HashSet<&str> = exposes.iter().map(|s| s.as_str()).collect();
     let mut fn_shapes = Vec::with_capacity(resolved_fns.len());
@@ -823,6 +832,7 @@ pub fn analyze_source_with(
         histogram,
         layer,
         fns: fn_shapes,
+        patterns: program_shape.patterns,
     })
 }
 
@@ -973,6 +983,63 @@ pub struct RenderOptions {
     pub summary: bool,
 }
 
+/// One human-readable line for a single `ModulePattern`. Format:
+/// `<VariantName>  <key facts>` with the variant on the left so a
+/// `grep RefinementSmartConstructor` over the corpus output works.
+/// Scope-qualified names are rendered as `prefix::name` when the
+/// pattern lives in a dep module.
+fn render_module_pattern_line(p: &ModulePattern) -> String {
+    let scoped = |scope: &Option<String>, name: &str| -> String {
+        match scope {
+            Some(prefix) => format!("{prefix}::{name}"),
+            None => name.to_string(),
+        }
+    };
+    match p {
+        ModulePattern::RefinementSmartConstructor {
+            scope,
+            type_name,
+            carrier_field,
+            carrier_type,
+            constructor_fn,
+            ..
+        } => format!(
+            "RefinementSmartConstructor  {type_name}({carrier_field}: {carrier_type})  via {ctor}",
+            type_name = scoped(scope, type_name),
+            ctor = scoped(scope, constructor_fn),
+        ),
+        ModulePattern::WrapperOverRecursion {
+            wrapper_scope,
+            wrapper_fn,
+            inner_scope,
+            inner_fn,
+        } => format!(
+            "WrapperOverRecursion        {} → {}",
+            scoped(wrapper_scope, wrapper_fn),
+            scoped(inner_scope, inner_fn),
+        ),
+        ModulePattern::ResultPipelineChain {
+            scope,
+            fn_name,
+            step_count,
+        } => format!(
+            "ResultPipelineChain         {}  ({step_count} steps)",
+            scoped(scope, fn_name),
+        ),
+        ModulePattern::RendererFormatter { scope, fn_name } => {
+            format!("RendererFormatter           {}", scoped(scope, fn_name))
+        }
+        ModulePattern::MatchDispatcherFold {
+            scope,
+            fn_name,
+            list_param,
+        } => format!(
+            "MatchDispatcherFold         {}  (over {list_param})",
+            scoped(scope, fn_name),
+        ),
+    }
+}
+
 pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
     let mut out = String::new();
     // Header: `Module:` and `Kind:` share the value column. `Module:` is
@@ -1081,6 +1148,15 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
         }
     } else {
         out.push_str("\n  Layer: insufficient data\n");
+    }
+
+    if !report.patterns.is_empty() {
+        out.push_str("\n  Module patterns:\n");
+        for p in &report.patterns {
+            out.push_str("    ");
+            out.push_str(&render_module_pattern_line(p));
+            out.push('\n');
+        }
     }
 
     if !opts.summary {
