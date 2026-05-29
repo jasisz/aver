@@ -286,6 +286,21 @@ def main() -> int:
 
     if not args.skip_compiler:
         build_compiler()
+        # `wasm-pack build --features playground --no-default-features`
+        # (inside `build_compiler`) flips the workspace feature set,
+        # which invalidates cargo's feature cache for `aver-lang` and
+        # rebuilds `target/release/aver` without the `wasm` feature.
+        # If the next step is `build_wasm`, restore the wasm-capable
+        # aver bin first — otherwise `aver compile --target wasm-gc`
+        # would error out with "WASM target requires --features wasm".
+        if not args.skip_build:
+            print("Restoring aver bin with --features wasm after wasm-pack ...")
+            result = subprocess.run(
+                ["cargo", "build", "--release", "--bin", "aver", "--features", "wasm"],
+                cwd=REPO_ROOT,
+            )
+            if result.returncode != 0:
+                raise SystemExit("cargo build --features wasm failed")
 
     if not args.skip_source_sync:
         sync_sources()

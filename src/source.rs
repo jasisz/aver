@@ -293,14 +293,16 @@ fn load_recursive(
 /// playground / LSP / audit paths) into `ModuleInfo` records suitable
 /// for `PipelineConfig.dep_modules` and `SymbolTable::build`.
 ///
-/// Mirrors what [`load_compile_deps`] produces but skips disk IO and
-/// per-dep pipeline runs — the entry-level pipeline (typecheck +
-/// resolve) handles cross-module typing through `TypecheckMode::
-/// WithLoaded`. `analysis: None` here means the VM compiler falls
-/// through to the conservative "assume allocates" branch (no per-fn
-/// `no_alloc` promotion), which is the same trade-off the verify path
-/// already accepts.
+/// Each dep goes through `pipeline::run` with
+/// `TypecheckMode::WithLoaded(&siblings)` so the resulting
+/// `AnalysisResult` populates the same `no_alloc` / recursion facts
+/// the disk-loader path produces. The entry-level pipeline still
+/// handles cross-module typing separately; per-dep analysis here
+/// just unlocks the VM compiler's `no_alloc` fast paths on dep
+/// functions instead of forcing the conservative "assume allocates"
+/// branch.
 pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::ModuleInfo> {
+    let neutral_policy = crate::ir::NeutralAllocPolicy;
     loaded
         .iter()
         .map(|m| {
@@ -323,12 +325,30 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
                     _ => None,
                 })
                 .collect();
+            // Run the canonical pipeline on a clone of this dep's
+            // items, type-checking against the other loaded modules
+            // as the source of cross-module references. We feed the
+            // analysis result alone back into ModuleInfo; the
+            // pipeline-mutated items themselves stay local — the
+            // entry's pipeline run sees the original `m.items` shape
+            // via WithLoaded just like the typechecker did pre-fix.
+            let mut dep_items = m.items.clone();
+            let pipeline_result = crate::ir::pipeline::run(
+                &mut dep_items,
+                crate::ir::PipelineConfig {
+                    typecheck: Some(crate::ir::TypecheckMode::WithLoaded(loaded)),
+                    run_interp_lower: false,
+                    run_buffer_build: false,
+                    alloc_policy: Some(&neutral_policy),
+                    ..Default::default()
+                },
+            );
             crate::codegen::ModuleInfo {
                 prefix: m.dep_name.clone(),
                 depends,
                 type_defs,
                 fn_defs,
-                analysis: None,
+                analysis: pipeline_result.analysis,
             }
         })
         .collect()
