@@ -162,11 +162,13 @@ glob = "src/parse/**"
 layer = "Parse"
 ```
 
-Static module-shape analyzer. Three views in one run:
+Static module-shape analyzer — an *architectural smell radar*, not a classifier of truth. The histogram is the fact; Kind and Layer are interpretation. Output is auditable: every interpretation comes with the metric that drove it (confidence + margin + top-3 candidates for Layer; the rule that mapped the vector to Kind), so reviewers can decide whether to trust the label.
+
+Three views in one run:
 
 1. **Per-fn archetype** — 14 labels (`scc-mutual`, `structural-recursion`, `match-dispatcher`, `pipeline-result`, `manual-result-adapter`, `renderer-formatter`, `match-on-value`, `orchestration`, `effectful-leaf`, `let-pipeline`, `constructor-wrapper`, `data-as-function`, `trivial-helper`, `pure-expression`). Multi-label per fn; output lists every label that fires plus a primary pick.
 2. **ModuleShape vector + Kind** — 5 dims (`purity`, `entry`, `state_shape`, `type_surface`, `api_shape`). Kind is a single label projected from the vector: `ServiceClient`, `Orchestration`, `SmartConstructor`, `DataModule`, `PureHelpers`, `Library`, `EffectfulLibrary`, `EffectfulShell`. `purity` is `Pure` / `ClassifiedEffectful` (all effects are Oracle one-shot req/resp shape) / `ShellEffectful` (contains shell/lifecycle effect like `HttpServer.listen` — Oracle skips by design, not because the classifier doesn't recognize it).
-3. **Architectural Layer** — `Domain | Parse | Command | AiStrategy | RenderUi | Infra` by Euclidean distance between the per-module archetype histogram and built-in v0 fingerprints. Histogram is the fact, layer label the interpretation; `basis:` field announces which fingerprint set was used. Confidence is penalized on tiny modules (<5 fns capped at 0.2, <10 fns softened by 0.7×).
+3. **Architectural Layer** — `Domain | Parse | Command | AiStrategy | RenderUi | Infra` by Euclidean distance between the per-module archetype histogram and the fingerprint table. Two metrics: `confidence` (absolute fit to the best fingerprint) and `margin` (distance gap to runner-up). Low confidence OR low margin marks the verdict `uncertain`, with explicit "best: X" wording so the user doesn't read it as a hard label. Runners-up (top-3 closest layers with distances) are always printed so the user sees how decisive the call is. Confidence is penalized on tiny modules (<5 fns capped at 0.2, <10 fns softened by 0.7×).
 
 Verification appears as an orthogonal section — what verify blocks the source carries (`Cases`, `Laws`, `Trace`, `Mixed`), how many blocks, and per-fn coverage. Static read of the source, doesn't run VM.
 

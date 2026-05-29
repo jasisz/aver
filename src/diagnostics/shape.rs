@@ -854,10 +854,33 @@ fn histogram_to_buckets(hist: &Histogram) -> [(Bucket, f64); 5] {
 #[derive(Debug, Clone)]
 pub struct LayerVerdict {
     pub layer: Layer,
+    /// Absolute fit: how close `layer` is to the observed histogram,
+    /// normalised against the max possible Euclidean distance in the
+    /// 5-bucket simplex. Penalised on small modules (<5 fns capped at
+    /// 0.2, <10 fns softened by 0.7×).
     pub confidence: f64,
+    /// Distance gap between the chosen layer and the runner-up.
+    /// High margin = clear winner. Low margin = classifier is hesitating
+    /// between multiple fingerprints — read with care.
+    pub margin: f64,
+    /// True when the verdict shouldn't be read as a hard label —
+    /// either confidence is low OR margin to the runner-up is small.
+    /// Renderers should surface this with explicit "uncertain" wording.
+    pub uncertain: bool,
+    /// Top three nearest layers with their raw distances. Lets the
+    /// caller show "next: Domain Δ4.1, RenderUi Δ8.3" so the verdict
+    /// is auditable without pretending the second-best didn't exist.
+    pub candidates: Vec<(Layer, f64)>,
     pub basis: String,
     pub support_fns: usize,
 }
+
+/// Confidence threshold below which a verdict is marked `uncertain`.
+const UNCERTAIN_CONFIDENCE_THRESHOLD: f64 = 0.4;
+/// Margin (distance gap to runner-up) below which a verdict is marked
+/// `uncertain` even at high confidence — fingerprints are close to
+/// each other and the classifier could plausibly pick either.
+const UNCERTAIN_MARGIN_THRESHOLD: f64 = 10.0;
 
 /// Nearest fingerprint by Euclidean distance over bucket %.
 /// Confidence is `(max_dist - chosen_dist) / max_dist`, penalized by
@@ -896,9 +919,24 @@ pub fn classify_layer(
     } else {
         raw_conf
     };
+    // Margin = how far ahead the winner is from the second-best.
+    // Captures ambivalence the confidence number alone misses
+    // (two fingerprints both 0.2 fit is ambivalent; one at 0.5 + one
+    // at 0.1 is decisive even if confidence is the same).
+    let margin = if scored.len() >= 2 {
+        scored[1].1 - scored[0].1
+    } else {
+        f64::INFINITY
+    };
+    let uncertain =
+        small_n_penalty < UNCERTAIN_CONFIDENCE_THRESHOLD || margin < UNCERTAIN_MARGIN_THRESHOLD;
+    let candidates: Vec<(Layer, f64)> = scored.into_iter().take(3).collect();
     Some(LayerVerdict {
         layer: best_layer,
         confidence: small_n_penalty,
+        margin,
+        uncertain,
+        candidates,
         basis: basis.to_string(),
         support_fns: n,
     })
@@ -1333,12 +1371,36 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
         }
     }
     if let Some(verdict) = &report.layer {
-        out.push_str(&format!(
-            "\n  Layer: {}  (confidence {:.2}, basis: {})\n",
-            verdict.layer.as_str(),
-            verdict.confidence,
-            verdict.basis,
-        ));
+        if verdict.uncertain {
+            out.push_str(&format!(
+                "\n  Layer: uncertain  (best: {}, confidence {:.2}, margin Δ{:.1}, basis: {})\n",
+                verdict.layer.as_str(),
+                verdict.confidence,
+                verdict.margin,
+                verdict.basis,
+            ));
+        } else {
+            out.push_str(&format!(
+                "\n  Layer: {}  (confidence {:.2}, margin Δ{:.1}, basis: {})\n",
+                verdict.layer.as_str(),
+                verdict.confidence,
+                verdict.margin,
+                verdict.basis,
+            ));
+        }
+        // Runners-up (top 3 minus best). Hides nothing — even when
+        // confidence is high the user sees how far the alternatives
+        // are. "Δ" is the raw Euclidean distance in the 5-bucket %
+        // simplex; higher = further from observed histogram.
+        let runners: Vec<String> = verdict
+            .candidates
+            .iter()
+            .skip(1)
+            .map(|(layer, dist)| format!("{} Δ{:.1}", layer.as_str(), dist))
+            .collect();
+        if !runners.is_empty() {
+            out.push_str(&format!("         next: {}\n", runners.join(", ")));
+        }
     } else {
         out.push_str("\n  Layer: insufficient data\n");
     }
@@ -1387,9 +1449,17 @@ fn histogram_bar(pct: f64, width: usize) -> String {
 pub fn render_json(report: &ShapeReport) -> serde_json::Value {
     use serde_json::json;
     let layer = report.layer.as_ref().map(|v| {
+        let candidates: Vec<serde_json::Value> = v
+            .candidates
+            .iter()
+            .map(|(layer, dist)| json!({"name": layer.as_str(), "distance": dist}))
+            .collect();
         json!({
             "name": v.layer.as_str(),
             "confidence": v.confidence,
+            "margin": v.margin,
+            "uncertain": v.uncertain,
+            "candidates": candidates,
             "basis": v.basis,
             "support_fns": v.support_fns,
         })
@@ -1680,6 +1750,36 @@ pub fn render_corpus_text(entries: &[CorpusEntry], opts: &RenderOptions) -> Stri
                 pct,
                 count,
                 width = name_w,
+            ));
+        }
+    }
+    // Skipped files: list per-file reason so the user sees what got
+    // dropped and why. Without this the summary's "X analyzed, Y
+    // skipped" line gave a count but no actionable info.
+    let skipped: Vec<(&str, &str)> = entries
+        .iter()
+        .filter_map(|e| match e {
+            CorpusEntry::Skipped { rel_path, reason } => Some((rel_path.as_str(), reason.as_str())),
+            _ => None,
+        })
+        .collect();
+    if !skipped.is_empty() {
+        out.push_str(&format!("\n  Skipped ({} files):\n", skipped.len()));
+        let path_w = skipped
+            .iter()
+            .map(|(p, _)| p.len())
+            .max()
+            .unwrap_or(0)
+            .max(30);
+        for (path, reason) in skipped {
+            // Trim reason: typecheck errors can carry full module-line
+            // diagnostics; one-liner is enough at corpus summary level.
+            let one_line = reason.lines().next().unwrap_or(reason);
+            out.push_str(&format!(
+                "    {:<width$}  {}\n",
+                path,
+                one_line,
+                width = path_w
             ));
         }
     }
