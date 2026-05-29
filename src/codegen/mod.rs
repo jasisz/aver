@@ -262,6 +262,15 @@ pub struct CodegenContext {
     /// their primary input; this field is the foundation those PRs
     /// build on.
     pub resolved_program: crate::codegen::program_view::ResolvedProgramView,
+    /// Whole-program shape facts — typed Archetype labels + call-graph
+    /// SCC per `FnId`. Computed once per compilation by
+    /// [`analyze_program`](crate::analysis::shape::analyze_program) at
+    /// `build_context` time. Stage 5+ of #232 (0.23 "Shape") migrates
+    /// ad-hoc fn-shape detectors in proof codegen to read this instead
+    /// of rewalking the AST. `None` only for tests that assemble the
+    /// ctx by hand without calling `build_context`; downstream callers
+    /// should treat that as opt-out (preserve legacy detection path).
+    pub program_shape: Option<crate::analysis::shape::ProgramShape>,
 }
 
 /// Output files from a codegen backend.
@@ -508,6 +517,22 @@ pub fn build_context(
         resolved_fn_defs,
         resolved_module_fn_defs,
         current_module_scope: std::cell::RefCell::new(None),
+        program_shape: {
+            // Build once per compilation; downstream codegen reads
+            // `Archetype::StructuralRecursion` etc. instead of
+            // rewalking the AST. Covers entry-module fns first;
+            // dep-module fns get included so cross-module law
+            // routing (Stage 5+) can ask shape questions about
+            // callees declared in other files.
+            let mut all_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
+                resolved_program.entry_fns().collect();
+            for m in &resolved_program.modules {
+                for fd in &m.fn_defs {
+                    all_fns.push(fd);
+                }
+            }
+            Some(crate::analysis::shape::analyze_program(&all_fns))
+        },
         resolved_program,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
