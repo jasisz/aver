@@ -232,6 +232,27 @@ fn project_layer_override_rejects_unknown_layer_name() {
 }
 
 #[test]
+fn pure_module_with_demo_main_is_not_orchestration() {
+    // quicksort.av has a `main()` that prints the sorted result, but
+    // the rest of the module is pure recursive helpers. Pre-redesign
+    // it classified as Orchestration (any module with main + classified
+    // effects); post-redesign the effectful-fn ratio is below 30% so
+    // the demo main doesn't drag the module into Orchestration.
+    let r = analyze("examples/data/quicksort.av");
+    assert!(r.has_main, "quicksort.av declares main()");
+    assert!(
+        r.effectful_fn_ratio < 0.3,
+        "expected < 30% effectful non-main fns, got {:.2}",
+        r.effectful_fn_ratio,
+    );
+    assert!(
+        !matches!(r.kind, Kind::Orchestration),
+        "quicksort is library-with-demo, must NOT be Orchestration; got {:?}",
+        r.kind
+    );
+}
+
+#[test]
 fn layer_verdict_includes_runners_up_and_margin() {
     use aver::diagnostics::shape;
     let r = analyze("examples/services/redis.av");

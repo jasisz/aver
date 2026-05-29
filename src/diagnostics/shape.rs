@@ -562,7 +562,13 @@ impl Kind {
     }
 }
 
-pub fn derive_kind(shape: &ModuleShape) -> Kind {
+/// Threshold for "this module is genuinely effectful": at least this
+/// fraction of its non-main fns must declare effects in their `! [...]`.
+/// Below the threshold, a `main` that prints `Console.print("done")`
+/// after running pure code shouldn't drag the module into `Orchestration`.
+const EFFECTFUL_FN_RATIO_FOR_ORCHESTRATION: f64 = 0.3;
+
+pub fn derive_kind(shape: &ModuleShape, effectful_fn_ratio: f64) -> Kind {
     // Effectful Kinds (both Classified and Shell flavors): a Shell effect
     // is a long-running lifecycle (HttpServer.listen, Tcp.listen) — Oracle
     // skips it by design, not because the classifier doesn't recognize it.
@@ -579,13 +585,33 @@ pub fn derive_kind(shape: &ModuleShape) -> Kind {
             return Kind::ServiceClient;
         }
         if matches!(shape.entry, Entry::Main) {
-            return Kind::Orchestration;
+            // "Has main + has effects" used to unconditionally pick
+            // Orchestration. That dragged pure algorithm modules with
+            // a demo `main(); Console.print(result)` (quicksort,
+            // calculator, …) into Orchestration even though only one
+            // fn out of N actually touches an effect. Now we only
+            // commit to Orchestration when ≥30% of non-main fns are
+            // effectful — below that the module is library-shaped
+            // with a demo entry, and falls through to the api-shape
+            // and pure paths below.
+            if effectful_fn_ratio >= EFFECTFUL_FN_RATIO_FOR_ORCHESTRATION {
+                return Kind::Orchestration;
+            }
+            // Fall through: treat as library-with-demo by api/purity rules.
         }
         if matches!(shape.api_shape, ApiShape::ExposedLibrary) {
             return Kind::Library;
         }
         if matches!(shape.purity, Purity::ShellEffectful) {
             return Kind::EffectfulShell;
+        }
+        // Pure-dominated module with a demo main and no exposes —
+        // ergonomically the same as PureHelpers, even though one fn
+        // has effects.
+        if matches!(shape.entry, Entry::Main)
+            && effectful_fn_ratio < EFFECTFUL_FN_RATIO_FOR_ORCHESTRATION
+        {
+            return Kind::PureHelpers;
         }
         return Kind::EffectfulLibrary;
     }
@@ -961,6 +987,11 @@ pub struct ShapeReport {
     pub has_main: bool,
     pub shape: ModuleShape,
     pub kind: Kind,
+    /// Fraction of non-`main` fns that declare effects in their
+    /// `! [...]`. Drives the Orchestration vs PureHelpers decision in
+    /// `derive_kind` so a pure module with a demo `main()` doesn't
+    /// read as Orchestration.
+    pub effectful_fn_ratio: f64,
     pub verify: VerifyReport,
     pub histogram: Histogram,
     pub layer: Option<LayerVerdict>,
@@ -1093,10 +1124,17 @@ pub fn analyze_source_with(
     let mut has_main = false;
     let mut classified_uses_handle = false;
     let mut exposed_uses_handle = false;
+    let mut non_main_fns = 0usize;
+    let mut effectful_non_main_fns = 0usize;
 
     for fd in &resolved_fns {
         if fd.name == "main" {
             has_main = true;
+        } else {
+            non_main_fns += 1;
+            if !fd.effects.is_empty() {
+                effectful_non_main_fns += 1;
+            }
         }
         let this_uses_handle = uses_runtime_handle(fd);
         if this_uses_handle {
@@ -1119,6 +1157,14 @@ pub fn analyze_source_with(
         });
     }
 
+    let effectful_fn_ratio = if non_main_fns > 0 {
+        effectful_non_main_fns as f64 / non_main_fns as f64
+    } else {
+        // No non-main fns to classify — `derive_kind` falls through to
+        // the pure/api-shape paths anyway, so the value here is moot.
+        0.0
+    };
+
     let verify = compute_verify_report(&items, &resolved_fns);
 
     let shape = derive_shape(
@@ -1129,7 +1175,7 @@ pub fn analyze_source_with(
         exposed_uses_handle,
         &exposes,
     );
-    let kind = derive_kind(&shape);
+    let kind = derive_kind(&shape, effectful_fn_ratio);
     let layer = classify_layer(&histogram, fingerprints, basis);
 
     Ok(ShapeReport {
@@ -1141,6 +1187,7 @@ pub fn analyze_source_with(
         has_main,
         shape,
         kind,
+        effectful_fn_ratio,
         verify,
         histogram,
         layer,
@@ -1674,10 +1721,26 @@ pub fn render_corpus_text(entries: &[CorpusEntry], opts: &RenderOptions) -> Stri
         for e in entries {
             match e {
                 CorpusEntry::Analyzed { rel_path, report } => {
+                    // Layer cell carries confidence + margin always; when
+                    // uncertain, prefix with "uncertain — " so the user
+                    // can scan a corpus column and see ambivalent verdicts
+                    // without losing the best-fit name.
                     let layer = report
                         .layer
                         .as_ref()
-                        .map(|v| format!("{} ({:.2})", v.layer.as_str(), v.confidence))
+                        .map(|v| {
+                            let suffix = format!(
+                                "{} (conf {:.2}, Δ{:.1})",
+                                v.layer.as_str(),
+                                v.confidence,
+                                v.margin
+                            );
+                            if v.uncertain {
+                                format!("uncertain — {}", suffix)
+                            } else {
+                                suffix
+                            }
+                        })
                         .unwrap_or_else(|| "—".to_string());
                     out.push_str(&format!(
                         "  {:<width$}  {:<16}  layer: {}\n",
