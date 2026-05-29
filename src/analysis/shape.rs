@@ -683,6 +683,70 @@ pub enum ModulePattern {
         /// Source-level inner fn name (the recursive one).
         inner_fn: String,
     },
+    /// `?`-propagating Result pipeline: a fn whose body is a sequence
+    /// of `let x = step()?` bindings followed by a tail expression
+    /// (typically `Result.Ok(final)`). Canonical example:
+    /// `examples/core/result_pipeline.av::validateAndCombine` — six
+    /// `?` steps that short-circuit on the first Err.
+    ///
+    /// Detection rules (stage 6d):
+    /// - fn return type starts with `Result<`
+    /// - body has at least two `Stmt::Binding` whose value is
+    ///   `Expr::ErrorProp(...)` (the `?` operator)
+    /// - the tail stmt is an expression, not a binding
+    ///
+    /// `step_count` is the number of `?` bindings; downstream
+    /// consumers can use it to size the staged result type or to
+    /// pick between inlined and trampoline lowerings. No proof-export
+    /// consumer yet — this is substrate-only.
+    ResultPipelineChain {
+        scope: Option<String>,
+        fn_name: String,
+        step_count: usize,
+    },
+    /// Non-recursive pure renderer: a fn whose return type is `String`,
+    /// effects list is empty, and body contains an `InterpolatedStr`
+    /// or a `String`-typed `+` concatenation. Canonical examples are
+    /// `examples/data/rle.av::showRun` (single interpolation) and the
+    /// `show*` family in `examples/data/fibonacci.av`.
+    ///
+    /// Detection rules (stage 6e):
+    /// - return type is exactly `String`
+    /// - effects list is empty
+    /// - fn does not call itself anywhere in its body
+    /// - body contains at least one `Expr::InterpolatedStr` or
+    ///   `Expr::BinOp(Add, ..)` reachable through nesting
+    ///
+    /// Recursive structural renderers (`showRuns`, `showListIntInner`)
+    /// are intentionally excluded — they belong to a future
+    /// `StructuralRenderer` pattern paired with structural induction.
+    RendererFormatter {
+        scope: Option<String>,
+        fn_name: String,
+    },
+    /// Self-recursive structural fold over a `List<T>` parameter:
+    /// fn body is a single `match <param>` with at minimum
+    /// `[] -> ...` and `[head, ..tail] -> ...` arms, and the fn
+    /// calls itself somewhere in its body (typically passing
+    /// `tail` to recur). `nthOrZero(xs, index)` from
+    /// `examples/data/fibonacci.av` is the canonical example.
+    ///
+    /// Detection rules (stage 6f):
+    /// - body is a single `Stmt::Expr(Match)`
+    /// - subject is `Ident(p)` where `p` is one of the fn's params
+    /// - arms include both `Pattern::EmptyList` and `Pattern::Cons`
+    /// - fn is self-recursive
+    ///
+    /// Aver's stdlib has no `List.map/fold`, so this hand-rolled
+    /// structural fold shows up across the corpus. Recognizing it
+    /// unlocks two future moves: list-induction proof obligation
+    /// emission, and a deforestation rewrite that fuses the fold
+    /// with its consumer.
+    MatchDispatcherFold {
+        scope: Option<String>,
+        fn_name: String,
+        list_param: String,
+    },
 }
 
 /// Walk entry items + dep modules and emit every typed
@@ -824,7 +888,195 @@ pub fn detect_module_patterns(
         detect_wrapper_over_recursion(Some(m.prefix.clone()), &fns, &mut out);
     }
 
+    // Stage 6d of #232: `ResultPipelineChain` per-scope detection.
+    detect_result_pipeline_chain(None, &entry_fns, &mut out);
+    for m in dep_modules {
+        let fns: Vec<&crate::ast::FnDef> = m.fn_defs.iter().collect();
+        detect_result_pipeline_chain(Some(m.prefix.clone()), &fns, &mut out);
+    }
+
+    // Stage 6e of #232: `RendererFormatter` per-scope detection.
+    detect_renderer_formatter(None, &entry_fns, &mut out);
+    for m in dep_modules {
+        let fns: Vec<&crate::ast::FnDef> = m.fn_defs.iter().collect();
+        detect_renderer_formatter(Some(m.prefix.clone()), &fns, &mut out);
+    }
+
+    // Stage 6f of #232: `MatchDispatcherFold` per-scope detection.
+    detect_match_dispatcher_fold(None, &entry_fns, &mut out);
+    for m in dep_modules {
+        let fns: Vec<&crate::ast::FnDef> = m.fn_defs.iter().collect();
+        detect_match_dispatcher_fold(Some(m.prefix.clone()), &fns, &mut out);
+    }
+
     out
+}
+
+/// Per-scope detector for [`ModulePattern::MatchDispatcherFold`]. See
+/// the variant docs for the detection contract.
+fn detect_match_dispatcher_fold(
+    scope: Option<String>,
+    fns: &[&crate::ast::FnDef],
+    out: &mut Vec<ModulePattern>,
+) {
+    use crate::ast::{Expr, Pattern, Stmt};
+    for fd in fns {
+        let stmts = fd.body.stmts();
+        if stmts.len() != 1 {
+            continue;
+        }
+        let Stmt::Expr(body_expr) = &stmts[0] else {
+            continue;
+        };
+        let Expr::Match { subject, arms } = &body_expr.node else {
+            continue;
+        };
+        let Expr::Ident(subj_name) = &subject.node else {
+            continue;
+        };
+        if !fd.params.iter().any(|(n, _)| n == subj_name) {
+            continue;
+        }
+        let has_nil = arms.iter().any(|a| matches!(a.pattern, Pattern::EmptyList));
+        let has_cons = arms
+            .iter()
+            .any(|a| matches!(a.pattern, Pattern::Cons(_, _)));
+        if !(has_nil && has_cons) {
+            continue;
+        }
+        if !body_calls_name(&fd.body, &fd.name) {
+            continue;
+        }
+        out.push(ModulePattern::MatchDispatcherFold {
+            scope: scope.clone(),
+            fn_name: fd.name.clone(),
+            list_param: subj_name.clone(),
+        });
+    }
+}
+
+/// Per-scope detector for [`ModulePattern::RendererFormatter`]. See
+/// the variant docs for the detection contract.
+fn detect_renderer_formatter(
+    scope: Option<String>,
+    fns: &[&crate::ast::FnDef],
+    out: &mut Vec<ModulePattern>,
+) {
+    for fd in fns {
+        if fd.return_type != "String" {
+            continue;
+        }
+        if !fd.effects.is_empty() {
+            continue;
+        }
+        if body_calls_name(&fd.body, &fd.name) {
+            continue;
+        }
+        if !body_has_string_building(&fd.body) {
+            continue;
+        }
+        out.push(ModulePattern::RendererFormatter {
+            scope: scope.clone(),
+            fn_name: fd.name.clone(),
+        });
+    }
+}
+
+/// Walk `body` looking for any `Expr::InterpolatedStr` or string-typed
+/// `+` (`BinOp(Add, ..)`). Conservative: any addition counts since
+/// the typechecker has already restricted what `+` can do at a
+/// `String`-returning callsite — false positives here would be
+/// numeric adds that never reach the return slot, which the
+/// `return_type == "String"` guard already excludes for trivial
+/// arithmetic-only bodies.
+fn body_has_string_building(body: &crate::ast::FnBody) -> bool {
+    for stmt in body.stmts() {
+        let expr = match stmt {
+            crate::ast::Stmt::Binding(_, _, e) => e,
+            crate::ast::Stmt::Expr(e) => e,
+        };
+        if expr_has_string_building(expr) {
+            return true;
+        }
+    }
+    false
+}
+
+fn expr_has_string_building(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::InterpolatedStr(_) => true,
+        Expr::BinOp(crate::ast::BinOp::Add, _, _) => true,
+        Expr::FnCall(callee, args) => {
+            expr_has_string_building(callee) || args.iter().any(expr_has_string_building)
+        }
+        Expr::TailCall(td) => td.args.iter().any(expr_has_string_building),
+        Expr::Match { subject, arms } => {
+            expr_has_string_building(subject)
+                || arms.iter().any(|a| expr_has_string_building(&a.body))
+        }
+        Expr::BinOp(_, l, r) => expr_has_string_building(l) || expr_has_string_building(r),
+        Expr::Neg(e) | Expr::Attr(e, _) | Expr::ErrorProp(e) => expr_has_string_building(e),
+        Expr::Constructor(_, Some(e)) => expr_has_string_building(e),
+        Expr::List(xs) | Expr::Tuple(xs) | Expr::IndependentProduct(xs, _) => {
+            xs.iter().any(expr_has_string_building)
+        }
+        Expr::MapLiteral(pairs) => pairs
+            .iter()
+            .any(|(k, v)| expr_has_string_building(k) || expr_has_string_building(v)),
+        Expr::RecordCreate { fields, .. } => {
+            fields.iter().any(|(_, e)| expr_has_string_building(e))
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_has_string_building(base)
+                || updates.iter().any(|(_, e)| expr_has_string_building(e))
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {
+            false
+        }
+    }
+}
+
+/// Per-scope detector for [`ModulePattern::ResultPipelineChain`].
+/// Counts `Stmt::Binding(_, _, ErrorProp(...))` (the `?` operator)
+/// in each fn body; emits the pattern when there are ≥2 such
+/// bindings, the fn returns `Result<…>`, and the tail stmt is an
+/// expression (`Stmt::Expr`, not another binding).
+fn detect_result_pipeline_chain(
+    scope: Option<String>,
+    fns: &[&crate::ast::FnDef],
+    out: &mut Vec<ModulePattern>,
+) {
+    use crate::ast::{Expr, Stmt};
+    for fd in fns {
+        if !fd.return_type.starts_with("Result<") {
+            continue;
+        }
+        let stmts = fd.body.stmts();
+        if stmts.len() < 2 {
+            continue;
+        }
+        if !matches!(stmts.last(), Some(Stmt::Expr(_))) {
+            continue;
+        }
+        let step_count = stmts
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s,
+                    Stmt::Binding(_, _, e) if matches!(e.node, Expr::ErrorProp(_))
+                )
+            })
+            .count();
+        if step_count < 2 {
+            continue;
+        }
+        out.push(ModulePattern::ResultPipelineChain {
+            scope: scope.clone(),
+            fn_name: fd.name.clone(),
+            step_count,
+        });
+    }
 }
 
 /// Per-scope detector for [`ModulePattern::WrapperOverRecursion`].

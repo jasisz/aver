@@ -96,12 +96,19 @@ fn nonneg_float_module_emits_one_refinement_pattern() {
 }
 
 #[test]
-fn module_with_no_refinement_emits_no_pattern() {
+fn module_with_no_refinement_emits_no_refinement_pattern() {
     // Plain orchestration module — no opaque + smart constructor pair.
+    // It may still emit other module patterns (e.g. RendererFormatter
+    // for `showListInt`); the contract here is only that
+    // `RefinementSmartConstructor` does not fire.
     let patterns = detect_in_file("examples/data/quicksort.av");
+    let refinements: Vec<_> = patterns
+        .iter()
+        .filter(|p| matches!(p, ModulePattern::RefinementSmartConstructor { .. }))
+        .collect();
     assert!(
-        patterns.is_empty(),
-        "quicksort is not a refinement module; got {patterns:?}"
+        refinements.is_empty(),
+        "quicksort has no refinement record; got {refinements:?}"
     );
 }
 
@@ -191,6 +198,121 @@ fn fibonacci_module_pins_fib_over_fibtr_wrapper() {
     assert!(
         wrappers.contains(&(None, "fib".to_string(), None, "fibTR".to_string())),
         "expected fib→fibTR wrapper; got {wrappers:?}"
+    );
+}
+
+// ─── Stage 6d: ResultPipelineChain ──────────────────────────────────────────
+
+#[test]
+fn result_pipeline_module_pins_validate_and_combine_chain() {
+    let patterns = detect_in_file("examples/core/result_pipeline.av");
+    let chains: Vec<_> = patterns
+        .iter()
+        .filter_map(|p| match p {
+            ModulePattern::ResultPipelineChain {
+                fn_name,
+                step_count,
+                scope,
+            } => Some((scope.clone(), fn_name.clone(), *step_count)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        chains.contains(&(None, "validateAndCombine".to_string(), 6)),
+        "expected validateAndCombine with 6 `?` steps; got {chains:?}"
+    );
+    // The single-step smart constructors (parsePositive, doubled,
+    // capAtThousand) don't qualify — body is one match, not a
+    // binding chain. The manual `match Result.Err -> Err` version
+    // (`validateAndCombineNoOp`) has zero `?` bindings.
+    assert!(
+        chains
+            .iter()
+            .all(|(_, name, _)| name == "validateAndCombine"),
+        "no other fn should match in this module; got {chains:?}"
+    );
+}
+
+#[test]
+fn refinement_module_emits_no_pipeline_chain() {
+    let patterns = detect_in_file("examples/refinement/natural/natural.av");
+    let chains: Vec<_> = patterns
+        .iter()
+        .filter(|p| matches!(p, ModulePattern::ResultPipelineChain { .. }))
+        .collect();
+    assert!(
+        chains.is_empty(),
+        "smart-constructor module has no `?` chains; got {chains:?}"
+    );
+}
+
+// ─── Stage 6e: RendererFormatter ────────────────────────────────────────────
+
+#[test]
+fn rle_module_pins_show_run_as_renderer() {
+    let patterns = detect_in_file("examples/data/rle.av");
+    let renderers: Vec<_> = patterns
+        .iter()
+        .filter_map(|p| match p {
+            ModulePattern::RendererFormatter { fn_name, scope } => {
+                Some((scope.clone(), fn_name.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    // `showRun` is a non-recursive pure interpolation.
+    assert!(
+        renderers.contains(&(None, "showRun".to_string())),
+        "expected showRun renderer; got {renderers:?}"
+    );
+    // `showRuns` is recursive (self-call in tail arm) — must NOT be
+    // emitted by this pattern.
+    assert!(
+        !renderers.contains(&(None, "showRuns".to_string())),
+        "recursive showRuns must not match RendererFormatter; got {renderers:?}"
+    );
+}
+
+// ─── Stage 6f: MatchDispatcherFold ──────────────────────────────────────────
+
+#[test]
+fn fibonacci_module_pins_nth_or_zero_fold() {
+    let patterns = detect_in_file("examples/data/fibonacci.av");
+    let folds: Vec<_> = patterns
+        .iter()
+        .filter_map(|p| match p {
+            ModulePattern::MatchDispatcherFold {
+                fn_name,
+                list_param,
+                scope,
+            } => Some((scope.clone(), fn_name.clone(), list_param.clone())),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        folds.contains(&(None, "nthOrZero".to_string(), "xs".to_string())),
+        "expected nthOrZero fold; got {folds:?}"
+    );
+    // `showListIntInner` also folds over a list but nests its match —
+    // the outer subject is `xs`, both nil and cons arms exist, and
+    // the fn self-recurses. This is intentional: the pattern claims
+    // *structural* list-fold shape, not "single match arm depth".
+    assert!(
+        folds.contains(&(None, "showListIntInner".to_string(), "xs".to_string())),
+        "expected showListIntInner fold; got {folds:?}"
+    );
+}
+
+#[test]
+fn refinement_module_emits_no_fold_pattern() {
+    let patterns = detect_in_file("examples/refinement/natural/natural.av");
+    let folds: Vec<_> = patterns
+        .iter()
+        .filter(|p| matches!(p, ModulePattern::MatchDispatcherFold { .. }))
+        .collect();
+    assert!(
+        folds.is_empty(),
+        "smart-constructor module has no list folds; got {folds:?}"
     );
 }
 
