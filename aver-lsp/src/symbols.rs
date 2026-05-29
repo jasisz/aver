@@ -7,7 +7,7 @@ use aver::checker::merge_verify_blocks;
 
 use crate::completion;
 
-pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
+pub fn document_symbols(source: &str, base_dir: Option<&str>) -> Option<DocumentSymbolResponse> {
     let items = completion::parse_items(source);
     if items.is_empty() {
         return None;
@@ -39,13 +39,21 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
     let symbols = items
         .iter()
         .filter_map(|item| match item {
-            TopLevel::Module(module) => Some(make_symbol(
-                module.name.clone(),
-                Some("module".to_string()),
-                SymbolKind::MODULE,
-                line_range(module.line),
-                None,
-            )),
+            TopLevel::Module(module) => {
+                // Surface the analyzer's Kind verdict in the symbol
+                // detail so the outline reads e.g. "Redis — ServiceClient".
+                // Best-effort: if shape analysis fails, fall back to the
+                // plain "module" label.
+                let detail = module_shape_detail(source, base_dir, &module.name)
+                    .unwrap_or_else(|| "module".to_string());
+                Some(make_symbol(
+                    module.name.clone(),
+                    Some(detail),
+                    SymbolKind::MODULE,
+                    line_range(module.line),
+                    None,
+                ))
+            }
             TopLevel::Decision(decision) => Some(make_symbol(
                 decision.name.clone(),
                 Some(format!("chosen {}", decision.chosen.node.text())),
@@ -115,6 +123,22 @@ pub fn document_symbols(source: &str) -> Option<DocumentSymbolResponse> {
     Some(DocumentSymbolResponse::Nested(symbols))
 }
 
+fn module_shape_detail(source: &str, base_dir: Option<&str>, module_name: &str) -> Option<String> {
+    use aver::diagnostics::shape;
+    let module_root = base_dir.unwrap_or(".");
+    let fingerprints = shape::builtin_v0_layer_fingerprints();
+    let report = shape::analyze_source_with(
+        source,
+        module_root,
+        "(buffer)",
+        module_name,
+        &fingerprints,
+        "built-in v0",
+    )
+    .ok()?;
+    Some(format!("module — {}", report.kind.as_str()))
+}
+
 fn line_range(line: usize) -> Range {
     let line = line.saturating_sub(1) as u32;
     Range {
@@ -175,7 +199,7 @@ verify publicFn law grows
     publicFn(x) => x + 1
 "#;
 
-        let Some(DocumentSymbolResponse::Nested(symbols)) = document_symbols(source) else {
+        let Some(DocumentSymbolResponse::Nested(symbols)) = document_symbols(source, None) else {
             panic!("expected document symbols");
         };
 

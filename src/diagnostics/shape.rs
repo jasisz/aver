@@ -948,8 +948,6 @@ pub fn analyze_path_with(
     basis: &str,
 ) -> Result<ShapeReport, String> {
     let source = std::fs::read_to_string(path).map_err(|e| format!("read: {}", e))?;
-    let mut items = crate::source::parse_source(&source).map_err(|e| format!("parse: {}", e))?;
-
     let module_root = match module_root_hint {
         Some(r) => r.to_string(),
         None => path
@@ -958,6 +956,38 @@ pub fn analyze_path_with(
             .map(|s| s.to_string())
             .unwrap_or_else(|| ".".to_string()),
     };
+    let file_label = path.to_string_lossy().to_string();
+    let fallback_module_name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("<unnamed>")
+        .to_string();
+    analyze_source_with(
+        &source,
+        &module_root,
+        &file_label,
+        &fallback_module_name,
+        fingerprints,
+        basis,
+    )
+}
+
+/// Analyze a source string directly, without touching the filesystem
+/// for the entry file. Used by the LSP (editor buffer may differ from
+/// on-disk content) and any future embedder that holds the program in
+/// memory. `module_root` resolves `depends [...]`; `file_label` is the
+/// path string surfaced in the report's `file` field; `fallback_module_name`
+/// is used when the source has no `module` declaration.
+pub fn analyze_source_with(
+    source: &str,
+    module_root: &str,
+    file_label: &str,
+    fallback_module_name: &str,
+    fingerprints: &[LayerFingerprint],
+    basis: &str,
+) -> Result<ShapeReport, String> {
+    let mut items = crate::source::parse_source(source).map_err(|e| format!("parse: {}", e))?;
+    let module_root = module_root.to_string();
 
     let dep_modules = crate::source::load_compile_deps(&items, &module_root)
         .map_err(|e| format!("deps: {}", e))?;
@@ -995,10 +1025,7 @@ pub fn analyze_path_with(
             m.exposes.clone(),
         ),
         None => (
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("<unnamed>")
-                .to_string(),
+            fallback_module_name.to_string(),
             vec![],
             vec![],
             vec![],
@@ -1069,7 +1096,7 @@ pub fn analyze_path_with(
 
     Ok(ShapeReport {
         module: module_name,
-        file: path.to_string_lossy().to_string(),
+        file: file_label.to_string(),
         depends,
         effects,
         exposes_opaque,

@@ -28,6 +28,12 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
     }
 
     let tc_result = run_type_check_full(&items, base_dir);
+
+    // Module-level shape lens: one CodeLens above `module X` with the
+    // derived Kind + nearest Layer. Best-effort — if shape analysis
+    // fails (typecheck error, missing deps), skip silently rather than
+    // breaking the rest of the lens output.
+    let shape_lenses = compute_module_shape_lens(source, base_dir, uri, &items);
     let verify_by_fn: HashMap<String, Vec<_>> =
         merge_verify_blocks(&items)
             .into_iter()
@@ -127,7 +133,84 @@ pub fn code_lenses(source: &str, base_dir: Option<&str>, uri: &str) -> Vec<CodeL
         }
     }
 
+    lenses.extend(shape_lenses);
     lenses
+}
+
+/// One CodeLens above `module X` showing the analyzer's verdict on
+/// what kind of module this is. Best-effort — needs a full pipeline
+/// run (resolver) and module-root deps to resolve; if that fails the
+/// lens is omitted rather than surfacing the error as an LSP
+/// diagnostic.
+fn compute_module_shape_lens(
+    source: &str,
+    base_dir: Option<&str>,
+    uri: &str,
+    items: &[TopLevel],
+) -> Vec<CodeLens> {
+    use aver::diagnostics::shape;
+
+    let Some(module_decl) = items.iter().find_map(|i| match i {
+        TopLevel::Module(m) => Some(m),
+        _ => None,
+    }) else {
+        return Vec::new();
+    };
+
+    let module_root = base_dir.unwrap_or(".");
+    let file_label = uri.strip_prefix("file://").unwrap_or(uri);
+    let fallback_name = &module_decl.name;
+    let fingerprints = shape::builtin_v0_layer_fingerprints();
+    let Ok(report) = shape::analyze_source_with(
+        source,
+        module_root,
+        file_label,
+        fallback_name,
+        &fingerprints,
+        "built-in v0",
+    ) else {
+        return Vec::new();
+    };
+
+    let layer_label = report
+        .layer
+        .as_ref()
+        .map(|v| format!(" · {} ({:.2})", v.layer.as_str(), v.confidence))
+        .unwrap_or_default();
+    let title = format!("shape: {}{}", report.kind.as_str(), layer_label);
+
+    let message = format!(
+        "{}{}\nKind:    {} — {}\n\nModuleShape:\n  purity        {}\n  entry         {}\n  state_shape   {}\n  type_surface  {}\n  api_shape     {}\n\nVerify blocks: {}\nNon-main fns:  {}\nLayer:         {}\nBasis:         {}",
+        "Module: ",
+        report.module,
+        report.kind.as_str(),
+        report.kind.rule(),
+        report.shape.purity.as_str(),
+        report.shape.entry.as_str(),
+        report.shape.state_shape.as_str(),
+        report.shape.type_surface.as_str(),
+        report.shape.api_shape.as_str(),
+        report.verify.blocks,
+        report.histogram.total_fns,
+        report
+            .layer
+            .as_ref()
+            .map(|v| v.layer.as_str())
+            .unwrap_or("insufficient data"),
+        report
+            .layer
+            .as_ref()
+            .map(|v| v.basis.as_str())
+            .unwrap_or("—"),
+    );
+
+    vec![make_lens(
+        uri,
+        module_decl.line,
+        module_decl.line,
+        title,
+        message,
+    )]
 }
 
 fn canonical_specs(
@@ -250,6 +333,17 @@ verify publicFn law publicFnSpec
         assert!(titles.contains(&"verify: 1 case, 1 law"));
         assert!(titles.contains(&"decisions: 1"));
         assert!(titles.contains(&"impacts: 1"));
+
+        // Module-shape lens — Demo declares `effects []` implicitly (no
+        // block); the analyzer should still pick a Kind. Kind label
+        // appears in the title; the exact Kind is whatever the
+        // classifier picks for this small fixture, so we just assert
+        // the prefix.
+        assert!(
+            titles.iter().any(|t| t.starts_with("shape: ")),
+            "expected a `shape: <Kind>` lens, got titles: {:?}",
+            titles
+        );
         let verify = lenses
             .iter()
             .find(|lens| {

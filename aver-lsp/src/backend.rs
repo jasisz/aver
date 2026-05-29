@@ -231,7 +231,8 @@ impl LanguageServer for AverBackend {
             docs.get(&uri.to_string()).cloned().unwrap_or_default()
         };
 
-        Ok(symbols::document_symbols(&source))
+        let base_dir = self.get_base_dir(&uri);
+        Ok(symbols::document_symbols(&source, base_dir.as_deref()))
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
