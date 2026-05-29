@@ -989,6 +989,7 @@ pub struct RenderOptions {
 /// Scope-qualified names are rendered as `prefix::name` when the
 /// pattern lives in a dep module.
 fn render_module_pattern_line(p: &ModulePattern) -> String {
+    use colored::Colorize;
     let scoped = |scope: &Option<String>, name: &str| -> String {
         match scope {
             Some(prefix) => format!("{prefix}::{name}"),
@@ -1004,9 +1005,12 @@ fn render_module_pattern_line(p: &ModulePattern) -> String {
             constructor_fn,
             ..
         } => format!(
-            "RefinementSmartConstructor  {type_name}({carrier_field}: {carrier_type})  via {ctor}",
-            type_name = scoped(scope, type_name),
-            ctor = scoped(scope, constructor_fn),
+            "{}  {}({}: {})  via {}",
+            "RefinementSmartConstructor".magenta().bold(),
+            scoped(scope, type_name).bold(),
+            carrier_field,
+            carrier_type.cyan(),
+            scoped(scope, constructor_fn).bold(),
         ),
         ModulePattern::WrapperOverRecursion {
             wrapper_scope,
@@ -1014,68 +1018,84 @@ fn render_module_pattern_line(p: &ModulePattern) -> String {
             inner_scope,
             inner_fn,
         } => format!(
-            "WrapperOverRecursion        {} → {}",
-            scoped(wrapper_scope, wrapper_fn),
-            scoped(inner_scope, inner_fn),
+            "{}        {} → {}",
+            "WrapperOverRecursion".magenta().bold(),
+            scoped(wrapper_scope, wrapper_fn).bold(),
+            scoped(inner_scope, inner_fn).bold(),
         ),
         ModulePattern::ResultPipelineChain {
             scope,
             fn_name,
             step_count,
         } => format!(
-            "ResultPipelineChain         {}  ({step_count} steps)",
-            scoped(scope, fn_name),
+            "{}         {}  ({} steps)",
+            "ResultPipelineChain".magenta().bold(),
+            scoped(scope, fn_name).bold(),
+            step_count.to_string().yellow(),
         ),
-        ModulePattern::RendererFormatter { scope, fn_name } => {
-            format!("RendererFormatter           {}", scoped(scope, fn_name))
-        }
+        ModulePattern::RendererFormatter { scope, fn_name } => format!(
+            "{}           {}",
+            "RendererFormatter".magenta().bold(),
+            scoped(scope, fn_name).bold(),
+        ),
         ModulePattern::MatchDispatcherFold {
             scope,
             fn_name,
             list_param,
         } => format!(
-            "MatchDispatcherFold         {}  (over {list_param})",
-            scoped(scope, fn_name),
+            "{}         {}  (over {})",
+            "MatchDispatcherFold".magenta().bold(),
+            scoped(scope, fn_name).bold(),
+            list_param.cyan(),
         ),
     }
 }
 
 pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
+    use colored::Colorize;
     let mut out = String::new();
     // Header: `Module:` and `Kind:` share the value column. `Module:` is
     // 7 chars + space, `Kind:` is 5 chars + 3 spaces — same total width.
-    out.push_str(&format!("Module:  {}\n", report.module));
-    out.push_str(&format!("Kind:    {}\n\n", report.kind.as_str()));
-    out.push_str("  ModuleShape:\n");
+    // Colors auto-disable on non-TTY (the `colored` crate detects
+    // pipes and the NO_COLOR env var), so tests + JSON consumers see
+    // plain text.
+    out.push_str(&format!("{}  {}\n", "Module:".bold(), report.module.bold()));
     out.push_str(&format!(
-        "    purity        {}\n",
+        "{}    {}\n\n",
+        "Kind:".bold(),
+        report.kind.as_str().cyan().bold()
+    ));
+    out.push_str(&format!("{}\n", "ModuleShape:".bold()));
+    out.push_str(&format!(
+        "  purity        {}\n",
         report.shape.purity.as_str()
     ));
     out.push_str(&format!(
-        "    entry         {}\n",
+        "  entry         {}\n",
         report.shape.entry.as_str()
     ));
     out.push_str(&format!(
-        "    state_shape   {}\n",
+        "  state_shape   {}\n",
         report.shape.state_shape.as_str()
     ));
     out.push_str(&format!(
-        "    type_surface  {}\n",
+        "  type_surface  {}\n",
         report.shape.type_surface.as_str()
     ));
     out.push_str(&format!(
-        "    api_shape     {}\n\n",
+        "  api_shape     {}\n\n",
         report.shape.api_shape.as_str()
     ));
 
     // Verification: collapse the zero-block case to a single line — the
     // "0 (no) blocks, 0/0 fns covered" reading was confusing.
     if report.verify.blocks == 0 {
-        out.push_str("  Verification:  no verify blocks\n\n");
+        out.push_str(&format!("{}  no verify blocks\n\n", "Verification:".bold()));
     } else {
         out.push_str(&format!(
-            "  Verification:  {} {} block{}, {}/{} fns covered\n\n",
-            report.verify.blocks,
+            "{}  {} {} block{}, {}/{} fns covered\n\n",
+            "Verification:".bold(),
+            report.verify.blocks.to_string().yellow(),
             match report.verify.level {
                 VerifyLevel::None => "(no)",
                 VerifyLevel::Cases => "cases",
@@ -1084,17 +1104,21 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
                 VerifyLevel::Mixed => "mixed",
             },
             if report.verify.blocks == 1 { "" } else { "s" },
-            report.verify.covered_fns,
-            report.verify.eligible_fns,
+            report.verify.covered_fns.to_string().yellow(),
+            report.verify.eligible_fns.to_string().yellow(),
         ));
     }
 
     if report.histogram.total_fns == 0 {
-        out.push_str("  Histogram:     no classifiable fns (module only has `main` or no fns)\n");
+        out.push_str(&format!(
+            "{}     no classifiable fns (module only has `main` or no fns)\n",
+            "Histogram:".bold()
+        ));
     } else {
         out.push_str(&format!(
-            "  Histogram ({} fns):\n",
-            report.histogram.total_fns
+            "{} ({} fns):\n",
+            "Histogram".bold(),
+            report.histogram.total_fns.to_string().yellow()
         ));
         let sorted = report.histogram.sorted();
         let name_w = sorted
@@ -1106,11 +1130,11 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
         for (name, count, pct) in &sorted {
             let bar = histogram_bar(*pct, 20);
             out.push_str(&format!(
-                "    {:<width$}  {}  {:>3.0}%  ({})\n",
+                "  {:<width$}  {}  {:>3}  ({})\n",
                 name.as_str(),
-                bar,
-                pct,
-                count,
+                bar.cyan(),
+                format!("{:.0}%", pct).yellow(),
+                count.to_string().dimmed(),
                 width = name_w,
             ));
         }
@@ -1118,19 +1142,22 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
     if let Some(verdict) = &report.layer {
         if verdict.uncertain {
             out.push_str(&format!(
-                "\n  Layer: uncertain  (best: {}, confidence {:.2}, margin Δ{:.1}, basis: {})\n",
-                verdict.layer.as_str(),
-                verdict.confidence,
-                verdict.margin,
-                verdict.basis,
+                "\n{} {}  (best: {}, confidence {}, margin Δ{}, basis: {})\n",
+                "Layer:".bold(),
+                "uncertain".yellow().bold(),
+                verdict.layer.as_str().cyan().bold(),
+                format!("{:.2}", verdict.confidence).yellow(),
+                format!("{:.1}", verdict.margin).yellow(),
+                verdict.basis.dimmed(),
             ));
         } else {
             out.push_str(&format!(
-                "\n  Layer: {}  (confidence {:.2}, margin Δ{:.1}, basis: {})\n",
-                verdict.layer.as_str(),
-                verdict.confidence,
-                verdict.margin,
-                verdict.basis,
+                "\n{} {}  (confidence {}, margin Δ{}, basis: {})\n",
+                "Layer:".bold(),
+                verdict.layer.as_str().cyan().bold(),
+                format!("{:.2}", verdict.confidence).yellow(),
+                format!("{:.1}", verdict.margin).yellow(),
+                verdict.basis.dimmed(),
             ));
         }
         // Runners-up (top 3 minus best). Hides nothing — even when
@@ -1144,23 +1171,27 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
             .map(|(layer, dist)| format!("{} Δ{:.1}", layer.as_str(), dist))
             .collect();
         if !runners.is_empty() {
-            out.push_str(&format!("         next: {}\n", runners.join(", ")));
+            out.push_str(&format!(
+                "       {} {}\n",
+                "next:".dimmed(),
+                runners.join(", ").dimmed()
+            ));
         }
     } else {
-        out.push_str("\n  Layer: insufficient data\n");
+        out.push_str(&format!("\n{} insufficient data\n", "Layer:".bold()));
     }
 
     if !report.patterns.is_empty() {
-        out.push_str("\n  Module patterns:\n");
+        out.push_str(&format!("\n{}\n", "Module patterns:".bold()));
         for p in &report.patterns {
-            out.push_str("    ");
+            out.push_str("  ");
             out.push_str(&render_module_pattern_line(p));
             out.push('\n');
         }
     }
 
     if !opts.summary {
-        out.push_str("\n  Functions:\n");
+        out.push_str(&format!("\n{}\n", "Functions:".bold()));
         let name_w = report
             .fns
             .iter()
@@ -1179,9 +1210,9 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
                     .join(", ")
             };
             out.push_str(&format!(
-                "    {:<width$}  {}\n",
+                "  {:<width$}  {}\n",
                 f.name,
-                labels_str,
+                labels_str.dimmed(),
                 width = name_w,
             ));
         }
@@ -1241,6 +1272,8 @@ pub fn render_json(report: &ShapeReport) -> serde_json::Value {
             })
         })
         .collect();
+    let patterns: Vec<serde_json::Value> =
+        report.patterns.iter().map(module_pattern_to_json).collect();
     json!({
         "module": report.module,
         "file": report.file,
@@ -1274,7 +1307,76 @@ pub fn render_json(report: &ShapeReport) -> serde_json::Value {
         },
         "layer": layer,
         "fns": fns,
+        "patterns": patterns,
     })
+}
+
+/// JSON encoding of one [`ModulePattern`]. Each variant becomes an
+/// object with a `kind` tag plus the variant's typed payload, mirror
+/// of the text renderer's grep-friendly format. `null` instead of
+/// `None` keeps the schema explicit for downstream tooling.
+fn module_pattern_to_json(p: &ModulePattern) -> serde_json::Value {
+    use serde_json::json;
+    let scope_json = |s: &Option<String>| match s {
+        Some(prefix) => serde_json::Value::String(prefix.clone()),
+        None => serde_json::Value::Null,
+    };
+    match p {
+        ModulePattern::RefinementSmartConstructor {
+            scope,
+            type_name,
+            carrier_field,
+            carrier_type,
+            constructor_fn,
+            param_name,
+            ..
+        } => json!({
+            "kind": "RefinementSmartConstructor",
+            "scope": scope_json(scope),
+            "type_name": type_name,
+            "carrier_field": carrier_field,
+            "carrier_type": carrier_type,
+            "constructor_fn": constructor_fn,
+            "param_name": param_name,
+        }),
+        ModulePattern::WrapperOverRecursion {
+            wrapper_scope,
+            wrapper_fn,
+            inner_scope,
+            inner_fn,
+        } => json!({
+            "kind": "WrapperOverRecursion",
+            "wrapper_scope": scope_json(wrapper_scope),
+            "wrapper_fn": wrapper_fn,
+            "inner_scope": scope_json(inner_scope),
+            "inner_fn": inner_fn,
+        }),
+        ModulePattern::ResultPipelineChain {
+            scope,
+            fn_name,
+            step_count,
+        } => json!({
+            "kind": "ResultPipelineChain",
+            "scope": scope_json(scope),
+            "fn_name": fn_name,
+            "step_count": step_count,
+        }),
+        ModulePattern::RendererFormatter { scope, fn_name } => json!({
+            "kind": "RendererFormatter",
+            "scope": scope_json(scope),
+            "fn_name": fn_name,
+        }),
+        ModulePattern::MatchDispatcherFold {
+            scope,
+            fn_name,
+            list_param,
+        } => json!({
+            "kind": "MatchDispatcherFold",
+            "scope": scope_json(scope),
+            "fn_name": fn_name,
+            "list_param": list_param,
+        }),
+    }
 }
 
 // ─── Corpus (directory) mode ────────────────────────────────────────────────
