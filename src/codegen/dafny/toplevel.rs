@@ -802,7 +802,27 @@ fn law_top_level_fn(expr: &Spanned<Expr>) -> Option<String> {
 }
 
 /// Check if a function is directly recursive (calls itself in its own body).
+///
+/// Stage 5 of #232: routes through `ctx.program_shape` when available
+/// (set by `build_context`), reading the typed `Archetype::StructuralRecursion`
+/// label that `analyze_program` already computed once. Falls back to
+/// the legacy AST-walk path when `program_shape` is `None` (test
+/// harnesses that bypass `build_context`).
+///
+/// Both paths must agree on every existing law's pinned ProofStrategy;
+/// the snapshot-style proof tests in `tests/proof_spec.rs` cover
+/// that invariant.
 fn is_directly_recursive(fn_name: &str, ctx: &CodegenContext) -> bool {
+    if let Some(shape) = ctx.program_shape.as_ref()
+        && let Some(fd) = ctx.resolved_program.fn_by_name(fn_name)
+        && let Some(recognition) = shape.for_fn(fd.fn_id)
+    {
+        return recognition
+            .labels
+            .contains(&crate::analysis::shape::Archetype::StructuralRecursion);
+    }
+    // Legacy fallback: walks the typed AST. Kept for ctx-by-hand
+    // test setups; production paths route through shape.
     ctx.fn_defs
         .iter()
         .any(|fd| fd.name == fn_name && body_has_recursive_call(&fd.body, &fd.name))
