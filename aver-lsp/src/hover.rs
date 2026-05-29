@@ -161,10 +161,9 @@ pub fn hover_for_word(word: &str, source: &str, base_dir: Option<&str>) -> Optio
     for item in &items {
         if let TopLevel::Module(module) = item
             && module.name == word
+            && let Some(content) = build_module_shape_hover(source, base_dir, module)
         {
-            if let Some(content) = build_module_shape_hover(source, base_dir, module) {
-                return Some(make_hover(content));
-            }
+            return Some(make_hover(content));
         }
     }
 
