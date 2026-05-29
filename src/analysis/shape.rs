@@ -482,3 +482,82 @@ pub fn compute_sccs(fns: &[&ResolvedFnDef], facts_by_id: &HashMap<FnId, &Facts>)
     }
     multi_scc
 }
+
+// ─── Program-level shape (stage 4 of #232) ───────────────────────────────────
+
+/// Per-fn recognition output: precedence-picked primary archetype +
+/// the full multi-label set the classifier fired on.
+///
+/// Facts (the AST walker output) intentionally don't escape here —
+/// they're cheap to recompute if a future consumer wants them, and
+/// keeping the `ProgramShape` value small means downstream passes
+/// (proof_lower, future inliner / monomorphizer) can clone it freely.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FnRecognition {
+    pub primary: Archetype,
+    pub labels: Vec<Archetype>,
+}
+
+/// Whole-program shape facts produced by [`analyze_program`].
+///
+/// Stage 4 of issue #232 (0.23 "Shape"). This is the *recognition*
+/// substrate every downstream consumer reads from — `aver shape` CLI,
+/// proof_lower's strategy router, future inliner / monomorphizer.
+/// Stage 6 will grow `patterns: Vec<ModulePattern>` and
+/// `relations: Vec<FnRelation>` next to `per_fn` for the higher-arity
+/// recognitions (`WrapperOverRecursion`, `RefinementSmartConstructor`,
+/// `ResultPipelineChain`, …).
+///
+/// Computed once per compilation per the peer-review note ("compute
+/// ProgramShape once per compilation / per HIR snapshot — don't
+/// persistent-cache per FnId yet"). Threaded as a read-only borrow
+/// from the call site; the analysis tier never mutates it.
+#[derive(Debug, Clone, Default)]
+pub struct ProgramShape {
+    /// Per-fn recognition keyed by stable `FnId`.
+    pub per_fn: std::collections::HashMap<FnId, FnRecognition>,
+    /// Multi-node SCC participants in the local call graph. Kept here
+    /// so consumers don't have to recompute Tarjan to ask
+    /// "is this fn part of a mutual-recursion group?".
+    pub sccs: HashSet<FnId>,
+}
+
+impl ProgramShape {
+    /// Recognition for one fn by id. Returns `None` for fns that
+    /// weren't included in the call to [`analyze_program`] (e.g. an
+    /// out-of-tree id or a stale lookup against a refreshed view).
+    pub fn for_fn(&self, fn_id: FnId) -> Option<&FnRecognition> {
+        self.per_fn.get(&fn_id)
+    }
+}
+
+/// Build a [`ProgramShape`] over the post-resolver fn snapshot in one
+/// pass. Caller picks which fns participate (typically every
+/// `ResolvedTopLevel::FnDef` of the entry module, sometimes plus
+/// dep-module fns when a cross-module analysis needs the broader
+/// view).
+///
+/// Two-pass internally: facts first (needed to build the call graph
+/// for SCC detection), then classify with the facts + SCC ready.
+/// `O(N)` over fn bodies, `O(N+E)` Tarjan over the call graph; the
+/// per-compilation cache budget the peer-review pinned.
+pub fn analyze_program(resolved_fns: &[&ResolvedFnDef]) -> ProgramShape {
+    let mut facts_by_id: std::collections::HashMap<FnId, Facts> =
+        std::collections::HashMap::with_capacity(resolved_fns.len());
+    for fd in resolved_fns {
+        facts_by_id.insert(fd.fn_id, extract_facts(fd));
+    }
+    let facts_refs: std::collections::HashMap<FnId, &Facts> =
+        facts_by_id.iter().map(|(k, v)| (*k, v)).collect();
+    let sccs = compute_sccs(resolved_fns, &facts_refs);
+
+    let mut per_fn = std::collections::HashMap::with_capacity(resolved_fns.len());
+    for fd in resolved_fns {
+        let facts = &facts_by_id[&fd.fn_id];
+        let labels = classify(fd, facts, &sccs);
+        let primary = primary_label(&labels);
+        per_fn.insert(fd.fn_id, FnRecognition { primary, labels });
+    }
+
+    ProgramShape { per_fn, sccs }
+}
