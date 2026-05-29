@@ -161,7 +161,27 @@ Notes:
 aver shape file.av
 aver shape file.av --summary
 aver shape file.av --json
+aver shape file.av --lint           # opt-in lint vs aver.toml expectations
 aver shape file.av --module-root .
+```
+
+`aver.toml` config:
+
+```toml
+# Per-project layer fingerprints — override the built-in v0 baseline.
+[[shape.layer]]
+name = "Domain"
+match = 40
+recursion = 25
+pipeline = 0
+orchestration = 5
+helpers = 30
+
+# Path → expected layer. `--lint` flags mismatches; without these
+# entries, `--lint` is a silent no-op.
+[[shape.expected]]
+glob = "src/parse/**"
+layer = "Parse"
 ```
 
 Static module-shape analyzer. Three views in one run:

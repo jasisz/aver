@@ -118,6 +118,57 @@ fn render_json_has_facts_vector_kind_and_layer() {
 }
 
 #[test]
+fn project_layer_override_loads_from_config() {
+    use aver::config::ShapeLayerFingerprint;
+    // A clearly-non-default fingerprint: claim that "Parse" is 100%
+    // helpers. The classifier should pick this up over the built-in v0.
+    let entries = vec![
+        ShapeLayerFingerprint {
+            name: "Parse".to_string(),
+            match_pct: 0.0,
+            recursion_pct: 0.0,
+            pipeline_pct: 0.0,
+            orchestration_pct: 0.0,
+            helpers_pct: 100.0,
+        },
+        ShapeLayerFingerprint {
+            name: "Domain".to_string(),
+            match_pct: 100.0,
+            recursion_pct: 0.0,
+            pipeline_pct: 0.0,
+            orchestration_pct: 0.0,
+            helpers_pct: 0.0,
+        },
+    ];
+    let fps = shape::fingerprints_from_config(&entries).unwrap();
+    assert_eq!(fps.len(), 2);
+    // Sanity: shape::Layer round-trips through Layer::parse for the names
+    // we just declared.
+    use aver::diagnostics::shape::Layer;
+    assert_eq!(fps[0].layer, Layer::Parse);
+    assert_eq!(fps[1].layer, Layer::Domain);
+}
+
+#[test]
+fn project_layer_override_rejects_unknown_layer_name() {
+    use aver::config::ShapeLayerFingerprint;
+    let entries = vec![ShapeLayerFingerprint {
+        name: "DefinitelyNotALayer".to_string(),
+        match_pct: 0.0,
+        recursion_pct: 0.0,
+        pipeline_pct: 0.0,
+        orchestration_pct: 0.0,
+        helpers_pct: 100.0,
+    }];
+    let err = shape::fingerprints_from_config(&entries).unwrap_err();
+    assert!(
+        err.contains("DefinitelyNotALayer") && err.contains("known Layer"),
+        "expected typo-detection error, got: {}",
+        err,
+    );
+}
+
+#[test]
 fn small_module_layer_confidence_is_penalized() {
     // <5 fns → confidence capped at 0.2 regardless of fit. We can't
     // easily synthesize a 3-fn module from disk without a fixture

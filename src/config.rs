@@ -24,6 +24,29 @@ pub struct EffectPolicy {
     pub keys: Vec<String>,
 }
 
+/// Per-project layer fingerprint, used by `aver shape` to override the
+/// built-in v0 baseline. Buckets must cover all five `shape::Bucket`
+/// values (match / recursion / pipeline / orchestration / helpers) and
+/// sum to roughly 100.
+#[derive(Debug, Clone)]
+pub struct ShapeLayerFingerprint {
+    pub name: String,
+    pub match_pct: f64,
+    pub recursion_pct: f64,
+    pub pipeline_pct: f64,
+    pub orchestration_pct: f64,
+    pub helpers_pct: f64,
+}
+
+/// Per-project "this directory should belong to this architectural layer"
+/// declaration. `aver shape --lint` walks these and flags any module whose
+/// nearest-layer guess disagrees.
+#[derive(Debug, Clone)]
+pub struct ShapeExpected {
+    pub glob: String,
+    pub layer: String,
+}
+
 /// A single check-warning suppression rule.
 #[derive(Debug, Clone)]
 pub struct CheckSuppression {
@@ -67,6 +90,12 @@ pub struct ProjectConfig {
     pub check_suppressions: Vec<CheckSuppression>,
     /// How `?!` products handle branch failure.
     pub independence_mode: IndependenceMode,
+    /// Per-project layer fingerprints for `aver shape`. Empty = use the
+    /// built-in v0 baseline.
+    pub shape_layers: Vec<ShapeLayerFingerprint>,
+    /// Path-glob → expected-layer declarations for `aver shape --lint`.
+    /// Empty = `--lint` is a no-op (nothing to flag against).
+    pub shape_expected: Vec<ShapeExpected>,
 }
 
 impl ProjectConfig {
@@ -160,12 +189,28 @@ impl ProjectConfig {
 
         let check_suppressions = parse_check_suppressions(&table)?;
         let independence_mode = parse_independence_mode(&table)?;
+        let (shape_layers, shape_expected) = parse_shape(&table)?;
 
         Ok(ProjectConfig {
             effect_policies,
             check_suppressions,
             independence_mode,
+            shape_layers,
+            shape_expected,
         })
+    }
+
+    /// True when at least one `[[shape.expected]]` glob matches `file_path`.
+    /// `--lint` consults this to decide whether the file has a declared
+    /// expected layer to compare against.
+    pub fn shape_expected_for(&self, file_path: &str) -> Option<&str> {
+        self.shape_expected
+            .iter()
+            .filter(|e| glob_matches(file_path, &e.glob))
+            // Prefer the most specific (longest) glob — same rule as in
+            // PR review.
+            .max_by_key(|e| e.glob.len())
+            .map(|e| e.layer.as_str())
     }
 
     /// Returns `true` if a diagnostic with the given `slug` at `file_path`
@@ -378,6 +423,95 @@ fn env_key_matches(key: &str, pattern: &str) -> bool {
 }
 
 /// Parse `[independence]` section from the top-level TOML table.
+#[allow(clippy::type_complexity)]
+fn parse_shape(
+    table: &toml::Table,
+) -> Result<(Vec<ShapeLayerFingerprint>, Vec<ShapeExpected>), String> {
+    let Some(toml::Value::Table(shape_table)) = table.get("shape") else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+
+    // Both keys are optional; missing == empty.
+    let mut layers = Vec::new();
+    if let Some(val) = shape_table.get("layer") {
+        let arr = val
+            .as_array()
+            .ok_or_else(|| "aver.toml: [[shape.layer]] must be an array of tables".to_string())?;
+        let pct = |t: &toml::Table, key: &str, idx: usize| -> Result<f64, String> {
+            t.get(key)
+                .and_then(|v| match v {
+                    toml::Value::Float(f) => Some(*f),
+                    toml::Value::Integer(i) => Some(*i as f64),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "aver.toml: [[shape.layer]][{}] requires numeric `{}` (percentage 0..100)",
+                        idx, key
+                    )
+                })
+        };
+        for (i, entry) in arr.iter().enumerate() {
+            let t = entry
+                .as_table()
+                .ok_or_else(|| format!("aver.toml: [[shape.layer]][{}] must be a table", i))?;
+            let name = t
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    format!(
+                        "aver.toml: [[shape.layer]][{}] requires string `name` (e.g. \"Domain\")",
+                        i
+                    )
+                })?
+                .to_string();
+            layers.push(ShapeLayerFingerprint {
+                name,
+                match_pct: pct(t, "match", i)?,
+                recursion_pct: pct(t, "recursion", i)?,
+                pipeline_pct: pct(t, "pipeline", i)?,
+                orchestration_pct: pct(t, "orchestration", i)?,
+                helpers_pct: pct(t, "helpers", i)?,
+            });
+        }
+    }
+
+    let mut expected = Vec::new();
+    if let Some(val) = shape_table.get("expected") {
+        let arr = val.as_array().ok_or_else(|| {
+            "aver.toml: [[shape.expected]] must be an array of tables".to_string()
+        })?;
+        for (i, entry) in arr.iter().enumerate() {
+            let t = entry
+                .as_table()
+                .ok_or_else(|| format!("aver.toml: [[shape.expected]][{}] must be a table", i))?;
+            let glob = t
+                .get("glob")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    format!(
+                        "aver.toml: [[shape.expected]][{}] requires string `glob` (e.g. \"src/parse/**\")",
+                        i
+                    )
+                })?
+                .to_string();
+            let layer = t
+                .get("layer")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    format!(
+                        "aver.toml: [[shape.expected]][{}] requires string `layer` (e.g. \"Parse\")",
+                        i
+                    )
+                })?
+                .to_string();
+            expected.push(ShapeExpected { glob, layer });
+        }
+    }
+
+    Ok((layers, expected))
+}
+
 fn parse_independence_mode(table: &toml::Table) -> Result<IndependenceMode, String> {
     let section = match table.get("independence") {
         Some(toml::Value::Table(t)) => t,
@@ -963,6 +1097,104 @@ mode = "cancel"
 "#;
         let config = ProjectConfig::parse(toml).unwrap();
         assert_eq!(config.independence_mode, IndependenceMode::Cancel);
+    }
+
+    // --- shape config tests ---
+
+    #[test]
+    fn test_parse_shape_layer_overrides() {
+        let toml = r#"
+[[shape.layer]]
+name = "Domain"
+match = 40
+recursion = 25
+pipeline = 0
+orchestration = 5
+helpers = 30
+
+[[shape.layer]]
+name = "Parse"
+match = 15
+recursion = 10
+pipeline = 65
+orchestration = 10
+helpers = 0
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(config.shape_layers.len(), 2);
+        assert_eq!(config.shape_layers[0].name, "Domain");
+        assert_eq!(config.shape_layers[0].pipeline_pct, 0.0);
+        assert_eq!(config.shape_layers[1].name, "Parse");
+        assert_eq!(config.shape_layers[1].pipeline_pct, 65.0);
+    }
+
+    #[test]
+    fn test_parse_shape_expected() {
+        let toml = r#"
+[[shape.expected]]
+glob = "src/parse/**"
+layer = "Parse"
+
+[[shape.expected]]
+glob = "src/domain/**"
+layer = "Domain"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(config.shape_expected.len(), 2);
+        assert_eq!(
+            config.shape_expected_for("src/parse/lexer.av"),
+            Some("Parse"),
+        );
+        assert_eq!(
+            config.shape_expected_for("src/domain/order.av"),
+            Some("Domain"),
+        );
+        assert_eq!(config.shape_expected_for("src/unrelated/x.av"), None);
+    }
+
+    #[test]
+    fn test_parse_shape_expected_specific_wins() {
+        // Longer glob beats shorter one when both match — lets nested
+        // folders carve out exceptions.
+        let toml = r#"
+[[shape.expected]]
+glob = "src/**"
+layer = "Domain"
+
+[[shape.expected]]
+glob = "src/parse/**"
+layer = "Parse"
+"#;
+        let config = ProjectConfig::parse(toml).unwrap();
+        assert_eq!(
+            config.shape_expected_for("src/parse/lexer.av"),
+            Some("Parse")
+        );
+        assert_eq!(config.shape_expected_for("src/order.av"), Some("Domain"));
+    }
+
+    #[test]
+    fn test_parse_shape_layer_missing_field_errors() {
+        let toml = r#"
+[[shape.layer]]
+name = "Domain"
+match = 40
+recursion = 25
+# pipeline missing
+orchestration = 5
+helpers = 30
+"#;
+        let result = ProjectConfig::parse(toml);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("pipeline"));
+    }
+
+    #[test]
+    fn test_no_shape_section_is_ok() {
+        let config = ProjectConfig::parse("").unwrap();
+        assert!(config.shape_layers.is_empty());
+        assert!(config.shape_expected.is_empty());
+        assert_eq!(config.shape_expected_for("any/file.av"), None);
     }
 
     #[test]
