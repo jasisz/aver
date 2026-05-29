@@ -365,6 +365,20 @@ pub(super) enum Commands {
         #[arg(long, default_value = "10kb", value_parser = parse_context_budget)]
         budget: usize,
     },
+    /// Static module-shape analyzer: per-fn archetype + ModuleShape vector + Kind + nearest Layer.
+    Shape {
+        /// File (.av) for single-module analysis. (Corpus / directory mode TBD.)
+        file: String,
+        /// Resolve `depends [...]` from this root (default: file's parent directory)
+        #[arg(long)]
+        module_root: Option<String>,
+        /// Per-file: collapse per-fn listing to ModuleShape + histogram only.
+        #[arg(long)]
+        summary: bool,
+        /// Output as JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
     /// Compile an Aver file to a Rust/Cargo project or WASM binary
     Compile {
         file: String,

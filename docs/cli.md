@@ -124,6 +124,32 @@ Notes:
 - `--decisions-only` exports only `decision` blocks
 - selection metadata is printed to stdout and embedded in JSON output
 
+### Shape
+
+```bash
+aver shape file.av
+aver shape file.av --summary
+aver shape file.av --json
+aver shape file.av --module-root .
+```
+
+Static module-shape analyzer. Three views in one run:
+
+1. **Per-fn archetype** — 14 labels (`scc-mutual`, `structural-recursion`, `match-dispatcher`, `pipeline-result`, `manual-result-adapter`, `renderer-formatter`, `match-on-value`, `orchestration`, `effectful-leaf`, `let-pipeline`, `constructor-wrapper`, `data-as-function`, `trivial-helper`, `pure-expression`). Multi-label per fn; output lists every label that fires plus a primary pick.
+2. **ModuleShape vector + Kind** — 5 dims (`purity`, `entry`, `state_shape`, `type_surface`, `api_shape`). Kind is a single label projected from the vector: `ServiceClient`, `Orchestration`, `SmartConstructor`, `DataModule`, `PureHelpers`, `Library`, `EffectfulLibrary`, `EffectfulShell`. `purity` is `Pure` / `ClassifiedEffectful` (all effects are Oracle one-shot req/resp shape) / `ShellEffectful` (contains shell/lifecycle effect like `HttpServer.listen` — Oracle skips by design, not because the classifier doesn't recognize it).
+3. **Architectural Layer** — `Domain | Parse | Command | AiStrategy | RenderUi | Infra` by Euclidean distance between the per-module archetype histogram and built-in v0 fingerprints. Histogram is the fact, layer label the interpretation; `basis:` field announces which fingerprint set was used. Confidence is penalized on tiny modules (<5 fns capped at 0.2, <10 fns softened by 0.7×).
+
+Verification appears as an orthogonal section — what verify blocks the source carries (`Cases`, `Laws`, `Trace`, `Mixed`), how many blocks, and per-fn coverage. Static read of the source, doesn't run VM.
+
+Use cases:
+- "What is this module structurally?" — first glance before reading
+- "Does the directory layer match what the histogram looks like?" — architectural lint (full `--lint` mode + `[[shape.expected]]` config is the next iteration)
+- LLM context enrichment — Kind + ModuleShape are stable per-module facts worth attaching to AI prompts about that file
+
+Notes:
+- `--summary` collapses per-fn listing to the header + histogram; same content otherwise
+- `--json` emits an audit-friendly structure with `facts` + `vector` + `kind` + `histogram` + `layer` + `fns` all side by side, so consumers can pick any layer
+
 ### Compile
 
 ```bash
@@ -136,11 +162,11 @@ aver compile file.av --explain-passes
 ```
 
 - Default: Rust codegen, emits a modular Cargo project
-- `--target wasm-gc`: native WebAssembly GC + tail-call output. Self-contained binary, engine handles GC/recursion, per-instantiation helpers DCE'd to what each program calls. Modern host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+, Cloudflare Workers).
-- `--target wasip2`: WASI 0.2 / Component Model output. Wraps a wasm-gc core module with `wit-component`, lowers Aver effects directly to canonical-ABI WASI imports (no preview-1 adapter). Emits `.component.wasm` + sibling `.wit`. Runs on wasmtime, Spin, NGINX Unit, wasmCloud, every other Component Model host. See [`docs/wasip2.md`](wasip2.md) for the full effect surface.
+- `--target wasm-gc`: native WebAssembly GC + tail-call output (recommended). Self-contained binary, engine handles GC/recursion, per-instantiation helpers DCE'd to what each program calls. Modern host baseline (Chrome 119+, Firefox 120+, Safari 18.2+, wasmtime 25+, Node 22+).
+- `--target wasm`: legacy fallback for pre-2024 hosts. Bundles a custom NaN-boxed runtime via `wasm-merge`.
 - `--optimize size|speed`: post-process with binaryen `-Oz` (size) or `-O3` (speed).
 - `--preset cloudflare --handler <fn>`: Cloudflare Workers pack — `--target wasm-gc --pack cloudflare`, drops `worker.js` + `wrangler.toml` next to the wasm. `<fn>` must have signature `Fn(HttpRequest) -> HttpResponse`.
-- `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze`, `refinement_lower`, `contract_lower`, `law_lower` }. `diff -u` between two stages shows exactly what each pass rewrote. The three proof-lower stages dump `ProofIR` instead of items — useful when debugging a `verify <fn> law` that fell through to `sorry` (Lean) or empty-body (Dafny): `--emit-ir-after=law_lower` lists every law theorem and the strategy the lowerer pinned (e.g. `Commutative { op: Add }`, `MapUpdatePostcondition { kind: HasAfter, … }`, `LinearRecurrence2SpecEquivalence { impl_fn, spec_fn, helper_fn }`, or `BackendDispatch` when no strategy matched and the backend has to fall back).
+- `--emit-ir-after=PASS`: print the IR snapshot after the named pipeline stage and exit before codegen. PASS ∈ { `parse`, `tco`, `typecheck`, `interp_lower`, `buffer_build`, `resolve`, `last_use`, `analyze` }. `diff -u` between two stages shows exactly what each pass rewrote.
 - `--explain-passes`: run the full pipeline (no codegen) and print a per-pass diagnostic report — tail-call conversions, interpolations lowered, fusion sites rewritten + sinks synthesized, slots resolved, last-use markers annotated, alloc/recursion facts. Drives failable-invariant CI checks ("fail if buffer_build no longer fires on the canonical shape", "fail if hot fn loses no-alloc status"). Pair with `--json` for typed-per-stage shape: `{schema_version: 1, passes: [{stage, data: {...stage-specific fields}}, ...]}` — buffer_build's `data` exposes `rewrites`, `synthesized`, `sinks`, `rewrites_by_sink`; analyze's exposes `total_fns`, `no_alloc_fns`, `recursive_fns`, `mutual_tco_members`. `jq '.passes[] | select(.stage=="buffer_build") | .data.rewrites'` instead of regex-parsing summary strings.
 
 ### Bench
@@ -152,8 +178,7 @@ aver bench bench/scenarios/fib.toml                          # named manifest
 aver bench bench/scenarios/fib.toml --json                   # structured report
 aver bench bench/scenarios/                                  # directory mode (every *.toml)
 aver bench bench/scenarios/ --json                           # NDJSON
-aver bench bench/scenarios/fib.toml --target=wasm-gc         # embedded wasmtime, requires --features wasm
-aver bench bench/scenarios/fib.toml --target=wasm-gc-v8      # subprocess Node/V8
+aver bench bench/scenarios/fib.toml --target=wasm-local      # requires --features wasm
 aver bench bench/scenarios/fib.toml --target=rust            # native binary, subprocess per iter
 aver bench bench/scenarios/fib.toml --save-baseline base.json
 aver bench bench/scenarios/fib.toml --compare base.json --fail-on-regression

@@ -155,6 +155,32 @@ Notes:
 - `--decisions-only` exports only `decision` blocks
 - selection metadata is printed to stdout and embedded in JSON output
 
+### Shape
+
+```bash
+aver shape file.av
+aver shape file.av --summary
+aver shape file.av --json
+aver shape file.av --module-root .
+```
+
+Static module-shape analyzer. Three views in one run:
+
+1. **Per-fn archetype** — 14 labels (`scc-mutual`, `structural-recursion`, `match-dispatcher`, `pipeline-result`, `manual-result-adapter`, `renderer-formatter`, `match-on-value`, `orchestration`, `effectful-leaf`, `let-pipeline`, `constructor-wrapper`, `data-as-function`, `trivial-helper`, `pure-expression`). Multi-label per fn; output lists every label that fires plus a primary pick.
+2. **ModuleShape vector + Kind** — 5 dims (`purity`, `entry`, `state_shape`, `type_surface`, `api_shape`). Kind is a single label projected from the vector: `ServiceClient`, `Orchestration`, `SmartConstructor`, `DataModule`, `PureHelpers`, `Library`, `EffectfulLibrary`, `EffectfulShell`. `purity` is `Pure` / `ClassifiedEffectful` (all effects are Oracle one-shot req/resp shape) / `ShellEffectful` (contains shell/lifecycle effect like `HttpServer.listen` — Oracle skips by design, not because the classifier doesn't recognize it).
+3. **Architectural Layer** — `Domain | Parse | Command | AiStrategy | RenderUi | Infra` by Euclidean distance between the per-module archetype histogram and built-in v0 fingerprints. Histogram is the fact, layer label the interpretation; `basis:` field announces which fingerprint set was used. Confidence is penalized on tiny modules (<5 fns capped at 0.2, <10 fns softened by 0.7×).
+
+Verification appears as an orthogonal section — what verify blocks the source carries (`Cases`, `Laws`, `Trace`, `Mixed`), how many blocks, and per-fn coverage. Static read of the source, doesn't run VM.
+
+Use cases:
+- "What is this module structurally?" — first glance before reading
+- "Does the directory layer match what the histogram looks like?" — architectural lint (full `--lint` mode + `[[shape.expected]]` config is the next iteration)
+- LLM context enrichment — Kind + ModuleShape are stable per-module facts worth attaching to AI prompts about that file
+
+Notes:
+- `--summary` collapses per-fn listing to the header + histogram; same content otherwise
+- `--json` emits an audit-friendly structure with `facts` + `vector` + `kind` + `histogram` + `layer` + `fns` all side by side, so consumers can pick any layer
+
 ### Compile
 
 ```bash

@@ -13,6 +13,7 @@ pub mod classify;
 pub mod context;
 pub mod factories;
 pub mod model;
+pub mod shape;
 #[cfg(feature = "runtime")]
 pub mod verify_run;
 #[cfg(feature = "runtime")]
