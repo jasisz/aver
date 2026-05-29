@@ -135,7 +135,6 @@ version = "0.0.0"
 dependencies = [
  "afl",
  "aver-lang",
- "tempfile",
  "wasmparser 0.248.0",
 ]
 
