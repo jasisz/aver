@@ -289,6 +289,51 @@ fn load_recursive(
     Ok(())
 }
 
+/// Convert pre-loaded modules (parsed virtual-fs items from the
+/// playground / LSP / audit paths) into `ModuleInfo` records suitable
+/// for `PipelineConfig.dep_modules` and `SymbolTable::build`.
+///
+/// Mirrors what [`load_compile_deps`] produces but skips disk IO and
+/// per-dep pipeline runs — the entry-level pipeline (typecheck +
+/// resolve) handles cross-module typing through `TypecheckMode::
+/// WithLoaded`. `analysis: None` here means the VM compiler falls
+/// through to the conservative "assume allocates" branch (no per-fn
+/// `no_alloc` promotion), which is the same trade-off the verify path
+/// already accepts.
+pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::ModuleInfo> {
+    loaded
+        .iter()
+        .map(|m| {
+            let depends = visibility::module_decl(&m.items)
+                .map(|md| md.depends.clone())
+                .unwrap_or_default();
+            let type_defs: Vec<_> = m
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::TypeDef(td) => Some(td.clone()),
+                    _ => None,
+                })
+                .collect();
+            let fn_defs: Vec<_> = m
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    TopLevel::FnDef(fd) if fd.name != "main" => Some(fd.clone()),
+                    _ => None,
+                })
+                .collect();
+            crate::codegen::ModuleInfo {
+                prefix: m.dep_name.clone(),
+                depends,
+                type_defs,
+                fn_defs,
+                analysis: None,
+            }
+        })
+        .collect()
+}
+
 /// Load every dep module declared by `items`'s `Module.depends`, plus
 /// every transitive dep, into `codegen::ModuleInfo` records ready to
 /// hand to `PipelineConfig.dep_modules`.

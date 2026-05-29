@@ -641,6 +641,19 @@ pub fn run_verify_for_items_vm_with_mode(
         inject_hostile_effect_stubs_for_blocks(&mut items, &preview_blocks);
     }
 
+    // Load dep modules so `SymbolTable::build` below sees cross-module
+    // fns. Without this the resolver classifies `Module.fn(...)`
+    // callsites as `Passthrough`, the VM compiler later errors with
+    // "missing VM symbol for exposed function", and any multi-module
+    // verify fails — exactly the bug #213 surfaced on the 0.22 release.
+    // Mirrors what `aver run` / `aver compile` / `bench/runner` /
+    // `wasm_gc_verify` all do.
+    let dep_modules = if let Some(root) = base_dir {
+        crate::source::load_compile_deps(&items, root)?
+    } else {
+        Vec::new()
+    };
+
     let tc_result =
         crate::ir::pipeline::typecheck(&items, &crate::ir::TypecheckMode::Full { base_dir });
     if !tc_result.errors.is_empty() {
@@ -669,7 +682,7 @@ pub fn run_verify_for_items_vm_with_mode(
     // "assume allocates" branch (no per-fn `no_alloc` promotion).
     // Build the resolved-identity table + lift the items to resolved
     // HIR ourselves so the VM compiler stays on the Phase E contract.
-    let symbol_table = crate::ir::SymbolTable::build(&items, &[]);
+    let symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
     let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
     let (code, globals) = vm::compile_program_with_modules(
         &resolved_items,
@@ -760,7 +773,14 @@ pub fn run_verify_for_items_vm_with_loaded_and_mode(
 
     let mut arena = Arena::new();
     vm::register_service_types(&mut arena);
-    let symbol_table = crate::ir::SymbolTable::build(&items, &[]);
+    // Mirror of the disk-loader path's dep_modules wiring (#213 fix):
+    // turn the pre-loaded virtual-fs modules into `ModuleInfo` records
+    // so `SymbolTable::build` sees every cross-module fn. Without this
+    // the playground's multi-file programs would hit the same
+    // "missing VM symbol for exposed function" path that the disk path
+    // hit before the fix.
+    let dep_modules = crate::source::loaded_to_module_info(&loaded);
+    let symbol_table = crate::ir::SymbolTable::build(&items, &dep_modules);
     let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
     let (code, globals) = vm::compile_program_with_loaded_modules(
         &resolved_items,
