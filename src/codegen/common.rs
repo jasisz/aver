@@ -186,6 +186,15 @@ fn refinement_info_for_walk<'a>(
 /// `false -> Result.Err(_)`. Required so we don't mis-classify a
 /// random `match … -> Result.Ok(...) | -> Result.Err(...)` (e.g. an
 /// effectful pipeline) as a smart constructor.
+pub fn is_refinement_bool_ok_err_match(
+    arms: &[MatchArm],
+    type_name: &str,
+    carrier_field: &str,
+    param_name: &str,
+) -> bool {
+    is_bool_ok_err_match(arms, type_name, carrier_field, param_name)
+}
+
 fn is_bool_ok_err_match(
     arms: &[MatchArm],
     type_name: &str,

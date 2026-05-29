@@ -485,6 +485,24 @@ pub fn build_context(
         .map(|m| m.fn_defs.clone())
         .collect();
 
+    // Compute program shape before moving items / modules into ctx.
+    // Once-per-compilation analysis substrate (#232 stage 4+); ad-hoc
+    // detectors in codegen (e.g. dafny's `is_directly_recursive`,
+    // future stage 6 adapters for `refinement_info_for`) read from
+    // this instead of rewalking the AST.
+    let program_shape = {
+        let mut all_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
+            resolved_program.entry_fns().collect();
+        for m in &resolved_program.modules {
+            for fd in &m.fn_defs {
+                all_fns.push(fd);
+            }
+        }
+        Some(crate::analysis::shape::analyze_program_with_modules(
+            &all_fns, &items, &modules,
+        ))
+    };
+
     let ctx = CodegenContext {
         items,
         memo_fns,
@@ -517,22 +535,7 @@ pub fn build_context(
         resolved_fn_defs,
         resolved_module_fn_defs,
         current_module_scope: std::cell::RefCell::new(None),
-        program_shape: {
-            // Build once per compilation; downstream codegen reads
-            // `Archetype::StructuralRecursion` etc. instead of
-            // rewalking the AST. Covers entry-module fns first;
-            // dep-module fns get included so cross-module law
-            // routing (Stage 5+) can ask shape questions about
-            // callees declared in other files.
-            let mut all_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
-                resolved_program.entry_fns().collect();
-            for m in &resolved_program.modules {
-                for fd in &m.fn_defs {
-                    all_fns.push(fd);
-                }
-            }
-            Some(crate::analysis::shape::analyze_program(&all_fns))
-        },
+        program_shape,
         resolved_program,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
