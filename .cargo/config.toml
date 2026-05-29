@@ -7,3 +7,17 @@
 # untouched.
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+
+# Use `lld` as the linker on macOS hosts when available. The default
+# Apple linker (`ld` from Xcode) is the slowest step in incremental
+# rebuilds of this workspace — `lld` (from `brew install llvm`) cuts
+# the link step roughly in half. If `lld` is not installed the build
+# will fail with a clear error pointing at the missing binary; remove
+# the block or install `llvm` via Homebrew.
+[target.aarch64-apple-darwin]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.x86_64-apple-darwin]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
