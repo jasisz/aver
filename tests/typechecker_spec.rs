@@ -1379,6 +1379,103 @@ fn error_tcp_connection_manual_construction_is_opaque() {
 }
 
 #[test]
+fn verify_trace_may_fabricate_tcp_connection_handle() {
+    // Verify-trace context relaxes opaque-construction for runtime
+    // handles flagged in `effect_classification::is_verify_fabricable_handle`.
+    // Tcp.Connection is the first such handle: lets Oracle stubs feed
+    // a deterministic conn into the SUT without going through Tcp.connect.
+    let src = concat!(
+        "fn fakeWrite(p: BranchPath, n: Int, c: Tcp.Connection, line: String) -> Result<Unit, String>\n",
+        "    ? \"stub\"\n",
+        "    Result.Ok(Unit)\n",
+        "\n",
+        "fn fakeRead(p: BranchPath, n: Int, c: Tcp.Connection) -> Result<String, String>\n",
+        "    ? \"stub\"\n",
+        "    Result.Ok(\"+PONG\")\n",
+        "\n",
+        "fn ping(conn: Tcp.Connection) -> Result<String, String>\n",
+        "    ? \"ping\"\n",
+        "    ! [Tcp.readLine, Tcp.writeLine]\n",
+        "    _ = Tcp.writeLine(conn, \"PING\")?\n",
+        "    Tcp.readLine(conn)\n",
+        "\n",
+        "verify ping trace\n",
+        "    given w: Tcp.writeLine = [fakeWrite]\n",
+        "    given r: Tcp.readLine  = [fakeRead]\n",
+        "    pinged = ping(Tcp.Connection(id = \"fake\", host = \"127.0.0.1\", port = 6379))\n",
+        "    pinged.trace.contains(Tcp.writeLine) => true\n",
+    );
+    assert_no_errors(src);
+}
+
+#[test]
+fn error_tcp_connection_fabrication_still_rejected_outside_verify() {
+    // Regression: relaxation is scoped to verify-trace context. A
+    // regular fn that constructs Tcp.Connection is still rejected.
+    // (The original "fake()" test above guards the same property
+    // without the verify-context flag flipped; this test makes the
+    // scoping explicit by also covering a fn that DOES participate
+    // in oracle stub signatures.)
+    let src = concat!(
+        "fn forgeOutsideVerify() -> Tcp.Connection\n",
+        "    Tcp.Connection(id = \"forged\", host = \"x\", port = 80)\n",
+    );
+    assert_error_containing(src, "opaque type 'Tcp.Connection'");
+}
+
+#[test]
+fn error_user_defined_opaque_not_fabricable_in_verify_trace() {
+    // The relaxation is opt-in via `is_verify_fabricable_handle`.
+    // User-defined opaque types protect domain invariants (smart
+    // constructors), so verify-trace context MUST NOT erode that
+    // protection — the typechecker should reject construction of an
+    // imported opaque even from inside a verify block.
+    let root = temp_module_root("verify_opaque_no_fabricate");
+    let bounded_dir = root.join("Bounded");
+    std::fs::create_dir_all(&bounded_dir).expect("create Bounded dir failed");
+    std::fs::write(
+        bounded_dir.join("Positive.av"),
+        r#"module Positive
+    exposes [fromInt]
+    exposes opaque [Positive]
+    intent = "Positive integer with smart-constructor invariant."
+
+record Positive
+    value: Int
+
+fn fromInt(n: Int) -> Result<Positive, String>
+    ? "Smart constructor: rejects non-positive inputs."
+    match n > 0
+        true  -> Result.Ok(Positive(value = n))
+        false -> Result.Err("non-positive")
+"#,
+    )
+    .expect("write Positive.av failed");
+
+    let src = r#"module App
+    depends [Bounded.Positive]
+    intent = "Tries to fabricate Positive inside a verify trace."
+
+fn echo(p: Positive) -> Positive
+    ? "Identity over Positive."
+    p
+
+verify echo trace
+    echoed = echo(Positive(value = -1))
+    echoed => Positive(value = -1)
+"#;
+    let errs = errors_with_base(src, root.to_str().expect("utf-8 temp dir"));
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Cannot construct opaque type")),
+        "expected opaque construction error inside verify trace, got: {:?}",
+        errs
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn error_tcp_write_line_with_string() {
     let src = concat!(
         "fn send(conn: String, msg: String) -> Result<Unit, String>\n",
