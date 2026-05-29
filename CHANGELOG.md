@@ -2,6 +2,13 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## Unreleased
+
+### Tooling
+
+- **`aver shape <file>` — static module-shape analyzer.** Walks the resolved AST and emits three views of a module in one run: per-function archetype (14 labels — `match-dispatcher`, `structural-recursion`, `pipeline-result`, `orchestration`, `trivial-helper`, and ten more), a 5-dimensional `ModuleShape` vector (`purity` / `entry` / `state_shape` / `type_surface` / `api_shape`) with a single-label `Kind` projected from it (`ServiceClient`, `Orchestration`, `SmartConstructor`, `DataModule`, `PureHelpers`, `Library`, `EffectfulLibrary`, `EffectfulShell`), and a histogram-based architectural-layer guess (`Domain` / `Parse` / `Command` / `AiStrategy` / `RenderUi` / `Infra`) with confidence and an explicit `basis:` field telling you which fingerprint set produced the label. Per-project baseline override + `--lint` mode for "does this directory match the layer it claims to be" are coming in a follow-up; today the built-in v0 fingerprints (from a casual single-author corpus measurement) are the only baseline. Histogram rendered as ASCII bars; verification (cases / law / trace / mixed) shows up as a separate section since static analysis can't claim "8/8 pass" without running the VM. JSON output (`--json`) emits raw `facts` + `vector` + `kind` + `histogram` + `layer` + `fns` side by side so consumers can audit each layer independently.
+- **`aver verify --hostile` semantics: opaque runtime handles can be fabricated inside verify-trace context** for any effect classified as a system handle (today: `Tcp.Connection`). Lets Oracle stubs feed a deterministic conn into the SUT without round-tripping through `Tcp.connect`, which would be the very effect the verify block is stubbing out. User-defined opaque types stay protected — the relaxation is opt-in per type via `effect_classification::is_verify_fabricable_handle`, so a `Refinement.Natural` smart-constructor invariant can't be bypassed by writing `Natural(value = -1)` inside a verify block. `examples/services/redis.av` gains `verify ping/set/get trace` blocks that exercise this; previously the only Tcp verify path was to skip session-effect oracling entirely.
+
 ## 0.22.1 — 2026-05-29
 
 ### Hardening

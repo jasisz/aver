@@ -415,7 +415,7 @@ pub fn compute_sccs(
 pub enum Purity {
     Pure,
     ClassifiedEffectful,
-    UnclassifiedEffectful,
+    ShellEffectful,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,7 +460,18 @@ impl Purity {
         match self {
             Purity::Pure => "Pure",
             Purity::ClassifiedEffectful => "ClassifiedEffectful",
-            Purity::UnclassifiedEffectful => "UnclassifiedEffectful",
+            Purity::ShellEffectful => "ShellEffectful",
+        }
+    }
+
+    /// One-line user-facing explanation of what each purity value means.
+    /// Surfaced in CLI help / hover text — answers "what makes this
+    /// module ShellEffectful vs ClassifiedEffectful?".
+    pub fn description(&self) -> &'static str {
+        match self {
+            Purity::Pure => "no effects declared",
+            Purity::ClassifiedEffectful => "all effects are Oracle-classified (one-shot req/resp shape)",
+            Purity::ShellEffectful => "contains at least one shell/lifecycle effect (e.g. HttpServer.listen) — Oracle skips by design",
         }
     }
 }
@@ -514,7 +525,7 @@ pub enum Kind {
     Orchestration,
     ServiceClient,
     EffectfulLibrary,
-    UnknownEffectBoundary,
+    EffectfulShell,
 }
 
 impl Kind {
@@ -527,7 +538,7 @@ impl Kind {
             Kind::Orchestration => "Orchestration",
             Kind::ServiceClient => "ServiceClient",
             Kind::EffectfulLibrary => "EffectfulLibrary",
-            Kind::UnknownEffectBoundary => "UnknownEffectBoundary",
+            Kind::EffectfulShell => "EffectfulShell",
         }
     }
 
@@ -542,27 +553,35 @@ impl Kind {
             Kind::Orchestration => "classified effects with main entry point",
             Kind::ServiceClient => "classified effects threaded through a runtime handle",
             Kind::EffectfulLibrary => "effectful library — exposed surface, no main",
-            Kind::UnknownEffectBoundary => "uses effects the classifier doesn't recognize",
+            Kind::EffectfulShell => "shell/lifecycle effects (e.g. HttpServer.listen) — long-running, not Oracle-classified",
         }
     }
 }
 
 pub fn derive_kind(shape: &ModuleShape) -> Kind {
-    if matches!(shape.purity, Purity::UnclassifiedEffectful) {
-        return Kind::UnknownEffectBoundary;
-    }
-    if matches!(shape.purity, Purity::ClassifiedEffectful) {
-        if matches!(shape.type_surface, TypeSurface::RuntimeHandle) {
+    // Effectful Kinds (both Classified and Shell flavors): a Shell effect
+    // is a long-running lifecycle (HttpServer.listen, Tcp.listen) — Oracle
+    // skips it by design, not because the classifier doesn't recognize it.
+    // From the user's perspective a module with a shell-effect entrypoint
+    // is still Orchestration (or ServiceClient if it threads a handle);
+    // the `purity` field tells the rest of the story.
+    if !matches!(shape.purity, Purity::Pure) {
+        // ServiceClient = module that re-exports its handle-using API
+        // surface (api_shape == ServiceBoundary, i.e. some exposed fn
+        // takes/returns the handle). Threading a handle internally is
+        // not enough — those modules show up as Orchestration / Library
+        // depending on whether they have `main`.
+        if matches!(shape.api_shape, ApiShape::ServiceBoundary) {
             return Kind::ServiceClient;
         }
         if matches!(shape.entry, Entry::Main) {
             return Kind::Orchestration;
         }
-        if matches!(
-            shape.api_shape,
-            ApiShape::ExposedLibrary | ApiShape::ServiceBoundary
-        ) {
+        if matches!(shape.api_shape, ApiShape::ExposedLibrary) {
             return Kind::Library;
+        }
+        if matches!(shape.purity, Purity::ShellEffectful) {
+            return Kind::EffectfulShell;
         }
         return Kind::EffectfulLibrary;
     }
@@ -949,17 +968,23 @@ pub fn analyze_path(
     let facts_refs: HashMap<FnId, &Facts> = facts_by_id.iter().map(|(k, v)| (*k, v)).collect();
     let scc = compute_sccs(&resolved_fns, &facts_refs);
 
+    let exposes_set: HashSet<&str> = exposes.iter().map(|s| s.as_str()).collect();
     let mut fn_shapes = Vec::with_capacity(resolved_fns.len());
     let mut histogram = Histogram::default();
     let mut has_main = false;
     let mut classified_uses_handle = false;
+    let mut exposed_uses_handle = false;
 
     for fd in &resolved_fns {
         if fd.name == "main" {
             has_main = true;
         }
-        if uses_runtime_handle(fd) {
+        let this_uses_handle = uses_runtime_handle(fd);
+        if this_uses_handle {
             classified_uses_handle = true;
+            if exposes_set.contains(fd.name.as_str()) {
+                exposed_uses_handle = true;
+            }
         }
         let facts = &facts_by_id[&fd.fn_id];
         let labels = classify(fd, facts, &scc);
@@ -982,6 +1007,7 @@ pub fn analyze_path(
         has_main,
         &exposes_opaque,
         classified_uses_handle,
+        exposed_uses_handle,
         &exposes,
     );
     let kind = derive_kind(&shape);
@@ -1076,6 +1102,7 @@ fn derive_shape(
     has_main: bool,
     exposes_opaque: &[String],
     classified_uses_handle: bool,
+    exposed_uses_handle: bool,
     exposes: &[String],
 ) -> ModuleShape {
     use crate::types::checker::effect_classification::is_classified;
@@ -1088,7 +1115,7 @@ fn derive_shape(
     } else if all_classified {
         Purity::ClassifiedEffectful
     } else {
-        Purity::UnclassifiedEffectful
+        Purity::ShellEffectful
     };
     let entry = if has_main { Entry::Main } else { Entry::None };
     let state_shape = match purity {
@@ -1105,7 +1132,13 @@ fn derive_shape(
     } else {
         TypeSurface::NoTypes
     };
-    let api_shape = if classified_uses_handle {
+    // ServiceBoundary only when the handle actually reaches the exposed
+    // surface — i.e. at least one fn in `exposes [...]` takes/returns the
+    // handle. A module that threads `Tcp.Connection` only internally
+    // (a webapp that talks to Redis but doesn't re-export its client)
+    // stays at `ExposedLibrary` so its Kind doesn't get mis-labeled as
+    // `ServiceClient`.
+    let api_shape = if exposed_uses_handle {
         ApiShape::ServiceBoundary
     } else if !exposes.is_empty() {
         ApiShape::ExposedLibrary

@@ -276,7 +276,7 @@ Rules:
 
 - Arithmetic: `+`, `-`, `*`, `/` (operands must match types)
 - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
-- Error propagation: `expr?` (unwraps `Result.Ok`, propagates `Result.Err`). **Result-only** — does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match. Prefer `?` whenever every `Err` arm is pass-through (`Result.Err(e) -> Result.Err(e)`); keep a manual `match` when the `Err` needs transforming or branching. Worked example: `examples/core/result_pipeline.av`.
+- Error propagation: `expr?` (unwraps `Result.Ok`, propagates `Result.Err`). **Result-only** — does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match.
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
 - String interpolation: `"Hello, {name}!"`
 

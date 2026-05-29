@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use aver::diagnostics::shape::{
-    self, ApiShape, Kind, Purity, RenderOptions, StateShape, TypeSurface,
+    self, ApiShape, Entry, Kind, Purity, RenderOptions, StateShape, TypeSurface,
 };
 
 fn analyze(rel: &str) -> shape::ShapeReport {
@@ -22,6 +22,30 @@ fn natural_is_smart_constructor() {
     assert!(matches!(r.shape.state_shape, StateShape::Stateless));
     assert!(matches!(r.shape.type_surface, TypeSurface::UserOpaque));
     assert_eq!(r.kind, Kind::SmartConstructor);
+}
+
+#[test]
+fn weather_is_orchestration_with_shell_effects() {
+    // weather.av declares `effects [Console, Http, HttpServer, Tcp]`.
+    // `HttpServer.listen*` is a shell/lifecycle effect (long-running,
+    // not Oracle-classifiable by design — see memory), so purity must
+    // be ShellEffectful, NOT something that suggests "compiler can't
+    // recognize it" (the classifier knows every Aver effect).
+    let r = shape::analyze_path(
+        std::path::Path::new("examples/services/weather.av"),
+        Some("examples"),
+    )
+    .expect("weather analyze");
+    assert!(
+        matches!(r.shape.purity, Purity::ShellEffectful),
+        "weather mixes Oracle (Http.get, Tcp.*) with shell (HttpServer.listenWith) — must be ShellEffectful, got {:?}",
+        r.shape.purity
+    );
+    assert!(matches!(r.shape.entry, Entry::Main));
+    // Tcp.Connection is threaded internally (via WeatherContext) but the
+    // exposed surface is `[main]` — not a service-client API. Kind must
+    // be Orchestration, not ServiceClient.
+    assert_eq!(r.kind, Kind::Orchestration);
 }
 
 #[test]

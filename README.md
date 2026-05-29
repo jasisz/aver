@@ -76,6 +76,7 @@ aver audit    hello.av
 aver audit    hello.av --json
 aver why      hello.av
 aver context  hello.av
+aver shape    hello.av
 aver compile  hello.av -o out/
 (cd out && cargo run)
 ```
