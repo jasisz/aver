@@ -44,14 +44,26 @@ fn main() {
         }
         let c = common::counters();
         c.record_exec();
-        let Ok(source) = std::str::from_utf8(data) else {
-            return;
+
+        // Multi-module dispatch (same shape as codegen_wasm_gc).
+        let setup_holder = common::try_multimodule_input(data);
+        let (source, base_dir): (&str, Option<&str>) = match &setup_holder {
+            Some(setup) => (setup.entry_source.as_str(), setup.module_root.to_str()),
+            None => {
+                let Ok(s) = std::str::from_utf8(data) else {
+                    return;
+                };
+                (s, None)
+            }
         };
+
         let mut lexer = aver::lexer::Lexer::new(source);
         let Ok(tokens) = lexer.tokenize() else { return };
         c.record_lex_ok();
         let mut parser = aver::parser::Parser::new(tokens);
-        let Ok(mut items) = parser.parse() else { return };
+        let Ok(mut items) = parser.parse() else {
+            return;
+        };
         let (nodes, depth) = common::ast_metrics(&items);
         c.record_parse_ok(nodes, depth);
 
@@ -64,10 +76,16 @@ fn main() {
         let _result = aver::ir::pipeline::run(
             &mut items,
             PipelineConfig {
-                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                typecheck: Some(TypecheckMode::Full { base_dir }),
                 ..Default::default()
             },
         );
+
+        if let Some(root) = base_dir {
+            if let Ok(dep_modules) = aver::source::load_compile_deps(&items, root) {
+                aver::codegen::wasm_gc::flatten_multimodule(&mut items, &dep_modules);
+            }
+        }
 
         // Stage 1: core wasm (canonical-ABI shape). Same panic
         // hazards as the bridge target — `aver_type_of` on bare
@@ -101,17 +119,14 @@ fn main() {
         // `new_with_features` keeps the check explicit so a
         // future wasmparser default flip doesn't silently turn
         // this into a core-module-only check.
-        let mut validator = wasmparser::Validator::new_with_features(
-            wasmparser::WasmFeatures::default(),
-        );
+        let mut validator =
+            wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::default());
         if validator.validate_all(&component_bytes).is_err() {
             // Real codegen bug: emitted bytes that the component-
             // model validator rejects. Hosts (wasmtime, Spin,
             // wasmCloud) refuse to load this. `process::abort()`
             // so AFL registers the crash under `fuzz_nohook!`.
-            eprintln!(
-                "wasip2 codegen produced invalid component from typechecked source"
-            );
+            eprintln!("wasip2 codegen produced invalid component from typechecked source");
             std::process::abort();
         }
     });

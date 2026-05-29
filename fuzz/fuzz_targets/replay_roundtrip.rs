@@ -60,15 +60,30 @@ fn main() {
         }
         let c = common::counters();
         c.record_exec();
-        let Ok(source) = std::str::from_utf8(data) else {
-            return;
+
+        // Multi-module dispatch — record/replay over cross-module fn
+        // calls is a real bug class (effect ordering, return-value
+        // decoding when dep-module ctor identity matters). Light
+        // dispatch: pass base_dir through pipeline so the VM compile
+        // below picks up dep modules; record/replay run as before.
+        let setup_holder = common::try_multimodule_input(data);
+        let (source, base_dir): (&str, Option<&str>) = match &setup_holder {
+            Some(setup) => (setup.entry_source.as_str(), setup.module_root.to_str()),
+            None => {
+                let Ok(s) = std::str::from_utf8(data) else {
+                    return;
+                };
+                (s, None)
+            }
         };
 
         let mut lexer = aver::lexer::Lexer::new(source);
         let Ok(tokens) = lexer.tokenize() else { return };
         c.record_lex_ok();
         let mut parser = aver::parser::Parser::new(tokens);
-        let Ok(mut items) = parser.parse() else { return };
+        let Ok(mut items) = parser.parse() else {
+            return;
+        };
         let (nodes, depth) = common::ast_metrics(&items);
         c.record_parse_ok(nodes, depth);
         let errors = aver::types::checker::run_type_check(&items);
@@ -80,7 +95,7 @@ fn main() {
         let pipeline_result = aver::ir::pipeline::run(
             &mut items,
             PipelineConfig {
-                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                typecheck: Some(TypecheckMode::Full { base_dir }),
                 ..Default::default()
             },
         );
@@ -91,6 +106,7 @@ fn main() {
             &pipeline_result.resolved_items,
             &pipeline_result.symbol_table,
             RecordMode::Record,
+            base_dir,
         ) else {
             return;
         };
@@ -105,6 +121,7 @@ fn main() {
             &pipeline_result.resolved_items,
             &pipeline_result.symbol_table,
             RecordMode::Replay(trace),
+            base_dir,
         ) else {
             // Replay refused / panicked under catch_unwind. Real
             // bug class — record produced a trace the replay
@@ -143,13 +160,20 @@ fn run_vm(
     items: &[ResolvedTopLevel],
     symbols: &SymbolTable,
     mode: RecordMode,
+    module_root: Option<&str>,
 ) -> Option<RunOutcome> {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut arena = aver::nan_value::Arena::new();
         aver::vm::register_service_types(&mut arena);
-        let (code, globals) =
-            aver::vm::compile_program_with_modules(items, symbols, &mut arena, None, "", None)
-                .ok()?;
+        let (code, globals) = aver::vm::compile_program_with_modules(
+            items,
+            symbols,
+            &mut arena,
+            module_root,
+            "",
+            None,
+        )
+        .ok()?;
         let mut machine = aver::vm::VM::new(code, globals, arena);
         machine.set_cli_args(Vec::new());
         let want_record = match &mode {
@@ -165,8 +189,7 @@ fn run_vm(
                 false
             }
         };
-        let (run_res, stdout, _stderr) =
-            aver::services::console::capture_output(|| machine.run());
+        let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| machine.run());
         let nv = run_res.ok()?;
         if let RecordMode::Replay(_) = &mode {
             // `ensure_replay_consumed` is the load-bearing assertion

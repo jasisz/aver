@@ -65,15 +65,28 @@ fn main() {
         }
         let c = common::counters();
         c.record_exec();
-        let Ok(source) = std::str::from_utf8(data) else {
-            return;
+
+        // Multi-module dispatch: this is THE target where #213-class
+        // divergences (one backend's multi-module pipeline succeeds,
+        // the other's doesn't) would surface most cleanly.
+        let setup_holder = common::try_multimodule_input(data);
+        let (source, base_dir): (&str, Option<&str>) = match &setup_holder {
+            Some(setup) => (setup.entry_source.as_str(), setup.module_root.to_str()),
+            None => {
+                let Ok(s) = std::str::from_utf8(data) else {
+                    return;
+                };
+                (s, None)
+            }
         };
 
         let mut lexer = aver::lexer::Lexer::new(source);
         let Ok(tokens) = lexer.tokenize() else { return };
         c.record_lex_ok();
         let mut parser = aver::parser::Parser::new(tokens);
-        let Ok(mut items) = parser.parse() else { return };
+        let Ok(mut items) = parser.parse() else {
+            return;
+        };
         let (nodes, depth) = common::ast_metrics(&items);
         c.record_parse_ok(nodes, depth);
         let errors = aver::types::checker::run_type_check(&items);
@@ -88,14 +101,19 @@ fn main() {
         let pipeline = aver::ir::pipeline::run(
             &mut items,
             PipelineConfig {
-                typecheck: Some(TypecheckMode::Full { base_dir: None }),
+                typecheck: Some(TypecheckMode::Full { base_dir }),
                 ..Default::default()
             },
         );
         let analysis = pipeline.analysis.as_ref();
 
-        let vm_outcome = run_vm(&pipeline.resolved_items, &pipeline.symbol_table, analysis);
-        let wasm_outcome = run_wasm_gc(&items, analysis);
+        let vm_outcome = run_vm(
+            &pipeline.resolved_items,
+            &pipeline.symbol_table,
+            analysis,
+            base_dir,
+        );
+        let wasm_outcome = run_wasm_gc(&items, analysis, base_dir);
 
         match (vm_outcome, wasm_outcome) {
             (Some(vm), Some(wasm)) => {
@@ -129,17 +147,23 @@ fn run_vm(
     items: &[aver::ir::hir::ResolvedTopLevel],
     symbols: &aver::ir::SymbolTable,
     analysis: Option<&aver::ir::AnalysisResult>,
+    module_root: Option<&str>,
 ) -> Option<BackendOutcome> {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut arena = aver::nan_value::Arena::new();
         aver::vm::register_service_types(&mut arena);
-        let (code, globals) =
-            aver::vm::compile_program_with_modules(items, symbols, &mut arena, None, "", analysis)
-                .ok()?;
+        let (code, globals) = aver::vm::compile_program_with_modules(
+            items,
+            symbols,
+            &mut arena,
+            module_root,
+            "",
+            analysis,
+        )
+        .ok()?;
         let mut machine = aver::vm::VM::new(code, globals, arena);
         machine.set_cli_args(Vec::new());
-        let (run_res, stdout, _stderr) =
-            aver::services::console::capture_output(|| machine.run());
+        let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| machine.run());
         let nv = run_res.ok()?;
         let value = <aver::nan_value::NanValue as aver::nan_value::NanValueConvert>::to_value(
             nv,
@@ -163,11 +187,22 @@ fn run_vm(
 fn run_wasm_gc(
     items: &[TopLevel],
     analysis: Option<&aver::ir::AnalysisResult>,
+    module_root: Option<&str>,
 ) -> Option<BackendOutcome> {
     let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        // Multi-module support mirrors VM's compile_program_with_modules
+        // by pre-flattening dep modules into `items` (wasm-gc backend
+        // expects a single flat ast — multi-module split happens
+        // upstream of run_in_process per its doc comment).
+        let mut items_flat = items.to_vec();
+        if let Some(root) = module_root {
+            if let Ok(dep_modules) = aver::source::load_compile_deps(items, root) {
+                aver::codegen::wasm_gc::flatten_multimodule(&mut items_flat, &dep_modules);
+            }
+        }
         let (run_res, stdout, _stderr) = aver::services::console::capture_output(|| {
             aver::runtime::wasm_gc::run_in_process(
-                items,
+                &items_flat,
                 analysis,
                 aver::runtime::wasm_gc::RunConfig {
                     program_args: Vec::new(),

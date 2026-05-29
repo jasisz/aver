@@ -36,22 +36,38 @@ fn main() {
     afl::fuzz!(|data: &[u8]| {
         let c = common::counters();
         c.record_exec();
-        let Ok(source) = std::str::from_utf8(data) else {
-            return;
+
+        // Multi-module dispatch — multi-file inputs exercise the
+        // cross-module typecheck path (TypecheckMode::Full with a
+        // base_dir loads dep modules on demand). Catches Type::Named
+        // identity collisions across modules.
+        let setup_holder = common::try_multimodule_input(data);
+        let (source, base_dir): (&str, Option<&str>) = match &setup_holder {
+            Some(setup) => (setup.entry_source.as_str(), setup.module_root.to_str()),
+            None => {
+                let Ok(s) = std::str::from_utf8(data) else {
+                    return;
+                };
+                (s, None)
+            }
         };
+
         let mut lexer = aver::lexer::Lexer::new(source);
         let Ok(tokens) = lexer.tokenize() else { return };
         c.record_lex_ok();
         let mut parser = aver::parser::Parser::new(tokens);
-        let Ok(mut items) = parser.parse() else { return };
+        let Ok(mut items) = parser.parse() else {
+            return;
+        };
         let (nodes, depth) = common::ast_metrics(&items);
         c.record_parse_ok(nodes, depth);
-        // run_type_check returns a Vec<TypeError> for valid frontend
-        // inputs that have real type problems — that's not a panic and
-        // not a fuzz finding. We only care that the function returns
+        // typecheck via pipeline (picks up dep modules via base_dir on
+        // multi-module dispatch). Real type errors are not panics and
+        // not findings — we only care that the function returns
         // cleanly without unwinding.
-        let errors = aver::types::checker::run_type_check(&items);
-        if errors.is_empty() {
+        let tc_result =
+            aver::ir::pipeline::typecheck(&items, &aver::ir::TypecheckMode::Full { base_dir });
+        if tc_result.errors.is_empty() {
             c.record_typecheck_clean();
         }
         // The resolver mutates its input — feed it the same `items`
