@@ -91,7 +91,8 @@ aver compile  hello.av -o out/
 ```bash
 git clone https://github.com/jasisz/aver
 cd aver
-cargo install --path . --force
+cargo install --path . --force                              # full release build (LTO, ~3 min)
+cargo install --path . --force --profile release-fast       # local dev build  (no LTO,  ~30 s)
 
 aver run      examples/core/calculator.av
 aver run      examples/core/calculator.av --self-host

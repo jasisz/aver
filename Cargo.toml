@@ -110,3 +110,18 @@ required-features = ["wasm"]
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Local-iteration profile: skips LTO and uses 16 codegen units, so a
+# rebuild after a one-line change typically finishes in ~30 s instead
+# of 3-4 min. Use for `cargo build --profile release-fast --bin aver`
+# and `cargo install --path . --profile release-fast` during development.
+# Runtime perf is slightly lower (no cross-crate inlining) but well
+# above debug — fine for testing `aver shape`, `aver verify`, etc.
+# `cargo install` without `--profile` and CI / crates.io artifacts
+# stay on the default `release` profile, so shipped binaries are
+# unaffected.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
