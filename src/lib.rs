@@ -7,6 +7,7 @@
 
 extern crate self as aver;
 
+pub mod analysis;
 pub mod ast;
 pub mod ast_rewrite;
 #[cfg(feature = "runtime")]
