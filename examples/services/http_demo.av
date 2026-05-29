@@ -33,6 +33,51 @@ fn post(url: String, payload: String, token: String) -> Result<HttpResponse, Str
     headers = {"authorization" => ["Bearer {token}"]}
     Http.post(url, payload, "application/json", headers)
 
+// Oracle stubs for fetch / checkStatus / post: pin Http without
+// hitting the network. Each stub matches the matching Http.* Oracle
+// signature, so the verify blocks below can pre-pick a deterministic
+// world.
+
+fn fakeGet200(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+    ? "Deterministic Http.get stub: 200 OK with a short body."
+    Result.Ok(HttpResponse(status = 200, body = "{{\"ok\": true}}", headers = {}))
+
+fn fakeGet404(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+    ? "Deterministic Http.get stub: server reachable, returns 404."
+    Result.Ok(HttpResponse(status = 404, body = "not found", headers = {}))
+
+fn fakeGetDown(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>
+    ? "Deterministic Http.get stub: transport error. Exercises the `?` Err short-circuit in checkStatus."
+    Result.Err("timeout")
+
+fn fakePost200(path: BranchPath, n: Int, url: String, body: String, contentType: String, headers: Map<String, List<String>>) -> Result<HttpResponse, String>
+    ? "Deterministic Http.post stub: 200 OK echoing a fixed body."
+    Result.Ok(HttpResponse(status = 200, body = "accepted", headers = {}))
+
+verify fakeGet200
+    fakeGet200(BranchPath.Root, 0, "https://x") => Result.Ok(HttpResponse(status = 200, body = "{{\"ok\": true}}", headers = {}))
+
+verify fakeGet404
+    fakeGet404(BranchPath.Root, 0, "https://x") => Result.Ok(HttpResponse(status = 404, body = "not found", headers = {}))
+
+verify fakeGetDown
+    fakeGetDown(BranchPath.Root, 0, "https://x") => Result.Err("timeout")
+
+verify fetch trace
+    given http: Http.get = [fakeGet200, fakeGet404, fakeGetDown]
+    fetched = fetch("https://example.com")
+    fetched.trace.contains(Http.get("https://example.com")) => true
+
+verify checkStatus trace
+    given http: Http.get = [fakeGet200, fakeGet404, fakeGetDown]
+    checked = checkStatus("https://example.com")
+    checked.trace.contains(Http.get("https://example.com")) => true
+
+verify post trace
+    given http: Http.post = [fakePost200]
+    posted = post("https://example.com", "{{}}", "demo-token")
+    posted.trace.contains(Http.post) => true
+
 fn main() -> Unit
     ! [Console.print, Http.get, Http.post]
     url = "https://httpbin.org/get"

@@ -232,11 +232,41 @@ verify withoutId
 
 // --- CRUD ---
 
+// Oracle stubs for loadAll: exercise the Disk.readText branches without
+// touching the real filesystem. Each stub matches the `Disk.readText`
+// Oracle signature `(path, n, file) -> Result<String, String>`.
+
+fn fakeDiskEmpty(path: BranchPath, n: Int, file: String) -> Result<String, String>
+    ? "Deterministic Disk.readText stub: empty notes file."
+    Result.Ok("")
+
+fn fakeDiskOneNote(path: BranchPath, n: Int, file: String) -> Result<String, String>
+    ? "Deterministic Disk.readText stub: a single well-formed note line."
+    Result.Ok("1\tBuy milk\tFrom the store\n")
+
+fn fakeDiskGone(path: BranchPath, n: Int, file: String) -> Result<String, String>
+    ? "Deterministic Disk.readText stub: file does not exist — exercises the Err short-circuit."
+    Result.Err("ENOENT")
+
+verify fakeDiskEmpty
+    fakeDiskEmpty(BranchPath.Root, 0, "/tmp/aver_notepad/notes.txt") => Result.Ok("")
+
+verify fakeDiskOneNote
+    fakeDiskOneNote(BranchPath.Root, 0, "/tmp/aver_notepad/notes.txt") => Result.Ok("1\tBuy milk\tFrom the store\n")
+
+verify fakeDiskGone
+    fakeDiskGone(BranchPath.Root, 0, "/tmp/aver_notepad/notes.txt") => Result.Err("ENOENT")
+
 fn loadAll() -> Result<List<Note>, String>
     ? "Reads all notes from disk."
     ! [Disk.readText]
     content = Disk.readText(notesPath())?
     parseNotes(content)
+
+verify loadAll trace
+    given disk: Disk.readText = [fakeDiskEmpty, fakeDiskOneNote, fakeDiskGone]
+    loaded = loadAll()
+    loaded.trace.contains(Disk.readText("/tmp/aver_notepad/notes.txt")) => true
 
 fn saveAll(notes: List<Note>) -> Result<Unit, String>
     ? "Overwrites the notes file with the given list."
