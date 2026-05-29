@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use aver::config::ProjectConfig;
 use aver::diagnostics::shape::{self, CorpusEntry, RenderOptions};
 
+use super::shared::resolve_module_root;
+
 pub fn cmd_shape(arg: &str, module_root: Option<&str>, summary: bool, json: bool, lint: bool) {
     let path = Path::new(arg);
 
@@ -74,7 +76,10 @@ fn run_single_file(
     config: Option<&ProjectConfig>,
     config_dir: &Path,
 ) {
-    let report = match shape::analyze_path_with(path, module_root, fingerprints, basis) {
+    // Same rule as `aver verify` / `aver check`: explicit `--module-root`
+    // wins, otherwise cwd. No walker — keep one rule across commands.
+    let resolved_root = resolve_module_root(module_root);
+    let report = match shape::analyze_path_with(path, Some(&resolved_root), fingerprints, basis) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("aver shape: {}", e);
@@ -110,7 +115,9 @@ fn run_corpus(
     config: Option<&ProjectConfig>,
     config_dir: &Path,
 ) {
-    let entries = match shape::analyze_dir(root, module_root, fingerprints, basis) {
+    // Same rule as single-file: `--module-root` wins, else cwd.
+    let resolved_root = resolve_module_root(module_root);
+    let entries = match shape::analyze_dir(root, Some(&resolved_root), fingerprints, basis) {
         Ok(es) => es,
         Err(e) => {
             eprintln!("aver shape: {}", e);
