@@ -232,6 +232,83 @@ fn project_layer_override_rejects_unknown_layer_name() {
 }
 
 #[test]
+fn pure_module_with_demo_main_is_not_orchestration() {
+    // quicksort.av has a `main()` that prints the sorted result, but
+    // the rest of the module is pure recursive helpers. Pre-redesign
+    // it classified as Orchestration (any module with main + classified
+    // effects); post-redesign the effectful-fn ratio is below 30% so
+    // the demo main doesn't drag the module into Orchestration.
+    let r = analyze("examples/data/quicksort.av");
+    assert!(r.has_main, "quicksort.av declares main()");
+    assert!(
+        r.effectful_fn_ratio < 0.3,
+        "expected < 30% effectful non-main fns, got {:.2}",
+        r.effectful_fn_ratio,
+    );
+    assert!(
+        !matches!(r.kind, Kind::Orchestration),
+        "quicksort is library-with-demo, must NOT be Orchestration; got {:?}",
+        r.kind
+    );
+}
+
+#[test]
+fn layer_verdict_includes_runners_up_and_margin() {
+    use aver::diagnostics::shape;
+    let r = analyze("examples/services/redis.av");
+    let verdict = r
+        .layer
+        .clone()
+        .expect("redis has fns, layer must be inferred");
+    // Top-3 candidates with distances.
+    assert!(
+        verdict.candidates.len() >= 2,
+        "expected at least 2 candidates, got {}",
+        verdict.candidates.len()
+    );
+    // Margin is the distance gap between best and runner-up.
+    let best_dist = verdict.candidates[0].1;
+    let runner_dist = verdict.candidates[1].1;
+    assert!(
+        (verdict.margin - (runner_dist - best_dist)).abs() < 1e-9,
+        "margin should equal runner-up distance minus best distance",
+    );
+    // Render must include "next:" runners-up line.
+    let text = shape::render_text(&r, &shape::RenderOptions { summary: false });
+    assert!(
+        text.contains("next:"),
+        "render_text must include runners-up line, got:\n{}",
+        text
+    );
+}
+
+#[test]
+fn low_confidence_or_low_margin_marks_layer_uncertain() {
+    // calculator.av has 3 non-main fns — small-N penalty caps
+    // confidence at 0.2, which trips the uncertain flag.
+    let r = analyze("examples/core/calculator.av");
+    if let Some(verdict) = &r.layer {
+        if verdict.confidence < 0.4 || verdict.margin < 10.0 {
+            assert!(
+                verdict.uncertain,
+                "low-confidence/low-margin verdict must be uncertain"
+            );
+            let text = shape::render_text(&r, &shape::RenderOptions { summary: false });
+            assert!(
+                text.contains("Layer: uncertain"),
+                "uncertain verdict must surface 'Layer: uncertain' wording, got:\n{}",
+                text
+            );
+            assert!(
+                text.contains("best:"),
+                "uncertain wording must include 'best:' label, got:\n{}",
+                text
+            );
+        }
+    }
+}
+
+#[test]
 fn small_module_layer_confidence_is_penalized() {
     // <5 fns → confidence capped at 0.2 regardless of fit. We can't
     // easily synthesize a 3-fn module from disk without a fixture
