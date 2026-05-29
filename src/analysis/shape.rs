@@ -924,17 +924,15 @@ fn expr_calls_name(expr: &crate::ast::Spanned<crate::ast::Expr>, name: &str) -> 
             .any(|(k, v)| expr_calls_name(k, name) || expr_calls_name(v, name)),
         Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_calls_name(e, name)),
         Expr::RecordUpdate { base, updates, .. } => {
-            expr_calls_name(base, name)
-                || updates.iter().any(|(_, e)| expr_calls_name(e, name))
+            expr_calls_name(base, name) || updates.iter().any(|(_, e)| expr_calls_name(e, name))
         }
         Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
             crate::ast::StrPart::Parsed(e) => expr_calls_name(e, name),
             crate::ast::StrPart::Literal(_) => false,
         }),
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Constructor(_, None)
-        | Expr::Resolved { .. } => false,
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {
+            false
+        }
     }
 }
 
@@ -1037,9 +1035,6 @@ fn collect_qualifying_in_expr(
                 collect_qualifying_in_expr(a, outer_params, recursive, out);
             }
         }
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Constructor(_, None)
-        | Expr::Resolved { .. } => {}
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) | Expr::Resolved { .. } => {}
     }
 }
