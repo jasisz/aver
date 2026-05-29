@@ -165,12 +165,10 @@ verify noteRoundtripSafe
     noteRoundtripSafe(Note(id = 2, title = "bad\ttitle", body = "ok")) => false
 
 fn foldNote(acc: Result<List<Note>, String>, line: String) -> Result<List<Note>, String>
-    ? "Fold step: parses a line and appends the resulting note."
-    match acc
-        Result.Err(e) -> Result.Err(e)
-        Result.Ok(notes) -> match deserializeLine(line)
-            Result.Err(e) -> Result.Err(e)
-            Result.Ok(note) -> Result.Ok(List.concat(notes, [note]))
+    ? "Fold step: parses a line and appends the resulting note. Both the running accumulator and the per-line parse are Result-shaped, so `?` collapses the nested match into a linear happy-path."
+    notes = acc?
+    note = deserializeLine(line)?
+    Result.Ok(List.concat(notes, [note]))
 
 verify foldNote
     foldNote(Result.Err("x"), "1\tA\tB") => Result.Err("x")
