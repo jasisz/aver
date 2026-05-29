@@ -118,7 +118,10 @@ fn refinement_info_from_shape<'a>(
             type_name: ptn,
             constructor_fn,
             ..
-        } = p;
+        } = p
+        else {
+            return None;
+        };
         if ptn != type_name {
             return None;
         }
