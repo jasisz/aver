@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use aver::ast::{Spanned, TopLevel};
 use aver::ir::hir::{
-    ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnDef, ResolvedMatchArm,
-    ResolvedPattern, ResolvedStmt, ResolvedTopLevel,
+    ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnDef, ResolvedMatchArm, ResolvedPattern,
+    ResolvedStmt, ResolvedTopLevel,
 };
 use aver::ir::{FnId, PipelineConfig, TypecheckMode};
 use aver::types::Type;
@@ -69,8 +69,8 @@ fn load_module_recursive(
             name, module_root
         )
     })?;
-    let source = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Read '{}': {}", path.display(), e))?;
+    let source =
+        std::fs::read_to_string(&path).map_err(|e| format!("Read '{}': {}", path.display(), e))?;
     let mut items = aver::source::parse_source(&source)
         .map_err(|e| format!("Parse '{}': {}", path.display(), e))?;
     aver::source::require_module_declaration(&items, path.to_str().unwrap_or(name))?;
@@ -91,10 +91,7 @@ fn load_module_recursive(
     if let Some(tc) = pipeline_result.typecheck.as_ref()
         && !tc.errors.is_empty()
     {
-        return Err(format!(
-            "Type errors in dep '{}'",
-            name
-        ));
+        return Err(format!("Type errors in dep '{}'", name));
     }
 
     let transitive: Vec<String> = items
@@ -485,7 +482,9 @@ fn compute_sccs(fns: &[&ResolvedFnDef], facts_by_id: &HashMap<FnId, &Facts>) -> 
         if let Some(neighbors) = graph.get(&v).cloned() {
             for w in neighbors {
                 if !indices.contains_key(&w) {
-                    strongconnect(w, graph, index, stack, on_stack, indices, lowlinks, multi_scc);
+                    strongconnect(
+                        w, graph, index, stack, on_stack, indices, lowlinks, multi_scc,
+                    );
                     let lv = *lowlinks.get(&v).unwrap();
                     let lw = *lowlinks.get(&w).unwrap();
                     lowlinks.insert(v, lv.min(lw));
@@ -568,14 +567,11 @@ fn analyze_file(path: &Path) -> Result<FileResult, String> {
                 _ => None,
             })
             .unwrap_or_default();
-        format!(
-            "deps: cannot locate module root for {:?}",
-            dep_names
-        )
+        format!("deps: cannot locate module root for {:?}", dep_names)
     })?;
 
-    let dep_modules = load_compile_deps(&items, &module_root)
-        .map_err(|e| format!("deps: {}", e))?;
+    let dep_modules =
+        load_compile_deps(&items, &module_root).map_err(|e| format!("deps: {}", e))?;
     let pipeline_result = aver::ir::pipeline::run(
         &mut items,
         PipelineConfig {
@@ -678,7 +674,11 @@ fn research_archetype_clustering_full_corpus() {
 
     let total_fns: usize = all_files.iter().map(|r| r.fns.len()).sum();
     eprintln!();
-    eprintln!("# total fns classified: {} ({} files skipped)", total_fns, skipped.len());
+    eprintln!(
+        "# total fns classified: {} ({} files skipped)",
+        total_fns,
+        skipped.len()
+    );
 
     use std::collections::BTreeMap;
 
@@ -698,7 +698,12 @@ fn research_archetype_clustering_full_corpus() {
     let mut sorted_p: Vec<_> = primary_counts.iter().collect();
     sorted_p.sort_by(|a, b| b.1.cmp(a.1));
     for (l, c) in &sorted_p {
-        eprintln!("  {:30} {:5}  {:5.1}%", l, c, 100.0 * (**c as f64) / (total_fns.max(1) as f64));
+        eprintln!(
+            "  {:30} {:5}  {:5.1}%",
+            l,
+            c,
+            100.0 * (**c as f64) / (total_fns.max(1) as f64)
+        );
     }
 
     // ── H2: Verify density per archetype ──────────────────────────────
@@ -720,7 +725,10 @@ fn research_archetype_clustering_full_corpus() {
     });
     for (label, (v, n)) in vs {
         let density = (*v as f64) / (*n as f64).max(1.0);
-        eprintln!("  {:30} {:5.2} verify/fn  ({} cases over {} fns)", label, density, v, n);
+        eprintln!(
+            "  {:30} {:5.2} verify/fn  ({} cases over {} fns)",
+            label, density, v, n
+        );
     }
 
     // ── H4: Seeded-driver pair detection + semantic-significance split
@@ -729,10 +737,11 @@ fn research_archetype_clustering_full_corpus() {
     // built-in container).
     eprintln!();
     eprintln!("# H4: Seeded-driver pairs — semantic accumulator vs mechanical duplicate");
-    let mut semantic_pairs: Vec<(String, String, String, String)> = Vec::new();   // file, driver, worker, acc_type
+    let mut semantic_pairs: Vec<(String, String, String, String)> = Vec::new(); // file, driver, worker, acc_type
     let mut mechanical_pairs: Vec<(String, String, String, String)> = Vec::new();
     for r in &all_files {
-        let by_name: HashMap<&str, &FnRecord> = r.fns.iter().map(|f| (f.name.as_str(), f)).collect();
+        let by_name: HashMap<&str, &FnRecord> =
+            r.fns.iter().map(|f| (f.name.as_str(), f)).collect();
         for f in &r.fns {
             for suffix in &["Acc", "Loop", "Inner", "Helper"] {
                 let candidate = format!("{}{}", f.name, suffix);
@@ -797,7 +806,10 @@ fn research_archetype_clustering_full_corpus() {
     });
     for (root, (pe, total)) in pe_sorted {
         let pct = 100.0 * (*pe as f64) / (*total as f64).max(1.0);
-        eprintln!("  {:20} {:5.1}%  ({} pure-expr of {} fns)", root, pct, pe, total);
+        eprintln!(
+            "  {:20} {:5.1}%  ({} pure-expr of {} fns)",
+            root, pct, pe, total
+        );
     }
 
     // ── H3: Call graph between archetypes ─────────────────────────────
@@ -864,8 +876,8 @@ fn research_archetype_clustering_full_corpus() {
         let total = *per_folder_totals.get(folder).unwrap_or(&1) as f64;
         eprint!("  {:>15} |", folder);
         for arch in archs.iter() {
-            let p = primary_counts.get(arch).copied().unwrap_or(0) as f64
-                / (total_fns.max(1) as f64);
+            let p =
+                primary_counts.get(arch).copied().unwrap_or(0) as f64 / (total_fns.max(1) as f64);
             let observed = counts.get(arch).copied().unwrap_or(0) as f64 / total.max(1.0);
             // Z-score using normal approximation: (observed - expected) / sqrt(p(1-p)/n)
             let expected = p;
@@ -989,17 +1001,27 @@ fn short_type_name(ty: &Type) -> String {
         Type::Str => "String".into(),
         Type::Bool => "Bool".into(),
         Type::Unit => "Unit".into(),
-        Type::Result(ok, err) => format!("Result<{}, {}>", short_type_name(ok), short_type_name(err)),
+        Type::Result(ok, err) => {
+            format!("Result<{}, {}>", short_type_name(ok), short_type_name(err))
+        }
         Type::Option(inner) => format!("Option<{}>", short_type_name(inner)),
         Type::List(inner) => format!("List<{}>", short_type_name(inner)),
         Type::Vector(inner) => format!("Vector<{}>", short_type_name(inner)),
         Type::Map(k, v) => format!("Map<{}, {}>", short_type_name(k), short_type_name(v)),
         Type::Tuple(parts) => {
-            let inner = parts.iter().map(short_type_name).collect::<Vec<_>>().join(", ");
+            let inner = parts
+                .iter()
+                .map(short_type_name)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("({})", inner)
         }
         Type::Fn(args, ret, _) => {
-            let a = args.iter().map(short_type_name).collect::<Vec<_>>().join(", ");
+            let a = args
+                .iter()
+                .map(short_type_name)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("fn({}) -> {}", a, short_type_name(ret))
         }
         Type::Var(name) => name.clone(),
