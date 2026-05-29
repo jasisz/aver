@@ -188,40 +188,40 @@ pub fn extract_facts(fd: &ResolvedFnDef) -> Facts {
 
 // ─── Per-fn classification ───────────────────────────────────────────────────
 
-pub fn classify(fd: &ResolvedFnDef, facts: &Facts, scc: &HashSet<FnId>) -> Vec<&'static str> {
+pub fn classify(fd: &ResolvedFnDef, facts: &Facts, scc: &HashSet<FnId>) -> Vec<Archetype> {
     let mut labels = Vec::new();
 
     let self_call = facts.calls_to.contains(&fd.fn_id) || facts.tail_calls.contains(&fd.fn_id);
     if self_call {
-        labels.push("structural-recursion");
+        labels.push(Archetype::StructuralRecursion);
     }
     if scc.contains(&fd.fn_id) {
-        labels.push("scc-mutual");
+        labels.push(Archetype::SccMutual);
     }
 
     if facts.last_stmt_is_match {
         if facts.ctor_match_patterns >= facts.other_match_patterns && facts.ctor_match_patterns > 0
         {
-            labels.push("match-dispatcher");
+            labels.push(Archetype::MatchDispatcher);
         } else {
-            labels.push("match-on-value");
+            labels.push(Archetype::MatchOnValue);
         }
     }
 
     if !fd.effects.is_empty() {
         let total_calls = facts.calls_to.len() + facts.builtin_calls.len();
         if total_calls >= 2 {
-            labels.push("orchestration");
+            labels.push(Archetype::Orchestration);
         } else {
-            labels.push("effectful-leaf");
+            labels.push(Archetype::EffectfulLeaf);
         }
     }
 
     let is_result_ret = type_is_result(&fd.return_type);
     if is_result_ret && facts.has_error_prop {
-        labels.push("pipeline-result");
+        labels.push(Archetype::PipelineResult);
     } else if is_result_ret && facts.has_match_with_err_arm {
-        labels.push("manual-result-adapter");
+        labels.push(Archetype::ManualResultAdapter);
     }
 
     let is_string_ret = matches!(&fd.return_type, Type::Named { name, .. } if name == "String");
@@ -230,14 +230,14 @@ pub fn classify(fd: &ResolvedFnDef, facts: &Facts, scc: &HashSet<FnId>) -> Vec<&
         && (facts.has_interp_str || facts.string_builtin_calls >= 1)
         && (facts.body_stmt_count >= 2 || facts.has_interp_str)
     {
-        labels.push("renderer-formatter");
+        labels.push(Archetype::RendererFormatter);
     }
 
     if facts.body_stmt_count == 1
         && (!facts.ctor_constructs.is_empty() || facts.record_creates > 0)
         && !facts.has_match
     {
-        labels.push("constructor-wrapper");
+        labels.push(Archetype::ConstructorWrapper);
     }
 
     if fd.params.is_empty()
@@ -246,7 +246,7 @@ pub fn classify(fd: &ResolvedFnDef, facts: &Facts, scc: &HashSet<FnId>) -> Vec<&
         && fd.effects.is_empty()
         && facts.only_stmt_is_literal
     {
-        labels.push("data-as-function");
+        labels.push(Archetype::DataAsFunction);
     }
 
     if facts.body_stmt_count == 1
@@ -255,7 +255,7 @@ pub fn classify(fd: &ResolvedFnDef, facts: &Facts, scc: &HashSet<FnId>) -> Vec<&
         && fd.effects.is_empty()
         && (!facts.builtin_calls.is_empty() || !facts.calls_to.is_empty())
     {
-        labels.push("trivial-helper");
+        labels.push(Archetype::TrivialHelper);
     }
 
     if facts.body_stmt_count == 1
@@ -267,7 +267,7 @@ pub fn classify(fd: &ResolvedFnDef, facts: &Facts, scc: &HashSet<FnId>) -> Vec<&
         && facts.ctor_constructs.is_empty()
         && !fd.params.is_empty()
     {
-        labels.push("pure-expression");
+        labels.push(Archetype::PureExpression);
     }
 
     if facts.body_stmt_count >= 2
@@ -276,7 +276,7 @@ pub fn classify(fd: &ResolvedFnDef, facts: &Facts, scc: &HashSet<FnId>) -> Vec<&
         && (!facts.builtin_calls.is_empty() || !facts.calls_to.is_empty())
         && !self_call
     {
-        labels.push("let-pipeline");
+        labels.push(Archetype::LetPipeline);
     }
 
     labels
@@ -286,30 +286,112 @@ pub fn type_is_result(t: &Type) -> bool {
     matches!(t, Type::Named { name, .. } if name == "Result")
 }
 
-pub const ARCHETYPE_ORDER: &[&str] = &[
-    "scc-mutual",
-    "structural-recursion",
-    "match-dispatcher",
-    "pipeline-result",
-    "manual-result-adapter",
-    "renderer-formatter",
-    "match-on-value",
-    "orchestration",
-    "effectful-leaf",
-    "let-pipeline",
-    "constructor-wrapper",
-    "data-as-function",
-    "trivial-helper",
-    "pure-expression",
-];
+/// Per-fn archetype label. Multi-label per fn — `classify` returns
+/// a `Vec<Archetype>`; `primary_label` picks one by the precedence
+/// declared in [`Archetype::all`]. Stringified only at presentation
+/// boundaries (renderer, JSON, LSP hover).
+///
+/// Stage 3 of #232 ("Shape") replaced the prior `&'static str`-keyed
+/// representation with this typed enum. The string forms are still
+/// the public JSON / text contract; `as_str` / `parse` translate
+/// at the edges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Archetype {
+    SccMutual,
+    StructuralRecursion,
+    MatchDispatcher,
+    PipelineResult,
+    ManualResultAdapter,
+    RendererFormatter,
+    MatchOnValue,
+    Orchestration,
+    EffectfulLeaf,
+    LetPipeline,
+    ConstructorWrapper,
+    DataAsFunction,
+    TrivialHelper,
+    PureExpression,
+    /// Fallback for fn bodies that don't match any classifier rule.
+    /// Surfaces as `"unclassified"` in JSON / text output.
+    Unclassified,
+}
 
-pub fn primary_label(labels: &[&str]) -> &'static str {
-    for &want in ARCHETYPE_ORDER {
+impl Archetype {
+    /// Precedence-ordered list. `primary_label` walks this in order;
+    /// the first archetype that fires on a fn wins. Renderers also
+    /// use this for histogram tie-breaking.
+    pub fn all() -> &'static [Archetype] {
+        &[
+            Archetype::SccMutual,
+            Archetype::StructuralRecursion,
+            Archetype::MatchDispatcher,
+            Archetype::PipelineResult,
+            Archetype::ManualResultAdapter,
+            Archetype::RendererFormatter,
+            Archetype::MatchOnValue,
+            Archetype::Orchestration,
+            Archetype::EffectfulLeaf,
+            Archetype::LetPipeline,
+            Archetype::ConstructorWrapper,
+            Archetype::DataAsFunction,
+            Archetype::TrivialHelper,
+            Archetype::PureExpression,
+        ]
+    }
+
+    /// Canonical kebab-case label. Used by renderers, JSON, hover.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Archetype::SccMutual => "scc-mutual",
+            Archetype::StructuralRecursion => "structural-recursion",
+            Archetype::MatchDispatcher => "match-dispatcher",
+            Archetype::PipelineResult => "pipeline-result",
+            Archetype::ManualResultAdapter => "manual-result-adapter",
+            Archetype::RendererFormatter => "renderer-formatter",
+            Archetype::MatchOnValue => "match-on-value",
+            Archetype::Orchestration => "orchestration",
+            Archetype::EffectfulLeaf => "effectful-leaf",
+            Archetype::LetPipeline => "let-pipeline",
+            Archetype::ConstructorWrapper => "constructor-wrapper",
+            Archetype::DataAsFunction => "data-as-function",
+            Archetype::TrivialHelper => "trivial-helper",
+            Archetype::PureExpression => "pure-expression",
+            Archetype::Unclassified => "unclassified",
+        }
+    }
+
+    /// Parse a string back into the typed form. Used by callers that
+    /// receive the public JSON shape and want to operate on the typed
+    /// enum (e.g. the research test reading per-folder histograms).
+    pub fn parse(s: &str) -> Option<Archetype> {
+        Some(match s {
+            "scc-mutual" => Archetype::SccMutual,
+            "structural-recursion" => Archetype::StructuralRecursion,
+            "match-dispatcher" => Archetype::MatchDispatcher,
+            "pipeline-result" => Archetype::PipelineResult,
+            "manual-result-adapter" => Archetype::ManualResultAdapter,
+            "renderer-formatter" => Archetype::RendererFormatter,
+            "match-on-value" => Archetype::MatchOnValue,
+            "orchestration" => Archetype::Orchestration,
+            "effectful-leaf" => Archetype::EffectfulLeaf,
+            "let-pipeline" => Archetype::LetPipeline,
+            "constructor-wrapper" => Archetype::ConstructorWrapper,
+            "data-as-function" => Archetype::DataAsFunction,
+            "trivial-helper" => Archetype::TrivialHelper,
+            "pure-expression" => Archetype::PureExpression,
+            "unclassified" => Archetype::Unclassified,
+            _ => return None,
+        })
+    }
+}
+
+pub fn primary_label(labels: &[Archetype]) -> Archetype {
+    for &want in Archetype::all() {
         if labels.contains(&want) {
             return want;
         }
     }
-    "unclassified"
+    Archetype::Unclassified
 }
 
 // ─── Call-graph SCC (multi-node strongly connected components) ───────────────

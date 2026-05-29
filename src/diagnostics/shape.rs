@@ -32,7 +32,9 @@ use crate::types::Type;
 // walker + renderers + `aver.toml` bridges. Internal use of the
 // recognition API in this file goes through `crate::analysis::shape`
 // directly (see imports below).
-use crate::analysis::shape::{Facts, classify, compute_sccs, extract_facts, primary_label};
+use crate::analysis::shape::{
+    Archetype, Facts, classify, compute_sccs, extract_facts, primary_label,
+};
 
 // ─── ModuleShape vector + derived Kind ───────────────────────────────────────
 
@@ -145,7 +147,7 @@ impl ApiShape {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Kind {
     PureHelpers,
     DataModule,
@@ -290,28 +292,28 @@ pub struct VerifyReport {
 
 #[derive(Debug, Clone, Default)]
 pub struct Histogram {
-    pub counts: BTreeMap<&'static str, usize>,
+    pub counts: BTreeMap<Archetype, usize>,
     pub total_fns: usize,
 }
 
 impl Histogram {
-    pub fn percentage(&self, archetype: &str) -> f64 {
+    pub fn percentage(&self, archetype: Archetype) -> f64 {
         if self.total_fns == 0 {
             return 0.0;
         }
-        let c = self.counts.get(archetype).copied().unwrap_or(0) as f64;
+        let c = self.counts.get(&archetype).copied().unwrap_or(0) as f64;
         100.0 * c / self.total_fns as f64
     }
 
     /// Returns archetype-percentage pairs in descending count order.
-    pub fn sorted(&self) -> Vec<(&'static str, usize, f64)> {
-        let mut entries: Vec<(&'static str, usize)> = self
+    pub fn sorted(&self) -> Vec<(Archetype, usize, f64)> {
+        let mut entries: Vec<(Archetype, usize)> = self
             .counts
             .iter()
             .filter(|(_, c)| **c > 0)
             .map(|(k, c)| (*k, *c))
             .collect();
-        entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_str().cmp(b.0.as_str())));
         entries
             .into_iter()
             .map(|(name, count)| {
@@ -397,18 +399,20 @@ impl Bucket {
     }
 }
 
-pub fn archetype_to_bucket(archetype: &str) -> Option<Bucket> {
+pub fn archetype_to_bucket(archetype: Archetype) -> Option<Bucket> {
     match archetype {
-        "match-dispatcher" | "match-on-value" => Some(Bucket::Match),
-        "scc-mutual" | "structural-recursion" => Some(Bucket::Recursion),
-        "pipeline-result" | "let-pipeline" | "manual-result-adapter" => Some(Bucket::Pipeline),
-        "orchestration" | "effectful-leaf" => Some(Bucket::Orchestration),
-        "trivial-helper"
-        | "pure-expression"
-        | "constructor-wrapper"
-        | "data-as-function"
-        | "renderer-formatter" => Some(Bucket::Helpers),
-        _ => None,
+        Archetype::MatchDispatcher | Archetype::MatchOnValue => Some(Bucket::Match),
+        Archetype::SccMutual | Archetype::StructuralRecursion => Some(Bucket::Recursion),
+        Archetype::PipelineResult | Archetype::LetPipeline | Archetype::ManualResultAdapter => {
+            Some(Bucket::Pipeline)
+        }
+        Archetype::Orchestration | Archetype::EffectfulLeaf => Some(Bucket::Orchestration),
+        Archetype::TrivialHelper
+        | Archetype::PureExpression
+        | Archetype::ConstructorWrapper
+        | Archetype::DataAsFunction
+        | Archetype::RendererFormatter => Some(Bucket::Helpers),
+        Archetype::Unclassified => None,
     }
 }
 
@@ -489,7 +493,7 @@ fn histogram_to_buckets(hist: &Histogram) -> [(Bucket, f64); 5] {
     use Bucket::*;
     let mut counts: HashMap<Bucket, usize> = HashMap::new();
     for (arch, c) in &hist.counts {
-        if let Some(b) = archetype_to_bucket(arch) {
+        if let Some(b) = archetype_to_bucket(*arch) {
             *counts.entry(b).or_insert(0) += c;
         }
     }
@@ -600,8 +604,8 @@ pub fn classify_layer(
 #[derive(Debug, Clone)]
 pub struct FnShape {
     pub name: String,
-    pub primary: &'static str,
-    pub labels: Vec<&'static str>,
+    pub primary: Archetype,
+    pub labels: Vec<Archetype>,
 }
 
 #[derive(Debug, Clone)]
@@ -1028,7 +1032,7 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
         let sorted = report.histogram.sorted();
         let name_w = sorted
             .iter()
-            .map(|(n, _, _)| n.len())
+            .map(|(n, _, _)| n.as_str().len())
             .max()
             .unwrap_or(0)
             .max(20);
@@ -1036,7 +1040,7 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
             let bar = histogram_bar(*pct, 20);
             out.push_str(&format!(
                 "    {:<width$}  {}  {:>3.0}%  ({})\n",
-                name,
+                name.as_str(),
                 bar,
                 pct,
                 count,
@@ -1089,11 +1093,14 @@ pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
             .unwrap_or(0)
             .max(16);
         for f in &report.fns {
-            let labels: Vec<&str> = f.labels.to_vec();
-            let labels_str = if labels.is_empty() {
+            let labels_str = if f.labels.is_empty() {
                 "unclassified".to_string()
             } else {
-                labels.join(", ")
+                f.labels
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
             out.push_str(&format!(
                 "    {:<width$}  {}\n",
@@ -1143,17 +1150,18 @@ pub fn render_json(report: &ShapeReport) -> serde_json::Value {
         .counts
         .iter()
         .filter(|(_, c)| **c > 0)
-        .map(|(k, c)| (k.to_string(), serde_json::Value::from(*c)))
+        .map(|(k, c)| (k.as_str().to_string(), serde_json::Value::from(*c)))
         .collect::<serde_json::Map<_, _>>()
         .into();
     let fns: Vec<serde_json::Value> = report
         .fns
         .iter()
         .map(|f| {
+            let labels: Vec<&str> = f.labels.iter().map(|a| a.as_str()).collect();
             json!({
                 "name": f.name,
-                "primary": f.primary,
-                "labels": f.labels,
+                "primary": f.primary.as_str(),
+                "labels": labels,
             })
         })
         .collect();
@@ -1295,9 +1303,9 @@ pub struct CorpusSummary {
     pub analyzed_files: usize,
     pub skipped_files: usize,
     pub total_fns: usize,
-    pub kind_counts: BTreeMap<&'static str, usize>,
-    pub layer_counts: BTreeMap<&'static str, usize>,
-    pub archetype_counts: BTreeMap<&'static str, usize>,
+    pub kind_counts: BTreeMap<Kind, usize>,
+    pub layer_counts: BTreeMap<Layer, usize>,
+    pub archetype_counts: BTreeMap<Archetype, usize>,
 }
 
 pub fn summarize_corpus(entries: &[CorpusEntry]) -> CorpusSummary {
@@ -1310,12 +1318,12 @@ pub fn summarize_corpus(entries: &[CorpusEntry]) -> CorpusSummary {
             CorpusEntry::Analyzed { report, .. } => {
                 s.analyzed_files += 1;
                 s.total_fns += report.histogram.total_fns;
-                *s.kind_counts.entry(report.kind.as_str()).or_insert(0) += 1;
+                *s.kind_counts.entry(report.kind).or_insert(0) += 1;
                 if let Some(v) = &report.layer {
-                    *s.layer_counts.entry(v.layer.as_str()).or_insert(0) += 1;
+                    *s.layer_counts.entry(v.layer).or_insert(0) += 1;
                 }
                 for (arch, c) in &report.histogram.counts {
-                    *s.archetype_counts.entry(arch).or_insert(0) += c;
+                    *s.archetype_counts.entry(*arch).or_insert(0) += c;
                 }
             }
             CorpusEntry::Skipped { .. } => {
@@ -1401,7 +1409,7 @@ pub fn render_corpus_text(entries: &[CorpusEntry], opts: &RenderOptions) -> Stri
         let mut kinds: Vec<_> = summary.kind_counts.iter().collect();
         kinds.sort_by(|a, b| b.1.cmp(a.1));
         for (kind, count) in kinds {
-            out.push_str(&format!("    {:<24}  {}\n", kind, count));
+            out.push_str(&format!("    {:<24}  {}\n", kind.as_str(), count));
         }
     }
     if !summary.layer_counts.is_empty() {
@@ -1409,7 +1417,7 @@ pub fn render_corpus_text(entries: &[CorpusEntry], opts: &RenderOptions) -> Stri
         let mut layers: Vec<_> = summary.layer_counts.iter().collect();
         layers.sort_by(|a, b| b.1.cmp(a.1));
         for (layer, count) in layers {
-            out.push_str(&format!("    {:<24}  {}\n", layer, count));
+            out.push_str(&format!("    {:<24}  {}\n", layer.as_str(), count));
         }
     }
     if !summary.archetype_counts.is_empty() {
@@ -1422,7 +1430,7 @@ pub fn render_corpus_text(entries: &[CorpusEntry], opts: &RenderOptions) -> Stri
         archs.sort_by(|a, b| b.1.cmp(a.1));
         let name_w = archs
             .iter()
-            .map(|(n, _)| n.len())
+            .map(|(n, _)| n.as_str().len())
             .max()
             .unwrap_or(0)
             .max(20);
@@ -1435,7 +1443,7 @@ pub fn render_corpus_text(entries: &[CorpusEntry], opts: &RenderOptions) -> Stri
             let bar = histogram_bar(pct, 20);
             out.push_str(&format!(
                 "    {:<width$}  {}  {:>3.0}%  ({})\n",
-                arch,
+                arch.as_str(),
                 bar,
                 pct,
                 count,

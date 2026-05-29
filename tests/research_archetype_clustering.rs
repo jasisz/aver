@@ -22,7 +22,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use aver::analysis::shape::{Facts, classify, compute_sccs, extract_facts, primary_label};
+use aver::analysis::shape::{
+    Archetype, Facts, classify, compute_sccs, extract_facts, primary_label,
+};
 use aver::ast::TopLevel;
 use aver::ir::hir::{ResolvedFnDef, ResolvedTopLevel};
 use aver::ir::{FnId, PipelineConfig, TypecheckMode};
@@ -40,8 +42,8 @@ struct FnRecord {
     fn_id: FnId,
     param_count: usize,
     verify_count: usize,
-    primary: &'static str,
-    labels: Vec<&'static str>,
+    primary: Archetype,
+    labels: Vec<Archetype>,
     calls_to: HashSet<FnId>,
     /// All param types — for accumulator semantic-significance check
     /// in the seeded-driver pair analysis.
@@ -181,8 +183,8 @@ fn research_archetype_clustering_full_corpus() {
     use std::collections::BTreeMap;
 
     // ── Sec 1: primary archetype distribution ─────────────────────────
-    let mut primary_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
-    let mut label_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut primary_counts: BTreeMap<Archetype, usize> = BTreeMap::new();
+    let mut label_counts: BTreeMap<Archetype, usize> = BTreeMap::new();
     for r in &all_files {
         for f in &r.fns {
             *primary_counts.entry(f.primary).or_insert(0) += 1;
@@ -198,7 +200,7 @@ fn research_archetype_clustering_full_corpus() {
     for (l, c) in &sorted_p {
         eprintln!(
             "  {:30} {:5}  {:5.1}%",
-            l,
+            l.as_str(),
             c,
             100.0 * (**c as f64) / (total_fns.max(1) as f64)
         );
@@ -207,7 +209,7 @@ fn research_archetype_clustering_full_corpus() {
     // ── H2: Verify density per archetype ──────────────────────────────
     eprintln!();
     eprintln!("# H2: Verify density per primary archetype (cases / fn)");
-    let mut verify_sum: BTreeMap<&'static str, (usize, usize)> = BTreeMap::new(); // (verify_total, fn_total)
+    let mut verify_sum: BTreeMap<Archetype, (usize, usize)> = BTreeMap::new(); // (verify_total, fn_total)
     for r in &all_files {
         for f in &r.fns {
             let entry = verify_sum.entry(f.primary).or_insert((0, 0));
@@ -225,7 +227,10 @@ fn research_archetype_clustering_full_corpus() {
         let density = (*v as f64) / (*n as f64).max(1.0);
         eprintln!(
             "  {:30} {:5.2} verify/fn  ({} cases over {} fns)",
-            label, density, v, n
+            label.as_str(),
+            density,
+            v,
+            n
         );
     }
 
@@ -291,7 +296,7 @@ fn research_archetype_clustering_full_corpus() {
         let entry = pe_per_root.entry(top).or_insert((0, 0));
         for f in &r.fns {
             entry.1 += 1;
-            if f.primary == "pure-expression" {
+            if f.primary == Archetype::PureExpression {
                 entry.0 += 1;
             }
         }
@@ -313,13 +318,13 @@ fn research_archetype_clustering_full_corpus() {
     // ── H3: Call graph between archetypes ─────────────────────────────
     eprintln!();
     eprintln!("# H3: Call graph — caller archetype → callee archetype (raw counts)");
-    let mut fn_archetype: HashMap<FnId, &'static str> = HashMap::new();
+    let mut fn_archetype: HashMap<FnId, Archetype> = HashMap::new();
     for r in &all_files {
         for f in &r.fns {
             fn_archetype.insert(f.fn_id, f.primary);
         }
     }
-    let mut edge_counts: BTreeMap<(&'static str, &'static str), usize> = BTreeMap::new();
+    let mut edge_counts: BTreeMap<(Archetype, Archetype), usize> = BTreeMap::new();
     for r in &all_files {
         for f in &r.fns {
             for callee_id in &f.calls_to {
@@ -333,12 +338,12 @@ fn research_archetype_clustering_full_corpus() {
     // Header
     eprint!("  {:>26} |", "caller↓ / callee→");
     for a in archs.iter() {
-        eprint!(" {:>4}", abbrev(a));
+        eprint!(" {:>4}", abbrev(*a));
     }
     eprintln!();
     eprintln!("  {:>26}-+{}", "", "-----".repeat(archs.len()));
     for caller in archs.iter() {
-        eprint!("  {:>26} |", caller);
+        eprint!("  {:>26} |", caller.as_str());
         for callee in archs.iter() {
             let v = edge_counts.get(&(*caller, *callee)).copied().unwrap_or(0);
             if v == 0 {
@@ -354,7 +359,7 @@ fn research_archetype_clustering_full_corpus() {
     eprintln!();
     eprintln!("# H1: Layer × archetype Z-scores (deviation from corpus-wide mean rate)");
     eprintln!("#     z > 2 means archetype is over-represented in that layer.");
-    let mut per_folder: BTreeMap<String, BTreeMap<&'static str, usize>> = BTreeMap::new();
+    let mut per_folder: BTreeMap<String, BTreeMap<Archetype, usize>> = BTreeMap::new();
     let mut per_folder_totals: BTreeMap<String, usize> = BTreeMap::new();
     for r in &all_files {
         let top = r.folder.split('/').next().unwrap_or(&r.folder).to_string();
@@ -366,7 +371,7 @@ fn research_archetype_clustering_full_corpus() {
     }
     eprint!("  {:>15} |", "layer ↓");
     for a in archs.iter() {
-        eprint!(" {:>5}", abbrev(a));
+        eprint!(" {:>5}", abbrev(*a));
     }
     eprintln!();
     eprintln!("  {:>15}-+{}", "", "------".repeat(archs.len()));
@@ -397,7 +402,7 @@ fn research_archetype_clustering_full_corpus() {
     // ── Per-folder primary top-3 (qualitative anchor) ─────────────────
     eprintln!();
     eprintln!("# Per-folder primary top-3 (qualitative anchor)");
-    let mut folder_top: BTreeMap<String, BTreeMap<&'static str, usize>> = BTreeMap::new();
+    let mut folder_top: BTreeMap<String, BTreeMap<Archetype, usize>> = BTreeMap::new();
     for r in &all_files {
         let top = r.folder.split('/').next().unwrap_or(&r.folder).to_string();
         let entry = folder_top.entry(top).or_default();
@@ -412,7 +417,7 @@ fn research_archetype_clustering_full_corpus() {
         let top3 = top
             .iter()
             .take(3)
-            .map(|(l, c)| format!("{}={}", l, c))
+            .map(|(l, c)| format!("{}={}", l.as_str(), c))
             .collect::<Vec<_>>()
             .join(", ");
         eprintln!("  {:30} (n={:4}) {}", folder, total, top3);
@@ -528,36 +533,36 @@ fn short_type_name(ty: &Type) -> String {
     }
 }
 
-fn primary_label_order() -> &'static [&'static str] {
+fn primary_label_order() -> &'static [Archetype] {
     &[
-        "scc-mutual",
-        "structural-recursion",
-        "match-dispatcher",
-        "match-on-value",
-        "orchestration",
-        "let-pipeline",
-        "constructor-wrapper",
-        "trivial-helper",
-        "pure-expression",
-        "effectful-leaf",
-        "data-as-function",
+        Archetype::SccMutual,
+        Archetype::StructuralRecursion,
+        Archetype::MatchDispatcher,
+        Archetype::MatchOnValue,
+        Archetype::Orchestration,
+        Archetype::LetPipeline,
+        Archetype::ConstructorWrapper,
+        Archetype::TrivialHelper,
+        Archetype::PureExpression,
+        Archetype::EffectfulLeaf,
+        Archetype::DataAsFunction,
     ]
 }
 
-fn abbrev(label: &str) -> &str {
+fn abbrev(label: Archetype) -> &'static str {
     match label {
-        "scc-mutual" => "scc",
-        "structural-recursion" => "rec",
-        "match-dispatcher" => "mD",
-        "match-on-value" => "mV",
-        "orchestration" => "orch",
-        "let-pipeline" => "let",
-        "constructor-wrapper" => "ctor",
-        "trivial-helper" => "triv",
-        "pure-expression" => "pure",
-        "effectful-leaf" => "leaf",
-        "data-as-function" => "data",
-        _ => label,
+        Archetype::SccMutual => "scc",
+        Archetype::StructuralRecursion => "rec",
+        Archetype::MatchDispatcher => "mD",
+        Archetype::MatchOnValue => "mV",
+        Archetype::Orchestration => "orch",
+        Archetype::LetPipeline => "let",
+        Archetype::ConstructorWrapper => "ctor",
+        Archetype::TrivialHelper => "triv",
+        Archetype::PureExpression => "pure",
+        Archetype::EffectfulLeaf => "leaf",
+        Archetype::DataAsFunction => "data",
+        _ => label.as_str(),
     }
 }
 
