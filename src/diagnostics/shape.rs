@@ -23,9 +23,16 @@ use crate::ir::hir::{ResolvedFnDef, ResolvedTopLevel};
 use crate::ir::{FnId, PipelineConfig, TypecheckMode};
 use crate::types::Type;
 
-pub use crate::analysis::shape::{
-    ARCHETYPE_ORDER, Facts, classify, compute_sccs, extract_facts, primary_label, type_is_result,
-};
+// Recognition primitives moved to `aver::analysis::shape` in stage 1
+// (#232). Stage 2 drops the re-exports — callers import from
+// `analysis::shape` directly so the presentation tier doesn't double
+// as an API entry point for the recognition tier. This file holds
+// only the presentation surface from here on: `ModuleShape` vector +
+// `Kind` + Layer fingerprints + verify report + histogram + corpus
+// walker + renderers + `aver.toml` bridges. Internal use of the
+// recognition API in this file goes through `crate::analysis::shape`
+// directly (see imports below).
+use crate::analysis::shape::{Facts, classify, compute_sccs, extract_facts, primary_label};
 
 // ─── ModuleShape vector + derived Kind ───────────────────────────────────────
 
