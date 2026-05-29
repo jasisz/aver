@@ -440,6 +440,30 @@ pub fn is_classified(method: &str) -> bool {
     classify(method).is_some()
 }
 
+/// Opaque types that are runtime handles (id + connection metadata),
+/// not domain-invariant smart-constructor types. These may be fabricated
+/// inside verify-trace context so that Oracle stubs can return them
+/// without going through the live effect that normally produces them
+/// (e.g. `Tcp.connect`). All four soundness conditions from PR 221 apply:
+///
+/// 1. Every effect that can observe/consume the fake handle must be
+///    stubbed, or the verify block is rejected (existing behavior in
+///    `flow.rs` — see "needs a `given` stub" error).
+/// 2. Pure code outside the defining module cannot inspect fields or
+///    pattern-match the value just because it was fabricated. Field
+///    access on opaque types is rejected outside the defining module
+///    regardless of this flag.
+/// 3. Verify-block bodies are not lowered to executable artifacts, so
+///    fabricated handles cannot escape to compiled programs.
+/// 4. Runtime handle identity is uninterpreted test data unless an
+///    Oracle stub assigns meaning to it.
+///
+/// User-defined opaque types are NOT eligible — their opacity protects
+/// domain invariants that this fabrication would erase.
+pub fn is_verify_fabricable_handle(canonical_type: &str) -> bool {
+    matches!(canonical_type, "Tcp.Connection")
+}
+
 /// Oracle signature for use in lifted specs.
 ///
 /// - Snapshot: capability reader — unchanged from runtime signature,

@@ -119,6 +119,60 @@ fn del(conn: Tcp.Connection, key: String) -> Result<String, String>
     _ = sendCommand(conn, ["DEL", key])?
     Tcp.readLine(conn)
 
+// Oracle stubs for ping/set/get: pin Tcp.writeLine + Tcp.readLine
+// without touching a real socket. Each stub matches the Oracle
+// signature for its method.
+//
+// Tcp.Connection is an opaque runtime handle. Outside this verify
+// block the typechecker rejects `Tcp.Connection(...)` construction;
+// here, inside verify-trace context, the systemic-handle relaxation
+// allows fabricating one as test-only input (no field is inspected,
+// every effect that would touch the handle is stubbed).
+
+fn fakeWriteOk(path: BranchPath, n: Int, conn: Tcp.Connection, line: String) -> Result<Unit, String>
+    ? "Deterministic Tcp.writeLine stub: write always succeeds."
+    Result.Ok(Unit)
+
+fn fakeWriteFail(path: BranchPath, n: Int, conn: Tcp.Connection, line: String) -> Result<Unit, String>
+    ? "Deterministic Tcp.writeLine stub: socket dead — exercises the `?` Err short-circuit in sendCommand."
+    Result.Err("broken pipe")
+
+fn fakeReadPong(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<String, String>
+    ? "Deterministic Tcp.readLine stub: server returns +PONG."
+    Result.Ok("+PONG")
+
+fn fakeReadOk(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<String, String>
+    ? "Deterministic Tcp.readLine stub: server returns +OK (SET acknowledgement)."
+    Result.Ok("+OK")
+
+fn fakeReadNil(path: BranchPath, n: Int, conn: Tcp.Connection) -> Result<String, String>
+    ? "Deterministic Tcp.readLine stub: server returns $-1 (RESP nil)."
+    Result.Ok("$-1")
+
+// Oracle trace records DIRECT effect emissions from the root fn under
+// test. ping/set/get all dispatch Tcp.writeLine through helper fns
+// (sendCommand → sendArgs → sendArgAndRest), so writeLine doesn't
+// surface here. Tcp.readLine, however, is invoked at the root level
+// — that's what we anchor on.
+
+verify ping trace
+    given write: Tcp.writeLine = [fakeWriteOk]
+    given read:  Tcp.readLine  = [fakeReadPong]
+    pinged = ping(Tcp.Connection(id = "fake", host = "127.0.0.1", port = 6379))
+    pinged.trace.contains(Tcp.readLine) => true
+
+verify set trace
+    given write: Tcp.writeLine = [fakeWriteOk]
+    given read:  Tcp.readLine  = [fakeReadOk]
+    setted = set(Tcp.Connection(id = "fake", host = "127.0.0.1", port = 6379), "k", "v")
+    setted.trace.contains(Tcp.readLine) => true
+
+verify get trace
+    given write: Tcp.writeLine = [fakeWriteOk]
+    given read:  Tcp.readLine  = [fakeReadNil, fakeReadOk]
+    got = get(Tcp.Connection(id = "fake", host = "127.0.0.1", port = 6379), "k")
+    got.trace.contains(Tcp.readLine) => true
+
 // Demo entry point
 
 fn run() -> Result<Unit, String>
