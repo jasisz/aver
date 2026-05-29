@@ -20,7 +20,7 @@ use std::path::Path;
 
 use crate::ast::TopLevel;
 use crate::ir::hir::{ResolvedFnDef, ResolvedTopLevel};
-use crate::ir::{FnId, PipelineConfig, TypecheckMode};
+use crate::ir::{PipelineConfig, TypecheckMode};
 use crate::types::Type;
 
 // Recognition primitives moved to `aver::analysis::shape` in stage 1
@@ -32,9 +32,7 @@ use crate::types::Type;
 // walker + renderers + `aver.toml` bridges. Internal use of the
 // recognition API in this file goes through `crate::analysis::shape`
 // directly (see imports below).
-use crate::analysis::shape::{
-    Archetype, Facts, classify, compute_sccs, extract_facts, primary_label,
-};
+use crate::analysis::shape::{Archetype, analyze_program};
 
 // ─── ModuleShape vector + derived Kind ───────────────────────────────────────
 
@@ -742,12 +740,12 @@ pub fn analyze_source_with(
         })
         .collect();
 
-    let mut facts_by_id: HashMap<FnId, Facts> = HashMap::new();
-    for fd in &resolved_fns {
-        facts_by_id.insert(fd.fn_id, extract_facts(fd));
-    }
-    let facts_refs: HashMap<FnId, &Facts> = facts_by_id.iter().map(|(k, v)| (*k, v)).collect();
-    let scc = compute_sccs(&resolved_fns, &facts_refs);
+    // Stage 4 of #232: recognition substrate. `analyze_program` runs
+    // facts walk + SCC + classify in one go and returns the per-fn
+    // ProgramShape. Presentation tier (this fn) just adds the
+    // module-level Kind / verify / histogram / Layer scaffolding on
+    // top — the actual per-fn recognition no longer lives here.
+    let program_shape = analyze_program(&resolved_fns);
 
     let exposes_set: HashSet<&str> = exposes.iter().map(|s| s.as_str()).collect();
     let mut fn_shapes = Vec::with_capacity(resolved_fns.len());
@@ -774,9 +772,11 @@ pub fn analyze_source_with(
                 exposed_uses_handle = true;
             }
         }
-        let facts = &facts_by_id[&fd.fn_id];
-        let labels = classify(fd, facts, &scc);
-        let primary = primary_label(&labels);
+        let recognition = program_shape
+            .for_fn(fd.fn_id)
+            .expect("analyze_program populates per_fn for every resolved fn");
+        let primary = recognition.primary;
+        let labels = recognition.labels.clone();
         if fd.name != "main" {
             *histogram.counts.entry(primary).or_insert(0) += 1;
             histogram.total_fns += 1;
