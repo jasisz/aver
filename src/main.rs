@@ -240,8 +240,9 @@ fn main() {
             module_root,
             summary,
             json,
+            lint,
         } => {
-            shape_cmd::cmd_shape(file, module_root.as_deref(), *summary, *json);
+            shape_cmd::cmd_shape(file, module_root.as_deref(), *summary, *json, *lint);
         }
         Commands::Compile {
             file,

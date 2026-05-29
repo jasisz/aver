@@ -778,6 +778,38 @@ pub struct LayerFingerprint {
 /// RenderUi    ~50%    ~5%       ~0%       ~25%           ~20%
 /// Infra       ~20%   ~10%       ~30%      ~40%            ~0%
 /// ```
+/// Translate `aver.toml [[shape.layer]]` entries into the runtime
+/// fingerprint representation. Returns an error if `name` doesn't match
+/// any known `Layer` variant. Unknown layers are deliberately rejected
+/// here, not silently dropped — typo-detection is cheap and a silently
+/// missing fingerprint would change the nearest-neighbor result.
+pub fn fingerprints_from_config(
+    entries: &[crate::config::ShapeLayerFingerprint],
+) -> Result<Vec<LayerFingerprint>, String> {
+    use Bucket::*;
+    entries
+        .iter()
+        .map(|e| {
+            let layer = Layer::parse(&e.name).ok_or_else(|| {
+                format!(
+                    "aver.toml: [[shape.layer]] name '{}' is not a known Layer (expected one of: Domain, Parse, Command, AiStrategy, RenderUi, Infra)",
+                    e.name
+                )
+            })?;
+            Ok(LayerFingerprint {
+                layer,
+                buckets: [
+                    (Match, e.match_pct),
+                    (Recursion, e.recursion_pct),
+                    (Pipeline, e.pipeline_pct),
+                    (Orchestration, e.orchestration_pct),
+                    (Helpers, e.helpers_pct),
+                ],
+            })
+        })
+        .collect()
+}
+
 pub fn builtin_v0_layer_fingerprints() -> Vec<LayerFingerprint> {
     use Bucket::*;
     let mk = |layer, m, r, p, o, h| LayerFingerprint {
@@ -898,6 +930,23 @@ pub struct ShapeReport {
 }
 
 pub fn analyze_path(path: &Path, module_root_hint: Option<&str>) -> Result<ShapeReport, String> {
+    analyze_path_with(
+        path,
+        module_root_hint,
+        &builtin_v0_layer_fingerprints(),
+        "built-in v0",
+    )
+}
+
+/// Same as `analyze_path` but lets the caller supply a custom layer
+/// fingerprint table + basis label (used by the CLI when `aver.toml` has
+/// `[[shape.layer]]` overrides).
+pub fn analyze_path_with(
+    path: &Path,
+    module_root_hint: Option<&str>,
+    fingerprints: &[LayerFingerprint],
+    basis: &str,
+) -> Result<ShapeReport, String> {
     let source = std::fs::read_to_string(path).map_err(|e| format!("read: {}", e))?;
     let mut items = crate::source::parse_source(&source).map_err(|e| format!("parse: {}", e))?;
 
@@ -1016,7 +1065,7 @@ pub fn analyze_path(path: &Path, module_root_hint: Option<&str>) -> Result<Shape
         &exposes,
     );
     let kind = derive_kind(&shape);
-    let layer = classify_layer(&histogram, &builtin_v0_layer_fingerprints(), "built-in v0");
+    let layer = classify_layer(&histogram, fingerprints, basis);
 
     Ok(ShapeReport {
         module: module_name,

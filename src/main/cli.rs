@@ -378,6 +378,12 @@ pub(super) enum Commands {
         /// Output as JSON instead of human-readable text.
         #[arg(long)]
         json: bool,
+        /// Flag when a path matches a `[[shape.expected]]` glob in
+        /// `aver.toml` but its histogram nearest-layer differs from the
+        /// declared layer. Exits 1 on mismatch, 0 otherwise. No-op when
+        /// the file's path doesn't match any expectation glob.
+        #[arg(long)]
+        lint: bool,
     },
     /// Compile an Aver file to a Rust/Cargo project or WASM binary
     Compile {

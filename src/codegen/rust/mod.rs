@@ -1557,6 +1557,8 @@ fn main() -> Result<String, String>
             effect_policies: std::collections::HashMap::new(),
             check_suppressions: Vec::new(),
             independence_mode: crate::config::IndependenceMode::default(),
+            shape_layers: Vec::new(),
+            shape_expected: Vec::new(),
         });
 
         let out = transpile(&mut ctx);
@@ -1646,6 +1648,8 @@ fn main() -> Result<Tuple<Int, Int>, String>
             effect_policies: std::collections::HashMap::new(),
             check_suppressions: Vec::new(),
             independence_mode: crate::config::IndependenceMode::Cancel,
+            shape_layers: Vec::new(),
+            shape_expected: Vec::new(),
         });
 
         let out = transpile(&mut ctx);

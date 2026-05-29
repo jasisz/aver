@@ -259,24 +259,29 @@ fn proof_dafny_verifies_rle_when_dafny_is_available() {
 
 #[test]
 fn proof_export_builds_quicksort_when_lake_is_available() {
-    // Two sampled-domain laws (`sort.resultOrdered` /
-    // `sort.lengthPreserved`) emit the sorry fallback — the
-    // universal closure needs a real induction strategy on the
-    // pivot-partition shape. Per-sample `_sample_N` theorems still
-    // verify mechanically.
-    assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 2);
+    // Three sampled-domain laws (`sort.resultOrdered` /
+    // `sort.lengthPreserved` / `sort.idempotent`) emit the sorry
+    // fallback — universal closure needs a real induction strategy
+    // on the pivot-partition shape. Per-sample `_sample_N` theorems
+    // still verify mechanically. (Budget grew from 2 → 3 when
+    // `sort.idempotent` landed in #220.)
+    assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 3);
 }
 
 #[test]
 fn proof_dafny_verifies_quicksort_when_dafny_is_available() {
     // Recursive postcondition gaps on `sort.resultOrdered` /
-    // `sort.lengthPreserved` shape. Sample-domain theorems still
-    // hold; universal closure needs the pivot-partition induction
-    // tactic. Tracked in issue #114.
+    // `sort.lengthPreserved` / `sort.idempotent`. Sample-domain
+    // theorems still hold for ordered/length-preserved; idempotent
+    // sample assertions trip the same mutual-recursion / fuel issue
+    // tracked in #76 — sort(sort([..])) cannot unfold under Z3's
+    // budget without explicit `reveal`. Budget grew from 5 → 8 when
+    // `sort.idempotent` landed in #220 (three sample inputs ×
+    // one postcondition each). Tracked in issue #114 / #76.
     assert_dafny_verifies_with_error_budget(
         "examples/data/quicksort.av",
         "aver-dafny-quicksort",
-        5,
+        8,
     );
 }
 
