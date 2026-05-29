@@ -155,7 +155,67 @@ pub fn hover_for_word(word: &str, source: &str, base_dir: Option<&str>) -> Optio
         }
     }
 
+    // Module name → shape report (Kind + ModuleShape vector + Layer).
+    // Best-effort: skip silently if shape analysis fails (typecheck
+    // error, missing deps).
+    for item in &items {
+        if let TopLevel::Module(module) = item
+            && module.name == word
+        {
+            if let Some(content) = build_module_shape_hover(source, base_dir, module) {
+                return Some(make_hover(content));
+            }
+        }
+    }
+
     None
+}
+
+fn build_module_shape_hover(
+    source: &str,
+    base_dir: Option<&str>,
+    module: &aver::ast::Module,
+) -> Option<String> {
+    use aver::diagnostics::shape;
+    let module_root = base_dir.unwrap_or(".");
+    let fingerprints = shape::builtin_v0_layer_fingerprints();
+    let report = shape::analyze_source_with(
+        source,
+        module_root,
+        "(buffer)",
+        &module.name,
+        &fingerprints,
+        "built-in v0",
+    )
+    .ok()?;
+
+    let layer_line = report
+        .layer
+        .as_ref()
+        .map(|v| {
+            format!(
+                "**Layer:** {} (confidence {:.2}, basis: {})",
+                v.layer.as_str(),
+                v.confidence,
+                v.basis
+            )
+        })
+        .unwrap_or_else(|| "**Layer:** insufficient data".to_string());
+
+    Some(format!(
+        "**module {}**\n\n**Kind:** {} — {}\n\n```\npurity        {}\nentry         {}\nstate_shape   {}\ntype_surface  {}\napi_shape     {}\n```\n\nVerify blocks: {} · Non-main fns: {}\n\n{}",
+        report.module,
+        report.kind.as_str(),
+        report.kind.rule(),
+        report.shape.purity.as_str(),
+        report.shape.entry.as_str(),
+        report.shape.state_shape.as_str(),
+        report.shape.type_surface.as_str(),
+        report.shape.api_shape.as_str(),
+        report.verify.blocks,
+        report.histogram.total_fns,
+        layer_line,
+    ))
 }
 
 fn build_fn_hover(fd: &FnDef, items: &[TopLevel], base_dir: Option<&str>) -> String {
