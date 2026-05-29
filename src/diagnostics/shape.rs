@@ -1409,3 +1409,257 @@ pub fn render_json(report: &ShapeReport) -> serde_json::Value {
         "fns": fns,
     })
 }
+
+// ─── Corpus (directory) mode ────────────────────────────────────────────────
+
+/// Outcome of analyzing a single file inside a corpus walk. Files that
+/// fail typecheck or parse get the error attached instead of being
+/// silently skipped — the corpus view should show what's broken.
+#[derive(Debug, Clone)]
+pub enum CorpusEntry {
+    Analyzed {
+        rel_path: String,
+        report: ShapeReport,
+    },
+    Skipped {
+        rel_path: String,
+        reason: String,
+    },
+}
+
+/// Walk a directory recursively and analyze every `.av` file.
+/// `root` is also used as the default `module_root` for dep resolution
+/// — callers that want a different module root can pass it explicitly.
+pub fn analyze_dir(
+    root: &Path,
+    module_root_hint: Option<&str>,
+    fingerprints: &[LayerFingerprint],
+    basis: &str,
+) -> Result<Vec<CorpusEntry>, String> {
+    let mut files = Vec::new();
+    collect_av_files(root, &mut files)?;
+    files.sort();
+    let effective_module_root = match module_root_hint {
+        Some(r) => r.to_string(),
+        None => root.to_string_lossy().to_string(),
+    };
+    let mut entries = Vec::with_capacity(files.len());
+    for path in files {
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        match analyze_path_with(&path, Some(&effective_module_root), fingerprints, basis) {
+            Ok(report) => entries.push(CorpusEntry::Analyzed {
+                rel_path: rel,
+                report,
+            }),
+            Err(reason) => entries.push(CorpusEntry::Skipped {
+                rel_path: rel,
+                reason,
+            }),
+        }
+    }
+    Ok(entries)
+}
+
+fn collect_av_files(path: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<(), String> {
+    if path.is_file() {
+        if path.extension().and_then(|s| s.to_str()) == Some("av") {
+            out.push(path.to_path_buf());
+        }
+        return Ok(());
+    }
+    let entries = std::fs::read_dir(path).map_err(|e| {
+        format!(
+            "aver shape: cannot read directory '{}': {}",
+            path.display(),
+            e
+        )
+    })?;
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| format!("aver shape: read_dir error in '{}': {}", path.display(), e))?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        // Skip hidden + common build/dep directories.
+        if name_str.starts_with('.')
+            || name_str == "target"
+            || name_str == "node_modules"
+            || name_str == "pkg"
+        {
+            continue;
+        }
+        let p = entry.path();
+        if p.is_dir() {
+            collect_av_files(&p, out)?;
+        } else if p.extension().and_then(|s| s.to_str()) == Some("av") {
+            out.push(p);
+        }
+    }
+    Ok(())
+}
+
+/// Per-Kind / per-Layer aggregate over a corpus.
+#[derive(Debug, Clone, Default)]
+pub struct CorpusSummary {
+    pub total_files: usize,
+    pub analyzed_files: usize,
+    pub skipped_files: usize,
+    pub total_fns: usize,
+    pub kind_counts: BTreeMap<&'static str, usize>,
+    pub layer_counts: BTreeMap<&'static str, usize>,
+    pub archetype_counts: BTreeMap<&'static str, usize>,
+}
+
+pub fn summarize_corpus(entries: &[CorpusEntry]) -> CorpusSummary {
+    let mut s = CorpusSummary {
+        total_files: entries.len(),
+        ..Default::default()
+    };
+    for e in entries {
+        match e {
+            CorpusEntry::Analyzed { report, .. } => {
+                s.analyzed_files += 1;
+                s.total_fns += report.histogram.total_fns;
+                *s.kind_counts.entry(report.kind.as_str()).or_insert(0) += 1;
+                if let Some(v) = &report.layer {
+                    *s.layer_counts.entry(v.layer.as_str()).or_insert(0) += 1;
+                }
+                for (arch, c) in &report.histogram.counts {
+                    *s.archetype_counts.entry(arch).or_insert(0) += c;
+                }
+            }
+            CorpusEntry::Skipped { .. } => {
+                s.skipped_files += 1;
+            }
+        }
+    }
+    s
+}
+
+pub fn render_corpus_text(entries: &[CorpusEntry], opts: &RenderOptions) -> String {
+    let mut out = String::new();
+    let summary = summarize_corpus(entries);
+
+    if !opts.summary {
+        out.push_str(&format!(
+            "Corpus: {} files ({} analyzed, {} skipped)\n\n",
+            summary.total_files, summary.analyzed_files, summary.skipped_files,
+        ));
+        let path_w = entries
+            .iter()
+            .map(|e| match e {
+                CorpusEntry::Analyzed { rel_path, .. } | CorpusEntry::Skipped { rel_path, .. } => {
+                    rel_path.len()
+                }
+            })
+            .max()
+            .unwrap_or(0)
+            .max(30);
+        for e in entries {
+            match e {
+                CorpusEntry::Analyzed { rel_path, report } => {
+                    let layer = report
+                        .layer
+                        .as_ref()
+                        .map(|v| format!("{} ({:.2})", v.layer.as_str(), v.confidence))
+                        .unwrap_or_else(|| "—".to_string());
+                    out.push_str(&format!(
+                        "  {:<width$}  {:<16}  layer: {}\n",
+                        rel_path,
+                        report.kind.as_str(),
+                        layer,
+                        width = path_w,
+                    ));
+                }
+                CorpusEntry::Skipped { rel_path, reason } => {
+                    out.push_str(&format!(
+                        "  {:<width$}  SKIPPED        ({})\n",
+                        rel_path,
+                        reason,
+                        width = path_w,
+                    ));
+                }
+            }
+        }
+        out.push('\n');
+    }
+
+    // Aggregate block — printed in both modes; --summary just omits the
+    // per-file table above.
+    out.push_str(&format!(
+        "Corpus summary: {}/{} analyzed, {} fns classified\n",
+        summary.analyzed_files, summary.total_files, summary.total_fns,
+    ));
+    if !summary.kind_counts.is_empty() {
+        out.push_str("\n  Kind distribution:\n");
+        let mut kinds: Vec<_> = summary.kind_counts.iter().collect();
+        kinds.sort_by(|a, b| b.1.cmp(a.1));
+        for (kind, count) in kinds {
+            out.push_str(&format!("    {:<24}  {}\n", kind, count));
+        }
+    }
+    if !summary.layer_counts.is_empty() {
+        out.push_str("\n  Layer distribution:\n");
+        let mut layers: Vec<_> = summary.layer_counts.iter().collect();
+        layers.sort_by(|a, b| b.1.cmp(a.1));
+        for (layer, count) in layers {
+            out.push_str(&format!("    {:<24}  {}\n", layer, count));
+        }
+    }
+    if !summary.archetype_counts.is_empty() {
+        out.push_str("\n  Archetype distribution (across all fns):\n");
+        let mut archs: Vec<_> = summary
+            .archetype_counts
+            .iter()
+            .filter(|(_, c)| **c > 0)
+            .collect();
+        archs.sort_by(|a, b| b.1.cmp(a.1));
+        let name_w = archs
+            .iter()
+            .map(|(n, _)| n.len())
+            .max()
+            .unwrap_or(0)
+            .max(20);
+        for (arch, count) in archs {
+            let pct = if summary.total_fns == 0 {
+                0.0
+            } else {
+                100.0 * *count as f64 / summary.total_fns as f64
+            };
+            let bar = histogram_bar(pct, 20);
+            out.push_str(&format!(
+                "    {:<width$}  {}  {:>3.0}%  ({})\n",
+                arch,
+                bar,
+                pct,
+                count,
+                width = name_w,
+            ));
+        }
+    }
+    out
+}
+
+pub fn render_corpus_json(entries: &[CorpusEntry]) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    entries
+        .iter()
+        .map(|e| match e {
+            CorpusEntry::Analyzed { rel_path, report } => {
+                let mut v = render_json(report);
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("rel_path".to_string(), json!(rel_path));
+                }
+                v
+            }
+            CorpusEntry::Skipped { rel_path, reason } => json!({
+                "rel_path": rel_path,
+                "skipped": true,
+                "reason": reason,
+            }),
+        })
+        .collect()
+}

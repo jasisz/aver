@@ -127,6 +127,15 @@ aver shape file.av --summary
 aver shape file.av --json
 aver shape file.av --lint           # opt-in lint vs aver.toml expectations
 aver shape file.av --module-root .
+
+# Corpus mode: pass a directory and `aver shape` walks every .av
+# underneath, prints a per-file table + aggregate Kind / Layer /
+# archetype distributions, and runs the same --lint check against
+# every file in one pass.
+aver shape src/
+aver shape src/ --summary           # aggregate only, no per-file table
+aver shape src/ --json              # NDJSON, one object per file
+aver shape src/ --lint              # exit 1 if any file mismatches its expected layer
 ```
 
 `aver.toml` config:

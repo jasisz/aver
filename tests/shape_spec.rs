@@ -118,6 +118,69 @@ fn render_json_has_facts_vector_kind_and_layer() {
 }
 
 #[test]
+fn corpus_mode_walks_directory_and_aggregates() {
+    use aver::diagnostics::shape::{self, CorpusEntry};
+    // examples/services/ has redis.av (ServiceClient), weather.av,
+    // http_demo.av, disk_demo.av, independent_products.av. Some need
+    // module-root=examples for `Services.Redis` resolution; those that
+    // can't resolve land as Skipped, the corpus walk still completes.
+    let entries = shape::analyze_dir(
+        std::path::Path::new("examples/services"),
+        Some("examples"),
+        &shape::builtin_v0_layer_fingerprints(),
+        "built-in v0",
+    )
+    .expect("analyze_dir");
+    assert!(
+        entries.len() >= 3,
+        "expected at least 3 .av files in examples/services"
+    );
+    // At least one file must analyze cleanly.
+    let analyzed: Vec<_> = entries
+        .iter()
+        .filter(|e| matches!(e, CorpusEntry::Analyzed { .. }))
+        .collect();
+    assert!(!analyzed.is_empty(), "expected at least one analyzed file");
+
+    let summary = shape::summarize_corpus(&entries);
+    assert!(summary.total_files >= 3);
+    assert_eq!(
+        summary.analyzed_files + summary.skipped_files,
+        summary.total_files
+    );
+    if summary.analyzed_files > 0 {
+        assert!(
+            summary.total_fns > 0,
+            "analyzed files should yield fn classifications"
+        );
+    }
+}
+
+#[test]
+fn corpus_mode_renders_text_with_summary() {
+    use aver::diagnostics::shape::{self, RenderOptions};
+    let entries = shape::analyze_dir(
+        std::path::Path::new("examples/services"),
+        Some("examples"),
+        &shape::builtin_v0_layer_fingerprints(),
+        "built-in v0",
+    )
+    .expect("analyze_dir");
+    let full = shape::render_corpus_text(&entries, &RenderOptions { summary: false });
+    let only_summary = shape::render_corpus_text(&entries, &RenderOptions { summary: true });
+    // Both views must carry the global summary block.
+    for s in &[&full, &only_summary] {
+        assert!(s.contains("Corpus summary:"));
+        assert!(s.contains("Kind distribution") || s.contains("analyzed,"));
+    }
+    // Full view also lists per-file rows.
+    assert!(
+        full.contains("Corpus: ") || full.contains("layer:"),
+        "full view must include per-file table"
+    );
+}
+
+#[test]
 fn project_layer_override_loads_from_config() {
     use aver::config::ShapeLayerFingerprint;
     // A clearly-non-default fingerprint: claim that "Parse" is 100%
