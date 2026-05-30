@@ -629,6 +629,24 @@ pub enum ProofStrategy {
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
+    /// `?`-propagating Result chain equals a manual `match`-version:
+    /// the law states `chain_qm(x) == chain_manual(x)` where the
+    /// LHS uses `?` for short-circuit Err propagation and the RHS
+    /// writes the same flow as nested `match Result.Err -> Err`
+    /// arms. Both sides unfold to the same nested match; the proof
+    /// closes by unfolding all step fns and case-splitting on each
+    /// step's Result discriminator. Demonstrated by
+    /// `examples/core/result_chain.av`. Stage 8b of #232.
+    ResultPipelineChain {
+        /// Source name of the `?`-chain fn (the wrapper). LHS of the law.
+        chain_qm_fn: String,
+        /// Source name of the manual `match`-chain fn. RHS of the law.
+        chain_manual_fn: String,
+        /// Source names of every step fn the two chains thread
+        /// through, in pipeline order. Drives the unfold list for
+        /// both backends.
+        step_fns: Vec<String>,
+    },
     /// Monoidal-accumulator wrapper-over-recursion: a non-recursive
     /// `wrapper_fn(xs) = inner_fn(xs, neutral)` paired with a direct-
     /// recurrence `other_fn` such that the law states

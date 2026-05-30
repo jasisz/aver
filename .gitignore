@@ -36,3 +36,4 @@ editors/vscode/*.vsix
 
 # Local prompts / notes — not part of the repo
 prompts/
+examples/data/shape.png

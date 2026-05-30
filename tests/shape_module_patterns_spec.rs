@@ -213,6 +213,7 @@ fn result_pipeline_module_pins_validate_and_combine_chain() {
                 fn_name,
                 step_count,
                 scope,
+                ..
             } => Some((scope.clone(), fn_name.clone(), *step_count)),
             _ => None,
         })

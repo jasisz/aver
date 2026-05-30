@@ -1027,6 +1027,7 @@ fn render_module_pattern_line(p: &ModulePattern) -> String {
             scope,
             fn_name,
             step_count,
+            ..
         } => format!(
             "{}         {}  ({} steps)",
             "ResultPipelineChain".magenta().bold(),
@@ -1355,11 +1356,13 @@ fn module_pattern_to_json(p: &ModulePattern) -> serde_json::Value {
             scope,
             fn_name,
             step_count,
+            step_fns,
         } => json!({
             "kind": "ResultPipelineChain",
             "scope": scope_json(scope),
             "fn_name": fn_name,
             "step_count": step_count,
+            "step_fns": step_fns,
         }),
         ModulePattern::RendererFormatter { scope, fn_name } => json!({
             "kind": "RendererFormatter",

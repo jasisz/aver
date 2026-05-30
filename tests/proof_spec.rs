@@ -262,6 +262,29 @@ fn proof_export_builds_sum_acc_when_lake_is_available() {
 }
 
 #[test]
+fn proof_dafny_verifies_result_chain_when_dafny_is_available() {
+    // Stage 8b of #232: `ProofStrategy::ResultPipelineChain` closes
+    // `chainQM(n) == chainManual(n)` — `?`-propagating Result chain
+    // vs nested `match Result.Err -> Err` chain. Both unfold to the
+    // same tree; Z3 closes by structural equality with the right
+    // fuel + unfold list. Second real consumer of a typed
+    // `ModulePattern` in proof_lower.
+    assert_dafny_verifies("examples/core/result_chain.av", "aver-dafny-result-chain");
+}
+
+#[test]
+fn proof_export_builds_result_chain_when_lake_is_available() {
+    // Lean template: `unfold` + `repeat (first | split | rfl) ;
+    // all_goals simp_all`. Generic over step count — works for any
+    // ResultPipelineChain with arbitrary number of step fns.
+    assert_proof_builds_with_sorry_budget(
+        "examples/core/result_chain.av",
+        "aver-proof-result-chain",
+        0,
+    );
+}
+
+#[test]
 fn proof_export_builds_rle_when_lake_is_available() {
     // Two sampled-domain laws (encodeString / decodeString roundtrip
     // shapes) hit the universal-not-auto-proved fallback. Same gate
