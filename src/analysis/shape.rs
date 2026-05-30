@@ -713,6 +713,13 @@ pub enum ModulePattern {
         scope: Option<String>,
         fn_name: String,
         step_count: usize,
+        /// Source names of the step fns called via `?` in body
+        /// order. Captured here because the post-pipeline AST
+        /// desugars `?` into nested `match` arms — downstream
+        /// consumers that need the original step list (e.g. the
+        /// proof_lower `ResultPipelineChain` strategy) read from
+        /// this field instead of re-walking.
+        step_fns: Vec<String>,
     },
     /// Non-recursive pure renderer: a fn whose return type is `String`,
     /// effects list is empty, and body contains an `InterpolatedStr`
@@ -1129,22 +1136,25 @@ fn detect_result_pipeline_chain(
         if !matches!(stmts.last(), Some(Stmt::Expr(_))) {
             continue;
         }
-        let step_count = stmts
-            .iter()
-            .filter(|s| {
-                matches!(
-                    s,
-                    Stmt::Binding(_, _, e) if matches!(e.node, Expr::ErrorProp(_))
-                )
-            })
-            .count();
-        if step_count < 2 {
+        let mut step_fns: Vec<String> = Vec::new();
+        for stmt in stmts {
+            if let Stmt::Binding(_, _, value) = stmt
+                && let Expr::ErrorProp(inner) = &value.node
+                && let Expr::FnCall(callee, _) = &inner.node
+                && let Expr::Ident(name) = &callee.node
+            {
+                step_fns.push(name.clone());
+            }
+        }
+        if step_fns.len() < 2 {
             continue;
         }
+        let step_count = step_fns.len();
         out.push(ModulePattern::ResultPipelineChain {
             scope: scope.clone(),
             fn_name: fd.name.clone(),
             step_count,
+            step_fns,
         });
     }
 }

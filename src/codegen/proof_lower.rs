@@ -880,6 +880,15 @@ fn classify_law_strategy(
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
+    // Result-pipeline chain equivalence (stage 8b of #232) — `?`
+    // propagation `chain_qm(x)` vs nested-match `chain_manual(x)`.
+    // Both sides unfold to the same nested match; the proof closes
+    // by `unfold + repeat split`.
+    if law.when.is_none()
+        && let Some(s) = detect_result_pipeline_chain_equivalence(law, fn_name, inputs)
+    {
+        return s;
+    }
     // Wrapper-over-recursion with monoidal accumulator (stage 8 of
     // #232) — runs before generic induction because its aux-lemma
     // template closes laws naive induction can't (e.g. `sum(xs) ==
@@ -2544,6 +2553,138 @@ fn is_bool_true(expr: &Spanned<crate::ast::Expr>) -> bool {
 /// shapes are rejected here — the backend's emit can't handle
 /// them and would fail at lake-build time; better to fall through
 /// to `BackendDispatch` than pin a bad strategy.
+/// Stage 8b of #232: detect `chain_qm(g) == chain_manual(g)` where
+/// `chain_qm` is a `ModulePattern::ResultPipelineChain` (the `?`-chain
+/// fn) and `chain_manual` is a manual `match Result.Err -> Err`
+/// nested chain over the same step fns. Returns a payload carrying
+/// both fn names + the ordered step list so backends can emit the
+/// unfold list without re-walking the AST.
+fn detect_result_pipeline_chain_equivalence(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<crate::ir::ProofStrategy> {
+    use crate::analysis::shape::ModulePattern;
+    use crate::ast::{Expr, Pattern, Stmt};
+
+    fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
+        match &e.node {
+            Expr::Ident(n) => Some(n.as_str()),
+            Expr::Resolved { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    let shape = inputs.program_shape?;
+
+    if law.givens.len() != 1 {
+        return None;
+    }
+    let given_name = &law.givens[0].name;
+
+    // Confirm fn_name is a ResultPipelineChain in the shape, and
+    // pull the step fn list from there — post-pipeline AST has
+    // already desugared `?` into nested matches, so the shape
+    // (built from pre-resolver source items) is the authoritative
+    // record of the original step list.
+    let (chain_qm_fn, step_fns) = shape.patterns.iter().find_map(|p| match p {
+        ModulePattern::ResultPipelineChain {
+            fn_name: n,
+            step_fns,
+            ..
+        } if n == fn_name => Some((n.clone(), step_fns.clone())),
+        _ => None,
+    })?;
+
+    // Law shape: `chain_qm(g) == chain_manual(g)` (either side).
+    let extract = |expr: &Spanned<Expr>| -> Option<String> {
+        let Expr::FnCall(callee, args) = &expr.node else {
+            return None;
+        };
+        let name = ident_name(callee)?;
+        if args.len() != 1 {
+            return None;
+        }
+        if ident_name(&args[0])? != given_name {
+            return None;
+        }
+        Some(name.to_string())
+    };
+    let lhs_call = extract(&law.lhs);
+    let rhs_call = extract(&law.rhs);
+    let chain_manual_fn = match (lhs_call, rhs_call) {
+        (Some(l), Some(r)) if l == chain_qm_fn && r != chain_qm_fn => r,
+        (Some(l), Some(r)) if r == chain_qm_fn && l != chain_qm_fn => l,
+        _ => return None,
+    };
+
+    if step_fns.len() < 2 {
+        return None;
+    }
+
+    // Verify the manual fn is a nested `match Result.Err -> Err`
+    // chain calling the same step fns. Heuristic: walk body, look
+    // for `Match { subject: Call(step, _), arms: [Err -> Err, Ok -> ...] }`
+    // pattern. Counts how many step calls show up.
+    let manual_fd = inputs.find_fn_def_by_call_name(&chain_manual_fn)?;
+    let mut manual_steps: Vec<String> = Vec::new();
+    fn walk_manual<'a>(
+        expr: &'a Spanned<Expr>,
+        steps: &mut Vec<String>,
+        ident_name: &dyn Fn(&'a Spanned<Expr>) -> Option<&'a str>,
+    ) {
+        if let Expr::Match { subject, arms } = &expr.node
+            && let Expr::FnCall(callee, _) = &subject.node
+            && let Some(n) = ident_name(subject).or_else(|| ident_name(callee))
+        {
+            let has_err_pass = arms.iter().any(|a| {
+                let pat_is_err = matches!(
+                    &a.pattern,
+                    Pattern::Constructor(c, _) if c == "Result.Err" || c.ends_with(".Err")
+                );
+                // Body shape: either `Expr::Constructor("Result.Err", _)`
+                // (pre-resolver) or `Expr::FnCall(Attr(Ident("Result"), "Err"), _)`
+                // (post-resolver — `Result.Err(...)` is treated as a
+                // method-attr call once names are wired up).
+                let body_is_err = match &a.body.node {
+                    Expr::Constructor(c, _) => c == "Result.Err" || c.ends_with(".Err"),
+                    Expr::FnCall(callee, _) => matches!(
+                        &callee.node,
+                        Expr::Attr(base, attr)
+                            if attr == "Err"
+                                && matches!(&base.node, Expr::Ident(b) if b == "Result")
+                    ),
+                    _ => false,
+                };
+                pat_is_err && body_is_err
+            });
+            if has_err_pass {
+                steps.push(n.to_string());
+            }
+            for a in arms {
+                walk_manual(&a.body, steps, ident_name);
+            }
+        }
+    }
+    let manual_stmts = manual_fd.body.stmts();
+    if manual_stmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Expr(manual_root) = &manual_stmts[0] else {
+        return None;
+    };
+    walk_manual(manual_root, &mut manual_steps, &ident_name);
+    if manual_steps.len() < 2 {
+        return None;
+    }
+
+    Some(crate::ir::ProofStrategy::ResultPipelineChain {
+        chain_qm_fn,
+        chain_manual_fn,
+        step_fns,
+    })
+}
+
 /// Stage 8 of #232: detect `wrapper(g) == other(g)` where `wrapper`
 /// is a `ModulePattern::WrapperOverRecursion` and the inner fn has a
 /// monoidal-accumulator shape we know how to emit Dafny support

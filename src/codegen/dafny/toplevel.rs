@@ -1519,6 +1519,39 @@ pub fn emit_verify_law(
         );
     }
 
+    // Stage 8b of #232 — `ResultPipelineChain` (Dafny needs only a
+    // fuel-bumped trivial body; Z3 unfolds both fns and closes by
+    // structural equality). Explicit branch makes the strategy
+    // choice observable in proof_ir.
+    if let Some(crate::ir::ProofStrategy::ResultPipelineChain {
+        chain_qm_fn,
+        chain_manual_fn,
+        step_fns,
+    }) = vb_fn_id
+        .and_then(|fn_id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+        })
+        .map(|t| t.strategy.clone())
+    {
+        let qm_d = aver_name_to_dafny(&chain_qm_fn);
+        let manual_d = aver_name_to_dafny(&chain_manual_fn);
+        let main_thm = format!("{fn_name}_{law_name}");
+        let mut fuels: Vec<String> = vec![
+            format!("{{:fuel {qm_d}, 5}}"),
+            format!("{{:fuel {manual_d}, 5}}"),
+        ];
+        for s in &step_fns {
+            fuels.push(format!("{{:fuel {}, 5}}", aver_name_to_dafny(s)));
+        }
+        return format!(
+            "// Law: {chain_qm_fn}.{law_name} — result-pipeline chain equivalence\nlemma {} {main_thm}(n: int)\n  ensures {qm_d}(n) == {manual_d}(n)\n{{\n}}\n",
+            fuels.join(" "),
+        );
+    }
+
     // Stage 8 of #232 — `WrapperOverRecursion` support stack.
     if let Some(crate::ir::ProofStrategy::WrapperOverRecursion {
         wrapper_fn,

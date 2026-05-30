@@ -255,6 +255,26 @@ pub fn emit_verify_law_forall_auto_proof(
         return Some(proof);
     }
 
+    // Stage 8b of #232 — `ResultPipelineChain`. Unfold both fns +
+    // every step fn, then `repeat split` peels off match layers
+    // until structural equality remains.
+    if let Some(crate::ir::ProofStrategy::ResultPipelineChain {
+        chain_qm_fn,
+        chain_manual_fn,
+        step_fns,
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+        && let Some(proof) = spec::emit_result_pipeline_chain_law(
+            vb,
+            law,
+            ctx,
+            &chain_qm_fn,
+            &chain_manual_fn,
+            &step_fns,
+        )
+    {
+        return Some(proof);
+    }
+
     // Stage 8 of #232 — `WrapperOverRecursion` support stack.
     // Aux acc-decomposition lemma + main universal lemma; both
     // close in core Lean 4 (`omega`) without Mathlib.

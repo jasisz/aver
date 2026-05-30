@@ -1,0 +1,56 @@
+module ResultChain
+    intent =
+        "ResultPipelineChain proof-export demo."
+        "chainQM uses `?` propagation across two fallible steps."
+        "chainManual writes the same flow as nested match arms with explicit Err pass-through."
+        "Both fns are observably identical; the law states the equivalence and the proof closes by unfolding both sides."
+    effects []
+
+fn parseStep1(n: Int) -> Result<Int, String>
+    ? "First step: rejects non-positive integers."
+    match n > 0
+        true  -> Result.Ok(n)
+        false -> Result.Err("non-positive")
+
+verify parseStep1
+    parseStep1(1)  => Result.Ok(1)
+    parseStep1(0)  => Result.Err("non-positive")
+    parseStep1(-3) => Result.Err("non-positive")
+
+fn parseStep2(n: Int) -> Result<Int, String>
+    ? "Second step: rejects values above 100."
+    match n > 100
+        true  -> Result.Err("over cap")
+        false -> Result.Ok(n * 2)
+
+verify parseStep2
+    parseStep2(5)   => Result.Ok(10)
+    parseStep2(101) => Result.Err("over cap")
+
+fn chainQM(n: Int) -> Result<Int, String>
+    ? "`?`-propagating chain: short-circuits on the first Err with its own value."
+    a = parseStep1(n)?
+    b = parseStep2(a)?
+    Result.Ok(b + 1)
+
+verify chainQM
+    chainQM(5)   => Result.Ok(11)
+    chainQM(0)   => Result.Err("non-positive")
+    chainQM(101) => Result.Err("over cap")
+
+fn chainManual(n: Int) -> Result<Int, String>
+    ? "Manual nested-match version: every Err arm is `Result.Err(e) -> Result.Err(e)` pass-through."
+    match parseStep1(n)
+        Result.Err(e) -> Result.Err(e)
+        Result.Ok(a)  -> match parseStep2(a)
+            Result.Err(e) -> Result.Err(e)
+            Result.Ok(b)  -> Result.Ok(b + 1)
+
+verify chainManual
+    chainManual(5)   => Result.Ok(11)
+    chainManual(0)   => Result.Err("non-positive")
+    chainManual(101) => Result.Err("over cap")
+
+verify chainQM law equalsManual
+    given n: Int = [-3, 0, 1, 50, 200]
+    chainQM(n) => chainManual(n)
