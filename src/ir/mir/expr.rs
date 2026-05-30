@@ -1,0 +1,276 @@
+//! `MirExpr` + supporting node types.
+//!
+//! Phase 2a of #252. Expression-based (every `MirExpr` is a value),
+//! structured (no terminator-style basic blocks), and identity-typed
+//! (declaration refs go through `FnId` / `TypeId` / `CtorId`).
+//!
+//! The shape decisions pinned in the Phase 1 RFC live here as code:
+//!
+//! - `Try` is its own variant — *not* desugared to `Match`.
+//! - `Match` is structured with `Vec<MirMatchArm>` — no flat
+//!   switch / jump representation.
+//! - Constructors carry `CtorId`, record types carry `TypeId`,
+//!   tail-call targets carry `FnId`.
+//! - Each node carries a `Span` for diagnostics + future
+//!   correlation with `ProofIR`.
+
+use crate::ast::{BinOp, Literal, Spanned};
+use crate::ir::{CtorId, FnId, TypeId};
+
+use super::program::LocalId;
+
+/// One MIR expression. Every variant is a value — there's no
+/// separate statement form at this phase. Sequencing happens via
+/// `Let`.
+#[derive(Debug, Clone)]
+pub enum MirExpr {
+    /// A literal value (`Int`, `Float`, `Bool`, `String`, `Unit`).
+    /// Same vocabulary the existing typed AST already uses.
+    Literal(Spanned<Literal>),
+    /// Read a previously-bound local. The `LocalId` was introduced
+    /// either as a function parameter (`MirParam::local`) or via a
+    /// `Let` in this body's lexical scope.
+    Local(Spanned<LocalId>),
+    /// `let binding = value; body` — sequence two expressions and
+    /// surface the second's value. Phase 2a's only sequencing
+    /// primitive; everything else inside a function body composes
+    /// from this + the value-form variants below.
+    Let(Spanned<MirLet>),
+    /// Apply a callee (user fn / builtin) to arguments. The callee
+    /// kind discriminates so backends know whether to look up via
+    /// `FnId` (typed identity) or via the named-builtin registry.
+    Call(Spanned<MirCall>),
+    /// Tail call to a user fn — same SCC as the surrounding fn.
+    /// Backends decide the final shape (wasm-gc tail-call insn,
+    /// VM tail dispatch, Rust loop rewrite).
+    TailCall(Spanned<MirTailCall>),
+    /// Binary operator over numeric / boolean operands. Same set as
+    /// `ast::BinOp` — MIR doesn't normalize arithmetic here; that's
+    /// a Phase 6 optimizer concern.
+    BinOp(Spanned<MirBinOp>),
+    /// Unary numeric negation. Distinct from `BinOp(Sub, 0, x)` so
+    /// IEEE-754 `-0.0` semantics are preserved on `Float`.
+    Neg(Box<Spanned<MirExpr>>),
+    /// `match <subject> { arm₁ ; arm₂ ; … }` — structured. Phase 4
+    /// VM walks arms in order, picks the first matching pattern.
+    Match(Spanned<MirMatch>),
+    /// Construct a sum-type variant by `CtorId`. The variant's
+    /// declared fields are filled in argument order.
+    Construct(Spanned<MirConstruct>),
+    /// Build a fresh record of a named product type. Fields are
+    /// (`field_name`, value) pairs to keep the dump readable; the
+    /// declared field order is determined by `TypeId` and
+    /// validated at lowering time.
+    RecordCreate(Spanned<MirRecordCreate>),
+    /// `T.update(base, field = v, …)` — produce a new record that
+    /// matches `base` except for the named field overrides.
+    RecordUpdate(Spanned<MirRecordUpdate>),
+    /// Field access (`base.field`) on a record value.
+    Project(Spanned<MirProject>),
+    /// `value?` — the canonical `?` propagation. Phase 1's
+    /// most-important pin: this stays a node. Lowering to nested
+    /// `Match` is a per-backend choice, not a pipeline-wide
+    /// transform. Rust will eventually emit `?` native, VM emits
+    /// tag-check + early return.
+    Try(Box<Spanned<MirExpr>>),
+    /// `let ok_binding = value?; ok_body` — the bound form of
+    /// `Try`. Carries `ok_binding` so the body has a name for the
+    /// unwrapped `Ok(_)` value. Distinct variant from `Try` +
+    /// `Let` so the lowering pass keeps the bind-and-propagate
+    /// intent intact (and downstream consumers can recognize the
+    /// shape without re-walking).
+    TryBind(Spanned<MirTryBind>),
+    /// `[a, b, c]` — list literal. Elements lower to MIR
+    /// expressions; the resulting value is `List<T>` with `T`
+    /// inferred at type-check time.
+    List(Vec<Spanned<MirExpr>>),
+    /// `(a, b, c)` — tuple literal.
+    Tuple(Vec<Spanned<MirExpr>>),
+    /// `{"k" => v, …}` — map literal. Keys + values lower as MIR
+    /// expressions; the resulting value is `Map<K, V>`.
+    MapLiteral(Vec<(Spanned<MirExpr>, Spanned<MirExpr>)>),
+    /// `"…{expr}…"` — interpolated string. Each part is either a
+    /// literal text segment or an embedded MIR expression whose
+    /// value gets stringified at runtime.
+    InterpolatedStr(Vec<MirStrPart>),
+    /// Independent product: `(a, b, c)!` or `(a, b, c)?!`. The
+    /// `unwrap_results` flag captures the `?` form (every element
+    /// must be `Result<…>`; `Err` short-circuits with the first
+    /// error). Schedule (`complete` / `cancel` / `sequential`) is
+    /// an aver.toml runtime policy and is NOT carried in MIR.
+    IndependentProduct(Spanned<MirIndependentProduct>),
+    /// Early `return value;` — used in lowered bodies that have a
+    /// natural early-return shape (the `?` propagation lowering
+    /// inside a backend is the canonical example). Functions that
+    /// don't return early end their body with the final expression
+    /// itself; `Return` is only for the explicit early-exit case.
+    Return(Box<Spanned<MirExpr>>),
+}
+
+/// `let binding = value; body`.
+#[derive(Debug, Clone)]
+pub struct MirLet {
+    pub binding: LocalId,
+    pub value: Box<Spanned<MirExpr>>,
+    pub body: Box<Spanned<MirExpr>>,
+}
+
+/// Apply `callee` to `args`.
+#[derive(Debug, Clone)]
+pub struct MirCall {
+    pub callee: MirCallee,
+    pub args: Vec<Spanned<MirExpr>>,
+}
+
+/// What we're calling. Two flavors during Phase 2–3; richer
+/// `BuiltinId` may replace the string in a later phase.
+#[derive(Debug, Clone)]
+pub enum MirCallee {
+    /// User-defined function (any module, including the current
+    /// one). Resolved at HIR → MIR lowering — never a string.
+    Fn(FnId),
+    /// Built-in registered in the runtime's builtin table
+    /// (`Console.print`, `List.prepend`, …). String for now; a
+    /// later phase may introduce `BuiltinId` for full typed
+    /// identity.
+    Builtin(String),
+}
+
+/// `target(args…)` in tail position — same SCC as the surrounding fn.
+#[derive(Debug, Clone)]
+pub struct MirTailCall {
+    pub target: FnId,
+    pub args: Vec<Spanned<MirExpr>>,
+}
+
+/// `lhs <op> rhs`.
+#[derive(Debug, Clone)]
+pub struct MirBinOp {
+    pub op: BinOp,
+    pub lhs: Box<Spanned<MirExpr>>,
+    pub rhs: Box<Spanned<MirExpr>>,
+}
+
+/// Structured match expression.
+#[derive(Debug, Clone)]
+pub struct MirMatch {
+    pub subject: Box<Spanned<MirExpr>>,
+    pub arms: Vec<MirMatchArm>,
+}
+
+/// One arm of a `match`. Pattern picks the variant; `body` is the
+/// value produced when this arm fires.
+#[derive(Debug, Clone)]
+pub struct MirMatchArm {
+    pub pattern: MirPattern,
+    pub body: Spanned<MirExpr>,
+}
+
+/// Pattern shape for `match` arms. Identity-typed where applicable
+/// (constructor patterns reference `CtorId`); `LocalId` is the
+/// fresh local introduced by the binding form.
+#[derive(Debug, Clone)]
+pub enum MirPattern {
+    /// `_` — catch-all, binds nothing.
+    Wildcard,
+    /// Literal arm: `0`, `true`, `"foo"`.
+    Literal(Literal),
+    /// Identifier binding — captures the matched value into a
+    /// fresh local accessible in the arm body.
+    Bind(LocalId),
+    /// `[]` — empty-list pattern.
+    EmptyList,
+    /// `[head, ..tail]` — cons pattern; both bindings fresh.
+    Cons { head: LocalId, tail: LocalId },
+    /// `(a, b, c)` — tuple pattern; each component is a sub-pattern.
+    Tuple(Vec<MirPattern>),
+    /// `Module.Variant(b1, b2, …)` — constructor pattern. `ctor`
+    /// identifies the variant by stable id; `bindings` are the
+    /// fresh locals for the variant's fields, in declaration
+    /// order.
+    Ctor {
+        ctor: CtorId,
+        bindings: Vec<LocalId>,
+    },
+}
+
+/// Construct a sum-type variant.
+#[derive(Debug, Clone)]
+pub struct MirConstruct {
+    pub ctor: CtorId,
+    pub args: Vec<Spanned<MirExpr>>,
+}
+
+/// Build a fresh record.
+#[derive(Debug, Clone)]
+pub struct MirRecordCreate {
+    pub type_id: TypeId,
+    pub fields: Vec<MirRecordField>,
+}
+
+/// `T.update(base, …)` — produce a record matching `base` except
+/// for the named field overrides.
+#[derive(Debug, Clone)]
+pub struct MirRecordUpdate {
+    pub base: Box<Spanned<MirExpr>>,
+    pub type_id: TypeId,
+    pub updates: Vec<MirRecordField>,
+}
+
+/// One `field = value` pair inside a record create or update.
+#[derive(Debug, Clone)]
+pub struct MirRecordField {
+    pub name: String,
+    pub value: Spanned<MirExpr>,
+}
+
+/// `base.field` projection.
+#[derive(Debug, Clone)]
+pub struct MirProject {
+    pub base: Box<Spanned<MirExpr>>,
+    pub field: String,
+}
+
+/// `let ok_binding = value?; ok_body` — semantic bind-and-propagate.
+#[derive(Debug, Clone)]
+pub struct MirTryBind {
+    pub value: Box<Spanned<MirExpr>>,
+    pub ok_binding: LocalId,
+    pub ok_body: Box<Spanned<MirExpr>>,
+}
+
+/// `(a, b, c)!` or `(a, b, c)?!`.
+#[derive(Debug, Clone)]
+pub struct MirIndependentProduct {
+    pub items: Vec<Spanned<MirExpr>>,
+    /// `true` for `?!` (unwrap `Ok`, propagate first `Err`);
+    /// `false` for `!` (raw tuple of `Result`s).
+    pub unwrap_results: bool,
+}
+
+/// Part of an interpolated string.
+#[derive(Debug, Clone)]
+pub enum MirStrPart {
+    /// Literal text between interpolation slots.
+    Literal(String),
+    /// `{expr}` — value gets stringified at runtime.
+    Expr(Spanned<MirExpr>),
+}
+
+/// Declared effect on a `MirFn`. Carries the source name
+/// (`"Console.print"`, `"Disk.readText"`) for now; a later phase
+/// may swap in `EffectId` for typed identity once the effect
+/// registry grows ids.
+#[derive(Debug, Clone)]
+pub struct MirEffectAnnotation {
+    pub name: String,
+}
+
+// `Spanned<T>` is re-used from `crate::ast::Spanned` — it already
+// carries a `SourceLine` plus a `OnceLock<Type>` type stamp, which
+// matches MIR's need to surface type-check results into the
+// executable substrate for later optimization passes. Defining a
+// second MIR-private `Spanned` would mean either dropping the type
+// stamp (losing information) or duplicating the OnceLock wiring;
+// reusing the AST helper keeps lowering trivial and the dump
+// output uniform across IR layers.
