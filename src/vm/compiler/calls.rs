@@ -105,7 +105,7 @@ impl<'a> FnCompiler<'a> {
         self.arena.find_type_id(name)
     }
 
-    fn resolve_fn_id_by_name(&self, name: &str) -> Option<u32> {
+    pub(super) fn resolve_fn_id_by_name(&self, name: &str) -> Option<u32> {
         self.module_scope()
             .get(name)
             .copied()
