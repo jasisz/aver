@@ -1,0 +1,43 @@
+module SumAcc
+    intent =
+        "Wrapper-over-recursion demo for proof export."
+        "sum/sumTR is the canonical accumulator-threading wrapper-over-recursion shape:"
+        "a non-recursive wrapper calls a self-recursive inner with neutral element."
+        "Paired with sumDirect (the direct recurrence) to enable a closable equivalence law."
+    effects []
+
+fn sumTR(xs: List<Int>, acc: Int) -> Int
+    ? "Tail-recursive sum: returns acc + total(xs)."
+    match xs
+        [] -> acc
+        [h, ..t] -> sumTR(t, acc + h)
+
+verify sumTR
+    sumTR([], 0)        => 0
+    sumTR([], 7)        => 7
+    sumTR([1, 2, 3], 0) => 6
+    sumTR([1, 2, 3], 4) => 10
+
+fn sum(xs: List<Int>) -> Int
+    ? "Sum of a list via a tail-recursive worker with neutral initial accumulator."
+    sumTR(xs, 0)
+
+verify sum
+    sum([])        => 0
+    sum([1, 2, 3]) => 6
+    sum([42])      => 42
+
+fn sumDirect(xs: List<Int>) -> Int
+    ? "Direct-recurrence sum: matches the algebraic content sum/sumTR encode."
+    match xs
+        [] -> 0
+        [h, ..t] -> h + sumDirect(t)
+
+verify sumDirect
+    sumDirect([])        => 0
+    sumDirect([1, 2, 3]) => 6
+    sumDirect([42])      => 42
+
+verify sum law equalsDirect
+    given xs: List<Int> = [[], [1], [1, 2, 3], [4, 5, 6, 7]]
+    sum(xs) => sumDirect(xs)

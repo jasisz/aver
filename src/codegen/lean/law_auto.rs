@@ -255,6 +255,28 @@ pub fn emit_verify_law_forall_auto_proof(
         return Some(proof);
     }
 
+    // Stage 8 of #232 — `WrapperOverRecursion` support stack.
+    // Aux acc-decomposition lemma + main universal lemma; both
+    // close in core Lean 4 (`omega`) without Mathlib.
+    if let Some(crate::ir::ProofStrategy::WrapperOverRecursion {
+        wrapper_fn,
+        inner_fn,
+        other_fn,
+        combine_op,
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+        && let Some(proof) = spec::emit_wrapper_over_recursion_law(
+            vb,
+            law,
+            ctx,
+            &wrapper_fn,
+            &inner_fn,
+            &other_fn,
+            combine_op,
+        )
+    {
+        return Some(proof);
+    }
+
     spec::emit_spec_function_equivalence_law(vb, law, ctx, &proof_intro_names)
         .or_else(|| {
             // IR-pinned Map library axiom (has_set_self / get_set_self).

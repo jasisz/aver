@@ -1367,6 +1367,61 @@ fn emit_linear_recurrence2_support_stack(
     lines.join("\n")
 }
 
+/// Stage 8 of #232: support stack for `ProofStrategy::WrapperOverRecursion`.
+/// Emits the accumulator-decomposition aux lemma and the main universal
+/// lemma — `examples/data/sum_acc.av` is the canonical case. Z3 closes
+/// both via list induction; the aux lemma is the lifting that naive
+/// induction on the law can't supply by itself.
+///
+/// Output shape:
+/// ```dafny
+/// lemma <inner>_acc(xs: seq<int>, a: int)
+///   ensures <inner>(xs, a) == a <op> <inner>(xs, <neutral>)
+///   decreases |xs|
+/// { if |xs| > 0 { <inner>_acc(xs[1..], a <op> xs[0]); <inner>_acc(xs[1..], xs[0]); } }
+///
+/// lemma <law_theorem>(xs: seq<int>)
+///   ensures <wrapper>(xs) == <other>(xs)
+///   decreases |xs|
+/// { if |xs| > 0 { <inner>_acc(xs[1..], xs[0]); <law_theorem>(xs[1..]); } }
+/// ```
+fn emit_wrapper_over_recursion_support_stack(
+    wrapper_fn: &str,
+    inner_fn: &str,
+    other_fn: &str,
+    combine_op: crate::ast::BinOp,
+    impl_dafny: &str,
+    law_name_dafny: &str,
+) -> String {
+    let op_dafny = match combine_op {
+        crate::ast::BinOp::Add => "+",
+        crate::ast::BinOp::Mul => "*",
+        crate::ast::BinOp::Sub => "-",
+        _ => "+",
+    };
+    let neutral = match combine_op {
+        crate::ast::BinOp::Mul => "1",
+        _ => "0",
+    };
+    let wrapper_d = aver_name_to_dafny(wrapper_fn);
+    let inner_d = aver_name_to_dafny(inner_fn);
+    let other_d = aver_name_to_dafny(other_fn);
+    let acc_thm = format!("{inner_d}__acc");
+    let main_thm = format!("{impl_dafny}_{law_name_dafny}");
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "// Law: {wrapper_fn}.{law_name_dafny} — wrapper-over-recursion support stack"
+    ));
+    lines.push(format!(
+        "lemma {acc_thm}(xs: seq<int>, a: int)\n  ensures {inner_d}(xs, a) == a {op_dafny} {inner_d}(xs, {neutral})\n  decreases |xs|\n{{\n  if |xs| > 0 {{\n    {acc_thm}(xs[1..], a {op_dafny} xs[0]);\n    {acc_thm}(xs[1..], xs[0]);\n  }}\n}}"
+    ));
+    lines.push(format!(
+        "lemma {{:fuel {wrapper_d}, 5}} {{:fuel {other_d}, 5}} {main_thm}(xs: seq<int>)\n  ensures {wrapper_d}(xs) == {other_d}(xs)\n  decreases |xs|\n{{\n  if |xs| > 0 {{\n    {acc_thm}(xs[1..], xs[0]);\n    {main_thm}(xs[1..]);\n  }}\n}}\n"
+    ));
+    lines.join("\n")
+}
+
 pub fn emit_verify_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1461,6 +1516,31 @@ pub fn emit_verify_law(
     {
         return emit_linear_recurrence2_support_stack(
             &impl_fn, &spec_fn, &helper_fn, &fn_name, &law_name,
+        );
+    }
+
+    // Stage 8 of #232 — `WrapperOverRecursion` support stack.
+    if let Some(crate::ir::ProofStrategy::WrapperOverRecursion {
+        wrapper_fn,
+        inner_fn,
+        other_fn,
+        combine_op,
+    }) = vb_fn_id
+        .and_then(|fn_id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+        })
+        .map(|t| t.strategy.clone())
+    {
+        return emit_wrapper_over_recursion_support_stack(
+            &wrapper_fn,
+            &inner_fn,
+            &other_fn,
+            combine_op,
+            &fn_name,
+            &law_name,
         );
     }
 

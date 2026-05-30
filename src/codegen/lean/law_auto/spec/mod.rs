@@ -1,8 +1,10 @@
 mod linear_int;
 mod linear_recurrence2;
 mod simp_normalized;
+mod wrapper_over_recursion;
 
 pub(super) use linear_recurrence2::emit_second_order_linear_recurrence_spec_equivalence_law;
+pub(super) use wrapper_over_recursion::emit_wrapper_over_recursion_law;
 
 use crate::ast::{Expr, Spanned, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;

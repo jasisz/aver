@@ -880,6 +880,19 @@ fn classify_law_strategy(
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
+    // Wrapper-over-recursion with monoidal accumulator (stage 8 of
+    // #232) — runs before generic induction because its aux-lemma
+    // template closes laws naive induction can't (e.g. `sum(xs) ==
+    // sumDirect(xs)` where `sum(xs) = sumTR(xs, 0)`). Detected
+    // when `fn_name` is registered as a `WrapperOverRecursion`
+    // pattern in `ProgramShape` AND the law shape is
+    // `wrapper(g) == other(g)` AND the inner fn body matches the
+    // monoidal-accumulator template.
+    if law.when.is_none()
+        && let Some(s) = detect_wrapper_over_recursion(law, fn_name, inputs)
+    {
+        return s;
+    }
     // Structural induction runs first — when any given binds a
     // recursive ADT, induction over its variants is the canonical
     // proof. Reflexive could also fire on `f(t) = f(t)` for `t: Tree`
@@ -2531,6 +2544,190 @@ fn is_bool_true(expr: &Spanned<crate::ast::Expr>) -> bool {
 /// shapes are rejected here — the backend's emit can't handle
 /// them and would fail at lake-build time; better to fall through
 /// to `BackendDispatch` than pin a bad strategy.
+/// Stage 8 of #232: detect `wrapper(g) == other(g)` where `wrapper`
+/// is a `ModulePattern::WrapperOverRecursion` and the inner fn has a
+/// monoidal-accumulator shape we know how to emit Dafny support
+/// theorems for. Returns the typed strategy carrying enough payload
+/// for the backend to emit the aux acc-decomposition lemma without
+/// re-walking the AST.
+fn detect_wrapper_over_recursion(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<crate::ir::ProofStrategy> {
+    use crate::analysis::shape::ModulePattern;
+    use crate::ast::{BinOp, Expr, Pattern, Stmt};
+
+    // Pre-pipeline AST has `Expr::Ident(n)`; post-pipeline the
+    // resolver rewrites local/param idents to `Expr::Resolved { name }`.
+    // Both forms identify the same surface name.
+    fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
+        match &e.node {
+            Expr::Ident(n) => Some(n.as_str()),
+            Expr::Resolved { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    let shape = inputs.program_shape?;
+
+    // Only handle single-given laws — the template is parameterized
+    // by one universal `xs`.
+    if law.givens.len() != 1 {
+        return None;
+    }
+    let given_name = &law.givens[0].name;
+
+    // Find the matching pattern in the shape — wrapper_fn must
+    // equal the law's surrounding fn.
+    let (wrapper_fn, inner_fn) = shape.patterns.iter().find_map(|p| match p {
+        ModulePattern::WrapperOverRecursion {
+            wrapper_fn,
+            inner_fn,
+            ..
+        } if wrapper_fn == fn_name => Some((wrapper_fn.clone(), inner_fn.clone())),
+        _ => None,
+    })?;
+
+    // Law shape: `wrapper(g) == other(g)` (either side).
+    let extract = |expr: &Spanned<crate::ast::Expr>| -> Option<String> {
+        let Expr::FnCall(callee, args) = &expr.node else {
+            return None;
+        };
+        let name = ident_name(callee)?;
+        if args.len() != 1 {
+            return None;
+        }
+        if ident_name(&args[0])? != given_name {
+            return None;
+        }
+        Some(name.to_string())
+    };
+    let lhs_call = extract(&law.lhs);
+    let rhs_call = extract(&law.rhs);
+    let other_fn = match (lhs_call, rhs_call) {
+        (Some(l), Some(r)) if l == wrapper_fn && r != wrapper_fn => r,
+        (Some(l), Some(r)) if r == wrapper_fn && l != wrapper_fn => l,
+        _ => return None,
+    };
+
+    // Inner fn must have body shape
+    //   match xs { [] -> acc; [h, ..t] -> inner(t, acc OP h) }
+    // — extract OP.
+    let inner_fd = inputs.find_fn_def_by_call_name(&inner_fn)?;
+    if inner_fd.params.len() != 2 {
+        return None;
+    }
+    let stmts = inner_fd.body.stmts();
+    if stmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Expr(body) = &stmts[0] else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return None;
+    };
+    if ident_name(subject)? != inner_fd.params[0].0 {
+        return None;
+    }
+    if arms.len() != 2 {
+        return None;
+    }
+    let mut nil_acc_ok = false;
+    let mut cons_op: Option<BinOp> = None;
+    let acc_name = &inner_fd.params[1].0;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::EmptyList => {
+                if ident_name(&arm.body) == Some(acc_name.as_str()) {
+                    nil_acc_ok = true;
+                }
+            }
+            Pattern::Cons(head_name, tail_name) => {
+                // Body must be `inner(tail, acc OP head)` (or with `head OP acc`).
+                // Post-pipeline the call can also be a `TailCall`.
+                let (callee_name, args) = match &arm.body.node {
+                    Expr::FnCall(c, a) => (ident_name(c)?, a.clone()),
+                    Expr::TailCall(td) => (td.target.as_str(), td.args.clone()),
+                    _ => return None,
+                };
+                if callee_name != inner_fn {
+                    return None;
+                }
+                if args.len() != 2 {
+                    return None;
+                }
+                if ident_name(&args[0])? != tail_name.as_str() {
+                    return None;
+                }
+                let Expr::BinOp(op, l, r) = &args[1].node else {
+                    return None;
+                };
+                if !matches!(op, BinOp::Add | BinOp::Mul) {
+                    return None;
+                }
+                let l_n = ident_name(l);
+                let r_n = ident_name(r);
+                let l_is_acc = l_n == Some(acc_name.as_str());
+                let r_is_head = r_n == Some(head_name.as_str());
+                let l_is_head = l_n == Some(head_name.as_str());
+                let r_is_acc = r_n == Some(acc_name.as_str());
+                if !((l_is_acc && r_is_head) || (l_is_head && r_is_acc)) {
+                    return None;
+                }
+                cons_op = Some(*op);
+            }
+            _ => return None,
+        }
+    }
+    if !nil_acc_ok {
+        return None;
+    }
+    let combine_op = cons_op?;
+
+    // Wrapper body must be `inner(<given>, neutral)` where neutral is
+    // 0 for Add and 1 for Mul. Verify against the fn def to be sure.
+    let wrapper_fd = inputs.find_fn_def_by_call_name(&wrapper_fn)?;
+    let wstmts = wrapper_fd.body.stmts();
+    if wstmts.len() != 1 {
+        return None;
+    }
+    let Stmt::Expr(wbody) = &wstmts[0] else {
+        return None;
+    };
+    let (wcallee_name, wargs) = match &wbody.node {
+        Expr::FnCall(c, a) => (ident_name(c)?, a.clone()),
+        Expr::TailCall(td) => (td.target.as_str(), td.args.clone()),
+        _ => return None,
+    };
+    if wcallee_name != inner_fn {
+        return None;
+    }
+    if wargs.len() != 2 {
+        return None;
+    }
+    let expected_neutral: i64 = match combine_op {
+        BinOp::Add | BinOp::Sub => 0,
+        BinOp::Mul => 1,
+        _ => return None,
+    };
+    let neutral_matches = matches!(
+        &wargs[1].node,
+        Expr::Literal(crate::ast::Literal::Int(n)) if *n == expected_neutral
+    );
+    if !neutral_matches {
+        return None;
+    }
+
+    Some(crate::ir::ProofStrategy::WrapperOverRecursion {
+        wrapper_fn,
+        inner_fn,
+        other_fn,
+        combine_op,
+    })
+}
+
 fn detect_induction_target(
     law: &crate::ast::VerifyLaw,
     inputs: &ProofLowerInputs,
