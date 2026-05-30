@@ -52,10 +52,9 @@ The exact field layout lands in Phase 2 alongside snapshot-style dumps. Phase 1 
 
 ```text
 Try(value)
-TryBind { value, ok_binding, ok_body }
 ```
 
-with canonical semantics `evaluate value; if Ok(v), continue with v; if Err(e), return Err(e)`.
+with canonical semantics `evaluate value; if Ok(v), the result is v; if Err(e), return Err(e) from the enclosing fn`. The bind-and-propagate shape `let x = step()?; body` is expressed as `Let { binding: x, value: Try(step()), body }` — no dedicated `TryBind` variant (see the resolved open-questions list below).
 
 Backends pick their final shape:
 
@@ -144,7 +143,7 @@ One PR per wave so review surface stays bounded:
 
 1. literals + locals + binops + `return` + `Project`
 2. user calls + builtin calls + constructors + record create / update
-3. `match` (structured), `Try` / `TryBind`, `TailCall`, `IndependentProduct`
+3. `match` (structured), `Try`, `TailCall`, `IndependentProduct`
 
 Each wave: dump snapshot for a representative example, no behavioral change for any backend yet.
 
