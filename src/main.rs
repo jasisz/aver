@@ -364,6 +364,7 @@ fn main() {
             module_root,
             backend,
             verify_mode,
+            check,
         } => {
             commands::cmd_proof(
                 file,
@@ -372,6 +373,7 @@ fn main() {
                 module_root.as_deref(),
                 backend,
                 verify_mode,
+                *check,
             );
         }
     }

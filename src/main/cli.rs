@@ -573,12 +573,47 @@ pub(super) enum Commands {
         /// How to emit `verify` cases and law theorems in generated Lean
         #[arg(long, default_value = "auto")]
         verify_mode: ProofVerifyMode,
+        /// After generating the proof project, invoke the backend
+        /// verifier (`dafny verify` / `lake build`) inside the
+        /// output directory and report its exit status. Non-zero
+        /// exit on any verification failure. Useful in CI to gate
+        /// regressions on pinned `ProofStrategy` choices.
+        #[arg(long)]
+        check: bool,
     },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proof_accepts_check_flag() {
+        let cli = Cli::parse_from([
+            "aver",
+            "proof",
+            "examples/data/sum_acc.av",
+            "--backend",
+            "dafny",
+            "--check",
+        ]);
+        match cli.command {
+            Commands::Proof { file, check, .. } => {
+                assert_eq!(file, "examples/data/sum_acc.av");
+                assert!(check, "--check must parse to true");
+            }
+            _ => panic!("expected proof command"),
+        }
+    }
+
+    #[test]
+    fn proof_check_defaults_to_false() {
+        let cli = Cli::parse_from(["aver", "proof", "examples/data/sum_acc.av"]);
+        match cli.command {
+            Commands::Proof { check, .. } => assert!(!check, "--check defaults to false"),
+            _ => panic!("expected proof command"),
+        }
+    }
 
     #[test]
     fn verify_accepts_deps_flag() {

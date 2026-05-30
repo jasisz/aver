@@ -4607,6 +4607,7 @@ pub(super) fn cmd_proof(
     module_root_override: Option<&str>,
     backend: &super::cli::ProofBackend,
     verify_mode: &super::cli::ProofVerifyMode,
+    check: bool,
 ) {
     let (mut ctx, _module_root) = build_codegen_context(
         file,
@@ -4661,6 +4662,87 @@ pub(super) fn cmd_proof(
         }
         super::cli::ProofBackend::Dafny => {
             cmd_proof_dafny(file, output_dir, &ctx);
+        }
+    }
+
+    if check {
+        run_proof_check(output_dir, backend);
+    }
+}
+
+/// `aver proof --check` harness: invoke the backend's verifier inside
+/// `output_dir`, stream its output to the user, exit non-zero on
+/// failure. MVP — no residual-diagnostic mapping back to source
+/// `verify` blocks yet; that's a follow-up (issue #222 `--try-auto`).
+fn run_proof_check(output_dir: &str, backend: &super::cli::ProofBackend) {
+    use std::process::{Command, Stdio};
+
+    let (cmd, args, label): (&str, Vec<String>, &str) = match backend {
+        super::cli::ProofBackend::Lean => ("lake", vec!["build".to_string()], "Lean / lake"),
+        super::cli::ProofBackend::Dafny => {
+            // Find the single `.dfy` entry file in `output_dir` — the
+            // generator emits exactly one (plus `common.dfy`).
+            let entry = match std::fs::read_dir(output_dir) {
+                Ok(rd) => rd
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .find(|n| n.ends_with(".dfy") && n != "common.dfy"),
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!("--check: read_dir({}) failed: {}", output_dir, e).red()
+                    );
+                    std::process::exit(2);
+                }
+            };
+            let Some(entry) = entry else {
+                eprintln!(
+                    "{}",
+                    format!(
+                        "--check: no .dfy entry file found in {} (besides common.dfy)",
+                        output_dir
+                    )
+                    .red()
+                );
+                std::process::exit(2);
+            };
+            ("dafny", vec!["verify".to_string(), entry], "Dafny / Z3")
+        }
+    };
+
+    println!("{}", format!("--check: running {} verifier…", label).blue());
+    let status = Command::new(cmd)
+        .args(&args)
+        .current_dir(output_dir)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            println!("{}", format!("--check: {} verifier passed", label).green());
+        }
+        Ok(s) => {
+            eprintln!(
+                "{}",
+                format!(
+                    "--check: {} verifier reported failures (exit {})",
+                    label,
+                    s.code().unwrap_or(-1)
+                )
+                .red()
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!(
+                "{}",
+                format!(
+                    "--check: failed to spawn `{}`: {} — is the verifier installed and on PATH?",
+                    cmd, e
+                )
+                .red()
+            );
+            std::process::exit(2);
         }
     }
 }
