@@ -1,4 +1,4 @@
-//! HIR → MIR lowering, waves 1 + 2 + 3a + 3b.
+//! HIR → MIR lowering, waves 1 + 2 + 3a + 3b + 3c (all sub-waves).
 //!
 //! Phase 3 of #252 lowers `ResolvedProgramView` into `MirProgram`
 //! in widening waves so review surface stays small.
@@ -50,12 +50,47 @@
 //!   `BuiltinCtorPattern` drop out of `LowerStats.skipped` (the
 //!   variants stay in the enum for historical attribution).
 //!
-//! Remaining wave 3c sub-waves: 3c-ii lands `Try`, 3c-iii tail
-//! calls + first-class fn callees, 3c-iv list / tuple / map /
-//! interpolated-string literals, 3c-v `IndependentProduct`. The
-//! bind-and-propagate shape `let x = step()?; body` will lower
-//! as `Let { binding, value: Try(step()), body }` — no
-//! dedicated `TryBind` variant (dropped during wave 3 prep).
+//! **Wave 3c-ii** — `Try` (`?` propagation): `ErrorProp(inner)` →
+//! `MirExpr::Try(inner)`. RFC pin: stays a node, backends pick
+//! the final shape. The `let x = step()?; body` form composes
+//! through wave 3a's stmt-chain (`Let { value: Try(_), … }`).
+//!
+//! **Wave 3c-iii** — tail calls: `TailCall { target, args }` →
+//! `MirExpr::TailCall(MirTailCall { target: FnId, args })`. TCO
+//! upstream already classified the call; MIR preserves `FnId`
+//! identity. Backends pick wasm-gc tail-call insn / VM tail
+//! dispatch / Rust loop rewrite.
+//!
+//! **Wave 3c-iv** — collection literals: `List` / `Tuple` /
+//! `MapLiteral` / `InterpolatedStr` all lower element-wise; the
+//! outer MIR node carries the structural shape. Note: `interp_lower`
+//! upstream of MIR desugars interpolated strings into buffer-build
+//! calls before MIR sees the tree, so `InterpolatedStr` is rarely
+//! reached in practice — the lowering exists for symmetry.
+//!
+//! **Wave 3c-v** — `IndependentProduct(items, unwrap_results)` →
+//! `MirExpr::IndependentProduct { items, unwrap_results }`. The
+//! compile-time independence mode (`complete` / `cancel` /
+//! `sequential`) is NOT carried in MIR per RFC — that's an
+//! aver.toml runtime policy decision.
+//!
+//! Final remaining `SkipReason`s after wave 3c:
+//! - `UnresolvedIdent` — resolver gap (e.g. bare `Option.None` in
+//!   value position), not a MIR concern.
+//! - `MissingResolution` / `EmptyBody` / `BindingOnlyTail` /
+//!   `BindingSlotLookupMissing` / `PatternSlotShortfall` —
+//!   defensive guards for upstream pipeline gaps.
+//! - `UnsupportedCallee` — first-class fn / intrinsic / unresolved
+//!   call targets; future closures work.
+//! - `BuiltinRecord` — records on built-in product types (no
+//!   `TypeId`); waits for a consumer that needs them.
+//! - `BuiltinCtorConstruction` / `BuiltinCtorPattern` /
+//!   `UnsupportedTry` / `UnsupportedTailCall` /
+//!   `UnsupportedList` / `UnsupportedTuple` / `UnsupportedMap` /
+//!   `UnsupportedInterpolatedStr` /
+//!   `UnsupportedIndependentProduct` — kept in the enum for
+//!   historical attribution; no longer reachable from the
+//!   lowerer.
 //!
 //! Functions that use anything outside the waves' supported
 //! subset are dropped — `MirProgram.fns` only contains what the
@@ -396,10 +431,28 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Result<Spanned<MirExpr>, SkipReas
             MirExpr::InterpolatedStr(mir_parts)
         }
 
-        // ── Wave 3c+ ────────────────────────────────────────────
-        ResolvedExpr::IndependentProduct(_, _) => {
-            return Err(SkipReason::UnsupportedIndependentProduct);
+        // ── Wave 3c-v ───────────────────────────────────────────
+        // `(a, b, c)!` (raw tuple of Results) or `(a, b, c)?!`
+        // (unwrap each Ok, propagate first Err). The compile-time
+        // independence mode (`complete` / `cancel` / `sequential`)
+        // is NOT carried in MIR per RFC — that's an aver.toml
+        // runtime policy. MIR represents only the source-level
+        // shape: items + the `unwrap_results` bool.
+        ResolvedExpr::IndependentProduct(items, unwrap_results) => {
+            let mir_items = items
+                .iter()
+                .map(lower_expr)
+                .collect::<Result<Vec<_>, _>>()?;
+            MirExpr::IndependentProduct(wrap(
+                super::expr::MirIndependentProduct {
+                    items: mir_items,
+                    unwrap_results: *unwrap_results,
+                },
+                expr,
+            ))
         }
+
+        // ── Final catch-all ─────────────────────────────────────
         ResolvedExpr::Ident(_) => return Err(SkipReason::UnresolvedIdent),
     };
     Ok(wrap(mir, expr))
