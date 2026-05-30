@@ -153,11 +153,11 @@ fn build_a_tiny_function_by_hand() {
     // here we build it manually so any rename / move on the
     // public API breaks this test.
     let x = LocalId(0);
-    let body = MirExpr::BinOp(span(MirBinOp {
+    let body = span(MirExpr::BinOp(span(MirBinOp {
         op: BinOp::Add,
         lhs: Box::new(span(MirExpr::Local(span(x)))),
         rhs: Box::new(span(MirExpr::Local(span(x)))),
-    }));
+    })));
     let f = MirFn {
         fn_id: fn_id(0),
         name: "double".to_string(),

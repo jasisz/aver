@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 use crate::ir::{FnId, ModuleId};
 
+use crate::ast::Spanned;
+
 use super::expr::{MirEffectAnnotation, MirExpr};
 
 /// A whole compiled program in Core MIR. Keyed by `FnId` (stable
@@ -79,10 +81,12 @@ pub struct MirFn {
     /// the Phase 6 optimizer track per the RFC.
     pub effects: Vec<MirEffectAnnotation>,
     /// The single expression that, when evaluated, produces the
-    /// function's return value. Phase 2a treats this as a typed
-    /// hole — the actual `MirExpr` variants are defined alongside
-    /// in `expr.rs`. Phase 3 lowering fills it.
-    pub body: MirExpr,
+    /// function's return value. Wrapped in `Spanned` so the body's
+    /// own source location stays available to dumps / diagnostics
+    /// (the surrounding `MirFn` has its own identity layer via
+    /// `fn_id`, but the body span is needed for sub-expression
+    /// errors that don't carry a closer one).
+    pub body: Spanned<MirExpr>,
 }
 
 /// One formal parameter. The `LocalId` is assigned at lowering

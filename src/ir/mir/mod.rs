@@ -73,6 +73,7 @@
 //! See `RFC.md` next to this file for the full design write-up,
 //! open questions, and the per-phase checklist.
 
+pub mod dump;
 pub mod expr;
 pub mod program;
 
