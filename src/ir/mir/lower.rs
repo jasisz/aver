@@ -28,7 +28,7 @@
 //! **Wave 3b (this commit)** — structured `match` + patterns:
 //! - `ResolvedExpr::Match { subject, arms }` → `MirExpr::Match`.
 //! - User-ctor patterns (`ResolvedCtor::User { ctor_id, .. }`)
-//!   lower to `MirPattern::Ctor { ctor: CtorId, bindings }`.
+//!   lower to `MirPattern::Ctor { ctor: MirCtor::User(_), bindings }`.
 //! - Cons / Tuple / Ident / Literal / Wildcard / EmptyList lower
 //!   structurally. Pattern bindings draw their `LocalId`s from
 //!   `ResolvedMatchArm.binding_slots` (preorder-flat, same shape
@@ -38,13 +38,24 @@
 //!   silently skipped, same skip-rule that wave 2 applied to
 //!   built-in ctor *constructions*.
 //!
-//! Wave 3c lands `Try`, tail calls, `IndependentProduct`,
-//! lists / tuples / maps / interpolation, and built-in constructors
-//! (`Result.Ok` / `Option.Some` — those need a typed identity
-//! story beyond raw `CtorId`). The bind-and-propagate shape
-//! `let x = step()?; body` lowers as
-//! `Let { binding, value: Try(step()), body }` — no dedicated
-//! `TryBind` variant (dropped during wave 3 prep).
+//! **Wave 3c-i (this commit)** — typed identity for built-in
+//!   constructors:
+//! - `ResolvedExpr::Ctor(Builtin(bc), args)` →
+//!   `MirConstruct { ctor: MirCtor::Builtin(bc), args }`.
+//! - `ResolvedPattern::Ctor(Builtin(bc), names)` →
+//!   `MirPattern::Ctor { ctor: MirCtor::Builtin(bc), bindings }`.
+//! - User ctors stay on `MirCtor::User(CtorId)`; the two flavors
+//!   ride the same node shape so backends pattern-match once.
+//! - `SkipReason::BuiltinCtorConstruction` /
+//!   `BuiltinCtorPattern` drop out of `LowerStats.skipped` (the
+//!   variants stay in the enum for historical attribution).
+//!
+//! Remaining wave 3c sub-waves: 3c-ii lands `Try`, 3c-iii tail
+//! calls + first-class fn callees, 3c-iv list / tuple / map /
+//! interpolated-string literals, 3c-v `IndependentProduct`. The
+//! bind-and-propagate shape `let x = step()?; body` will lower
+//! as `Let { binding, value: Try(step()), body }` — no
+//! dedicated `TryBind` variant (dropped during wave 3 prep).
 //!
 //! Functions that use anything outside the waves' supported
 //! subset are dropped — `MirProgram.fns` only contains what the
@@ -74,8 +85,9 @@ use crate::ir::hir::{
 };
 
 use super::expr::{
-    MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr, MirLet, MirMatch,
-    MirMatchArm, MirPattern, MirProject, MirRecordCreate, MirRecordField, MirRecordUpdate,
+    MirBinOp, MirCall, MirCallee, MirConstruct, MirCtor, MirEffectAnnotation, MirExpr, MirLet,
+    MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate, MirRecordField,
+    MirRecordUpdate,
 };
 use super::program::{LocalId, MirFn, MirParam, MirProgram};
 use super::stats::SkipReason;
@@ -215,18 +227,26 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Result<Spanned<MirExpr>, SkipReas
             let mir_args = args.iter().map(lower_expr).collect::<Result<Vec<_>, _>>()?;
             MirExpr::Construct(wrap(
                 MirConstruct {
-                    ctor: *ctor_id,
+                    ctor: MirCtor::User(*ctor_id),
                     args: mir_args,
                 },
                 expr,
             ))
         }
-        // Built-in ctors (`Result.Ok` / `Option.Some` / etc.) don't
-        // carry user-program `CtorId`s. Wave 3c-i will introduce a
-        // typed identity for them — until then, fns that construct
-        // them get dropped.
-        ResolvedExpr::Ctor(ResolvedCtor::Builtin(_), _) => {
-            return Err(SkipReason::BuiltinCtorConstruction);
+        // Wave 3c-i: built-in ctors (`Result.Ok` / `Result.Err` /
+        // `Option.Some` / `Option.None`) lower through
+        // `MirCtor::Builtin`, riding the same `MirConstruct` shape
+        // as user ctors. Backends pick their final emit; until
+        // then `Construct(Builtin(_), …)` is the canonical form.
+        ResolvedExpr::Ctor(ResolvedCtor::Builtin(bc), args) => {
+            let mir_args = args.iter().map(lower_expr).collect::<Result<Vec<_>, _>>()?;
+            MirExpr::Construct(wrap(
+                MirConstruct {
+                    ctor: MirCtor::Builtin(*bc),
+                    args: mir_args,
+                },
+                expr,
+            ))
         }
         ResolvedExpr::Ctor(ResolvedCtor::Unresolved { .. }, _) => {
             return Err(SkipReason::UnresolvedCtor);
@@ -372,25 +392,44 @@ fn lower_pattern(
             MirPattern::Tuple(mir_items)
         }
         ResolvedPattern::Ctor(ResolvedCtor::User { ctor_id, .. }, names) => {
-            let mut bindings = Vec::with_capacity(names.len());
-            for _ in names {
-                let slot = take_slot(slots, cursor)?;
-                bindings.push(LocalId(u32::from(slot)));
-            }
+            let bindings = take_pattern_bindings(slots, cursor, names.len())?;
             MirPattern::Ctor {
-                ctor: *ctor_id,
+                ctor: MirCtor::User(*ctor_id),
                 bindings,
             }
         }
-        // Wave 3c-i — built-in / unresolved ctor patterns get typed
-        // identity alongside their construction-side counterparts.
-        ResolvedPattern::Ctor(ResolvedCtor::Builtin(_), _) => {
-            return Err(SkipReason::BuiltinCtorPattern);
+        // Wave 3c-i — built-in ctor patterns ride the same shape
+        // as user-ctor patterns via `MirCtor::Builtin`.
+        ResolvedPattern::Ctor(ResolvedCtor::Builtin(bc), names) => {
+            let bindings = take_pattern_bindings(slots, cursor, names.len())?;
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(*bc),
+                bindings,
+            }
         }
+        // Unresolved ctors still drop — typechecker already
+        // surfaced the error; MIR refuses to emit half-resolved
+        // identity.
         ResolvedPattern::Ctor(ResolvedCtor::Unresolved { .. }, _) => {
             return Err(SkipReason::UnresolvedCtor);
         }
     })
+}
+
+/// Helper for ctor-pattern lowering — consume `arity` slots in
+/// preorder. Used by both user-ctor and built-in-ctor branches so
+/// the slot-cursor advance rule lives in one place.
+fn take_pattern_bindings(
+    slots: &[u16],
+    cursor: &mut usize,
+    arity: usize,
+) -> Result<Vec<LocalId>, SkipReason> {
+    let mut bindings = Vec::with_capacity(arity);
+    for _ in 0..arity {
+        let slot = take_slot(slots, cursor)?;
+        bindings.push(LocalId(u32::from(slot)));
+    }
+    Ok(bindings)
 }
 
 fn take_slot(slots: &[u16], cursor: &mut usize) -> Result<u16, SkipReason> {

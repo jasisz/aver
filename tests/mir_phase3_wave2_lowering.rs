@@ -107,13 +107,17 @@ fn lowers_record_update() {
 }
 
 #[test]
-fn builtin_ctor_fn_is_silently_dropped() {
-    // `Result.Ok(_)` is a built-in constructor — wave 2 leaves it
-    // for wave 3 (needs typed builtin identity). The lowerer must
-    // not panic; the fn just doesn't show up in the dump.
+fn builtin_ctor_fn_lowers_after_wave_3c_i() {
+    // `Result.Ok(_)` is a built-in constructor. Wave 2 dropped fns
+    // touching them; wave 3c-i landed `MirCtor::Builtin` so the fn
+    // now lowers cleanly with the canonical builtin name in the dump.
     let dump = lower("fn ok_seven() -> Result<Int, String>\n    Result.Ok(7)\n");
     assert!(
-        !dump.contains("fn ok_seven"),
-        "built-in ctor fn shouldn't be lowered in wave 2:\n{dump}"
+        dump.contains("fn ok_seven"),
+        "built-in ctor fn must lower after wave 3c-i:\n{dump}"
+    );
+    assert!(
+        dump.contains("Result.Ok("),
+        "dump should render the canonical builtin name (`Result.Ok`):\n{dump}"
     );
 }

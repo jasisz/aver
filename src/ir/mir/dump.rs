@@ -213,7 +213,8 @@ fn write_pattern(f: &mut fmt::Formatter<'_>, p: &MirPattern) -> fmt::Result {
             write!(f, ")")
         }
         MirPattern::Ctor { ctor, bindings } => {
-            write!(f, "CtorId({})(", ctor.0)?;
+            write_ctor(f, *ctor)?;
+            write!(f, "(")?;
             for (i, b) in bindings.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
@@ -226,9 +227,22 @@ fn write_pattern(f: &mut fmt::Formatter<'_>, p: &MirPattern) -> fmt::Result {
 }
 
 fn write_construct(f: &mut fmt::Formatter<'_>, c: &MirConstruct, indent: &str) -> fmt::Result {
-    write!(f, "CtorId({})(", c.ctor.0)?;
+    write_ctor(f, c.ctor)?;
+    write!(f, "(")?;
     write_args(f, &c.args, indent)?;
     write!(f, ")")
+}
+
+fn write_ctor(f: &mut fmt::Formatter<'_>, ctor: super::MirCtor) -> fmt::Result {
+    match ctor {
+        super::MirCtor::User(id) => write!(f, "CtorId({})", id.0),
+        super::MirCtor::Builtin(b) => match b {
+            super::BuiltinCtor::ResultOk => write!(f, "Result.Ok"),
+            super::BuiltinCtor::ResultErr => write!(f, "Result.Err"),
+            super::BuiltinCtor::OptionSome => write!(f, "Option.Some"),
+            super::BuiltinCtor::OptionNone => write!(f, "Option.None"),
+        },
+    }
 }
 
 fn write_record_create(

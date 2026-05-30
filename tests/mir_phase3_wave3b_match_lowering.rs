@@ -124,25 +124,30 @@ fn user_ctor_pattern_lowers_through_ctor_id() {
 }
 
 #[test]
-fn builtin_ctor_pattern_drops_the_fn() {
-    // `match Result.Ok(...) { Result.Ok(v) -> v; Result.Err(_) -> 0 }`
-    // — the ctor patterns reference `Result.Ok` / `Result.Err`,
-    // which are *built-in* ctors. Wave 3b drops the whole fn from
-    // MIR so wave 3c can later land typed identity for built-in
-    // result/option shapes.
-    //
-    // We pair the dropped fn with a wave-2 fn so the dump still
-    // has something to render — the assertion is that
-    // `drops_me` is absent.
+fn wave_3c_i_builtin_ctor_pattern_lowers() {
+    // Wave 3c-i landed typed identity for built-in ctors, so the
+    // wave-3b drop has flipped: a fn matching on `Result.Ok` /
+    // `Result.Err` now lowers cleanly. Both arms render via
+    // `MirPattern::Ctor { ctor: MirCtor::Builtin(_), … }`, and
+    // the dump renders the canonical builtin name (`Result.Ok` /
+    // `Result.Err`), not a fresh `CtorId(N)`.
     let dump = lower(
-        "fn keep(x: Int) -> Int\n    x + 1\n\nfn drops_me(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n",
+        "fn keep(x: Int) -> Int\n    x + 1\n\nfn match_result(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n",
     );
     assert!(
         dump.contains("fn keep"),
         "wave-2 fn should still lower:\n{dump}"
     );
     assert!(
-        !dump.contains("fn drops_me"),
-        "fn matching on built-in Result ctors must be dropped until wave 3c:\n{dump}"
+        dump.contains("fn match_result"),
+        "fn matching on built-in Result ctors must lower after wave 3c-i:\n{dump}"
+    );
+    assert!(
+        dump.contains("Result.Ok(%"),
+        "Result.Ok arm should render its canonical builtin name:\n{dump}"
+    );
+    assert!(
+        dump.contains("Result.Err(%"),
+        "Result.Err arm should render its canonical builtin name:\n{dump}"
     );
 }

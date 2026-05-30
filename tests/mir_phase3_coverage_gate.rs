@@ -38,11 +38,11 @@ fn lower_stats(source: &str) -> aver::ir::mir::LowerStats {
 
 #[test]
 fn conservation_lowered_plus_skipped_equals_total() {
-    // Mix of one wave-1 supported fn and one wave-3c-bound fn
-    // (`Result.Ok` construction). Total fns seen = 2; every fn
-    // accounted for in `lowered` or `skipped`.
+    // Mix of one wave-1 supported fn and one fn that still drops
+    // (list literal — wave 3c-iv territory). Total fns seen = 2;
+    // every fn accounted for in `lowered` or `skipped`.
     let stats = lower_stats(
-        "fn keep(x: Int) -> Int\n    x + 1\n\nfn drops_me() -> Result<Int, String>\n    Result.Ok(1)\n",
+        "fn keep(x: Int) -> Int\n    x + 1\n\nfn drops_me() -> List<Int>\n    [1, 2, 3]\n",
     );
     assert_eq!(
         stats.total(),
@@ -74,17 +74,24 @@ fn coverage_ratio_pins_one_for_empty_program() {
 }
 
 #[test]
-fn builtin_ctor_construction_attributes_to_dedicated_reason() {
+fn wave_3c_i_builtin_ctor_construction_no_longer_drops() {
+    // Wave 3c-i landed typed identity for built-in ctors. A fn
+    // whose body is `Result.Ok(x)` now lowers cleanly — its skip
+    // counter for `BuiltinCtorConstruction` must be 0.
     let stats = lower_stats("fn makes_ok(x: Int) -> Result<Int, String>\n    Result.Ok(x)\n");
-    assert_eq!(stats.lowered, 0, "fn constructing Result.Ok must drop");
+    assert_eq!(
+        stats.lowered, 1,
+        "Result.Ok construction must lower after wave 3c-i: {:?}",
+        stats
+    );
     let count = stats
         .skipped
         .get(&SkipReason::BuiltinCtorConstruction)
         .copied()
         .unwrap_or(0);
     assert_eq!(
-        count, 1,
-        "expected BuiltinCtorConstruction = 1, got {:?}",
+        count, 0,
+        "BuiltinCtorConstruction must be 0 after wave 3c-i, got {:?}",
         stats.skipped
     );
 }
