@@ -1,4 +1,4 @@
-//! HIR → MIR lowering, waves 1 + 2.
+//! HIR → MIR lowering, waves 1 + 2 + 3a + 3b.
 //!
 //! Phase 3 of #252 lowers `ResolvedProgramView` into `MirProgram`
 //! in widening waves so review surface stays small.
@@ -25,13 +25,26 @@
 //!   intermediate `Stmt::Expr` gets a fresh synthetic `LocalId`
 //!   drawn from a counter starting at `local_count`.
 //!
-//! Wave 3b lands `match` arms + patterns; wave 3c lands `Try`,
-//! tail calls, `IndependentProduct`, lists / tuples / maps /
-//! interpolation, and built-in constructors (`Result.Ok` /
-//! `Option.Some` — those need a typed identity story beyond raw
-//! `CtorId`). The bind-and-propagate shape `let x = step()?; body`
-//! lowers as `Let { binding, value: Try(step()), body }` — no
-//! dedicated `TryBind` variant (dropped during wave 3 prep).
+//! **Wave 3b (this commit)** — structured `match` + patterns:
+//! - `ResolvedExpr::Match { subject, arms }` → `MirExpr::Match`.
+//! - User-ctor patterns (`ResolvedCtor::User { ctor_id, .. }`)
+//!   lower to `MirPattern::Ctor { ctor: CtorId, bindings }`.
+//! - Cons / Tuple / Ident / Literal / Wildcard / EmptyList lower
+//!   structurally. Pattern bindings draw their `LocalId`s from
+//!   `ResolvedMatchArm.binding_slots` (preorder-flat, same shape
+//!   `ast_rewrite::pattern_binding_names` walks).
+//! - Built-in constructor patterns (`Result.Ok`, `Option.Some`,
+//!   …) stay wave 3c territory — fns matching on them are
+//!   silently skipped, same skip-rule that wave 2 applied to
+//!   built-in ctor *constructions*.
+//!
+//! Wave 3c lands `Try`, tail calls, `IndependentProduct`,
+//! lists / tuples / maps / interpolation, and built-in constructors
+//! (`Result.Ok` / `Option.Some` — those need a typed identity
+//! story beyond raw `CtorId`). The bind-and-propagate shape
+//! `let x = step()?; body` lowers as
+//! `Let { binding, value: Try(step()), body }` — no dedicated
+//! `TryBind` variant (dropped during wave 3 prep).
 //!
 //! Functions that use anything outside the waves' supported
 //! subset are silently skipped — `MirProgram.fns` only contains
@@ -51,13 +64,13 @@
 
 use crate::ast::{FnResolution, Spanned};
 use crate::ir::hir::{
-    ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedStmt,
-    ResolvedTopLevel,
+    ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedMatchArm,
+    ResolvedPattern, ResolvedStmt, ResolvedTopLevel,
 };
 
 use super::expr::{
-    MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr, MirLet, MirProject,
-    MirRecordCreate, MirRecordField, MirRecordUpdate,
+    MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr, MirLet, MirMatch,
+    MirMatchArm, MirPattern, MirProject, MirRecordCreate, MirRecordField, MirRecordUpdate,
 };
 use super::program::{LocalId, MirFn, MirParam, MirProgram};
 
@@ -260,10 +273,100 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Option<Spanned<MirExpr>> {
             expr,
         )),
 
-        // ── Wave 3+ ─────────────────────────────────────────────
+        // ── Wave 3b ─────────────────────────────────────────────
+        ResolvedExpr::Match { subject, arms } => {
+            let mir_subject = lower_expr(subject)?;
+            let mir_arms: Option<Vec<_>> = arms.iter().map(lower_arm).collect();
+            MirExpr::Match(wrap(
+                MirMatch {
+                    subject: Box::new(mir_subject),
+                    arms: mir_arms?,
+                },
+                expr,
+            ))
+        }
+
+        // ── Wave 3c+ ────────────────────────────────────────────
         _ => return None,
     };
     Some(wrap(mir, expr))
+}
+
+/// Wave 3b — lower one resolved match arm. Pattern bindings draw
+/// their `LocalId`s from `arm.binding_slots`, which the resolver
+/// fills in preorder of the bindings as they appear in the
+/// pattern (same walk as `ast_rewrite::pattern_binding_names`).
+/// An arm with no resolved slots or with a built-in / unresolved
+/// ctor pattern returns `None`, causing the whole fn to be
+/// dropped from MIR.
+fn lower_arm(arm: &ResolvedMatchArm) -> Option<MirMatchArm> {
+    let slots: &[u16] = arm.binding_slots.get().map(Vec::as_slice).unwrap_or(&[]);
+    let mut cursor = 0usize;
+    let pattern = lower_pattern(&arm.pattern, slots, &mut cursor)?;
+    if cursor != slots.len() {
+        // Slot count mismatch — defensive guard against future
+        // pattern shapes the lowerer doesn't yet understand.
+        return None;
+    }
+    let body = lower_expr(&arm.body)?;
+    Some(MirMatchArm { pattern, body })
+}
+
+/// Wave 3b — lower a `ResolvedPattern` while consuming binding
+/// slots from `slots[*cursor..]` in preorder. Returns `None` on
+/// any unsupported pattern shape (built-in / unresolved ctor) so
+/// the caller can drop the whole fn cleanly.
+fn lower_pattern(
+    pattern: &ResolvedPattern,
+    slots: &[u16],
+    cursor: &mut usize,
+) -> Option<MirPattern> {
+    Some(match pattern {
+        ResolvedPattern::Wildcard => MirPattern::Wildcard,
+        ResolvedPattern::Literal(lit) => MirPattern::Literal(lit.clone()),
+        ResolvedPattern::Ident(_) => {
+            let slot = take_slot(slots, cursor)?;
+            MirPattern::Bind(LocalId(u32::from(slot)))
+        }
+        ResolvedPattern::EmptyList => MirPattern::EmptyList,
+        ResolvedPattern::Cons(_, _) => {
+            let head = take_slot(slots, cursor)?;
+            let tail = take_slot(slots, cursor)?;
+            MirPattern::Cons {
+                head: LocalId(u32::from(head)),
+                tail: LocalId(u32::from(tail)),
+            }
+        }
+        ResolvedPattern::Tuple(items) => {
+            let mir_items: Option<Vec<_>> = items
+                .iter()
+                .map(|p| lower_pattern(p, slots, cursor))
+                .collect();
+            MirPattern::Tuple(mir_items?)
+        }
+        ResolvedPattern::Ctor(ResolvedCtor::User { ctor_id, .. }, names) => {
+            let mut bindings = Vec::with_capacity(names.len());
+            for _ in names {
+                let slot = take_slot(slots, cursor)?;
+                bindings.push(LocalId(u32::from(slot)));
+            }
+            MirPattern::Ctor {
+                ctor: *ctor_id,
+                bindings,
+            }
+        }
+        // Built-in / unresolved ctor patterns wait for wave 3c —
+        // same skip rule as wave 2's built-in ctor *constructions*.
+        ResolvedPattern::Ctor(ResolvedCtor::Builtin(_) | ResolvedCtor::Unresolved { .. }, _) => {
+            return None;
+        }
+    })
+}
+
+fn take_slot(slots: &[u16], cursor: &mut usize) -> Option<u16> {
+    let slot = *slots.get(*cursor)?;
+    *cursor += 1;
+    Some(slot)
 }
 
 /// Wrap a freshly-lowered node in `Spanned` while inheriting the
