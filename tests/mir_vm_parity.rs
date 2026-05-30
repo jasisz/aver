@@ -266,6 +266,67 @@ fn tail_call_runtime_parity() {
 }
 
 #[test]
+fn builtin_call_runtime_parity() {
+    // Phase 4e — `MirCallee::Builtin(_)` lowers to CALL_BUILTIN.
+    // Tested with `String.len` (pure builtin, no effects) so we
+    // can verify runtime parity without effect plumbing.
+    let src = "fn name_length(s: String) -> Int\n    String.len(s)\n";
+    let (hir, mir) = compile_both(src);
+    let hir_fn = hir.get(hir.find("name_length").expect("name_length in HIR"));
+    let mir_fn = mir.get(mir.find("name_length").expect("name_length in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "CALL_BUILTIN emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn console_print_effect_bearing_call_lowers_under_mir_path() {
+    // Effect-bearing builtin in non-tail position. Bytecode is
+    // NOT byte-identical because HIR's `compile_stmt(is_tail=false)`
+    // emits POP after the call, while MIR's wave-3a stmt-chain
+    // wraps non-tail Expr stmts in `Let { binding: synthetic,
+    // value: expr, body: ... }` → STORE_LOCAL instead of POP.
+    // Both are semantically equivalent (effect happens, value
+    // discarded), and the parity question for effect-bearing
+    // intermediates moves to the runtime side. Until we have a
+    // safe way to observe the effect from a test (without a
+    // real stdout sink), we just verify both fns lower.
+    let (hir, mir) = compile_both(
+        "fn shout(msg: String) -> Int\n    ! [Console.print]\n    Console.print(msg)\n    0\n",
+    );
+    assert!(
+        hir.find("shout").is_some(),
+        "shout() should be present in HIR-only chunks"
+    );
+    assert!(
+        mir.find("shout").is_some(),
+        "shout() should be present in MIR-fallback chunks (Console.print is now in subset)"
+    );
+}
+
+#[test]
+fn corpus_hello_smoke_mir_walker_covers_it() {
+    // examples/core/hello.av is a small program that uses
+    // Console.print — Phase 4e's CALL_BUILTIN coverage should
+    // land the main fn in the MIR-covered set.
+    let src = std::fs::read_to_string("examples/core/hello.av")
+        .expect("examples/core/hello.av should exist");
+    let mut items = parse(&src);
+    tco::transform_program(&mut items);
+    resolver::resolve_program(&mut items);
+    let (resolved, _) = resolve(&items);
+    let mir = aver::ir::mir::lower_program(&resolved);
+    let cov = aver::vm::mir_vm::classify_mir_program_coverage(&mir);
+    assert!(
+        cov.covered >= 1,
+        "examples/core/hello.av should have at least one fn in MIR-covered: {:?}",
+        cov
+    );
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output

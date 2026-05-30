@@ -33,6 +33,7 @@ use crate::ast::Spanned;
 use crate::ir::hir::BuiltinCtor;
 use crate::ir::mir::{MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirProgram};
 use crate::nan_value::NanValue;
+use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 
 use super::{CompileError, FnCompiler};
@@ -107,32 +108,52 @@ pub(super) fn compile_mir_expr(
         }
         MirExpr::Call(spanned_call) => {
             let MirCall { callee, args } = &spanned_call.node;
-            let fn_id = match callee {
-                MirCallee::Fn(fn_id) => *fn_id,
-                MirCallee::Builtin(_) => {
-                    return Err(MirVmUnsupported::UnsupportedCallee);
+            match callee {
+                MirCallee::Fn(fn_id) => {
+                    for arg in args {
+                        compile_mir_expr(fc, arg)?;
+                    }
+                    let name = fc.canonical_fn_name(*fn_id)?;
+                    let vm_fn_id = fc.resolve_fn_id_by_name(&name).ok_or_else(|| {
+                        MirVmUnsupported::InnerError(CompileError {
+                            msg: format!(
+                                "MIR-VM: unresolved fn `{name}` (FnId={fn_id:?}) — \
+                                 module not loaded?"
+                            ),
+                        })
+                    })?;
+                    fc.emit_op(CALL_KNOWN);
+                    fc.emit_u16(vm_fn_id as u16);
+                    fc.emit_u8(args.len() as u8);
+                    Ok(())
                 }
-            };
-            for arg in args {
-                compile_mir_expr(fc, arg)?;
+                MirCallee::Builtin(name) => {
+                    // Phase 4e — generic CALL_BUILTIN dispatch.
+                    // The HIR walker specializes ~6 builtins
+                    // (ListLen → LIST_LEN, MapGet → MAP_GET,
+                    // OptionWithDefault → UNWRAP_OR, …) into
+                    // dedicated opcodes; we don't replicate that
+                    // here yet, so bytecode parity only holds for
+                    // the generic path. Runtime parity holds for
+                    // all builtins — the VM's CALL_BUILTIN
+                    // dispatch lands on the same handler the
+                    // specialised opcodes wrap.
+                    let builtin =
+                        lookup_vm_builtin(name).ok_or(MirVmUnsupported::UnsupportedCallee)?;
+                    for arg in args {
+                        compile_mir_expr(fc, arg)?;
+                    }
+                    let symbol_id = fc.symbols.intern_builtin(builtin).map_err(|e| {
+                        MirVmUnsupported::InnerError(CompileError {
+                            msg: format!("MIR-VM: intern_builtin failed: {e:?}"),
+                        })
+                    })?;
+                    fc.emit_op(CALL_BUILTIN);
+                    fc.emit_u32(symbol_id);
+                    fc.emit_u8(args.len() as u8);
+                    Ok(())
+                }
             }
-            // Same dispatch path the HIR compiler uses:
-            // FnId → canonical name → VM fn_id (u16) via
-            // `module_scope` / `code_store.find`.
-            let name = fc.canonical_fn_name(fn_id)?;
-            let vm_fn_id = fc.resolve_fn_id_by_name(&name).ok_or_else(|| {
-                MirVmUnsupported::InnerError(CompileError {
-                    msg: format!(
-                        "MIR-VM: unresolved fn `{name}` (FnId={fn_id:?}) — \
-                         module not loaded?"
-                    ),
-                })
-            })?;
-            // CALL_KNOWN layout: fn_id u16, argc u8.
-            fc.emit_op(CALL_KNOWN);
-            fc.emit_u16(vm_fn_id as u16);
-            fc.emit_u8(args.len() as u8);
-            Ok(())
         }
         MirExpr::Return(inner) => {
             compile_mir_expr(fc, inner)?;
@@ -325,7 +346,11 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::Neg(inner) => can_compile(inner),
         MirExpr::Let(l) => can_compile(&l.node.value) && can_compile(&l.node.body),
         MirExpr::Call(c) => {
-            matches!(c.node.callee, MirCallee::Fn(_)) && c.node.args.iter().all(can_compile)
+            let callee_ok = match &c.node.callee {
+                MirCallee::Fn(_) => true,
+                MirCallee::Builtin(name) => lookup_vm_builtin(name).is_some(),
+            };
+            callee_ok && c.node.args.iter().all(can_compile)
         }
         MirExpr::Return(inner) => can_compile(inner),
         // Phase 4c additions:
@@ -336,6 +361,15 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::TailCall(t) => t.node.args.iter().all(can_compile),
         _ => false,
     }
+}
+
+/// Linear-search lookup `name → VmBuiltin`. Returns `None` for
+/// names not in the builtin table — the caller drops back to HIR
+/// via `MirVmUnsupported::UnsupportedCallee`. The table is small
+/// (~60 entries) so linear scan is fine; a future Phase 6 can
+/// memoize.
+fn lookup_vm_builtin(name: &str) -> Option<VmBuiltin> {
+    VmBuiltin::ALL.iter().copied().find(|b| b.name() == name)
 }
 
 /// Helper: emit a single ctor arg, or `LOAD_UNIT` when the ctor
