@@ -223,12 +223,52 @@ pub(super) fn compile_mir_expr(
             Ok(())
         }
 
+        // ── Phase 4d: `?` propagation ───────────────────────────
+        MirExpr::Try(inner) => {
+            compile_mir_expr(fc, inner)?;
+            fc.emit_op(PROPAGATE_ERR);
+            Ok(())
+        }
+
+        // ── Phase 4d: tail-call dispatch ────────────────────────
+        MirExpr::TailCall(spanned_tail) => {
+            let tc = &spanned_tail.node;
+            for arg in &tc.args {
+                compile_mir_expr(fc, arg)?;
+            }
+            let target_name = fc.canonical_fn_name(tc.target)?;
+            // Self-recursive vs cross-fn dispatch. The HIR walker
+            // also derives an `owned_mask` from last-use
+            // annotations; MIR doesn't carry last-use bits yet
+            // (Phase 6 work), so we emit `0` — bytecode stays
+            // semantically equivalent, the optimizer pass can
+            // later rebuild the mask off MIR liveness.
+            if target_name == fc.name() {
+                fc.emit_op(TAIL_CALL_SELF);
+                fc.emit_u8(tc.args.len() as u8);
+                fc.emit_u8(0);
+            } else {
+                let vm_fn_id = fc.resolve_fn_id_by_name(&target_name).ok_or_else(|| {
+                    MirVmUnsupported::InnerError(CompileError {
+                        msg: format!(
+                            "MIR-VM: unresolved tail-call target `{target_name}` \
+                             (FnId={:?})",
+                            tc.target
+                        ),
+                    })
+                })?;
+                fc.emit_op(TAIL_CALL_KNOWN);
+                fc.emit_u16(vm_fn_id as u16);
+                fc.emit_u8(tc.args.len() as u8);
+                fc.emit_u8(0);
+            }
+            Ok(())
+        }
+
         // Phase 4 subset boundary — everything else falls back.
         MirExpr::Match(_) => Err(MirVmUnsupported::UnsupportedExpr("Match")),
-        MirExpr::TailCall(_) => Err(MirVmUnsupported::UnsupportedExpr("TailCall")),
         MirExpr::RecordCreate(_) => Err(MirVmUnsupported::UnsupportedExpr("RecordCreate")),
         MirExpr::RecordUpdate(_) => Err(MirVmUnsupported::UnsupportedExpr("RecordUpdate")),
-        MirExpr::Try(_) => Err(MirVmUnsupported::UnsupportedExpr("Try")),
         MirExpr::List(_) => Err(MirVmUnsupported::UnsupportedExpr("List")),
         MirExpr::Tuple(_) => Err(MirVmUnsupported::UnsupportedExpr("Tuple")),
         MirExpr::MapLiteral(_) => Err(MirVmUnsupported::UnsupportedExpr("MapLiteral")),
@@ -291,6 +331,9 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         // Phase 4c additions:
         MirExpr::Construct(c) => c.node.args.iter().all(can_compile),
         MirExpr::Project(p) => can_compile(&p.node.base),
+        // Phase 4d additions:
+        MirExpr::Try(inner) => can_compile(inner),
+        MirExpr::TailCall(t) => t.node.args.iter().all(can_compile),
         _ => false,
     }
 }
