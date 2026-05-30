@@ -58,11 +58,6 @@ impl From<CompileError> for MirVmUnsupported {
 /// `FnCompiler`. Returns `Err(MirVmUnsupported)` for any MirExpr
 /// variant outside the Phase 4 subset — the caller drops back to
 /// HIR compilation in that case.
-///
-/// Dead-code-allowed until Phase 4b lands the driver
-/// (`compile_program_with_mir_fallback`) that actually invokes
-/// this walker on a `ProgramCompiler`-built `FnCompiler`.
-#[allow(dead_code)]
 pub(super) fn compile_mir_expr(
     fc: &mut FnCompiler<'_>,
     expr: &Spanned<MirExpr>,
@@ -164,9 +159,6 @@ pub(super) fn compile_mir_expr(
 /// with `RETURN`. Caller has already constructed `fc` with the
 /// right arity / local_count / local_slots — same path the HIR
 /// compiler takes through `compile_fn_with_scope`.
-///
-/// Dead-code-allowed until Phase 4b lands the driver.
-#[allow(dead_code)]
 pub(super) fn compile_mir_fn_body(
     fc: &mut FnCompiler<'_>,
     mir_fn: &MirFn,
@@ -216,7 +208,6 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
     }
 }
 
-#[allow(dead_code)]
 fn emit_binop_generic(fc: &mut FnCompiler<'_>, op: crate::ast::BinOp) {
     use crate::ast::BinOp::*;
     match op {
