@@ -77,6 +77,7 @@ pub mod dump;
 pub mod expr;
 pub mod lower;
 pub mod program;
+pub mod stats;
 
 pub use expr::{
     MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr,
@@ -85,3 +86,4 @@ pub use expr::{
 };
 pub use lower::lower_program;
 pub use program::{LocalId, MirFn, MirParam, MirProgram};
+pub use stats::{LowerStats, SkipReason};

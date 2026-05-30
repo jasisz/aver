@@ -141,11 +141,32 @@ Each `MirExpr` carries a `Span` for diagnostics + future correlation with `Proof
 
 One PR per wave so review surface stays bounded:
 
-1. literals + locals + binops + `return` + `Project`
-2. user calls + builtin calls + constructors + record create / update
-3. `match` (structured), `Try`, `TailCall`, `IndependentProduct`
+1. literals + locals + binops + `Neg` (wave 1)
+2. user calls + builtin calls + user ctors + record create / update + `Project` (wave 2)
+3. wave 3, sub-waves:
+   - 3a — multi-stmt `Let` chains
+   - 3b — structured `match` arms + user-ctor patterns
+   - **coverage gate** (this PR) — `LowerStats { lowered, skipped: HashMap<SkipReason, _> }` riding on `MirProgram`; every dropped fn attributed to a single dominant reason; tests pin conservation + attribution
+   - 3c-i — built-in ctor identity (`Result.Ok` / `Option.Some` construction + pattern). Must land *before* `Try` because well-typed Aver fns using `?` always also construct a `Result.Ok` in the same body (early-return + happy-path), so the `Try` lowering only becomes exerciseable once built-in ctors stop dropping the fn
+   - 3c-ii — `Try` (`?` propagation)
+   - 3c-iii — tail calls + first-class fn callees
+   - 3c-iv — list / tuple / map / interpolated-string literals
+   - 3c-v — `IndependentProduct`
 
-Each wave: dump snapshot for a representative example, no behavioral change for any backend yet.
+Each wave: dump snapshot for a representative example, no behavioral change for any backend yet. After each wave, `LowerStats.skipped` should lose the reason(s) the wave covers.
+
+### Phase 3 → 4 coverage gate
+
+Phase 4 (VM slice) can only consume MIR honestly if MIR actually covers the corpus. The lowerer's "silent skip on unsupported shape" is fine *during* widening waves, but invisible without telemetry — `dump` renders, tests pass on the supported subset, and 60% of the corpus can disappear silently.
+
+`MirProgram.stats: LowerStats` is the gate:
+
+- `lowered` — fns successfully in `MirProgram.fns`.
+- `skipped: HashMap<SkipReason, u32>` — one bump per dropped fn, keyed by the first unsupported shape the lowerer hit.
+- `total() == lowered + skipped.values().sum()` — conservation invariant.
+- `coverage_ratio()` — for corpus-wide floor assertions.
+
+Phase 4's entry gate adds `coverage_ratio() ≥ X` on the shipped examples (`examples/core/`, `examples/data/`, `examples/games/`) with X rising as 3c sub-waves land. Phase 4 can't ship while `skipped` still contains a wave-3c reason that the VM slice would route through MIR.
 
 ### Phase 4 — VM vertical slice
 
