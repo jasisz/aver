@@ -12,8 +12,8 @@
 
 use aver::ast::{BinOp, Literal, Spanned};
 use aver::ir::mir::{
-    LocalId, MirBinOp, MirCall, MirCallee, MirEffectAnnotation, MirExpr, MirFn, MirLet, MirMatch,
-    MirMatchArm, MirParam, MirPattern, MirProgram,
+    LocalId, MirBinOp, MirCall, MirCallee, MirCtor, MirEffectAnnotation, MirExpr, MirFn, MirLet,
+    MirMatch, MirMatchArm, MirParam, MirPattern, MirProgram,
 };
 use aver::ir::{CtorId, FnId};
 
@@ -112,13 +112,13 @@ fn pinned_decision_identity_is_typed() {
     assert_eq!(callee_id, fn_id(42));
 
     let ctor_pattern = MirPattern::Ctor {
-        ctor: ctor_id(7),
+        ctor: MirCtor::User(ctor_id(7)),
         bindings: vec![LocalId(0)],
     };
     let MirPattern::Ctor { ctor, bindings } = ctor_pattern else {
         unreachable!()
     };
-    assert_eq!(ctor, ctor_id(7));
+    assert_eq!(ctor, MirCtor::User(ctor_id(7)));
     assert_eq!(bindings, vec![LocalId(0)]);
 }
 

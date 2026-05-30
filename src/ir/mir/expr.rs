@@ -15,9 +15,31 @@
 //!   correlation with `ProofIR`.
 
 use crate::ast::{BinOp, Literal, Spanned};
+use crate::ir::hir::BuiltinCtor;
 use crate::ir::{CtorId, FnId, TypeId};
 
 use super::program::LocalId;
+
+/// Typed identity for a constructor reference inside MIR. Two
+/// flavors: user-declared variants identified by stable `CtorId`,
+/// and language-level built-in constructors (`Result.Ok` /
+/// `Result.Err` / `Option.Some` / `Option.None`) that don't get
+/// user-program ids because they're not user-declared.
+///
+/// Wave 3c-i pin: built-in ctors travel through the same
+/// `MirConstruct` / `MirPattern::Ctor` shape as user ctors, so
+/// every consumer reading constructor identity goes through one
+/// matchable enum — no separate "is this Result.Ok" string check
+/// scattered across backends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirCtor {
+    /// User-declared sum-type variant or record constructor.
+    User(CtorId),
+    /// Language-level built-in (`Result.Ok` / `Result.Err` /
+    /// `Option.Some` / `Option.None`). Same `BuiltinCtor` enum
+    /// the resolver pass uses, re-exported by `super::*`.
+    Builtin(BuiltinCtor),
+}
 
 /// One MIR expression. Every variant is a value — there's no
 /// separate statement form at this phase. Sequencing happens via
@@ -185,20 +207,24 @@ pub enum MirPattern {
     Cons { head: LocalId, tail: LocalId },
     /// `(a, b, c)` — tuple pattern; each component is a sub-pattern.
     Tuple(Vec<MirPattern>),
-    /// `Module.Variant(b1, b2, …)` — constructor pattern. `ctor`
-    /// identifies the variant by stable id; `bindings` are the
-    /// fresh locals for the variant's fields, in declaration
-    /// order.
+    /// `Module.Variant(b1, b2, …)` / `Result.Ok(b)` / `Option.None`
+    /// — constructor pattern. `ctor` discriminates user vs built-in
+    /// variant via `MirCtor`; `bindings` are the fresh locals for
+    /// the variant's fields in declaration order (empty for
+    /// nullary variants like `Option.None`).
     Ctor {
-        ctor: CtorId,
+        ctor: MirCtor,
         bindings: Vec<LocalId>,
     },
 }
 
-/// Construct a sum-type variant.
+/// Construct a sum-type variant. `ctor` discriminates user vs
+/// built-in via `MirCtor` (wave 3c-i — built-in ctors now ride
+/// the same node as user ctors instead of being dropped from the
+/// MIR program).
 #[derive(Debug, Clone)]
 pub struct MirConstruct {
-    pub ctor: CtorId,
+    pub ctor: MirCtor,
     pub args: Vec<Spanned<MirExpr>>,
 }
 

@@ -146,8 +146,8 @@ One PR per wave so review surface stays bounded:
 3. wave 3, sub-waves:
    - 3a — multi-stmt `Let` chains
    - 3b — structured `match` arms + user-ctor patterns
-   - **coverage gate** (this PR) — `LowerStats { lowered, skipped: HashMap<SkipReason, _> }` riding on `MirProgram`; every dropped fn attributed to a single dominant reason; tests pin conservation + attribution
-   - 3c-i — built-in ctor identity (`Result.Ok` / `Option.Some` construction + pattern). Must land *before* `Try` because well-typed Aver fns using `?` always also construct a `Result.Ok` in the same body (early-return + happy-path), so the `Try` lowering only becomes exerciseable once built-in ctors stop dropping the fn
+   - **coverage gate** — `LowerStats { lowered, skipped: HashMap<SkipReason, _> }` riding on `MirProgram`; every dropped fn attributed to a single dominant reason; tests pin conservation + attribution
+   - **3c-i (this PR)** — built-in ctor identity. `MirCtor { User(CtorId), Builtin(BuiltinCtor) }` discriminates user vs language-level (`Result.Ok` / `Result.Err` / `Option.Some` / `Option.None`) ctors at the variant level. `MirConstruct.ctor` and `MirPattern::Ctor.ctor` both switch to `MirCtor`. Dump renders canonical builtin names (`Result.Ok(%0)`) so reviewers see typed identity at a glance. Lands before `Try` because well-typed Aver fns using `?` always also construct a `Result.Ok` in the same body — the `Try` lowering only becomes exerciseable once built-in ctors stop dropping the fn. Open follow-up: bare nullary `Option.None` as a body expression currently lowers to `Attr(Ident("Option"), "None")` — a preexisting resolver gap, not 3c-i scope.
    - 3c-ii — `Try` (`?` propagation)
    - 3c-iii — tail calls + first-class fn callees
    - 3c-iv — list / tuple / map / interpolated-string literals

@@ -9,8 +9,8 @@
 
 use aver::ast::{BinOp, Literal, Spanned};
 use aver::ir::mir::{
-    LocalId, MirBinOp, MirCall, MirCallee, MirEffectAnnotation, MirExpr, MirFn, MirLet, MirMatch,
-    MirMatchArm, MirParam, MirPattern, MirProgram,
+    LocalId, MirBinOp, MirCall, MirCallee, MirCtor, MirEffectAnnotation, MirExpr, MirFn, MirLet,
+    MirMatch, MirMatchArm, MirParam, MirPattern, MirProgram,
 };
 use aver::ir::{CtorId, FnId};
 
@@ -173,7 +173,7 @@ fn ctor_pattern_dump_uses_ctor_id() {
     // pattern: Module.Variant(b1) — make sure CtorId appears (not
     // a string name) so reviewers can confirm identity wiring.
     let p = MirPattern::Ctor {
-        ctor: CtorId(7),
+        ctor: MirCtor::User(CtorId(7)),
         bindings: vec![LocalId(0)],
     };
     // Use the arm-rendering path via a tiny Match.
