@@ -1201,8 +1201,18 @@ function cacheCompiledWasm(bytes, name = "playground.wasm") {
 // when the virtual fs has more than one tab, so depends[...] resolve
 // against the in-browser file map instead of surfacing as bogus
 // "Unknown identifier 'Types'" noise on every game fork.
+//
+// Entry choice differs from Compile/Run: analyses are per-source —
+// the user clicked verify while editing math.av and expects the
+// report to reflect *that* file, not main.av. Compile/Run still
+// prefers the project entry (pickEntryFile) because it ships one
+// binary; analyses prefer the active tab so cross-module deps still
+// resolve but the verify_run / why / audit pipeline runs against
+// the file the user is reading.
 function runAnalysis(comp, kind, fallbackSource) {
-    const entry = pickEntryFile();
+    const entry = state.activeFile && state.files.has(state.activeFile)
+        ? state.activeFile
+        : pickEntryFile();
     if (state.files.size > 1 && entry && typeof comp[`aver_${kind}_project`] === "function") {
         const filesObj = getProjectFiles();
         return comp[`aver_${kind}_project`](JSON.stringify(filesObj), entry);
