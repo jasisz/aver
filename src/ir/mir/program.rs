@@ -1,0 +1,120 @@
+//! `MirProgram` + `MirFn` — the top-level shape of Core MIR.
+//!
+//! Phase 2a of #252. The data model is structured (not flat /
+//! basic-block), expression-based (every `MirExpr` is a value), and
+//! identity-typed (declaration refs go through `FnId` / `TypeId` /
+//! `CtorId`). See [`super::RFC.md`] for the full rationale.
+
+use std::collections::HashMap;
+
+use crate::ir::{FnId, ModuleId};
+
+use super::expr::{MirEffectAnnotation, MirExpr};
+
+/// A whole compiled program in Core MIR. Keyed by `FnId` (stable
+/// across compilation units; same identity layer the rest of the
+/// pipeline consumes). Phase 2a builds an empty `MirProgram`
+/// directly; Phase 3 grows the lowering that populates it from
+/// `ResolvedProgramView`.
+#[derive(Debug, Clone, Default)]
+pub struct MirProgram {
+    /// All compiled functions, keyed by their `FnId`.
+    pub fns: HashMap<FnId, MirFn>,
+    /// Optional module identity for tooling that wants to walk
+    /// `MirProgram` per source module (LSP outline, future
+    /// per-module IR dump). Empty when the program was assembled
+    /// from a single entry file with no `depends [...]`.
+    pub modules: Vec<ModuleId>,
+}
+
+impl MirProgram {
+    /// Construct an empty program. Phase 3 lowering will populate
+    /// `fns` and `modules` as it walks `ResolvedProgramView`.
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Lookup a function by its `FnId`. Returns `None` if the id
+    /// wasn't part of this compilation (e.g. a stale id surviving
+    /// from a previous program view).
+    pub fn fn_by_id(&self, id: FnId) -> Option<&MirFn> {
+        self.fns.get(&id)
+    }
+
+    /// All functions in arbitrary (`HashMap`) order. Callers that
+    /// need a stable walk (snapshot tests, dump output) should sort
+    /// by `FnId` themselves.
+    pub fn iter(&self) -> impl Iterator<Item = (&FnId, &MirFn)> {
+        self.fns.iter()
+    }
+}
+
+/// One function in Core MIR. Body is a single `MirExpr` — MIR is
+/// expression-based, so the function's body is the expression that
+/// produces its return value. `Let` chains within the body bind
+/// intermediate results; there's no separate "block" or
+/// "terminator" concept at this phase.
+#[derive(Debug, Clone)]
+pub struct MirFn {
+    /// Stable identity for this function. Matches the `FnId` issued
+    /// by `SymbolTable` during the existing pipeline; downstream
+    /// consumers can cross-reference `ProofIR` / `ProgramShape` by
+    /// the same id.
+    pub fn_id: FnId,
+    /// Source-level name. Carried for dumps + diagnostics; backends
+    /// must not key off this string for identity — that's what
+    /// `fn_id` is for.
+    pub name: String,
+    /// Parameters in declaration order. Each gets a fresh `LocalId`
+    /// at lowering time so the body can refer to it.
+    pub params: Vec<MirParam>,
+    /// Source-level return type annotation as it appears on the fn
+    /// signature. Phase 4 backends consume this for VM stack-slot
+    /// layout; later phases may replace it with a richer type
+    /// representation when the typechecker's `Type` enum becomes
+    /// the universal vocabulary.
+    pub return_type: String,
+    /// Declared effects (`! [Namespace.method, ...]`). Function-
+    /// level only — per-call-site effect annotation is deferred to
+    /// the Phase 6 optimizer track per the RFC.
+    pub effects: Vec<MirEffectAnnotation>,
+    /// The single expression that, when evaluated, produces the
+    /// function's return value. Phase 2a treats this as a typed
+    /// hole — the actual `MirExpr` variants are defined alongside
+    /// in `expr.rs`. Phase 3 lowering fills it.
+    pub body: MirExpr,
+}
+
+/// One formal parameter. The `LocalId` is assigned at lowering
+/// time and is the binding the function body refers to.
+#[derive(Debug, Clone)]
+pub struct MirParam {
+    /// Local binding introduced for this parameter. The function
+    /// body refers to it via `MirExpr::Local(LocalId)`.
+    pub local: LocalId,
+    /// Source-level parameter name. For dumps + diagnostics only.
+    pub name: String,
+    /// Source-level type annotation. Same caveat as `MirFn::return_type`.
+    pub ty: String,
+}
+
+/// Local binding identifier. Unique per function body (not per
+/// program) — backends look up the binding by walking the body's
+/// `Let` chain, so collision across functions isn't a concern.
+///
+/// Phase 2 picks "assign at MIR construction time" over "carry the
+/// HIR slot index" (the latter was the strawman alternative listed
+/// in the RFC). The carry-from-HIR option would have meant MIR's
+/// local space matches whatever the resolver chose — fine for the
+/// VM consumer, but the future inliner / monomorphizer needs the
+/// freedom to introduce fresh locals during optimization passes,
+/// and inheriting HIR's numbering would silently overlap with
+/// those.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LocalId(pub u32);
+
+impl std::fmt::Display for LocalId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "%{}", self.0)
+    }
+}

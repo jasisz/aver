@@ -72,3 +72,13 @@
 //!
 //! See `RFC.md` next to this file for the full design write-up,
 //! open questions, and the per-phase checklist.
+
+pub mod expr;
+pub mod program;
+
+pub use expr::{
+    MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr,
+    MirIndependentProduct, MirLet, MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate,
+    MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall, MirTryBind,
+};
+pub use program::{LocalId, MirFn, MirParam, MirProgram};
