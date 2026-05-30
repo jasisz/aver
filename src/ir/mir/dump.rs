@@ -36,7 +36,7 @@ use super::expr::{
     MirIndependentProduct, MirLet, MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate,
     MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall, MirTryBind,
 };
-use super::program::{LocalId, MirFn, MirParam, MirProgram};
+use super::program::{MirFn, MirParam, MirProgram};
 
 impl fmt::Display for MirProgram {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
