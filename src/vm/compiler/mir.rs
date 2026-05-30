@@ -433,6 +433,22 @@ pub(super) fn compile_mir_expr(
                                 emit_store_or_pop(fc, *b);
                             }
                         }
+                        MirPattern::Tuple(items) => {
+                            // Last-arm Tuple: shape known —
+                            // skip MATCH_TUPLE preamble, just
+                            // EXTRACT each item + bind/pop.
+                            for (i, sub) in items.iter().enumerate() {
+                                fc.emit_op(EXTRACT_TUPLE_ITEM);
+                                fc.emit_u8(i as u8);
+                                match sub {
+                                    MirPattern::Wildcard => fc.emit_op(POP),
+                                    MirPattern::Bind(local) => emit_store_or_pop(fc, *local),
+                                    _ => unreachable!(
+                                        "preflight: Tuple subpatterns restricted to Wildcard | Bind"
+                                    ),
+                                }
+                            }
+                        }
                         MirPattern::Ctor {
                             ctor: MirCtor::Builtin(bc),
                             bindings,
@@ -611,14 +627,18 @@ fn pattern_in_4g_subset(p: &MirPattern) -> bool {
             ctor: MirCtor::User(_),
             ..
         } => true,
-        // 4g-4: built-in ctor patterns. Result.Ok / Result.Err /
-        // Option.Some lower via MATCH_UNWRAP + DUP + STORE_LOCAL.
-        // Option.None (no bindings) uses DUP + LOAD_CONST NONE +
-        // EQ + JUMP_IF_FALSE.
+        // 4g-4: built-in ctor patterns.
         MirPattern::Ctor {
             ctor: MirCtor::Builtin(_),
             ..
         } => true,
+        // 4g-5: Tuple patterns with flat Wildcard / Bind
+        // subpatterns. Nested structural patterns (Cons / Ctor
+        // inside a Tuple) need cleanup-jump emit and are
+        // deferred.
+        MirPattern::Tuple(items) => items
+            .iter()
+            .all(|sub| matches!(sub, MirPattern::Wildcard | MirPattern::Bind(_))),
         _ => false,
     }
 }
@@ -715,6 +735,32 @@ fn emit_pattern_check(
                 fc.emit_op(EXTRACT_FIELD);
                 fc.emit_u8(i as u8);
                 emit_store_or_pop(fc, *b);
+            }
+            Ok(Some(patch))
+        }
+        MirPattern::Tuple(items) => {
+            // Phase 4g-5 — tuple pattern with flat subpatterns
+            // (Wildcard / Bind). Emit MATCH_TUPLE arity +
+            // fail_offset; for each subpattern emit
+            // EXTRACT_TUPLE_ITEM idx then store-or-pop.
+            //
+            // Nested structural subpatterns (Cons / Ctor inside
+            // a Tuple) need cleanup-jump emit similar to HIR's
+            // `compile_extracted_subpattern`; deferred.
+            fc.emit_op(MATCH_TUPLE);
+            fc.emit_u8(items.len() as u8);
+            let patch = fc.offset();
+            fc.emit_i16(0);
+            for (i, sub) in items.iter().enumerate() {
+                fc.emit_op(EXTRACT_TUPLE_ITEM);
+                fc.emit_u8(i as u8);
+                match sub {
+                    MirPattern::Wildcard => fc.emit_op(POP),
+                    MirPattern::Bind(local) => emit_store_or_pop(fc, *local),
+                    _ => unreachable!(
+                        "preflight should have restricted subpatterns to Wildcard | Bind"
+                    ),
+                }
             }
             Ok(Some(patch))
         }

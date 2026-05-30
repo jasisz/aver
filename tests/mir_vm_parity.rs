@@ -486,6 +486,29 @@ fn match_option_builtin_ctor_pattern_runtime_parity() {
 }
 
 #[test]
+fn match_tuple_pattern_runtime_parity() {
+    // Phase 4g-5 — flat tuple pattern with Bind subpatterns.
+    // `(a, b) -> a + b` runs identically on both paths.
+    let src = "fn pair_sum(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a + b\n\nfn check(_d: Int) -> Int\n    pair_sum((3, 4))\n";
+    let hir = run_via_path(src, "check", &[0], Path::Hir);
+    let mir = run_via_path(src, "check", &[0], Path::MirFallback);
+    assert_eq!(hir, mir, "Tuple match parity: HIR={hir:?}, MIR={mir:?}");
+    assert_eq!(hir, Value::Int(7));
+}
+
+#[test]
+fn match_tuple_with_wildcard_subpattern_parity() {
+    // `(_, b) -> b` — wildcard subpattern collapses to POP in
+    // the MIR walker (mirror of HIR's bind_top_to_local on
+    // wildcard).
+    let src = "fn second(p: Tuple<Int, Int>) -> Int\n    match p\n        (_, b) -> b\n\nfn check(_d: Int) -> Int\n    second((11, 22))\n";
+    let hir = run_via_path(src, "check", &[0], Path::Hir);
+    let mir = run_via_path(src, "check", &[0], Path::MirFallback);
+    assert_eq!(hir, mir);
+    assert_eq!(hir, Value::Int(22));
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output
