@@ -580,6 +580,22 @@ pub(super) enum Commands {
         /// regressions on pinned `ProofStrategy` choices.
         #[arg(long)]
         check: bool,
+        /// `--check` only: tolerate up to N Dafny verification
+        /// errors. Gates regressions upward for examples whose laws
+        /// don't yet have a closing strategy.
+        #[arg(long, requires = "check")]
+        error_budget: Option<usize>,
+        /// `--check` only: tolerate up to N residual Lean `sorry`s.
+        /// Symmetric to `--error-budget` on Dafny.
+        #[arg(long, requires = "check")]
+        sorry_budget: Option<usize>,
+        /// `--check` only: emit a structured JSON summary
+        /// (`{backend, errors, sorries, budget, passed}`) to stdout
+        /// instead of streaming the verifier's raw output. Exit
+        /// codes unchanged: 0 within budget, 1 over, 2 on harness
+        /// failure.
+        #[arg(long, requires = "check")]
+        check_json: bool,
     },
 }
 
