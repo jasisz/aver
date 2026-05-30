@@ -30,7 +30,9 @@
 //! caller can fall back to HIR compilation for that fn.
 
 use crate::ast::Spanned;
-use crate::ir::mir::{MirCall, MirCallee, MirExpr, MirFn, MirLet, MirProgram};
+use crate::ir::hir::BuiltinCtor;
+use crate::ir::mir::{MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirProgram};
+use crate::nan_value::NanValue;
 use crate::vm::opcode::*;
 
 use super::{CompileError, FnCompiler};
@@ -137,13 +139,95 @@ pub(super) fn compile_mir_expr(
             fc.emit_op(RETURN);
             Ok(())
         }
+
+        // ── Phase 4c: ctor construction ─────────────────────────
+        MirExpr::Construct(spanned_construct) => {
+            let c = &spanned_construct.node;
+            match c.ctor {
+                MirCtor::Builtin(BuiltinCtor::ResultOk) => {
+                    emit_constructor_arg(fc, c.args.first())?;
+                    fc.emit_op(WRAP);
+                    fc.emit_u8(0);
+                    Ok(())
+                }
+                MirCtor::Builtin(BuiltinCtor::ResultErr) => {
+                    emit_constructor_arg(fc, c.args.first())?;
+                    fc.emit_op(WRAP);
+                    fc.emit_u8(1);
+                    Ok(())
+                }
+                MirCtor::Builtin(BuiltinCtor::OptionSome) => {
+                    emit_constructor_arg(fc, c.args.first())?;
+                    fc.emit_op(WRAP);
+                    fc.emit_u8(2);
+                    Ok(())
+                }
+                MirCtor::Builtin(BuiltinCtor::OptionNone) => {
+                    let idx = fc.add_constant(NanValue::NONE);
+                    fc.emit_op(LOAD_CONST);
+                    fc.emit_u16(idx);
+                    Ok(())
+                }
+                MirCtor::User(ctor_id) => {
+                    // CtorEntry → (owning_type, variant_name) →
+                    // canonical type name → arena type_id +
+                    // variant_id. Same path the HIR walker uses
+                    // for `ResolvedCtor::User`.
+                    let entry = fc.symbol_table.ctor_entry(ctor_id);
+                    let owning_type = entry.owning_type;
+                    let variant_name = entry.name.clone();
+                    let qualified_type_name = fc.canonical_type_name(owning_type)?;
+                    let arena_type_id =
+                        fc.resolve_type_id(&qualified_type_name).ok_or_else(|| {
+                            MirVmUnsupported::InnerError(CompileError {
+                                msg: format!(
+                                    "MIR-VM: unknown arena type for `{qualified_type_name}` \
+                                     (CtorId={ctor_id:?})"
+                                ),
+                            })
+                        })?;
+                    let variant_id =
+                        fc.arena.find_variant_id(arena_type_id, &variant_name).ok_or_else(
+                            || {
+                                MirVmUnsupported::InnerError(CompileError {
+                                    msg: format!(
+                                        "MIR-VM: unknown variant `{variant_name}` on `{qualified_type_name}`"
+                                    ),
+                                })
+                            },
+                        )?;
+                    for arg in &c.args {
+                        compile_mir_expr(fc, arg)?;
+                    }
+                    fc.emit_op(VARIANT_NEW);
+                    fc.emit_u16(arena_type_id as u16);
+                    fc.emit_u16(variant_id);
+                    fc.emit_u8(c.args.len() as u8);
+                    Ok(())
+                }
+            }
+        }
+
+        // ── Phase 4c: record field access ───────────────────────
+        MirExpr::Project(spanned_proj) => {
+            let p = &spanned_proj.node;
+            // RECORD_GET_NAMED is the universal path — VM resolves
+            // the field by symbol id at runtime. The HIR walker
+            // sometimes specializes to RECORD_GET when it can
+            // infer field index statically; that's a Phase 6
+            // optimization we skip here.
+            compile_mir_expr(fc, &p.base)?;
+            let field_symbol_id = fc.symbols.intern_name(&p.field);
+            fc.emit_op(RECORD_GET_NAMED);
+            fc.emit_u32(field_symbol_id);
+            Ok(())
+        }
+
         // Phase 4 subset boundary — everything else falls back.
         MirExpr::Match(_) => Err(MirVmUnsupported::UnsupportedExpr("Match")),
         MirExpr::TailCall(_) => Err(MirVmUnsupported::UnsupportedExpr("TailCall")),
-        MirExpr::Construct(_) => Err(MirVmUnsupported::UnsupportedExpr("Construct")),
         MirExpr::RecordCreate(_) => Err(MirVmUnsupported::UnsupportedExpr("RecordCreate")),
         MirExpr::RecordUpdate(_) => Err(MirVmUnsupported::UnsupportedExpr("RecordUpdate")),
-        MirExpr::Project(_) => Err(MirVmUnsupported::UnsupportedExpr("Project")),
         MirExpr::Try(_) => Err(MirVmUnsupported::UnsupportedExpr("Try")),
         MirExpr::List(_) => Err(MirVmUnsupported::UnsupportedExpr("List")),
         MirExpr::Tuple(_) => Err(MirVmUnsupported::UnsupportedExpr("Tuple")),
@@ -204,7 +288,27 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
             matches!(c.node.callee, MirCallee::Fn(_)) && c.node.args.iter().all(can_compile)
         }
         MirExpr::Return(inner) => can_compile(inner),
+        // Phase 4c additions:
+        MirExpr::Construct(c) => c.node.args.iter().all(can_compile),
+        MirExpr::Project(p) => can_compile(&p.node.base),
         _ => false,
+    }
+}
+
+/// Helper: emit a single ctor arg, or `LOAD_UNIT` when the ctor
+/// arg is absent (defensive — built-in Wrap-shaped ctors always
+/// take exactly one arg in well-typed Aver, but the lowerer
+/// only enforces that at the type level).
+fn emit_constructor_arg(
+    fc: &mut FnCompiler<'_>,
+    arg: Option<&Spanned<MirExpr>>,
+) -> Result<(), MirVmUnsupported> {
+    match arg {
+        Some(a) => compile_mir_expr(fc, a),
+        None => {
+            fc.emit_op(LOAD_UNIT);
+            Ok(())
+        }
     }
 }
 
