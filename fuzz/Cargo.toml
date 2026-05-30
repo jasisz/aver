@@ -25,7 +25,7 @@ afl = "0.15"
 # `aver-lang` as a library) has to ask explicitly. Keeping them in
 # the parity build means the wasm-gc executor sees the same effect
 # surface AFL might generate from real Aver corpus seeds.
-aver-lang = { path = "..", default-features = false, features = ["runtime", "wasm-compile", "wasm", "wasip2", "runtime-net", "terminal"] }
+aver-lang = { path = "..", default-features = false, features = ["runtime", "wasm-compile", "wasm", "wasip2", "runtime-net", "terminal", "tty-render"] }
 # Validate codegen output bytes after `compile_to_wasm_gc`. We pin
 # the same minor as `aver-lang`'s optional dep so the workspace
 # resolver picks a single version.
