@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.23.0 "Shape" (unreleased)
+## 0.23.0 "Shape" — 2026-05-30
 
 > _What `aver shape` sees, `aver proof` now uses._
 
