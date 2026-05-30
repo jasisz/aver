@@ -80,21 +80,21 @@ fn match_fn_falls_back_to_hir() {
 }
 
 #[test]
-fn builtin_call_falls_back_to_hir() {
-    // `MirCallee::Builtin(_)` (e.g. `Int.add`-style methods)
-    // isn't in the Phase 4 subset — the walker needs the symbol
-    // table to resolve a builtin id, which Phase 4b will land
-    // alongside parity.
+fn builtin_call_now_lands_in_subset_after_phase_4e() {
+    // Phase 4e landed `MirCallee::Builtin(_)` → CALL_BUILTIN
+    // dispatch via the VmBuiltin lookup. A fn that uses
+    // `Console.print` (or any builtin in the VmBuiltin::ALL
+    // table) now lands in `covered`. The test was previously
+    // pinned to the opposite — Phase 4d's "falls back to HIR"
+    // — so the assertion is flipped here to track the new
+    // reality.
     let mir = lower(
         "fn print_hello() -> Int\n    ! [Console.print]\n    Console.print(\"hello\")\n    0\n",
     );
     let cov = classify_mir_program_coverage(&mir);
-    // The fn may or may not appear in MIR depending on whether
-    // the inner Console.print effect path resolves cleanly — we
-    // only assert it does NOT land in `covered`.
     assert_eq!(
-        cov.covered, 0,
-        "Console.print fn must NOT be in the Phase 4 subset: {:?}",
+        cov.covered, 1,
+        "Console.print fn must land in the Phase 4 subset after 4e: {:?}",
         cov
     );
 }
