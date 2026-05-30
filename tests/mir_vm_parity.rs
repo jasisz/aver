@@ -214,6 +214,58 @@ fn record_field_access_parity() {
 }
 
 #[test]
+fn try_propagation_parity_runtime() {
+    // `relay(7)` should succeed with `Result.Ok(7)`. Both paths
+    // emit PROPAGATE_ERR after the inner `fetch()` call; the
+    // happy-path Result.Ok wrapper goes through WRAP 0.
+    let src = "fn fetch(x: Int) -> Result<Int, String>\n    Result.Ok(x)\n\nfn relay(x: Int) -> Result<Int, String>\n    Result.Ok(fetch(x)?)\n";
+    let hir = run_via_path(src, "relay", &[7], Path::Hir);
+    let mir = run_via_path(src, "relay", &[7], Path::MirFallback);
+    assert_eq!(
+        hir, mir,
+        "Try (`?`) propagation parity: HIR={hir:?}, MIR={mir:?}"
+    );
+}
+
+#[test]
+fn bytecode_parity_for_try_propagation() {
+    // Per-fn bytecode parity: `relay` body lowers to
+    //   Construct(Builtin(ResultOk), [Try(Call(fetch, [x]))])
+    // → CALL_KNOWN fetch / PROPAGATE_ERR / WRAP 0 / RETURN
+    // Same byte sequence from both walkers.
+    let (hir, mir) = compile_both(
+        "fn fetch(x: Int) -> Result<Int, String>\n    Result.Ok(x)\n\nfn relay(x: Int) -> Result<Int, String>\n    Result.Ok(fetch(x)?)\n",
+    );
+    let hir_fn = hir.get(hir.find("relay").expect("relay in HIR"));
+    let mir_fn = mir.get(mir.find("relay").expect("relay in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "Try emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn tail_call_runtime_parity() {
+    // Self-recursive countdown: tail call to self inside a match
+    // arm body. The match itself rides HIR fallback (out of
+    // Phase 4 subset), so this is technically an HIR-vs-HIR
+    // parity test — both paths produce identical chunks
+    // because the MIR path drops to HIR for the whole fn. Still
+    // verifies the MIR walker doesn't break tail-call-bearing
+    // fns when it can't cover them.
+    let src =
+        "fn countdown(n: Int) -> Int\n    match n\n        0 -> 0\n        _ -> countdown(n - 1)\n";
+    let hir = run_via_path(src, "countdown", &[10], Path::Hir);
+    let mir = run_via_path(src, "countdown", &[10], Path::MirFallback);
+    assert_eq!(
+        hir, mir,
+        "countdown(10) must agree: HIR={hir:?}, MIR={mir:?}"
+    );
+    assert_eq!(hir, Value::Int(0));
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output
