@@ -411,16 +411,30 @@ pub(super) fn compile_mir_expr(
                 let is_last = i == last_idx;
                 let fail_patch: Option<usize> = if is_last {
                     // Last arm — exhaustive, no pattern check.
-                    // Cons bindings must still be extracted
-                    // unconditionally (the value is on the
-                    // stack, we know the shape matches).
-                    if let MirPattern::Cons { head, tail } = &arm.pattern {
-                        fc.emit_op(DUP);
-                        fc.emit_op(LIST_HEAD_TAIL);
-                        fc.emit_op(STORE_LOCAL);
-                        fc.emit_u8(head.0 as u8);
-                        fc.emit_op(STORE_LOCAL);
-                        fc.emit_u8(tail.0 as u8);
+                    // Bindings still need extracting (value on
+                    // stack, shape known from preceding arm
+                    // failures).
+                    match &arm.pattern {
+                        MirPattern::Cons { head, tail } => {
+                            fc.emit_op(DUP);
+                            fc.emit_op(LIST_HEAD_TAIL);
+                            fc.emit_op(STORE_LOCAL);
+                            fc.emit_u8(head.0 as u8);
+                            fc.emit_op(STORE_LOCAL);
+                            fc.emit_u8(tail.0 as u8);
+                        }
+                        MirPattern::Ctor {
+                            ctor: MirCtor::User(_),
+                            bindings,
+                        } => {
+                            for (i, b) in bindings.iter().enumerate() {
+                                fc.emit_op(EXTRACT_FIELD);
+                                fc.emit_u8(i as u8);
+                                fc.emit_op(STORE_LOCAL);
+                                fc.emit_u8(b.0 as u8);
+                            }
+                        }
+                        _ => {}
                     }
                     None
                 } else {
@@ -531,13 +545,21 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
 /// MIR Match walker handles. Wildcard / Literal(Int) (4g-1),
 /// Cons + EmptyList (4g-2). Further variants land in 4g-3+.
 fn pattern_in_4g_subset(p: &MirPattern) -> bool {
-    matches!(
-        p,
+    match p {
         MirPattern::Wildcard
-            | MirPattern::Literal(Literal::Int(_))
-            | MirPattern::Cons { .. }
-            | MirPattern::EmptyList
-    )
+        | MirPattern::Literal(Literal::Int(_))
+        | MirPattern::Cons { .. }
+        | MirPattern::EmptyList => true,
+        // 4g-3: User-ctor patterns (sum-type variants). Built-in
+        // ctor patterns (Result.Ok / Result.Err / Option.Some /
+        // Option.None) need a different opcode story (MATCH_UNWRAP
+        // for the wrapper kinds) and land in 4g-4.
+        MirPattern::Ctor {
+            ctor: MirCtor::User(_),
+            ..
+        } => true,
+        _ => false,
+    }
 }
 
 /// Emit the pattern check for a non-last arm. Returns the
@@ -577,6 +599,63 @@ fn emit_pattern_check(
             fc.emit_u8(head.0 as u8);
             fc.emit_op(STORE_LOCAL);
             fc.emit_u8(tail.0 as u8);
+            Ok(Some(patch))
+        }
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            bindings,
+        } => {
+            // Resolve `CtorId → arena ctor_id` via the same path
+            // the HIR walker uses (symbol table → canonical name
+            // → arena type id → variant id → arena ctor id).
+            let entry = fc.symbol_table.ctor_entry(*ctor_id);
+            let owning_type = entry.owning_type;
+            let variant_name = entry.name.clone();
+            let qualified_type_name = fc.canonical_type_name(owning_type)?;
+            let arena_type_id = fc.resolve_type_id(&qualified_type_name).ok_or_else(|| {
+                MirVmUnsupported::InnerError(CompileError {
+                    msg: format!(
+                        "MIR-VM: unknown arena type `{qualified_type_name}` for ctor pattern"
+                    ),
+                })
+            })?;
+            let variant_id = fc
+                .arena
+                .find_variant_id(arena_type_id, &variant_name)
+                .ok_or_else(|| {
+                    MirVmUnsupported::InnerError(CompileError {
+                        msg: format!(
+                            "MIR-VM: unknown variant `{variant_name}` on `{qualified_type_name}`"
+                        ),
+                    })
+                })?;
+            let arena_ctor_id =
+                fc.arena.find_ctor_id(arena_type_id, variant_id).ok_or_else(|| {
+                    MirVmUnsupported::InnerError(CompileError {
+                        msg: format!(
+                            "MIR-VM: unknown arena ctor id for `{qualified_type_name}.{variant_name}`"
+                        ),
+                    })
+                })?;
+            if arena_ctor_id > u16::MAX as u32 {
+                return Err(MirVmUnsupported::InnerError(CompileError {
+                    msg: format!(
+                        "MIR-VM: ctor id too large for MATCH_VARIANT: {qualified_type_name}.{variant_name}"
+                    ),
+                }));
+            }
+            fc.emit_op(MATCH_VARIANT);
+            fc.emit_u16(arena_ctor_id as u16);
+            let patch = fc.offset();
+            fc.emit_i16(0);
+            // EXTRACT_FIELD doesn't consume the subject — value
+            // stays on the stack between field extractions.
+            for (i, b) in bindings.iter().enumerate() {
+                fc.emit_op(EXTRACT_FIELD);
+                fc.emit_u8(i as u8);
+                fc.emit_op(STORE_LOCAL);
+                fc.emit_u8(b.0 as u8);
+            }
             Ok(Some(patch))
         }
         // Preflight in the caller filters everything else out.

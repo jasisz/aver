@@ -431,17 +431,38 @@ fn match_cons_emptylist_runtime_parity() {
 }
 
 #[test]
-fn match_ctor_pattern_still_falls_back_to_hir() {
-    // 4g-2 explicitly does NOT cover Ctor patterns; those still
-    // ride HIR fallback. Test the fn still appears in the
-    // chunks (compile_program_with_mir_fallback dispatches
-    // correctly).
-    let src = "type Shape\n  Circle(Int)\n  Square(Int)\n\nfn area(s: Shape) -> Int\n    match s\n        Shape.Circle(r) -> r\n        Shape.Square(side) -> side\n";
+fn match_user_ctor_pattern_runtime_parity() {
+    // Phase 4g-3 — `match s { Shape.Circle(r) -> r;
+    // Shape.Square(side) -> side }` runs identically through
+    // both paths. The MIR walker resolves CtorId → CtorEntry →
+    // arena ctor id and emits MATCH_VARIANT, mirroring the
+    // HIR walker exactly.
+    let src = "type Shape\n  Circle(Int)\n  Square(Int)\n\nfn extract(s: Shape) -> Int\n    match s\n        Shape.Circle(r) -> r\n        Shape.Square(side) -> side\n\nfn circle_eight(_d: Int) -> Int\n    extract(Shape.Circle(8))\n\nfn square_three(_d: Int) -> Int\n    extract(Shape.Square(3))\n";
+
+    let hir_circle = run_via_path(src, "circle_eight", &[0], Path::Hir);
+    let mir_circle = run_via_path(src, "circle_eight", &[0], Path::MirFallback);
+    assert_eq!(hir_circle, mir_circle);
+    assert_eq!(hir_circle, Value::Int(8));
+
+    let hir_square = run_via_path(src, "square_three", &[0], Path::Hir);
+    let mir_square = run_via_path(src, "square_three", &[0], Path::MirFallback);
+    assert_eq!(hir_square, mir_square);
+    assert_eq!(hir_square, Value::Int(3));
+}
+
+#[test]
+fn match_builtin_ctor_pattern_still_falls_back_to_hir() {
+    // Phase 4g-3 explicitly does NOT cover built-in ctor
+    // patterns (Result.Ok / Result.Err / Option.Some /
+    // Option.None) — those need MATCH_UNWRAP (different
+    // opcode shape than MATCH_VARIANT) and land in 4g-4.
+    // The fn still lowers via HIR fallback.
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     let (hir, mir) = compile_both(src);
-    assert!(hir.find("area").is_some(), "area in HIR chunks");
+    assert!(hir.find("unwrap").is_some(), "unwrap in HIR chunks");
     assert!(
-        mir.find("area").is_some(),
-        "area still in MIR-path chunks via HIR fallback"
+        mir.find("unwrap").is_some(),
+        "unwrap still in MIR-path chunks via HIR fallback"
     );
 }
 
