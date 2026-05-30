@@ -4600,6 +4600,7 @@ pub(super) struct CompileOptions<'a> {
     pub(super) optimize: Option<super::cli::WasmOptMode>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn cmd_proof(
     file: &str,
     output_dir: &str,
