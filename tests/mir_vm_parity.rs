@@ -451,19 +451,38 @@ fn match_user_ctor_pattern_runtime_parity() {
 }
 
 #[test]
-fn match_builtin_ctor_pattern_still_falls_back_to_hir() {
-    // Phase 4g-3 explicitly does NOT cover built-in ctor
-    // patterns (Result.Ok / Result.Err / Option.Some /
-    // Option.None) — those need MATCH_UNWRAP (different
-    // opcode shape than MATCH_VARIANT) and land in 4g-4.
-    // The fn still lowers via HIR fallback.
-    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
+fn match_result_builtin_ctor_pattern_runtime_parity() {
+    // Phase 4g-4 — `match r { Result.Ok(v) -> v; Result.Err(_) -> 0 }`
+    // runs identically across HIR and MIR-fallback paths.
+    let src = "fn unwrap(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n\nfn run_ok(_d: Int) -> Int\n    unwrap(Result.Ok(42))\n\nfn run_err(_d: Int) -> Int\n    unwrap(Result.Err(\"nope\"))\n";
+
+    let hir_ok = run_via_path(src, "run_ok", &[0], Path::Hir);
+    let mir_ok = run_via_path(src, "run_ok", &[0], Path::MirFallback);
+    assert_eq!(hir_ok, mir_ok);
+    assert_eq!(hir_ok, Value::Int(42));
+
+    let hir_err = run_via_path(src, "run_err", &[0], Path::Hir);
+    let mir_err = run_via_path(src, "run_err", &[0], Path::MirFallback);
+    assert_eq!(hir_err, mir_err);
+    assert_eq!(hir_err, Value::Int(0));
+}
+
+#[test]
+fn match_option_builtin_ctor_pattern_runtime_parity() {
+    // Phase 4g-4 — Option.Some(v) and Option.None arms. None
+    // doesn't bind anything; Some binds the inner value.
+    let src = "fn unwrap_or_999(o: Option<Int>) -> Int\n    match o\n        Option.Some(v) -> v\n        Option.None -> 999\n\nfn run_some(_d: Int) -> Int\n    unwrap_or_999(Option.Some(7))\n\nfn run_none(o: Option<Int>) -> Int\n    unwrap_or_999(o)\n";
+
+    let hir_some = run_via_path(src, "run_some", &[0], Path::Hir);
+    let mir_some = run_via_path(src, "run_some", &[0], Path::MirFallback);
+    assert_eq!(hir_some, mir_some);
+    assert_eq!(hir_some, Value::Int(7));
+    // Option.None as the explicit arg path would require a
+    // None-valued NanValue — we just verify the fn compiles
+    // through both paths.
     let (hir, mir) = compile_both(src);
-    assert!(hir.find("unwrap").is_some(), "unwrap in HIR chunks");
-    assert!(
-        mir.find("unwrap").is_some(),
-        "unwrap still in MIR-path chunks via HIR fallback"
-    );
+    assert!(hir.find("unwrap_or_999").is_some());
+    assert!(mir.find("unwrap_or_999").is_some());
 }
 
 #[test]

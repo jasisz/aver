@@ -32,7 +32,9 @@
 use crate::ast::Literal;
 use crate::ast::Spanned;
 use crate::ir::hir::BuiltinCtor;
-use crate::ir::mir::{MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirPattern, MirProgram};
+use crate::ir::mir::{
+    LocalId, MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirPattern, MirProgram,
+};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
@@ -418,10 +420,8 @@ pub(super) fn compile_mir_expr(
                         MirPattern::Cons { head, tail } => {
                             fc.emit_op(DUP);
                             fc.emit_op(LIST_HEAD_TAIL);
-                            fc.emit_op(STORE_LOCAL);
-                            fc.emit_u8(head.0 as u8);
-                            fc.emit_op(STORE_LOCAL);
-                            fc.emit_u8(tail.0 as u8);
+                            emit_store_or_pop(fc, *head);
+                            emit_store_or_pop(fc, *tail);
                         }
                         MirPattern::Ctor {
                             ctor: MirCtor::User(_),
@@ -430,8 +430,32 @@ pub(super) fn compile_mir_expr(
                             for (i, b) in bindings.iter().enumerate() {
                                 fc.emit_op(EXTRACT_FIELD);
                                 fc.emit_u8(i as u8);
-                                fc.emit_op(STORE_LOCAL);
-                                fc.emit_u8(b.0 as u8);
+                                emit_store_or_pop(fc, *b);
+                            }
+                        }
+                        MirPattern::Ctor {
+                            ctor: MirCtor::Builtin(bc),
+                            bindings,
+                        } => {
+                            // Last-arm Builtin: shape is known —
+                            // emit MATCH_UNWRAP with no-fail
+                            // patch (offset=0) then bind the
+                            // single inner value via DUP +
+                            // store-or-pop. Option.None has no
+                            // bindings.
+                            if let Some(b) = bindings.first() {
+                                let kind: u8 = match bc {
+                                    BuiltinCtor::ResultOk => 0,
+                                    BuiltinCtor::ResultErr => 1,
+                                    BuiltinCtor::OptionSome => 2,
+                                    BuiltinCtor::OptionNone => unreachable!(
+                                        "Option.None has no bindings — exhausted by preceding arms"
+                                    ),
+                                };
+                                fc.emit_op(MATCH_UNWRAP);
+                                fc.emit_u8(kind);
+                                fc.emit_i16(0); // no-fail (shape known)
+                                emit_dup_and_bind(fc, *b);
                             }
                         }
                         _ => {}
@@ -541,6 +565,37 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
     }
 }
 
+/// Sentinel `LocalId` value used by the resolver for wildcard
+/// bindings (`_`) inside patterns. The HIR walker treats this
+/// as "no slot to write — POP the value off the stack instead
+/// of `STORE_LOCAL`". MIR carries the sentinel as the same
+/// `u32::from(u16::MAX)` so we can detect it here.
+const WILDCARD_SLOT_SENTINEL: u32 = u16::MAX as u32;
+
+/// Emit either `STORE_LOCAL slot` for a real binding or `POP`
+/// for the wildcard sentinel — mirroring HIR's
+/// `bind_top_to_local`.
+fn emit_store_or_pop(fc: &mut FnCompiler<'_>, local: LocalId) {
+    if local.0 == WILDCARD_SLOT_SENTINEL {
+        fc.emit_op(POP);
+    } else {
+        fc.emit_op(STORE_LOCAL);
+        fc.emit_u8(local.0 as u8);
+    }
+}
+
+/// DUP + (`STORE_LOCAL` or `POP`) — mirror of HIR's
+/// `dup_and_bind_top_to_local`. When the binding is the
+/// wildcard sentinel, DUP + POP is a no-op, so we emit nothing.
+fn emit_dup_and_bind(fc: &mut FnCompiler<'_>, local: LocalId) {
+    if local.0 == WILDCARD_SLOT_SENTINEL {
+        return;
+    }
+    fc.emit_op(DUP);
+    fc.emit_op(STORE_LOCAL);
+    fc.emit_u8(local.0 as u8);
+}
+
 /// Phase 4g preflight + can_compile — pattern variants the
 /// MIR Match walker handles. Wildcard / Literal(Int) (4g-1),
 /// Cons + EmptyList (4g-2). Further variants land in 4g-3+.
@@ -550,12 +605,18 @@ fn pattern_in_4g_subset(p: &MirPattern) -> bool {
         | MirPattern::Literal(Literal::Int(_))
         | MirPattern::Cons { .. }
         | MirPattern::EmptyList => true,
-        // 4g-3: User-ctor patterns (sum-type variants). Built-in
-        // ctor patterns (Result.Ok / Result.Err / Option.Some /
-        // Option.None) need a different opcode story (MATCH_UNWRAP
-        // for the wrapper kinds) and land in 4g-4.
+        // 4g-3: User-ctor patterns (sum-type variants via
+        // MATCH_VARIANT + EXTRACT_FIELD).
         MirPattern::Ctor {
             ctor: MirCtor::User(_),
+            ..
+        } => true,
+        // 4g-4: built-in ctor patterns. Result.Ok / Result.Err /
+        // Option.Some lower via MATCH_UNWRAP + DUP + STORE_LOCAL.
+        // Option.None (no bindings) uses DUP + LOAD_CONST NONE +
+        // EQ + JUMP_IF_FALSE.
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(_),
             ..
         } => true,
         _ => false,
@@ -595,10 +656,8 @@ fn emit_pattern_check(
             // the slot.
             fc.emit_op(DUP);
             fc.emit_op(LIST_HEAD_TAIL);
-            fc.emit_op(STORE_LOCAL);
-            fc.emit_u8(head.0 as u8);
-            fc.emit_op(STORE_LOCAL);
-            fc.emit_u8(tail.0 as u8);
+            emit_store_or_pop(fc, *head);
+            emit_store_or_pop(fc, *tail);
             Ok(Some(patch))
         }
         MirPattern::Ctor {
@@ -650,13 +709,57 @@ fn emit_pattern_check(
             fc.emit_i16(0);
             // EXTRACT_FIELD doesn't consume the subject — value
             // stays on the stack between field extractions.
+            // Wildcard `_` bindings carry the sentinel slot;
+            // `emit_store_or_pop` collapses to POP for those.
             for (i, b) in bindings.iter().enumerate() {
                 fc.emit_op(EXTRACT_FIELD);
                 fc.emit_u8(i as u8);
-                fc.emit_op(STORE_LOCAL);
-                fc.emit_u8(b.0 as u8);
+                emit_store_or_pop(fc, *b);
             }
             Ok(Some(patch))
+        }
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(bc),
+            bindings,
+        } => {
+            // Built-in wrapper variants (Result.Ok / Result.Err /
+            // Option.Some). Option.None is the nullary case —
+            // dispatched via the NONE constant compare.
+            match bc {
+                BuiltinCtor::ResultOk | BuiltinCtor::ResultErr | BuiltinCtor::OptionSome => {
+                    let kind: u8 = match bc {
+                        BuiltinCtor::ResultOk => 0,
+                        BuiltinCtor::ResultErr => 1,
+                        BuiltinCtor::OptionSome => 2,
+                        BuiltinCtor::OptionNone => unreachable!(),
+                    };
+                    fc.emit_op(MATCH_UNWRAP);
+                    fc.emit_u8(kind);
+                    let patch = fc.offset();
+                    fc.emit_i16(0);
+                    // MATCH_UNWRAP replaces TOS with the inner
+                    // value; the binding (when present) takes a
+                    // DUP + store-or-pop — same shape the HIR
+                    // walker uses (wildcard `_` collapses to no
+                    // emit at all, mirroring HIR's `dup_and_bind`
+                    // on `_`).
+                    if let Some(b) = bindings.first() {
+                        emit_dup_and_bind(fc, *b);
+                    }
+                    Ok(Some(patch))
+                }
+                BuiltinCtor::OptionNone => {
+                    // Nullary: DUP + LOAD_CONST NONE + EQ +
+                    // JUMP_IF_FALSE. No bindings to extract.
+                    fc.emit_op(DUP);
+                    let none_const = fc.add_constant(NanValue::NONE);
+                    fc.emit_op(LOAD_CONST);
+                    fc.emit_u16(none_const);
+                    fc.emit_op(EQ);
+                    let patch = fc.emit_jump(JUMP_IF_FALSE);
+                    Ok(Some(patch))
+                }
+            }
         }
         // Preflight in the caller filters everything else out.
         _ => unreachable!("Phase 4g subset preflight should have filtered this out"),
