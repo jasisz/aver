@@ -1,0 +1,33 @@
+module ListLengthFold
+    intent =
+        "MatchDispatcherFold proof-export demo."
+        "Two structurally-identical list folds compute list length differently:"
+        "lengthFwd uses `1 + length(t)` (left-folding the +) and lengthSwap uses `length(t) + 1` (right-folding)."
+        "The law states their equivalence — proved by structural induction on xs."
+    effects []
+
+fn lengthFwd(xs: List<Int>) -> Int
+    ? "Length via `1 + length(tail)`."
+    match xs
+        [] -> 0
+        [_, ..t] -> 1 + lengthFwd(t)
+
+verify lengthFwd
+    lengthFwd([])        => 0
+    lengthFwd([7])       => 1
+    lengthFwd([1, 2, 3]) => 3
+
+fn lengthSwap(xs: List<Int>) -> Int
+    ? "Length via `length(tail) + 1`."
+    match xs
+        [] -> 0
+        [_, ..t] -> lengthSwap(t) + 1
+
+verify lengthSwap
+    lengthSwap([])        => 0
+    lengthSwap([7])       => 1
+    lengthSwap([1, 2, 3]) => 3
+
+verify lengthFwd law equalsSwap
+    given xs: List<Int> = [[], [7], [1, 2, 3], [1, 2, 3, 4, 5]]
+    lengthFwd(xs) => lengthSwap(xs)

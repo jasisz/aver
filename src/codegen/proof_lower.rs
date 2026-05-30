@@ -880,6 +880,15 @@ fn classify_law_strategy(
 ) -> crate::ir::ProofStrategy {
     use crate::ir::ProofStrategy;
 
+    // Match-dispatcher fold equivalence (stage 8c of #232) — two
+    // self-recursive `MatchDispatcherFold` fns over the same list
+    // param. Closes by structural induction on `xs` + `omega` on
+    // each arm.
+    if law.when.is_none()
+        && let Some(s) = detect_match_dispatcher_fold_equivalence(law, fn_name, inputs)
+    {
+        return s;
+    }
     // Result-pipeline chain equivalence (stage 8b of #232) — `?`
     // propagation `chain_qm(x)` vs nested-match `chain_manual(x)`.
     // Both sides unfold to the same nested match; the proof closes
@@ -2559,6 +2568,86 @@ fn is_bool_true(expr: &Spanned<crate::ast::Expr>) -> bool {
 /// nested chain over the same step fns. Returns a payload carrying
 /// both fn names + the ordered step list so backends can emit the
 /// unfold list without re-walking the AST.
+/// Stage 8c of #232: detect `fold(g) == spec(g)` where both `fold`
+/// and `spec` are registered `ModulePattern::MatchDispatcherFold`
+/// fns over a `List<T>` param. Both sides are list folds with
+/// identical match structure; structural induction on `xs` plus
+/// `omega` per arm closes the equivalence — emit lives on the
+/// backend.
+fn detect_match_dispatcher_fold_equivalence(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<crate::ir::ProofStrategy> {
+    use crate::analysis::shape::ModulePattern;
+    use crate::ast::Expr;
+
+    fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
+        match &e.node {
+            Expr::Ident(n) => Some(n.as_str()),
+            Expr::Resolved { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    let shape = inputs.program_shape?;
+
+    if law.givens.len() != 1 {
+        return None;
+    }
+    let given_name = &law.givens[0].name;
+
+    // fn_name must be a MatchDispatcherFold in the shape.
+    let fold_fn_pinned = shape.patterns.iter().any(|p| {
+        matches!(
+            p,
+            ModulePattern::MatchDispatcherFold { fn_name: n, .. } if n == fn_name
+        )
+    });
+    if !fold_fn_pinned {
+        return None;
+    }
+
+    // Extract `fold(g)` and `spec(g)` from law sides.
+    let extract = |expr: &Spanned<Expr>| -> Option<String> {
+        let Expr::FnCall(callee, args) = &expr.node else {
+            return None;
+        };
+        let name = ident_name(callee)?;
+        if args.len() != 1 {
+            return None;
+        }
+        if ident_name(&args[0])? != given_name {
+            return None;
+        }
+        Some(name.to_string())
+    };
+    let lhs_call = extract(&law.lhs)?;
+    let rhs_call = extract(&law.rhs)?;
+    let (fold_fn, spec_fn) = if lhs_call == fn_name && rhs_call != fn_name {
+        (lhs_call, rhs_call)
+    } else if rhs_call == fn_name && lhs_call != fn_name {
+        (rhs_call, lhs_call)
+    } else {
+        return None;
+    };
+
+    // The spec side must also be a MatchDispatcherFold — otherwise
+    // the structural-induction template's `simp` step on the RHS
+    // won't have a fold to unfold.
+    let spec_pinned = shape.patterns.iter().any(|p| {
+        matches!(
+            p,
+            ModulePattern::MatchDispatcherFold { fn_name: n, .. } if n == &spec_fn
+        )
+    });
+    if !spec_pinned {
+        return None;
+    }
+
+    Some(crate::ir::ProofStrategy::MatchDispatcherFold { fold_fn, spec_fn })
+}
+
 fn detect_result_pipeline_chain_equivalence(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
