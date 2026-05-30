@@ -12,6 +12,10 @@ mod interp_lower;
 pub mod last_use;
 mod leaf;
 mod matches;
+/// Core MIR — executable middle-end. Phase 1 of #252 (the 0.24
+/// epic) is doc-only; see `src/ir/mir/mod.rs` for the overview and
+/// `src/ir/mir/RFC.md` for the full design.
+pub mod mir;
 mod pass_diag;
 pub mod pipeline;
 pub mod proof_ir;

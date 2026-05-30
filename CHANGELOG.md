@@ -2,6 +2,12 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## Unreleased
+
+### Compiler internals
+
+- **Core MIR scaffolding lands (Phase 1 of #252).** `src/ir/mir/` exists with a doc-comment summary in `mod.rs` and a full design RFC in `RFC.md`. Pinned decisions: `Try` stays a node (no desugar to `match`), `match` stays structured, identity goes through `FnId` / `TypeId` / `CtorId` / `ModuleId`, ProofIR stays separate. No data model yet — Phase 2 lands the enums + textual dump, Phase 3 lands HIR → MIR lowering in waves, Phase 4 wires the VM as the first consumer. The 0.23 stage 8b workaround (`step_fns` side-channel on `ModulePattern::ResultPipelineChain`) is the concrete motivator: with `?` preserved as a `Try` node through MIR, that side-channel goes away in 0.24.
+
 ## 0.23.0 "Shape" — 2026-05-30
 
 > _What `aver shape` sees, `aver proof` now uses._
