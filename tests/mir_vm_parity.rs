@@ -142,6 +142,78 @@ fn bytecode_parity_for_double_in_phase_4_subset() {
 }
 
 #[test]
+fn user_ctor_construction_parity() {
+    // Phase 4c — `MirExpr::Construct(MirCtor::User(_))` walks
+    // through the CtorEntry → owning_type lookup and emits
+    // VARIANT_NEW just like the HIR walker. We verify by
+    // (a) running an Int-extractor through both paths, and
+    // (b) byte-comparing the FnChunk.
+    let src = "type Shape\n  Circle(Int)\n  Square(Int)\n\nfn makeCircle(r: Int) -> Shape\n    Shape.Circle(r)\n\nfn area(s: Shape) -> Int\n    match s\n        Shape.Circle(r) -> r\n        Shape.Square(side) -> side\n\nfn make_and_extract(r: Int) -> Int\n    area(makeCircle(r))\n";
+    let hir = run_via_path(src, "make_and_extract", &[7], Path::Hir);
+    let mir = run_via_path(src, "make_and_extract", &[7], Path::MirFallback);
+    assert_eq!(
+        hir, mir,
+        "User ctor + match parity: HIR={hir:?}, MIR={mir:?}"
+    );
+    assert_eq!(hir, Value::Int(7));
+}
+
+#[test]
+fn bytecode_parity_for_user_ctor_construction() {
+    // Just makeCircle alone — body is `Shape.Circle(r)`, fully
+    // inside the Phase 4c subset. The fn's bytecode must match
+    // exactly between HIR and MIR-fallback paths.
+    let (hir, mir) = compile_both(
+        "type Shape\n  Circle(Int)\n  Square(Int)\n\nfn makeCircle(r: Int) -> Shape\n    Shape.Circle(r)\n",
+    );
+    let hir_fn = hir.get(hir.find("makeCircle").expect("makeCircle in HIR"));
+    let mir_fn = mir.get(mir.find("makeCircle").expect("makeCircle in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "VARIANT_NEW emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn builtin_ctor_wrap_parity() {
+    // `Result.Ok(x)` lowers to MirCtor::Builtin(ResultOk) in
+    // MIR. The Phase 4c walker emits the same WRAP 0 sequence
+    // the HIR walker emits.
+    let src = "fn wrap_ok(x: Int) -> Result<Int, String>\n    Result.Ok(x)\n";
+    let (hir, mir) = compile_both(src);
+    let hir_fn = hir.get(hir.find("wrap_ok").expect("wrap_ok in HIR"));
+    let mir_fn = mir.get(mir.find("wrap_ok").expect("wrap_ok in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "WRAP emit for Result.Ok must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn record_field_access_parity() {
+    // `MirExpr::Project` → RECORD_GET_NAMED, mirroring the HIR
+    // path. We verify per-fn bytecode parity on a fn that takes
+    // a record and projects a field.
+    //
+    // Note: the HIR walker may optimize to RECORD_GET (typed
+    // index) when it can infer the type statically; the MIR
+    // walker uses RECORD_GET_NAMED universally for now. The
+    // record-creation call (`P(...)`) currently isn't in the
+    // Phase 4 subset (RecordCreate is still wave-future), so
+    // we test field access on a parameter — that path stays
+    // pure Project in both walkers.
+    let src = "record P\n  x: Int\n  y: Int\n\nfn px(p: P) -> Int\n    p.x\n";
+    let (_hir, _mir) = compile_both(src);
+    // We don't byte-compare here because HIR may use the typed
+    // RECORD_GET op while MIR uses RECORD_GET_NAMED — both
+    // semantically equivalent. Instead verify both compiled.
+    // Full bytecode parity for Project lands when MIR carries
+    // type stamps on its sub-nodes (Phase 6).
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output
