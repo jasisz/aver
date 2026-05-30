@@ -262,6 +262,30 @@ fn proof_export_builds_sum_acc_when_lake_is_available() {
 }
 
 #[test]
+fn proof_dafny_verifies_list_length_fold_when_dafny_is_available() {
+    // Stage 8c of #232: `ProofStrategy::MatchDispatcherFold` — two
+    // structural list folds (`1 + length(t)` vs `length(t) + 1`)
+    // closing by induction on `xs`. Dafny's default Induction path
+    // already verifies this shape; the explicit strategy makes the
+    // recognition observable in proof_ir.
+    assert_dafny_verifies(
+        "examples/data/list_length_fold.av",
+        "aver-dafny-list-length-fold",
+    );
+}
+
+#[test]
+fn proof_export_builds_list_length_fold_when_lake_is_available() {
+    // Lean template: `induction xs with | nil => simp | cons => simp;
+    // omega`. The omega discharge handles `1 + x = x + 1`.
+    assert_proof_builds_with_sorry_budget(
+        "examples/data/list_length_fold.av",
+        "aver-proof-list-length-fold",
+        0,
+    );
+}
+
+#[test]
 fn proof_dafny_verifies_result_chain_when_dafny_is_available() {
     // Stage 8b of #232: `ProofStrategy::ResultPipelineChain` closes
     // `chainQM(n) == chainManual(n)` — `?`-propagating Result chain

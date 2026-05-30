@@ -255,6 +255,15 @@ pub fn emit_verify_law_forall_auto_proof(
         return Some(proof);
     }
 
+    // Stage 8c of #232 — `MatchDispatcherFold`. Structural induction
+    // on `xs` + per-arm `simp` + `omega` for arithmetic identity.
+    if let Some(crate::ir::ProofStrategy::MatchDispatcherFold { fold_fn, spec_fn }) =
+        law_strategy_for(ctx, &vb.fn_name, &law.name)
+        && let Some(proof) = spec::emit_match_dispatcher_fold_law(vb, law, ctx, &fold_fn, &spec_fn)
+    {
+        return Some(proof);
+    }
+
     // Stage 8b of #232 — `ResultPipelineChain`. Unfold both fns +
     // every step fn, then `repeat split` peels off match layers
     // until structural equality remains.
