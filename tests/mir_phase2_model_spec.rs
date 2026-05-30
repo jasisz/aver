@@ -12,8 +12,8 @@
 
 use aver::ast::{BinOp, Literal, Spanned};
 use aver::ir::mir::{
-    LocalId, MirBinOp, MirCall, MirCallee, MirEffectAnnotation, MirExpr, MirFn, MirMatch,
-    MirMatchArm, MirParam, MirPattern, MirProgram, MirTryBind,
+    LocalId, MirBinOp, MirCall, MirCallee, MirEffectAnnotation, MirExpr, MirFn, MirLet, MirMatch,
+    MirMatchArm, MirParam, MirPattern, MirProgram,
 };
 use aver::ir::{CtorId, FnId};
 
@@ -123,24 +123,32 @@ fn pinned_decision_identity_is_typed() {
 }
 
 #[test]
-fn try_bind_pins_let_form() {
-    // `let x = step()?; body` — semantic bind-and-propagate.
-    // Distinct from a `Let` chaining a `Try` so downstream
-    // consumers can recognize the shape without re-walking.
-    let value = Box::new(span(MirExpr::Call(span(MirCall {
+fn try_bind_is_let_with_try_value() {
+    // `let x = step()?; body` is expressed as composition:
+    //   Let { binding: x, value: Try(step()), body }
+    // The original design had a dedicated `TryBind` variant; we
+    // dropped it because `Let { value: Try(_), ... }` already
+    // captures the same semantics, with no walker complexity
+    // penalty. This test pins the composition contract.
+    let step_call = MirExpr::Call(span(MirCall {
         callee: MirCallee::Fn(fn_id(1)),
         args: vec![],
-    }))));
-    let ok_body = Box::new(span(MirExpr::Local(span(LocalId(0)))));
-    let try_bind = MirExpr::TryBind(span(MirTryBind {
-        value,
-        ok_binding: LocalId(0),
-        ok_body,
     }));
-    let MirExpr::TryBind(spanned) = try_bind else {
-        panic!("expected TryBind");
+    let bind = MirExpr::Let(span(MirLet {
+        binding: LocalId(0),
+        value: Box::new(span(MirExpr::Try(Box::new(span(step_call))))),
+        body: Box::new(span(MirExpr::Local(span(LocalId(0))))),
+    }));
+    let MirExpr::Let(let_node) = bind else {
+        panic!("expected Let composition");
     };
-    assert_eq!(spanned.node.ok_binding, LocalId(0));
+    assert_eq!(let_node.node.binding, LocalId(0));
+    // The Let's value side must hold the Try wrapping the step call.
+    assert!(
+        matches!(&let_node.node.value.node, MirExpr::Try(_)),
+        "Let value must be Try(_) for ?-bind composition; got {:?}",
+        let_node.node.value.node
+    );
 }
 
 #[test]

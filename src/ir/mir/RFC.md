@@ -163,6 +163,7 @@ These don't block Phase 1. They get decided when the data model lands.
 - **`LocalId` stability** — assigned at MIR construction time, or carried from HIR's existing slot indices? Carrying is simpler; assigning is more flexible for later optimizers. Phase 2 picks.
 - **Effects per call site** — does Phase 1–4 carry call-site effects, or only function-level? Function-level only, deferred to Phase 6 if needed.
 - **`?` on user-defined `Result`-like types** — Phase 1 pins `Try` for built-in `Result<T, E>`. Whether user-defined sum types with an `Ok` / `Err` shape can ride the same node is an extension question. Phase 3 wave 3 picks (when `Try` lowering lands).
+- ~~**`TryBind` vs `Let { value: Try(_), … }`**~~ — **resolved**: `TryBind` dropped during wave 3 prep; the composition `Let { binding, value: Try(step()), body }` carries identical semantics and saves one variant. Consumers that need to recognize the bind-and-propagate pattern walk `Let` and inspect `value.node` for `MirExpr::Try`.
 - **wasm-gc flatten ordering** — wasm-gc currently flattens multi-module programs into a single AST before codegen. Does Phase 5 (wasm-gc on MIR) flatten in MIR or in HIR? Out of scope for 0.24 but noted so reviewers know it exists.
 
 ## Guardrails

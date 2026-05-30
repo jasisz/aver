@@ -72,14 +72,15 @@ pub enum MirExpr {
     /// `Match` is a per-backend choice, not a pipeline-wide
     /// transform. Rust will eventually emit `?` native, VM emits
     /// tag-check + early return.
+    ///
+    /// The bound form `let x = step()?; body` is expressed as
+    /// `MirExpr::Let { binding: x, value: MirExpr::Try(step()),
+    /// body }` — no dedicated `TryBind` variant. The original
+    /// design had one, but it duplicated the semantics of
+    /// `Let { value: Try(_), ... }` exactly. Consumers that need
+    /// to recognize the `?-bind` pattern do so by walking
+    /// `Let` and inspecting `value.node` for `MirExpr::Try`.
     Try(Box<Spanned<MirExpr>>),
-    /// `let ok_binding = value?; ok_body` — the bound form of
-    /// `Try`. Carries `ok_binding` so the body has a name for the
-    /// unwrapped `Ok(_)` value. Distinct variant from `Try` +
-    /// `Let` so the lowering pass keeps the bind-and-propagate
-    /// intent intact (and downstream consumers can recognize the
-    /// shape without re-walking).
-    TryBind(Spanned<MirTryBind>),
     /// `[a, b, c]` — list literal. Elements lower to MIR
     /// expressions; the resulting value is `List<T>` with `T`
     /// inferred at type-check time.
@@ -229,14 +230,6 @@ pub struct MirRecordField {
 pub struct MirProject {
     pub base: Box<Spanned<MirExpr>>,
     pub field: String,
-}
-
-/// `let ok_binding = value?; ok_body` — semantic bind-and-propagate.
-#[derive(Debug, Clone)]
-pub struct MirTryBind {
-    pub value: Box<Spanned<MirExpr>>,
-    pub ok_binding: LocalId,
-    pub ok_body: Box<Spanned<MirExpr>>,
 }
 
 /// `(a, b, c)!` or `(a, b, c)?!`.

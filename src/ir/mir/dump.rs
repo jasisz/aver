@@ -34,7 +34,7 @@ use crate::ast::Spanned;
 use super::expr::{
     MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr,
     MirIndependentProduct, MirLet, MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate,
-    MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall, MirTryBind,
+    MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
 };
 use super::program::{MirFn, MirParam, MirProgram};
 
@@ -121,7 +121,6 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &Spanned<MirExpr>, indent: &str)
             write_expr(f, inner, indent)?;
             write!(f, "?")
         }
-        MirExpr::TryBind(spanned) => write_try_bind(f, &spanned.node, indent),
         MirExpr::List(items) => write_list_or_tuple(f, "List", items, indent),
         MirExpr::Tuple(items) => write_list_or_tuple(f, "Tuple", items, indent),
         MirExpr::MapLiteral(pairs) => write_map_literal(f, pairs, indent),
@@ -272,17 +271,6 @@ fn write_fields(
 fn write_project(f: &mut fmt::Formatter<'_>, p: &MirProject, indent: &str) -> fmt::Result {
     write_expr(f, &p.base, indent)?;
     write!(f, ".{}", p.field)
-}
-
-fn write_try_bind(f: &mut fmt::Formatter<'_>, tb: &MirTryBind, indent: &str) -> fmt::Result {
-    write!(f, "let {} =", tb.ok_binding)?;
-    let inner = format!("{indent}  ");
-    writeln!(f)?;
-    write!(f, "{inner}")?;
-    write_expr(f, &tb.value, &inner)?;
-    writeln!(f, "?")?;
-    write!(f, "{indent}in ")?;
-    write_expr(f, &tb.ok_body, indent)
 }
 
 fn write_list_or_tuple(
