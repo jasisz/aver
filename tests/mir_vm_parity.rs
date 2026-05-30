@@ -378,6 +378,39 @@ fn record_create_bytecode_parity() {
 }
 
 #[test]
+fn match_int_literal_runtime_parity() {
+    // Phase 4g-1 — match arms with Wildcard + Literal(Int) only.
+    // Runtime must agree between HIR and MIR-fallback paths for
+    // each branch.
+    let src = "fn classify(n: Int) -> Int\n    match n\n        0 -> 100\n        1 -> 200\n        _ -> 999\n";
+    for (input, expected) in &[(0, 100), (1, 200), (2, 999), (-1, 999)] {
+        let hir = run_via_path(src, "classify", &[*input], Path::Hir);
+        let mir = run_via_path(src, "classify", &[*input], Path::MirFallback);
+        assert_eq!(
+            hir, mir,
+            "classify({input}) parity: HIR={hir:?}, MIR={mir:?}"
+        );
+        assert_eq!(hir, Value::Int(*expected as i64));
+    }
+}
+
+#[test]
+fn match_complex_pattern_falls_back_to_hir() {
+    // Cons / EmptyList patterns are NOT in 4g-1 — those fns
+    // must fall back to HIR and still produce the right answer.
+    let src = "fn first_or_zero(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h\n";
+    let (hir, mir) = compile_both(src);
+    assert!(
+        hir.find("first_or_zero").is_some(),
+        "fn should exist in HIR chunks"
+    );
+    assert!(
+        mir.find("first_or_zero").is_some(),
+        "fn should still exist in MIR-path chunks via HIR fallback"
+    );
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output
