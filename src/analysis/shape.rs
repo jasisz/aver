@@ -526,6 +526,14 @@ pub struct ProgramShape {
     /// the source items needed to detect module-level shapes like
     /// `RefinementSmartConstructor`.
     pub patterns: Vec<ModulePattern>,
+    /// Source-level sum type names that are eligible as induction
+    /// targets: directly self-referential in at least one variant
+    /// and not indirectly recursive through nested generics the
+    /// per-variant emit can't case-split (e.g. `Some(List<Self>)`).
+    /// Mirrors `proof_lower::detect_induction_target`'s inline
+    /// scan so the detector can read this set instead of
+    /// re-walking type defs.
+    pub inductable_sum_types: HashSet<String>,
 }
 
 impl ProgramShape {
@@ -569,6 +577,7 @@ pub fn analyze_program(resolved_fns: &[&ResolvedFnDef]) -> ProgramShape {
         per_fn,
         sccs,
         patterns: Vec::new(),
+        inductable_sum_types: HashSet::new(),
     }
 }
 
@@ -583,6 +592,7 @@ pub fn analyze_program_with_modules(
 ) -> ProgramShape {
     let mut shape = analyze_program(resolved_fns);
     shape.patterns = detect_module_patterns(entry_items, dep_modules);
+    shape.inductable_sum_types = collect_inductable_sum_types(entry_items, dep_modules);
     shape
 }
 
@@ -747,6 +757,60 @@ pub enum ModulePattern {
         fn_name: String,
         list_param: String,
     },
+}
+
+/// Walk entry items + dep modules and collect the names of sum types
+/// that pass the proof-export induction eligibility check: directly
+/// self-referential in at least one variant, and not indirectly
+/// recursive through nested generics that the per-variant emit
+/// would have to give up on. Mirrors the inline scan that
+/// `proof_lower::detect_induction_target` used to perform so the
+/// detector can read from `ProgramShape.inductable_sum_types` and
+/// avoid re-walking the AST.
+pub fn collect_inductable_sum_types(
+    entry_items: &[crate::ast::TopLevel],
+    dep_modules: &[crate::codegen::ModuleInfo],
+) -> HashSet<String> {
+    use crate::ast::{TopLevel, TypeDef};
+    let mut out = HashSet::new();
+    let mut consider = |td: &TypeDef| {
+        if let TypeDef::Sum { name, variants, .. } = td
+            && crate::codegen::common::is_recursive_sum(name, variants)
+            && !indirect_rec_variants(variants, name)
+        {
+            out.insert(name.clone());
+        }
+    };
+    for item in entry_items {
+        if let TopLevel::TypeDef(td) = item {
+            consider(td);
+        }
+    }
+    for m in dep_modules {
+        for td in &m.type_defs {
+            consider(td);
+        }
+    }
+    out
+}
+
+/// Mirror of `proof_lower::has_indirect_rec_variants`: a variant
+/// field that contains `type_name` nested past one `<` is rejected
+/// because the per-variant induction case-split can't decompose it.
+fn indirect_rec_variants(variants: &[crate::ast::TypeVariant], type_name: &str) -> bool {
+    for variant in variants {
+        for field in &variant.fields {
+            let f = field.trim();
+            if f == type_name {
+                continue;
+            }
+            let opens = f.matches('<').count();
+            if opens > 1 && f.contains(type_name) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Walk entry items + dep modules and emit every typed

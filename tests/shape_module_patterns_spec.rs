@@ -5,7 +5,7 @@
 //! `codegen::common::refinement_info_for` already returns (so the
 //! stage 6b adapter migration is behavior-preserving).
 
-use aver::analysis::shape::{ModulePattern, detect_module_patterns};
+use aver::analysis::shape::{ModulePattern, collect_inductable_sum_types, detect_module_patterns};
 
 fn detect_in_file(path: &str) -> Vec<ModulePattern> {
     let source = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
@@ -327,4 +327,33 @@ fn refinement_module_emits_no_wrapper_pattern() {
         wrappers.is_empty(),
         "refinement module has no recursive inner fns; got {wrappers:?}"
     );
+}
+
+// ─── Stage 7: inductable_sum_types ──────────────────────────────────────────
+
+fn inductable_in_file(path: &str) -> std::collections::HashSet<String> {
+    let source = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+    let items = aver::source::parse_source(&source).unwrap_or_else(|e| panic!("parse {path}: {e}"));
+    let module_root = std::path::Path::new(path)
+        .parent()
+        .and_then(|p| p.to_str())
+        .unwrap_or(".");
+    let deps = aver::source::load_compile_deps(&items, module_root)
+        .unwrap_or_else(|e| panic!("deps: {e}"));
+    collect_inductable_sum_types(&items, &deps)
+}
+
+#[test]
+fn red_black_tree_module_pins_tree_as_inductable() {
+    let s = inductable_in_file("examples/data/red_black_tree.av");
+    assert!(
+        s.contains("Tree"),
+        "Tree is direct-recursive (Empty | Red(Tree,_,Tree) | Black(Tree,_,Tree)); got {s:?}"
+    );
+}
+
+#[test]
+fn refinement_module_emits_no_inductable_sum_types() {
+    let s = inductable_in_file("examples/refinement/natural/natural.av");
+    assert!(s.is_empty(), "Natural carries no sum types; got {s:?}");
 }
