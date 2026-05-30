@@ -335,8 +335,25 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Result<Spanned<MirExpr>, SkipReas
         // walker places it on the Let's `value` side).
         ResolvedExpr::ErrorProp(inner) => MirExpr::Try(Box::new(lower_expr(inner)?)),
 
+        // ── Wave 3c-iii ─────────────────────────────────────────
+        // Tail call — same SCC as the surrounding fn. The TCO pass
+        // upstream of MIR already classified the call as tail
+        // position and emitted `ResolvedExpr::TailCall`. Backends
+        // pick the final shape: wasm-gc tail-call instructions,
+        // VM tail dispatch, Rust loop rewrite. `FnId` is preserved
+        // — no name lookup on the backend side.
+        ResolvedExpr::TailCall { target, args } => {
+            let mir_args = args.iter().map(lower_expr).collect::<Result<Vec<_>, _>>()?;
+            MirExpr::TailCall(wrap(
+                super::expr::MirTailCall {
+                    target: *target,
+                    args: mir_args,
+                },
+                expr,
+            ))
+        }
+
         // ── Wave 3c+ ────────────────────────────────────────────
-        ResolvedExpr::TailCall { .. } => return Err(SkipReason::UnsupportedTailCall),
         ResolvedExpr::List(_) => return Err(SkipReason::UnsupportedList),
         ResolvedExpr::Tuple(_) => return Err(SkipReason::UnsupportedTuple),
         ResolvedExpr::MapLiteral(_) => return Err(SkipReason::UnsupportedMap),
