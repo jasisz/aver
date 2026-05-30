@@ -12,6 +12,7 @@ use crate::ir::{FnId, ModuleId};
 use crate::ast::Spanned;
 
 use super::expr::{MirEffectAnnotation, MirExpr};
+use super::stats::LowerStats;
 
 /// A whole compiled program in Core MIR. Keyed by `FnId` (stable
 /// across compilation units; same identity layer the rest of the
@@ -27,6 +28,12 @@ pub struct MirProgram {
     /// per-module IR dump). Empty when the program was assembled
     /// from a single entry file with no `depends [...]`.
     pub modules: Vec<ModuleId>,
+    /// Coverage telemetry for the lowering that produced this
+    /// program. `lowered + skipped.values().sum()` equals the
+    /// number of `ResolvedFnDef` items the lowerer saw — see
+    /// [`super::stats::LowerStats`] for the coverage gate that
+    /// Phase 4 (VM slice) consumes.
+    pub stats: LowerStats,
 }
 
 impl MirProgram {
@@ -114,6 +121,16 @@ pub struct MirParam {
 /// freedom to introduce fresh locals during optimization passes,
 /// and inheriting HIR's numbering would silently overlap with
 /// those.
+///
+/// **Seed during Phase 3 (waves 1-3b):** the lowerer seeds new
+/// `LocalId`s from the resolver's slot indices
+/// (`ResolvedExpr::Resolved { slot, .. }`, `FnResolution.local_slots`,
+/// `ResolvedMatchArm.binding_slots`) and grows synthetic locals
+/// from `local_count` upward for `Stmt::Expr` intermediates the
+/// resolver didn't see. The slot space is unique per function so
+/// reuse is safe. Later optimizer passes are still free to
+/// renumber — `LocalId` is just an opaque identity per body, not
+/// a promise about resolver lineage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LocalId(pub u32);
 

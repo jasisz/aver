@@ -47,8 +47,13 @@
 //! `TryBind` variant (dropped during wave 3 prep).
 //!
 //! Functions that use anything outside the waves' supported
-//! subset are silently skipped — `MirProgram.fns` only contains
-//! what the waves so far knew how to handle.
+//! subset are dropped — `MirProgram.fns` only contains what the
+//! waves so far knew how to handle. Every drop bumps a counter
+//! on `MirProgram.stats.skipped` keyed by the first
+//! [`SkipReason`](crate::ir::mir::SkipReason) the lowerer hit
+//! inside the fn. Phase 4's coverage gate consumes that to
+//! prove the lowered subset covers the corpus before the VM
+//! slice migrates.
 //!
 //! ## LocalId mapping
 //!
@@ -73,39 +78,49 @@ use super::expr::{
     MirMatchArm, MirPattern, MirProject, MirRecordCreate, MirRecordField, MirRecordUpdate,
 };
 use super::program::{LocalId, MirFn, MirParam, MirProgram};
+use super::stats::SkipReason;
 
 /// Lower an entry-module resolved-item list into a `MirProgram`.
-/// Function bodies outside wave 1's supported subset are silently
-/// skipped — `MirProgram.fns` only contains what this wave knew
-/// how to handle. Wave 2 and 3 will widen the coverage; a future
-/// "complete" assertion test can compare `lowered_fn_count` against
-/// the total `ResolvedFnDef` count to track progress.
+/// Function bodies outside the supported subset are dropped —
+/// `MirProgram.fns` only contains what the lowerer's waves so far
+/// knew how to handle. Every drop bumps a counter on
+/// `MirProgram.stats.skipped` keyed by the first `SkipReason` the
+/// lowerer hit inside the fn, so Phase 4's coverage gate can prove
+/// that the lowered subset actually covers the corpus.
 pub fn lower_program(items: &[ResolvedTopLevel]) -> MirProgram {
     let mut program = MirProgram::empty();
     for item in items {
-        if let ResolvedTopLevel::FnDef(fd) = item
-            && let Some(mir_fn) = lower_fn(fd)
-        {
-            program.fns.insert(fd.fn_id, mir_fn);
+        let ResolvedTopLevel::FnDef(fd) = item else {
+            continue;
+        };
+        match lower_fn(fd) {
+            Ok(mir_fn) => {
+                program.fns.insert(fd.fn_id, mir_fn);
+                program.stats.record_lowered();
+            }
+            Err(reason) => {
+                program.stats.record_skip(reason);
+            }
         }
     }
     program
 }
 
-/// Lower one `ResolvedFnDef` if its body fits wave 1. Returns
-/// `None` for everything else; the caller drops the fn from the
-/// MIR program in that case.
-fn lower_fn(fd: &ResolvedFnDef) -> Option<MirFn> {
+/// Lower one `ResolvedFnDef` if its body fits the supported subset.
+/// Returns `Err(SkipReason)` for the dominant unsupported shape —
+/// the caller drops the fn from the MIR program and records the
+/// reason in `LowerStats.skipped`.
+fn lower_fn(fd: &ResolvedFnDef) -> Result<MirFn, SkipReason> {
     let ResolvedFnBody::Block(stmts) = &*fd.body;
     if stmts.is_empty() {
-        return None;
+        return Err(SkipReason::EmptyBody);
     }
     let body = match stmts.len() {
         1 => {
             // Single-stmt body: must be `Expr`. Bindings alone
             // can't produce a value.
             let ResolvedStmt::Expr(expr) = &stmts[0] else {
-                return None;
+                return Err(SkipReason::BindingOnlyTail);
             };
             lower_expr(expr)?
         }
@@ -114,7 +129,10 @@ fn lower_fn(fd: &ResolvedFnDef) -> Option<MirFn> {
             // chains. Last stmt must be `Expr` — it's the body's
             // final value; everything before it gets opaque-let'd
             // so effectful intermediate calls survive into MIR.
-            let resolution = fd.resolution.as_ref()?;
+            let resolution = fd
+                .resolution
+                .as_ref()
+                .ok_or(SkipReason::MissingResolution)?;
             let mut next_synthetic_local = u32::from(resolution.local_count);
             lower_stmt_chain(stmts, resolution, &mut next_synthetic_local)?
         }
@@ -141,7 +159,7 @@ fn lower_fn(fd: &ResolvedFnDef) -> Option<MirFn> {
             name: e.node.clone(),
         })
         .collect();
-    Some(MirFn {
+    Ok(MirFn {
         fn_id: fd.fn_id,
         name: fd.name.clone(),
         params,
@@ -151,10 +169,10 @@ fn lower_fn(fd: &ResolvedFnDef) -> Option<MirFn> {
     })
 }
 
-/// Wave 1 expression lowering. Returns `None` for any construct
-/// outside the supported subset so `lower_fn` can drop the whole
-/// function rather than emit a half-lowered body.
-fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Option<Spanned<MirExpr>> {
+/// Expression lowering. Returns `Err(SkipReason)` for any
+/// construct outside the supported subset so `lower_fn` can drop
+/// the whole function and record the dominant reason.
+fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Result<Spanned<MirExpr>, SkipReason> {
     let mir = match &expr.node {
         // ── Wave 1 ──────────────────────────────────────────────
         ResolvedExpr::Literal(lit) => MirExpr::Literal(wrap(lit.clone(), expr)),
@@ -177,59 +195,60 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Option<Spanned<MirExpr>> {
                 ResolvedCallee::Fn(fn_id) => MirCallee::Fn(*fn_id),
                 ResolvedCallee::Builtin(name) => MirCallee::Builtin(name.clone()),
                 // First-class fn values, intrinsics, and unresolved
-                // callees aren't covered by wave 2. Wave 3+ will
-                // grow `MirCallee` (or a separate node) for the
-                // first-class-fn case once `Let` / closure shapes
-                // need it. Intrinsics arrive only after lowering
-                // passes the lowerer doesn't currently traverse.
+                // callees aren't covered yet. Wave 3+ will grow
+                // `MirCallee` (or a separate node) for the
+                // first-class-fn case once closure shapes need it.
                 ResolvedCallee::Intrinsic(_)
                 | ResolvedCallee::LocalSlot { .. }
-                | ResolvedCallee::Unresolved { .. } => return None,
+                | ResolvedCallee::Unresolved { .. } => return Err(SkipReason::UnsupportedCallee),
             };
-            let mir_args: Option<Vec<_>> = args.iter().map(lower_expr).collect();
+            let mir_args = args.iter().map(lower_expr).collect::<Result<Vec<_>, _>>()?;
             MirExpr::Call(wrap(
                 MirCall {
                     callee: mir_callee,
-                    args: mir_args?,
+                    args: mir_args,
                 },
                 expr,
             ))
         }
         ResolvedExpr::Ctor(ResolvedCtor::User { ctor_id, .. }, args) => {
-            let mir_args: Option<Vec<_>> = args.iter().map(lower_expr).collect();
+            let mir_args = args.iter().map(lower_expr).collect::<Result<Vec<_>, _>>()?;
             MirExpr::Construct(wrap(
                 MirConstruct {
                     ctor: *ctor_id,
-                    args: mir_args?,
+                    args: mir_args,
                 },
                 expr,
             ))
         }
-        // Built-in ctors (`Result.Ok` / `Option.Some` / etc.)
-        // don't carry user-program `CtorId`s. Wave 3 will introduce
-        // a typed identity for them — until then, fns that touch
-        // them get dropped from the MIR output.
-        ResolvedExpr::Ctor(ResolvedCtor::Builtin(_) | ResolvedCtor::Unresolved { .. }, _) => {
-            return None;
+        // Built-in ctors (`Result.Ok` / `Option.Some` / etc.) don't
+        // carry user-program `CtorId`s. Wave 3c-i will introduce a
+        // typed identity for them — until then, fns that construct
+        // them get dropped.
+        ResolvedExpr::Ctor(ResolvedCtor::Builtin(_), _) => {
+            return Err(SkipReason::BuiltinCtorConstruction);
+        }
+        ResolvedExpr::Ctor(ResolvedCtor::Unresolved { .. }, _) => {
+            return Err(SkipReason::UnresolvedCtor);
         }
         ResolvedExpr::RecordCreate {
             type_id: Some(type_id),
             fields,
             ..
         } => {
-            let mir_fields: Option<Vec<_>> = fields
+            let mir_fields = fields
                 .iter()
                 .map(|(name, value)| {
-                    Some(MirRecordField {
+                    Ok(MirRecordField {
                         name: name.clone(),
                         value: lower_expr(value)?,
                     })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, SkipReason>>()?;
             MirExpr::RecordCreate(wrap(
                 MirRecordCreate {
                     type_id: *type_id,
-                    fields: mir_fields?,
+                    fields: mir_fields,
                 },
                 expr,
             ))
@@ -240,31 +259,31 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Option<Spanned<MirExpr>> {
             updates,
             ..
         } => {
-            let mir_updates: Option<Vec<_>> = updates
+            let mir_updates = updates
                 .iter()
                 .map(|(name, value)| {
-                    Some(MirRecordField {
+                    Ok(MirRecordField {
                         name: name.clone(),
                         value: lower_expr(value)?,
                     })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, SkipReason>>()?;
             MirExpr::RecordUpdate(wrap(
                 MirRecordUpdate {
                     base: Box::new(lower_expr(base)?),
                     type_id: *type_id,
-                    updates: mir_updates?,
+                    updates: mir_updates,
                 },
                 expr,
             ))
         }
         // Records on built-in types (`HttpResponse`, `Header`,
-        // `Buffer`, …) carry no `TypeId`. Wave 2 skips them; a
-        // later phase will widen `MirRecordCreate` / `MirRecordUpdate`
-        // to carry an optional source-type-name when the consumer
-        // demands it (none does today).
+        // `Buffer`, …) carry no `TypeId`. Skipped until the
+        // consumer (currently nobody) demands a name-only fallback.
         ResolvedExpr::RecordCreate { type_id: None, .. }
-        | ResolvedExpr::RecordUpdate { type_id: None, .. } => return None,
+        | ResolvedExpr::RecordUpdate { type_id: None, .. } => {
+            return Err(SkipReason::BuiltinRecord);
+        }
         ResolvedExpr::Attr(base, field) => MirExpr::Project(wrap(
             MirProject {
                 base: Box::new(lower_expr(base)?),
@@ -276,52 +295,60 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Option<Spanned<MirExpr>> {
         // ── Wave 3b ─────────────────────────────────────────────
         ResolvedExpr::Match { subject, arms } => {
             let mir_subject = lower_expr(subject)?;
-            let mir_arms: Option<Vec<_>> = arms.iter().map(lower_arm).collect();
+            let mir_arms = arms.iter().map(lower_arm).collect::<Result<Vec<_>, _>>()?;
             MirExpr::Match(wrap(
                 MirMatch {
                     subject: Box::new(mir_subject),
-                    arms: mir_arms?,
+                    arms: mir_arms,
                 },
                 expr,
             ))
         }
 
         // ── Wave 3c+ ────────────────────────────────────────────
-        _ => return None,
+        ResolvedExpr::ErrorProp(_) => return Err(SkipReason::UnsupportedTry),
+        ResolvedExpr::TailCall { .. } => return Err(SkipReason::UnsupportedTailCall),
+        ResolvedExpr::List(_) => return Err(SkipReason::UnsupportedList),
+        ResolvedExpr::Tuple(_) => return Err(SkipReason::UnsupportedTuple),
+        ResolvedExpr::MapLiteral(_) => return Err(SkipReason::UnsupportedMap),
+        ResolvedExpr::InterpolatedStr(_) => {
+            return Err(SkipReason::UnsupportedInterpolatedStr);
+        }
+        ResolvedExpr::IndependentProduct(_, _) => {
+            return Err(SkipReason::UnsupportedIndependentProduct);
+        }
+        ResolvedExpr::Ident(_) => return Err(SkipReason::UnresolvedIdent),
     };
-    Some(wrap(mir, expr))
+    Ok(wrap(mir, expr))
 }
 
 /// Wave 3b — lower one resolved match arm. Pattern bindings draw
 /// their `LocalId`s from `arm.binding_slots`, which the resolver
 /// fills in preorder of the bindings as they appear in the
 /// pattern (same walk as `ast_rewrite::pattern_binding_names`).
-/// An arm with no resolved slots or with a built-in / unresolved
-/// ctor pattern returns `None`, causing the whole fn to be
-/// dropped from MIR.
-fn lower_arm(arm: &ResolvedMatchArm) -> Option<MirMatchArm> {
+/// Returns `Err(SkipReason)` for built-in / unresolved ctor
+/// patterns or for slot-count desyncs.
+fn lower_arm(arm: &ResolvedMatchArm) -> Result<MirMatchArm, SkipReason> {
     let slots: &[u16] = arm.binding_slots.get().map(Vec::as_slice).unwrap_or(&[]);
     let mut cursor = 0usize;
     let pattern = lower_pattern(&arm.pattern, slots, &mut cursor)?;
     if cursor != slots.len() {
-        // Slot count mismatch — defensive guard against future
-        // pattern shapes the lowerer doesn't yet understand.
-        return None;
+        return Err(SkipReason::PatternSlotShortfall);
     }
     let body = lower_expr(&arm.body)?;
-    Some(MirMatchArm { pattern, body })
+    Ok(MirMatchArm { pattern, body })
 }
 
 /// Wave 3b — lower a `ResolvedPattern` while consuming binding
-/// slots from `slots[*cursor..]` in preorder. Returns `None` on
-/// any unsupported pattern shape (built-in / unresolved ctor) so
-/// the caller can drop the whole fn cleanly.
+/// slots from `slots[*cursor..]` in preorder. Returns
+/// `Err(SkipReason)` on built-in / unresolved ctor patterns or on
+/// a slot shortfall.
 fn lower_pattern(
     pattern: &ResolvedPattern,
     slots: &[u16],
     cursor: &mut usize,
-) -> Option<MirPattern> {
-    Some(match pattern {
+) -> Result<MirPattern, SkipReason> {
+    Ok(match pattern {
         ResolvedPattern::Wildcard => MirPattern::Wildcard,
         ResolvedPattern::Literal(lit) => MirPattern::Literal(lit.clone()),
         ResolvedPattern::Ident(_) => {
@@ -338,11 +365,11 @@ fn lower_pattern(
             }
         }
         ResolvedPattern::Tuple(items) => {
-            let mir_items: Option<Vec<_>> = items
+            let mir_items = items
                 .iter()
                 .map(|p| lower_pattern(p, slots, cursor))
-                .collect();
-            MirPattern::Tuple(mir_items?)
+                .collect::<Result<Vec<_>, _>>()?;
+            MirPattern::Tuple(mir_items)
         }
         ResolvedPattern::Ctor(ResolvedCtor::User { ctor_id, .. }, names) => {
             let mut bindings = Vec::with_capacity(names.len());
@@ -355,18 +382,21 @@ fn lower_pattern(
                 bindings,
             }
         }
-        // Built-in / unresolved ctor patterns wait for wave 3c —
-        // same skip rule as wave 2's built-in ctor *constructions*.
-        ResolvedPattern::Ctor(ResolvedCtor::Builtin(_) | ResolvedCtor::Unresolved { .. }, _) => {
-            return None;
+        // Wave 3c-i — built-in / unresolved ctor patterns get typed
+        // identity alongside their construction-side counterparts.
+        ResolvedPattern::Ctor(ResolvedCtor::Builtin(_), _) => {
+            return Err(SkipReason::BuiltinCtorPattern);
+        }
+        ResolvedPattern::Ctor(ResolvedCtor::Unresolved { .. }, _) => {
+            return Err(SkipReason::UnresolvedCtor);
         }
     })
 }
 
-fn take_slot(slots: &[u16], cursor: &mut usize) -> Option<u16> {
-    let slot = *slots.get(*cursor)?;
+fn take_slot(slots: &[u16], cursor: &mut usize) -> Result<u16, SkipReason> {
+    let slot = *slots.get(*cursor).ok_or(SkipReason::PatternSlotShortfall)?;
     *cursor += 1;
-    Some(slot)
+    Ok(slot)
 }
 
 /// Wrap a freshly-lowered node in `Spanned` while inheriting the
@@ -400,11 +430,11 @@ fn lower_stmt_chain(
     stmts: &[ResolvedStmt],
     resolution: &FnResolution,
     next_synthetic_local: &mut u32,
-) -> Option<Spanned<MirExpr>> {
-    let (last, rest) = stmts.split_last()?;
+) -> Result<Spanned<MirExpr>, SkipReason> {
+    let (last, rest) = stmts.split_last().ok_or(SkipReason::EmptyBody)?;
     // Last stmt must produce a value.
     let ResolvedStmt::Expr(tail_expr) = last else {
-        return None;
+        return Err(SkipReason::BindingOnlyTail);
     };
     let mut body = lower_expr(tail_expr)?;
 
@@ -413,7 +443,10 @@ fn lower_stmt_chain(
     for stmt in rest.iter().rev() {
         let (binding, value_expr) = match stmt {
             ResolvedStmt::Binding { name, value, .. } => {
-                let slot = *resolution.local_slots.get(name)?;
+                let slot = *resolution
+                    .local_slots
+                    .get(name)
+                    .ok_or(SkipReason::BindingSlotLookupMissing)?;
                 (LocalId(u32::from(slot)), value)
             }
             ResolvedStmt::Expr(expr) => {
@@ -438,5 +471,5 @@ fn lower_stmt_chain(
             ty: std::sync::OnceLock::new(),
         };
     }
-    Some(body)
+    Ok(body)
 }
