@@ -254,11 +254,11 @@ fn proof_dafny_verifies_sum_acc_when_dafny_is_available() {
 
 #[test]
 fn proof_export_builds_sum_acc_when_lake_is_available() {
-    // Lean side still emits `sorry` on the universal proof — the
-    // Lean template for `WrapperOverRecursion` is a planned
-    // follow-up. Per-sample lemmas (`_sample_N`) verify on the
-    // declared domain via `native_decide`.
-    assert_proof_builds_with_sorry_budget("examples/data/sum_acc.av", "aver-proof-sum-acc", 1);
+    // Lean template for `WrapperOverRecursion` emits the aux
+    // accumulator-decomposition theorem + main universal lemma; both
+    // close in core Lean 4 (`omega`) without Mathlib. Sorry budget
+    // 0 — the strategy fully closes the universal proof.
+    assert_proof_builds_with_sorry_budget("examples/data/sum_acc.av", "aver-proof-sum-acc", 0);
 }
 
 #[test]
