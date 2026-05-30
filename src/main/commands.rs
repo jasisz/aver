@@ -4608,6 +4608,9 @@ pub(super) fn cmd_proof(
     backend: &super::cli::ProofBackend,
     verify_mode: &super::cli::ProofVerifyMode,
     check: bool,
+    error_budget: Option<usize>,
+    sorry_budget: Option<usize>,
+    check_json: bool,
 ) {
     let (mut ctx, _module_root) = build_codegen_context(
         file,
@@ -4666,22 +4669,35 @@ pub(super) fn cmd_proof(
     }
 
     if check {
-        run_proof_check(output_dir, backend);
+        run_proof_check(output_dir, backend, error_budget, sorry_budget, check_json);
     }
 }
 
 /// `aver proof --check` harness: invoke the backend's verifier inside
-/// `output_dir`, stream its output to the user, exit non-zero on
-/// failure. MVP — no residual-diagnostic mapping back to source
-/// `verify` blocks yet; that's a follow-up (issue #222 `--try-auto`).
-fn run_proof_check(output_dir: &str, backend: &super::cli::ProofBackend) {
-    use std::process::{Command, Stdio};
+/// `output_dir`, count errors (Dafny) or residual `sorry`s (Lean),
+/// compare against the optional budget, and exit accordingly:
+/// - exit 0: count ≤ budget (budget defaults to 0 when unset)
+/// - exit 1: count > budget
+/// - exit 2: harness failure (verifier not on PATH, missing .dfy entry,
+///   verifier output didn't parse)
+///
+/// With `--check-json`, prints a structured summary to stdout
+/// instead of streaming verifier output verbatim — same exit codes,
+/// for CI consumption.
+fn run_proof_check(
+    output_dir: &str,
+    backend: &super::cli::ProofBackend,
+    error_budget: Option<usize>,
+    sorry_budget: Option<usize>,
+    check_json: bool,
+) {
+    use std::process::Command;
 
-    let (cmd, args, label): (&str, Vec<String>, &str) = match backend {
-        super::cli::ProofBackend::Lean => ("lake", vec!["build".to_string()], "Lean / lake"),
+    let (cmd, args, label, backend_tag): (&str, Vec<String>, &str, &str) = match backend {
+        super::cli::ProofBackend::Lean => {
+            ("lake", vec!["build".to_string()], "Lean / lake", "lean")
+        }
         super::cli::ProofBackend::Dafny => {
-            // Find the single `.dfy` entry file in `output_dir` — the
-            // generator emits exactly one (plus `common.dfy`).
             let entry = match std::fs::read_dir(output_dir) {
                 Ok(rd) => rd
                     .filter_map(|e| e.ok())
@@ -4706,33 +4722,24 @@ fn run_proof_check(output_dir: &str, backend: &super::cli::ProofBackend) {
                 );
                 std::process::exit(2);
             };
-            ("dafny", vec!["verify".to_string(), entry], "Dafny / Z3")
+            (
+                "dafny",
+                vec!["verify".to_string(), entry],
+                "Dafny / Z3",
+                "dafny",
+            )
         }
     };
 
-    println!("{}", format!("--check: running {} verifier…", label).blue());
-    let status = Command::new(cmd)
+    if !check_json {
+        println!("{}", format!("--check: running {} verifier…", label).blue());
+    }
+    let output = match Command::new(cmd)
         .args(&args)
         .current_dir(output_dir)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-    match status {
-        Ok(s) if s.success() => {
-            println!("{}", format!("--check: {} verifier passed", label).green());
-        }
-        Ok(s) => {
-            eprintln!(
-                "{}",
-                format!(
-                    "--check: {} verifier reported failures (exit {})",
-                    label,
-                    s.code().unwrap_or(-1)
-                )
-                .red()
-            );
-            std::process::exit(1);
-        }
+        .output()
+    {
+        Ok(o) => o,
         Err(e) => {
             eprintln!(
                 "{}",
@@ -4744,7 +4751,108 @@ fn run_proof_check(output_dir: &str, backend: &super::cli::ProofBackend) {
             );
             std::process::exit(2);
         }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let (errors, sorries, budget, count) = match backend {
+        super::cli::ProofBackend::Dafny => {
+            let errors = match parse_dafny_error_count(&stdout) {
+                Some(n) => n,
+                None => {
+                    eprintln!(
+                        "{}",
+                        "--check: could not parse Dafny verifier output (missing \"finished with X verified, Y errors\" line)".red()
+                    );
+                    if !check_json {
+                        eprint!("{}", stderr);
+                        print!("{}", stdout);
+                    }
+                    std::process::exit(2);
+                }
+            };
+            (Some(errors), None, error_budget.unwrap_or(0), errors)
+        }
+        super::cli::ProofBackend::Lean => {
+            let sorries = count_lean_sorries(&stderr) + count_lean_sorries(&stdout);
+            (None, Some(sorries), sorry_budget.unwrap_or(0), sorries)
+        }
+    };
+
+    let passed = count <= budget;
+
+    if check_json {
+        let mut obj = serde_json::Map::new();
+        obj.insert("backend".into(), backend_tag.into());
+        if let Some(e) = errors {
+            obj.insert("errors".into(), e.into());
+        }
+        if let Some(s) = sorries {
+            obj.insert("sorries".into(), s.into());
+        }
+        obj.insert("budget".into(), budget.into());
+        obj.insert("passed".into(), passed.into());
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::Value::Object(obj))
+                .unwrap_or_else(|_| "{}".to_string())
+        );
+    } else {
+        // Stream the verifier's own output so the user sees the
+        // diagnostics; we already parsed counts above.
+        print!("{}", stdout);
+        eprint!("{}", stderr);
+        let metric = match backend {
+            super::cli::ProofBackend::Dafny => format!("{count} errors"),
+            super::cli::ProofBackend::Lean => format!("{count} sorries"),
+        };
+        if passed {
+            let suffix = if budget > 0 {
+                format!(" (within budget {budget})")
+            } else {
+                String::new()
+            };
+            println!("{}", format!("--check: {label} — {metric}{suffix}").green());
+        } else {
+            eprintln!(
+                "{}",
+                format!("--check: {label} — {metric} over budget {budget}").red()
+            );
+        }
     }
+
+    if !passed {
+        std::process::exit(1);
+    }
+}
+
+/// Parse `Dafny program verifier finished with N verified, M errors`
+/// out of the verifier's stdout. Returns `Some(M)` on a match,
+/// `None` when the line isn't present.
+fn parse_dafny_error_count(stdout: &str) -> Option<usize> {
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("Dafny program verifier finished with ") {
+            // Shape: "<N> verified, <M> errors"
+            if let Some((_, after_comma)) = rest.split_once(", ")
+                && let Some(m) = after_comma.split_whitespace().next()
+                && let Ok(n) = m.parse::<usize>()
+            {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+/// Count Lean's `declaration uses 'sorry'` warnings in build output.
+/// Lake emits one such warning per `sorry` in the residual program;
+/// counting them matches the budget the proof_spec gating tests use.
+fn count_lean_sorries(s: &str) -> usize {
+    s.lines()
+        .filter(|l| l.contains("declaration uses 'sorry'"))
+        .count()
 }
 
 fn cmd_proof_lean(

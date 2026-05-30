@@ -44,63 +44,61 @@ fn assert_proof_builds_with_sorry_budget(
     let output_dir = temp_output_dir(prefix);
     let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let proof = Command::new(aver_bin)
+    // One subprocess: `aver proof --check --check-json` generates the
+    // project, runs `lake build`, parses the residual `sorry` count
+    // from the build's `declaration uses 'sorry'` warnings, and emits
+    // a JSON summary. Exit code is ignored — the test asserts
+    // exact-match on the count for regression detection (the CLI's
+    // `≤ budget` semantics let CI tolerate noisy examples, but tests
+    // want a drift-up-or-down signal both ways).
+    let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
         .arg(example_path)
+        .arg("--backend")
+        .arg("lean")
         .arg("--verify-mode")
         .arg("auto")
         .arg("-o")
         .arg(&output_dir)
+        .arg("--check")
+        .arg("--check-json")
         .output()
-        .expect("expected `aver proof` to run");
-    assert!(
-        proof.status.success(),
-        "`aver proof` failed:\n{}",
-        format_output(&proof)
-    );
+        .expect("expected `aver proof --check --check-json` to run");
 
-    // Count `sorry` tokens in the entry Lean file (skip `AverCommon.
-    // lean`, which carries prelude lemmas that legitimately use
-    // `sorry` for runtime-only obligations). The match is whole-word
-    // to avoid counting identifiers like `sorry_substring`.
-    let entry_lean = std::fs::read_dir(&output_dir)
-        .expect("read output_dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| {
-            p.extension().is_some_and(|x| x == "lean")
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n != "AverCommon.lean" && n != "lakefile.lean")
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| {
+            panic!(
+                "`aver proof --check --check-json` produced no JSON line:\n{}",
+                format_output(&run)
+            )
         });
-    if let Some(path) = entry_lean {
-        let text = std::fs::read_to_string(&path).expect("read entry .lean");
-        let actual = text
-            .lines()
-            .filter(|line| {
-                line.split_whitespace().any(|tok| tok == "sorry")
-                    && !line.trim_start().starts_with("--")
-            })
-            .count();
-        assert_eq!(
-            actual, expected_sorries,
-            "{}: sorry count drift (expected {}, got {}). \
-             If the count dropped, lower the budget. If it grew, a new shape regressed — \
-             investigate before raising the budget.",
-            example_path, expected_sorries, actual
-        );
-    }
-
-    let build = Command::new("lake")
-        .current_dir(&output_dir)
-        .arg("build")
-        .output()
-        .expect("expected `lake build` to run");
-    assert!(
-        build.status.success(),
-        "`lake build` failed:\n{}",
-        format_output(&build)
+    let summary: serde_json::Value = serde_json::from_str(json_line).unwrap_or_else(|e| {
+        panic!(
+            "failed to parse `aver proof --check --check-json` output as JSON ({}):\n{}",
+            e, json_line
+        )
+    });
+    let actual = summary["sorries"].as_u64().unwrap_or_else(|| {
+        panic!(
+            "`sorries` field missing from --check-json summary:\n{}",
+            json_line
+        )
+    }) as usize;
+    assert_eq!(
+        actual,
+        expected_sorries,
+        "{}: sorry count drift (expected {}, got {}). \
+         If the count dropped, lower the budget. If it grew, a new shape regressed — \
+         investigate before raising the budget.\n{}",
+        example_path,
+        expected_sorries,
+        actual,
+        format_output(&run)
     );
 
     let _ = std::fs::remove_dir_all(&output_dir);
@@ -139,7 +137,13 @@ fn assert_dafny_verifies_with_error_budget(
     let output_dir = temp_output_dir(prefix);
     let aver_bin = env!("CARGO_BIN_EXE_aver");
 
-    let proof = Command::new(aver_bin)
+    // Same single-subprocess shape as the Lean side: generate, run
+    // `dafny verify`, parse the error count out of the verifier
+    // summary, emit JSON. Exit code is ignored — tests assert an
+    // exact-match on `errors` for regression detection in both
+    // directions (drift up = lost a strategy, drift down = budget can
+    // be tightened).
+    let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
         .arg(example_path)
@@ -147,75 +151,47 @@ fn assert_dafny_verifies_with_error_budget(
         .arg("dafny")
         .arg("-o")
         .arg(&output_dir)
+        .arg("--check")
+        .arg("--check-json")
         .output()
-        .expect("expected `aver proof --backend dafny` to run");
-    assert!(
-        proof.status.success(),
-        "`aver proof --backend dafny` failed:\n{}",
-        format_output(&proof)
-    );
+        .expect("expected `aver proof --check --check-json` to run");
 
-    let dfy = std::fs::read_dir(&output_dir)
-        .expect("read output_dir")
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .find(|p| {
-            p.extension().is_some_and(|x| x == "dfy")
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n != "common.dfy")
-        })
-        .expect("expected a non-`common.dfy` Dafny file in output");
-    let verify = Command::new("dafny")
-        .current_dir(&output_dir)
-        .arg("verify")
-        .arg(&dfy)
-        .output()
-        .expect("expected `dafny verify` to run");
-
-    if expected_errors == 0 {
-        assert!(
-            verify.status.success(),
-            "`dafny verify` failed:\n{}",
-            format_output(&verify)
-        );
-    } else {
-        let stdout = String::from_utf8_lossy(&verify.stdout);
-        let actual = parse_dafny_error_count(&stdout).unwrap_or_else(|| {
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| {
             panic!(
-                "could not parse Dafny verifier summary from output:\n{}",
-                format_output(&verify)
+                "`aver proof --check --check-json` produced no JSON line:\n{}",
+                format_output(&run)
             )
         });
-        assert_eq!(
-            actual,
-            expected_errors,
-            "{}: dafny error count drift (expected {}, got {}). \
-             If the count dropped, lower the budget. If it grew, a new shape regressed — \
-             investigate before raising the budget.\n{}",
-            example_path,
-            expected_errors,
-            actual,
-            format_output(&verify)
-        );
-    }
+    let summary: serde_json::Value = serde_json::from_str(json_line).unwrap_or_else(|e| {
+        panic!(
+            "failed to parse `aver proof --check --check-json` output as JSON ({}):\n{}",
+            e, json_line
+        )
+    });
+    let actual = summary["errors"].as_u64().unwrap_or_else(|| {
+        panic!(
+            "`errors` field missing from --check-json summary:\n{}",
+            json_line
+        )
+    }) as usize;
+    assert_eq!(
+        actual,
+        expected_errors,
+        "{}: dafny error count drift (expected {}, got {}). \
+         If the count dropped, lower the budget. If it grew, a new shape regressed — \
+         investigate before raising the budget.\n{}",
+        example_path,
+        expected_errors,
+        actual,
+        format_output(&run)
+    );
 
     let _ = std::fs::remove_dir_all(&output_dir);
-}
-
-/// Extract the trailing error count from a Dafny verifier run.
-///
-/// Dafny prints `Dafny program verifier finished with N verified, M
-/// error(s)` (singular `error` when M == 1). Returns `M` or `None`
-/// if the summary line is missing.
-fn parse_dafny_error_count(stdout: &str) -> Option<usize> {
-    let line = stdout
-        .lines()
-        .rev()
-        .find(|l| l.contains("Dafny program verifier finished with"))?;
-    let after = line.split(", ").nth(1)?;
-    let n: usize = after.split_whitespace().next()?.parse().ok()?;
-    Some(n)
 }
 
 #[test]

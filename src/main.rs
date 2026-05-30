@@ -365,6 +365,9 @@ fn main() {
             backend,
             verify_mode,
             check,
+            error_budget,
+            sorry_budget,
+            check_json,
         } => {
             commands::cmd_proof(
                 file,
@@ -374,6 +377,9 @@ fn main() {
                 backend,
                 verify_mode,
                 *check,
+                *error_budget,
+                *sorry_budget,
+                *check_json,
             );
         }
     }
