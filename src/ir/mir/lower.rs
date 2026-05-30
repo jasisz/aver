@@ -353,13 +353,50 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Result<Spanned<MirExpr>, SkipReas
             ))
         }
 
-        // ── Wave 3c+ ────────────────────────────────────────────
-        ResolvedExpr::List(_) => return Err(SkipReason::UnsupportedList),
-        ResolvedExpr::Tuple(_) => return Err(SkipReason::UnsupportedTuple),
-        ResolvedExpr::MapLiteral(_) => return Err(SkipReason::UnsupportedMap),
-        ResolvedExpr::InterpolatedStr(_) => {
-            return Err(SkipReason::UnsupportedInterpolatedStr);
+        // ── Wave 3c-iv ──────────────────────────────────────────
+        // Collection literals — lists, tuples, maps, interpolated
+        // strings. Each lowers element-by-element through
+        // `lower_expr`; the outer node carries the structural
+        // shape so backends pick their build strategy (List
+        // prepend chain vs vec-grow, Map flat-hashtable vs HAMT,
+        // interpolation buffer-build vs format-string).
+        ResolvedExpr::List(items) => {
+            let mir_items = items
+                .iter()
+                .map(lower_expr)
+                .collect::<Result<Vec<_>, _>>()?;
+            MirExpr::List(mir_items)
         }
+        ResolvedExpr::Tuple(items) => {
+            let mir_items = items
+                .iter()
+                .map(lower_expr)
+                .collect::<Result<Vec<_>, _>>()?;
+            MirExpr::Tuple(mir_items)
+        }
+        ResolvedExpr::MapLiteral(pairs) => {
+            let mir_pairs = pairs
+                .iter()
+                .map(|(k, v)| Ok((lower_expr(k)?, lower_expr(v)?)))
+                .collect::<Result<Vec<_>, SkipReason>>()?;
+            MirExpr::MapLiteral(mir_pairs)
+        }
+        ResolvedExpr::InterpolatedStr(parts) => {
+            let mir_parts = parts
+                .iter()
+                .map(|p| match p {
+                    crate::ir::hir::ResolvedStrPart::Literal(s) => {
+                        Ok(super::expr::MirStrPart::Literal(s.clone()))
+                    }
+                    crate::ir::hir::ResolvedStrPart::Parsed(inner) => {
+                        Ok(super::expr::MirStrPart::Expr(lower_expr(inner)?))
+                    }
+                })
+                .collect::<Result<Vec<_>, SkipReason>>()?;
+            MirExpr::InterpolatedStr(mir_parts)
+        }
+
+        // ── Wave 3c+ ────────────────────────────────────────────
         ResolvedExpr::IndependentProduct(_, _) => {
             return Err(SkipReason::UnsupportedIndependentProduct);
         }
