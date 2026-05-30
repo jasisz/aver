@@ -400,10 +400,11 @@ pub(super) fn compile_mir_expr(
         //   end:
         MirExpr::Match(spanned_match) => {
             let m = &spanned_match.node;
-            if !m.arms.iter().all(|arm| match &arm.pattern {
-                MirPattern::Wildcard => true,
-                MirPattern::Literal(Literal::Int(_)) => true,
-                _ => false,
+            if !m.arms.iter().all(|arm| {
+                matches!(
+                    &arm.pattern,
+                    MirPattern::Wildcard | MirPattern::Literal(Literal::Int(_))
+                )
             }) {
                 return Err(MirVmUnsupported::UnsupportedExpr("Match (complex pattern)"));
             }
