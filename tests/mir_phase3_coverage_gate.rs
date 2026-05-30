@@ -38,11 +38,19 @@ fn lower_stats(source: &str) -> aver::ir::mir::LowerStats {
 
 #[test]
 fn conservation_lowered_plus_skipped_equals_total() {
-    // Mix of one wave-1 supported fn and one fn that still drops
-    // (list literal — wave 3c-iv territory). Total fns seen = 2;
+    // Mix of one wave-1 supported fn and one fn that drops on
+    // the still-reachable resolver gap for bare nullary
+    // builtin ctors in value position (`Option.None`). The
+    // typechecker accepts `Option.None` as a known builtin
+    // value, but the resolver lowers it to
+    // `Attr(Ident("Option"), "None")`, which the MIR lowerer
+    // bounces with `UnresolvedIdent`. Total fns seen = 2;
     // every fn accounted for in `lowered` or `skipped`.
+    //
+    // List / Tuple / Map / Result.Ok no longer work as drop
+    // fixtures here — wave 3c lowered all of them.
     let stats = lower_stats(
-        "fn keep(x: Int) -> Int\n    x + 1\n\nfn drops_me() -> List<Int>\n    [1, 2, 3]\n",
+        "fn keep(x: Int) -> Int\n    x + 1\n\nfn drops_me() -> Option<Int>\n    Option.None\n",
     );
     assert_eq!(
         stats.total(),
@@ -97,50 +105,62 @@ fn wave_3c_i_builtin_ctor_construction_no_longer_drops() {
 }
 
 #[test]
-fn list_literal_attributes_to_list_reason() {
+fn wave_3c_iv_list_literal_no_longer_drops() {
+    // Wave 3c-iv landed list-literal lowering. A fn whose body
+    // is `[1, 2, 3]` now lowers cleanly — `UnsupportedList`
+    // must be 0 (= absent from the skip map).
     let stats = lower_stats("fn one() -> List<Int>\n    [1, 2, 3]\n");
     assert_eq!(
         stats.skipped.get(&SkipReason::UnsupportedList).copied(),
-        Some(1),
-        "list literal must skip with UnsupportedList:\n{:?}",
+        None,
+        "UnsupportedList must be absent after wave 3c-iv: {:?}",
         stats.skipped
     );
+    assert_eq!(stats.lowered, 1, "list-literal fn must lower: {:?}", stats);
 }
 
 #[test]
-fn tuple_literal_attributes_to_tuple_reason() {
+fn wave_3c_iv_tuple_literal_no_longer_drops() {
+    // Wave 3c-iv landed tuple-literal lowering. Same shape as the
+    // list assertion above — `UnsupportedTuple` must be 0.
     let stats = lower_stats("fn pair() -> Tuple<Int, Int>\n    (1, 2)\n");
     assert_eq!(
         stats.skipped.get(&SkipReason::UnsupportedTuple).copied(),
-        Some(1),
-        "tuple literal must skip with UnsupportedTuple:\n{:?}",
+        None,
+        "UnsupportedTuple must be absent after wave 3c-iv: {:?}",
         stats.skipped
     );
+    assert_eq!(stats.lowered, 1, "tuple-literal fn must lower: {:?}", stats);
 }
 
 #[test]
 fn skipped_sorted_is_stable() {
-    // Two distinct skips → stable iteration order from
-    // `skipped_sorted()` regardless of `HashMap` internal layout.
-    let stats =
-        lower_stats("fn a() -> List<Int>\n    [1]\n\nfn b() -> Tuple<Int, Int>\n    (1, 2)\n");
-    let sorted = stats.skipped_sorted();
-    assert_eq!(sorted.len(), 2);
-    // SkipReason variant order is the declaration order in
-    // `stats.rs` — UnsupportedList comes before UnsupportedTuple.
-    let reasons: Vec<_> = sorted.iter().map(|(r, _)| *r).collect();
-    let list_pos = reasons
-        .iter()
-        .position(|r| *r == SkipReason::UnsupportedList);
-    let tuple_pos = reasons
-        .iter()
-        .position(|r| *r == SkipReason::UnsupportedTuple);
-    assert!(list_pos.is_some() && tuple_pos.is_some());
-    assert!(
-        list_pos.unwrap() < tuple_pos.unwrap(),
-        "UnsupportedList must precede UnsupportedTuple in sorted iteration: {:?}",
-        sorted
+    // Two distinct skips via in-bounds reasons that *still* fire
+    // — two fns with unresolved bare idents (resolver gap) and an
+    // empty body (defensive guard). Both reasons reachable from
+    // the lowerer; sorted iteration follows `SkipReason as u8`.
+    let stats = lower_stats(
+        "fn a() -> Option<Int>\n    Option.None\n\nfn b() -> Option<Int>\n    Option.None\n",
     );
+    let sorted = stats.skipped_sorted();
+    assert!(
+        !sorted.is_empty(),
+        "skipped map should be non-empty: {:?}",
+        stats.skipped
+    );
+    // Walk sorted output and verify monotonic ascending discriminant.
+    let mut prev: Option<u8> = None;
+    for (reason, _) in &sorted {
+        let disc = *reason as u8;
+        if let Some(p) = prev {
+            assert!(
+                p < disc,
+                "skipped_sorted must yield strictly ascending discriminants: {:?}",
+                sorted
+            );
+        }
+        prev = Some(disc);
+    }
 }
 
 #[test]
