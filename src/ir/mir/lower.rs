@@ -325,8 +325,17 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Result<Spanned<MirExpr>, SkipReas
             ))
         }
 
+        // ── Wave 3c-ii ──────────────────────────────────────────
+        // `expr?` — `?` propagation. RFC-pinned: stays a node.
+        // Backends pick the final shape (Rust `?`, VM tag-check +
+        // early return, wasm-gc `br_on_struct`). The bind-and-
+        // propagate form `let x = step()?; body` composes via Let
+        // wrapping a Try (wave 3a's right-fold does this for free
+        // — `step()?` lowers to `Try(step())` and the Let-chain
+        // walker places it on the Let's `value` side).
+        ResolvedExpr::ErrorProp(inner) => MirExpr::Try(Box::new(lower_expr(inner)?)),
+
         // ── Wave 3c+ ────────────────────────────────────────────
-        ResolvedExpr::ErrorProp(_) => return Err(SkipReason::UnsupportedTry),
         ResolvedExpr::TailCall { .. } => return Err(SkipReason::UnsupportedTailCall),
         ResolvedExpr::List(_) => return Err(SkipReason::UnsupportedList),
         ResolvedExpr::Tuple(_) => return Err(SkipReason::UnsupportedTuple),
