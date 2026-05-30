@@ -64,18 +64,24 @@ fn user_fn_call_lands_in_subset() {
 }
 
 #[test]
-fn complex_pattern_match_fn_falls_back_to_hir() {
-    // 4g-3 covers user-ctor patterns. To keep this test honest
-    // as the subset grows, use a Tuple pattern — still outside
-    // the subset (Phase 4g-5 territory).
+fn nested_tuple_pattern_falls_back_to_hir() {
+    // Phase 4g-5 covers flat Tuple patterns (Wildcard / Bind
+    // subpatterns). Nested structural subpatterns (Cons / Ctor
+    // inside a Tuple) still need HIR fallback — they require
+    // cleanup-jump emit logic deferred to a future sub-PR.
+    //
+    // Use `match (xs, n) { ([], _) -> 0; ([_, ..], 0) -> 1;
+    // _ -> 2 }` — the outer pattern is a Tuple whose first
+    // subpattern is EmptyList/Cons (nested non-flat), so the
+    // 4g-5 walker drops back to HIR.
     let mir = lower(
-        "fn double(x: Int) -> Int\n    x + x\n\nfn pair_sum(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a + b\n",
+        "fn double(x: Int) -> Int\n    x + x\n\nfn classify(p: Tuple<List<Int>, Int>) -> Int\n    match p\n        ([], _) -> 0\n        _ -> 1\n",
     );
     let cov = classify_mir_program_coverage(&mir);
     assert_eq!(cov.covered, 1, "double() in subset: {:?}", cov);
     assert_eq!(
         cov.needs_hir_fallback, 1,
-        "pair_sum() (Tuple pattern) needs HIR fallback: {:?}",
+        "classify() (nested tuple subpattern) needs HIR fallback: {:?}",
         cov
     );
 }
