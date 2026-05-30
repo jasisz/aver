@@ -367,9 +367,10 @@ pub(super) enum Commands {
     },
     /// Static module-shape analyzer: per-fn archetype + ModuleShape vector + Kind + nearest Layer.
     Shape {
-        /// File (.av) for single-module analysis. (Corpus / directory mode TBD.)
+        /// File (.av) for single-module analysis, or a directory to walk every `.av` underneath as a corpus.
+        #[arg(value_name = "PATH")]
         file: String,
-        /// Resolve `depends [...]` from this root (default: file's parent directory)
+        /// Resolve `depends [...]` from this root (default: current working directory)
         #[arg(long)]
         module_root: Option<String>,
         /// Per-file: collapse per-fn listing to ModuleShape + histogram only.

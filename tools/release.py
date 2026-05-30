@@ -246,7 +246,7 @@ def regenerate_playground(dry_run: bool) -> None:
     # `rebuild_playground.py` restores the wasm-capable aver bin
     # itself after `wasm-pack` invalidates cargo's feature cache
     # (the script's `main` re-runs `cargo build --release --bin aver
-    // --features wasm` between `build_compiler` and `build_wasm`).
+    # --features wasm` between `build_compiler` and `build_wasm`).
     # Pre-build once so the wasm-pack invocation has a warm cache
     # to invalidate — saves a few minutes on cold runs.
     run(["cargo", "build", "--release", "--bin", "aver", "--features", "wasm"])
