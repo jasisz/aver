@@ -269,7 +269,6 @@ pub(super) fn compile_mir_expr(
         MirExpr::Match(_) => Err(MirVmUnsupported::UnsupportedExpr("Match")),
         MirExpr::RecordCreate(_) => Err(MirVmUnsupported::UnsupportedExpr("RecordCreate")),
         MirExpr::RecordUpdate(_) => Err(MirVmUnsupported::UnsupportedExpr("RecordUpdate")),
-        MirExpr::Try(_) => Err(MirVmUnsupported::UnsupportedExpr("Try")),
         MirExpr::List(_) => Err(MirVmUnsupported::UnsupportedExpr("List")),
         MirExpr::Tuple(_) => Err(MirVmUnsupported::UnsupportedExpr("Tuple")),
         MirExpr::MapLiteral(_) => Err(MirVmUnsupported::UnsupportedExpr("MapLiteral")),
