@@ -1451,12 +1451,18 @@ body {
 /* ── Shape section (0.23) ─────────────────────────────────────────── */
 
 .shape-vector {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 2px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
     margin: 6px 0 8px;
     font-family: var(--mono);
     font-size: 0.85em;
+}
+.shape-vec-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 12px;
+    align-items: baseline;
 }
 .shape-vec-key { color: var(--fg-dim); }
 .shape-vec-val { color: var(--fg); }
@@ -1509,10 +1515,16 @@ body {
     padding: 4px 0;
 }
 .shape-fns-list {
-    display: grid;
-    grid-template-columns: minmax(120px, max-content) 1fr;
-    gap: 1px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
     padding: 4px 0 0 8px;
+}
+.shape-fn-row {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 12px;
+    align-items: baseline;
 }
 .shape-fn-name { color: var(--fg); }
 .shape-fn-labels { color: var(--fg-dim); }
