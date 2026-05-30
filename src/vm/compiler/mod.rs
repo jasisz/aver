@@ -1,6 +1,7 @@
 mod calls;
 mod classify;
 mod expr;
+pub mod mir;
 mod patterns;
 
 use std::collections::HashMap;

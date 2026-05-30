@@ -11,6 +11,15 @@ mod types;
 pub use compiler::{
     compile_program, compile_program_with_loaded_modules, compile_program_with_modules,
 };
+/// Phase 4 of #252 — MIR vertical slice for the VM. Re-exported
+/// so tests + future external consumers can reach
+/// `classify_mir_program_coverage` without making the full
+/// `vm::compiler` module public.
+pub mod mir_vm {
+    pub use super::compiler::mir::{
+        MirVmCoverage, MirVmUnsupported, classify_mir_program_coverage,
+    };
+}
 pub use execute::VM;
 pub use opcode::opcode_name;
 pub use profile::{
