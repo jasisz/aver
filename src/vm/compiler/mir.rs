@@ -400,12 +400,7 @@ pub(super) fn compile_mir_expr(
         //   end:
         MirExpr::Match(spanned_match) => {
             let m = &spanned_match.node;
-            if !m.arms.iter().all(|arm| {
-                matches!(
-                    &arm.pattern,
-                    MirPattern::Wildcard | MirPattern::Literal(Literal::Int(_))
-                )
-            }) {
+            if !m.arms.iter().all(|arm| pattern_in_4g_subset(&arm.pattern)) {
                 return Err(MirVmUnsupported::UnsupportedExpr("Match (complex pattern)"));
             }
             compile_mir_expr(fc, &m.subject)?;
@@ -415,23 +410,21 @@ pub(super) fn compile_mir_expr(
             for (i, arm) in m.arms.iter().enumerate() {
                 let is_last = i == last_idx;
                 let fail_patch: Option<usize> = if is_last {
+                    // Last arm — exhaustive, no pattern check.
+                    // Cons bindings must still be extracted
+                    // unconditionally (the value is on the
+                    // stack, we know the shape matches).
+                    if let MirPattern::Cons { head, tail } = &arm.pattern {
+                        fc.emit_op(DUP);
+                        fc.emit_op(LIST_HEAD_TAIL);
+                        fc.emit_op(STORE_LOCAL);
+                        fc.emit_u8(head.0 as u8);
+                        fc.emit_op(STORE_LOCAL);
+                        fc.emit_u8(tail.0 as u8);
+                    }
                     None
                 } else {
-                    match &arm.pattern {
-                        MirPattern::Wildcard => None,
-                        MirPattern::Literal(Literal::Int(v)) => {
-                            fc.emit_op(MATCH_INT_LITERAL);
-                            fc.emit_i64(*v);
-                            let patch = fc.offset();
-                            fc.emit_i16(0);
-                            Some(patch)
-                        }
-                        // Filtered by the preflight check above —
-                        // any other variant would have returned
-                        // `UnsupportedExpr` before we reached
-                        // here.
-                        _ => unreachable!("Phase 4g-1 preflight guarantees Wildcard|Literal(Int)"),
-                    }
+                    emit_pattern_check(fc, &arm.pattern)?
                 };
                 fc.emit_op(POP);
                 compile_mir_expr(fc, &arm.body)?;
@@ -522,18 +515,72 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::RecordUpdate(ru) => {
             can_compile(&ru.node.base) && ru.node.updates.iter().all(|f| can_compile(&f.value))
         }
-        // Phase 4g-1: match with Wildcard + Literal(Int) arms only.
+        // Phase 4g-1/2: match with Wildcard + Literal(Int) + Cons + EmptyList arms.
         MirExpr::Match(m) => {
             can_compile(&m.node.subject)
-                && m.node.arms.iter().all(|arm| {
-                    let pattern_ok = matches!(
-                        &arm.pattern,
-                        MirPattern::Wildcard | MirPattern::Literal(Literal::Int(_))
-                    );
-                    pattern_ok && can_compile(&arm.body)
-                })
+                && m.node
+                    .arms
+                    .iter()
+                    .all(|arm| pattern_in_4g_subset(&arm.pattern) && can_compile(&arm.body))
         }
         _ => false,
+    }
+}
+
+/// Phase 4g preflight + can_compile — pattern variants the
+/// MIR Match walker handles. Wildcard / Literal(Int) (4g-1),
+/// Cons + EmptyList (4g-2). Further variants land in 4g-3+.
+fn pattern_in_4g_subset(p: &MirPattern) -> bool {
+    matches!(
+        p,
+        MirPattern::Wildcard
+            | MirPattern::Literal(Literal::Int(_))
+            | MirPattern::Cons { .. }
+            | MirPattern::EmptyList
+    )
+}
+
+/// Emit the pattern check for a non-last arm. Returns the
+/// `fail_offset` patch position the caller will fill in to
+/// point at the next arm's start (or `None` when the pattern
+/// always matches — currently just `Wildcard`).
+fn emit_pattern_check(
+    fc: &mut FnCompiler<'_>,
+    pattern: &MirPattern,
+) -> Result<Option<usize>, MirVmUnsupported> {
+    match pattern {
+        MirPattern::Wildcard => Ok(None),
+        MirPattern::Literal(Literal::Int(v)) => {
+            fc.emit_op(MATCH_INT_LITERAL);
+            fc.emit_i64(*v);
+            let patch = fc.offset();
+            fc.emit_i16(0);
+            Ok(Some(patch))
+        }
+        MirPattern::EmptyList => {
+            fc.emit_op(MATCH_NIL);
+            let patch = fc.offset();
+            fc.emit_i16(0);
+            Ok(Some(patch))
+        }
+        MirPattern::Cons { head, tail } => {
+            fc.emit_op(MATCH_CONS);
+            let patch = fc.offset();
+            fc.emit_i16(0);
+            // Successful match: extract head/tail and bind into
+            // the resolver-assigned slots. The HIR walker does
+            // the same shape; MIR's `LocalId` directly carries
+            // the slot.
+            fc.emit_op(DUP);
+            fc.emit_op(LIST_HEAD_TAIL);
+            fc.emit_op(STORE_LOCAL);
+            fc.emit_u8(head.0 as u8);
+            fc.emit_op(STORE_LOCAL);
+            fc.emit_u8(tail.0 as u8);
+            Ok(Some(patch))
+        }
+        // Preflight in the caller filters everything else out.
+        _ => unreachable!("Phase 4g subset preflight should have filtered this out"),
     }
 }
 

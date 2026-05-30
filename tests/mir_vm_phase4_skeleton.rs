@@ -64,17 +64,18 @@ fn user_fn_call_lands_in_subset() {
 }
 
 #[test]
-fn match_fn_falls_back_to_hir() {
-    // `match` is outside the Phase 4 subset — the fn will need
-    // HIR fallback. The classifier should bucket it correctly.
+fn complex_pattern_match_fn_falls_back_to_hir() {
+    // 4g-2 covers Cons + EmptyList. To keep this test honest as
+    // the subset grows, use a `Ctor` pattern which is still
+    // outside the subset (Phase 4g-3 territory).
     let mir = lower(
-        "fn double(x: Int) -> Int\n    x + x\n\nfn first(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h\n",
+        "fn double(x: Int) -> Int\n    x + x\n\ntype Shape\n  Circle(Int)\n  Square(Int)\n\nfn area(s: Shape) -> Int\n    match s\n        Shape.Circle(r) -> r\n        Shape.Square(side) -> side\n",
     );
     let cov = classify_mir_program_coverage(&mir);
     assert_eq!(cov.covered, 1, "double() in subset: {:?}", cov);
     assert_eq!(
         cov.needs_hir_fallback, 1,
-        "first() (match) needs HIR fallback: {:?}",
+        "area() (Ctor pattern) needs HIR fallback: {:?}",
         cov
     );
 }

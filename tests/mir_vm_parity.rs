@@ -411,6 +411,41 @@ fn match_complex_pattern_falls_back_to_hir() {
 }
 
 #[test]
+fn match_cons_emptylist_runtime_parity() {
+    // Phase 4g-2 — `match xs { [] -> 0; [h, ..t] -> h }`.
+    // Runtime must agree on both branches across HIR vs
+    // MIR-fallback paths. We can't pass a `List<Int>` directly
+    // via `run_named_function` (NanValue arg encoding for
+    // lists isn't trivial from tests), so we drive it through
+    // an Int-returning fn that constructs the list inline.
+    let src = "fn head_or_zero(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h\n\nfn check_empty(_dummy: Int) -> Int\n    head_or_zero([])\n\nfn check_cons(_dummy: Int) -> Int\n    head_or_zero([42, 7, 3])\n";
+    let hir_empty = run_via_path(src, "check_empty", &[0], Path::Hir);
+    let mir_empty = run_via_path(src, "check_empty", &[0], Path::MirFallback);
+    assert_eq!(hir_empty, mir_empty);
+    assert_eq!(hir_empty, Value::Int(0));
+
+    let hir_cons = run_via_path(src, "check_cons", &[0], Path::Hir);
+    let mir_cons = run_via_path(src, "check_cons", &[0], Path::MirFallback);
+    assert_eq!(hir_cons, mir_cons);
+    assert_eq!(hir_cons, Value::Int(42));
+}
+
+#[test]
+fn match_ctor_pattern_still_falls_back_to_hir() {
+    // 4g-2 explicitly does NOT cover Ctor patterns; those still
+    // ride HIR fallback. Test the fn still appears in the
+    // chunks (compile_program_with_mir_fallback dispatches
+    // correctly).
+    let src = "type Shape\n  Circle(Int)\n  Square(Int)\n\nfn area(s: Shape) -> Int\n    match s\n        Shape.Circle(r) -> r\n        Shape.Square(side) -> side\n";
+    let (hir, mir) = compile_both(src);
+    assert!(hir.find("area").is_some(), "area in HIR chunks");
+    assert!(
+        mir.find("area").is_some(),
+        "area still in MIR-path chunks via HIR fallback"
+    );
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output
