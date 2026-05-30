@@ -239,6 +239,29 @@ fn proof_dafny_verifies_fibonacci_when_dafny_is_available() {
 }
 
 #[test]
+fn proof_dafny_verifies_sum_acc_when_dafny_is_available() {
+    // Stage 8 of #232: `ProofStrategy::WrapperOverRecursion` closes
+    // the `sum(xs) == sumDirect(xs)` law on the `sum_acc` example by
+    // emitting an accumulator-decomposition aux lemma plus the main
+    // universal lemma. Both close in Z3 via list induction —
+    // demonstrates the first real consumer of the
+    // `analysis::shape::ModulePattern::WrapperOverRecursion` typed
+    // pattern. Regression guard: if a future change disables the
+    // strategy or breaks the aux template, this lemma falls back to
+    // naive induction and Dafny reports 1 error.
+    assert_dafny_verifies("examples/data/sum_acc.av", "aver-dafny-sum-acc");
+}
+
+#[test]
+fn proof_export_builds_sum_acc_when_lake_is_available() {
+    // Lean side still emits `sorry` on the universal proof — the
+    // Lean template for `WrapperOverRecursion` is a planned
+    // follow-up. Per-sample lemmas (`_sample_N`) verify on the
+    // declared domain via `native_decide`.
+    assert_proof_builds_with_sorry_budget("examples/data/sum_acc.av", "aver-proof-sum-acc", 1);
+}
+
+#[test]
 fn proof_export_builds_rle_when_lake_is_available() {
     // Two sampled-domain laws (encodeString / decodeString roundtrip
     // shapes) hit the universal-not-auto-proved fallback. Same gate

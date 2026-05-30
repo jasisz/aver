@@ -629,6 +629,30 @@ pub enum ProofStrategy {
     /// Bounded universal: case-split over the declared `given`
     /// domain, dispatch each case to a per-sample lemma.
     BoundedUniversal,
+    /// Monoidal-accumulator wrapper-over-recursion: a non-recursive
+    /// `wrapper_fn(xs) = inner_fn(xs, neutral)` paired with a direct-
+    /// recurrence `other_fn` such that the law states
+    /// `wrapper_fn(xs) == other_fn(xs)`. The inner fn has shape
+    /// `match xs { [] -> acc; [h, ..t] -> inner_fn(t, acc <op> h) }`
+    /// where `<op>` is monoidal (`Add` / `Mul` / `Sub` on Int) with
+    /// known neutral element. Strategy emits an aux accumulator-
+    /// decomposition lemma plus the main universal lemma; Z3 closes
+    /// both via list induction. Demonstrated by `examples/data/sum_acc.av`.
+    ///
+    /// Stage 8 of #232 — first ProofStrategy variant that consumes
+    /// a `ModulePattern` from `analysis::shape`.
+    WrapperOverRecursion {
+        /// Source name of the non-recursive wrapper (e.g. `"sum"`).
+        wrapper_fn: String,
+        /// Source name of the self-recursive inner (e.g. `"sumTR"`).
+        inner_fn: String,
+        /// Source name of the direct-recurrence fn the law compares
+        /// the wrapper against (e.g. `"sumDirect"`).
+        other_fn: String,
+        /// Binary op the inner threads through its accumulator
+        /// (`Add` / `Mul` / `Sub`). Drives the aux lemma's RHS.
+        combine_op: crate::ast::BinOp,
+    },
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,
