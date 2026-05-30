@@ -29,9 +29,10 @@
 //! IndependentProduct) returns `Err(MirVmUnsupported)` so the
 //! caller can fall back to HIR compilation for that fn.
 
+use crate::ast::Literal;
 use crate::ast::Spanned;
 use crate::ir::hir::BuiltinCtor;
-use crate::ir::mir::{MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirProgram};
+use crate::ir::mir::{MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirPattern, MirProgram};
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
@@ -377,9 +378,76 @@ pub(super) fn compile_mir_expr(
             Ok(())
         }
 
-        // Phase 4 subset boundary — everything else falls back.
-        // Match: large pattern walker — separate Phase 4g.
-        MirExpr::Match(_) => Err(MirVmUnsupported::UnsupportedExpr("Match")),
+        // ── Phase 4g-1: match with Wildcard + Literal(Int) arms ──
+        // The HIR walker's `compile_match` is 756 lines and
+        // includes fast-paths (MATCH_DISPATCH_CONST, bool-branch
+        // optimization) we don't replicate here. This sub-PR
+        // handles the smallest reviewable subset: arm patterns
+        // restricted to `Wildcard` and `Literal(Int)`. Any other
+        // pattern variant in any arm falls back to HIR.
+        //
+        // Emit shape (linear fallback, mirrors HIR's tail of
+        // `compile_match`):
+        //   <subject>
+        //   per arm (except last):
+        //     [MATCH_INT_LITERAL imm fail]  // skipped for Wildcard
+        //     POP
+        //     <body>
+        //     JUMP end
+        //     fail: <next arm>
+        //   last arm: skip pattern check entirely (exhaustive),
+        //             POP, <body>
+        //   end:
+        MirExpr::Match(spanned_match) => {
+            let m = &spanned_match.node;
+            if !m.arms.iter().all(|arm| {
+                matches!(
+                    &arm.pattern,
+                    MirPattern::Wildcard | MirPattern::Literal(Literal::Int(_))
+                )
+            }) {
+                return Err(MirVmUnsupported::UnsupportedExpr("Match (complex pattern)"));
+            }
+            compile_mir_expr(fc, &m.subject)?;
+
+            let mut end_jumps: Vec<usize> = Vec::new();
+            let last_idx = m.arms.len() - 1;
+            for (i, arm) in m.arms.iter().enumerate() {
+                let is_last = i == last_idx;
+                let fail_patch: Option<usize> = if is_last {
+                    None
+                } else {
+                    match &arm.pattern {
+                        MirPattern::Wildcard => None,
+                        MirPattern::Literal(Literal::Int(v)) => {
+                            fc.emit_op(MATCH_INT_LITERAL);
+                            fc.emit_i64(*v);
+                            let patch = fc.offset();
+                            fc.emit_i16(0);
+                            Some(patch)
+                        }
+                        // Filtered by the preflight check above —
+                        // any other variant would have returned
+                        // `UnsupportedExpr` before we reached
+                        // here.
+                        _ => unreachable!("Phase 4g-1 preflight guarantees Wildcard|Literal(Int)"),
+                    }
+                };
+                fc.emit_op(POP);
+                compile_mir_expr(fc, &arm.body)?;
+                if !is_last {
+                    end_jumps.push(fc.emit_jump(JUMP));
+                    if let Some(patch) = fail_patch {
+                        let next_arm_start = fc.offset();
+                        fc.patch_jump_to(patch, next_arm_start);
+                    }
+                }
+            }
+            for patch in end_jumps {
+                fc.patch_jump(patch);
+            }
+            Ok(())
+        }
         MirExpr::MapLiteral(_) => Err(MirVmUnsupported::UnsupportedExpr("MapLiteral")),
         MirExpr::InterpolatedStr(_) => Err(MirVmUnsupported::UnsupportedExpr("InterpolatedStr")),
         MirExpr::IndependentProduct(_) => {
@@ -453,6 +521,17 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::RecordCreate(rc) => rc.node.fields.iter().all(|f| can_compile(&f.value)),
         MirExpr::RecordUpdate(ru) => {
             can_compile(&ru.node.base) && ru.node.updates.iter().all(|f| can_compile(&f.value))
+        }
+        // Phase 4g-1: match with Wildcard + Literal(Int) arms only.
+        MirExpr::Match(m) => {
+            can_compile(&m.node.subject)
+                && m.node.arms.iter().all(|arm| {
+                    let pattern_ok = matches!(
+                        &arm.pattern,
+                        MirPattern::Wildcard | MirPattern::Literal(Literal::Int(_))
+                    );
+                    pattern_ok && can_compile(&arm.body)
+                })
         }
         _ => false,
     }
