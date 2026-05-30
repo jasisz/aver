@@ -1447,3 +1447,72 @@ body {
         display: none;
     }
 }
+
+/* ── Shape section (0.23) ─────────────────────────────────────────── */
+
+.shape-vector {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 2px 12px;
+    margin: 6px 0 8px;
+    font-family: var(--mono);
+    font-size: 0.85em;
+}
+.shape-vec-key { color: var(--fg-dim); }
+.shape-vec-val { color: var(--fg); }
+
+.shape-kind-rule {
+    font-size: 0.85em;
+    color: var(--fg-dim);
+    margin: 4px 0 10px;
+    font-style: italic;
+}
+
+.shape-section-subtitle {
+    font-weight: 600;
+    font-size: 0.85em;
+    color: var(--fg);
+    margin: 12px 0 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.shape-histogram { font-family: var(--mono); font-size: 0.82em; }
+.shape-hist-row {
+    display: grid;
+    grid-template-columns: minmax(120px, max-content) 1fr max-content max-content;
+    align-items: center;
+    gap: 6px;
+    padding: 1px 0;
+}
+.shape-hist-name { color: var(--fg); }
+.shape-hist-bar {
+    height: 8px;
+    background: var(--accent, #06b6d4);
+    border-radius: 2px;
+    display: inline-block;
+    min-width: 4px;
+}
+.shape-hist-pct { color: #eab308; text-align: right; }
+.shape-hist-count { color: var(--fg-dim); }
+
+.shape-patterns { font-family: var(--mono); font-size: 0.85em; }
+.shape-pattern-line { padding: 2px 0; display: flex; gap: 10px; flex-wrap: wrap; }
+.shape-pattern-kind { color: #d946ef; font-weight: 600; min-width: 200px; }
+.shape-pattern-target { color: var(--fg); font-weight: 600; }
+.shape-pattern-meta { color: var(--fg-dim); }
+
+.shape-fns-details { margin-top: 10px; font-family: var(--mono); font-size: 0.82em; }
+.shape-fns-details summary {
+    cursor: pointer;
+    color: var(--fg-dim);
+    padding: 4px 0;
+}
+.shape-fns-list {
+    display: grid;
+    grid-template-columns: minmax(120px, max-content) 1fr;
+    gap: 1px 12px;
+    padding: 4px 0 0 8px;
+}
+.shape-fn-name { color: var(--fg); }
+.shape-fn-labels { color: var(--fg-dim); }

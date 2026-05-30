@@ -3635,6 +3635,138 @@ function renderVerifySection(data, actions) {
     });
 }
 
+// Render `aver shape` JSON as the 4th audit section. Same shape as
+// the CLI `--json` output: vector + Kind + histogram + Layer +
+// per-fn archetype labels + module patterns. Folded by default;
+// summary line shows `Kind · Layer (confidence)` so the most useful
+// at-a-glance recognition stays visible without expanding.
+function renderShapeSection(shapeData, actions) {
+    const kindName = shapeData?.kind?.name || "Unknown";
+    const layerName = shapeData?.layer?.name || "—";
+    const conf = shapeData?.layer?.confidence != null
+        ? shapeData.layer.confidence.toFixed(2)
+        : null;
+    const layerLabel = conf != null ? `${layerName} (${conf})` : layerName;
+    const teaching = "Module shape vector + derived Kind, histogram of fn archetypes, Layer fingerprint, module patterns. Same payload as `aver shape --json`.";
+
+    const extras = (body) => {
+        // 5-axis vector + Kind rule
+        const vec = shapeData?.vector || {};
+        const vecBox = document.createElement("div");
+        vecBox.className = "shape-vector";
+        const fields = [
+            ["purity", vec.purity],
+            ["entry", vec.entry],
+            ["state_shape", vec.state_shape],
+            ["type_surface", vec.type_surface],
+            ["api_shape", vec.api_shape],
+        ];
+        for (const [k, v] of fields) {
+            if (v == null) continue;
+            const row = document.createElement("div");
+            row.className = "shape-vec-row";
+            row.innerHTML = `<span class="shape-vec-key">${k}</span><span class="shape-vec-val">${v}</span>`;
+            vecBox.appendChild(row);
+        }
+        body.appendChild(vecBox);
+
+        if (shapeData?.kind?.rule) {
+            const rule = document.createElement("div");
+            rule.className = "shape-kind-rule";
+            rule.textContent = `Kind ${kindName}: ${shapeData.kind.rule}`;
+            body.appendChild(rule);
+        }
+
+        // Histogram bars
+        const hist = shapeData?.histogram?.counts || {};
+        const totalFns = shapeData?.histogram?.total_fns || 0;
+        const entries = Object.entries(hist).sort((a, b) => b[1] - a[1]);
+        if (entries.length > 0) {
+            const histTitle = document.createElement("div");
+            histTitle.className = "shape-section-subtitle";
+            histTitle.textContent = `Histogram (${totalFns} fns)`;
+            body.appendChild(histTitle);
+            const histBox = document.createElement("div");
+            histBox.className = "shape-histogram";
+            for (const [arche, count] of entries) {
+                const pct = totalFns > 0 ? (count / totalFns) * 100 : 0;
+                const row = document.createElement("div");
+                row.className = "shape-hist-row";
+                const bar = document.createElement("span");
+                bar.className = "shape-hist-bar";
+                bar.style.width = `${Math.max(pct, 2)}%`;
+                row.innerHTML = `<span class="shape-hist-name">${arche}</span>`;
+                row.appendChild(bar);
+                row.insertAdjacentHTML("beforeend", `<span class="shape-hist-pct">${pct.toFixed(0)}%</span><span class="shape-hist-count">(${count})</span>`);
+                histBox.appendChild(row);
+            }
+            body.appendChild(histBox);
+        }
+
+        // Module patterns
+        const patterns = shapeData?.patterns || [];
+        if (patterns.length > 0) {
+            const patTitle = document.createElement("div");
+            patTitle.className = "shape-section-subtitle";
+            patTitle.textContent = "Module patterns";
+            body.appendChild(patTitle);
+            const patBox = document.createElement("div");
+            patBox.className = "shape-patterns";
+            for (const p of patterns) {
+                const line = document.createElement("div");
+                line.className = "shape-pattern-line";
+                let summary = `<span class="shape-pattern-kind">${p.kind}</span>`;
+                if (p.kind === "RefinementSmartConstructor") {
+                    summary += `<span class="shape-pattern-target">${p.type_name}(${p.carrier_field}: ${p.carrier_type})</span><span class="shape-pattern-meta">via ${p.constructor_fn}</span>`;
+                } else if (p.kind === "WrapperOverRecursion") {
+                    summary += `<span class="shape-pattern-target">${p.wrapper_fn} → ${p.inner_fn}</span>`;
+                } else if (p.kind === "ResultPipelineChain") {
+                    summary += `<span class="shape-pattern-target">${p.fn_name}</span><span class="shape-pattern-meta">${p.step_count} steps</span>`;
+                } else if (p.kind === "RendererFormatter") {
+                    summary += `<span class="shape-pattern-target">${p.fn_name}</span>`;
+                } else if (p.kind === "MatchDispatcherFold") {
+                    summary += `<span class="shape-pattern-target">${p.fn_name}</span><span class="shape-pattern-meta">over ${p.list_param}</span>`;
+                }
+                line.innerHTML = summary;
+                patBox.appendChild(line);
+            }
+            body.appendChild(patBox);
+        }
+
+        // Per-fn archetype list (collapsible)
+        const fns = shapeData?.fns || [];
+        if (fns.length > 0) {
+            const fnsDetails = document.createElement("details");
+            fnsDetails.className = "shape-fns-details";
+            const fnsSummary = document.createElement("summary");
+            fnsSummary.textContent = `Functions (${fns.length})`;
+            fnsDetails.appendChild(fnsSummary);
+            const fnsList = document.createElement("div");
+            fnsList.className = "shape-fns-list";
+            for (const f of fns) {
+                const row = document.createElement("div");
+                row.className = "shape-fn-row";
+                const labels = (f.labels || []).join(", ") || "unclassified";
+                row.innerHTML = `<span class="shape-fn-name">${f.name}</span><span class="shape-fn-labels">${labels}</span>`;
+                fnsList.appendChild(row);
+            }
+            fnsDetails.appendChild(fnsList);
+            body.appendChild(fnsDetails);
+        }
+    };
+
+    return buildSection({
+        key: "shape",
+        label: "Shape — module recognition",
+        status: "pass",
+        statusText: "✓",
+        countText: `${kindName} · ${layerLabel}`,
+        teaching,
+        actions,
+        extras,
+    });
+}
+
 function renderFormatSection(data, actions) {
     const { formatIssues } = data;
     const needsFormat = formatIssues.length > 0;
@@ -3671,6 +3803,16 @@ async function rerunAuditSection(key) {
             replacement = renderVerifySection(data, sectionActions("verify"));
         } else if (key === "format") {
             replacement = renderFormatSection(data, sectionActions("format"));
+        } else if (key === "shape") {
+            try {
+                const shapeJson = runAnalysis(comp, "shape", source);
+                const shapeData = JSON.parse(shapeJson);
+                if (!shapeData.error) {
+                    replacement = renderShapeSection(shapeData, sectionActions("shape"));
+                }
+            } catch (_) {
+                // Non-fatal.
+            }
         }
         // Preserve prior open/closed state on the section being replaced.
         if (replacement) {
@@ -3840,6 +3982,19 @@ if (auditBtn) {
             panel.appendChild(renderStaticSection(data, sectionActions("static")));
             panel.appendChild(renderVerifySection(data, sectionActions("verify")));
             panel.appendChild(renderFormatSection(data, sectionActions("format")));
+
+            // Shape recognition section (0.23): same payload as
+            // `aver shape --json`. Best-effort — failures don't break
+            // the rest of the audit panel.
+            try {
+                const shapeJson = runAnalysis(comp, "shape", source);
+                const shapeData = JSON.parse(shapeJson);
+                if (!shapeData.error) {
+                    panel.appendChild(renderShapeSection(shapeData, sectionActions("shape")));
+                }
+            } catch (_) {
+                // Shape failure is non-fatal for the panel.
+            }
 
             dom.console.appendChild(panel);
 
