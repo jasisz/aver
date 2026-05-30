@@ -327,6 +327,57 @@ fn corpus_hello_smoke_mir_walker_covers_it() {
 }
 
 #[test]
+fn list_literal_bytecode_parity() {
+    let (hir, mir) = compile_both("fn nums() -> List<Int>\n    [1, 2, 3]\n");
+    let hir_fn = hir.get(hir.find("nums").expect("nums in HIR"));
+    let mir_fn = mir.get(mir.find("nums").expect("nums in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "LIST_NEW emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn empty_list_bytecode_parity() {
+    let (hir, mir) = compile_both("fn empty() -> List<Int>\n    []\n");
+    let hir_fn = hir.get(hir.find("empty").expect("empty in HIR"));
+    let mir_fn = mir.get(mir.find("empty").expect("empty in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "LIST_NIL emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn tuple_literal_bytecode_parity() {
+    let (hir, mir) = compile_both("fn pair() -> Tuple<Int, Int>\n    (1, 2)\n");
+    let hir_fn = hir.get(hir.find("pair").expect("pair in HIR"));
+    let mir_fn = mir.get(mir.find("pair").expect("pair in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "TUPLE_NEW emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn record_create_bytecode_parity() {
+    // Field order follows declaration order in `get_field_names`,
+    // identical between HIR and MIR paths.
+    let (hir, mir) =
+        compile_both("record P\n  x: Int\n  y: Int\n\nfn makeP() -> P\n    P(x = 1, y = 2)\n");
+    let hir_fn = hir.get(hir.find("makeP").expect("makeP in HIR"));
+    let mir_fn = mir.get(mir.find("makeP").expect("makeP in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "RECORD_NEW emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output

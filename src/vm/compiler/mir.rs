@@ -286,12 +286,100 @@ pub(super) fn compile_mir_expr(
             Ok(())
         }
 
+        // ── Phase 4f: record + list + tuple builders ────────────
+        MirExpr::List(items) => {
+            if items.is_empty() {
+                fc.emit_op(LIST_NIL);
+                return Ok(());
+            }
+            for item in items {
+                compile_mir_expr(fc, item)?;
+            }
+            fc.emit_op(LIST_NEW);
+            fc.emit_u8(items.len() as u8);
+            Ok(())
+        }
+        MirExpr::Tuple(items) => {
+            for item in items {
+                compile_mir_expr(fc, item)?;
+            }
+            fc.emit_op(TUPLE_NEW);
+            fc.emit_u8(items.len() as u8);
+            Ok(())
+        }
+        MirExpr::RecordCreate(spanned_rc) => {
+            let rc = &spanned_rc.node;
+            // Resolve TypeId → canonical name → arena type id +
+            // field order. Same path the HIR walker takes; MIR
+            // carries the `TypeId` already, so we just look up
+            // the canonical name to ask the arena for the type
+            // metadata (the arena's field order is the
+            // declaration order, which is what RECORD_NEW
+            // expects on the stack).
+            let qualified_type_name = fc.canonical_type_name(rc.type_id)?;
+            let arena_type_id = fc.resolve_type_id(&qualified_type_name).ok_or_else(|| {
+                MirVmUnsupported::InnerError(CompileError {
+                    msg: format!(
+                        "MIR-VM: unknown arena type `{qualified_type_name}` for \
+                         RecordCreate (TypeId={:?})",
+                        rc.type_id
+                    ),
+                })
+            })?;
+            let field_names = fc.arena.get_field_names(arena_type_id).to_vec();
+            // Push fields in declared order.
+            for expected_name in &field_names {
+                let field = rc.fields.iter().find(|f| f.name == *expected_name).ok_or_else(
+                    || {
+                        MirVmUnsupported::InnerError(CompileError {
+                            msg: format!(
+                                "MIR-VM: missing field `{expected_name}` in record `{qualified_type_name}`"
+                            ),
+                        })
+                    },
+                )?;
+                compile_mir_expr(fc, &field.value)?;
+            }
+            fc.emit_op(RECORD_NEW);
+            fc.emit_u16(arena_type_id as u16);
+            fc.emit_u8(field_names.len() as u8);
+            Ok(())
+        }
+        MirExpr::RecordUpdate(spanned_ru) => {
+            let ru = &spanned_ru.node;
+            let qualified_type_name = fc.canonical_type_name(ru.type_id)?;
+            let arena_type_id = fc.resolve_type_id(&qualified_type_name).ok_or_else(|| {
+                MirVmUnsupported::InnerError(CompileError {
+                    msg: format!(
+                        "MIR-VM: unknown arena type `{qualified_type_name}` for \
+                         RecordUpdate (TypeId={:?})",
+                        ru.type_id
+                    ),
+                })
+            })?;
+            let field_names = fc.arena.get_field_names(arena_type_id).to_vec();
+            let mut updated_indices = Vec::with_capacity(ru.updates.len());
+
+            compile_mir_expr(fc, &ru.base)?;
+
+            for (field_idx, field_name) in field_names.iter().enumerate() {
+                if let Some(field) = ru.updates.iter().find(|f| f.name == *field_name) {
+                    compile_mir_expr(fc, &field.value)?;
+                    updated_indices.push(field_idx as u8);
+                }
+            }
+            fc.emit_op(RECORD_UPDATE);
+            fc.emit_u16(arena_type_id as u16);
+            fc.emit_u8(updated_indices.len() as u8);
+            for idx in updated_indices {
+                fc.emit_u8(idx);
+            }
+            Ok(())
+        }
+
         // Phase 4 subset boundary — everything else falls back.
+        // Match: large pattern walker — separate Phase 4g.
         MirExpr::Match(_) => Err(MirVmUnsupported::UnsupportedExpr("Match")),
-        MirExpr::RecordCreate(_) => Err(MirVmUnsupported::UnsupportedExpr("RecordCreate")),
-        MirExpr::RecordUpdate(_) => Err(MirVmUnsupported::UnsupportedExpr("RecordUpdate")),
-        MirExpr::List(_) => Err(MirVmUnsupported::UnsupportedExpr("List")),
-        MirExpr::Tuple(_) => Err(MirVmUnsupported::UnsupportedExpr("Tuple")),
         MirExpr::MapLiteral(_) => Err(MirVmUnsupported::UnsupportedExpr("MapLiteral")),
         MirExpr::InterpolatedStr(_) => Err(MirVmUnsupported::UnsupportedExpr("InterpolatedStr")),
         MirExpr::IndependentProduct(_) => {
@@ -359,6 +447,13 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         // Phase 4d additions:
         MirExpr::Try(inner) => can_compile(inner),
         MirExpr::TailCall(t) => t.node.args.iter().all(can_compile),
+        // Phase 4f additions:
+        MirExpr::List(items) => items.iter().all(can_compile),
+        MirExpr::Tuple(items) => items.iter().all(can_compile),
+        MirExpr::RecordCreate(rc) => rc.node.fields.iter().all(|f| can_compile(&f.value)),
+        MirExpr::RecordUpdate(ru) => {
+            can_compile(&ru.node.base) && ru.node.updates.iter().all(|f| can_compile(&f.value))
+        }
         _ => false,
     }
 }
