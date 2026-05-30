@@ -57,13 +57,18 @@ fn lowers_neg_over_int_literal() {
 
 #[test]
 fn drops_unsupported_fn_silently() {
-    // List literal isn't covered by wave 1, so this fn shouldn't
-    // appear in `MirProgram.fns`. The lowerer must not panic; it
-    // just leaves the fn out and wave 2/3 will pick it up.
-    let dump = lower("fn three_items() -> List<Int>\n    [1, 2, 3]\n");
+    // Bare nullary builtin ctor `Option.None` in value position
+    // lowers to `Attr(Ident("Option"), "None")` (resolver gap),
+    // which the MIR lowerer bounces with `UnresolvedIdent`. The
+    // lowerer must not panic; it just leaves the fn out.
+    //
+    // Previously the test used a list literal — wave 3c-iv now
+    // lowers those, so the fixture was repurposed to a still-
+    // dropped shape.
+    let dump = lower("fn nothing() -> Option<Int>\n    Option.None\n");
     assert!(
-        !dump.contains("fn three_items"),
-        "unsupported fn shouldn't be lowered in wave 1:\n{dump}"
+        !dump.contains("fn nothing"),
+        "fn referencing the bare-nullary-ctor resolver gap shouldn't lower:\n{dump}"
     );
 }
 
