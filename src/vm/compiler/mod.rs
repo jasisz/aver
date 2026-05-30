@@ -56,6 +56,7 @@ pub fn compile_program_with_modules(
         source_file,
         ModuleSource::Disk(module_root),
         analysis,
+        None,
     )
 }
 
@@ -77,6 +78,37 @@ pub fn compile_program_with_loaded_modules(
         source_file,
         ModuleSource::Loaded(loaded),
         analysis,
+        None,
+    )
+}
+
+/// Phase 4b of #252: compile with MIR-first dispatch + HIR
+/// fallback. Per fn: if the fn's body lowers cleanly to MIR
+/// *and* MIR-emit produces bytecode, use that chunk; otherwise
+/// fall back to the existing HIR walker. The fallback is
+/// deliberate — every fn that lands in `MirVmUnsupported`
+/// territory (Match / Try / TailCall / Construct / Record* /
+/// Project / List / Tuple / Map / InterpolatedStr /
+/// IndependentProduct / builtin callees / first-class fn
+/// values) keeps the well-tested HIR shape.
+///
+/// Same I/O contract as [`compile_program`]; the only
+/// difference is the per-fn dispatch.
+pub fn compile_program_with_mir_fallback(
+    items: &[ResolvedTopLevel],
+    symbols: &SymbolTable,
+    arena: &mut Arena,
+    analysis: Option<&crate::ir::AnalysisResult>,
+) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
+    let mir = crate::ir::mir::lower_program(items);
+    compile_program_inner(
+        items,
+        symbols,
+        arena,
+        "",
+        ModuleSource::Disk(None),
+        analysis,
+        Some(&mir),
     )
 }
 
@@ -92,6 +124,7 @@ fn compile_program_inner(
     source_file: &str,
     module_source: ModuleSource<'_>,
     analysis: Option<&crate::ir::AnalysisResult>,
+    mir_program: Option<&crate::ir::mir::MirProgram>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
     let mut compiler = ProgramCompiler::new();
     compiler.source_file = source_file.to_string();
@@ -181,7 +214,20 @@ fn compile_program_inner(
     for item in items {
         if let ResolvedTopLevel::FnDef(rfd) = item {
             let fn_id = compiler.code.find(&rfd.name).unwrap();
-            let chunk = compiler.compile_fn(rfd, symbols, arena)?;
+            // Phase 4b dispatch: if the caller supplied a
+            // `MirProgram` *and* MIR has a body for this fn
+            // *and* the MIR walker accepts the body, use the
+            // MIR-emitted chunk. Otherwise fall back to the
+            // HIR walker — same chunk path every other caller
+            // takes.
+            let chunk = if let Some(mir) = mir_program
+                && let Some(mir_fn) = mir.fn_by_id(rfd.fn_id)
+                && let Ok(mir_chunk) = compiler.compile_fn_via_mir(rfd, mir_fn, symbols, arena)
+            {
+                mir_chunk
+            } else {
+                compiler.compile_fn(rfd, symbols, arena)?
+            };
             compiler.code.functions[fn_id as usize] = chunk;
         }
     }
@@ -687,6 +733,58 @@ impl ProgramCompiler {
             ResolvedFnBody::Block(stmts) => fc.compile_body(stmts)?,
         }
 
+        Ok(fc.finish())
+    }
+
+    /// Phase 4b: emit a fn's bytecode by walking the MIR body
+    /// instead of the HIR body. Mirrors `compile_fn_with_scope`'s
+    /// `FnCompiler` setup exactly — same arity / local_count /
+    /// effects / aliased slots — so the resulting `FnChunk` is
+    /// drop-in for the HIR-emitted version when the MIR walker
+    /// covers the body shape.
+    fn compile_fn_via_mir(
+        &mut self,
+        rfd: &ResolvedFnDef,
+        mir_fn: &crate::ir::mir::MirFn,
+        symbols: &SymbolTable,
+        arena: &mut Arena,
+    ) -> Result<FnChunk, mir::MirVmUnsupported> {
+        let resolution = rfd.resolution.as_ref();
+        let local_count = resolution.map_or(rfd.params.len() as u16, |r| r.local_count);
+        let local_slots: HashMap<String, u16> = resolution
+            .map(|r| r.local_slots.as_ref().clone())
+            .unwrap_or_else(|| {
+                rfd.params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (name, _))| (name.clone(), i as u16))
+                    .collect()
+            });
+
+        let empty_scope = HashMap::new();
+        let mut fc = FnCompiler::new(
+            &rfd.name,
+            rfd.params.len() as u8,
+            local_count,
+            rfd.effects
+                .iter()
+                .map(|effect| self.symbols.intern_name(&effect.node))
+                .collect(),
+            local_slots,
+            &self.global_names,
+            &empty_scope,
+            &self.code,
+            &mut self.symbols,
+            arena,
+            symbols,
+        );
+        fc.source_file = self.source_file.clone();
+        fc.note_line(rfd.line);
+        if let Some(res) = resolution {
+            fc.set_aliased_slots(res.aliased_slots.clone());
+        }
+
+        mir::compile_mir_fn_body(&mut fc, mir_fn)?;
         Ok(fc.finish())
     }
 
