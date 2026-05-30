@@ -2,16 +2,32 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## Unreleased
+## 0.23.0 "Shape" (unreleased)
+
+> _What `aver shape` sees, `aver proof` now uses._
 
 ### Breaking
 
-- **All commands now use the same module-root default: explicit `--module-root` wins, otherwise current working directory.** Previously `aver run`, `aver run --wasm-gc`, and `aver run --wasm-gc`/`--wasip2` would *walk the entry file's parent chain upward* and pick the first directory where every `depends [...]` resolved, while `aver verify` / `aver check` / `aver context` / `aver compile` already used the simpler cwd rule. The walker was a per-command DWIM that silently disagreed with the rest of the CLI — a multi-module project would `aver run` cleanly from any cwd but `aver verify` would need an explicit `--module-root` from the same shell. After this change, every command treats the same arguments the same way. **Migration:** if you relied on `aver run projects/foo/main.av` from the repo root finding `projects/foo/depends/*`, add `--module-root projects/foo` (or `cd` into that directory). The error message ("Cannot find module 'X.Y' in module root '...'") names the directory it actually searched.
+- **All commands now use the same module-root default: explicit `--module-root` wins, otherwise current working directory.** Previously `aver run`, `aver run --wasm-gc`, and `aver run --wasip2` walked the entry file's parent chain to find a directory where every `depends [...]` resolved, while `aver verify` / `aver check` / `aver context` / `aver compile` already used cwd. After this change, every command treats the same arguments the same way. **Migration:** if you relied on `aver run projects/foo/main.av` from the repo root finding `projects/foo/depends/*`, add `--module-root projects/foo` (or `cd` into that directory).
+
+### `aver shape`
+
+- **MVP — architectural smell radar (CLI + LSP).** Per-fn archetypes (14 labels), `ModuleShape` 5-dim vector with derived `Kind` (`ServiceClient`, `Orchestration`, `SmartConstructor`, `DataModule`, `PureHelpers`, `Library`, `EffectfulLibrary`, `EffectfulShell`), and a histogram-based Layer guess (`Domain` / `Parse` / `Command` / `AiStrategy` / `RenderUi` / `Infra`) with confidence and runners-up. `aver shape <dir>` walks corpora; `--lint` checks `aver.toml`'s `[[shape.expected]]`. LSP surfaces the verdict via CodeLens, hover, and document symbol.
+- **Module patterns are now first-class typed facts.** Five shapes by name: `RefinementSmartConstructor`, `WrapperOverRecursion`, `ResultPipelineChain`, `RendererFormatter`, `MatchDispatcherFold`. Surfaced in a new `Module patterns:` section in the CLI output and as a `patterns` array in `--json`. Same data feeds the LSP and `proof_lower`.
+- **Output is flat + colored** — section headers at column 0, ANSI palette (bold headers, cyan Kind / Layer, yellow counts, magenta pattern variants). Auto-disables on non-TTY pipes; `NO_COLOR` respected.
+
+### Proof export
+
+- **Three new `ProofStrategy` variants close universal laws on Lean and Dafny.** Each consumes a `ModulePattern`:
+  - `WrapperOverRecursion` — monoidal-accumulator wrapper (`sum(xs) == sumDirect(xs)`). Demo: `examples/data/sum_acc.av`.
+  - `ResultPipelineChain` — `?`-chain ≡ nested `match Result.Err -> Err`. Demo: `examples/core/result_chain.av`.
+  - `MatchDispatcherFold` — two list folds equal by structural induction. Demo: `examples/data/list_length_fold.av`.
 
 ### Tooling
 
-- **`aver shape` — architectural smell radar (CLI + LSP).** `aver shape <file>` emits three views: per-fn archetype (14 labels), a `ModuleShape` 5-dim vector with a derived `Kind` (`ServiceClient`, `Orchestration`, `SmartConstructor`, `DataModule`, `PureHelpers`, `Library`, `EffectfulLibrary`, `EffectfulShell`), and a histogram-based Layer guess (`Domain` / `Parse` / `Command` / `AiStrategy` / `RenderUi` / `Infra`) with `confidence`, `margin` to runner-up, and top-3 candidates with distances. Low confidence or low margin renders as `Layer: uncertain (best: X, …)` so a hesitating classifier doesn't read as a verdict. `aver shape <dir>` walks every `.av` underneath, prints per-file table plus aggregate Kind / Layer / archetype distributions, lists skipped files with reasons; `--lint` flags every mismatch against `[[shape.expected]]` in one pass. `aver.toml` accepts `[[shape.layer]]` to override the built-in v0 fingerprints and `[[shape.expected]]` to declare expected layer per path glob. `--json` mirrors everything: `facts` + `vector` + `kind` + `histogram` + `layer` (with `candidates` / `uncertain` / `margin`) + `fns`. Histogram is the fact; Kind and Layer are interpretation — output makes that explicit. The LSP surfaces the same verdict in three places: a `CodeLens` above `module X`, hover on the module name, and the document symbol detail (`Redis — ServiceClient`).
-- **`aver verify --hostile` semantics: opaque runtime handles can be fabricated inside verify-trace context** for any effect classified as a system handle (today: `Tcp.Connection`). Lets Oracle stubs feed a deterministic conn into the SUT without round-tripping through `Tcp.connect`, which would be the very effect the verify block is stubbing out. User-defined opaque types stay protected — the relaxation is opt-in per type via `effect_classification::is_verify_fabricable_handle`, so a `Refinement.Natural` smart-constructor invariant can't be bypassed by writing `Natural(value = -1)` inside a verify block. `examples/services/redis.av` gains `verify ping/set/get trace` blocks that exercise this; previously the only Tcp verify path was to skip session-effect oracling entirely.
+- **`aver proof --check` runs the backend verifier and gates regressions.** `--error-budget=N` (Dafny) and `--sorry-budget=N` (Lean) tolerate up to N residual failures so CI can pin a budget; `--check-json` emits `{backend, errors|sorries, budget, passed}` for external harnesses. Exit codes: 0 within budget, 1 over, 2 on harness failure.
+- **Playground Audit panel gains a Shape section** — Kind · Layer summary; expand to see module-shape vector, histogram, recognized patterns, and per-fn archetypes. Same payload as `aver shape --json`; no new toolbar button.
+- **`aver verify --hostile`: opaque runtime handles can be fabricated inside verify-trace context** for system-handle effects (today: `Tcp.Connection`), so Oracle stubs can feed a deterministic conn into the SUT without round-tripping through `Tcp.connect`. Opt-in per type — user-defined opaques (`Refinement.Natural`, …) stay protected. `examples/services/redis.av` exercises this via `verify ping/set/get trace` blocks.
 
 ## 0.22.1 — 2026-05-29
 
