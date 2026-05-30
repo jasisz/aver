@@ -81,7 +81,7 @@ pub mod program;
 pub use expr::{
     MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr,
     MirIndependentProduct, MirLet, MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate,
-    MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall, MirTryBind,
+    MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
 };
 pub use lower::lower_program;
 pub use program::{LocalId, MirFn, MirParam, MirProgram};

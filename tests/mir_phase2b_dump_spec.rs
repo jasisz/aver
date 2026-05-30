@@ -10,7 +10,7 @@
 use aver::ast::{BinOp, Literal, Spanned};
 use aver::ir::mir::{
     LocalId, MirBinOp, MirCall, MirCallee, MirEffectAnnotation, MirExpr, MirFn, MirLet, MirMatch,
-    MirMatchArm, MirParam, MirPattern, MirProgram, MirTryBind,
+    MirMatchArm, MirParam, MirPattern, MirProgram,
 };
 use aver::ir::{CtorId, FnId};
 
@@ -75,15 +75,21 @@ MirProgram {
 }
 
 #[test]
-fn try_bind_dump_shape() {
-    // fn use_step() -> Result<Int, String> = let %0 = step()?; %0
-    let body = span(MirExpr::TryBind(span(MirTryBind {
-        value: Box::new(span(MirExpr::Call(span(MirCall {
-            callee: MirCallee::Fn(fn_id(1)),
-            args: vec![],
-        })))),
-        ok_binding: LocalId(0),
-        ok_body: Box::new(span(MirExpr::Local(span(LocalId(0))))),
+fn try_bind_via_let_composition_dump_shape() {
+    // `let x = step()?; x` is expressed as `Let { binding: x,
+    // value: Try(step()), body: x }`. The original design had a
+    // dedicated `TryBind` variant; we dropped it because the
+    // composition already captures the same semantics, with the
+    // same dump appearance (one `let`, one `?`).
+    let body = span(MirExpr::Let(span(MirLet {
+        binding: LocalId(0),
+        value: Box::new(span(MirExpr::Try(Box::new(span(MirExpr::Call(span(
+            MirCall {
+                callee: MirCallee::Fn(fn_id(1)),
+                args: vec![],
+            },
+        ))))))),
+        body: Box::new(span(MirExpr::Local(span(LocalId(0))))),
     })));
     let mut program = MirProgram::empty();
     program.fns.insert(
@@ -98,16 +104,13 @@ fn try_bind_dump_shape() {
         },
     );
     let dump = format!("{program}");
-    // Spot-check key markers, not full equality — the inner
-    // indentation policy may evolve as Phase 3 lands and we don't
-    // want to thrash the fixture every time.
     assert!(
         dump.contains("fn use_step()"),
         "dump missing fn header:\n{dump}"
     );
     assert!(
         dump.contains("let %0 ="),
-        "dump missing TryBind let:\n{dump}"
+        "dump missing Let header:\n{dump}"
     );
     assert!(
         dump.contains("FnId(1).call()?"),
