@@ -65,17 +65,17 @@ fn user_fn_call_lands_in_subset() {
 
 #[test]
 fn complex_pattern_match_fn_falls_back_to_hir() {
-    // 4g-2 covers Cons + EmptyList. To keep this test honest as
-    // the subset grows, use a `Ctor` pattern which is still
-    // outside the subset (Phase 4g-3 territory).
+    // 4g-3 covers user-ctor patterns. To keep this test honest
+    // as the subset grows, use a Tuple pattern — still outside
+    // the subset (Phase 4g-5 territory).
     let mir = lower(
-        "fn double(x: Int) -> Int\n    x + x\n\ntype Shape\n  Circle(Int)\n  Square(Int)\n\nfn area(s: Shape) -> Int\n    match s\n        Shape.Circle(r) -> r\n        Shape.Square(side) -> side\n",
+        "fn double(x: Int) -> Int\n    x + x\n\nfn pair_sum(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a + b\n",
     );
     let cov = classify_mir_program_coverage(&mir);
     assert_eq!(cov.covered, 1, "double() in subset: {:?}", cov);
     assert_eq!(
         cov.needs_hir_fallback, 1,
-        "area() (Ctor pattern) needs HIR fallback: {:?}",
+        "pair_sum() (Tuple pattern) needs HIR fallback: {:?}",
         cov
     );
 }
