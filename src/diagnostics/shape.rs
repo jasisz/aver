@@ -23,6 +23,51 @@ use crate::ir::hir::{ResolvedFnDef, ResolvedTopLevel};
 use crate::ir::{PipelineConfig, TypecheckMode};
 use crate::types::Type;
 
+/// ANSI styling shim for the `render_text` renderer. With
+/// `tty-render` enabled (the default for the CLI / LSP / playground
+/// builds), `Colorize` is re-exported from the `colored` crate so
+/// calls like `"X".bold().cyan()` produce the actual escape
+/// sequences. Without `tty-render` (the fuzz crates and any
+/// future `--no-default-features` consumer), the trait still
+/// resolves but every method is a no-op that returns the input as
+/// `String` — the renderer keeps working, just emits plain text.
+#[cfg(feature = "tty-render")]
+use colored::Colorize as _shape_colorize;
+#[cfg(not(feature = "tty-render"))]
+use shape_color::Colorize as _shape_colorize;
+
+#[cfg(not(feature = "tty-render"))]
+mod shape_color {
+    /// No-op stand-in for `colored::Colorize` when the `tty-render`
+    /// feature is off. Every method returns the input as `String`,
+    /// so `"X".bold().cyan()` chains the same way it does with the
+    /// real crate — just without escapes.
+    pub trait Colorize {
+        fn bold(&self) -> String;
+        fn cyan(&self) -> String;
+        fn yellow(&self) -> String;
+        fn magenta(&self) -> String;
+        fn dimmed(&self) -> String;
+    }
+    impl<S: AsRef<str> + ?Sized> Colorize for S {
+        fn bold(&self) -> String {
+            self.as_ref().to_string()
+        }
+        fn cyan(&self) -> String {
+            self.as_ref().to_string()
+        }
+        fn yellow(&self) -> String {
+            self.as_ref().to_string()
+        }
+        fn magenta(&self) -> String {
+            self.as_ref().to_string()
+        }
+        fn dimmed(&self) -> String {
+            self.as_ref().to_string()
+        }
+    }
+}
+
 // Recognition primitives moved to `aver::analysis::shape` in stage 1
 // (#232). Stage 2 drops the re-exports — callers import from
 // `analysis::shape` directly so the presentation tier doesn't double
@@ -989,7 +1034,8 @@ pub struct RenderOptions {
 /// Scope-qualified names are rendered as `prefix::name` when the
 /// pattern lives in a dep module.
 fn render_module_pattern_line(p: &ModulePattern) -> String {
-    use colored::Colorize;
+    // `_shape_colorize` is in module scope above — its methods
+    // (`bold`, `cyan`, …) are usable directly without a local import.
     let scoped = |scope: &Option<String>, name: &str| -> String {
         match scope {
             Some(prefix) => format!("{prefix}::{name}"),
@@ -1053,7 +1099,9 @@ fn render_module_pattern_line(p: &ModulePattern) -> String {
 }
 
 pub fn render_text(report: &ShapeReport, opts: &RenderOptions) -> String {
-    use colored::Colorize;
+    // `_shape_colorize` is in module scope above (see top-of-file
+    // shim). Auto-disables coloring on non-TTY pipes and when the
+    // `tty-render` feature is off (e.g. fuzz / mutator builds).
     let mut out = String::new();
     // Header: `Module:` and `Kind:` share the value column. `Module:` is
     // 7 chars + space, `Kind:` is 5 chars + 3 spaces — same total width.
