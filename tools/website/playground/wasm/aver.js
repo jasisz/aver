@@ -517,6 +517,29 @@ export function aver_proof_lean_project(files_json, entry) {
 }
 
 /**
+ * Aver source → `aver shape` JSON report (module shape vector,
+ * derived Kind, histogram, Layer, per-fn archetypes, module
+ * patterns). Same payload as the CLI's `--json` mode; the
+ * playground renders this inside the Audit panel.
+ * @param {string} source
+ * @returns {string}
+ */
+export function aver_shape(source) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.aver_shape(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * @param {string} source
  * @returns {string}
  */

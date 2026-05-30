@@ -669,6 +669,27 @@ pub fn audit_source_hostile(source: &str) -> String {
     audit_build_report(source, None, None, None, true).to_json()
 }
 
+/// Aver source → `aver shape` JSON report. Renders the module shape
+/// vector + Kind + histogram + Layer + per-fn archetype labels +
+/// module patterns. Returns a JSON error object on parse / analyze
+/// failure so the UI can show the diagnostic alongside the editor.
+pub fn shape_source(source: &str) -> String {
+    use crate::diagnostics::shape;
+    let fingerprints = shape::builtin_v0_layer_fingerprints();
+    let report = shape::analyze_source_with(
+        source,
+        ".",
+        "<playground>",
+        "Module",
+        &fingerprints,
+        "built-in v0",
+    );
+    match report {
+        Ok(r) => shape::render_json(&r).to_string(),
+        Err(e) => serde_json::json!({ "error": e }).to_string(),
+    }
+}
+
 #[cfg(feature = "runtime")]
 pub fn audit_project(files: &HashMap<String, String>, entry: &str) -> String {
     let Some(entry_source) = files.get(entry) else {
@@ -852,6 +873,15 @@ mod bindgen {
     #[wasm_bindgen]
     pub fn aver_audit(source: &str) -> String {
         super::audit_source(source)
+    }
+
+    /// Aver source → `aver shape` JSON report (module shape vector,
+    /// derived Kind, histogram, Layer, per-fn archetypes, module
+    /// patterns). Same payload as the CLI's `--json` mode; the
+    /// playground renders this inside the Audit panel.
+    #[wasm_bindgen]
+    pub fn aver_shape(source: &str) -> String {
+        super::shape_source(source)
     }
 
     #[wasm_bindgen]
