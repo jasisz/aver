@@ -1,5 +1,0 @@
-{"log":
- [{"message":
-   ".> LEAN_PATH=././.lake/build/lib DYLD_LIBRARY_PATH= /Users/szymon.tezewski/.elan/toolchains/leanprover--lean4---v4.15.0/bin/lean ././././AverCommon.lean -R ./././. -o ././.lake/build/lib/AverCommon.olean -i ././.lake/build/lib/AverCommon.ilean -c ././.lake/build/ir/AverCommon.c --json",
-   "level": "trace"}],
- "depHash": "14898524085249325702"}

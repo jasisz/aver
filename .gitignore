@@ -37,3 +37,7 @@ editors/vscode/*.vsix
 # Local prompts / notes — not part of the repo
 prompts/
 examples/data/shape.png
+
+# `aver proof` default and ad-hoc output dirs — debug artifacts, never tracked.
+/out/
+/o2/
