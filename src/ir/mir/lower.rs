@@ -17,16 +17,25 @@
 //! - `ResolvedExpr::RecordUpdate { type_id: Some(_), … }` → `MirExpr::RecordUpdate`
 //! - `ResolvedExpr::Attr(base, field)` → `MirExpr::Project`
 //!
-//! Wave 3 adds match arms, `Try` / `TryBind`, tail calls,
-//! `IndependentProduct`, `Let` chains, and built-in constructors
-//! (`Result.Ok` / `Option.Some` / etc. — those need a typed
-//! identity story beyond raw `CtorId`).
+//! **Wave 3a (this commit)** — multi-stmt bodies via `Let` chains:
+//! - `Stmt::Binding { name, value }` + `Stmt::Expr(value)` in
+//!   sequence ending in `Stmt::Expr` right-folds into nested
+//!   `MirExpr::Let { binding, value, body }` nodes.
+//! - Binding slot comes from `FnResolution.local_slots[name]`;
+//!   intermediate `Stmt::Expr` gets a fresh synthetic `LocalId`
+//!   drawn from a counter starting at `local_count`.
 //!
-//! Bodies still must be single-stmt `Stmt::Expr` (multi-stmt
-//! bodies with `Let` bindings land in wave 3 alongside `match`).
-//! Functions that use anything outside the wave's supported subset
-//! are silently skipped — `MirProgram.fns` only contains what the
-//! waves so far knew how to handle.
+//! Wave 3b lands `match` arms + patterns; wave 3c lands `Try`,
+//! tail calls, `IndependentProduct`, lists / tuples / maps /
+//! interpolation, and built-in constructors (`Result.Ok` /
+//! `Option.Some` — those need a typed identity story beyond raw
+//! `CtorId`). The bind-and-propagate shape `let x = step()?; body`
+//! lowers as `Let { binding, value: Try(step()), body }` — no
+//! dedicated `TryBind` variant (dropped during wave 3 prep).
+//!
+//! Functions that use anything outside the waves' supported
+//! subset are silently skipped — `MirProgram.fns` only contains
+//! what the waves so far knew how to handle.
 //!
 //! ## LocalId mapping
 //!
@@ -40,14 +49,14 @@
 //! will introduce one when `Let` bindings start producing fresh
 //! locals that the resolver didn't see.
 
-use crate::ast::Spanned;
+use crate::ast::{FnResolution, Spanned};
 use crate::ir::hir::{
     ResolvedCallee, ResolvedCtor, ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedStmt,
     ResolvedTopLevel,
 };
 
 use super::expr::{
-    MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr, MirProject,
+    MirBinOp, MirCall, MirCallee, MirConstruct, MirEffectAnnotation, MirExpr, MirLet, MirProject,
     MirRecordCreate, MirRecordField, MirRecordUpdate,
 };
 use super::program::{LocalId, MirFn, MirParam, MirProgram};
@@ -75,13 +84,28 @@ pub fn lower_program(items: &[ResolvedTopLevel]) -> MirProgram {
 /// MIR program in that case.
 fn lower_fn(fd: &ResolvedFnDef) -> Option<MirFn> {
     let ResolvedFnBody::Block(stmts) = &*fd.body;
-    if stmts.len() != 1 {
+    if stmts.is_empty() {
         return None;
     }
-    let ResolvedStmt::Expr(expr) = &stmts[0] else {
-        return None;
+    let body = match stmts.len() {
+        1 => {
+            // Single-stmt body: must be `Expr`. Bindings alone
+            // can't produce a value.
+            let ResolvedStmt::Expr(expr) = &stmts[0] else {
+                return None;
+            };
+            lower_expr(expr)?
+        }
+        _ => {
+            // Multi-stmt body (wave 3a): right-fold into `Let`
+            // chains. Last stmt must be `Expr` — it's the body's
+            // final value; everything before it gets opaque-let'd
+            // so effectful intermediate calls survive into MIR.
+            let resolution = fd.resolution.as_ref()?;
+            let mut next_synthetic_local = u32::from(resolution.local_count);
+            lower_stmt_chain(stmts, resolution, &mut next_synthetic_local)?
+        }
     };
-    let body = lower_expr(expr)?;
 
     let params = fd
         .params
@@ -252,4 +276,64 @@ fn wrap<T, U>(node: T, source: &Spanned<U>) -> Spanned<T> {
         line: source.line,
         ty: std::sync::OnceLock::new(),
     }
+}
+
+/// Right-fold a list of `ResolvedStmt`s into a single `MirExpr`
+/// via `Let` nesting. Wave 3a — the first lowering that produces
+/// multi-stmt bodies.
+///
+/// Rules:
+/// - The last stmt must be `Stmt::Expr`; it becomes the innermost
+///   body of the resulting `Let` chain.
+/// - `Stmt::Binding { name, value }` uses the slot the resolver
+///   already assigned (`resolution.local_slots[name]`) as the
+///   binding's `LocalId`. Missing slot → the fn is skipped.
+/// - `Stmt::Expr` at non-tail position is treated as a let
+///   binding to a fresh synthetic `LocalId` so its (potentially
+///   effectful) value still gets evaluated. The synthetic
+///   counter starts at `resolution.local_count` so it can't
+///   collide with the resolver's own slots.
+fn lower_stmt_chain(
+    stmts: &[ResolvedStmt],
+    resolution: &FnResolution,
+    next_synthetic_local: &mut u32,
+) -> Option<Spanned<MirExpr>> {
+    let (last, rest) = stmts.split_last()?;
+    // Last stmt must produce a value.
+    let ResolvedStmt::Expr(tail_expr) = last else {
+        return None;
+    };
+    let mut body = lower_expr(tail_expr)?;
+
+    // Right-fold: walk earlier stmts in reverse, wrapping each
+    // around the accumulating `body`.
+    for stmt in rest.iter().rev() {
+        let (binding, value_expr) = match stmt {
+            ResolvedStmt::Binding { name, value, .. } => {
+                let slot = *resolution.local_slots.get(name)?;
+                (LocalId(u32::from(slot)), value)
+            }
+            ResolvedStmt::Expr(expr) => {
+                let fresh = LocalId(*next_synthetic_local);
+                *next_synthetic_local += 1;
+                (fresh, expr)
+            }
+        };
+        let mir_value = lower_expr(value_expr)?;
+        let span = mir_value.line;
+        body = Spanned {
+            node: MirExpr::Let(Spanned {
+                node: MirLet {
+                    binding,
+                    value: Box::new(mir_value),
+                    body: Box::new(body),
+                },
+                line: span,
+                ty: std::sync::OnceLock::new(),
+            }),
+            line: span,
+            ty: std::sync::OnceLock::new(),
+        };
+    }
+    Some(body)
 }
