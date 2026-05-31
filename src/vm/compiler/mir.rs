@@ -24,20 +24,27 @@
 //!   compiler uses).
 //! - `Return(inner)` — explicit early-return form.
 //!
-//! Everything else (Match, Try, TailCall, Construct, Record*,
-//! Project, List, Tuple, MapLiteral, InterpolatedStr,
-//! IndependentProduct) returns `Err(MirVmUnsupported)` so the
-//! caller can fall back to HIR compilation for that fn.
+//! After Phase 4h, every `MirExpr` variant has walker coverage.
+//! Match accepts the flat-pattern subset (4g-1…5); nested
+//! structural subpatterns inside a Tuple still drop to HIR.
+//! Bytecode parity holds on the generic-emit path; HIR's
+//! specialised opcodes (MATCH_DISPATCH_CONST table fast-path,
+//! per-builtin opcodes like LIST_LEN / MAP_GET / UNWRAP_OR)
+//! produce different bytes but identical runtime — that's
+//! Phase 6 work with type-stamp propagation.
 
 use crate::ast::Literal;
 use crate::ast::Spanned;
 use crate::ir::hir::BuiltinCtor;
 use crate::ir::mir::{
     LocalId, MirCall, MirCallee, MirCtor, MirExpr, MirFn, MirLet, MirPattern, MirProgram,
+    MirStrPart,
 };
 use crate::nan_value::NanValue;
 use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
+
+use super::VmSymbolTable;
 
 use super::{CompileError, FnCompiler};
 
@@ -495,10 +502,137 @@ pub(super) fn compile_mir_expr(
             }
             Ok(())
         }
-        MirExpr::MapLiteral(_) => Err(MirVmUnsupported::UnsupportedExpr("MapLiteral")),
-        MirExpr::InterpolatedStr(_) => Err(MirVmUnsupported::UnsupportedExpr("InterpolatedStr")),
-        MirExpr::IndependentProduct(_) => {
-            Err(MirVmUnsupported::UnsupportedExpr("IndependentProduct"))
+        // ── Phase 4h: remaining MirExpr variants ────────────────
+        MirExpr::MapLiteral(entries) => {
+            // Mirror HIR's `compile_map`: LOAD_CONST an empty
+            // `PersistentMap` from the arena, then per entry
+            // compile key + value and emit a `MapSet` call.
+            let empty_map = fc.arena.push_map(crate::nan_value::PersistentMap::new());
+            let nv = NanValue::new_map(empty_map);
+            let idx = fc.add_constant(nv);
+            fc.emit_op(LOAD_CONST);
+            fc.emit_u16(idx);
+            for (k, v) in entries {
+                compile_mir_expr(fc, k)?;
+                compile_mir_expr(fc, v)?;
+                let symbol_id = fc.symbols.intern_builtin(VmBuiltin::MapSet).map_err(|e| {
+                    MirVmUnsupported::InnerError(CompileError {
+                        msg: format!("MIR-VM: intern_builtin(MapSet) failed: {e:?}"),
+                    })
+                })?;
+                fc.emit_op(CALL_BUILTIN);
+                fc.emit_u32(symbol_id);
+                fc.emit_u8(3);
+            }
+            Ok(())
+        }
+        MirExpr::InterpolatedStr(parts) => {
+            // `interp_lower` upstream of MIR usually desugars
+            // these into buffer-build calls before MIR sees
+            // them, so this branch is rarely reached in
+            // practice — kept for completeness so the walker
+            // covers every `MirExpr` variant.
+            if parts.is_empty() {
+                let nv = NanValue::new_string_value("", fc.arena);
+                let cidx = fc.add_constant(nv);
+                fc.emit_op(LOAD_CONST);
+                fc.emit_u16(cidx);
+                return Ok(());
+            }
+            let mut first = true;
+            for part in parts {
+                match part {
+                    MirStrPart::Literal(s) => {
+                        let nv = NanValue::new_string_value(s, fc.arena);
+                        let cidx = fc.add_constant(nv);
+                        fc.emit_op(LOAD_CONST);
+                        fc.emit_u16(cidx);
+                    }
+                    MirStrPart::Expr(e) => {
+                        compile_mir_expr(fc, e)?;
+                        let empty_nv = NanValue::new_string_value("", fc.arena);
+                        let empty_const = fc.add_constant(empty_nv);
+                        fc.emit_op(LOAD_CONST);
+                        fc.emit_u16(empty_const);
+                        fc.emit_op(CONCAT);
+                    }
+                }
+                if !first {
+                    fc.emit_op(CONCAT);
+                }
+                first = false;
+            }
+            Ok(())
+        }
+        MirExpr::IndependentProduct(spanned_ip) => {
+            let ip = &spanned_ip.node;
+            // Mirror HIR's `compile_independent_product`. Each
+            // item is expected to be a Call (or Try-wrapped
+            // Call) so we push the callee as a value followed
+            // by its args; the dispatcher then emits CALL_PAR
+            // with per-branch arities. If any item shape isn't
+            // call-like, fall back to a sequential TUPLE_NEW
+            // (the same safety net HIR uses).
+            let call_ready = ip.items.iter().all(|item| {
+                let inner = match &item.node {
+                    MirExpr::Try(boxed) => &boxed.node,
+                    other => other,
+                };
+                matches!(inner, MirExpr::Call(_))
+            });
+            if !call_ready {
+                for item in &ip.items {
+                    compile_mir_expr(fc, item)?;
+                }
+                fc.emit_op(TUPLE_NEW);
+                fc.emit_u8(ip.items.len() as u8);
+                return Ok(());
+            }
+            let mut arg_counts: Vec<u8> = Vec::with_capacity(ip.items.len());
+            for item in &ip.items {
+                let inner_call = match &item.node {
+                    MirExpr::Try(boxed) => &boxed.node,
+                    other => other,
+                };
+                let MirExpr::Call(spanned_call) = inner_call else {
+                    unreachable!("call_ready preflight just confirmed");
+                };
+                let call = &spanned_call.node;
+                match &call.callee {
+                    MirCallee::Fn(fn_id) => {
+                        let name = fc.canonical_fn_name(*fn_id)?;
+                        let symbol_id = fc.symbols.find(&name).ok_or_else(|| {
+                            MirVmUnsupported::InnerError(CompileError {
+                                msg: format!("MIR-VM: missing VM symbol for fn `{name}`"),
+                            })
+                        })?;
+                        let idx = fc.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+                        fc.emit_op(LOAD_CONST);
+                        fc.emit_u16(idx);
+                    }
+                    MirCallee::Builtin(name) => {
+                        let symbol_id = fc.symbols.find(name).ok_or_else(|| {
+                            MirVmUnsupported::InnerError(CompileError {
+                                msg: format!("MIR-VM: missing VM symbol for builtin `{name}`"),
+                            })
+                        })?;
+                        let idx = fc.add_constant(VmSymbolTable::symbol_ref(symbol_id));
+                        fc.emit_op(LOAD_CONST);
+                        fc.emit_u16(idx);
+                    }
+                }
+                for arg in &call.args {
+                    compile_mir_expr(fc, arg)?;
+                }
+                arg_counts.push(call.args.len() as u8);
+            }
+            fc.emit_op(CALL_PAR);
+            fc.emit_u8(ip.items.len() as u8);
+            fc.emit_u8(if ip.unwrap_results { 1 } else { 0 });
+            for argc in arg_counts {
+                fc.emit_u8(argc);
+            }
+            Ok(())
         }
     }
 }
@@ -569,6 +703,15 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::RecordUpdate(ru) => {
             can_compile(&ru.node.base) && ru.node.updates.iter().all(|f| can_compile(&f.value))
         }
+        // Phase 4h additions:
+        MirExpr::MapLiteral(entries) => entries
+            .iter()
+            .all(|(k, v)| can_compile(k) && can_compile(v)),
+        MirExpr::InterpolatedStr(parts) => parts.iter().all(|p| match p {
+            MirStrPart::Literal(_) => true,
+            MirStrPart::Expr(e) => can_compile(e),
+        }),
+        MirExpr::IndependentProduct(ip) => ip.node.items.iter().all(can_compile),
         // Phase 4g-1/2: match with Wildcard + Literal(Int) + Cons + EmptyList arms.
         MirExpr::Match(m) => {
             can_compile(&m.node.subject)
@@ -577,7 +720,6 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
                     .iter()
                     .all(|arm| pattern_in_4g_subset(&arm.pattern) && can_compile(&arm.body))
         }
-        _ => false,
     }
 }
 
