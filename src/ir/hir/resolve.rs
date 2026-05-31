@@ -300,6 +300,27 @@ fn resolve_expr(ctx: &ResolveCtx<'_>, expr: &Spanned<Expr>) -> ResolvedExpr {
             last_use: *last_use,
         },
         Expr::Attr(obj, field) => {
+            // Nullary constructor in value position — `Option.None`,
+            // `Color.Black`, etc. These only got recognized in call
+            // position (`Expr::FnCall`); in value position they arrived
+            // here as a bare `Attr(Ident(Type), Variant)` and stalled MIR
+            // lowering with `UnresolvedIdent`. A non-nullary ctor can't
+            // appear un-applied as a value (Aver has no first-class
+            // partial constructors), so an `Attr` whose `Type.Member`
+            // resolves to a ctor is necessarily a nullary reference —
+            // lower it to the zero-arg `Ctor` shape both walkers already
+            // handle (LOAD_CONST NONE / VARIANT_NEW with no fields).
+            if let Expr::Ident(ns) = &obj.node {
+                let qualified = format!("{ns}.{field}");
+                let ctor = classify_ctor(ctx, &qualified);
+                let nullary = matches!(
+                    ctor,
+                    ResolvedCtor::Builtin(BuiltinCtor::OptionNone) | ResolvedCtor::User { .. }
+                );
+                if nullary {
+                    return ResolvedExpr::Ctor(ctor, vec![]);
+                }
+            }
             ResolvedExpr::Attr(Box::new(resolve_spanned(ctx, obj)), field.clone())
         }
         Expr::FnCall(callee, args) => {

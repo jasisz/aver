@@ -943,15 +943,26 @@ fn emit_type_constructor_call(
         })
         .collect();
 
+    // A nullary variant is generated as a Rust *unit* variant
+    // (`enum E { Point }`), so it's referenced as `E::Point` with no
+    // parens — `E::Point()` is `error[E0618]: expected function, found
+    // enum variant`. (Reached now that nullary ctors in value position
+    // resolve to the zero-arg `Ctor` shape rather than an `Attr`.)
     if let Some((prefix, bare_type_name)) = resolve_module_call(qualified_type_name, ctx) {
         let module_path = module_prefix_to_rust_path(prefix);
-        format!(
-            "{}::{}::{}({})",
-            module_path,
-            bare_type_name,
-            variant_name,
-            arg_strs.join(", ")
-        )
+        if arg_strs.is_empty() {
+            format!("{}::{}::{}", module_path, bare_type_name, variant_name)
+        } else {
+            format!(
+                "{}::{}::{}({})",
+                module_path,
+                bare_type_name,
+                variant_name,
+                arg_strs.join(", ")
+            )
+        }
+    } else if arg_strs.is_empty() {
+        format!("{}::{}", qualified_type_name, variant_name)
     } else {
         format!(
             "{}::{}({})",
