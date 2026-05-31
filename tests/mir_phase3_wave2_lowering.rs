@@ -53,9 +53,11 @@ fn lowers_user_fn_call_with_typed_callee() {
 fn lowers_builtin_call() {
     // `String.len(s)` is a built-in namespace method.
     let dump = lower("fn length_of(s: String) -> Int\n    String.len(s)\n");
+    // The `s` arg is the final read in the fn body, so MIR's
+    // wave-4 last-use annotation renders it as `%0*`.
     assert!(
-        dump.contains("Builtin(String.len).call(%0)"),
-        "expected built-in callee + local arg:\n{dump}"
+        dump.contains("Builtin(String.len).call(%0*)"),
+        "expected built-in callee + last-use local arg:\n{dump}"
     );
 }
 
@@ -88,9 +90,11 @@ fn lowers_record_create_and_project() {
         dump.contains("TypeId(") && dump.contains("{ x = Int(0), y = Int(0) }"),
         "expected TypeId-typed record-create with field list:\n{dump}"
     );
+    // `p` is the final read in `x_of`, so MIR's wave-4 last-use
+    // annotation renders it as `%0*.x`.
     assert!(
-        dump.contains("%0.x"),
-        "expected `%0.x` projection in x_of dump:\n{dump}"
+        dump.contains("%0*.x"),
+        "expected `%0*.x` projection in x_of dump:\n{dump}"
     );
 }
 
@@ -100,9 +104,10 @@ fn lowers_record_update() {
         "record Point\n  x: Int\n  y: Int\n\n\
          fn shift_x(p: Point) -> Point\n    Point.update(p, x = 99)\n",
     );
+    // `p` is last-use here too — renders as `%0*`.
     assert!(
-        dump.contains(".update(%0, x = Int(99))"),
-        "expected record-update with base local + override:\n{dump}"
+        dump.contains(".update(%0*, x = Int(99))"),
+        "expected record-update with last-use base local + override:\n{dump}"
     );
 }
 

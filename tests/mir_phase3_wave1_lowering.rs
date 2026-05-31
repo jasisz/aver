@@ -40,9 +40,12 @@ fn lowers_binop_over_locals() {
         dump.contains("fn double(%0x:"),
         "param didn't render:\n{dump}"
     );
+    // Phase 6 wave 4 — the second read of `x` is the last use,
+    // so MIR's dump renders it as `%0*` (asterisk = last-use
+    // annotation propagated from HIR's `AnnotBool` stamp).
     assert!(
-        dump.contains("(%0 Add %0)"),
-        "BinOp(Add, Local, Local) didn't render:\n{dump}"
+        dump.contains("(%0 Add %0*)"),
+        "BinOp(Add, Local, Local-last-use) didn't render:\n{dump}"
     );
 }
 

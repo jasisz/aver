@@ -13,7 +13,7 @@
 use aver::ast::{BinOp, Literal, Spanned};
 use aver::ir::mir::{
     LocalId, MirBinOp, MirCall, MirCallee, MirCtor, MirEffectAnnotation, MirExpr, MirFn, MirLet,
-    MirMatch, MirMatchArm, MirParam, MirPattern, MirProgram,
+    MirLocal, MirMatch, MirMatchArm, MirParam, MirPattern, MirProgram,
 };
 use aver::ir::{CtorId, FnId};
 
@@ -65,7 +65,7 @@ fn pinned_decision_try_is_its_own_variant() {
 fn pinned_decision_match_is_structured() {
     // RFC pin: `Match { subject, arms: Vec<MirMatchArm> }`. No
     // basic-block jumps, no terminator-style switch.
-    let subject = Box::new(span(MirExpr::Local(span(LocalId(0)))));
+    let subject = Box::new(span(MirExpr::Local(span(MirLocal::at(LocalId(0))))));
     let arms = vec![
         MirMatchArm {
             pattern: MirPattern::EmptyList,
@@ -76,7 +76,7 @@ fn pinned_decision_match_is_structured() {
                 head: LocalId(1),
                 tail: LocalId(2),
             },
-            body: span(MirExpr::Local(span(LocalId(1)))),
+            body: span(MirExpr::Local(span(MirLocal::at(LocalId(1))))),
         },
     ];
     let m = MirExpr::Match(span(MirMatch { subject, arms }));
@@ -137,7 +137,7 @@ fn try_bind_is_let_with_try_value() {
     let bind = MirExpr::Let(span(MirLet {
         binding: LocalId(0),
         value: Box::new(span(MirExpr::Try(Box::new(span(step_call))))),
-        body: Box::new(span(MirExpr::Local(span(LocalId(0))))),
+        body: Box::new(span(MirExpr::Local(span(MirLocal::at(LocalId(0)))))),
     }));
     let MirExpr::Let(let_node) = bind else {
         panic!("expected Let composition");
@@ -163,8 +163,8 @@ fn build_a_tiny_function_by_hand() {
     let x = LocalId(0);
     let body = span(MirExpr::BinOp(span(MirBinOp {
         op: BinOp::Add,
-        lhs: Box::new(span(MirExpr::Local(span(x)))),
-        rhs: Box::new(span(MirExpr::Local(span(x)))),
+        lhs: Box::new(span(MirExpr::Local(span(MirLocal::at(x))))),
+        rhs: Box::new(span(MirExpr::Local(span(MirLocal::at(x))))),
     })));
     let f = MirFn {
         fn_id: fn_id(0),

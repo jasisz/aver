@@ -59,11 +59,16 @@ fn lowers_chained_let_bindings() {
         pos0 < pos1,
         "Let chain didn't nest in source order:\n{dump}"
     );
+    // Wave 4 last-use: `x` is final read in `x + 1`, `y` is
+    // final read in the tail expression — both render with `*`.
     assert!(
-        dump.contains("(%0 Add Int(1))"),
-        "second binding value should reference %0:\n{dump}"
+        dump.contains("(%0* Add Int(1))"),
+        "second binding value should reference last-use %0*:\n{dump}"
     );
-    assert!(dump.contains("in %1"), "final body should be %1:\n{dump}");
+    assert!(
+        dump.contains("in %1*"),
+        "final body should be last-use %1*:\n{dump}"
+    );
 }
 
 #[test]

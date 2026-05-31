@@ -10,7 +10,7 @@
 use aver::ast::{BinOp, Literal, Spanned};
 use aver::ir::mir::{
     LocalId, MirBinOp, MirCall, MirCallee, MirCtor, MirEffectAnnotation, MirExpr, MirFn, MirLet,
-    MirMatch, MirMatchArm, MirParam, MirPattern, MirProgram,
+    MirLocal, MirMatch, MirMatchArm, MirParam, MirPattern, MirProgram,
 };
 use aver::ir::{CtorId, FnId};
 
@@ -39,8 +39,8 @@ fn one_fn_dump_pins_skeleton() {
     let x = LocalId(0);
     let body = span(MirExpr::BinOp(span(MirBinOp {
         op: BinOp::Add,
-        lhs: Box::new(span(MirExpr::Local(span(x)))),
-        rhs: Box::new(span(MirExpr::Local(span(x)))),
+        lhs: Box::new(span(MirExpr::Local(span(MirLocal::at(x))))),
+        rhs: Box::new(span(MirExpr::Local(span(MirLocal::at(x))))),
     })));
     let mut program = MirProgram::empty();
     program.fns.insert(
@@ -89,7 +89,7 @@ fn try_bind_via_let_composition_dump_shape() {
                 args: vec![],
             },
         ))))))),
-        body: Box::new(span(MirExpr::Local(span(LocalId(0))))),
+        body: Box::new(span(MirExpr::Local(span(MirLocal::at(LocalId(0)))))),
     })));
     let mut program = MirProgram::empty();
     program.fns.insert(
@@ -125,7 +125,7 @@ fn match_dump_shape() {
     let h = LocalId(1);
     let t = LocalId(2);
     let body = span(MirExpr::Match(span(MirMatch {
-        subject: Box::new(span(MirExpr::Local(span(xs)))),
+        subject: Box::new(span(MirExpr::Local(span(MirLocal::at(xs))))),
         arms: vec![
             MirMatchArm {
                 pattern: MirPattern::EmptyList,
@@ -133,7 +133,7 @@ fn match_dump_shape() {
             },
             MirMatchArm {
                 pattern: MirPattern::Cons { head: h, tail: t },
-                body: span(MirExpr::Local(span(h))),
+                body: span(MirExpr::Local(span(MirLocal::at(h)))),
             },
         ],
     })));
@@ -178,10 +178,10 @@ fn ctor_pattern_dump_uses_ctor_id() {
     };
     // Use the arm-rendering path via a tiny Match.
     let body = span(MirExpr::Match(span(MirMatch {
-        subject: Box::new(span(MirExpr::Local(span(LocalId(99))))),
+        subject: Box::new(span(MirExpr::Local(span(MirLocal::at(LocalId(99)))))),
         arms: vec![MirMatchArm {
             pattern: p,
-            body: span(MirExpr::Local(span(LocalId(0)))),
+            body: span(MirExpr::Local(span(MirLocal::at(LocalId(0))))),
         }],
     })));
     let mut program = MirProgram::empty();
@@ -267,7 +267,7 @@ fn let_dump_shape() {
     let body = span(MirExpr::Let(span(MirLet {
         binding: LocalId(0),
         value: Box::new(span(MirExpr::Literal(span(Literal::Int(7))))),
-        body: Box::new(span(MirExpr::Local(span(LocalId(0))))),
+        body: Box::new(span(MirExpr::Local(span(MirLocal::at(LocalId(0)))))),
     })));
     let mut program = MirProgram::empty();
     program.fns.insert(
