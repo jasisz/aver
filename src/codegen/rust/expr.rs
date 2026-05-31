@@ -510,7 +510,7 @@ fn emit_body_expr_plan_with_options(
     }
 }
 
-fn emit_literal(lit: &Literal) -> String {
+pub(super) fn emit_literal(lit: &Literal) -> String {
     match lit {
         Literal::Int(i) => format!("{}i64", i),
         Literal::Float(f) => {
