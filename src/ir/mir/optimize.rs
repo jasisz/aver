@@ -2067,6 +2067,34 @@ mod tests {
     }
 
     #[test]
+    fn branch_collapse_drops_dead_branch_with_side_effect() {
+        // Pin the deliberate semantic: when `cond` is literally
+        // `true`, the `else_branch` never evaluates at runtime,
+        // so dropping it can't change observable behavior even
+        // when it contains an effectful `Call`. This pass does
+        // NOT consult `is_pure` for that reason — branch
+        // selection is what gates the side effect, not purity.
+        //
+        // Mirror the language-level guarantee: `if true { A }
+        // else { B }` is `A`, regardless of what `B` would do.
+        use super::super::expr::{MirCall, MirCallee};
+        use crate::ir::FnId;
+        let dead_call = MirExpr::Call(span(MirCall {
+            callee: MirCallee::Fn(FnId(99)), // unresolved on purpose
+            args: vec![],
+        }));
+        let collapsed = branch_collapse(ite_program(
+            MirExpr::Literal(span(Literal::Bool(true))),
+            MirExpr::Literal(span(Literal::Int(1))),
+            dead_call,
+        ));
+        assert!(
+            matches!(body_of(&collapsed), MirExpr::Literal(s) if matches!(s.node, Literal::Int(1))),
+            "true cond should drop the dead effectful branch and yield `1`"
+        );
+    }
+
+    #[test]
     fn pipeline_const_fold_then_branch_collapse() {
         // `if (5 == 5) { 1 } else { 2 }`
         //  const-fold → `if true { 1 } else { 2 }`
