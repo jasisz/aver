@@ -100,16 +100,21 @@ pub fn compile_program_with_mir_fallback(
     arena: &mut Arena,
     analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    // Phase 6 wave 5–7: optimize pipeline on the lowered MIR
+    // Phase 6 wave 5–8: optimize pipeline on the lowered MIR
     // before the VM walker consumes it. Order is deliberate:
     // (1) nullary-literal inlining unlocks call-site literals,
-    // (2) const-fold collapses literal arithmetic, (3) DCE
-    // drops `let _ = <pure>; body` chains where the binding
-    // was never read. Each pass is a `MirProgram → MirProgram`
-    // pure function; future passes plug in by extending the
-    // chain.
-    let mir = crate::ir::mir::dead_code(crate::ir::mir::const_fold(
-        crate::ir::mir::inline_nullary_literals(crate::ir::mir::lower_program(items)),
+    // (2) const-fold collapses literal arithmetic,
+    // (3) algebraic-simplify rewrites Int identities
+    //     (`x + 0` / `x * 1` / `Neg(Neg(x))`) that const-fold
+    //     leaves symbolic (no two-literal pattern to collapse),
+    // (4) DCE drops `let _ = <pure>; body` chains where the
+    //     binding was never read.
+    // Each pass is a `MirProgram → MirProgram` pure function;
+    // future passes plug in by extending the chain.
+    let mir = crate::ir::mir::dead_code(crate::ir::mir::algebraic_simplify(
+        crate::ir::mir::const_fold(crate::ir::mir::inline_nullary_literals(
+            crate::ir::mir::lower_program(items),
+        )),
     ));
     compile_program_inner(
         items,
