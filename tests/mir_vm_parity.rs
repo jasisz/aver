@@ -509,6 +509,37 @@ fn match_tuple_with_wildcard_subpattern_parity() {
 }
 
 #[test]
+fn map_literal_bytecode_parity() {
+    // Phase 4h — `{"k" => 1, "j" => 2}` lowers to
+    // LOAD_CONST(empty_map) + key/value pairs each driven by
+    // CALL_BUILTIN(MapSet, argc=3). Byte-identical between
+    // HIR and MIR walkers.
+    let (hir, mir) = compile_both("fn pairs() -> Map<String, Int>\n    {\"a\" => 1, \"b\" => 2}\n");
+    let hir_fn = hir.get(hir.find("pairs").expect("pairs in HIR"));
+    let mir_fn = mir.get(mir.find("pairs").expect("pairs in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "MapLiteral emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn map_literal_runtime_parity() {
+    // Sanity: the constructed map's lookup yields the same
+    // value on both paths.
+    let src = "fn one() -> Map<String, Int>\n    {\"answer\" => 42}\n\nfn pull_answer(_d: Int) -> Int\n    Map.get(one(), \"answer\")\n";
+    let hir = run_via_path(src, "pull_answer", &[0], Path::Hir);
+    let mir = run_via_path(src, "pull_answer", &[0], Path::MirFallback);
+    assert_eq!(
+        hir, mir,
+        "MapLiteral runtime parity: HIR={hir:?}, MIR={mir:?}"
+    );
+    // `Map.get` returns `Option<Int>`; both paths reach the
+    // same Some/None shape.
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output
