@@ -26,9 +26,23 @@
 //! collapses to a `Literal` (pure) and unlocks its enclosing
 //! `Let` for elimination.
 //!
+//! ## Wave 7 — nullary literal inlining
+//!
+//! For every fn whose body is exactly a `MirExpr::Literal` and
+//! whose param list is empty, rewrite every `Call(Fn(id), [])`
+//! to that literal value. Smallest non-trivial inliner — no
+//! param substitution needed — and it unlocks further
+//! const-fold / DCE cascades: `let x = pi() * 2.0; 99` →
+//! `let x = 3.14 * 2.0; 99` → `let x = 6.28; 99` → `99`.
+//!
+//! Recursive nullary-literal fns are impossible by
+//! construction (a literal body has no `MirExpr::Call`), so no
+//! cycle check is needed.
+//!
 //! ## What this doesn't transform (deferred)
 //!
-//! - Call inlining (Phase 6 wave 7 candidate).
+//! - General inlining with param substitution (small
+//!   single-expression fns with N params) — Phase 6 wave 8.
 //! - String concatenation (`Str + Str`) — would require
 //!   intern-side allocation policy; the VM does it efficiently
 //!   at runtime already.
@@ -36,9 +50,14 @@
 //!   plumbing; defer until there's a real perf signal).
 //! - CSE / loop-invariant hoisting — future waves.
 
-use crate::ast::{BinOp, Literal, Spanned};
+use std::collections::HashMap;
 
-use super::expr::{MirBinOp, MirCall, MirConstruct, MirExpr, MirLet, MirMatchArm, MirPattern};
+use crate::ast::{BinOp, Literal, Spanned};
+use crate::ir::FnId;
+
+use super::expr::{
+    MirBinOp, MirCall, MirCallee, MirConstruct, MirExpr, MirLet, MirMatchArm, MirPattern,
+};
 use super::program::{LocalId, MirProgram};
 
 /// Apply const-fold to every fn body in `program`. Returns the
@@ -501,6 +520,145 @@ fn literal_eq(a: &Literal, b: &Literal) -> Option<bool> {
     }
 }
 
+/// Wave 7 — inline nullary fns whose body is a literal. Every
+/// `Call(Fn(id), [])` at any depth becomes a `Literal` node
+/// once the target qualifies. Unlocks downstream const-fold +
+/// DCE cascades when the caller wraps the call in arithmetic.
+///
+/// Cycle safety: a literal-only body has no `MirExpr::Call`, so
+/// a "nullary literal fn that calls itself" is structurally
+/// impossible — no SCC analysis needed.
+pub fn inline_nullary_literals(mut program: MirProgram) -> MirProgram {
+    let candidates = collect_nullary_literal_fns(&program);
+    if candidates.is_empty() {
+        return program;
+    }
+    for mir_fn in program.fns.values_mut() {
+        inline_in_place(&mut mir_fn.body, &candidates);
+    }
+    program
+}
+
+fn collect_nullary_literal_fns(program: &MirProgram) -> HashMap<FnId, Literal> {
+    let mut out = HashMap::new();
+    for (fn_id, mir_fn) in program.iter() {
+        if !mir_fn.params.is_empty() {
+            continue;
+        }
+        if let MirExpr::Literal(spanned_lit) = &mir_fn.body.node {
+            out.insert(*fn_id, spanned_lit.node.clone());
+        }
+    }
+    out
+}
+
+fn inline_in_place(expr: &mut Spanned<MirExpr>, candidates: &HashMap<FnId, Literal>) {
+    inline_walk_children(&mut expr.node, candidates);
+
+    // Top-level rewrite: replace `Call(Fn(id), [])` with the
+    // recorded literal when the callee qualifies. Done after
+    // descending so a nested call inside a wrapper expression
+    // already inlined first (post-order).
+    let replacement = if let MirExpr::Call(spanned_call) = &expr.node {
+        let call = &spanned_call.node;
+        if call.args.is_empty() {
+            if let MirCallee::Fn(fn_id) = &call.callee {
+                candidates.get(fn_id).cloned()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(lit) = replacement {
+        let ty = std::sync::OnceLock::new();
+        if let Some(t) = expr.ty() {
+            let _ = ty.set(t.clone());
+        }
+        expr.node = MirExpr::Literal(Spanned {
+            node: lit,
+            line: expr.line,
+            ty,
+        });
+    }
+}
+
+fn inline_walk_children(node: &mut MirExpr, candidates: &HashMap<FnId, Literal>) {
+    match node {
+        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Neg(inner) => inline_in_place(inner, candidates),
+        MirExpr::BinOp(spanned_bop) => {
+            inline_in_place(&mut spanned_bop.node.lhs, candidates);
+            inline_in_place(&mut spanned_bop.node.rhs, candidates);
+        }
+        MirExpr::Let(spanned_let) => {
+            inline_in_place(&mut spanned_let.node.value, candidates);
+            inline_in_place(&mut spanned_let.node.body, candidates);
+        }
+        MirExpr::Call(spanned_call) => {
+            for arg in &mut spanned_call.node.args {
+                inline_in_place(arg, candidates);
+            }
+        }
+        MirExpr::TailCall(spanned_tc) => {
+            for arg in &mut spanned_tc.node.args {
+                inline_in_place(arg, candidates);
+            }
+        }
+        MirExpr::Match(spanned_match) => {
+            inline_in_place(&mut spanned_match.node.subject, candidates);
+            for arm in &mut spanned_match.node.arms {
+                inline_in_place(&mut arm.body, candidates);
+            }
+        }
+        MirExpr::Construct(spanned_ctor) => {
+            for arg in &mut spanned_ctor.node.args {
+                inline_in_place(arg, candidates);
+            }
+        }
+        MirExpr::RecordCreate(spanned_rec) => {
+            for f in &mut spanned_rec.node.fields {
+                inline_in_place(&mut f.value, candidates);
+            }
+        }
+        MirExpr::RecordUpdate(spanned_upd) => {
+            inline_in_place(&mut spanned_upd.node.base, candidates);
+            for f in &mut spanned_upd.node.updates {
+                inline_in_place(&mut f.value, candidates);
+            }
+        }
+        MirExpr::Project(spanned_proj) => inline_in_place(&mut spanned_proj.node.base, candidates),
+        MirExpr::Try(inner) | MirExpr::Return(inner) => inline_in_place(inner, candidates),
+        MirExpr::List(items) | MirExpr::Tuple(items) => {
+            for item in items {
+                inline_in_place(item, candidates);
+            }
+        }
+        MirExpr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                inline_in_place(k, candidates);
+                inline_in_place(v, candidates);
+            }
+        }
+        MirExpr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let super::expr::MirStrPart::Expr(e) = part {
+                    inline_in_place(e, candidates);
+                }
+            }
+        }
+        MirExpr::IndependentProduct(spanned_ip) => {
+            for item in &mut spanned_ip.node.items {
+                inline_in_place(item, candidates);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,6 +950,154 @@ mod tests {
         assert!(
             matches!(body_of(&optimized), MirExpr::Literal(s) if matches!(s.node, Literal::Int(99))),
             "fold→dce should collapse the whole Let to the body literal"
+        );
+    }
+
+    // ── Phase 6 wave 7: nullary literal inlining ────────
+
+    /// Build a 2-fn program: callee = nullary literal-body fn,
+    /// caller = `body_of_caller` which presumably calls callee.
+    fn two_fn_program(callee_body: MirExpr, caller_body: MirExpr) -> MirProgram {
+        let mut p = MirProgram::empty();
+        p.fns.insert(
+            FnId(0),
+            MirFn {
+                fn_id: FnId(0),
+                name: "callee".to_string(),
+                params: vec![],
+                return_type: "Int".to_string(),
+                effects: vec![],
+                body: span(callee_body),
+            },
+        );
+        p.fns.insert(
+            FnId(1),
+            MirFn {
+                fn_id: FnId(1),
+                name: "caller".to_string(),
+                params: vec![],
+                return_type: "Int".to_string(),
+                effects: vec![],
+                body: span(caller_body),
+            },
+        );
+        p
+    }
+
+    fn caller_body(p: &MirProgram) -> &MirExpr {
+        &p.fns.get(&FnId(1)).unwrap().body.node
+    }
+
+    #[test]
+    fn inlines_nullary_literal_call() {
+        // callee: () -> Int = 42
+        // caller: () -> Int = callee()
+        // → caller body becomes Literal(42).
+        let callee_body = MirExpr::Literal(span(Literal::Int(42)));
+        let caller_body_expr = MirExpr::Call(span(MirCall {
+            callee: MirCallee::Fn(FnId(0)),
+            args: vec![],
+        }));
+        let inlined = inline_nullary_literals(two_fn_program(callee_body, caller_body_expr));
+        assert!(
+            matches!(caller_body(&inlined), MirExpr::Literal(s) if matches!(s.node, Literal::Int(42))),
+            "nullary literal call should inline to the literal"
+        );
+    }
+
+    #[test]
+    fn does_not_inline_non_nullary_call() {
+        // callee: (x: Int) -> Int = 42 — body IS literal but
+        // params non-empty → skip.
+        use super::super::program::MirParam;
+        let mut p = MirProgram::empty();
+        p.fns.insert(
+            FnId(0),
+            MirFn {
+                fn_id: FnId(0),
+                name: "callee".to_string(),
+                params: vec![MirParam {
+                    local: LocalId(0),
+                    name: "x".to_string(),
+                    ty: "Int".to_string(),
+                }],
+                return_type: "Int".to_string(),
+                effects: vec![],
+                body: span(MirExpr::Literal(span(Literal::Int(42)))),
+            },
+        );
+        let caller_body_expr = MirExpr::Call(span(MirCall {
+            callee: MirCallee::Fn(FnId(0)),
+            args: vec![span(MirExpr::Literal(span(Literal::Int(1))))],
+        }));
+        p.fns.insert(
+            FnId(1),
+            MirFn {
+                fn_id: FnId(1),
+                name: "caller".to_string(),
+                params: vec![],
+                return_type: "Int".to_string(),
+                effects: vec![],
+                body: span(caller_body_expr),
+            },
+        );
+        let inlined = inline_nullary_literals(p);
+        assert!(
+            matches!(caller_body(&inlined), MirExpr::Call(_)),
+            "non-nullary call must not be inlined even if body is literal"
+        );
+    }
+
+    #[test]
+    fn does_not_inline_nullary_non_literal_body() {
+        // callee: () -> Int = 1 + 2 — nullary but body is
+        // BinOp, not a pure Literal — skip (until const-fold
+        // collapses it; that's wave 5's job, and the pipeline
+        // composition makes the right thing happen).
+        let callee_body = MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Add,
+            lhs: Box::new(span(MirExpr::Literal(span(Literal::Int(1))))),
+            rhs: Box::new(span(MirExpr::Literal(span(Literal::Int(2))))),
+        }));
+        let caller_body_expr = MirExpr::Call(span(MirCall {
+            callee: MirCallee::Fn(FnId(0)),
+            args: vec![],
+        }));
+        let inlined = inline_nullary_literals(two_fn_program(callee_body, caller_body_expr));
+        assert!(
+            matches!(caller_body(&inlined), MirExpr::Call(_)),
+            "nullary call with BinOp body must not be inlined directly"
+        );
+    }
+
+    #[test]
+    fn pipeline_inline_then_fold_then_dce() {
+        // callee: () -> Int = 3
+        // caller: () -> Int = let x = callee() * 2; 99
+        //  inline   → let x = 3 * 2; 99
+        //  fold     → let x = 6; 99
+        //  dce      → 99
+        use super::super::expr::MirLet;
+        let callee_body = MirExpr::Literal(span(Literal::Int(3)));
+        let mul = MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Mul,
+            lhs: Box::new(span(MirExpr::Call(span(MirCall {
+                callee: MirCallee::Fn(FnId(0)),
+                args: vec![],
+            })))),
+            rhs: Box::new(span(MirExpr::Literal(span(Literal::Int(2))))),
+        }));
+        let caller_body_expr = MirExpr::Let(span(MirLet {
+            binding: LocalId(0),
+            binding_name: "x".to_string(),
+            value: Box::new(span(mul)),
+            body: Box::new(span(MirExpr::Literal(span(Literal::Int(99))))),
+        }));
+        let p = two_fn_program(callee_body, caller_body_expr);
+        let optimized = dead_code(const_fold(inline_nullary_literals(p)));
+        assert!(
+            matches!(caller_body(&optimized), MirExpr::Literal(s) if matches!(s.node, Literal::Int(99))),
+            "full pipeline should collapse caller body to `99`"
         );
     }
 }
