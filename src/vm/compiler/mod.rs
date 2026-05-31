@@ -31,13 +31,26 @@ use super::types::{CodeStore, FnChunk};
 /// `analysis` carries per-fn `FnAnalysis.allocates` from the
 /// pipeline's analyze stage; the VM compiler reads `chunk.no_alloc`
 /// from it directly.
+/// HIR-only compile. Retained as the differential reference path:
+/// the MIR-VM parity tests compile the same source through here and
+/// through the MIR-default module-aware entry points and assert
+/// identical VM-observable behavior. Production callers use the
+/// module-aware entry points below, which take the MIR-default path.
 pub fn compile_program(
     items: &[ResolvedTopLevel],
     symbols: &SymbolTable,
     arena: &mut Arena,
     analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    compile_program_with_modules(items, symbols, arena, None, "", analysis)
+    compile_program_inner(
+        items,
+        symbols,
+        arena,
+        "",
+        ModuleSource::Disk(None),
+        analysis,
+        false,
+    )
 }
 
 /// Compile with explicit module root for `depends` resolution.
@@ -56,7 +69,7 @@ pub fn compile_program_with_modules(
         source_file,
         ModuleSource::Disk(module_root),
         analysis,
-        None,
+        true,
     )
 }
 
@@ -78,7 +91,7 @@ pub fn compile_program_with_loaded_modules(
         source_file,
         ModuleSource::Loaded(loaded),
         analysis,
-        None,
+        true,
     )
 }
 
@@ -100,27 +113,11 @@ pub fn compile_program_with_mir_fallback(
     arena: &mut Arena,
     analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    // Phase 6 wave 5–10: optimize pipeline on the lowered MIR
-    // before the VM walker consumes it. Order is deliberate:
-    // (1) nullary-literal inlining unlocks call-site literals,
-    // (2) const-fold collapses literal arithmetic,
-    // (3) algebraic-simplify rewrites Int identities
-    //     (`x + 0` / `x * 1` / `Neg(Neg(x))`),
-    // (4) bool-match-to-if rewrites qualifying two-arm `Bool`
-    //     match expressions into `IfThenElse`,
-    // (5) branch-collapse drops the dead branch of an
-    //     `IfThenElse` whose `cond` folded to a literal `Bool`,
-    // (6) DCE drops `let _ = <pure>; body` chains where the
-    //     binding was never read.
-    // Each pass is a `MirProgram → MirProgram` pure function;
-    // future passes plug in by extending the chain.
-    let mir = crate::ir::mir::dead_code(crate::ir::mir::branch_collapse(
-        crate::ir::mir::bool_match_to_if(crate::ir::mir::algebraic_simplify(
-            crate::ir::mir::const_fold(crate::ir::mir::inline_nullary_literals(
-                crate::ir::mir::lower_program(items),
-            )),
-        )),
-    ));
+    // Single-module MIR-default entry, kept for the parity tests
+    // (`tests/mir_vm_parity.rs`) that exercise the MIR path without a
+    // module root. The optimize pipeline + per-fn MIR dispatch now
+    // live in `compile_program_inner` under `use_mir`, shared with the
+    // module-aware production entry points.
     compile_program_inner(
         items,
         symbols,
@@ -128,7 +125,7 @@ pub fn compile_program_with_mir_fallback(
         "",
         ModuleSource::Disk(None),
         analysis,
-        Some(&mir),
+        true,
     )
 }
 
@@ -144,8 +141,35 @@ fn compile_program_inner(
     source_file: &str,
     module_source: ModuleSource<'_>,
     analysis: Option<&crate::ir::AnalysisResult>,
-    mir_program: Option<&crate::ir::mir::MirProgram>,
+    use_mir: bool,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
+    // MIR-default path. Lower the entry items to MIR and run the
+    // optimize pipeline; the per-fn loop below dispatches each fn
+    // through the MIR walker and falls back to the HIR walker for
+    // shapes outside the MIR subset. Built here — not in the caller —
+    // so every module-aware entry point shares one pipeline. Order is
+    // deliberate: (1) nullary-literal inlining unlocks call-site
+    // literals, (2) const-fold collapses literal arithmetic,
+    // (3) algebraic-simplify rewrites Int identities, (4) bool-match-
+    // to-if rewrites two-arm `Bool` matches into `IfThenElse`,
+    // (5) branch-collapse drops the dead branch of a folded
+    // `IfThenElse`, (6) DCE drops unread `let _ = <pure>` chains.
+    // Module fns are compiled by `load_modules` / `integrate_module`
+    // on the HIR walker; only the entry `items` ride MIR for now
+    // (the per-fn coverage counter surfaces the gap).
+    let mir_built = if use_mir {
+        Some(crate::ir::mir::dead_code(crate::ir::mir::branch_collapse(
+            crate::ir::mir::bool_match_to_if(crate::ir::mir::algebraic_simplify(
+                crate::ir::mir::const_fold(crate::ir::mir::inline_nullary_literals(
+                    crate::ir::mir::lower_program(items),
+                )),
+            )),
+        )))
+    } else {
+        None
+    };
+    let mir_program = mir_built.as_ref();
+
     let mut compiler = ProgramCompiler::new();
     compiler.source_file = source_file.to_string();
     compiler.sync_record_field_symbols(arena)?;
@@ -772,7 +796,13 @@ impl ProgramCompiler {
         mir_program: &crate::ir::mir::MirProgram,
     ) -> Result<FnChunk, mir::MirVmUnsupported> {
         let resolution = rfd.resolution.as_ref();
-        let local_count = resolution.map_or(rfd.params.len() as u16, |r| r.local_count);
+        // The MIR body may mint synthetic slots past the resolver's
+        // `local_count` (opaque-let temps for effectful intermediates),
+        // so trust the MIR fn's own count — the resolver's is a lower
+        // bound and underruns the frame on `STORE_LOCAL` to a temp.
+        let local_count = mir_fn.local_count.max(
+            resolution.map_or(rfd.params.len() as u32, |r| u32::from(r.local_count)),
+        ) as u16;
         let local_slots: HashMap<String, u16> = resolution
             .map(|r| r.local_slots.as_ref().clone())
             .unwrap_or_else(|| {

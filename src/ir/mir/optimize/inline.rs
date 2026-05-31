@@ -171,6 +171,7 @@ mod tests {
                 return_type: "Int".to_string(),
                 effects: vec![],
                 body: span(callee_body),
+                local_count: 0,
             },
         );
         p.fns.insert(
@@ -182,6 +183,7 @@ mod tests {
                 return_type: "Int".to_string(),
                 effects: vec![],
                 body: span(caller_body),
+                local_count: 0,
             },
         );
         p
@@ -221,6 +223,7 @@ mod tests {
                 return_type: "Int".to_string(),
                 effects: vec![],
                 body: span(MirExpr::Literal(span(Literal::Int(42)))),
+                local_count: 1,
             },
         );
         let caller_body_expr = MirExpr::Call(span(MirCall {
@@ -236,6 +239,7 @@ mod tests {
                 return_type: "Int".to_string(),
                 effects: vec![],
                 body: span(caller_body_expr),
+                local_count: 0,
             },
         );
         let inlined = inline_nullary_literals(p);

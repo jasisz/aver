@@ -131,6 +131,12 @@ pub struct MirFn {
     /// `fn_id`, but the body span is needed for sub-expression
     /// errors that don't carry a closer one).
     pub body: Spanned<MirExpr>,
+    /// Number of frame slots the lowered body needs: the resolver's
+    /// `local_count` plus any synthetic slots minted for opaque-let
+    /// temps during stmt-chain lowering. The VM walker reserves this
+    /// many slots; using the resolver's count alone underruns the
+    /// frame when the body stores into a synthetic slot.
+    pub local_count: u32,
 }
 
 /// One formal parameter. The `LocalId` is assigned at lowering

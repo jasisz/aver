@@ -27,6 +27,7 @@ pub(crate) fn one_fn_program(body: MirExpr) -> MirProgram {
             return_type: "Int".to_string(),
             effects: vec![],
             body: span(body),
+            local_count: 0,
         },
     );
     p
