@@ -5,7 +5,7 @@ mod builtins;
 pub mod emit_ctx;
 mod expr;
 mod from_mir;
-pub use from_mir::{CoverageReport, coverage_report};
+pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report};
 mod pattern;
 mod policy;
 mod project;
