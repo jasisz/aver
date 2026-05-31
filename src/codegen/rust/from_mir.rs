@@ -263,7 +263,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 // many shapes to mirror in wave 2. Buffer intrinsics
                 // likewise fall back (the Rust backend deforests
                 // differently).
-                MirCallee::Builtin(_) | MirCallee::Intrinsic(_) => None,
+                MirCallee::Builtin(_) | MirCallee::Intrinsic(_) | MirCallee::LocalSlot { .. } => {
+                    None
+                }
             }
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, emit_ctx)?)),

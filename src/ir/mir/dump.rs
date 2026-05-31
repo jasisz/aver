@@ -157,6 +157,7 @@ fn write_call(f: &mut fmt::Formatter<'_>, call: &MirCall, indent: &str) -> fmt::
         MirCallee::Fn(id) => write!(f, "FnId({}).call(", id.0)?,
         MirCallee::Builtin(id) => write!(f, "Builtin(#{}).call(", id.0)?,
         MirCallee::Intrinsic(i) => write!(f, "Intrinsic({i:?}).call(")?,
+        MirCallee::LocalSlot { slot, .. } => write!(f, "slot({slot}).call(")?,
     }
     write_args(f, &call.args, indent)?;
     write!(f, ")")

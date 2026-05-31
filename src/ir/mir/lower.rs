@@ -75,13 +75,16 @@
 //! aver.toml runtime policy decision.
 //!
 //! Final remaining `SkipReason`s after wave 3c:
-//! - `UnresolvedIdent` — resolver gap (e.g. bare `Option.None` in
-//!   value position), not a MIR concern.
+//! - `UnresolvedIdent` — a fn referenced as a value (`callWith(dbl)`
+//!   passes `dbl` as a bare ident). Calling a fn value already lowers;
+//!   referencing one is the remaining first-class-fn shape.
 //! - `MissingResolution` / `EmptyBody` / `BindingOnlyTail` /
 //!   `BindingSlotLookupMissing` / `PatternSlotShortfall` —
 //!   defensive guards for upstream pipeline gaps.
-//! - `UnsupportedCallee` — first-class fn / intrinsic / unresolved
-//!   call targets; future closures work.
+//! - `UnsupportedCallee` — only `Unresolved` callees (typecheck-error
+//!   recovery) now. Buffer intrinsics (`MirCallee::Intrinsic`) and
+//!   first-class-fn *calls* (`MirCallee::LocalSlot` → `CALL_VALUE`)
+//!   lower.
 //! - `BuiltinRecord` — records on built-in product types (no
 //!   `TypeId`); waits for a consumer that needs them.
 //! - `BuiltinCtorConstruction` / `BuiltinCtorPattern` /
@@ -271,10 +274,16 @@ fn lower_expr(
                 // emits the BUFFER_* / CONCAT opcodes instead of dropping
                 // the fn to the HIR fallback.
                 ResolvedCallee::Intrinsic(intrinsic) => MirCallee::Intrinsic(*intrinsic),
-                // First-class fn values and unresolved callees aren't
-                // covered yet — a later wave grows `MirCallee` for the
-                // first-class-fn / closure case.
-                ResolvedCallee::LocalSlot { .. } | ResolvedCallee::Unresolved { .. } => {
+                // First-class fn value in a local slot — `f(x)` where `f`
+                // is a `Fn(..)` param / let-bound fn. Dispatches through
+                // the VM's `CALL_VALUE` at the walker.
+                ResolvedCallee::LocalSlot { slot, last_use, .. } => MirCallee::LocalSlot {
+                    slot: *slot,
+                    last_use: last_use.0,
+                },
+                // Unresolved callees (typecheck-rejected recovery) still
+                // ride the HIR fallback.
+                ResolvedCallee::Unresolved { .. } => {
                     return Err(SkipReason::UnsupportedCallee);
                 }
             };

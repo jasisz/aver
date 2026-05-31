@@ -94,19 +94,23 @@ fn lowers_neg_over_int_literal() {
 
 #[test]
 fn drops_unsupported_fn_silently() {
-    // A first-class-fn call (`f(x)` where `f` is a `Fn(..)` param)
-    // lowers to a `LocalSlot` callee, which the MIR lowerer bounces
-    // with `UnsupportedCallee` — closures / first-class fns are the
-    // remaining un-lowered shape. The lowerer must not panic; it just
-    // leaves the fn out.
+    // Passing a fn as a value (`callWith(dbl)` → the bare `dbl` ident)
+    // is the remaining un-lowered shape — the MIR lowerer bounces it
+    // with `UnresolvedIdent`. The lowerer must not panic; it just leaves
+    // the fn out. (Calling a fn value, `f(x)`, already lowers via the
+    // CALL_VALUE first-class-fn path; only referencing one as a value
+    // is left.)
     //
-    // The fixture was previously a list literal, then `Option.None` —
-    // both lower now (wave 3c-iv / the nullary-ctor-in-value-position
-    // resolver fix). First-class fns are what's left.
-    let dump = lower("fn nothing(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\n");
+    // The fixture was previously a list literal, then `Option.None`,
+    // then a first-class-fn call — all lower now.
+    let dump = lower(
+        "fn dbl(n: Int) -> Int\n    n + n\n\n\
+         fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
+         fn passesFn() -> Int\n    callWith(dbl)\n",
+    );
     assert!(
-        !dump.contains("fn nothing"),
-        "fn calling a first-class-fn param shouldn't lower yet:\n{dump}"
+        !dump.contains("fn passesFn"),
+        "fn passing a fn value shouldn't lower yet:\n{dump}"
     );
 }
 

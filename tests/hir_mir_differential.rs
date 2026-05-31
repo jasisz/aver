@@ -202,6 +202,21 @@ fn newtype_specialization() {
 }
 
 #[test]
+fn first_class_fn_call_via_call_value() {
+    // `applyTwice` calls its `Fn(..)` parameter `f` — a first-class fn
+    // value in a local slot. The MIR walker lowers `f(x)` to a
+    // CALL_VALUE dynamic dispatch (push the slot, then the args), the
+    // same shape the HIR walker's compile_call fallback emits. Result:
+    // applyTwice(inc, 5) = inc(inc(5)) = 7.
+    let src = prog(
+        "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    f(f(x))\n\n\
+         fn inc(n: Int) -> Int\n    n + 1\n\n\
+         fn run() -> Int\n    applyTwice(inc, 5)\n",
+    );
+    assert_parity("first_class_fn", &src, "run");
+}
+
+#[test]
 fn nullary_ctor_value_position() {
     // `Option.None` and a nullary user variant (`Color.Black`) used in
     // value position (as arguments / bindings), not called. The resolver

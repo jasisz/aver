@@ -286,6 +286,22 @@ pub(super) fn compile_mir_expr(
                     }
                     Ok(())
                 }
+                MirCallee::LocalSlot { slot, last_use } => {
+                    // First-class fn value: push the slot (the callee),
+                    // then the args, then dynamic-dispatch via CALL_VALUE.
+                    // Mirror of the HIR walker's compile_call fallback +
+                    // compile_callee_as_value(LocalSlot). CALL_VALUE reads
+                    // the callee at `stack.len() - 1 - argc`, so it must be
+                    // pushed before the args.
+                    fc.emit_op(if *last_use { MOVE_LOCAL } else { LOAD_LOCAL });
+                    fc.emit_u8(*slot as u8);
+                    for arg in args {
+                        compile_mir_expr(fc, arg)?;
+                    }
+                    fc.emit_op(CALL_VALUE);
+                    fc.emit_u8(args.len() as u8);
+                    Ok(())
+                }
             }
         }
         MirExpr::Return(inner) => {
@@ -714,8 +730,9 @@ pub(super) fn compile_mir_expr(
                     }
                     // A synthesis intrinsic can't appear as an
                     // independent-product branch callee (intrinsics are
-                    // never first-class values); fall back conservatively.
-                    MirCallee::Intrinsic(_) => {
+                    // never first-class values); a first-class-fn-valued
+                    // IP branch is rare — both fall back conservatively.
+                    MirCallee::Intrinsic(_) | MirCallee::LocalSlot { .. } => {
                         return Err(MirVmUnsupported::UnsupportedCallee);
                     }
                 }
@@ -796,6 +813,8 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
                 // Buffer-build / stringify intrinsics emit dedicated
                 // BUFFER_* / CONCAT opcodes — always compilable.
                 MirCallee::Intrinsic(_) => true,
+                // First-class fn value → CALL_VALUE dynamic dispatch.
+                MirCallee::LocalSlot { .. } => true,
             };
             callee_ok && c.node.args.iter().all(can_compile)
         }
