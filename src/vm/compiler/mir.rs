@@ -125,6 +125,7 @@ pub(super) fn compile_mir_expr(
         MirExpr::Let(spanned_let) => {
             let MirLet {
                 binding,
+                binding_name: _,
                 value,
                 body,
             } = &spanned_let.node;

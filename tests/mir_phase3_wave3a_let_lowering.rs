@@ -28,6 +28,36 @@ fn lower(source: &str) -> String {
 }
 
 #[test]
+fn lowers_let_carries_source_binding_name() {
+    // Phase 5 prep: `MirLet::binding_name` carries the source
+    // identifier when the let came from `Stmt::Binding`. Rust /
+    // wasm-gc backends use it as the emitted let-binder.
+    let src = "fn add_one(n: Int) -> Int\n    bumped = n + 1\n    bumped\n";
+    let mut items = parse_source(src).unwrap();
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    assert!(result.typecheck.as_ref().unwrap().errors.is_empty());
+    let program = lower_program(&result.resolved_items);
+    let mir_fn = program
+        .fns
+        .values()
+        .find(|f| f.name == "add_one")
+        .expect("add_one in MIR");
+    let aver::ir::mir::MirExpr::Let(let_node) = &mir_fn.body.node else {
+        panic!("expected Let at body root, got: {:?}", mir_fn.body.node);
+    };
+    assert_eq!(
+        let_node.node.binding_name, "bumped",
+        "Let.binding_name should propagate source ident"
+    );
+}
+
+#[test]
 fn lowers_single_let_binding_then_expr() {
     // let x = 7
     // x

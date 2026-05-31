@@ -173,9 +173,18 @@ pub enum MirExpr {
 }
 
 /// `let binding = value; body`.
+///
+/// Phase 5 wave-Let foundation: `binding_name` carries the
+/// source-level binder when the let came from `Stmt::Binding`,
+/// or stays empty for synthetic locals introduced by stmt-chain
+/// lowering (`Stmt::Expr` at non-tail position). Same propagation
+/// shape `MirLocal { name }` uses on the read side, so Rust /
+/// wasm-gc backends can emit `let x = …` for source-named
+/// bindings and fall back to HIR for the unnamed synthetics.
 #[derive(Debug, Clone)]
 pub struct MirLet {
     pub binding: LocalId,
+    pub binding_name: String,
     pub value: Box<Spanned<MirExpr>>,
     pub body: Box<Spanned<MirExpr>>,
 }

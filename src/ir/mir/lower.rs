@@ -610,18 +610,19 @@ fn lower_stmt_chain(
     // Right-fold: walk earlier stmts in reverse, wrapping each
     // around the accumulating `body`.
     for stmt in rest.iter().rev() {
-        let (binding, value_expr) = match stmt {
+        let (binding, binding_name, value_expr) = match stmt {
             ResolvedStmt::Binding { name, value, .. } => {
                 let slot = *resolution
                     .local_slots
                     .get(name)
                     .ok_or(SkipReason::BindingSlotLookupMissing)?;
-                (LocalId(u32::from(slot)), value)
+                (LocalId(u32::from(slot)), name.clone(), value)
             }
             ResolvedStmt::Expr(expr) => {
                 let fresh = LocalId(*next_synthetic_local);
                 *next_synthetic_local += 1;
-                (fresh, expr)
+                // Synthetic introduction — no source-level name.
+                (fresh, String::new(), expr)
             }
         };
         let mir_value = lower_expr(value_expr)?;
@@ -630,6 +631,7 @@ fn lower_stmt_chain(
             node: MirExpr::Let(Spanned {
                 node: MirLet {
                     binding,
+                    binding_name,
                     value: Box::new(mir_value),
                     body: Box::new(body),
                 },

@@ -83,6 +83,7 @@ fn try_bind_via_let_composition_dump_shape() {
     // same dump appearance (one `let`, one `?`).
     let body = span(MirExpr::Let(span(MirLet {
         binding: LocalId(0),
+        binding_name: String::new(),
         value: Box::new(span(MirExpr::Try(Box::new(span(MirExpr::Call(span(
             MirCall {
                 callee: MirCallee::Fn(fn_id(1)),
@@ -266,6 +267,7 @@ fn let_dump_shape() {
     // let %0 = 7; %0
     let body = span(MirExpr::Let(span(MirLet {
         binding: LocalId(0),
+        binding_name: String::new(),
         value: Box::new(span(MirExpr::Literal(span(Literal::Int(7))))),
         body: Box::new(span(MirExpr::Local(span(MirLocal::at(LocalId(0)))))),
     })));
