@@ -112,11 +112,6 @@ impl<'a> MirEmitCtx<'a> {
 /// `toplevel.rs`: find the longest registered module prefix
 /// inside a dotted name. Returns `(prefix, suffix)` on hit,
 /// `None` when no registered prefix matches.
-///
-/// First consumer lands in Phase 5 wave 4d (User-ctor
-/// Construct + dep-module records); landing the helper with
-/// `MirEmitCtx` keeps the foundation PR self-contained.
-#[allow(dead_code)]
 fn resolve_module_call<'a>(
     dotted: &'a str,
     module_prefixes: &HashSet<String>,
