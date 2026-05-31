@@ -75,6 +75,7 @@
 
 pub mod dump;
 pub mod expr;
+pub mod instantiations;
 pub mod lower;
 pub mod optimize;
 pub mod program;
@@ -86,6 +87,7 @@ pub use expr::{
     MirIfThenElse, MirIndependentProduct, MirLet, MirLocal, MirMatch, MirMatchArm, MirPattern,
     MirProject, MirRecordCreate, MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
 };
+pub use instantiations::{InstantiationRegistry, discover_instantiations};
 pub use lower::lower_program;
 pub use optimize::{
     algebraic_simplify, bool_match_to_if, branch_collapse, const_fold, dead_code,
