@@ -746,6 +746,34 @@ fn specialised_builtin_result_with_default_bytecode_parity() {
 }
 
 #[test]
+fn last_use_emits_move_local_bytecode_parity() {
+    // Phase 6 wave 4 — `x + x` with the second `x` being the
+    // final read emits LOAD_LOCAL + MOVE_LOCAL on both paths.
+    // The HIR walker carries last-use from `AnnotBool` stamp;
+    // MIR now propagates the same flag through `MirLocal` and
+    // mirrors the emit exactly.
+    let (hir, mir) = compile_both("fn double(x: Int) -> Int\n    x + x\n");
+    let hir_fn = hir.get(hir.find("double").expect("double in HIR"));
+    let mir_fn = mir.get(mir.find("double").expect("double in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "MOVE_LOCAL last-use emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn last_use_runtime_parity() {
+    // Same shape, runtime sanity — both paths agree on
+    // double(7) = 14 after the MOVE_LOCAL emit.
+    let src = "fn double(x: Int) -> Int\n    x + x\n";
+    let hir = run_via_path(src, "double", &[7], Path::Hir);
+    let mir = run_via_path(src, "double", &[7], Path::MirFallback);
+    assert_eq!(hir, mir);
+    assert_eq!(hir, Value::Int(14));
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output

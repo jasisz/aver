@@ -82,11 +82,18 @@ pub(super) fn compile_mir_expr(
             Ok(())
         }
         MirExpr::Local(spanned_local) => {
-            let slot = spanned_local.node.0;
-            // No last-use info on MIR yet (Phase 6 work), so always
-            // emit LOAD_LOCAL — matches a no-last-use HIR slot.
-            fc.emit_op(LOAD_LOCAL);
-            fc.emit_u8(slot as u8);
+            let local = spanned_local.node;
+            // Phase 6 wave 4: emit MOVE_LOCAL when this is the
+            // last read of the slot in the enclosing fn body.
+            // Mirrors HIR's last-use revival; skips ref-count
+            // bumps + lets the VM yard reclaim the slot's heap
+            // value immediately.
+            fc.emit_op(if local.last_use {
+                MOVE_LOCAL
+            } else {
+                LOAD_LOCAL
+            });
+            fc.emit_u8(local.slot.0 as u8);
             Ok(())
         }
         MirExpr::BinOp(spanned_binop) => {
@@ -142,9 +149,24 @@ pub(super) fn compile_mir_expr(
                             ),
                         })
                     })?;
-                    fc.emit_op(CALL_KNOWN);
-                    fc.emit_u16(vm_fn_id as u16);
-                    fc.emit_u8(args.len() as u8);
+                    // Phase 6 wave 4 — derive owned_mask from
+                    // args' last-use flags. Each bit `i` set
+                    // means arg `i` was a `MirLocal { last_use:
+                    // true }` AND its slot maps positionally to
+                    // parameter `i`. The HIR walker constrains
+                    // this to `slot == i`; we apply the same
+                    // rule.
+                    let owned_mask = compute_owned_mask(args, fc);
+                    if owned_mask != 0 {
+                        fc.emit_op(CALL_KNOWN_OWNED);
+                        fc.emit_u16(vm_fn_id as u16);
+                        fc.emit_u8(args.len() as u8);
+                        fc.emit_u8(owned_mask);
+                    } else {
+                        fc.emit_op(CALL_KNOWN);
+                        fc.emit_u16(vm_fn_id as u16);
+                        fc.emit_u8(args.len() as u8);
+                    }
                     Ok(())
                 }
                 MirCallee::Builtin(name) => {
@@ -160,10 +182,25 @@ pub(super) fn compile_mir_expr(
                     // wait for wave 4's last-use revival; until
                     // then `owned_mask = 0` everywhere on the
                     // MIR path, same as Phase 4e.
+                    let owned_mask = compute_owned_mask(args, fc);
                     match builtin {
                         VmBuiltin::ListLen => fc.emit_op(LIST_LEN),
                         VmBuiltin::ListPrepend => fc.emit_op(LIST_PREPEND),
                         VmBuiltin::VectorGet => fc.emit_op(VECTOR_GET),
+                        VmBuiltin::VectorSet if owned_mask != 0 => {
+                            // Phase 6 wave 4: HIR routes the
+                            // owned-VectorSet through CALL_BUILTIN_OWNED
+                            // (with take optimization).
+                            let symbol_id = fc.symbols.intern_builtin(builtin).map_err(|e| {
+                                MirVmUnsupported::InnerError(CompileError {
+                                    msg: format!("MIR-VM: intern_builtin failed: {e:?}"),
+                                })
+                            })?;
+                            fc.emit_op(CALL_BUILTIN_OWNED);
+                            fc.emit_u32(symbol_id);
+                            fc.emit_u8(args.len() as u8);
+                            fc.emit_u8(owned_mask);
+                        }
                         VmBuiltin::VectorSet => fc.emit_op(VECTOR_SET),
                         VmBuiltin::OptionWithDefault => fc.emit_op(UNWRAP_OR),
                         VmBuiltin::ResultWithDefault => fc.emit_op(UNWRAP_RESULT_OR),
@@ -173,9 +210,16 @@ pub(super) fn compile_mir_expr(
                                     msg: format!("MIR-VM: intern_builtin failed: {e:?}"),
                                 })
                             })?;
-                            fc.emit_op(CALL_BUILTIN);
-                            fc.emit_u32(symbol_id);
-                            fc.emit_u8(args.len() as u8);
+                            if owned_mask != 0 {
+                                fc.emit_op(CALL_BUILTIN_OWNED);
+                                fc.emit_u32(symbol_id);
+                                fc.emit_u8(args.len() as u8);
+                                fc.emit_u8(owned_mask);
+                            } else {
+                                fc.emit_op(CALL_BUILTIN);
+                                fc.emit_u32(symbol_id);
+                                fc.emit_u8(args.len() as u8);
+                            }
                         }
                     }
                     Ok(())
@@ -281,20 +325,18 @@ pub(super) fn compile_mir_expr(
         // ── Phase 4d: tail-call dispatch ────────────────────────
         MirExpr::TailCall(spanned_tail) => {
             let tc = &spanned_tail.node;
+            // Phase 6 wave 4: derive owned_mask from args' last-
+            // use flags BEFORE compiling them (compute looks at
+            // the MirExpr tree, not stack state).
+            let owned_mask = compute_owned_mask(&tc.args, fc);
             for arg in &tc.args {
                 compile_mir_expr(fc, arg)?;
             }
             let target_name = fc.canonical_fn_name(tc.target)?;
-            // Self-recursive vs cross-fn dispatch. The HIR walker
-            // also derives an `owned_mask` from last-use
-            // annotations; MIR doesn't carry last-use bits yet
-            // (Phase 6 work), so we emit `0` — bytecode stays
-            // semantically equivalent, the optimizer pass can
-            // later rebuild the mask off MIR liveness.
             if target_name == fc.name() {
                 fc.emit_op(TAIL_CALL_SELF);
                 fc.emit_u8(tc.args.len() as u8);
-                fc.emit_u8(0);
+                fc.emit_u8(owned_mask);
             } else {
                 let vm_fn_id = fc.resolve_fn_id_by_name(&target_name).ok_or_else(|| {
                     MirVmUnsupported::InnerError(CompileError {
@@ -308,7 +350,7 @@ pub(super) fn compile_mir_expr(
                 fc.emit_op(TAIL_CALL_KNOWN);
                 fc.emit_u16(vm_fn_id as u16);
                 fc.emit_u8(tc.args.len() as u8);
-                fc.emit_u8(0);
+                fc.emit_u8(owned_mask);
             }
             Ok(())
         }
@@ -1173,6 +1215,92 @@ where
     let outer_fail = fc.emit_jump(JUMP);
     fc.patch_jump(success_skip);
     Ok(vec![outer_fail])
+}
+
+/// Phase 6 wave 4 — derive `owned_mask` for a call's args.
+/// Bit `i` is set when arg `i` carries (transitively) a last-use
+/// read of slot `i`. Mirrors HIR's `compute_builtin_owned_mask`
+/// / tail-call mask derivation. Caps at 8 args (mask is u8).
+///
+/// The alias-prone slot guard HIR applies (skipping bits when
+/// the slot is aliased by another binding) isn't ported here
+/// yet — MIR doesn't carry the alias annotation from
+/// `FnResolution`. We emit conservatively when in doubt.
+fn compute_owned_mask(args: &[Spanned<MirExpr>], _fc: &FnCompiler<'_>) -> u8 {
+    let mut mask = 0u8;
+    for (i, arg) in args.iter().enumerate().take(8) {
+        if contains_last_use_slot_mir(&arg.node, i as u32) {
+            mask |= 1 << i;
+        }
+    }
+    mask
+}
+
+/// Recursive search: does `expr` contain a `MirExpr::Local`
+/// reading slot `target` with `last_use = true`? Mirror of
+/// HIR's `contains_last_use_slot`.
+fn contains_last_use_slot_mir(expr: &MirExpr, target: u32) -> bool {
+    match expr {
+        MirExpr::Local(spanned_local) => {
+            spanned_local.node.slot.0 == target && spanned_local.node.last_use
+        }
+        MirExpr::Call(c) => c
+            .node
+            .args
+            .iter()
+            .any(|a| contains_last_use_slot_mir(&a.node, target)),
+        MirExpr::TailCall(t) => t
+            .node
+            .args
+            .iter()
+            .any(|a| contains_last_use_slot_mir(&a.node, target)),
+        MirExpr::BinOp(b) => {
+            contains_last_use_slot_mir(&b.node.lhs.node, target)
+                || contains_last_use_slot_mir(&b.node.rhs.node, target)
+        }
+        MirExpr::Neg(inner) => contains_last_use_slot_mir(&inner.node, target),
+        MirExpr::Project(p) => contains_last_use_slot_mir(&p.node.base.node, target),
+        MirExpr::Try(inner) => contains_last_use_slot_mir(&inner.node, target),
+        MirExpr::Construct(c) => c
+            .node
+            .args
+            .iter()
+            .any(|a| contains_last_use_slot_mir(&a.node, target)),
+        MirExpr::RecordCreate(rc) => rc
+            .node
+            .fields
+            .iter()
+            .any(|f| contains_last_use_slot_mir(&f.value.node, target)),
+        MirExpr::RecordUpdate(ru) => {
+            contains_last_use_slot_mir(&ru.node.base.node, target)
+                || ru
+                    .node
+                    .updates
+                    .iter()
+                    .any(|f| contains_last_use_slot_mir(&f.value.node, target))
+        }
+        MirExpr::List(items) | MirExpr::Tuple(items) => items
+            .iter()
+            .any(|i| contains_last_use_slot_mir(&i.node, target)),
+        MirExpr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            contains_last_use_slot_mir(&k.node, target)
+                || contains_last_use_slot_mir(&v.node, target)
+        }),
+        MirExpr::IndependentProduct(ip) => ip
+            .node
+            .items
+            .iter()
+            .any(|i| contains_last_use_slot_mir(&i.node, target)),
+        MirExpr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            MirStrPart::Expr(e) => contains_last_use_slot_mir(&e.node, target),
+            MirStrPart::Literal(_) => false,
+        }),
+        // Match / Let / Return: structural recursion stays
+        // conservative — we only care about the immediate
+        // arg-evaluation context for the owned_mask, so deep
+        // recursion into match arms / let bodies isn't useful.
+        MirExpr::Match(_) | MirExpr::Let(_) | MirExpr::Return(_) | MirExpr::Literal(_) => false,
+    }
 }
 
 /// Linear-search lookup `name → VmBuiltin`. Returns `None` for

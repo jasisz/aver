@@ -82,8 +82,8 @@ pub mod stats;
 pub use crate::ir::hir::BuiltinCtor;
 pub use expr::{
     MirBinOp, MirCall, MirCallee, MirConstruct, MirCtor, MirEffectAnnotation, MirExpr,
-    MirIndependentProduct, MirLet, MirMatch, MirMatchArm, MirPattern, MirProject, MirRecordCreate,
-    MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
+    MirIndependentProduct, MirLet, MirLocal, MirMatch, MirMatchArm, MirPattern, MirProject,
+    MirRecordCreate, MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
 };
 pub use lower::lower_program;
 pub use program::{LocalId, MirFn, MirParam, MirProgram};
