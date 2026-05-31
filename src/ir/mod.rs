@@ -23,7 +23,7 @@ pub mod symbol_table;
 pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
-pub use identity::{CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
+pub use identity::{BuiltinId, CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
 pub use pipeline::{
     FnCountChange, NonTailEntry, PassDiagnostic, PassReport, PipelineConfig, PipelineResult,
     PipelineStage, TypecheckMode,

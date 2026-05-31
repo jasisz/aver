@@ -34,6 +34,14 @@ pub struct MirProgram {
     /// [`super::stats::LowerStats`] for the coverage gate that
     /// Phase 4 (VM slice) consumes.
     pub stats: LowerStats,
+    /// Phase 6 wave 11 — interned built-in fn names. Indexed by
+    /// `BuiltinId`. Lowering grows this lazily as it encounters
+    /// each unique `ResolvedCallee::Builtin(name)` shape; MIR
+    /// consumers (VM walker, Rust walker, optimize passes) look
+    /// up the canonical string via `program.builtin_name(id)`
+    /// instead of carrying the string inline on every
+    /// `MirCallee::Builtin`.
+    pub builtins: Vec<String>,
 }
 
 impl MirProgram {
@@ -55,6 +63,35 @@ impl MirProgram {
     /// by `FnId` themselves.
     pub fn iter(&self) -> impl Iterator<Item = (&FnId, &MirFn)> {
         self.fns.iter()
+    }
+
+    /// Phase 6 wave 11 — look up the canonical name behind a
+    /// `BuiltinId` minted by this program's lowering. Returns
+    /// `""` (empty slice) if the id is out of range — a defensive
+    /// fallback for diagnostic paths; consumers in the hot path
+    /// should hold valid ids by construction.
+    pub fn builtin_name(&self, id: crate::ir::BuiltinId) -> &str {
+        self.builtins
+            .get(id.0 as usize)
+            .map(String::as_str)
+            .unwrap_or("")
+    }
+
+    /// Phase 6 wave 11 — intern a built-in fn name into this
+    /// program's table. Returns the stable `BuiltinId`, reusing
+    /// the existing slot when the name has already been
+    /// registered. Lowering calls this; downstream optimizer
+    /// passes inherit the existing ids when they construct new
+    /// `MirCallee::Builtin` instances (e.g. from inlining).
+    pub fn intern_builtin(&mut self, name: &str) -> crate::ir::BuiltinId {
+        for (idx, existing) in self.builtins.iter().enumerate() {
+            if existing == name {
+                return crate::ir::BuiltinId(idx as u32);
+            }
+        }
+        let id = crate::ir::BuiltinId(self.builtins.len() as u32);
+        self.builtins.push(name.to_string());
+        id
     }
 }
 

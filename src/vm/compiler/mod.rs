@@ -242,7 +242,7 @@ fn compile_program_inner(
             // takes.
             let chunk = if let Some(mir) = mir_program
                 && let Some(mir_fn) = mir.fn_by_id(rfd.fn_id)
-                && let Ok(mir_chunk) = compiler.compile_fn_via_mir(rfd, mir_fn, symbols, arena)
+                && let Ok(mir_chunk) = compiler.compile_fn_via_mir(rfd, mir_fn, symbols, arena, mir)
             {
                 mir_chunk
             } else {
@@ -742,6 +742,7 @@ impl ProgramCompiler {
             &mut self.symbols,
             arena,
             symbols,
+            None,
         );
         fc.source_file = self.source_file.clone();
         fc.note_line(rfd.line);
@@ -768,6 +769,7 @@ impl ProgramCompiler {
         mir_fn: &crate::ir::mir::MirFn,
         symbols: &SymbolTable,
         arena: &mut Arena,
+        mir_program: &crate::ir::mir::MirProgram,
     ) -> Result<FnChunk, mir::MirVmUnsupported> {
         let resolution = rfd.resolution.as_ref();
         let local_count = resolution.map_or(rfd.params.len() as u16, |r| r.local_count);
@@ -797,6 +799,7 @@ impl ProgramCompiler {
             &mut self.symbols,
             arena,
             symbols,
+            Some(mir_program),
         );
         fc.source_file = self.source_file.clone();
         fc.note_line(rfd.line);
@@ -847,6 +850,7 @@ impl ProgramCompiler {
             &mut self.symbols,
             arena,
             symbols,
+            None,
         );
 
         for item in items {
@@ -971,6 +975,13 @@ pub(super) struct FnCompiler<'a> {
     /// dep's own items — keeps each compilation scope's `FnId` space
     /// self-consistent without forcing the caller to pre-merge.
     pub(super) symbol_table: &'a SymbolTable,
+    /// Phase 6 wave 11 — the lowered MIR for the current program,
+    /// when this `FnCompiler` is running on the MIR walker path
+    /// (`compile_program_with_mir_fallback`). Used by the walker
+    /// to resolve `MirCallee::Builtin(BuiltinId)` back to the
+    /// canonical name the VM builtin table keys on. `None` on the
+    /// HIR-only path.
+    pub(super) mir_program: Option<&'a crate::ir::mir::MirProgram>,
     code: Vec<u8>,
     constants: Vec<NanValue>,
     /// Byte offset of the last emitted opcode (for superinstruction fusion).
@@ -1006,6 +1017,7 @@ impl<'a> FnCompiler<'a> {
         symbols: &'a mut VmSymbolTable,
         arena: &'a mut Arena,
         symbol_table: &'a SymbolTable,
+        mir_program: Option<&'a crate::ir::mir::MirProgram>,
     ) -> Self {
         FnCompiler {
             name: name.to_string(),
@@ -1019,6 +1031,7 @@ impl<'a> FnCompiler<'a> {
             symbols,
             arena,
             symbol_table,
+            mir_program,
             code: Vec::new(),
             constants: Vec::new(),
             last_op_pos: usize::MAX,

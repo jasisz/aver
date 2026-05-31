@@ -631,7 +631,7 @@ mod tests {
         // Builtin calls ride the HIR walker (call-plan
         // classification). MIR walker returns None.
         let call = MirCall {
-            callee: MirCallee::Builtin("String.len".to_string()),
+            callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
             args: vec![span(MirExpr::Literal(span(crate::ast::Literal::Str(
                 "hello".to_string(),
             ))))],

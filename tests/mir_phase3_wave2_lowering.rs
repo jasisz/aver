@@ -55,9 +55,13 @@ fn lowers_builtin_call() {
     let dump = lower("fn length_of(s: String) -> Int\n    String.len(s)\n");
     // The `s` arg is the final read in the fn body, so MIR's
     // wave-4 last-use annotation renders it as `%0*`.
+    // Phase 6 wave 11: built-in callees lift to BuiltinId at
+    // lowering time; the dump renders them by id (`#0`, `#1`, …),
+    // not by source name. The id-to-name mapping lives in
+    // `MirProgram.builtins` for backend lookup.
     assert!(
-        dump.contains("Builtin(String.len).call(%0*)"),
-        "expected built-in callee + last-use local arg:\n{dump}"
+        dump.contains("Builtin(#0).call(%0*)"),
+        "expected built-in callee (by BuiltinId) + last-use local arg:\n{dump}"
     );
 }
 
