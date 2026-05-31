@@ -136,6 +136,7 @@ fn try_bind_is_let_with_try_value() {
     }));
     let bind = MirExpr::Let(span(MirLet {
         binding: LocalId(0),
+        binding_name: String::new(),
         value: Box::new(span(MirExpr::Try(Box::new(span(step_call))))),
         body: Box::new(span(MirExpr::Local(span(MirLocal::at(LocalId(0)))))),
     }));
