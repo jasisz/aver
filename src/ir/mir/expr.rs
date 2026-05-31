@@ -250,22 +250,34 @@ pub enum MirPattern {
     /// Literal arm: `0`, `true`, `"foo"`.
     Literal(Literal),
     /// Identifier binding — captures the matched value into a
-    /// fresh local accessible in the arm body.
-    Bind(LocalId),
+    /// fresh local accessible in the arm body. The `String`
+    /// carries the source-level binder name (Phase 5 prep) so
+    /// Rust / wasm-gc walkers can emit the binding ident.
+    Bind(LocalId, String),
     /// `[]` — empty-list pattern.
     EmptyList,
     /// `[head, ..tail]` — cons pattern; both bindings fresh.
-    Cons { head: LocalId, tail: LocalId },
+    /// `head_name` / `tail_name` carry the source idents (Phase 5
+    /// prep) for backends that emit named locals.
+    Cons {
+        head: LocalId,
+        head_name: String,
+        tail: LocalId,
+        tail_name: String,
+    },
     /// `(a, b, c)` — tuple pattern; each component is a sub-pattern.
     Tuple(Vec<MirPattern>),
     /// `Module.Variant(b1, b2, …)` / `Result.Ok(b)` / `Option.None`
     /// — constructor pattern. `ctor` discriminates user vs built-in
     /// variant via `MirCtor`; `bindings` are the fresh locals for
     /// the variant's fields in declaration order (empty for
-    /// nullary variants like `Option.None`).
+    /// nullary variants like `Option.None`). `binding_names` is a
+    /// parallel array of source idents (Phase 5 prep) — same
+    /// length as `bindings`.
     Ctor {
         ctor: MirCtor,
         bindings: Vec<LocalId>,
+        binding_names: Vec<String>,
     },
 }
 

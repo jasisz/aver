@@ -74,7 +74,9 @@ fn pinned_decision_match_is_structured() {
         MirMatchArm {
             pattern: MirPattern::Cons {
                 head: LocalId(1),
+                head_name: String::new(),
                 tail: LocalId(2),
+                tail_name: String::new(),
             },
             body: span(MirExpr::Local(span(MirLocal::at(LocalId(1))))),
         },
@@ -114,8 +116,9 @@ fn pinned_decision_identity_is_typed() {
     let ctor_pattern = MirPattern::Ctor {
         ctor: MirCtor::User(ctor_id(7)),
         bindings: vec![LocalId(0)],
+        binding_names: vec![String::new()],
     };
-    let MirPattern::Ctor { ctor, bindings } = ctor_pattern else {
+    let MirPattern::Ctor { ctor, bindings, .. } = ctor_pattern else {
         unreachable!()
     };
     assert_eq!(ctor, MirCtor::User(ctor_id(7)));

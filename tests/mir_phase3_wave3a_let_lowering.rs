@@ -145,3 +145,50 @@ fn binding_only_body_is_dropped() {
         "normal multi-stmt fn must still lower:\n{dump}"
     );
 }
+
+#[test]
+fn lowers_match_carries_pattern_binding_names() {
+    // Phase 5 prep: `MirPattern::{Bind, Cons, Ctor}` carry source
+    // identifiers so Rust / wasm-gc walkers can emit them as
+    // arm-binding idents. Same propagation shape as
+    // `MirLocal.name` on the value side.
+    let src = "fn first(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [head, ..tail] -> head\n";
+    let mut items = parse_source(src).unwrap();
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    assert!(
+        result.typecheck.as_ref().unwrap().errors.is_empty(),
+        "typecheck failed: {:?}",
+        result.typecheck.as_ref().unwrap().errors
+    );
+    let program = lower_program(&result.resolved_items);
+    let mir_fn = program
+        .fns
+        .values()
+        .find(|f| f.name == "first")
+        .expect("first in MIR");
+    let aver::ir::mir::MirExpr::Match(m) = &mir_fn.body.node else {
+        panic!("expected Match at body root, got: {:?}", mir_fn.body.node);
+    };
+    let cons_arm = m
+        .node
+        .arms
+        .iter()
+        .find(|arm| matches!(arm.pattern, aver::ir::mir::MirPattern::Cons { .. }))
+        .expect("Cons arm present");
+    let aver::ir::mir::MirPattern::Cons {
+        head_name,
+        tail_name,
+        ..
+    } = &cons_arm.pattern
+    else {
+        unreachable!()
+    };
+    assert_eq!(head_name, "head", "Cons.head_name should be `head`");
+    assert_eq!(tail_name, "tail", "Cons.tail_name should be `tail`");
+}
