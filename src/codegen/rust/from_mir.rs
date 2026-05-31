@@ -36,8 +36,13 @@
 //! - wave 4b: Match (the big one, like Phase 4g for the VM) +
 //!   User-ctor Construct + RecordCreate / RecordUpdate (needs
 //!   `&CodegenContext` threading for module-path resolution)
-//! - wave 5: Try, TailCall, List/Tuple/Map, InterpolatedStr,
-//!   IndependentProduct
+//! - wave 5: Try / Tuple / List ✅ (this PR — `?` propagation
+//!   + plain tuple / list literals reusing recursive walker)
+//! - wave 6: TailCall, Map, IndependentProduct (TailCall needs
+//!   Rust's loop-rewrite shape; Map needs `aver_rt::AverMap`
+//!   constructor wiring; InterpolatedStr is dropped by
+//!   `interp_lower` before codegen so it never reaches the
+//!   walker)
 
 use crate::ast::{BinOp, Spanned, Type};
 use crate::ir::SymbolTable;
@@ -128,6 +133,43 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             }
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, symbol_table)?)),
+        MirExpr::Try(inner) => {
+            // Phase 5 wave 5: `value?` propagation. Mirror of
+            // HIR's `ResolvedExpr::ErrorProp` emit — append `?`
+            // to the inner expression's Rust form.
+            Some(format!("{}?", emit_mir_expr(inner, symbol_table)?))
+        }
+        MirExpr::Tuple(items) => {
+            // Phase 5 wave 5: `(a, b, c)` tuple literal. Mirror
+            // of HIR's `ResolvedExpr::Tuple` emit, minus the
+            // `clone_arg` insertion (no `ectx` here — borrowed-
+            // param Locals signal the gap by returning their
+            // raw name and the outer caller still gets a
+            // well-formed string). For pure-value subtrees the
+            // output is character-identical to HIR.
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                parts.push(emit_mir_expr(item, symbol_table)?);
+            }
+            Some(format!("({})", parts.join(", ")))
+        }
+        MirExpr::List(items) => {
+            // Phase 5 wave 5: `[a, b, c]` list literal. Mirror
+            // of HIR's `ResolvedExpr::List` — empty case folds
+            // to `aver_rt::AverList::empty()`, non-empty to
+            // `from_vec(vec![...])`.
+            if items.is_empty() {
+                return Some("aver_rt::AverList::empty()".to_string());
+            }
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                parts.push(emit_mir_expr(item, symbol_table)?);
+            }
+            Some(format!(
+                "aver_rt::AverList::from_vec(vec![{}])",
+                parts.join(", ")
+            ))
+        }
         MirExpr::Let(spanned_let) => {
             // Phase 5 wave 4a: `let binding = value; body` →
             // Rust block-expression `{ let x = value; body }`.
@@ -337,8 +379,45 @@ mod tests {
 
     #[test]
     fn returns_none_for_unsupported_variant() {
-        let t = span(MirExpr::Tuple(vec![]));
-        assert!(emit_mir_expr(&t, &empty_symbols()).is_none());
+        // Phase 5 wave 5: Tuple is now covered. Pick a variant
+        // the walker still bounces — MapLiteral.
+        let m = span(MirExpr::MapLiteral(vec![]));
+        assert!(emit_mir_expr(&m, &empty_symbols()).is_none());
+    }
+
+    #[test]
+    fn emits_try_as_question_mark() {
+        // Phase 5 wave 5: `Try(inner)` → `inner?`.
+        let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let expr = span(MirExpr::Try(Box::new(inner)));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("try should emit");
+        assert_eq!(emit, "7i64?");
+    }
+
+    #[test]
+    fn emits_tuple_literal_as_paren_list() {
+        // Phase 5 wave 5: `(7, 9)` tuple.
+        let a = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(9))));
+        let expr = span(MirExpr::Tuple(vec![a, b]));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("tuple should emit");
+        assert_eq!(emit, "(7i64, 9i64)");
+    }
+
+    #[test]
+    fn emits_empty_list_as_averlist_empty() {
+        let expr = span(MirExpr::List(vec![]));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("list should emit");
+        assert_eq!(emit, "aver_rt::AverList::empty()");
+    }
+
+    #[test]
+    fn emits_nonempty_list_as_from_vec() {
+        let a = span(MirExpr::Literal(span(crate::ast::Literal::Int(1))));
+        let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(2))));
+        let expr = span(MirExpr::List(vec![a, b]));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("list should emit");
+        assert_eq!(emit, "aver_rt::AverList::from_vec(vec![1i64, 2i64])");
     }
 
     #[test]
