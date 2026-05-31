@@ -456,14 +456,17 @@ pub(super) fn compile_mir_expr(
         }
         MirExpr::RecordCreate(spanned_rc) => {
             let rc = &spanned_rc.node;
-            // Resolve TypeId → canonical name → arena type id +
-            // field order. Same path the HIR walker takes; MIR
-            // carries the `TypeId` already, so we just look up
-            // the canonical name to ask the arena for the type
-            // metadata (the arena's field order is the
-            // declaration order, which is what RECORD_NEW
-            // expects on the stack).
-            let qualified_type_name = fc.canonical_type_name(rc.type_id)?;
+            // Resolve to the arena type id + field order. User records
+            // carry a `TypeId` → canonical name; built-in records
+            // (`HttpResponse`, …) carry no `TypeId` and ride their
+            // canonical `type_name` directly (the arena registers
+            // built-in record types by that name). The arena's field
+            // order is declaration order, which is what RECORD_NEW
+            // expects on the stack.
+            let qualified_type_name = match rc.type_id {
+                Some(id) => fc.canonical_type_name(id)?,
+                None => rc.type_name.clone(),
+            };
             let arena_type_id = fc.resolve_type_id(&qualified_type_name).ok_or_else(|| {
                 MirVmUnsupported::InnerError(CompileError {
                     msg: format!(
@@ -494,7 +497,10 @@ pub(super) fn compile_mir_expr(
         }
         MirExpr::RecordUpdate(spanned_ru) => {
             let ru = &spanned_ru.node;
-            let qualified_type_name = fc.canonical_type_name(ru.type_id)?;
+            let qualified_type_name = match ru.type_id {
+                Some(id) => fc.canonical_type_name(id)?,
+                None => ru.type_name.clone(),
+            };
             let arena_type_id = fc.resolve_type_id(&qualified_type_name).ok_or_else(|| {
                 MirVmUnsupported::InnerError(CompileError {
                     msg: format!(

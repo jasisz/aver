@@ -331,19 +331,25 @@ pub struct MirConstruct {
     pub args: Vec<Spanned<MirExpr>>,
 }
 
-/// Build a fresh record.
+/// Build a fresh record. `type_id` is `Some` for user-declared
+/// records; built-in product types (`HttpResponse`, `Header`,
+/// `Buffer`, …) carry no user `TypeId`, so they ride `type_name`
+/// alone (the canonical builtin name the arena registers them under).
 #[derive(Debug, Clone)]
 pub struct MirRecordCreate {
-    pub type_id: TypeId,
+    pub type_id: Option<TypeId>,
+    pub type_name: String,
     pub fields: Vec<MirRecordField>,
 }
 
 /// `T.update(base, …)` — produce a record matching `base` except
-/// for the named field overrides.
+/// for the named field overrides. `type_id` / `type_name` follow the
+/// same user-vs-built-in split as [`MirRecordCreate`].
 #[derive(Debug, Clone)]
 pub struct MirRecordUpdate {
     pub base: Box<Spanned<MirExpr>>,
-    pub type_id: TypeId,
+    pub type_id: Option<TypeId>,
+    pub type_name: String,
     pub updates: Vec<MirRecordField>,
 }
 

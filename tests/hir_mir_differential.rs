@@ -202,6 +202,20 @@ fn newtype_specialization() {
 }
 
 #[test]
+fn builtin_record_construction_and_projection() {
+    // `HttpResponse(...)` is a built-in product type — it carries no
+    // user `TypeId`, so MIR's RecordCreate rides its canonical
+    // `type_name` and the walker resolves the arena type by name. Build
+    // one and read a field back; identical on both paths.
+    let src = prog(
+        "fn mk(code: Int) -> HttpResponse\n    \
+         HttpResponse(status = code, body = \"ok\", headers = {})\n\n\
+         fn run() -> Int\n    mk(200).status\n",
+    );
+    assert_parity("builtin_record", &src, "run");
+}
+
+#[test]
 fn discard_binding_evaluates_for_effect() {
     // `_ = step(5)?` — the idiomatic "run it, drop the Ok, continue"
     // form. The resolver assigns `_` no slot; the lowerer evaluates the

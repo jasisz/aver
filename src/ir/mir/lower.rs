@@ -85,15 +85,12 @@
 //!   recovery) now. Buffer intrinsics (`MirCallee::Intrinsic`) and
 //!   first-class-fn *calls* (`MirCallee::LocalSlot` → `CALL_VALUE`)
 //!   lower.
-//! - `BuiltinRecord` — records on built-in product types (no
-//!   `TypeId`); waits for a consumer that needs them.
-//! - `BuiltinCtorConstruction` / `BuiltinCtorPattern` /
-//!   `UnsupportedTry` / `UnsupportedTailCall` /
-//!   `UnsupportedList` / `UnsupportedTuple` / `UnsupportedMap` /
-//!   `UnsupportedInterpolatedStr` /
-//!   `UnsupportedIndependentProduct` — kept in the enum for
-//!   historical attribution; no longer reachable from the
-//!   lowerer.
+//! - `BuiltinRecord` / `BuiltinCtorConstruction` / `BuiltinCtorPattern`
+//!   / `UnsupportedTry` / `UnsupportedTailCall` / `UnsupportedList` /
+//!   `UnsupportedTuple` / `UnsupportedMap` / `UnsupportedInterpolatedStr`
+//!   / `UnsupportedIndependentProduct` — kept in the enum for historical
+//!   attribution; no longer reachable from the lowerer (built-in records
+//!   now ride `MirRecordCreate.type_name` when they carry no `TypeId`).
 //!
 //! Functions that use anything outside the waves' supported
 //! subset are dropped — `MirProgram.fns` only contains what the
@@ -333,10 +330,15 @@ fn lower_expr(
         ResolvedExpr::Ctor(ResolvedCtor::Unresolved { .. }, _) => {
             return Err(SkipReason::UnresolvedCtor);
         }
+        // User records carry a `TypeId`; built-in product types
+        // (`HttpResponse`, `Header`, `Buffer`, …) carry `None` and ride
+        // their canonical `type_name`. Both lower the same shape — the
+        // walker resolves the arena type via `TypeId` when present, else
+        // by name.
         ResolvedExpr::RecordCreate {
-            type_id: Some(type_id),
+            type_id,
+            type_name,
             fields,
-            ..
         } => {
             let mir_fields = fields
                 .iter()
@@ -350,16 +352,17 @@ fn lower_expr(
             MirExpr::RecordCreate(wrap(
                 MirRecordCreate {
                     type_id: *type_id,
+                    type_name: type_name.clone(),
                     fields: mir_fields,
                 },
                 expr,
             ))
         }
         ResolvedExpr::RecordUpdate {
-            type_id: Some(type_id),
+            type_id,
+            type_name,
             base,
             updates,
-            ..
         } => {
             let mir_updates = updates
                 .iter()
@@ -374,17 +377,11 @@ fn lower_expr(
                 MirRecordUpdate {
                     base: Box::new(lower_expr(base, program)?),
                     type_id: *type_id,
+                    type_name: type_name.clone(),
                     updates: mir_updates,
                 },
                 expr,
             ))
-        }
-        // Records on built-in types (`HttpResponse`, `Header`,
-        // `Buffer`, …) carry no `TypeId`. Skipped until the
-        // consumer (currently nobody) demands a name-only fallback.
-        ResolvedExpr::RecordCreate { type_id: None, .. }
-        | ResolvedExpr::RecordUpdate { type_id: None, .. } => {
-            return Err(SkipReason::BuiltinRecord);
         }
         ResolvedExpr::Attr(base, field) => MirExpr::Project(wrap(
             MirProject {
