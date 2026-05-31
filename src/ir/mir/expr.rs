@@ -227,6 +227,12 @@ pub enum MirCallee {
     /// `BUFFER_*` / CONCAT opcodes the HIR walker does instead of
     /// dropping the whole fn to the HIR fallback.
     Intrinsic(BuiltinIntrinsic),
+    /// First-class fn value held in a local slot — calling a `Fn(..)`
+    /// parameter or a let-bound fn value (`f(x)` where `f` is a slot).
+    /// The backend pushes the slot value (the callee) then the args and
+    /// dispatches dynamically (the VM's `CALL_VALUE`). `last_use` lets
+    /// the read use `MOVE_LOCAL` over `LOAD_LOCAL`.
+    LocalSlot { slot: u16, last_use: bool },
 }
 
 /// `target(args…)` in tail position — same SCC as the surrounding fn.

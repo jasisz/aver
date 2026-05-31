@@ -38,31 +38,38 @@ fn lower_stats(source: &str) -> aver::ir::mir::LowerStats {
 
 #[test]
 fn conservation_lowered_plus_skipped_equals_total() {
-    // Mix of one wave-1 supported fn and one fn that still drops:
-    // a first-class-fn call (`f(x)` where `f` is a `Fn(..)` param)
-    // lowers to a `LocalSlot` callee, which the MIR lowerer bounces
-    // with `UnsupportedCallee` — closures / first-class fns are the
-    // remaining un-lowered shape. Total fns seen = 2; every fn
+    // `dbl` and `callWith` lower (`callWith` calls its `Fn(..)` param
+    // via the CALL_VALUE first-class-fn path); `caller` still drops
+    // because it PASSES a fn as a value (`callWith(dbl)` → `dbl`
+    // resolves to a bare ident that the lowerer bounces). Passing /
+    // referencing a fn value is the remaining un-lowered shape —
+    // calling one already lowers. Total fns seen = 3; every fn
     // accounted for in `lowered` or `skipped`.
     //
-    // List / Tuple / Map / Result.Ok / interpolation / nullary-ctor-
-    // in-value-position (`Option.None`) no longer work as drop
+    // List / Tuple / Map / Result.Ok / interpolation / nullary-ctor-in-
+    // value-position / first-class-fn *calls* no longer work as drop
     // fixtures here — they all lower now.
     let stats = lower_stats(
-        "fn keep(x: Int) -> Int\n    x + 1\n\nfn drops_me(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\n",
+        "fn dbl(n: Int) -> Int\n    n + n\n\n\
+         fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
+         fn caller() -> Int\n    callWith(dbl)\n",
     );
     assert_eq!(
         stats.total(),
-        2,
-        "expected 2 fns seen, got {}: {:?}",
+        3,
+        "expected 3 fns seen, got {}: {:?}",
         stats.total(),
         stats
     );
-    assert_eq!(stats.lowered, 1, "wave-1 fn must lower: {:?}", stats);
+    assert_eq!(
+        stats.lowered, 2,
+        "the two non-passing fns must lower: {:?}",
+        stats
+    );
     assert_eq!(
         stats.skipped.values().sum::<u32>(),
         1,
-        "exactly one fn dropped: {:?}",
+        "exactly one fn (the fn-passer) dropped: {:?}",
         stats
     );
 }
@@ -134,13 +141,16 @@ fn wave_3c_iv_tuple_literal_no_longer_drops() {
 
 #[test]
 fn skipped_sorted_is_stable() {
-    // Skips that *still* fire after wave 3c + intrinsic + nullary-ctor
-    // lowering — two fns calling a first-class-fn param (`LocalSlot`
-    // callee → `UnsupportedCallee`). Sorted iteration follows
-    // `SkipReason as u8`; a single reason is trivially monotonic, and
-    // the map stays non-empty.
+    // Skips that *still* fire after wave 3c + intrinsic + nullary-ctor +
+    // first-class-fn-call lowering — two fns that PASS a fn as a value
+    // (`callWith(dbl)` → the bare `dbl` ident the lowerer bounces).
+    // Sorted iteration follows `SkipReason as u8`; a single reason is
+    // trivially monotonic, and the map stays non-empty.
     let stats = lower_stats(
-        "fn a(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\n\nfn b(g: Fn(Int) -> Int, y: Int) -> Int\n    g(y)\n",
+        "fn dbl(n: Int) -> Int\n    n + n\n\n\
+         fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
+         fn a() -> Int\n    callWith(dbl)\n\n\
+         fn b() -> Int\n    callWith(dbl)\n",
     );
     let sorted = stats.skipped_sorted();
     assert!(
