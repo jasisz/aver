@@ -223,10 +223,15 @@ fn lower_expr(expr: &Spanned<ResolvedExpr>) -> Result<Spanned<MirExpr>, SkipReas
     let mir = match &expr.node {
         // ── Wave 1 ──────────────────────────────────────────────
         ResolvedExpr::Literal(lit) => MirExpr::Literal(wrap(lit.clone(), expr)),
-        ResolvedExpr::Resolved { slot, last_use, .. } => {
+        ResolvedExpr::Resolved {
+            slot,
+            name,
+            last_use,
+        } => {
             let local = super::expr::MirLocal {
                 slot: LocalId(u32::from(*slot)),
                 last_use: last_use.0,
+                name: name.clone(),
             };
             MirExpr::Local(wrap(local, expr))
         }

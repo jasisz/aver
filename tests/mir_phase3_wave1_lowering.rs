@@ -34,6 +34,40 @@ fn lowers_int_literal_body() {
 }
 
 #[test]
+fn lowers_local_carries_source_name() {
+    // Phase 5 prep: `MirExpr::Local` carries `name` from
+    // `ResolvedExpr::Resolved.name`. Rust / wasm-gc backends
+    // use it as the emitted ident.
+    let src = "fn double(x: Int) -> Int\n    x + x\n";
+    let mut items = parse_source(src).unwrap();
+    let result = pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            ..Default::default()
+        },
+    );
+    assert!(result.typecheck.as_ref().unwrap().errors.is_empty());
+    let program = lower_program(&result.resolved_items);
+    let mir_fn = program
+        .fns
+        .values()
+        .find(|f| f.name == "double")
+        .expect("double in MIR");
+    let aver::ir::mir::MirExpr::BinOp(b) = &mir_fn.body.node else {
+        panic!("expected BinOp at body root");
+    };
+    let aver::ir::mir::MirExpr::Local(l) = &b.node.lhs.node else {
+        panic!("expected Local lhs");
+    };
+    let aver::ir::mir::MirExpr::Local(r) = &b.node.rhs.node else {
+        panic!("expected Local rhs");
+    };
+    assert_eq!(l.node.name, "x", "lhs Local name should be `x`");
+    assert_eq!(r.node.name, "x", "rhs Local name should be `x`");
+}
+
+#[test]
 fn lowers_binop_over_locals() {
     let dump = lower("fn double(x: Int) -> Int\n    x + x\n");
     assert!(
