@@ -476,6 +476,20 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 }
             }
         }
+        MirExpr::IfThenElse(spanned_ite) => {
+            // Phase 6 wave 9: direct conditional. Emits as a
+            // Rust `if … { … } else { … }` expression. Each
+            // subtree must emit cleanly or the whole node
+            // falls back to HIR.
+            let ite = &spanned_ite.node;
+            let cond = emit_mir_expr(&ite.cond, emit_ctx)?;
+            let then_branch = emit_mir_expr(&ite.then_branch, emit_ctx)?;
+            let else_branch = emit_mir_expr(&ite.else_branch, emit_ctx)?;
+            Some(format!(
+                "if {} {{ {} }} else {{ {} }}",
+                cond, then_branch, else_branch
+            ))
+        }
         _ => None,
     }
 }

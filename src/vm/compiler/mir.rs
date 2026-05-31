@@ -467,6 +467,25 @@ pub(super) fn compile_mir_expr(
         //   last arm: skip pattern check entirely (exhaustive),
         //             POP, <body>
         //   end:
+        MirExpr::IfThenElse(spanned_ite) => {
+            // Phase 6 wave 9: direct conditional shape.
+            // Emit:
+            //   compile_mir_expr(cond)
+            //   JUMP_IF_FALSE → else_start
+            //   compile_mir_expr(then_branch)
+            //   JUMP → end
+            //   else_start: compile_mir_expr(else_branch)
+            //   end:
+            let ite = &spanned_ite.node;
+            compile_mir_expr(fc, &ite.cond)?;
+            let else_patch = fc.emit_jump(JUMP_IF_FALSE);
+            compile_mir_expr(fc, &ite.then_branch)?;
+            let end_patch = fc.emit_jump(JUMP);
+            fc.patch_jump(else_patch);
+            compile_mir_expr(fc, &ite.else_branch)?;
+            fc.patch_jump(end_patch);
+            Ok(())
+        }
         MirExpr::Match(spanned_match) => {
             let m = &spanned_match.node;
             // Phase 6 wave 2 — try the MATCH_DISPATCH_CONST table
@@ -725,6 +744,14 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::IndependentProduct(ip) => ip.node.items.iter().all(can_compile),
         // Phase 4i: all `MirPattern` variants supported (Tuple
         // recurses into subpatterns).
+        // Phase 6 wave 9: direct conditional shape introduced
+        // by `bool_match_to_if`. Every backend (incl. VM)
+        // supports it natively as branch + branch.
+        MirExpr::IfThenElse(ite) => {
+            can_compile(&ite.node.cond)
+                && can_compile(&ite.node.then_branch)
+                && can_compile(&ite.node.else_branch)
+        }
         MirExpr::Match(m) => {
             can_compile(&m.node.subject)
                 && m.node
@@ -1300,11 +1327,16 @@ fn contains_last_use_slot_mir(expr: &MirExpr, target: u32) -> bool {
             MirStrPart::Expr(e) => contains_last_use_slot_mir(&e.node, target),
             MirStrPart::Literal(_) => false,
         }),
-        // Match / Let / Return: structural recursion stays
-        // conservative — we only care about the immediate
-        // arg-evaluation context for the owned_mask, so deep
-        // recursion into match arms / let bodies isn't useful.
-        MirExpr::Match(_) | MirExpr::Let(_) | MirExpr::Return(_) | MirExpr::Literal(_) => false,
+        // Match / IfThenElse / Let / Return: structural
+        // recursion stays conservative — we only care about
+        // the immediate arg-evaluation context for the
+        // owned_mask, so deep recursion into match arms /
+        // if branches / let bodies isn't useful.
+        MirExpr::Match(_)
+        | MirExpr::IfThenElse(_)
+        | MirExpr::Let(_)
+        | MirExpr::Return(_)
+        | MirExpr::Literal(_) => false,
     }
 }
 

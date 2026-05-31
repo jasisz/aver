@@ -131,6 +131,13 @@ pub enum MirExpr {
     RecordUpdate(Spanned<MirRecordUpdate>),
     /// Field access (`base.field`) on a record value.
     Project(Spanned<MirProject>),
+    /// `if cond { then } else { else }` — direct conditional
+    /// shape introduced by Phase 6 wave 9's `bool_match_to_if`
+    /// pass. Lowering never produces this node directly; the
+    /// optimizer pass rewrites qualifying two-arm `Bool` match
+    /// expressions into it so every backend gets a uniform
+    /// if/else node instead of re-implementing the recognition.
+    IfThenElse(Spanned<MirIfThenElse>),
     /// `value?` — the canonical `?` propagation. Phase 1's
     /// most-important pin: this stays a node. Lowering to nested
     /// `Match` is a per-backend choice, not a pipeline-wide
@@ -230,6 +237,21 @@ pub struct MirBinOp {
 pub struct MirMatch {
     pub subject: Box<Spanned<MirExpr>>,
     pub arms: Vec<MirMatchArm>,
+}
+
+/// `if cond { then_branch } else { else_branch }` — direct
+/// conditional, no pattern dispatch. Phase 6 wave 9 introduces
+/// this so every backend gets it for free instead of
+/// re-implementing the "two-arm bool match → if/else"
+/// recognition (HIR's `try_emit_bool_if_else` etc). The
+/// optimizer pass `bool_match_to_if` rewrites qualifying
+/// `Match` nodes into `IfThenElse`; backends consume only the
+/// rewritten form.
+#[derive(Debug, Clone)]
+pub struct MirIfThenElse {
+    pub cond: Box<Spanned<MirExpr>>,
+    pub then_branch: Box<Spanned<MirExpr>>,
+    pub else_branch: Box<Spanned<MirExpr>>,
 }
 
 /// One arm of a `match`. Pattern picks the variant; `body` is the
