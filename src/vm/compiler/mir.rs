@@ -772,7 +772,7 @@ fn emit_dup_and_bind(fc: &mut FnCompiler<'_>, local: LocalId) {
 fn pattern_supported(p: &MirPattern) -> bool {
     match p {
         MirPattern::Wildcard
-        | MirPattern::Bind(_)
+        | MirPattern::Bind(_, _)
         | MirPattern::Literal(_)
         | MirPattern::EmptyList
         | MirPattern::Cons { .. }
@@ -791,7 +791,7 @@ fn emit_pattern_check(
 ) -> Result<Vec<usize>, MirVmUnsupported> {
     match pattern {
         MirPattern::Wildcard => Ok(Vec::new()),
-        MirPattern::Bind(local) => {
+        MirPattern::Bind(local, _name) => {
             // Always matches; DUP the value and bind. Mirror of
             // HIR's `dup_and_bind_top_to_local` on a top-level
             // ident pattern. Wildcard sentinel collapses the
@@ -822,7 +822,7 @@ fn emit_pattern_check(
             fc.emit_i16(0);
             Ok(vec![patch])
         }
-        MirPattern::Cons { head, tail } => {
+        MirPattern::Cons { head, tail, .. } => {
             fc.emit_op(MATCH_CONS);
             let patch = fc.offset();
             fc.emit_i16(0);
@@ -839,6 +839,7 @@ fn emit_pattern_check(
         MirPattern::Ctor {
             ctor: MirCtor::User(ctor_id),
             bindings,
+            ..
         } => {
             // Resolve `CtorId → arena ctor_id` via the same path
             // the HIR walker uses (symbol table → canonical name
@@ -923,6 +924,7 @@ fn emit_pattern_check(
         MirPattern::Ctor {
             ctor: MirCtor::Builtin(bc),
             bindings,
+            ..
         } => {
             // Built-in wrapper variants (Result.Ok / Result.Err /
             // Option.Some). Option.None is the nullary case —
@@ -995,7 +997,7 @@ fn try_emit_match_dispatch_const(
     let default_arm = &arms[last_idx];
     let default_local = match &default_arm.pattern {
         MirPattern::Wildcard => None,
-        MirPattern::Bind(local) => Some(*local),
+        MirPattern::Bind(local, _name) => Some(*local),
         _ => return Ok(None),
     };
 
@@ -1110,11 +1112,11 @@ fn emit_last_arm_bindings(
 ) -> Result<(), MirVmUnsupported> {
     match pattern {
         MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => Ok(()),
-        MirPattern::Bind(local) => {
+        MirPattern::Bind(local, _name) => {
             emit_dup_and_bind(fc, *local);
             Ok(())
         }
-        MirPattern::Cons { head, tail } => {
+        MirPattern::Cons { head, tail, .. } => {
             fc.emit_op(DUP);
             fc.emit_op(LIST_HEAD_TAIL);
             emit_store_or_pop(fc, *head);
@@ -1124,6 +1126,7 @@ fn emit_last_arm_bindings(
         MirPattern::Ctor {
             ctor: MirCtor::User(_),
             bindings,
+            ..
         } => {
             for (i, b) in bindings.iter().enumerate() {
                 fc.emit_op(EXTRACT_FIELD);
@@ -1135,6 +1138,7 @@ fn emit_last_arm_bindings(
         MirPattern::Ctor {
             ctor: MirCtor::Builtin(bc),
             bindings,
+            ..
         } => {
             if let Some(b) = bindings.first() {
                 let kind: u8 = match bc {

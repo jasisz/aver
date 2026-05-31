@@ -496,17 +496,19 @@ fn lower_pattern(
     Ok(match pattern {
         ResolvedPattern::Wildcard => MirPattern::Wildcard,
         ResolvedPattern::Literal(lit) => MirPattern::Literal(lit.clone()),
-        ResolvedPattern::Ident(_) => {
+        ResolvedPattern::Ident(name) => {
             let slot = take_slot(slots, cursor)?;
-            MirPattern::Bind(LocalId(u32::from(slot)))
+            MirPattern::Bind(LocalId(u32::from(slot)), name.clone())
         }
         ResolvedPattern::EmptyList => MirPattern::EmptyList,
-        ResolvedPattern::Cons(_, _) => {
+        ResolvedPattern::Cons(head_name, tail_name) => {
             let head = take_slot(slots, cursor)?;
             let tail = take_slot(slots, cursor)?;
             MirPattern::Cons {
                 head: LocalId(u32::from(head)),
+                head_name: head_name.clone(),
                 tail: LocalId(u32::from(tail)),
+                tail_name: tail_name.clone(),
             }
         }
         ResolvedPattern::Tuple(items) => {
@@ -521,6 +523,7 @@ fn lower_pattern(
             MirPattern::Ctor {
                 ctor: MirCtor::User(*ctor_id),
                 bindings,
+                binding_names: names.clone(),
             }
         }
         // Wave 3c-i — built-in ctor patterns ride the same shape
@@ -530,6 +533,7 @@ fn lower_pattern(
             MirPattern::Ctor {
                 ctor: MirCtor::Builtin(*bc),
                 bindings,
+                binding_names: names.clone(),
             }
         }
         // Unresolved ctors still drop — typechecker already

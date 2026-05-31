@@ -132,7 +132,12 @@ fn match_dump_shape() {
                 body: span(MirExpr::Literal(span(Literal::Int(0)))),
             },
             MirMatchArm {
-                pattern: MirPattern::Cons { head: h, tail: t },
+                pattern: MirPattern::Cons {
+                    head: h,
+                    head_name: String::new(),
+                    tail: t,
+                    tail_name: String::new(),
+                },
                 body: span(MirExpr::Local(span(MirLocal::at(h)))),
             },
         ],
@@ -175,6 +180,7 @@ fn ctor_pattern_dump_uses_ctor_id() {
     let p = MirPattern::Ctor {
         ctor: MirCtor::User(CtorId(7)),
         bindings: vec![LocalId(0)],
+        binding_names: vec![String::new()],
     };
     // Use the arm-rendering path via a tiny Match.
     let body = span(MirExpr::Match(span(MirMatch {

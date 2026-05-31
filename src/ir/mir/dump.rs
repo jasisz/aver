@@ -199,9 +199,9 @@ fn write_pattern(f: &mut fmt::Formatter<'_>, p: &MirPattern) -> fmt::Result {
     match p {
         MirPattern::Wildcard => write!(f, "_"),
         MirPattern::Literal(lit) => write!(f, "{lit:?}"),
-        MirPattern::Bind(local) => write!(f, "{local}"),
+        MirPattern::Bind(local, _name) => write!(f, "{local}"),
         MirPattern::EmptyList => write!(f, "[]"),
-        MirPattern::Cons { head, tail } => write!(f, "[{head}, ..{tail}]"),
+        MirPattern::Cons { head, tail, .. } => write!(f, "[{head}, ..{tail}]"),
         MirPattern::Tuple(items) => {
             write!(f, "(")?;
             for (i, sub) in items.iter().enumerate() {
@@ -212,7 +212,7 @@ fn write_pattern(f: &mut fmt::Formatter<'_>, p: &MirPattern) -> fmt::Result {
             }
             write!(f, ")")
         }
-        MirPattern::Ctor { ctor, bindings } => {
+        MirPattern::Ctor { ctor, bindings, .. } => {
             write_ctor(f, *ctor)?;
             write!(f, "(")?;
             for (i, b) in bindings.iter().enumerate() {
