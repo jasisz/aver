@@ -555,14 +555,19 @@ fn take_slot(slots: &[u16], cursor: &mut usize) -> Result<u16, SkipReason> {
 }
 
 /// Wrap a freshly-lowered node in `Spanned` while inheriting the
-/// source's line. The MIR type stamp starts uninitialised — Phase
-/// 6 optimizer passes may fill it later; consumers that need the
-/// HIR-side stamp can still read `expr.ty()` on the original.
+/// source's line. Phase 6 wave 1: propagate the HIR-side type
+/// stamp into MIR so downstream consumers (VM walker's typed
+/// opcodes, future inliner / monomorphizer) can read
+/// `mir_expr.ty()` without re-deriving the type.
 fn wrap<T, U>(node: T, source: &Spanned<U>) -> Spanned<T> {
+    let ty = std::sync::OnceLock::new();
+    if let Some(t) = source.ty() {
+        let _ = ty.set(t.clone());
+    }
     Spanned {
         node,
         line: source.line,
-        ty: std::sync::OnceLock::new(),
+        ty,
     }
 }
 

@@ -93,16 +93,26 @@ pub(super) fn compile_mir_expr(
             let bop = &spanned_binop.node;
             compile_mir_expr(fc, &bop.lhs)?;
             compile_mir_expr(fc, &bop.rhs)?;
-            // No type stamp on MIR sub-nodes yet; emit the generic
-            // BinOp opcode and let the VM's runtime tag dispatch
-            // pick the typed path. Phase 6's type-stamp propagation
-            // can later switch this to `emit_binop_typed`.
-            emit_binop_generic(fc, bop.op);
+            // Phase 6 wave 1: type stamps now propagate from HIR
+            // into MIR sub-nodes via `lower::wrap`. When both
+            // operands carry a primitive numeric stamp, emit the
+            // typed opcode (ADD_INT / ADD_FLOAT / …); otherwise
+            // fall back to the generic dispatcher.
+            emit_binop_typed(fc, bop.op, bop.lhs.ty(), bop.rhs.ty());
             Ok(())
         }
         MirExpr::Neg(inner) => {
             compile_mir_expr(fc, inner)?;
-            fc.emit_op(NEG);
+            // Same wave: pick the typed NEG when the operand
+            // carries a primitive numeric stamp. Float's typed
+            // path preserves `-0.0` IEEE-754 semantics (the
+            // generic NEG bounces through `0 - x`).
+            let op = match inner.ty() {
+                Some(crate::ast::Type::Int) => NEG_INT,
+                Some(crate::ast::Type::Float) => NEG_FLOAT,
+                _ => NEG,
+            };
+            fc.emit_op(op);
             Ok(())
         }
         MirExpr::Let(spanned_let) => {
@@ -1038,28 +1048,75 @@ fn emit_constructor_arg(
     }
 }
 
-fn emit_binop_generic(fc: &mut FnCompiler<'_>, op: crate::ast::BinOp) {
+fn emit_binop_typed(
+    fc: &mut FnCompiler<'_>,
+    op: crate::ast::BinOp,
+    lhs_ty: Option<&crate::ast::Type>,
+    rhs_ty: Option<&crate::ast::Type>,
+) {
     use crate::ast::BinOp::*;
+    use crate::ast::Type;
+    let both_int = matches!((lhs_ty, rhs_ty), (Some(Type::Int), Some(Type::Int)));
+    let both_float = matches!((lhs_ty, rhs_ty), (Some(Type::Float), Some(Type::Float)));
+    let lt_op = if both_int {
+        LT_INT
+    } else if both_float {
+        LT_FLOAT
+    } else {
+        LT
+    };
+    let gt_op = if both_int {
+        GT_INT
+    } else if both_float {
+        GT_FLOAT
+    } else {
+        GT
+    };
+    let add_op = if both_int {
+        ADD_INT
+    } else if both_float {
+        ADD_FLOAT
+    } else {
+        ADD
+    };
+    let sub_op = if both_int {
+        SUB_INT
+    } else if both_float {
+        SUB_FLOAT
+    } else {
+        SUB
+    };
+    let mul_op = if both_int {
+        MUL_INT
+    } else if both_float {
+        MUL_FLOAT
+    } else {
+        MUL
+    };
+    // No DIV_INT — integer division traps on `b == 0` and the
+    // generic `arith_div` already does that branch + propagates
+    // a typed runtime error.
+    let div_op = if both_float { DIV_FLOAT } else { DIV };
     match op {
-        Add => fc.emit_op(ADD),
-        Sub => fc.emit_op(SUB),
-        Mul => fc.emit_op(MUL),
-        Div => fc.emit_op(DIV),
-        Eq => fc.emit_op(EQ),
-        Lt => fc.emit_op(LT),
-        Gt => fc.emit_op(GT),
-        // `Neq` / `Lte` / `Gte` have no dedicated opcodes —
-        // they're invert-of-the-corresponding-comparison.
+        Add => fc.emit_op(add_op),
+        Sub => fc.emit_op(sub_op),
+        Mul => fc.emit_op(mul_op),
+        Div => fc.emit_op(div_op),
+        Eq => fc.emit_op(if both_int { EQ_INT } else { EQ }),
+        Lt => fc.emit_op(lt_op),
+        Gt => fc.emit_op(gt_op),
+        // `Neq` / `Lte` / `Gte` invert the corresponding
+        // comparison (same composition HIR uses).
         Neq => {
-            fc.emit_op(EQ);
+            fc.emit_op(if both_int { EQ_INT } else { EQ });
             fc.emit_op(NOT);
         }
         Lte => {
-            fc.emit_op(GT);
+            fc.emit_op(gt_op);
             fc.emit_op(NOT);
         }
         Gte => {
-            fc.emit_op(LT);
+            fc.emit_op(lt_op);
             fc.emit_op(NOT);
         }
     }
