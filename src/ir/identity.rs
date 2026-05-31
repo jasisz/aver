@@ -60,6 +60,19 @@ pub struct CtorId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ModuleId(pub u32);
 
+/// Opaque, stable identity for a built-in function (e.g.
+/// `Console.print`, `List.prepend`, `String.fromInt`). Phase 6
+/// wave 11: replaces the previous `MirCallee::Builtin(String)`
+/// shape with a typed id so MIR substrate uses typed identity
+/// everywhere (matching `FnId` / `CtorId` / `TypeId`'s
+/// "consumers never re-parse names" rule). The string name
+/// stays available via `SymbolTable::builtin_entry(id).name`
+/// for diagnostics + the registries that still key off strings
+/// (the VM builtin table, the Rust codegen's
+/// `emit_builtin_call`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct BuiltinId(pub u32);
+
 impl ModuleId {
     /// The entry scope — top-level items not declared inside any dep
     /// module. Always assigned `ModuleId(0)`.

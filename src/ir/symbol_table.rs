@@ -40,7 +40,7 @@ use std::collections::HashMap;
 
 use crate::ast::{FnDef, TopLevel, TypeDef, TypeVariant};
 use crate::codegen::ModuleInfo;
-use crate::ir::identity::{CtorId, FnId, FnKey, ModuleId, TypeId, TypeKey};
+use crate::ir::identity::{BuiltinId, CtorId, FnId, FnKey, ModuleId, TypeId, TypeKey};
 
 /// One entry in the function table. The `key` field is the public
 /// canonical handle; `module` is the owning scope; `index_in_module`
@@ -103,6 +103,13 @@ pub struct SymbolTable {
     pub fns: Vec<FnEntry>,
     pub types: Vec<TypeEntry>,
     pub ctors: Vec<CtorEntry>,
+    /// Phase 6 wave 11 — interned built-in function names. Grows
+    /// lazily as `lower_program` encounters new
+    /// `ResolvedCallee::Builtin(name)` shapes via
+    /// `SymbolTable::intern_builtin`. Re-interning the same name
+    /// returns the same `BuiltinId` so MIR's call sites end up
+    /// with stable identity per program.
+    pub builtins: Vec<BuiltinEntry>,
 
     fn_index: HashMap<FnKey, FnId>,
     type_index: HashMap<TypeKey, TypeId>,
@@ -111,6 +118,18 @@ pub struct SymbolTable {
     /// share a variant name (`Result.Ok` vs a user's
     /// `Validation.Ok`) without collision.
     ctor_index: HashMap<(TypeId, String), CtorId>,
+    /// Builtin canonical name → `BuiltinId` (Phase 6 wave 11).
+    builtin_index: HashMap<String, BuiltinId>,
+}
+
+/// Phase 6 wave 11 — interned record for a built-in fn name.
+/// Carries the canonical name so VM / Rust / wasm-gc backends
+/// can look it up through their existing string-keyed builtin
+/// registries; MIR-internal consumers route through `BuiltinId`
+/// instead and never re-parse the string.
+#[derive(Debug, Clone)]
+pub struct BuiltinEntry {
+    pub name: String,
 }
 
 impl SymbolTable {
@@ -287,6 +306,40 @@ impl SymbolTable {
 
     pub fn module_entry(&self, id: ModuleId) -> &ModuleEntry {
         &self.modules[id.0 as usize]
+    }
+
+    /// Phase 6 wave 11 — look up an interned built-in name. Panics
+    /// the same way the other `*_entry` lookups do when the id is
+    /// out of range (consumers should always hold ids minted by
+    /// `intern_builtin`).
+    pub fn builtin_entry(&self, id: BuiltinId) -> &BuiltinEntry {
+        &self.builtins[id.0 as usize]
+    }
+
+    /// Phase 6 wave 11 — intern a built-in fn name. Returns the
+    /// stable `BuiltinId` for `name`, reusing the existing slot
+    /// when the name has already been interned. Callers
+    /// (`lower_program` for the MIR side) get the same id for the
+    /// same name across the whole program so MIR consumers can
+    /// compare callees by identity.
+    pub fn intern_builtin(&mut self, name: &str) -> BuiltinId {
+        if let Some(id) = self.builtin_index.get(name) {
+            return *id;
+        }
+        let id = BuiltinId(self.builtins.len() as u32);
+        self.builtins.push(BuiltinEntry {
+            name: name.to_string(),
+        });
+        self.builtin_index.insert(name.to_string(), id);
+        id
+    }
+
+    /// Phase 6 wave 11 — look up a `BuiltinId` by name without
+    /// interning. Returns `None` when the name hasn't been
+    /// registered yet. Useful for consumers that want to detect
+    /// "is this name a known builtin" without mutating state.
+    pub fn builtin_id_of(&self, name: &str) -> Option<BuiltinId> {
+        self.builtin_index.get(name).copied()
     }
 
     /// Build-time invariant check: every registered key resolves

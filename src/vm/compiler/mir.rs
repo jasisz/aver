@@ -170,7 +170,8 @@ pub(super) fn compile_mir_expr(
                     }
                     Ok(())
                 }
-                MirCallee::Builtin(name) => {
+                MirCallee::Builtin(id) => {
+                    let name = fc.mir_program.map(|p| p.builtin_name(*id)).unwrap_or("");
                     let builtin =
                         lookup_vm_builtin(name).ok_or(MirVmUnsupported::UnsupportedCallee)?;
                     for arg in args {
@@ -640,7 +641,8 @@ pub(super) fn compile_mir_expr(
                         fc.emit_op(LOAD_CONST);
                         fc.emit_u16(idx);
                     }
-                    MirCallee::Builtin(name) => {
+                    MirCallee::Builtin(id) => {
+                        let name = fc.mir_program.map(|p| p.builtin_name(*id)).unwrap_or("");
                         let symbol_id = fc.symbols.find(name).ok_or_else(|| {
                             MirVmUnsupported::InnerError(CompileError {
                                 msg: format!("MIR-VM: missing VM symbol for builtin `{name}`"),
@@ -715,7 +717,16 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::Call(c) => {
             let callee_ok = match &c.node.callee {
                 MirCallee::Fn(_) => true,
-                MirCallee::Builtin(name) => lookup_vm_builtin(name).is_some(),
+                // Phase 6 wave 11: optimistic — the `BuiltinId →
+                // name` resolution lives behind `MirProgram` and
+                // `can_compile` is a standalone walker. The hot
+                // path in `compile_mir_expr` still surfaces
+                // `MirVmUnsupported::UnsupportedCallee` when the
+                // name isn't in `VmBuiltin::ALL`, and the caller
+                // drops back to HIR — so reporting `true` here at
+                // worst costs one rejected compilation attempt
+                // rather than silently mis-emitting.
+                MirCallee::Builtin(_) => true,
             };
             callee_ok && c.node.args.iter().all(can_compile)
         }

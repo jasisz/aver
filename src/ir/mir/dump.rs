@@ -155,7 +155,7 @@ fn write_let(f: &mut fmt::Formatter<'_>, let_node: &MirLet, indent: &str) -> fmt
 fn write_call(f: &mut fmt::Formatter<'_>, call: &MirCall, indent: &str) -> fmt::Result {
     match &call.callee {
         MirCallee::Fn(id) => write!(f, "FnId({}).call(", id.0)?,
-        MirCallee::Builtin(name) => write!(f, "Builtin({}).call(", name)?,
+        MirCallee::Builtin(id) => write!(f, "Builtin(#{}).call(", id.0)?,
     }
     write_args(f, &call.args, indent)?;
     write!(f, ")")

@@ -16,7 +16,7 @@
 
 use crate::ast::{BinOp, Literal, Spanned};
 use crate::ir::hir::BuiltinCtor;
-use crate::ir::{CtorId, FnId, TypeId};
+use crate::ir::{BuiltinId, CtorId, FnId, TypeId};
 
 use super::program::LocalId;
 
@@ -204,17 +204,21 @@ pub struct MirCall {
 }
 
 /// What we're calling. Two flavors during Phase 2–3; richer
-/// `BuiltinId` may replace the string in a later phase.
-#[derive(Debug, Clone)]
+/// Built-in callees lift to `BuiltinId` since Phase 6 wave 11
+/// — backends look up the canonical name via
+/// `SymbolTable::builtin_entry(id)` when they need to dispatch
+/// against the existing string-keyed runtime registries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirCallee {
     /// User-defined function (any module, including the current
     /// one). Resolved at HIR → MIR lowering — never a string.
     Fn(FnId),
     /// Built-in registered in the runtime's builtin table
-    /// (`Console.print`, `List.prepend`, …). String for now; a
-    /// later phase may introduce `BuiltinId` for full typed
-    /// identity.
-    Builtin(String),
+    /// (`Console.print`, `List.prepend`, …). Interned via
+    /// `SymbolTable::intern_builtin` at lowering time; consumers
+    /// resolve the canonical name through
+    /// `SymbolTable::builtin_entry(id).name`.
+    Builtin(BuiltinId),
 }
 
 /// `target(args…)` in tail position — same SCC as the surrounding fn.
