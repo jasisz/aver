@@ -87,6 +87,6 @@ pub use expr::{
     MirRecordCreate, MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
 };
 pub use lower::lower_program;
-pub use optimize::const_fold;
+pub use optimize::{const_fold, dead_code};
 pub use program::{LocalId, MirFn, MirParam, MirProgram};
 pub use stats::{LowerStats, SkipReason};
