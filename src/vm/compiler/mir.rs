@@ -45,6 +45,7 @@ use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 
 use super::VmSymbolTable;
+use super::calls::buffer_intrinsic_opcode;
 
 use super::{CompileError, FnCompiler};
 
@@ -237,6 +238,50 @@ pub(super) fn compile_mir_expr(
                                 fc.emit_u32(symbol_id);
                                 fc.emit_u8(args.len() as u8);
                             }
+                        }
+                    }
+                    Ok(())
+                }
+                MirCallee::Intrinsic(intrinsic) => {
+                    // Mirror of the HIR walker's `compile_intrinsic_call`:
+                    // the deforestation pass's buffer-build ops map to
+                    // dedicated BUFFER_* opcodes; `__to_str` lowers to the
+                    // CONCAT-against-empty stringify trick.
+                    match buffer_intrinsic_opcode(*intrinsic) {
+                        Some((opcode, arity)) => {
+                            if args.len() != arity {
+                                return Err(MirVmUnsupported::InnerError(CompileError {
+                                    msg: format!(
+                                        "intrinsic {} expects {arity} arg(s), got {}",
+                                        intrinsic.name(),
+                                        args.len()
+                                    ),
+                                }));
+                            }
+                            for arg in args {
+                                compile_mir_expr(fc, arg)?;
+                            }
+                            fc.emit_op(opcode);
+                        }
+                        None => {
+                            // `__to_str(x)`: CONCAT against an empty string
+                            // — CONCAT calls `NanValue::repr` on both sides,
+                            // so any value lowers to its display string.
+                            if args.len() != 1 {
+                                return Err(MirVmUnsupported::InnerError(CompileError {
+                                    msg: format!(
+                                        "intrinsic {} expects 1 arg, got {}",
+                                        intrinsic.name(),
+                                        args.len()
+                                    ),
+                                }));
+                            }
+                            compile_mir_expr(fc, &args[0])?;
+                            let empty = fc.nan_literal(&Literal::Str(String::new()));
+                            let idx = fc.add_constant(empty);
+                            fc.emit_op(LOAD_CONST);
+                            fc.emit_u16(idx);
+                            fc.emit_op(CONCAT);
                         }
                     }
                     Ok(())
@@ -667,6 +712,12 @@ pub(super) fn compile_mir_expr(
                         fc.emit_op(LOAD_CONST);
                         fc.emit_u16(idx);
                     }
+                    // A synthesis intrinsic can't appear as an
+                    // independent-product branch callee (intrinsics are
+                    // never first-class values); fall back conservatively.
+                    MirCallee::Intrinsic(_) => {
+                        return Err(MirVmUnsupported::UnsupportedCallee);
+                    }
                 }
                 for arg in &call.args {
                     compile_mir_expr(fc, arg)?;
@@ -742,6 +793,9 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
                 // worst costs one rejected compilation attempt
                 // rather than silently mis-emitting.
                 MirCallee::Builtin(_) => true,
+                // Buffer-build / stringify intrinsics emit dedicated
+                // BUFFER_* / CONCAT opcodes — always compilable.
+                MirCallee::Intrinsic(_) => true,
             };
             callee_ok && c.node.args.iter().all(can_compile)
         }

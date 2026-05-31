@@ -202,6 +202,22 @@ fn newtype_specialization() {
 }
 
 #[test]
+fn string_interpolation_buffer_intrinsics() {
+    // Interpolation chains lower (via `interp_lower` deforestation) to
+    // the synthesized buffer intrinsics (`__buf_new` / `__buf_append` /
+    // `__buf_finalize` / `__to_str`). The MIR walker emits the same
+    // BUFFER_* / CONCAT opcodes the HIR walker does; this pins parity on
+    // that path.
+    let src = prog(
+        "fn build(n: Int, acc: String) -> String\n    \
+         match n\n        0 -> acc\n        \
+         _ -> build(n - 1, \"{acc}-{String.fromInt(n)}\")\n\n\
+         fn run() -> String\n    build(6, \"start\")\n",
+    );
+    assert_parity("string_interp", &src, "run");
+}
+
+#[test]
 fn bench_scenario_corpus_parity() {
     // Drive the real single-module bench programs (`depends []`, entry
     // `main`) through both walkers. These exercise the production shapes
