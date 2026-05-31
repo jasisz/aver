@@ -202,6 +202,21 @@ fn newtype_specialization() {
 }
 
 #[test]
+fn discard_binding_evaluates_for_effect() {
+    // `_ = step(5)?` — the idiomatic "run it, drop the Ok, continue"
+    // form. The resolver assigns `_` no slot; the lowerer evaluates the
+    // value under a fresh synthetic slot the body never reads. The
+    // discarded call must still run (and its `?` still short-circuit),
+    // identically on both paths. run() = drop step(5)=Ok(6), then
+    // step(10) = Ok(11).
+    let src = prog(
+        "fn step(n: Int) -> Result<Int, String>\n    Result.Ok(n + 1)\n\n\
+         fn run() -> Result<Int, String>\n    _ = step(5)?\n    step(10)\n",
+    );
+    assert_parity("discard_binding", &src, "run");
+}
+
+#[test]
 fn first_class_fn_call_via_call_value() {
     // `applyTwice` calls its `Fn(..)` parameter `f` — a first-class fn
     // value in a local slot. The MIR walker lowers `f(x)` to a
