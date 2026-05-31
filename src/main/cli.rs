@@ -471,6 +471,14 @@ pub(super) enum Commands {
         /// `--json` for a machine-readable shape consumable by CI scripts.
         #[arg(long, default_value_t = false)]
         explain_passes: bool,
+        /// Report MIR coverage for the VM backend: how many fns the MIR
+        /// lowering accepts vs. drops to the HIR fallback, broken down by
+        /// the shape that blocked each drop (`Try`, `TailCall`, `List`,
+        /// builtin ctor, …). MIR is the default VM path; this surfaces how
+        /// much still rides the HIR walker, so the dominant blockers can be
+        /// closed first. Pair with `--json` for a machine-readable shape.
+        #[arg(long, default_value_t = false)]
+        explain_mir_coverage: bool,
         /// JSON output for `--explain-passes`. One object per pass
         /// (`stage`, `summary`, `details`), top-level wrapper has
         /// `schema_version: 1` so consumers can pin against the shape.
