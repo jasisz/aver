@@ -127,6 +127,24 @@ fn recursive_owned_call_parity() {
     assert_eq!(hir, Value::Int(55), "fib(10) = 55");
 }
 
+#[test]
+fn vector_compound_leaf_op_parity() {
+    // `Option.withDefault(Vector.set(v, i, x), v)` and
+    // `Option.withDefault(Vector.get(v, i), <lit>)` are the fused
+    // compound shapes the HIR walker emits as single VECTOR_SET_OR_KEEP /
+    // VECTOR_GET_OR opcodes. The MIR walker recognizes the same shapes
+    // (rather than the generic VECTOR_SET/GET + UNWRAP_OR pair); this
+    // pins behavioral parity for both.
+    let src = "fn build(n: Int) -> Int\n    v = Vector.new(3, 0)\n    w = Option.withDefault(Vector.set(v, 0, n), v)\n    Option.withDefault(Vector.get(w, 0), 0)\n";
+    let hir = run_via_path(src, "build", &[7], Path::Hir);
+    let mir = run_via_path(src, "build", &[7], Path::MirFallback);
+    assert_eq!(
+        hir, mir,
+        "HIR and MIR paths must agree on the vector compound shapes: HIR={hir:?}, MIR={mir:?}"
+    );
+    assert_eq!(hir, Value::Int(7), "set slot 0 to 7, read it back");
+}
+
 /// Compile both paths and return the per-fn bytecode pair so
 /// tests can byte-compare specific chunks.
 fn compile_both(src: &str) -> (aver::vm::CodeStore, aver::vm::CodeStore) {
