@@ -644,6 +644,53 @@ fn typed_neg_float_bytecode_parity() {
 }
 
 #[test]
+fn match_dispatch_const_table_bytecode_parity() {
+    // Phase 6 wave 2 — `match n { 0 -> 100; 1 -> 200; _ -> 999 }`
+    // is the canonical literal-only match HIR fast-paths through
+    // MATCH_DISPATCH_CONST. MIR walker now mirrors the same
+    // table emit byte-for-byte.
+    let (hir, mir) = compile_both(
+        "fn classify(n: Int) -> Int\n    match n\n        0 -> 100\n        1 -> 200\n        _ -> 999\n",
+    );
+    let hir_fn = hir.get(hir.find("classify").expect("classify in HIR"));
+    let mir_fn = mir.get(mir.find("classify").expect("classify in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "MATCH_DISPATCH_CONST emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn match_dispatch_const_runtime_parity() {
+    // Same shape — runtime parity on every branch.
+    let src = "fn classify(n: Int) -> Int\n    match n\n        0 -> 100\n        1 -> 200\n        _ -> 999\n";
+    for (input, expected) in &[(0, 100), (1, 200), (2, 999), (-1, 999)] {
+        let hir = run_via_path(src, "classify", &[*input], Path::Hir);
+        let mir = run_via_path(src, "classify", &[*input], Path::MirFallback);
+        assert_eq!(
+            hir, mir,
+            "classify({input}) parity: HIR={hir:?}, MIR={mir:?}"
+        );
+        assert_eq!(hir, Value::Int(*expected as i64));
+    }
+}
+
+#[test]
+fn match_non_dispatchable_arm_still_uses_linear_emit() {
+    // Body is an expression, not a const literal — fast-path
+    // aborts and MIR falls through to its linear emit. The
+    // result is still correct on both paths.
+    let src = "fn double_or_zero(n: Int) -> Int\n    match n\n        0 -> 0\n        _ -> n + n\n";
+    for (input, expected) in &[(0, 0), (3, 6), (7, 14)] {
+        let hir = run_via_path(src, "double_or_zero", &[*input], Path::Hir);
+        let mir = run_via_path(src, "double_or_zero", &[*input], Path::MirFallback);
+        assert_eq!(hir, mir);
+        assert_eq!(hir, Value::Int(*expected as i64));
+    }
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output
