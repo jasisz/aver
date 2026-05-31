@@ -261,6 +261,7 @@ fn main() {
             optimize,
             emit_ir_after,
             explain_passes,
+            explain_mir_coverage,
             json,
         } => {
             let policy_mode = (*policy).unwrap_or(if *with_replay {
@@ -308,6 +309,13 @@ fn main() {
             // machine-readable shape for CI consumption.
             if *explain_passes {
                 commands::cmd_explain_passes(file, module_root.as_deref(), *json);
+                return;
+            }
+            // `--explain-mir-coverage` lowers the program to MIR and reports
+            // how much of it the MIR walker accepts vs. drops to the HIR
+            // fallback (by blocking shape). Same short-circuit shape.
+            if *explain_mir_coverage {
+                commands::cmd_explain_mir_coverage(file, module_root.as_deref(), *json);
                 return;
             }
             commands::cmd_compile(commands::CompileOptions {

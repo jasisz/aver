@@ -3475,6 +3475,109 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
     }
 }
 
+/// `aver compile FILE --explain-mir-coverage` — lowers the resolved
+/// program to MIR and reports how much of it the MIR pipeline accepts vs.
+/// drops to the HIR fallback, broken down by the shape that blocked each
+/// drop. MIR is the default VM path (`compile_program_with_modules`);
+/// this is the lowering-level coverage — the upper bound on how many fns
+/// the VM walker can take off the HIR path, and the roadmap for which
+/// blocking shapes to lower next.
+pub(super) fn cmd_explain_mir_coverage(file: &str, module_root_override: Option<&str>, json: bool) {
+    use aver::ir::{PipelineConfig, TypecheckMode};
+
+    let module_root = resolve_module_root(module_root_override);
+    let source = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let mut items = match parse_file(&source) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+
+    let dep_modules = load_compile_deps(&items, &module_root, false, false, false);
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full {
+                base_dir: Some(&module_root),
+            }),
+            dep_modules: &dep_modules,
+            ..Default::default()
+        },
+    );
+    if let Some(tc) = &result.typecheck
+        && !tc.errors.is_empty()
+    {
+        eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
+        process::exit(1);
+    }
+
+    let mir = aver::ir::mir::lower_program(&result.resolved_items);
+    if json {
+        print!("{}", render_mir_coverage_json(&mir.stats));
+    } else {
+        print!("{}", render_mir_coverage(&mir.stats));
+    }
+}
+
+/// Sort skip reasons by count descending (dominant blocker first), then
+/// by stable variant order for ties — so the report reads as a roadmap.
+fn mir_coverage_blockers(
+    stats: &aver::ir::mir::LowerStats,
+) -> Vec<(aver::ir::mir::SkipReason, u32)> {
+    let mut blockers = stats.skipped_sorted();
+    blockers.sort_by(|a, b| b.1.cmp(&a.1).then((a.0 as u8).cmp(&(b.0 as u8))));
+    blockers
+}
+
+fn render_mir_coverage(stats: &aver::ir::mir::LowerStats) -> String {
+    let total = stats.total();
+    let lowered = stats.lowered;
+    let fallback = total - lowered;
+    let pct = stats.coverage_ratio() * 100.0;
+    let mut out = String::new();
+    out.push_str("MIR coverage (VM backend) — lowering level\n");
+    out.push_str("==========================================\n\n");
+    out.push_str(&format!("fns total:     {total}\n"));
+    out.push_str(&format!("MIR-lowered:   {lowered}  ({pct:.1}%)\n"));
+    out.push_str(&format!("HIR fallback:  {fallback}\n"));
+    let blockers = mir_coverage_blockers(stats);
+    if !blockers.is_empty() {
+        out.push_str("\nblocked by shape (dominant first):\n");
+        for (reason, count) in blockers {
+            out.push_str(&format!("  {count:>4}  {}\n", reason.label()));
+        }
+    }
+    out
+}
+
+fn render_mir_coverage_json(stats: &aver::ir::mir::LowerStats) -> String {
+    let total = stats.total();
+    let blockers: Vec<String> = mir_coverage_blockers(stats)
+        .into_iter()
+        .map(|(reason, count)| {
+            format!(
+                "{{\"shape\":\"{}\",\"count\":{count}}}",
+                reason.label().replace('"', "\\\"")
+            )
+        })
+        .collect();
+    format!(
+        "{{\"schema_version\":1,\"total\":{total},\"mir_lowered\":{lowered},\"hir_fallback\":{fallback},\"coverage_ratio\":{ratio:.4},\"blocked_by_shape\":[{blockers}]}}\n",
+        lowered = stats.lowered,
+        fallback = total - stats.lowered,
+        ratio = stats.coverage_ratio(),
+        blockers = blockers.join(","),
+    )
+}
+
 fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> String {
     use aver::ir::pipeline::PassReport;
     let mut out = String::new();
