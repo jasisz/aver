@@ -109,14 +109,15 @@ fn neg_parity() {
 }
 
 #[test]
-fn recursive_owned_call_parity() {
-    // fib's recursive arms are non-tail `CALL_KNOWN`s whose argument
-    // (`n - 1` / `n - 2`) carries the last use of param `n`, so the MIR
-    // walker's `compute_owned_mask` is non-zero and it emits the
-    // `CALL_KNOWN_OWNED` opcode. That opcode previously had no handler
-    // in the execute dispatch, so this exact shape trapped with
-    // `unknown opcode: 0x47` on the MIR-fallback path while the HIR
-    // path (plain `CALL_KNOWN`) was fine. Guards the handler.
+fn recursive_non_tail_call_parity() {
+    // fib's recursive arms are non-tail known calls. Both walkers emit
+    // plain `CALL_KNOWN` for them (the MIR walker no longer emits the
+    // owned `CALL_KNOWN_OWNED` variant for user-fn calls — it desynced
+    // the leaf classifier; see tests/mir_call_known_owned_regression.rs).
+    // NOTE: this in-process harness runs tco + resolve but NOT the
+    // pipeline `last_use` pass, so owned masks are 0 here regardless —
+    // owned-emission divergences are exercised by the full-pipeline
+    // integration regression, not this harness.
     let src = "fn fib(n: Int) -> Int\n    match n < 2\n        true -> n\n        false -> fib(n - 1) + fib(n - 2)\n";
     let hir = run_via_path(src, "fib", &[10], Path::Hir);
     let mir = run_via_path(src, "fib", &[10], Path::MirFallback);

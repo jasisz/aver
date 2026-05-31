@@ -200,7 +200,13 @@ fn parent_thin_calls_are_safe(
         let op = bytes[ip];
         ip += 1;
         match op {
-            CALL_KNOWN => {
+            // CALL_KNOWN_OWNED carries the same leading `fn_id:u16` as
+            // CALL_KNOWN (only a trailing owned byte differs, absorbed by
+            // `opcode_operand_width`), so the same self-recursion /
+            // effectful-target safety check applies. It isn't emitted
+            // today, but stays guarded so a future emitter can't bypass
+            // this gate.
+            CALL_KNOWN | CALL_KNOWN_OWNED => {
                 if ip + 3 > bytes.len() {
                     return Err(CompileError {
                         msg: format!("truncated bytecode in {}", chunk.name),
@@ -230,7 +236,14 @@ fn classify_leaf_chunk(chunk: &FnChunk) -> Result<bool, CompileError> {
         let op = code[ip];
         ip += 1;
         match op {
-            CALL_KNOWN | CALL_VALUE | TAIL_CALL_SELF | TAIL_CALL_KNOWN | TAIL_CALL_SELF_THIN => {
+            CALL_KNOWN | CALL_KNOWN_OWNED | CALL_VALUE | TAIL_CALL_SELF | TAIL_CALL_KNOWN
+            | TAIL_CALL_SELF_THIN => {
+                // CALL_KNOWN_OWNED counts as a call: a chunk that makes
+                // one is NOT a leaf. The MIR walker no longer emits it
+                // (it emits plain CALL_KNOWN), but it stays a live opcode
+                // with an execute handler, so a future emitter must not be
+                // able to slip a non-leaf fn past this gate and have a
+                // caller's CALL_KNOWN upgraded to the frameless CALL_LEAF.
                 return Ok(false);
             }
             _ => {}
@@ -322,4 +335,49 @@ pub fn find_opcode_positions(chunk: &FnChunk, target_op: u8) -> Vec<usize> {
         ip += opcode_operand_width(op, code, ip);
     }
     positions
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk_with_code(code: Vec<u8>) -> FnChunk {
+        FnChunk {
+            name: "t".to_string(),
+            arity: 1,
+            local_count: 1,
+            code,
+            constants: vec![],
+            effects: vec![],
+            thin: false,
+            parent_thin: false,
+            leaf: false,
+            no_alloc: false,
+            source_file: String::new(),
+            line_table: vec![],
+        }
+    }
+
+    #[test]
+    fn call_known_owned_chunk_is_not_a_leaf() {
+        // A chunk that calls out via CALL_KNOWN_OWNED makes a call, so it
+        // must not be classified as a leaf — otherwise a caller's
+        // CALL_KNOWN to it gets upgraded to the frameless CALL_LEAF and
+        // the non-leaf fn is invoked without a CallFrame. (CALL_KNOWN_OWNED
+        // is fn_id:u16, argc:u8, owned:u8.)
+        let owned = chunk_with_code(vec![CALL_KNOWN_OWNED, 0x00, 0x02, 0x01, 0x00, RETURN]);
+        assert!(
+            !classify_leaf_chunk(&owned).unwrap(),
+            "CALL_KNOWN_OWNED must disqualify a chunk from leaf status"
+        );
+
+        // Sanity: the same chunk shape with plain CALL_KNOWN is likewise
+        // non-leaf (the established behavior this mirrors).
+        let plain = chunk_with_code(vec![CALL_KNOWN, 0x00, 0x02, 0x01, RETURN]);
+        assert!(!classify_leaf_chunk(&plain).unwrap());
+
+        // And a builtin-only chunk stays a leaf.
+        let leaf = chunk_with_code(vec![LIST_LEN, RETURN]);
+        assert!(classify_leaf_chunk(&leaf).unwrap());
+    }
 }

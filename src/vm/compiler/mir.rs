@@ -150,24 +150,27 @@ pub(super) fn compile_mir_expr(
                             ),
                         })
                     })?;
-                    // Phase 6 wave 4 — derive owned_mask from
-                    // args' last-use flags. Each bit `i` set
-                    // means arg `i` was a `MirLocal { last_use:
-                    // true }` AND its slot maps positionally to
-                    // parameter `i`. The HIR walker constrains
-                    // this to `slot == i`; we apply the same
-                    // rule.
-                    let owned_mask = compute_owned_mask(args, fc);
-                    if owned_mask != 0 {
-                        fc.emit_op(CALL_KNOWN_OWNED);
-                        fc.emit_u16(vm_fn_id as u16);
-                        fc.emit_u8(args.len() as u8);
-                        fc.emit_u8(owned_mask);
-                    } else {
-                        fc.emit_op(CALL_KNOWN);
-                        fc.emit_u16(vm_fn_id as u16);
-                        fc.emit_u8(args.len() as u8);
-                    }
+                    // Always plain CALL_KNOWN, matching the HIR walker
+                    // exactly. The owned mask is inert for a known
+                    // user-fn call at the call boundary (the callee
+                    // derives its parameter ownership from its own alias
+                    // analysis, and the runtime reads the trailing owned
+                    // byte but ignores it), so emitting CALL_KNOWN_OWNED
+                    // bought nothing — and it desynced the leaf /
+                    // parent-thin classifier, which only recognizes
+                    // CALL_KNOWN as a call. A fn calling out via
+                    // CALL_KNOWN_OWNED was wrongly flagged `leaf=true`,
+                    // its callers' plain CALL_KNOWN got upgraded to the
+                    // frameless CALL_LEAF, and the non-leaf fn was then
+                    // invoked without a CallFrame → VM out-of-bounds
+                    // crash on the shipped default path. A future
+                    // cross-call ownership pass that re-enables the owned
+                    // variant must also teach the classifier about it
+                    // (CALL_KNOWN_OWNED is recognized there now as
+                    // defense, but no longer emitted here).
+                    fc.emit_op(CALL_KNOWN);
+                    fc.emit_u16(vm_fn_id as u16);
+                    fc.emit_u8(args.len() as u8);
                     Ok(())
                 }
                 MirCallee::Builtin(id) => {
