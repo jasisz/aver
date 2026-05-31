@@ -49,10 +49,56 @@
 use crate::ast::{BinOp, Spanned, Type};
 use crate::ir::SymbolTable;
 use crate::ir::hir::BuiltinCtor;
-use crate::ir::mir::{MirCallee, MirCtor, MirExpr};
+use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirProgram};
 
 use super::expr::emit_literal;
 use super::syntax::aver_name_to_rust;
+
+/// Phase 5 diagnostic: how many fns the MIR walker can emit
+/// standalone vs how many need HIR fallback. Pre-wire-up signal
+/// so callers can track walker reach across the shipped corpus
+/// without altering the codegen path.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CoverageReport {
+    /// Total fn count in the lowered program.
+    pub total: usize,
+    /// Fns whose entire body the walker emits standalone
+    /// (no `None` anywhere in the recursive walk).
+    pub mir_covered: usize,
+    /// Fns the walker can't emit — the recursive walk hit at
+    /// least one variant that returned `None`. Caller would
+    /// fall back to the HIR walker in a wire-up.
+    pub hir_fallback: usize,
+}
+
+impl CoverageReport {
+    /// Walker reach as a percentage of total fns. `0.0` when
+    /// the program is empty (no fns lowered).
+    pub fn ratio(&self) -> f64 {
+        if self.total == 0 {
+            0.0
+        } else {
+            self.mir_covered as f64 / self.total as f64
+        }
+    }
+}
+
+/// Walk every fn in `program` and report walker reach. For each
+/// fn, calls [`emit_mir_expr`] on the body and counts
+/// `Some` / `None`. Suitable for `--explain-mir-coverage`–style
+/// diagnostics; the codegen path itself is untouched.
+pub fn coverage_report(program: &MirProgram, symbol_table: &SymbolTable) -> CoverageReport {
+    let mut report = CoverageReport::default();
+    for (_, mir_fn) in program.iter() {
+        report.total += 1;
+        if emit_mir_expr(&mir_fn.body, symbol_table).is_some() {
+            report.mir_covered += 1;
+        } else {
+            report.hir_fallback += 1;
+        }
+    }
+    report
+}
 
 /// Try to emit Rust source for `expr` directly from MIR.
 /// Returns `None` for any variant outside the Phase 5 wave 1
