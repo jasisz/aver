@@ -691,6 +691,61 @@ fn match_non_dispatchable_arm_still_uses_linear_emit() {
 }
 
 #[test]
+fn specialised_builtin_list_len_bytecode_parity() {
+    // Phase 6 wave 3 — `List.len(xs)` picks the LIST_LEN
+    // single-opcode emit instead of CALL_BUILTIN.
+    let (hir, mir) = compile_both("fn count(xs: List<Int>) -> Int\n    List.len(xs)\n");
+    let hir_fn = hir.get(hir.find("count").expect("count in HIR"));
+    let mir_fn = mir.get(mir.find("count").expect("count in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "LIST_LEN emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn specialised_builtin_list_prepend_bytecode_parity() {
+    let (hir, mir) =
+        compile_both("fn cons(x: Int, xs: List<Int>) -> List<Int>\n    List.prepend(x, xs)\n");
+    let hir_fn = hir.get(hir.find("cons").expect("cons in HIR"));
+    let mir_fn = mir.get(mir.find("cons").expect("cons in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "LIST_PREPEND emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn specialised_builtin_option_with_default_bytecode_parity() {
+    let (hir, mir) = compile_both(
+        "fn unwrap(o: Option<Int>, fallback: Int) -> Int\n    Option.withDefault(o, fallback)\n",
+    );
+    let hir_fn = hir.get(hir.find("unwrap").expect("unwrap in HIR"));
+    let mir_fn = mir.get(mir.find("unwrap").expect("unwrap in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "UNWRAP_OR emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn specialised_builtin_result_with_default_bytecode_parity() {
+    let (hir, mir) = compile_both(
+        "fn unwrap(r: Result<Int, String>, fallback: Int) -> Int\n    Result.withDefault(r, fallback)\n",
+    );
+    let hir_fn = hir.get(hir.find("unwrap").expect("unwrap in HIR"));
+    let mir_fn = mir.get(mir.find("unwrap").expect("unwrap in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "UNWRAP_RESULT_OR emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output

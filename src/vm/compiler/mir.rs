@@ -148,29 +148,36 @@ pub(super) fn compile_mir_expr(
                     Ok(())
                 }
                 MirCallee::Builtin(name) => {
-                    // Phase 4e — generic CALL_BUILTIN dispatch.
-                    // The HIR walker specializes ~6 builtins
-                    // (ListLen → LIST_LEN, MapGet → MAP_GET,
-                    // OptionWithDefault → UNWRAP_OR, …) into
-                    // dedicated opcodes; we don't replicate that
-                    // here yet, so bytecode parity only holds for
-                    // the generic path. Runtime parity holds for
-                    // all builtins — the VM's CALL_BUILTIN
-                    // dispatch lands on the same handler the
-                    // specialised opcodes wrap.
                     let builtin =
                         lookup_vm_builtin(name).ok_or(MirVmUnsupported::UnsupportedCallee)?;
                     for arg in args {
                         compile_mir_expr(fc, arg)?;
                     }
-                    let symbol_id = fc.symbols.intern_builtin(builtin).map_err(|e| {
-                        MirVmUnsupported::InnerError(CompileError {
-                            msg: format!("MIR-VM: intern_builtin failed: {e:?}"),
-                        })
-                    })?;
-                    fc.emit_op(CALL_BUILTIN);
-                    fc.emit_u32(symbol_id);
-                    fc.emit_u8(args.len() as u8);
+                    // Phase 6 wave 3 — pick the specialised
+                    // single-opcode emit when the builtin has
+                    // one (mirror of HIR's `emit_builtin_after_args`
+                    // dispatch). Owned/CALL_BUILTIN_OWNED variants
+                    // wait for wave 4's last-use revival; until
+                    // then `owned_mask = 0` everywhere on the
+                    // MIR path, same as Phase 4e.
+                    match builtin {
+                        VmBuiltin::ListLen => fc.emit_op(LIST_LEN),
+                        VmBuiltin::ListPrepend => fc.emit_op(LIST_PREPEND),
+                        VmBuiltin::VectorGet => fc.emit_op(VECTOR_GET),
+                        VmBuiltin::VectorSet => fc.emit_op(VECTOR_SET),
+                        VmBuiltin::OptionWithDefault => fc.emit_op(UNWRAP_OR),
+                        VmBuiltin::ResultWithDefault => fc.emit_op(UNWRAP_RESULT_OR),
+                        _ => {
+                            let symbol_id = fc.symbols.intern_builtin(builtin).map_err(|e| {
+                                MirVmUnsupported::InnerError(CompileError {
+                                    msg: format!("MIR-VM: intern_builtin failed: {e:?}"),
+                                })
+                            })?;
+                            fc.emit_op(CALL_BUILTIN);
+                            fc.emit_u32(symbol_id);
+                            fc.emit_u8(args.len() as u8);
+                        }
+                    }
                     Ok(())
                 }
             }
