@@ -162,10 +162,22 @@ fn lower_fn(fd: &ResolvedFnDef, program: &mut MirProgram) -> Result<MirFn, SkipR
     if stmts.is_empty() {
         return Err(SkipReason::EmptyBody);
     }
+    // Synthetic-local counter starts past the resolver's slots so the
+    // stmt-chain lowering can mint fresh slots for opaque-let temps.
+    // Its final value is the function's true local_count — the VM
+    // walker must reserve this many frame slots, not just the
+    // resolver's `local_count`, or a `STORE_LOCAL` to a synthetic slot
+    // overruns the frame.
+    let base_local_count = fd
+        .resolution
+        .as_ref()
+        .map_or(fd.params.len() as u32, |r| u32::from(r.local_count));
+    let mut next_synthetic_local = base_local_count;
     let body = match stmts.len() {
         1 => {
             // Single-stmt body: must be `Expr`. Bindings alone
-            // can't produce a value.
+            // can't produce a value. No opaque-let temps here, so the
+            // counter stays at `base_local_count`.
             let ResolvedStmt::Expr(expr) = &stmts[0] else {
                 return Err(SkipReason::BindingOnlyTail);
             };
@@ -180,10 +192,10 @@ fn lower_fn(fd: &ResolvedFnDef, program: &mut MirProgram) -> Result<MirFn, SkipR
                 .resolution
                 .as_ref()
                 .ok_or(SkipReason::MissingResolution)?;
-            let mut next_synthetic_local = u32::from(resolution.local_count);
             lower_stmt_chain(stmts, resolution, &mut next_synthetic_local, program)?
         }
     };
+    let local_count = next_synthetic_local;
 
     let params = fd
         .params
@@ -213,6 +225,7 @@ fn lower_fn(fd: &ResolvedFnDef, program: &mut MirProgram) -> Result<MirFn, SkipR
         return_type: format!("{:?}", fd.return_type),
         effects,
         body,
+        local_count,
     })
 }
 

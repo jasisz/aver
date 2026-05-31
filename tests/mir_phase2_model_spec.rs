@@ -183,6 +183,7 @@ fn build_a_tiny_function_by_hand() {
             name: "Console.print".to_string(),
         }],
         body,
+        local_count: 1,
     };
     let mut program = MirProgram::empty();
     program.fns.insert(f.fn_id, f);
