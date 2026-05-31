@@ -1359,14 +1359,18 @@ fn try_emit_vector_compound(
 /// read of slot `i`. Mirrors HIR's `compute_builtin_owned_mask`
 /// / tail-call mask derivation. Caps at 8 args (mask is u8).
 ///
-/// The alias-prone slot guard HIR applies (skipping bits when
-/// the slot is aliased by another binding) isn't ported here
-/// yet — MIR doesn't carry the alias annotation from
-/// `FnResolution`. We emit conservatively when in doubt.
-fn compute_owned_mask(args: &[Spanned<MirExpr>], _fc: &FnCompiler<'_>) -> u8 {
+/// The alias-prone slot guard mirrors HIR's `compute_builtin_owned_mask`:
+/// a bit is dropped when its slot is flagged on `FnResolution.aliased_slots`
+/// (propagated onto `fc` via `set_aliased_slots`). The guard is load-bearing
+/// — the owned builtin path empties the arena slot in place
+/// (`take_map_value` / vector take), so marking an aliased `Vector`/`Map`
+/// param owned would mutate a binding the caller still holds. Without it the
+/// MIR walker diverged from HIR, emitting `owned = 1` on a slot it knew was
+/// aliased.
+fn compute_owned_mask(args: &[Spanned<MirExpr>], fc: &FnCompiler<'_>) -> u8 {
     let mut mask = 0u8;
     for (i, arg) in args.iter().enumerate().take(8) {
-        if contains_last_use_slot_mir(&arg.node, i as u32) {
+        if contains_last_use_slot_mir(&arg.node, i as u32) && !fc.is_aliased_slot(i as u16) {
             mask |= 1 << i;
         }
     }
