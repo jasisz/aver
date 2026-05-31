@@ -134,6 +134,24 @@ enum ModuleSource<'a> {
     Loaded(Vec<crate::source::LoadedModule>),
 }
 
+/// Lower a resolved item list to MIR and run the Phase 6 optimize
+/// pipeline. Order is deliberate: (1) nullary-literal inlining unlocks
+/// call-site literals, (2) const-fold collapses literal arithmetic,
+/// (3) algebraic-simplify rewrites Int identities, (4) bool-match-to-if
+/// rewrites two-arm `Bool` matches into `IfThenElse`, (5) branch-collapse
+/// drops the dead branch of a folded `IfThenElse`, (6) DCE drops unread
+/// `let _ = <pure>` chains. Shared by the entry compile and per-dep-module
+/// MIR builds so both backends see identical lowered+optimized shapes.
+fn build_optimized_mir(items: &[ResolvedTopLevel]) -> crate::ir::mir::MirProgram {
+    crate::ir::mir::dead_code(crate::ir::mir::branch_collapse(
+        crate::ir::mir::bool_match_to_if(crate::ir::mir::algebraic_simplify(
+            crate::ir::mir::const_fold(crate::ir::mir::inline_nullary_literals(
+                crate::ir::mir::lower_program(items),
+            )),
+        )),
+    ))
+}
+
 fn compile_program_inner(
     items: &[ResolvedTopLevel],
     symbols: &SymbolTable,
@@ -154,17 +172,11 @@ fn compile_program_inner(
     // to-if rewrites two-arm `Bool` matches into `IfThenElse`,
     // (5) branch-collapse drops the dead branch of a folded
     // `IfThenElse`, (6) DCE drops unread `let _ = <pure>` chains.
-    // Module fns are compiled by `load_modules` / `integrate_module`
-    // on the HIR walker; only the entry `items` ride MIR for now
-    // (the per-fn coverage counter surfaces the gap).
+    // Dep-module fns build their own MIR in `integrate_module` (same
+    // `build_optimized_mir` pipeline); the per-fn loop there dispatches
+    // through the MIR walker with the dep's module scope.
     let mir_built = if use_mir {
-        Some(crate::ir::mir::dead_code(crate::ir::mir::branch_collapse(
-            crate::ir::mir::bool_match_to_if(crate::ir::mir::algebraic_simplify(
-                crate::ir::mir::const_fold(crate::ir::mir::inline_nullary_literals(
-                    crate::ir::mir::lower_program(items),
-                )),
-            )),
-        )))
+        Some(build_optimized_mir(items))
     } else {
         None
     };
@@ -264,9 +276,12 @@ fn compile_program_inner(
             // MIR-emitted chunk. Otherwise fall back to the
             // HIR walker — same chunk path every other caller
             // takes.
+            // Entry fns resolve through `global_names`; no module scope.
+            let entry_scope = HashMap::new();
             let chunk = if let Some(mir) = mir_program
                 && let Some(mir_fn) = mir.fn_by_id(rfd.fn_id)
-                && let Ok(mir_chunk) = compiler.compile_fn_via_mir(rfd, mir_fn, symbols, arena, mir)
+                && let Ok(mir_chunk) =
+                    compiler.compile_fn_via_mir(rfd, mir_fn, symbols, arena, &entry_scope, mir)
             {
                 mir_chunk
             } else {
@@ -511,12 +526,28 @@ impl ProgramCompiler {
         }
 
         let module_scope: HashMap<String, u32> = module_fn_ids.iter().cloned().collect();
+        // Lower the dep module to MIR and dispatch each fn through the MIR
+        // walker, falling back to the HIR walker for shapes outside the
+        // MIR subset — the same per-fn dispatch the entry module takes, so
+        // dep-module fns ride MIR too instead of always going HIR.
+        let dep_mir = build_optimized_mir(&dep_resolved);
         let mut fn_idx = 0;
         for item in &dep_resolved {
             if let ResolvedTopLevel::FnDef(rfd) = item {
                 let (fn_name, fn_id) = &module_fn_ids[fn_idx];
-                let mut chunk =
-                    self.compile_fn_with_scope(rfd, entry_symbols, arena, &module_scope)?;
+                let mut chunk = if let Some(mir_fn) = dep_mir.fn_by_id(rfd.fn_id)
+                    && let Ok(mir_chunk) = self.compile_fn_via_mir(
+                        rfd,
+                        mir_fn,
+                        entry_symbols,
+                        arena,
+                        &module_scope,
+                        &dep_mir,
+                    ) {
+                    mir_chunk
+                } else {
+                    self.compile_fn_with_scope(rfd, entry_symbols, arena, &module_scope)?
+                };
                 chunk.name = visibility::qualified_name(dep_name, fn_name);
                 self.code.functions[*fn_id as usize] = chunk;
                 fn_idx += 1;
@@ -793,6 +824,7 @@ impl ProgramCompiler {
         mir_fn: &crate::ir::mir::MirFn,
         symbols: &SymbolTable,
         arena: &mut Arena,
+        module_scope: &HashMap<String, u32>,
         mir_program: &crate::ir::mir::MirProgram,
     ) -> Result<FnChunk, mir::MirVmUnsupported> {
         let resolution = rfd.resolution.as_ref();
@@ -814,7 +846,6 @@ impl ProgramCompiler {
                     .collect()
             });
 
-        let empty_scope = HashMap::new();
         let mut fc = FnCompiler::new(
             &rfd.name,
             rfd.params.len() as u8,
@@ -825,7 +856,7 @@ impl ProgramCompiler {
                 .collect(),
             local_slots,
             &self.global_names,
-            &empty_scope,
+            module_scope,
             &self.code,
             &mut self.symbols,
             arena,
