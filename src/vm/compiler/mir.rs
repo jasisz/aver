@@ -409,81 +409,19 @@ pub(super) fn compile_mir_expr(
         //   end:
         MirExpr::Match(spanned_match) => {
             let m = &spanned_match.node;
-            if !m.arms.iter().all(|arm| pattern_in_4g_subset(&arm.pattern)) {
-                return Err(MirVmUnsupported::UnsupportedExpr("Match (complex pattern)"));
-            }
             compile_mir_expr(fc, &m.subject)?;
 
             let mut end_jumps: Vec<usize> = Vec::new();
             let last_idx = m.arms.len() - 1;
             for (i, arm) in m.arms.iter().enumerate() {
                 let is_last = i == last_idx;
-                let fail_patch: Option<usize> = if is_last {
+                let fail_patches: Vec<usize> = if is_last {
                     // Last arm — exhaustive, no pattern check.
                     // Bindings still need extracting (value on
                     // stack, shape known from preceding arm
                     // failures).
-                    match &arm.pattern {
-                        MirPattern::Cons { head, tail } => {
-                            fc.emit_op(DUP);
-                            fc.emit_op(LIST_HEAD_TAIL);
-                            emit_store_or_pop(fc, *head);
-                            emit_store_or_pop(fc, *tail);
-                        }
-                        MirPattern::Ctor {
-                            ctor: MirCtor::User(_),
-                            bindings,
-                        } => {
-                            for (i, b) in bindings.iter().enumerate() {
-                                fc.emit_op(EXTRACT_FIELD);
-                                fc.emit_u8(i as u8);
-                                emit_store_or_pop(fc, *b);
-                            }
-                        }
-                        MirPattern::Tuple(items) => {
-                            // Last-arm Tuple: shape known —
-                            // skip MATCH_TUPLE preamble, just
-                            // EXTRACT each item + bind/pop.
-                            for (i, sub) in items.iter().enumerate() {
-                                fc.emit_op(EXTRACT_TUPLE_ITEM);
-                                fc.emit_u8(i as u8);
-                                match sub {
-                                    MirPattern::Wildcard => fc.emit_op(POP),
-                                    MirPattern::Bind(local) => emit_store_or_pop(fc, *local),
-                                    _ => unreachable!(
-                                        "preflight: Tuple subpatterns restricted to Wildcard | Bind"
-                                    ),
-                                }
-                            }
-                        }
-                        MirPattern::Ctor {
-                            ctor: MirCtor::Builtin(bc),
-                            bindings,
-                        } => {
-                            // Last-arm Builtin: shape is known —
-                            // emit MATCH_UNWRAP with no-fail
-                            // patch (offset=0) then bind the
-                            // single inner value via DUP +
-                            // store-or-pop. Option.None has no
-                            // bindings.
-                            if let Some(b) = bindings.first() {
-                                let kind: u8 = match bc {
-                                    BuiltinCtor::ResultOk => 0,
-                                    BuiltinCtor::ResultErr => 1,
-                                    BuiltinCtor::OptionSome => 2,
-                                    BuiltinCtor::OptionNone => unreachable!(
-                                        "Option.None has no bindings — exhausted by preceding arms"
-                                    ),
-                                };
-                                fc.emit_op(MATCH_UNWRAP);
-                                fc.emit_u8(kind);
-                                fc.emit_i16(0); // no-fail (shape known)
-                                emit_dup_and_bind(fc, *b);
-                            }
-                        }
-                        _ => {}
-                    }
-                    None
+                    emit_last_arm_bindings(fc, &arm.pattern)?;
+                    Vec::new()
                 } else {
                     emit_pattern_check(fc, &arm.pattern)?
                 };
@@ -491,8 +429,8 @@ pub(super) fn compile_mir_expr(
                 compile_mir_expr(fc, &arm.body)?;
                 if !is_last {
                     end_jumps.push(fc.emit_jump(JUMP));
-                    if let Some(patch) = fail_patch {
-                        let next_arm_start = fc.offset();
+                    let next_arm_start = fc.offset();
+                    for patch in fail_patches {
                         fc.patch_jump_to(patch, next_arm_start);
                     }
                 }
@@ -712,13 +650,14 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
             MirStrPart::Expr(e) => can_compile(e),
         }),
         MirExpr::IndependentProduct(ip) => ip.node.items.iter().all(can_compile),
-        // Phase 4g-1/2: match with Wildcard + Literal(Int) + Cons + EmptyList arms.
+        // Phase 4i: all `MirPattern` variants supported (Tuple
+        // recurses into subpatterns).
         MirExpr::Match(m) => {
             can_compile(&m.node.subject)
                 && m.node
                     .arms
                     .iter()
-                    .all(|arm| pattern_in_4g_subset(&arm.pattern) && can_compile(&arm.body))
+                    .all(|arm| pattern_supported(&arm.pattern) && can_compile(&arm.body))
         }
     }
 }
@@ -754,59 +693,62 @@ fn emit_dup_and_bind(fc: &mut FnCompiler<'_>, local: LocalId) {
     fc.emit_u8(local.0 as u8);
 }
 
-/// Phase 4g preflight + can_compile — pattern variants the
-/// MIR Match walker handles. Wildcard / Literal(Int) (4g-1),
-/// Cons + EmptyList (4g-2). Further variants land in 4g-3+.
-fn pattern_in_4g_subset(p: &MirPattern) -> bool {
+/// Recursive predicate: every `MirPattern` variant is now
+/// walker-supported. Tuple subpatterns recurse so nested
+/// structural patterns work after Phase 4i landed
+/// `emit_nested_subpattern`.
+fn pattern_supported(p: &MirPattern) -> bool {
     match p {
         MirPattern::Wildcard
-        | MirPattern::Literal(Literal::Int(_))
+        | MirPattern::Bind(_)
+        | MirPattern::Literal(_)
+        | MirPattern::EmptyList
         | MirPattern::Cons { .. }
-        | MirPattern::EmptyList => true,
-        // 4g-3: User-ctor patterns (sum-type variants via
-        // MATCH_VARIANT + EXTRACT_FIELD).
-        MirPattern::Ctor {
-            ctor: MirCtor::User(_),
-            ..
-        } => true,
-        // 4g-4: built-in ctor patterns.
-        MirPattern::Ctor {
-            ctor: MirCtor::Builtin(_),
-            ..
-        } => true,
-        // 4g-5: Tuple patterns with flat Wildcard / Bind
-        // subpatterns. Nested structural patterns (Cons / Ctor
-        // inside a Tuple) need cleanup-jump emit and are
-        // deferred.
-        MirPattern::Tuple(items) => items
-            .iter()
-            .all(|sub| matches!(sub, MirPattern::Wildcard | MirPattern::Bind(_))),
-        _ => false,
+        | MirPattern::Ctor { .. } => true,
+        MirPattern::Tuple(items) => items.iter().all(pattern_supported),
     }
 }
 
 /// Emit the pattern check for a non-last arm. Returns the
-/// `fail_offset` patch position the caller will fill in to
-/// point at the next arm's start (or `None` when the pattern
-/// always matches — currently just `Wildcard`).
+/// list of `fail_offset` patch positions the caller will fill
+/// in to point at the next arm's start. Empty `Vec` = pattern
+/// always matches (Wildcard / Bind).
 fn emit_pattern_check(
     fc: &mut FnCompiler<'_>,
     pattern: &MirPattern,
-) -> Result<Option<usize>, MirVmUnsupported> {
+) -> Result<Vec<usize>, MirVmUnsupported> {
     match pattern {
-        MirPattern::Wildcard => Ok(None),
+        MirPattern::Wildcard => Ok(Vec::new()),
+        MirPattern::Bind(local) => {
+            // Always matches; DUP the value and bind. Mirror of
+            // HIR's `dup_and_bind_top_to_local` on a top-level
+            // ident pattern. Wildcard sentinel collapses the
+            // DUP+POP to no emit.
+            emit_dup_and_bind(fc, *local);
+            Ok(Vec::new())
+        }
         MirPattern::Literal(Literal::Int(v)) => {
             fc.emit_op(MATCH_INT_LITERAL);
             fc.emit_i64(*v);
             let patch = fc.offset();
             fc.emit_i16(0);
-            Ok(Some(patch))
+            Ok(vec![patch])
+        }
+        MirPattern::Literal(lit) => {
+            // Generic literal path — DUP + LOAD_CONST + EQ +
+            // JUMP_IF_FALSE. Mirror of HIR's fallback for non-Int
+            // literals (Bool / Float / Str / Unit).
+            fc.emit_op(DUP);
+            fc.compile_literal(lit)?;
+            fc.emit_op(EQ);
+            let patch = fc.emit_jump(JUMP_IF_FALSE);
+            Ok(vec![patch])
         }
         MirPattern::EmptyList => {
             fc.emit_op(MATCH_NIL);
             let patch = fc.offset();
             fc.emit_i16(0);
-            Ok(Some(patch))
+            Ok(vec![patch])
         }
         MirPattern::Cons { head, tail } => {
             fc.emit_op(MATCH_CONS);
@@ -820,7 +762,7 @@ fn emit_pattern_check(
             fc.emit_op(LIST_HEAD_TAIL);
             emit_store_or_pop(fc, *head);
             emit_store_or_pop(fc, *tail);
-            Ok(Some(patch))
+            Ok(vec![patch])
         }
         MirPattern::Ctor {
             ctor: MirCtor::User(ctor_id),
@@ -878,33 +820,33 @@ fn emit_pattern_check(
                 fc.emit_u8(i as u8);
                 emit_store_or_pop(fc, *b);
             }
-            Ok(Some(patch))
+            Ok(vec![patch])
         }
         MirPattern::Tuple(items) => {
-            // Phase 4g-5 — tuple pattern with flat subpatterns
-            // (Wildcard / Bind). Emit MATCH_TUPLE arity +
-            // fail_offset; for each subpattern emit
-            // EXTRACT_TUPLE_ITEM idx then store-or-pop.
-            //
-            // Nested structural subpatterns (Cons / Ctor inside
-            // a Tuple) need cleanup-jump emit similar to HIR's
-            // `compile_extracted_subpattern`; deferred.
+            // Phase 4i — tuple pattern with arbitrarily-nested
+            // subpatterns. Emit MATCH_TUPLE for the arity check,
+            // then walk each subpattern through
+            // `emit_nested_subpattern` (analog of HIR's
+            // `compile_extracted_subpattern`) so nested
+            // structural patterns (Cons / Ctor / Tuple / …) get
+            // a cleanup-jump if they fail mid-extraction.
             fc.emit_op(MATCH_TUPLE);
             fc.emit_u8(items.len() as u8);
-            let patch = fc.offset();
+            let tuple_fail = fc.offset();
             fc.emit_i16(0);
+            let mut all_patches = vec![tuple_fail];
             for (i, sub) in items.iter().enumerate() {
-                fc.emit_op(EXTRACT_TUPLE_ITEM);
-                fc.emit_u8(i as u8);
-                match sub {
-                    MirPattern::Wildcard => fc.emit_op(POP),
-                    MirPattern::Bind(local) => emit_store_or_pop(fc, *local),
-                    _ => unreachable!(
-                        "preflight should have restricted subpatterns to Wildcard | Bind"
-                    ),
-                }
+                let nested = emit_nested_subpattern(
+                    fc,
+                    |fc| {
+                        fc.emit_op(EXTRACT_TUPLE_ITEM);
+                        fc.emit_u8(i as u8);
+                    },
+                    sub,
+                )?;
+                all_patches.extend(nested);
             }
-            Ok(Some(patch))
+            Ok(all_patches)
         }
         MirPattern::Ctor {
             ctor: MirCtor::Builtin(bc),
@@ -934,7 +876,7 @@ fn emit_pattern_check(
                     if let Some(b) = bindings.first() {
                         emit_dup_and_bind(fc, *b);
                     }
-                    Ok(Some(patch))
+                    Ok(vec![patch])
                 }
                 BuiltinCtor::OptionNone => {
                     // Nullary: DUP + LOAD_CONST NONE + EQ +
@@ -945,13 +887,129 @@ fn emit_pattern_check(
                     fc.emit_u16(none_const);
                     fc.emit_op(EQ);
                     let patch = fc.emit_jump(JUMP_IF_FALSE);
-                    Ok(Some(patch))
+                    Ok(vec![patch])
                 }
             }
         }
-        // Preflight in the caller filters everything else out.
-        _ => unreachable!("Phase 4g subset preflight should have filtered this out"),
     }
+}
+
+/// Last-arm exhaustive binding extraction. The pattern is
+/// guaranteed to match (preceding arms exhausted everything
+/// else) so we skip the match-check opcode and just bind
+/// whatever the pattern names. Mirror of HIR's last-arm logic
+/// in `compile_match`.
+fn emit_last_arm_bindings(
+    fc: &mut FnCompiler<'_>,
+    pattern: &MirPattern,
+) -> Result<(), MirVmUnsupported> {
+    match pattern {
+        MirPattern::Wildcard | MirPattern::Literal(_) | MirPattern::EmptyList => Ok(()),
+        MirPattern::Bind(local) => {
+            emit_dup_and_bind(fc, *local);
+            Ok(())
+        }
+        MirPattern::Cons { head, tail } => {
+            fc.emit_op(DUP);
+            fc.emit_op(LIST_HEAD_TAIL);
+            emit_store_or_pop(fc, *head);
+            emit_store_or_pop(fc, *tail);
+            Ok(())
+        }
+        MirPattern::Ctor {
+            ctor: MirCtor::User(_),
+            bindings,
+        } => {
+            for (i, b) in bindings.iter().enumerate() {
+                fc.emit_op(EXTRACT_FIELD);
+                fc.emit_u8(i as u8);
+                emit_store_or_pop(fc, *b);
+            }
+            Ok(())
+        }
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(bc),
+            bindings,
+        } => {
+            if let Some(b) = bindings.first() {
+                let kind: u8 = match bc {
+                    BuiltinCtor::ResultOk => 0,
+                    BuiltinCtor::ResultErr => 1,
+                    BuiltinCtor::OptionSome => 2,
+                    BuiltinCtor::OptionNone => {
+                        // Option.None has no bindings — nothing
+                        // to extract.
+                        return Ok(());
+                    }
+                };
+                fc.emit_op(MATCH_UNWRAP);
+                fc.emit_u8(kind);
+                fc.emit_i16(0); // no-fail (shape known)
+                emit_dup_and_bind(fc, *b);
+            }
+            Ok(())
+        }
+        MirPattern::Tuple(items) => {
+            // Last-arm Tuple: shape known — for each item emit
+            // EXTRACT_TUPLE_ITEM then recurse into the subpattern
+            // as if it were itself a last-arm pattern (the outer
+            // exhaustiveness propagates inward — every nested
+            // subpattern is also guaranteed to match).
+            for (i, sub) in items.iter().enumerate() {
+                fc.emit_op(EXTRACT_TUPLE_ITEM);
+                fc.emit_u8(i as u8);
+                emit_last_arm_bindings(fc, sub)?;
+                fc.emit_op(POP);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Compile a subpattern that operates on an extracted value,
+/// with proper cleanup if the inner pattern fails. Mirrors HIR's
+/// `compile_extracted_subpattern`:
+///
+///   emit_subject(fc);             // e.g. EXTRACT_TUPLE_ITEM i
+///   <subpattern emit>             // fail_patches
+///   POP                           // drop subpattern subject on success
+///   if any fail patches:
+///     JUMP success_skip
+///     cleanup: POP + JUMP outer_fail
+///     patch fail_patches → cleanup
+///     patch success_skip → here
+///     return vec![outer_fail]
+///   else:
+///     return empty Vec
+///
+/// The outer-fail patch lets the surrounding match arm jump to
+/// the next arm if any nested subpattern fails, without
+/// leaking the cleanup state.
+fn emit_nested_subpattern<F>(
+    fc: &mut FnCompiler<'_>,
+    emit_subject: F,
+    pattern: &MirPattern,
+) -> Result<Vec<usize>, MirVmUnsupported>
+where
+    F: FnOnce(&mut FnCompiler<'_>),
+{
+    emit_subject(fc);
+    let inner_fail_patches = emit_pattern_check(fc, pattern)?;
+    fc.emit_op(POP);
+
+    if inner_fail_patches.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let success_skip = fc.emit_jump(JUMP);
+    let cleanup_target = fc.offset();
+    for patch in inner_fail_patches {
+        fc.patch_jump_to(patch, cleanup_target);
+    }
+    fc.emit_op(POP);
+    let outer_fail = fc.emit_jump(JUMP);
+    fc.patch_jump(success_skip);
+    Ok(vec![outer_fail])
 }
 
 /// Linear-search lookup `name → VmBuiltin`. Returns `None` for

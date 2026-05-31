@@ -540,6 +540,53 @@ fn map_literal_runtime_parity() {
 }
 
 #[test]
+fn match_nested_tuple_subpattern_runtime_parity() {
+    // Phase 4i — nested structural subpatterns inside a Tuple.
+    // `match (xs, n) { ([], 0) -> 100; ([], _) -> 200;
+    // ([_, ..], 0) -> 300; _ -> 400 }` exercises Tuple with
+    // EmptyList / Cons / Literal subpatterns.
+    let src = "fn classify(p: Tuple<List<Int>, Int>) -> Int\n    match p\n        ([], 0) -> 100\n        ([], _) -> 200\n        ([_, ..t], 0) -> 300\n        _ -> 400\n\nfn run_empty_zero(_d: Int) -> Int\n    classify(([], 0))\n\nfn run_empty_other(_d: Int) -> Int\n    classify(([], 7))\n\nfn run_cons_zero(_d: Int) -> Int\n    classify(([1, 2], 0))\n\nfn run_cons_other(_d: Int) -> Int\n    classify(([1, 2], 9))\n";
+
+    for (fn_name, expected) in &[
+        ("run_empty_zero", 100),
+        ("run_empty_other", 200),
+        ("run_cons_zero", 300),
+        ("run_cons_other", 400),
+    ] {
+        let hir = run_via_path(src, fn_name, &[0], Path::Hir);
+        let mir = run_via_path(src, fn_name, &[0], Path::MirFallback);
+        assert_eq!(hir, mir, "{fn_name} parity: HIR={hir:?}, MIR={mir:?}");
+        assert_eq!(hir, Value::Int(*expected));
+    }
+}
+
+#[test]
+fn match_top_level_ident_bind_runtime_parity() {
+    // Phase 4i — top-level Bind pattern (`match n { x -> x + 1 }`).
+    let src = "fn shift(n: Int) -> Int\n    match n\n        x -> x + 1\n";
+    let hir = run_via_path(src, "shift", &[7], Path::Hir);
+    let mir = run_via_path(src, "shift", &[7], Path::MirFallback);
+    assert_eq!(hir, mir);
+    assert_eq!(hir, Value::Int(8));
+}
+
+#[test]
+fn match_non_int_literal_pattern_runtime_parity() {
+    // Phase 4i — non-Int literal pattern (Bool here). Generic
+    // DUP + LOAD_CONST + EQ + JUMP_IF_FALSE path.
+    let src = "fn say(b: Bool) -> Int\n    match b\n        true -> 1\n        false -> 0\n\nfn t(_d: Int) -> Int\n    say(true)\n\nfn f(_d: Int) -> Int\n    say(false)\n";
+    let hir_t = run_via_path(src, "t", &[0], Path::Hir);
+    let mir_t = run_via_path(src, "t", &[0], Path::MirFallback);
+    assert_eq!(hir_t, mir_t);
+    assert_eq!(hir_t, Value::Int(1));
+
+    let hir_f = run_via_path(src, "f", &[0], Path::Hir);
+    let mir_f = run_via_path(src, "f", &[0], Path::MirFallback);
+    assert_eq!(hir_f, mir_f);
+    assert_eq!(hir_f, Value::Int(0));
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output

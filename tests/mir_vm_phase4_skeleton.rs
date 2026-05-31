@@ -64,24 +64,18 @@ fn user_fn_call_lands_in_subset() {
 }
 
 #[test]
-fn nested_tuple_pattern_falls_back_to_hir() {
-    // Phase 4g-5 covers flat Tuple patterns (Wildcard / Bind
-    // subpatterns). Nested structural subpatterns (Cons / Ctor
-    // inside a Tuple) still need HIR fallback — they require
-    // cleanup-jump emit logic deferred to a future sub-PR.
-    //
-    // Use `match (xs, n) { ([], _) -> 0; ([_, ..], 0) -> 1;
-    // _ -> 2 }` — the outer pattern is a Tuple whose first
-    // subpattern is EmptyList/Cons (nested non-flat), so the
-    // 4g-5 walker drops back to HIR.
+fn nested_tuple_pattern_now_lands_in_subset_after_phase_4i() {
+    // Phase 4i landed cleanup-jump emit for nested structural
+    // subpatterns inside a Tuple. The same fixture that
+    // previously dropped to HIR now lands in `covered`.
     let mir = lower(
         "fn double(x: Int) -> Int\n    x + x\n\nfn classify(p: Tuple<List<Int>, Int>) -> Int\n    match p\n        ([], _) -> 0\n        _ -> 1\n",
     );
     let cov = classify_mir_program_coverage(&mir);
-    assert_eq!(cov.covered, 1, "double() in subset: {:?}", cov);
+    assert_eq!(cov.covered, 2, "both fns now in subset: {:?}", cov);
     assert_eq!(
-        cov.needs_hir_fallback, 1,
-        "classify() (nested tuple subpattern) needs HIR fallback: {:?}",
+        cov.needs_hir_fallback, 0,
+        "no fns need HIR fallback after 4i: {:?}",
         cov
     );
 }
