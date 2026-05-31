@@ -31,8 +31,11 @@
 //! - wave 2: Call(Fn) + Call(Builtin), Let, Return ✅
 //! - wave 3: Construct (Builtin only — User pending ctx
 //!   threading), Project, RecordCreate ✅ (partial)
-//! - wave 4: Match (the big one, like Phase 4g for the VM) +
-//!   User-ctor Construct + RecordCreate / RecordUpdate
+//! - wave 4a: Let ✅ (this PR — uses foundation #293
+//!   `MirLet.binding_name` to emit block-expr `{ let x = …; … }`)
+//! - wave 4b: Match (the big one, like Phase 4g for the VM) +
+//!   User-ctor Construct + RecordCreate / RecordUpdate (needs
+//!   `&CodegenContext` threading for module-path resolution)
 //! - wave 5: Try, TailCall, List/Tuple/Map, InterpolatedStr,
 //!   IndependentProduct
 
@@ -125,6 +128,24 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             }
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, symbol_table)?)),
+        MirExpr::Let(spanned_let) => {
+            // Phase 5 wave 4a: `let binding = value; body` →
+            // Rust block-expression `{ let x = value; body }`.
+            // Synthetic locals (intermediate effectful
+            // `Stmt::Expr` at non-tail position) carry
+            // `binding_name.is_empty()` — the Rust walker can't
+            // emit them as named idents, so we fall back to
+            // HIR. Mirror of the `MirLocal { name }` empty-name
+            // fallback on the read side.
+            let let_node = &spanned_let.node;
+            if let_node.binding_name.is_empty() {
+                return None;
+            }
+            let value = emit_mir_expr(&let_node.value, symbol_table)?;
+            let body = emit_mir_expr(&let_node.body, symbol_table)?;
+            let name = aver_name_to_rust(&let_node.binding_name);
+            Some(format!("{{ let {} = {}; {} }}", name, value, body))
+        }
         MirExpr::Project(spanned_proj) => {
             // Phase 5 wave 3: `base.field` projection. Mirror of
             // HIR's `ResolvedLeafOp::FieldAccess` emit shape —
@@ -365,6 +386,45 @@ mod tests {
         let expr = span(MirExpr::Construct(span(con)));
         let emit = emit_mir_expr(&expr, &empty_symbols()).expect("construct should emit");
         assert_eq!(emit, "None");
+    }
+
+    #[test]
+    fn emits_let_as_block_expr() {
+        // Phase 5 wave 4a: `let x = 7; x` → `{ let x = 7i64; x }`.
+        let value = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let body_local = MirLocal {
+            slot: LocalId(0),
+            last_use: false,
+            name: "x".to_string(),
+        };
+        let body = span(MirExpr::Local(span(body_local)));
+        let let_node = crate::ir::mir::MirLet {
+            binding: LocalId(0),
+            binding_name: "x".to_string(),
+            value: Box::new(value),
+            body: Box::new(body),
+        };
+        let expr = span(MirExpr::Let(span(let_node)));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("let should emit");
+        assert_eq!(emit, "{ let x = 7i64; x }");
+    }
+
+    #[test]
+    fn returns_none_for_synthetic_let() {
+        // Phase 5 wave 4a: synthetic Let (intermediate
+        // effectful Stmt::Expr at non-tail position) carries an
+        // empty `binding_name`. Walker must fall back to HIR
+        // since there's no source ident to bind in Rust.
+        let value = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let body = span(MirExpr::Literal(span(crate::ast::Literal::Int(0))));
+        let let_node = crate::ir::mir::MirLet {
+            binding: LocalId(7),
+            binding_name: String::new(),
+            value: Box::new(value),
+            body: Box::new(body),
+        };
+        let expr = span(MirExpr::Let(span(let_node)));
+        assert!(emit_mir_expr(&expr, &empty_symbols()).is_none());
     }
 
     #[test]
