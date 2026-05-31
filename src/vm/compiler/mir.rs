@@ -148,29 +148,36 @@ pub(super) fn compile_mir_expr(
                     Ok(())
                 }
                 MirCallee::Builtin(name) => {
-                    // Phase 4e — generic CALL_BUILTIN dispatch.
-                    // The HIR walker specializes ~6 builtins
-                    // (ListLen → LIST_LEN, MapGet → MAP_GET,
-                    // OptionWithDefault → UNWRAP_OR, …) into
-                    // dedicated opcodes; we don't replicate that
-                    // here yet, so bytecode parity only holds for
-                    // the generic path. Runtime parity holds for
-                    // all builtins — the VM's CALL_BUILTIN
-                    // dispatch lands on the same handler the
-                    // specialised opcodes wrap.
                     let builtin =
                         lookup_vm_builtin(name).ok_or(MirVmUnsupported::UnsupportedCallee)?;
                     for arg in args {
                         compile_mir_expr(fc, arg)?;
                     }
-                    let symbol_id = fc.symbols.intern_builtin(builtin).map_err(|e| {
-                        MirVmUnsupported::InnerError(CompileError {
-                            msg: format!("MIR-VM: intern_builtin failed: {e:?}"),
-                        })
-                    })?;
-                    fc.emit_op(CALL_BUILTIN);
-                    fc.emit_u32(symbol_id);
-                    fc.emit_u8(args.len() as u8);
+                    // Phase 6 wave 3 — pick the specialised
+                    // single-opcode emit when the builtin has
+                    // one (mirror of HIR's `emit_builtin_after_args`
+                    // dispatch). Owned/CALL_BUILTIN_OWNED variants
+                    // wait for wave 4's last-use revival; until
+                    // then `owned_mask = 0` everywhere on the
+                    // MIR path, same as Phase 4e.
+                    match builtin {
+                        VmBuiltin::ListLen => fc.emit_op(LIST_LEN),
+                        VmBuiltin::ListPrepend => fc.emit_op(LIST_PREPEND),
+                        VmBuiltin::VectorGet => fc.emit_op(VECTOR_GET),
+                        VmBuiltin::VectorSet => fc.emit_op(VECTOR_SET),
+                        VmBuiltin::OptionWithDefault => fc.emit_op(UNWRAP_OR),
+                        VmBuiltin::ResultWithDefault => fc.emit_op(UNWRAP_RESULT_OR),
+                        _ => {
+                            let symbol_id = fc.symbols.intern_builtin(builtin).map_err(|e| {
+                                MirVmUnsupported::InnerError(CompileError {
+                                    msg: format!("MIR-VM: intern_builtin failed: {e:?}"),
+                                })
+                            })?;
+                            fc.emit_op(CALL_BUILTIN);
+                            fc.emit_u32(symbol_id);
+                            fc.emit_u8(args.len() as u8);
+                        }
+                    }
                     Ok(())
                 }
             }
@@ -419,6 +426,19 @@ pub(super) fn compile_mir_expr(
         //   end:
         MirExpr::Match(spanned_match) => {
             let m = &spanned_match.node;
+            // Phase 6 wave 2 — try the MATCH_DISPATCH_CONST table
+            // fast-path before falling back to the linear arm-by-
+            // arm emit. When every non-last arm has a literal
+            // pattern + literal body and the last arm is a
+            // wildcard/bind default, HIR's `compile_match` emits
+            // a single jump-table dispatch (MATCH_DISPATCH_CONST)
+            // with inline (kind, expected_bits, result_bits)
+            // entries — one VM op for the whole match. Mirror it
+            // here so MIR matches HIR byte-for-byte on the
+            // common shape.
+            if try_emit_match_dispatch_const(fc, &m.subject, &m.arms)?.is_some() {
+                return Ok(());
+            }
             compile_mir_expr(fc, &m.subject)?;
 
             let mut end_jumps: Vec<usize> = Vec::new();
@@ -902,6 +922,139 @@ fn emit_pattern_check(
             }
         }
     }
+}
+
+/// Phase 6 wave 2 — try the MATCH_DISPATCH_CONST table
+/// fast-path. Returns `Ok(Some(()))` when the table was emitted
+/// (caller skips the linear emit), `Ok(None)` when the arm
+/// shape doesn't fit the fast-path (caller proceeds with linear
+/// emit). Mirrors HIR's `emit_match_dispatch_const`.
+///
+/// Fast-path requirements (mirrors HIR's classifier):
+/// - At least one dispatchable arm (otherwise the table is
+///   pointless).
+/// - Every non-last arm: pattern is `Literal(Int | Bool | Unit)`
+///   (the bit-comparable subset) with a body that itself
+///   reduces to a `Literal` whose `NanValue::bits()` we can
+///   inline as the result.
+/// - The last arm is the default: `Wildcard` / `Bind`. We do
+///   not require its body to be a literal — the opcode pushes
+///   the subject back on miss and falls through to the default
+///   arm body, which we compile normally.
+fn try_emit_match_dispatch_const(
+    fc: &mut FnCompiler<'_>,
+    subject: &Spanned<MirExpr>,
+    arms: &[crate::ir::mir::MirMatchArm],
+) -> Result<Option<()>, MirVmUnsupported> {
+    if arms.len() < 2 {
+        return Ok(None);
+    }
+    let last_idx = arms.len() - 1;
+    let default_arm = &arms[last_idx];
+    let default_local = match &default_arm.pattern {
+        MirPattern::Wildcard => None,
+        MirPattern::Bind(local) => Some(*local),
+        _ => return Ok(None),
+    };
+
+    // Classify all non-default arms — every one must be a
+    // const-dispatchable literal pattern with a const literal
+    // body. Anything else aborts the fast-path.
+    let mut entries: Vec<(u8, u64, u64)> = Vec::with_capacity(last_idx);
+    for arm in &arms[..last_idx] {
+        let pattern_lit = match &arm.pattern {
+            MirPattern::Literal(lit) => lit,
+            _ => return Ok(None),
+        };
+        let body_lit = match &arm.body.node {
+            MirExpr::Literal(spanned_lit) => &spanned_lit.node,
+            _ => return Ok(None),
+        };
+        let expected = literal_dispatch_bits(fc, pattern_lit);
+        let result = literal_dispatch_bits(fc, body_lit);
+        // Strings would need DISPATCH_KIND_STRING + arena-side
+        // interning to compare; keep this wave focused on
+        // bit-equal dispatch (Int / Bool / Unit / Float-as-bits).
+        // Str / non-bit-comparable literals abort the fast-path.
+        if pattern_is_dispatchable_bits(pattern_lit) && body_is_dispatchable_bits(body_lit) {
+            entries.push((0u8, expected, result)); // DISPATCH_KIND_EXACT = 0
+        } else {
+            return Ok(None);
+        }
+    }
+
+    if entries.is_empty() {
+        return Ok(None);
+    }
+
+    // ── Emit ────────────────────────────────────────────────
+    compile_mir_expr(fc, subject)?;
+
+    fc.emit_op(MATCH_DISPATCH_CONST);
+    fc.emit_u8(entries.len() as u8);
+    let default_offset_patch = fc.offset();
+    fc.emit_i16(0); // default_offset — patched after the table
+
+    for (kind, expected, result) in &entries {
+        fc.emit_u8(*kind);
+        fc.emit_u64(*expected);
+        fc.emit_u64(*result);
+    }
+    let table_end = fc.offset();
+
+    // On hit: opcode pushes the result and ip lands right after
+    // the table — emit a JUMP to skip past the default arm body.
+    let hit_skip = fc.emit_jump(JUMP);
+
+    // Default arm starts here. Default offset is relative to
+    // `table_end` (the opcode handler adds `default_offset` to
+    // ip-after-table-end).
+    let default_start = fc.offset();
+    let default_rel = (default_start as isize - table_end as isize) as i16;
+    let bytes = (default_rel as u16).to_be_bytes();
+    fc.code_mut()[default_offset_patch] = bytes[0];
+    fc.code_mut()[default_offset_patch + 1] = bytes[1];
+
+    // Default arm body — subject was popped+repushed by the
+    // opcode on miss. Bind it if the pattern is `Bind(local)`,
+    // then drop it via POP before the body.
+    if let Some(local) = default_local {
+        emit_dup_and_bind(fc, local);
+    }
+    fc.emit_op(POP);
+    compile_mir_expr(fc, &default_arm.body)?;
+
+    // Patch the hit-skip JUMP to land after the default body.
+    fc.patch_jump(hit_skip);
+    Ok(Some(()))
+}
+
+/// `true` when a literal's runtime bits are dispatch-comparable
+/// (Int / Bool / Unit / Float). Strings need a different
+/// dispatch kind (interning) so they abort the fast-path.
+fn pattern_is_dispatchable_bits(lit: &Literal) -> bool {
+    matches!(
+        lit,
+        Literal::Int(_) | Literal::Bool(_) | Literal::Unit | Literal::Float(_)
+    )
+}
+
+fn body_is_dispatchable_bits(lit: &Literal) -> bool {
+    // String *bodies* could in principle be supported by
+    // interning + inline result bits, but HIR's fast-path also
+    // skips them. Mirror that.
+    pattern_is_dispatchable_bits(lit)
+}
+
+fn literal_dispatch_bits(fc: &mut FnCompiler<'_>, lit: &Literal) -> u64 {
+    let nv = match lit {
+        Literal::Int(i) => NanValue::new_int(*i, fc.arena),
+        Literal::Float(f) => NanValue::new_float(*f),
+        Literal::Bool(b) => NanValue::new_bool(*b),
+        Literal::Unit => NanValue::UNIT,
+        Literal::Str(s) => NanValue::new_string_value(s, fc.arena),
+    };
+    nv.bits()
 }
 
 /// Last-arm exhaustive binding extraction. The pattern is
