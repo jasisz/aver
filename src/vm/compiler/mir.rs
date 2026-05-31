@@ -82,7 +82,7 @@ pub(super) fn compile_mir_expr(
             Ok(())
         }
         MirExpr::Local(spanned_local) => {
-            let local = spanned_local.node;
+            let local = &spanned_local.node;
             // Phase 6 wave 4: emit MOVE_LOCAL when this is the
             // last read of the slot in the enclosing fn body.
             // Mirrors HIR's last-use revival; skips ref-count

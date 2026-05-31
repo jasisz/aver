@@ -24,20 +24,26 @@ use super::program::LocalId;
 /// the binding identity; `last_use = true` when this is the
 /// final read of that slot in the enclosing fn body, mirroring
 /// HIR's `AnnotBool` last-use stamp.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Phase 5 prep: `name` carries the source-level binding name
+/// (param name, let binding name, pattern binding name). VM
+/// backends ignore it (dispatch by slot). Rust / wasm-gc
+/// backends use it as the emitted Rust ident / export name.
+/// Empty for synthetic locals.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirLocal {
     pub slot: LocalId,
     pub last_use: bool,
+    pub name: String,
 }
 
 impl MirLocal {
-    /// Construct a `MirLocal` with `last_use = false`. Convenience
-    /// for hand-built test fixtures + lowering sites that don't
-    /// carry last-use info (yet).
+    /// Construct a `MirLocal` with `last_use = false` and empty
+    /// name. Convenience for hand-built test fixtures.
     pub fn at(slot: LocalId) -> Self {
         Self {
             slot,
             last_use: false,
+            name: String::new(),
         }
     }
 }
