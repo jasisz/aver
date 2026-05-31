@@ -34,8 +34,9 @@
 //! - wave 5: Try, TailCall, List/Tuple/Map, InterpolatedStr,
 //!   IndependentProduct
 
-use crate::ast::{BinOp, Spanned};
-use crate::ir::mir::MirExpr;
+use crate::ast::{BinOp, Spanned, Type};
+use crate::ir::SymbolTable;
+use crate::ir::mir::{MirCallee, MirExpr};
 
 use super::expr::emit_literal;
 use super::syntax::aver_name_to_rust;
@@ -54,7 +55,7 @@ use super::syntax::aver_name_to_rust;
 /// inside [`super::expr::emit_expr`] (try MIR first, fall back
 /// to HIR walker on `None`).
 #[allow(dead_code)]
-pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>) -> Option<String> {
+pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable) -> Option<String> {
     match &expr.node {
         MirExpr::Literal(lit) => Some(emit_literal(&lit.node)),
         MirExpr::Local(spanned_local) => {
@@ -68,11 +69,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>) -> Option<String> {
             }
             Some(aver_name_to_rust(name))
         }
-        MirExpr::Neg(inner) => Some(format!("(-{})", emit_mir_expr(inner)?)),
+        MirExpr::Neg(inner) => Some(format!("(-{})", emit_mir_expr(inner, symbol_table)?)),
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
-            let l = emit_mir_expr(&bop.lhs)?;
-            let r = emit_mir_expr(&bop.rhs)?;
+            let l = emit_mir_expr(&bop.lhs, symbol_table)?;
+            let r = emit_mir_expr(&bop.rhs, symbol_table)?;
             let op_str = match bop.op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",
@@ -85,21 +86,59 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>) -> Option<String> {
                 BinOp::Lte => "<=",
                 BinOp::Gte => ">=",
             };
-            // Numeric-only path. String-concat (`+` on AverStr)
-            // would need the HIR walker's `ectx.expr_is_numeric`
-            // check; MIR has the same info on `ty()` stamps but
-            // we keep wave 1 narrow.
-            Some(format!("({} {} {})", l, op_str, r))
+            // Phase 5 wave 2: read type stamps to disambiguate
+            // numeric `+` from `AverStr` concat. Same shape HIR
+            // walker takes via `ectx.expr_is_numeric`. When both
+            // operands are non-numeric (Str), the right side is
+            // borrowed via `&` for `AverStr`'s `Add<&AverStr>`
+            // impl.
+            if matches!(bop.op, BinOp::Add)
+                && !ty_is_numeric(bop.lhs.ty())
+                && !ty_is_numeric(bop.rhs.ty())
+            {
+                Some(format!("({} + &{})", l, r))
+            } else {
+                Some(format!("({} {} {})", l, op_str, r))
+            }
         }
+        MirExpr::Call(spanned_call) => {
+            let call = &spanned_call.node;
+            match &call.callee {
+                MirCallee::Fn(fn_id) => {
+                    // Resolve canonical name through the same
+                    // symbol table the HIR walker uses; emit
+                    // `name(arg1, arg2, …)` in source order.
+                    let name = symbol_table.fn_entry(*fn_id).key.canonical();
+                    let mut args = Vec::with_capacity(call.args.len());
+                    for a in &call.args {
+                        args.push(emit_mir_expr(a, symbol_table)?);
+                    }
+                    Some(format!("{}({})", aver_name_to_rust(&name), args.join(", ")))
+                }
+                // Builtin / closure / unresolved callees ride the
+                // HIR walker's classification (`CallPlan`) — too
+                // many shapes to mirror in wave 2.
+                MirCallee::Builtin(_) => None,
+            }
+        }
+        MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, symbol_table)?)),
         _ => None,
     }
+}
+
+/// Phase 5 wave 2 helper: is the type stamp a primitive numeric?
+/// `Int` / `Float` / `Byte` count; everything else (incl. `Str`)
+/// doesn't. Mirror of HIR's `EmitCtx::expr_is_numeric` for the
+/// MIR walker's `+` dispatch.
+fn ty_is_numeric(ty: Option<&Type>) -> bool {
+    matches!(ty, Some(Type::Int | Type::Float))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::Type;
-    use crate::ir::mir::{LocalId, MirBinOp, MirExpr, MirLocal};
+    use crate::ir::SymbolTable;
+    use crate::ir::mir::{LocalId, MirBinOp, MirCall, MirExpr, MirLocal};
     use std::sync::OnceLock;
 
     fn span<T>(node: T) -> Spanned<T> {
@@ -120,10 +159,17 @@ mod tests {
         }
     }
 
+    fn empty_symbols() -> SymbolTable {
+        SymbolTable::default()
+    }
+
     #[test]
     fn emits_int_literal_as_i64_suffix() {
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(42))));
-        assert_eq!(emit_mir_expr(&lit).as_deref(), Some("42i64"));
+        assert_eq!(
+            emit_mir_expr(&lit, &empty_symbols()).as_deref(),
+            Some("42i64")
+        );
     }
 
     #[test]
@@ -134,10 +180,7 @@ mod tests {
             name: "x".to_string(),
         };
         let expr = span(MirExpr::Local(span(local)));
-        let emit = emit_mir_expr(&expr).expect("local should emit");
-        // `aver_name_to_rust("x")` may return `"x"` directly or
-        // a sanitised variant; either way it must be non-empty
-        // and start with `x` for a plain ident.
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("local should emit");
         assert!(
             emit.contains("x"),
             "local emit should reference `x`: {emit}"
@@ -146,19 +189,17 @@ mod tests {
 
     #[test]
     fn returns_none_for_synthetic_local() {
-        // Wave 3a stmt-chain synthetic locals have empty name —
-        // Rust walker returns None so caller falls back to HIR.
         let local = MirLocal {
             slot: LocalId(7),
             last_use: false,
             name: String::new(),
         };
         let expr = span(MirExpr::Local(span(local)));
-        assert!(emit_mir_expr(&expr).is_none());
+        assert!(emit_mir_expr(&expr, &empty_symbols()).is_none());
     }
 
     #[test]
-    fn emits_binop_add_as_paren_l_op_r() {
+    fn emits_int_binop_add_as_plus() {
         let x = MirLocal {
             slot: LocalId(0),
             last_use: false,
@@ -170,10 +211,35 @@ mod tests {
             rhs: Box::new(span_ty(MirExpr::Local(span(x)), Type::Int)),
         };
         let expr = span(MirExpr::BinOp(span(bop)));
-        let emit = emit_mir_expr(&expr).expect("binop should emit");
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("binop should emit");
+        // Numeric path — both operands stamped Int → no `&` on
+        // the right side.
         assert!(
-            emit.contains("(") && emit.contains(" + ") && emit.contains(")"),
-            "expected `(x + x)`-shape Rust: {emit}"
+            emit.contains(" + ") && !emit.contains(" + &"),
+            "Int+Int should emit plain `+`, got: {emit}"
+        );
+    }
+
+    #[test]
+    fn emits_str_binop_add_as_concat() {
+        // Phase 5 wave 2: when both operands are stamped `Str`,
+        // the BinOp::Add path emits `(l + &r)` to match HIR's
+        // `AverStr` concat shape.
+        let s = MirLocal {
+            slot: LocalId(0),
+            last_use: false,
+            name: "s".to_string(),
+        };
+        let bop = MirBinOp {
+            op: BinOp::Add,
+            lhs: Box::new(span_ty(MirExpr::Local(span(s.clone())), Type::Str)),
+            rhs: Box::new(span_ty(MirExpr::Local(span(s)), Type::Str)),
+        };
+        let expr = span(MirExpr::BinOp(span(bop)));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("binop should emit");
+        assert!(
+            emit.contains(" + &"),
+            "Str+Str should emit `+ &` for AverStr concat: {emit}"
         );
     }
 
@@ -181,15 +247,35 @@ mod tests {
     fn emits_neg_as_paren_minus_inner() {
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let expr = span(MirExpr::Neg(Box::new(inner)));
-        let emit = emit_mir_expr(&expr).expect("neg should emit");
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("neg should emit");
         assert_eq!(emit, "(-7i64)");
     }
 
     #[test]
+    fn returns_none_for_builtin_call() {
+        // Builtin calls ride the HIR walker (call-plan
+        // classification). MIR walker returns None.
+        let call = MirCall {
+            callee: MirCallee::Builtin("String.len".to_string()),
+            args: vec![span(MirExpr::Literal(span(crate::ast::Literal::Str(
+                "hello".to_string(),
+            ))))],
+        };
+        let expr = span(MirExpr::Call(span(call)));
+        assert!(emit_mir_expr(&expr, &empty_symbols()).is_none());
+    }
+
+    #[test]
+    fn emits_return_keyword() {
+        let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let expr = span(MirExpr::Return(Box::new(inner)));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("return should emit");
+        assert_eq!(emit, "return 7i64");
+    }
+
+    #[test]
     fn returns_none_for_unsupported_variant() {
-        // `Tuple` isn't in wave 1's subset — must signal
-        // fallback to HIR.
         let t = span(MirExpr::Tuple(vec![]));
-        assert!(emit_mir_expr(&t).is_none());
+        assert!(emit_mir_expr(&t, &empty_symbols()).is_none());
     }
 }
