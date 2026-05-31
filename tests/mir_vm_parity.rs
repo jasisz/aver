@@ -108,6 +108,25 @@ fn neg_parity() {
     assert_eq!(hir, Value::Int(-5));
 }
 
+#[test]
+fn recursive_owned_call_parity() {
+    // fib's recursive arms are non-tail `CALL_KNOWN`s whose argument
+    // (`n - 1` / `n - 2`) carries the last use of param `n`, so the MIR
+    // walker's `compute_owned_mask` is non-zero and it emits the
+    // `CALL_KNOWN_OWNED` opcode. That opcode previously had no handler
+    // in the execute dispatch, so this exact shape trapped with
+    // `unknown opcode: 0x47` on the MIR-fallback path while the HIR
+    // path (plain `CALL_KNOWN`) was fine. Guards the handler.
+    let src = "fn fib(n: Int) -> Int\n    match n < 2\n        true -> n\n        false -> fib(n - 1) + fib(n - 2)\n";
+    let hir = run_via_path(src, "fib", &[10], Path::Hir);
+    let mir = run_via_path(src, "fib", &[10], Path::MirFallback);
+    assert_eq!(
+        hir, mir,
+        "HIR and MIR-fallback paths must agree on fib(10): HIR={hir:?}, MIR={mir:?}"
+    );
+    assert_eq!(hir, Value::Int(55), "fib(10) = 55");
+}
+
 /// Compile both paths and return the per-fn bytecode pair so
 /// tests can byte-compare specific chunks.
 fn compile_both(src: &str) -> (aver::vm::CodeStore, aver::vm::CodeStore) {

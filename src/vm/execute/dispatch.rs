@@ -433,9 +433,20 @@ impl VM {
                     }
                 }
 
-                CALL_KNOWN => {
+                CALL_KNOWN | CALL_KNOWN_OWNED => {
                     let target_fn_id = read_u16!(code, ip) as u32;
                     let argc = read_u8!(code, ip) as usize;
+                    // `CALL_KNOWN_OWNED` (emitted by the MIR walker) carries a
+                    // trailing owned-arg mask. A user-fn callee derives its
+                    // parameter ownership from its own alias analysis, so the
+                    // mask is inert at the call boundary today — this mirrors
+                    // the HIR walker, which ignores owned-ness for known calls
+                    // and only ever emits plain `CALL_KNOWN`. The byte is read
+                    // to keep the bytecode self-describing; a future cross-call
+                    // ownership pass can consume it to un-alias owned params.
+                    if op == CALL_KNOWN_OWNED {
+                        let _owned_mask = read_u8!(code, ip);
+                    }
 
                     self.frames.last_mut().unwrap().ip = ip as u32;
 
