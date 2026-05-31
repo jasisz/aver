@@ -20,6 +20,38 @@ use crate::ir::{CtorId, FnId, TypeId};
 
 use super::program::LocalId;
 
+/// Local-read with last-use annotation. Phase 6 wave 4. Slot is
+/// the binding identity; `last_use = true` when this is the
+/// final read of that slot in the enclosing fn body, mirroring
+/// HIR's `AnnotBool` last-use stamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MirLocal {
+    pub slot: LocalId,
+    pub last_use: bool,
+}
+
+impl MirLocal {
+    /// Construct a `MirLocal` with `last_use = false`. Convenience
+    /// for hand-built test fixtures + lowering sites that don't
+    /// carry last-use info (yet).
+    pub fn at(slot: LocalId) -> Self {
+        Self {
+            slot,
+            last_use: false,
+        }
+    }
+}
+
+impl std::fmt::Display for MirLocal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.last_use {
+            write!(f, "{}*", self.slot)
+        } else {
+            write!(f, "{}", self.slot)
+        }
+    }
+}
+
 /// Typed identity for a constructor reference inside MIR. Two
 /// flavors: user-declared variants identified by stable `CtorId`,
 /// and language-level built-in constructors (`Result.Ok` /
@@ -51,8 +83,12 @@ pub enum MirExpr {
     Literal(Spanned<Literal>),
     /// Read a previously-bound local. The `LocalId` was introduced
     /// either as a function parameter (`MirParam::local`) or via a
-    /// `Let` in this body's lexical scope.
-    Local(Spanned<LocalId>),
+    /// `Let` in this body's lexical scope. Phase 6 wave 4: carries
+    /// a `last_use` flag the lowerer propagates from HIR's
+    /// `ResolvedExpr::Resolved { last_use, .. }` so backends can
+    /// emit `MOVE_LOCAL` (skipping ref-count bumps) on the final
+    /// read of a slot.
+    Local(Spanned<MirLocal>),
     /// `let binding = value; body` — sequence two expressions and
     /// surface the second's value. Phase 2a's only sequencing
     /// primitive; everything else inside a function body composes
