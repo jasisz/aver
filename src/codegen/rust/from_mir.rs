@@ -36,11 +36,13 @@
 //! - wave 4b: Match (the big one, like Phase 4g for the VM) +
 //!   User-ctor Construct + RecordCreate / RecordUpdate (needs
 //!   `&CodegenContext` threading for module-path resolution)
-//! - wave 5: Try / Tuple / List ✅ (this PR — `?` propagation
-//!   + plain tuple / list literals reusing recursive walker)
-//! - wave 6: TailCall, Map, IndependentProduct (TailCall needs
-//!   Rust's loop-rewrite shape; Map needs `aver_rt::AverMap`
-//!   constructor wiring; InterpolatedStr is dropped by
+//! - wave 5: Try / Tuple / List ✅ (`?` propagation + plain
+//!   tuple / list literals reusing recursive walker)
+//! - wave 6: Map literal ✅ (this PR — `HashMap::new()` /
+//!   `vec![…].into_iter().collect::<HashMap<_, _>>()` mirror
+//!   of HIR's emit shape, recursive on keys + values)
+//! - wave 7: TailCall, IndependentProduct (TailCall needs
+//!   Rust's loop-rewrite shape; InterpolatedStr is dropped by
 //!   `interp_lower` before codegen so it never reaches the
 //!   walker)
 
@@ -167,6 +169,27 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             }
             Some(format!(
                 "aver_rt::AverList::from_vec(vec![{}])",
+                parts.join(", ")
+            ))
+        }
+        MirExpr::MapLiteral(entries) => {
+            // Phase 5 wave 6: `{"k" => v, …}` map literal.
+            // Mirror of HIR's `ResolvedExpr::MapLiteral` — empty
+            // → `HashMap::new()`, non-empty →
+            // `vec![(k, v), …].into_iter().collect::<HashMap<_, _>>()`.
+            // No clone_arg insertion; pure-value subtrees match
+            // HIR character-for-character.
+            if entries.is_empty() {
+                return Some("HashMap::new()".to_string());
+            }
+            let mut parts = Vec::with_capacity(entries.len());
+            for (k, v) in entries {
+                let key_str = emit_mir_expr(k, symbol_table)?;
+                let val_str = emit_mir_expr(v, symbol_table)?;
+                parts.push(format!("({}, {})", key_str, val_str));
+            }
+            Some(format!(
+                "vec![{}].into_iter().collect::<HashMap<_, _>>()",
                 parts.join(", ")
             ))
         }
@@ -379,10 +402,36 @@ mod tests {
 
     #[test]
     fn returns_none_for_unsupported_variant() {
-        // Phase 5 wave 5: Tuple is now covered. Pick a variant
-        // the walker still bounces — MapLiteral.
-        let m = span(MirExpr::MapLiteral(vec![]));
-        assert!(emit_mir_expr(&m, &empty_symbols()).is_none());
+        // Phase 5 wave 6: MapLiteral now covered. Pick a
+        // variant the walker still bounces — TailCall.
+        let t = span(MirExpr::TailCall(span(crate::ir::mir::MirTailCall {
+            target: crate::ir::FnId(0),
+            args: vec![],
+        })));
+        assert!(emit_mir_expr(&t, &empty_symbols()).is_none());
+    }
+
+    #[test]
+    fn emits_empty_map_as_hashmap_new() {
+        // Phase 5 wave 6: empty map literal.
+        let expr = span(MirExpr::MapLiteral(vec![]));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("map should emit");
+        assert_eq!(emit, "HashMap::new()");
+    }
+
+    #[test]
+    fn emits_nonempty_map_as_vec_into_iter_collect() {
+        // Phase 5 wave 6: non-empty map literal.
+        let k1 = span(MirExpr::Literal(span(crate::ast::Literal::Int(1))));
+        let v1 = span(MirExpr::Literal(span(crate::ast::Literal::Int(10))));
+        let k2 = span(MirExpr::Literal(span(crate::ast::Literal::Int(2))));
+        let v2 = span(MirExpr::Literal(span(crate::ast::Literal::Int(20))));
+        let expr = span(MirExpr::MapLiteral(vec![(k1, v1), (k2, v2)]));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("map should emit");
+        assert_eq!(
+            emit,
+            "vec![(1i64, 10i64), (2i64, 20i64)].into_iter().collect::<HashMap<_, _>>()"
+        );
     }
 
     #[test]
