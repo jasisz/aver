@@ -439,6 +439,7 @@ mod tests {
                 return_type: "Int".to_string(),
                 effects: vec![],
                 body,
+                local_count: 0,
             },
         );
         p
