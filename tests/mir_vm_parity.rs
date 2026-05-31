@@ -587,6 +587,63 @@ fn match_non_int_literal_pattern_runtime_parity() {
 }
 
 #[test]
+fn typed_int_arith_bytecode_parity() {
+    // Phase 6 wave 1 — MIR carries type stamps now, so the
+    // BinOp branch picks ADD_INT/SUB_INT/MUL_INT instead of the
+    // generic ADD/SUB/MUL. Byte-identical with HIR.
+    let (hir, mir) = compile_both("fn arith(a: Int, b: Int) -> Int\n    a + b - a * b\n");
+    let hir_fn = hir.get(hir.find("arith").expect("arith in HIR"));
+    let mir_fn = mir.get(mir.find("arith").expect("arith in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "Typed Int arith must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn typed_float_arith_bytecode_parity() {
+    // Float-typed BinOp picks ADD_FLOAT / SUB_FLOAT / MUL_FLOAT
+    // / DIV_FLOAT. Same emit as HIR.
+    let (hir, mir) =
+        compile_both("fn farith(a: Float, b: Float) -> Float\n    a + b - a * b / b\n");
+    let hir_fn = hir.get(hir.find("farith").expect("farith in HIR"));
+    let mir_fn = mir.get(mir.find("farith").expect("farith in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "Typed Float arith must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn typed_int_compare_bytecode_parity() {
+    // Int comparisons pick EQ_INT / LT_INT / GT_INT.
+    let (hir, mir) = compile_both("fn cmp(a: Int, b: Int) -> Bool\n    a == b\n");
+    let hir_fn = hir.get(hir.find("cmp").expect("cmp in HIR"));
+    let mir_fn = mir.get(mir.find("cmp").expect("cmp in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "Typed Int compare must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
+fn typed_neg_float_bytecode_parity() {
+    // Float NEG picks NEG_FLOAT (preserves -0.0 IEEE-754
+    // semantics). Same emit as HIR.
+    let (hir, mir) = compile_both("fn flip(x: Float) -> Float\n    -x\n");
+    let hir_fn = hir.get(hir.find("flip").expect("flip in HIR"));
+    let mir_fn = mir.get(mir.find("flip").expect("flip in MIR"));
+    assert_eq!(
+        hir_fn.code, mir_fn.code,
+        "NEG_FLOAT emit must match byte-for-byte:\n  HIR={:?}\n  MIR={:?}",
+        hir_fn.code, mir_fn.code
+    );
+}
+
+#[test]
 fn match_fn_uses_hir_fallback_and_remains_present_in_mir_path() {
     // `match` isn't in the Phase 4 subset → MIR-fallback path
     // falls back to HIR. The fn must still appear in the output
