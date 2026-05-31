@@ -145,6 +145,11 @@ fn walk_children(node: &mut MirExpr) {
                 fold_arm(arm);
             }
         }
+        MirExpr::IfThenElse(spanned_ite) => {
+            fold_in_place(&mut spanned_ite.node.cond);
+            fold_in_place(&mut spanned_ite.node.then_branch);
+            fold_in_place(&mut spanned_ite.node.else_branch);
+        }
         MirExpr::Construct(spanned_ctor) => {
             let ctor: &mut MirConstruct = &mut spanned_ctor.node;
             for arg in &mut ctor.args {
@@ -347,6 +352,11 @@ fn dce_walk_children(node: &mut MirExpr) {
                 dce_in_place(&mut arm.body);
             }
         }
+        MirExpr::IfThenElse(spanned_ite) => {
+            dce_in_place(&mut spanned_ite.node.cond);
+            dce_in_place(&mut spanned_ite.node.then_branch);
+            dce_in_place(&mut spanned_ite.node.else_branch);
+        }
         MirExpr::Construct(spanned_ctor) => {
             for arg in &mut spanned_ctor.node.args {
                 dce_in_place(arg);
@@ -435,6 +445,11 @@ fn visit_locals(node: &MirExpr, visit: &mut impl FnMut(LocalId)) {
                 visit_locals(&arm.body.node, visit);
             }
         }
+        MirExpr::IfThenElse(spanned_ite) => {
+            visit_locals(&spanned_ite.node.cond.node, visit);
+            visit_locals(&spanned_ite.node.then_branch.node, visit);
+            visit_locals(&spanned_ite.node.else_branch.node, visit);
+        }
         MirExpr::Construct(spanned_ctor) => {
             for arg in &spanned_ctor.node.args {
                 visit_locals(&arg.node, visit);
@@ -512,6 +527,13 @@ fn is_pure(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::Project(spanned_proj) => is_pure(&spanned_proj.node.base),
         MirExpr::Let(spanned_let) => {
             is_pure(&spanned_let.node.value) && is_pure(&spanned_let.node.body)
+        }
+        // IfThenElse is pure iff all three subtrees are pure —
+        // direct conditional, no dispatch overhead unlike Match.
+        MirExpr::IfThenElse(spanned_ite) => {
+            is_pure(&spanned_ite.node.cond)
+                && is_pure(&spanned_ite.node.then_branch)
+                && is_pure(&spanned_ite.node.else_branch)
         }
         // Anything that could call out (Call / TailCall),
         // unwind (Try / Return), dispatch (Match), produce
@@ -741,6 +763,11 @@ fn algebraic_walk_children(node: &mut MirExpr) {
                 algebraic_in_place(&mut arm.body);
             }
         }
+        MirExpr::IfThenElse(spanned_ite) => {
+            algebraic_in_place(&mut spanned_ite.node.cond);
+            algebraic_in_place(&mut spanned_ite.node.then_branch);
+            algebraic_in_place(&mut spanned_ite.node.else_branch);
+        }
         MirExpr::Construct(spanned_ctor) => {
             for arg in &mut spanned_ctor.node.args {
                 algebraic_in_place(arg);
@@ -880,6 +907,11 @@ fn inline_walk_children(node: &mut MirExpr, candidates: &HashMap<FnId, Literal>)
                 inline_in_place(&mut arm.body, candidates);
             }
         }
+        MirExpr::IfThenElse(spanned_ite) => {
+            inline_in_place(&mut spanned_ite.node.cond, candidates);
+            inline_in_place(&mut spanned_ite.node.then_branch, candidates);
+            inline_in_place(&mut spanned_ite.node.else_branch, candidates);
+        }
         MirExpr::Construct(spanned_ctor) => {
             for arg in &mut spanned_ctor.node.args {
                 inline_in_place(arg, candidates);
@@ -919,6 +951,192 @@ fn inline_walk_children(node: &mut MirExpr, candidates: &HashMap<FnId, Literal>)
         MirExpr::IndependentProduct(spanned_ip) => {
             for item in &mut spanned_ip.node.items {
                 inline_in_place(item, candidates);
+            }
+        }
+    }
+}
+
+/// Wave 9 — rewrite qualifying two-arm `Bool` match expressions
+/// into `IfThenElse`. Recognition shape (mirror of HIR's
+/// `try_emit_bool_if_else`):
+///
+/// - Match has exactly 2 arms
+/// - One arm's pattern is `Literal(Bool(true))`, the other is
+///   `Literal(Bool(false))` or `Wildcard` (catch-all default)
+/// - Bindings are empty (no captured locals)
+///
+/// When matched, replace with `IfThenElse { cond: subject,
+/// then_branch: <true-arm body>, else_branch: <false-arm body> }`.
+/// Backends consume only the rewritten form — no per-backend
+/// recognition logic.
+pub fn bool_match_to_if(mut program: MirProgram) -> MirProgram {
+    for mir_fn in program.fns.values_mut() {
+        bool_match_in_place(&mut mir_fn.body);
+    }
+    program
+}
+
+fn bool_match_in_place(expr: &mut Spanned<MirExpr>) {
+    bool_match_walk_children(&mut expr.node);
+
+    let replacement = if let MirExpr::Match(spanned_match) = &expr.node {
+        let m = &spanned_match.node;
+        try_bool_match_branches(&m.arms)
+    } else {
+        None
+    };
+
+    if let Some(branch_indices) = replacement {
+        let placeholder = MirExpr::Literal(Spanned {
+            node: Literal::Unit,
+            line: expr.line,
+            ty: std::sync::OnceLock::new(),
+        });
+        let original = std::mem::replace(&mut expr.node, placeholder);
+        if let MirExpr::Match(spanned_match) = original {
+            let m = spanned_match.node;
+            let subject = m.subject;
+            let mut arms_iter = m.arms.into_iter();
+            // Collect arms in source order so we can index.
+            let arms_vec: Vec<MirMatchArm> = arms_iter.by_ref().collect();
+            let then_branch = Box::new(arms_vec[branch_indices.true_idx].body.clone());
+            let else_branch = Box::new(arms_vec[branch_indices.false_idx].body.clone());
+            let ite = super::expr::MirIfThenElse {
+                cond: subject,
+                then_branch,
+                else_branch,
+            };
+            expr.node = MirExpr::IfThenElse(Spanned {
+                node: ite,
+                line: expr.line,
+                ty: std::sync::OnceLock::new(),
+            });
+        } else {
+            unreachable!("replacement only set inside the Match branch")
+        }
+    }
+}
+
+struct BoolBranchIndices {
+    true_idx: usize,
+    false_idx: usize,
+}
+
+/// Recognize the bool match shape over a 2-arm slice. Returns
+/// `Some` with the arm index for each branch on hit, `None`
+/// when the shape doesn't qualify.
+fn try_bool_match_branches(arms: &[MirMatchArm]) -> Option<BoolBranchIndices> {
+    if arms.len() != 2 {
+        return None;
+    }
+    let p0 = &arms[0].pattern;
+    let p1 = &arms[1].pattern;
+    let p0_bool = bool_pattern(p0);
+    let p1_bool = bool_pattern(p1);
+    match (p0_bool, p1_bool) {
+        // `true → A; false → B` or `true → A; _ → B`
+        (Some(BoolPat::True), Some(BoolPat::False))
+        | (Some(BoolPat::True), Some(BoolPat::Wildcard)) => Some(BoolBranchIndices {
+            true_idx: 0,
+            false_idx: 1,
+        }),
+        // `false → B; true → A` or `_ → B; true → A`
+        (Some(BoolPat::False), Some(BoolPat::True))
+        | (Some(BoolPat::Wildcard), Some(BoolPat::True)) => Some(BoolBranchIndices {
+            true_idx: 1,
+            false_idx: 0,
+        }),
+        _ => None,
+    }
+}
+
+enum BoolPat {
+    True,
+    False,
+    Wildcard,
+}
+
+fn bool_pattern(p: &MirPattern) -> Option<BoolPat> {
+    match p {
+        MirPattern::Literal(Literal::Bool(true)) => Some(BoolPat::True),
+        MirPattern::Literal(Literal::Bool(false)) => Some(BoolPat::False),
+        MirPattern::Wildcard => Some(BoolPat::Wildcard),
+        _ => None,
+    }
+}
+
+fn bool_match_walk_children(node: &mut MirExpr) {
+    match node {
+        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Neg(inner) => bool_match_in_place(inner),
+        MirExpr::BinOp(spanned_bop) => {
+            bool_match_in_place(&mut spanned_bop.node.lhs);
+            bool_match_in_place(&mut spanned_bop.node.rhs);
+        }
+        MirExpr::Let(spanned_let) => {
+            bool_match_in_place(&mut spanned_let.node.value);
+            bool_match_in_place(&mut spanned_let.node.body);
+        }
+        MirExpr::Call(spanned_call) => {
+            for arg in &mut spanned_call.node.args {
+                bool_match_in_place(arg);
+            }
+        }
+        MirExpr::TailCall(spanned_tc) => {
+            for arg in &mut spanned_tc.node.args {
+                bool_match_in_place(arg);
+            }
+        }
+        MirExpr::Match(spanned_match) => {
+            bool_match_in_place(&mut spanned_match.node.subject);
+            for arm in &mut spanned_match.node.arms {
+                bool_match_in_place(&mut arm.body);
+            }
+        }
+        MirExpr::IfThenElse(spanned_ite) => {
+            bool_match_in_place(&mut spanned_ite.node.cond);
+            bool_match_in_place(&mut spanned_ite.node.then_branch);
+            bool_match_in_place(&mut spanned_ite.node.else_branch);
+        }
+        MirExpr::Construct(spanned_ctor) => {
+            for arg in &mut spanned_ctor.node.args {
+                bool_match_in_place(arg);
+            }
+        }
+        MirExpr::RecordCreate(spanned_rec) => {
+            for f in &mut spanned_rec.node.fields {
+                bool_match_in_place(&mut f.value);
+            }
+        }
+        MirExpr::RecordUpdate(spanned_upd) => {
+            bool_match_in_place(&mut spanned_upd.node.base);
+            for f in &mut spanned_upd.node.updates {
+                bool_match_in_place(&mut f.value);
+            }
+        }
+        MirExpr::Project(spanned_proj) => bool_match_in_place(&mut spanned_proj.node.base),
+        MirExpr::Try(inner) | MirExpr::Return(inner) => bool_match_in_place(inner),
+        MirExpr::List(items) | MirExpr::Tuple(items) => {
+            for item in items {
+                bool_match_in_place(item);
+            }
+        }
+        MirExpr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                bool_match_in_place(k);
+                bool_match_in_place(v);
+            }
+        }
+        MirExpr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let super::expr::MirStrPart::Expr(e) = part {
+                    bool_match_in_place(e);
+                }
+            }
+        }
+        MirExpr::IndependentProduct(spanned_ip) => {
+            for item in &mut spanned_ip.node.items {
+                bool_match_in_place(item);
             }
         }
     }
@@ -1520,6 +1738,133 @@ mod tests {
         assert!(
             matches!(&let_node.node.body.node, MirExpr::Local(_)),
             "let body's `x + 0` should simplify to `x` (Local)"
+        );
+    }
+
+    // ── Phase 6 wave 9: bool match → IfThenElse ─────────
+
+    fn bool_match_program(arms: Vec<MirMatchArm>) -> MirProgram {
+        use super::super::expr::MirMatch;
+        use super::super::program::LocalId;
+        let subject = MirExpr::Local(span(super::super::expr::MirLocal::at(LocalId(0))));
+        let m = MirExpr::Match(span(MirMatch {
+            subject: Box::new(span(subject)),
+            arms,
+        }));
+        one_fn_program(m)
+    }
+
+    #[test]
+    fn bool_match_rewrites_true_first_then_false() {
+        // match cond { true → 1; false → 2 } → if cond { 1 } else { 2 }
+        let arms = vec![
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(true)),
+                body: span(MirExpr::Literal(span(Literal::Int(1)))),
+            },
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(false)),
+                body: span(MirExpr::Literal(span(Literal::Int(2)))),
+            },
+        ];
+        let rewritten = bool_match_to_if(bool_match_program(arms));
+        let MirExpr::IfThenElse(ite) = body_of(&rewritten) else {
+            panic!("expected IfThenElse, got: {:?}", body_of(&rewritten));
+        };
+        assert!(
+            matches!(&ite.node.then_branch.node, MirExpr::Literal(s) if matches!(s.node, Literal::Int(1))),
+            "then branch should be 1"
+        );
+        assert!(
+            matches!(&ite.node.else_branch.node, MirExpr::Literal(s) if matches!(s.node, Literal::Int(2))),
+            "else branch should be 2"
+        );
+    }
+
+    #[test]
+    fn bool_match_rewrites_false_first_then_true() {
+        // match cond { false → 2; true → 1 } → if cond { 1 } else { 2 }
+        let arms = vec![
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(false)),
+                body: span(MirExpr::Literal(span(Literal::Int(2)))),
+            },
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(true)),
+                body: span(MirExpr::Literal(span(Literal::Int(1)))),
+            },
+        ];
+        let rewritten = bool_match_to_if(bool_match_program(arms));
+        let MirExpr::IfThenElse(ite) = body_of(&rewritten) else {
+            panic!("expected IfThenElse")
+        };
+        assert!(
+            matches!(&ite.node.then_branch.node, MirExpr::Literal(s) if matches!(s.node, Literal::Int(1))),
+            "then branch should still be 1 even though true-arm was second in source"
+        );
+    }
+
+    #[test]
+    fn bool_match_rewrites_true_with_wildcard_default() {
+        // match cond { true → 1; _ → 2 } → if cond { 1 } else { 2 }
+        let arms = vec![
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(true)),
+                body: span(MirExpr::Literal(span(Literal::Int(1)))),
+            },
+            MirMatchArm {
+                pattern: MirPattern::Wildcard,
+                body: span(MirExpr::Literal(span(Literal::Int(2)))),
+            },
+        ];
+        let rewritten = bool_match_to_if(bool_match_program(arms));
+        assert!(matches!(body_of(&rewritten), MirExpr::IfThenElse(_)));
+    }
+
+    #[test]
+    fn bool_match_leaves_three_arm_match_intact() {
+        // match cond { true → 1; false → 2; _ → 3 } stays Match —
+        // wave 9 only handles two-arm shape, three+ wait for
+        // future passes.
+        let arms = vec![
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(true)),
+                body: span(MirExpr::Literal(span(Literal::Int(1)))),
+            },
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(false)),
+                body: span(MirExpr::Literal(span(Literal::Int(2)))),
+            },
+            MirMatchArm {
+                pattern: MirPattern::Wildcard,
+                body: span(MirExpr::Literal(span(Literal::Int(3)))),
+            },
+        ];
+        let rewritten = bool_match_to_if(bool_match_program(arms));
+        assert!(
+            matches!(body_of(&rewritten), MirExpr::Match(_)),
+            "three-arm match should stay a Match node"
+        );
+    }
+
+    #[test]
+    fn bool_match_leaves_non_bool_match_intact() {
+        // match xs { [] → 0; _ → 1 } — EmptyList isn't a Bool
+        // literal, so the pass doesn't fire.
+        let arms = vec![
+            MirMatchArm {
+                pattern: MirPattern::EmptyList,
+                body: span(MirExpr::Literal(span(Literal::Int(0)))),
+            },
+            MirMatchArm {
+                pattern: MirPattern::Wildcard,
+                body: span(MirExpr::Literal(span(Literal::Int(1)))),
+            },
+        ];
+        let rewritten = bool_match_to_if(bool_match_program(arms));
+        assert!(
+            matches!(body_of(&rewritten), MirExpr::Match(_)),
+            "non-Bool literal pattern should not trigger the rewrite"
         );
     }
 }

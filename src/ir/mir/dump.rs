@@ -113,6 +113,15 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &Spanned<MirExpr>, indent: &str)
             write!(f, ")")
         }
         MirExpr::Match(spanned) => write_match(f, &spanned.node, indent),
+        MirExpr::IfThenElse(spanned) => {
+            let ite = &spanned.node;
+            write!(f, "if ")?;
+            write_expr(f, &ite.cond, indent)?;
+            write!(f, " then ")?;
+            write_expr(f, &ite.then_branch, indent)?;
+            write!(f, " else ")?;
+            write_expr(f, &ite.else_branch, indent)
+        }
         MirExpr::Construct(spanned) => write_construct(f, &spanned.node, indent),
         MirExpr::RecordCreate(spanned) => write_record_create(f, &spanned.node, indent),
         MirExpr::RecordUpdate(spanned) => write_record_update(f, &spanned.node, indent),

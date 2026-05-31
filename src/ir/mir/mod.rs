@@ -83,10 +83,12 @@ pub mod stats;
 pub use crate::ir::hir::BuiltinCtor;
 pub use expr::{
     MirBinOp, MirCall, MirCallee, MirConstruct, MirCtor, MirEffectAnnotation, MirExpr,
-    MirIndependentProduct, MirLet, MirLocal, MirMatch, MirMatchArm, MirPattern, MirProject,
-    MirRecordCreate, MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
+    MirIfThenElse, MirIndependentProduct, MirLet, MirLocal, MirMatch, MirMatchArm, MirPattern,
+    MirProject, MirRecordCreate, MirRecordField, MirRecordUpdate, MirStrPart, MirTailCall,
 };
 pub use lower::lower_program;
-pub use optimize::{algebraic_simplify, const_fold, dead_code, inline_nullary_literals};
+pub use optimize::{
+    algebraic_simplify, bool_match_to_if, const_fold, dead_code, inline_nullary_literals,
+};
 pub use program::{LocalId, MirFn, MirParam, MirProgram};
 pub use stats::{LowerStats, SkipReason};
