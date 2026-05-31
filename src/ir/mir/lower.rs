@@ -266,13 +266,17 @@ fn lower_expr(
             let mir_callee = match callee {
                 ResolvedCallee::Fn(fn_id) => MirCallee::Fn(*fn_id),
                 ResolvedCallee::Builtin(name) => MirCallee::Builtin(program.intern_builtin(name)),
-                // First-class fn values, intrinsics, and unresolved
-                // callees aren't covered yet. Wave 3+ will grow
-                // `MirCallee` (or a separate node) for the
-                // first-class-fn case once closure shapes need it.
-                ResolvedCallee::Intrinsic(_)
-                | ResolvedCallee::LocalSlot { .. }
-                | ResolvedCallee::Unresolved { .. } => return Err(SkipReason::UnsupportedCallee),
+                // Synthesis-only buffer-build / stringify intrinsics from
+                // the deforestation pass — carried through so the walker
+                // emits the BUFFER_* / CONCAT opcodes instead of dropping
+                // the fn to the HIR fallback.
+                ResolvedCallee::Intrinsic(intrinsic) => MirCallee::Intrinsic(*intrinsic),
+                // First-class fn values and unresolved callees aren't
+                // covered yet — a later wave grows `MirCallee` for the
+                // first-class-fn / closure case.
+                ResolvedCallee::LocalSlot { .. } | ResolvedCallee::Unresolved { .. } => {
+                    return Err(SkipReason::UnsupportedCallee);
+                }
             };
             let mir_args = args
                 .iter()

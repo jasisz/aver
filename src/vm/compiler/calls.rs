@@ -23,7 +23,7 @@ type SpannedResolvedTriple<'a> = (
 /// empty trick instead of a dedicated opcode. The arity is checked
 /// at the callsite so a future intrinsic with a different shape
 /// can't accidentally re-use the wrong opcode.
-fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8, usize)> {
+pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8, usize)> {
     match intrinsic {
         BuiltinIntrinsic::BufNew => Some((BUFFER_NEW, 1)),
         BuiltinIntrinsic::BufAppend => Some((BUFFER_APPEND_STR, 2)),

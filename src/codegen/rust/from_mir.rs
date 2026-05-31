@@ -260,8 +260,10 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 }
                 // Builtin / closure / unresolved callees ride the
                 // HIR walker's classification (`CallPlan`) — too
-                // many shapes to mirror in wave 2.
-                MirCallee::Builtin(_) => None,
+                // many shapes to mirror in wave 2. Buffer intrinsics
+                // likewise fall back (the Rust backend deforests
+                // differently).
+                MirCallee::Builtin(_) | MirCallee::Intrinsic(_) => None,
             }
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, emit_ctx)?)),

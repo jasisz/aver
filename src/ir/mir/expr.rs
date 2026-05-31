@@ -15,7 +15,7 @@
 //!   correlation with `ProofIR`.
 
 use crate::ast::{BinOp, Literal, Spanned};
-use crate::ir::hir::BuiltinCtor;
+use crate::ir::hir::{BuiltinCtor, BuiltinIntrinsic};
 use crate::ir::{BuiltinId, CtorId, FnId, TypeId};
 
 use super::program::LocalId;
@@ -219,6 +219,14 @@ pub enum MirCallee {
     /// resolve the canonical name through
     /// `SymbolTable::builtin_entry(id).name`.
     Builtin(BuiltinId),
+    /// Synthesis-only intrinsic — the buffer-build / stringify ops the
+    /// deforestation pass (`interp_lower`) emits for `String.join` and
+    /// interpolation chains (`__buf_new` / `__buf_append` /
+    /// `__buf_append_sep_unless_first` / `__buf_finalize` / `__to_str`).
+    /// Never user-visible; carried so the MIR walker emits the same
+    /// `BUFFER_*` / CONCAT opcodes the HIR walker does instead of
+    /// dropping the whole fn to the HIR fallback.
+    Intrinsic(BuiltinIntrinsic),
 }
 
 /// `target(args…)` in tail position — same SCC as the surrounding fn.
