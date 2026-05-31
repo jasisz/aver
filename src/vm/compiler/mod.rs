@@ -100,7 +100,14 @@ pub fn compile_program_with_mir_fallback(
     arena: &mut Arena,
     analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    let mir = crate::ir::mir::lower_program(items);
+    // Phase 6 wave 5: const-fold runs on the lowered MIR
+    // before the VM walker consumes it. Pure-arithmetic
+    // sub-expressions collapse to single literals; the VM
+    // bytecode emitter sees `LOAD_CONST` instead of
+    // `LOAD_CONST + LOAD_CONST + ADD`. Compose with future
+    // optimizer passes by chaining further `*_in_place`-style
+    // helpers here.
+    let mir = crate::ir::mir::const_fold(crate::ir::mir::lower_program(items));
     compile_program_inner(
         items,
         symbols,
