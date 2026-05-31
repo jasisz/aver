@@ -55,13 +55,84 @@
 //! Won't reach the walker: InterpolatedStr is dropped by
 //! `interp_lower` before codegen runs.
 
+use std::collections::HashSet;
+
 use crate::ast::{BinOp, Spanned, Type};
+use crate::codegen::CodegenContext;
 use crate::ir::SymbolTable;
 use crate::ir::hir::BuiltinCtor;
 use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirProgram};
 
 use super::expr::emit_literal;
 use super::syntax::aver_name_to_rust;
+
+/// Walker-side emit context. Holds *only* the slice of the
+/// `CodegenContext` the MIR-to-Rust walker actually reads —
+/// keeping the dependency surface explicit so future
+/// `CodegenContext` refactors don't ripple through the walker,
+/// and so other backends (wasm-gc, wasip2) can introduce their
+/// own emit-ctx structs without inheriting Rust-specific fields.
+///
+/// Fields grow only when the walker needs them. Today's scope:
+/// - `symbol_table` — `FnId` / `TypeId` / `CtorId` resolution.
+/// - `module_prefixes` — `resolve_module_call` for module-scoped
+///   record types and (eventually) User-ctor module paths.
+#[derive(Debug, Clone, Copy)]
+pub struct MirEmitCtx<'a> {
+    pub symbol_table: &'a SymbolTable,
+    pub module_prefixes: &'a HashSet<String>,
+}
+
+impl<'a> MirEmitCtx<'a> {
+    /// Construct a walker ctx from the full `CodegenContext`.
+    /// Production callers (codegen pipeline, `coverage_report`
+    /// driven from `aver compile --explain-mir-coverage`) use
+    /// this; test fixtures use [`Self::for_test`] with hand-
+    /// rolled symbol-table + empty prefixes.
+    pub fn for_codegen(ctx: &'a CodegenContext) -> Self {
+        Self {
+            symbol_table: &ctx.symbol_table,
+            module_prefixes: &ctx.module_prefixes,
+        }
+    }
+
+    /// Construct a minimal walker ctx for tests. Caller supplies
+    /// a hand-built symbol table; `module_prefixes` defaults to
+    /// the caller's owned empty set (or a populated one when the
+    /// test needs to exercise module-scoped name resolution).
+    pub fn for_test(symbol_table: &'a SymbolTable, module_prefixes: &'a HashSet<String>) -> Self {
+        Self {
+            symbol_table,
+            module_prefixes,
+        }
+    }
+}
+
+/// Mirror of `RustSourceCallCtx::resolve_module_call` in
+/// `toplevel.rs`: find the longest registered module prefix
+/// inside a dotted name. Returns `(prefix, suffix)` on hit,
+/// `None` when no registered prefix matches.
+///
+/// First consumer lands in Phase 5 wave 4d (User-ctor
+/// Construct + dep-module records); landing the helper with
+/// `MirEmitCtx` keeps the foundation PR self-contained.
+#[allow(dead_code)]
+fn resolve_module_call<'a>(
+    dotted: &'a str,
+    module_prefixes: &HashSet<String>,
+) -> Option<(&'a str, &'a str)> {
+    let mut best: Option<(&str, &str)> = None;
+    for (dot_idx, _) in dotted.match_indices('.') {
+        let prefix = &dotted[..dot_idx];
+        let suffix = &dotted[dot_idx + 1..];
+        if module_prefixes.contains(prefix)
+            && best.is_none_or(|existing| prefix.len() > existing.0.len())
+        {
+            best = Some((prefix, suffix));
+        }
+    }
+    best
+}
 
 /// Phase 5 diagnostic: how many fns the MIR walker can emit
 /// standalone vs how many need HIR fallback. Pre-wire-up signal
@@ -96,11 +167,11 @@ impl CoverageReport {
 /// fn, calls [`emit_mir_expr`] on the body and counts
 /// `Some` / `None`. Suitable for `--explain-mir-coverage`–style
 /// diagnostics; the codegen path itself is untouched.
-pub fn coverage_report(program: &MirProgram, symbol_table: &SymbolTable) -> CoverageReport {
+pub fn coverage_report(program: &MirProgram, emit_ctx: &MirEmitCtx<'_>) -> CoverageReport {
     let mut report = CoverageReport::default();
     for (_, mir_fn) in program.iter() {
         report.total += 1;
-        if emit_mir_expr(&mir_fn.body, symbol_table).is_some() {
+        if emit_mir_expr(&mir_fn.body, emit_ctx).is_some() {
             report.mir_covered += 1;
         } else {
             report.hir_fallback += 1;
@@ -123,7 +194,7 @@ pub fn coverage_report(program: &MirProgram, symbol_table: &SymbolTable) -> Cove
 /// inside [`super::expr::emit_expr`] (try MIR first, fall back
 /// to HIR walker on `None`).
 #[allow(dead_code)]
-pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable) -> Option<String> {
+pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     match &expr.node {
         MirExpr::Literal(lit) => Some(emit_literal(&lit.node)),
         MirExpr::Local(spanned_local) => {
@@ -137,11 +208,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             }
             Some(aver_name_to_rust(name))
         }
-        MirExpr::Neg(inner) => Some(format!("(-{})", emit_mir_expr(inner, symbol_table)?)),
+        MirExpr::Neg(inner) => Some(format!("(-{})", emit_mir_expr(inner, emit_ctx)?)),
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
-            let l = emit_mir_expr(&bop.lhs, symbol_table)?;
-            let r = emit_mir_expr(&bop.rhs, symbol_table)?;
+            let l = emit_mir_expr(&bop.lhs, emit_ctx)?;
+            let r = emit_mir_expr(&bop.rhs, emit_ctx)?;
             let op_str = match bop.op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",
@@ -176,10 +247,10 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
                     // Resolve canonical name through the same
                     // symbol table the HIR walker uses; emit
                     // `name(arg1, arg2, …)` in source order.
-                    let name = symbol_table.fn_entry(*fn_id).key.canonical();
+                    let name = emit_ctx.symbol_table.fn_entry(*fn_id).key.canonical();
                     let mut args = Vec::with_capacity(call.args.len());
                     for a in &call.args {
-                        args.push(emit_mir_expr(a, symbol_table)?);
+                        args.push(emit_mir_expr(a, emit_ctx)?);
                     }
                     Some(format!("{}({})", aver_name_to_rust(&name), args.join(", ")))
                 }
@@ -189,7 +260,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
                 MirCallee::Builtin(_) => None,
             }
         }
-        MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, symbol_table)?)),
+        MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, emit_ctx)?)),
         MirExpr::TailCall(spanned_tc) => {
             // Phase 5 wave 7: tail call outside a self-TCO loop
             // emits as a regular function call — mirror of HIR's
@@ -202,10 +273,10 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             // layer's parity check is the safety net (mismatch
             // → fall back to HIR).
             let tc = &spanned_tc.node;
-            let name = symbol_table.fn_entry(tc.target).key.canonical();
+            let name = emit_ctx.symbol_table.fn_entry(tc.target).key.canonical();
             let mut args = Vec::with_capacity(tc.args.len());
             for a in &tc.args {
-                args.push(emit_mir_expr(a, symbol_table)?);
+                args.push(emit_mir_expr(a, emit_ctx)?);
             }
             Some(format!("{}({})", aver_name_to_rust(&name), args.join(", ")))
         }
@@ -213,7 +284,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             // Phase 5 wave 5: `value?` propagation. Mirror of
             // HIR's `ResolvedExpr::ErrorProp` emit — append `?`
             // to the inner expression's Rust form.
-            Some(format!("{}?", emit_mir_expr(inner, symbol_table)?))
+            Some(format!("{}?", emit_mir_expr(inner, emit_ctx)?))
         }
         MirExpr::Tuple(items) => {
             // Phase 5 wave 5: `(a, b, c)` tuple literal. Mirror
@@ -225,7 +296,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             // output is character-identical to HIR.
             let mut parts = Vec::with_capacity(items.len());
             for item in items {
-                parts.push(emit_mir_expr(item, symbol_table)?);
+                parts.push(emit_mir_expr(item, emit_ctx)?);
             }
             Some(format!("({})", parts.join(", ")))
         }
@@ -239,7 +310,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             }
             let mut parts = Vec::with_capacity(items.len());
             for item in items {
-                parts.push(emit_mir_expr(item, symbol_table)?);
+                parts.push(emit_mir_expr(item, emit_ctx)?);
             }
             Some(format!(
                 "aver_rt::AverList::from_vec(vec![{}])",
@@ -258,8 +329,8 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             }
             let mut parts = Vec::with_capacity(entries.len());
             for (k, v) in entries {
-                let key_str = emit_mir_expr(k, symbol_table)?;
-                let val_str = emit_mir_expr(v, symbol_table)?;
+                let key_str = emit_mir_expr(k, emit_ctx)?;
+                let val_str = emit_mir_expr(v, emit_ctx)?;
                 parts.push(format!("({}, {})", key_str, val_str));
             }
             Some(format!(
@@ -280,8 +351,8 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             if let_node.binding_name.is_empty() {
                 return None;
             }
-            let value = emit_mir_expr(&let_node.value, symbol_table)?;
-            let body = emit_mir_expr(&let_node.body, symbol_table)?;
+            let value = emit_mir_expr(&let_node.value, emit_ctx)?;
+            let body = emit_mir_expr(&let_node.body, emit_ctx)?;
             let name = aver_name_to_rust(&let_node.binding_name);
             Some(format!("{{ let {} = {}; {} }}", name, value, body))
         }
@@ -292,7 +363,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             // No clone insertion here; the HIR walker handles
             // that via `maybe_clone` at outer call sites.
             let proj = &spanned_proj.node;
-            let base = emit_mir_expr(&proj.base, symbol_table)?;
+            let base = emit_mir_expr(&proj.base, emit_ctx)?;
             Some(format!("{}.{}", base, aver_name_to_rust(&proj.field)))
         }
         MirExpr::RecordCreate(spanned_rec) => {
@@ -308,14 +379,14 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             // type's `key.scope` is non-empty so the HIR walker
             // handles the prefix rewrite.
             let rec = &spanned_rec.node;
-            let entry = symbol_table.type_entry(rec.type_id);
+            let entry = emit_ctx.symbol_table.type_entry(rec.type_id);
             if entry.key.scope_str().is_some() {
                 return None;
             }
             let type_name = entry.key.name.clone();
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
-                let val = emit_mir_expr(&f.value, symbol_table)?;
+                let val = emit_mir_expr(&f.value, emit_ctx)?;
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
             Some(format!("{} {{ {} }}", type_name, parts.join(", ")))
@@ -325,15 +396,15 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             // → `{type_name} { field: value, …, ..base }`.
             // Same module-scope gating as RecordCreate above.
             let upd = &spanned_upd.node;
-            let entry = symbol_table.type_entry(upd.type_id);
+            let entry = emit_ctx.symbol_table.type_entry(upd.type_id);
             if entry.key.scope_str().is_some() {
                 return None;
             }
             let type_name = entry.key.name.clone();
-            let base = emit_mir_expr(&upd.base, symbol_table)?;
+            let base = emit_mir_expr(&upd.base, emit_ctx)?;
             let mut parts = Vec::with_capacity(upd.updates.len());
             for f in &upd.updates {
-                let val = emit_mir_expr(&f.value, symbol_table)?;
+                let val = emit_mir_expr(&f.value, emit_ctx)?;
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
             Some(format!(
@@ -364,7 +435,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
                     }
                     let mut args = Vec::with_capacity(con.args.len());
                     for a in &con.args {
-                        args.push(emit_mir_expr(a, symbol_table)?);
+                        args.push(emit_mir_expr(a, emit_ctx)?);
                     }
                     Some(format!("{}({})", name, args.join(", ")))
                 }
@@ -408,17 +479,24 @@ mod tests {
         }
     }
 
-    fn empty_symbols() -> SymbolTable {
-        SymbolTable::default()
+    /// Empty `MirEmitCtx` with statically-borrowed empty symbol
+    /// table + empty module-prefix set. `OnceLock`s give us a
+    /// `'static` lifetime so tests can pass `&empty_ctx()`
+    /// inline without juggling local owners.
+    fn empty_ctx() -> MirEmitCtx<'static> {
+        use std::sync::OnceLock;
+        static SYMBOLS: OnceLock<SymbolTable> = OnceLock::new();
+        static PREFIXES: OnceLock<HashSet<String>> = OnceLock::new();
+        MirEmitCtx::for_test(
+            SYMBOLS.get_or_init(SymbolTable::default),
+            PREFIXES.get_or_init(HashSet::new),
+        )
     }
 
     #[test]
     fn emits_int_literal_as_i64_suffix() {
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(42))));
-        assert_eq!(
-            emit_mir_expr(&lit, &empty_symbols()).as_deref(),
-            Some("42i64")
-        );
+        assert_eq!(emit_mir_expr(&lit, &empty_ctx()).as_deref(), Some("42i64"));
     }
 
     #[test]
@@ -429,7 +507,7 @@ mod tests {
             name: "x".to_string(),
         };
         let expr = span(MirExpr::Local(span(local)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("local should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("local should emit");
         assert!(
             emit.contains("x"),
             "local emit should reference `x`: {emit}"
@@ -444,7 +522,7 @@ mod tests {
             name: String::new(),
         };
         let expr = span(MirExpr::Local(span(local)));
-        assert!(emit_mir_expr(&expr, &empty_symbols()).is_none());
+        assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
     }
 
     #[test]
@@ -460,7 +538,7 @@ mod tests {
             rhs: Box::new(span_ty(MirExpr::Local(span(x)), Type::Int)),
         };
         let expr = span(MirExpr::BinOp(span(bop)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("binop should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("binop should emit");
         // Numeric path — both operands stamped Int → no `&` on
         // the right side.
         assert!(
@@ -485,7 +563,7 @@ mod tests {
             rhs: Box::new(span_ty(MirExpr::Local(span(s)), Type::Str)),
         };
         let expr = span(MirExpr::BinOp(span(bop)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("binop should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("binop should emit");
         assert!(
             emit.contains(" + &"),
             "Str+Str should emit `+ &` for AverStr concat: {emit}"
@@ -496,7 +574,7 @@ mod tests {
     fn emits_neg_as_paren_minus_inner() {
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let expr = span(MirExpr::Neg(Box::new(inner)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("neg should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("neg should emit");
         assert_eq!(emit, "(-7i64)");
     }
 
@@ -511,14 +589,14 @@ mod tests {
             ))))],
         };
         let expr = span(MirExpr::Call(span(call)));
-        assert!(emit_mir_expr(&expr, &empty_symbols()).is_none());
+        assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
     }
 
     #[test]
     fn emits_return_keyword() {
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let expr = span(MirExpr::Return(Box::new(inner)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("return should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("return should emit");
         assert_eq!(emit, "return 7i64");
     }
 
@@ -561,7 +639,9 @@ mod tests {
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
         let st = symbols_with_one_type("Point", false);
-        let emit = emit_mir_expr(&expr, &st).expect("record create should emit");
+        let prefixes = HashSet::new();
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        let emit = emit_mir_expr(&expr, &ctx).expect("record create should emit");
         assert_eq!(emit, "Point { x: 1i64, y: 2i64 }");
     }
 
@@ -576,7 +656,13 @@ mod tests {
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
         let st = symbols_with_one_type("Connection", true);
-        assert!(emit_mir_expr(&expr, &st).is_none());
+        // No `Tcp` registered in module_prefixes — walker
+        // can't translate `Tcp.Connection` and bounces. With
+        // `Tcp` registered the walker resolves it (see
+        // `emits_record_create_scoped_via_module_prefix`).
+        let prefixes = HashSet::new();
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        assert!(emit_mir_expr(&expr, &ctx).is_none());
     }
 
     #[test]
@@ -598,7 +684,9 @@ mod tests {
         };
         let expr = span(MirExpr::RecordUpdate(span(upd)));
         let st = symbols_with_one_type("Point", false);
-        let emit = emit_mir_expr(&expr, &st).expect("record update should emit");
+        let prefixes = HashSet::new();
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        let emit = emit_mir_expr(&expr, &ctx).expect("record update should emit");
         assert_eq!(emit, "Point { x: 9i64, ..base }");
     }
 
@@ -626,7 +714,9 @@ mod tests {
             args: vec![arg],
         })));
         let st = symbols_with_one_fn("loop_step");
-        let emit = emit_mir_expr(&tc, &st).expect("tail call should emit");
+        let prefixes = HashSet::new();
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        let emit = emit_mir_expr(&tc, &ctx).expect("tail call should emit");
         assert_eq!(emit, "loop_step(7i64)");
     }
 
@@ -640,14 +730,14 @@ mod tests {
                 unwrap_results: false,
             },
         )));
-        assert!(emit_mir_expr(&ip, &empty_symbols()).is_none());
+        assert!(emit_mir_expr(&ip, &empty_ctx()).is_none());
     }
 
     #[test]
     fn emits_empty_map_as_hashmap_new() {
         // Phase 5 wave 6: empty map literal.
         let expr = span(MirExpr::MapLiteral(vec![]));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("map should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("map should emit");
         assert_eq!(emit, "HashMap::new()");
     }
 
@@ -659,7 +749,7 @@ mod tests {
         let k2 = span(MirExpr::Literal(span(crate::ast::Literal::Int(2))));
         let v2 = span(MirExpr::Literal(span(crate::ast::Literal::Int(20))));
         let expr = span(MirExpr::MapLiteral(vec![(k1, v1), (k2, v2)]));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("map should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("map should emit");
         assert_eq!(
             emit,
             "vec![(1i64, 10i64), (2i64, 20i64)].into_iter().collect::<HashMap<_, _>>()"
@@ -671,7 +761,7 @@ mod tests {
         // Phase 5 wave 5: `Try(inner)` → `inner?`.
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let expr = span(MirExpr::Try(Box::new(inner)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("try should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("try should emit");
         assert_eq!(emit, "7i64?");
     }
 
@@ -681,14 +771,14 @@ mod tests {
         let a = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(9))));
         let expr = span(MirExpr::Tuple(vec![a, b]));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("tuple should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("tuple should emit");
         assert_eq!(emit, "(7i64, 9i64)");
     }
 
     #[test]
     fn emits_empty_list_as_averlist_empty() {
         let expr = span(MirExpr::List(vec![]));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("list should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("list should emit");
         assert_eq!(emit, "aver_rt::AverList::empty()");
     }
 
@@ -697,7 +787,7 @@ mod tests {
         let a = span(MirExpr::Literal(span(crate::ast::Literal::Int(1))));
         let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(2))));
         let expr = span(MirExpr::List(vec![a, b]));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("list should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("list should emit");
         assert_eq!(emit, "aver_rt::AverList::from_vec(vec![1i64, 2i64])");
     }
 
@@ -715,7 +805,7 @@ mod tests {
             field: "name".to_string(),
         };
         let expr = span(MirExpr::Project(span(proj)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("project should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("project should emit");
         assert!(
             emit.ends_with(".name"),
             "project should end with `.name`, got: {emit}"
@@ -731,7 +821,7 @@ mod tests {
             args: vec![arg],
         };
         let expr = span(MirExpr::Construct(span(con)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("construct should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("construct should emit");
         assert_eq!(emit, "Ok(42i64)");
     }
 
@@ -744,7 +834,7 @@ mod tests {
             args: vec![],
         };
         let expr = span(MirExpr::Construct(span(con)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("construct should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("construct should emit");
         assert_eq!(emit, "None");
     }
 
@@ -765,7 +855,7 @@ mod tests {
             body: Box::new(body),
         };
         let expr = span(MirExpr::Let(span(let_node)));
-        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("let should emit");
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("let should emit");
         assert_eq!(emit, "{ let x = 7i64; x }");
     }
 
@@ -784,7 +874,7 @@ mod tests {
             body: Box::new(body),
         };
         let expr = span(MirExpr::Let(span(let_node)));
-        assert!(emit_mir_expr(&expr, &empty_symbols()).is_none());
+        assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
     }
 
     #[test]
@@ -798,6 +888,6 @@ mod tests {
             args: vec![],
         };
         let expr = span(MirExpr::Construct(span(con)));
-        assert!(emit_mir_expr(&expr, &empty_symbols()).is_none());
+        assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
     }
 }

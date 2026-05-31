@@ -7,7 +7,9 @@
 //! real lowered program — not to pin a specific ratio (which
 //! would force re-rolling the test on every walker widening).
 
-use aver::codegen::rust::{CoverageReport, coverage_report};
+use std::collections::HashSet;
+
+use aver::codegen::rust::{CoverageReport, MirEmitCtx, coverage_report};
 use aver::ir::SymbolTable;
 use aver::ir::mir::lower_program;
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
@@ -26,7 +28,9 @@ fn lower_and_report(src: &str) -> CoverageReport {
     assert!(tc.errors.is_empty(), "typecheck failed: {:?}", tc.errors);
     let program = lower_program(&result.resolved_items);
     let symbol_table = SymbolTable::build(&items, &[]);
-    coverage_report(&program, &symbol_table)
+    let prefixes = HashSet::new();
+    let emit_ctx = MirEmitCtx::for_test(&symbol_table, &prefixes);
+    coverage_report(&program, &emit_ctx)
 }
 
 #[test]
