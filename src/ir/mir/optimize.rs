@@ -26,6 +26,20 @@
 //! collapses to a `Literal` (pure) and unlocks its enclosing
 //! `Let` for elimination.
 //!
+//! ## Wave 10 — branch collapse
+//!
+//! After `bool_match_to_if` (wave 9) lifts qualifying matches
+//! into `MirExpr::IfThenElse`, this pass collapses any
+//! `IfThenElse` whose `cond` is a literal `Bool` directly to
+//! the surviving branch. Trivially correct: when the condition
+//! is `Literal(Bool(true))` only the `then_branch` ever
+//! evaluates; same logic for `false` and the `else_branch`.
+//!
+//! Composes naturally with const-fold: a folded comparison
+//! (`Literal(5) == Literal(5)` → `Literal(true)`) feeds into
+//! the surrounding `IfThenElse` and lets this pass drop the
+//! dead branch on the next sweep.
+//!
 //! ## Wave 8 — algebraic identities
 //!
 //! Rewrite `BinOp` / `Neg` shapes whose result is determined by
@@ -1142,6 +1156,138 @@ fn bool_match_walk_children(node: &mut MirExpr) {
     }
 }
 
+/// Wave 10 — collapse `IfThenElse` whose `cond` is a literal
+/// `Bool` directly to the surviving branch. Composes with
+/// const-fold: a folded comparison feeds into the surrounding
+/// `IfThenElse` and lets this pass drop the dead branch.
+pub fn branch_collapse(mut program: MirProgram) -> MirProgram {
+    for mir_fn in program.fns.values_mut() {
+        branch_collapse_in_place(&mut mir_fn.body);
+    }
+    program
+}
+
+fn branch_collapse_in_place(expr: &mut Spanned<MirExpr>) {
+    branch_collapse_walk_children(&mut expr.node);
+
+    let collapse = if let MirExpr::IfThenElse(spanned_ite) = &expr.node {
+        let ite = &spanned_ite.node;
+        if let MirExpr::Literal(spanned_lit) = &ite.cond.node {
+            match &spanned_lit.node {
+                Literal::Bool(true) => Some(BranchSide::Then),
+                Literal::Bool(false) => Some(BranchSide::Else),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(side) = collapse {
+        let placeholder = MirExpr::Literal(Spanned {
+            node: Literal::Unit,
+            line: expr.line,
+            ty: std::sync::OnceLock::new(),
+        });
+        let original = std::mem::replace(&mut expr.node, placeholder);
+        if let MirExpr::IfThenElse(spanned_ite) = original {
+            let ite = spanned_ite.node;
+            let surviving = match side {
+                BranchSide::Then => *ite.then_branch,
+                BranchSide::Else => *ite.else_branch,
+            };
+            *expr = surviving;
+        } else {
+            unreachable!("collapse only set inside the IfThenElse branch")
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BranchSide {
+    Then,
+    Else,
+}
+
+fn branch_collapse_walk_children(node: &mut MirExpr) {
+    match node {
+        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Neg(inner) => branch_collapse_in_place(inner),
+        MirExpr::BinOp(spanned_bop) => {
+            branch_collapse_in_place(&mut spanned_bop.node.lhs);
+            branch_collapse_in_place(&mut spanned_bop.node.rhs);
+        }
+        MirExpr::Let(spanned_let) => {
+            branch_collapse_in_place(&mut spanned_let.node.value);
+            branch_collapse_in_place(&mut spanned_let.node.body);
+        }
+        MirExpr::Call(spanned_call) => {
+            for arg in &mut spanned_call.node.args {
+                branch_collapse_in_place(arg);
+            }
+        }
+        MirExpr::TailCall(spanned_tc) => {
+            for arg in &mut spanned_tc.node.args {
+                branch_collapse_in_place(arg);
+            }
+        }
+        MirExpr::Match(spanned_match) => {
+            branch_collapse_in_place(&mut spanned_match.node.subject);
+            for arm in &mut spanned_match.node.arms {
+                branch_collapse_in_place(&mut arm.body);
+            }
+        }
+        MirExpr::IfThenElse(spanned_ite) => {
+            branch_collapse_in_place(&mut spanned_ite.node.cond);
+            branch_collapse_in_place(&mut spanned_ite.node.then_branch);
+            branch_collapse_in_place(&mut spanned_ite.node.else_branch);
+        }
+        MirExpr::Construct(spanned_ctor) => {
+            for arg in &mut spanned_ctor.node.args {
+                branch_collapse_in_place(arg);
+            }
+        }
+        MirExpr::RecordCreate(spanned_rec) => {
+            for f in &mut spanned_rec.node.fields {
+                branch_collapse_in_place(&mut f.value);
+            }
+        }
+        MirExpr::RecordUpdate(spanned_upd) => {
+            branch_collapse_in_place(&mut spanned_upd.node.base);
+            for f in &mut spanned_upd.node.updates {
+                branch_collapse_in_place(&mut f.value);
+            }
+        }
+        MirExpr::Project(spanned_proj) => branch_collapse_in_place(&mut spanned_proj.node.base),
+        MirExpr::Try(inner) | MirExpr::Return(inner) => branch_collapse_in_place(inner),
+        MirExpr::List(items) | MirExpr::Tuple(items) => {
+            for item in items {
+                branch_collapse_in_place(item);
+            }
+        }
+        MirExpr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                branch_collapse_in_place(k);
+                branch_collapse_in_place(v);
+            }
+        }
+        MirExpr::InterpolatedStr(parts) => {
+            for part in parts {
+                if let super::expr::MirStrPart::Expr(e) = part {
+                    branch_collapse_in_place(e);
+                }
+            }
+        }
+        MirExpr::IndependentProduct(spanned_ip) => {
+            for item in &mut spanned_ip.node.items {
+                branch_collapse_in_place(item);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1865,6 +2011,107 @@ mod tests {
         assert!(
             matches!(body_of(&rewritten), MirExpr::Match(_)),
             "non-Bool literal pattern should not trigger the rewrite"
+        );
+    }
+
+    // ── Phase 6 wave 10: branch collapse ──────────────────
+
+    fn ite_program(cond: MirExpr, then_b: MirExpr, else_b: MirExpr) -> MirProgram {
+        let ite = super::super::expr::MirIfThenElse {
+            cond: Box::new(span(cond)),
+            then_branch: Box::new(span(then_b)),
+            else_branch: Box::new(span(else_b)),
+        };
+        one_fn_program(MirExpr::IfThenElse(span(ite)))
+    }
+
+    #[test]
+    fn branch_collapse_keeps_then_when_cond_is_true() {
+        let collapsed = branch_collapse(ite_program(
+            MirExpr::Literal(span(Literal::Bool(true))),
+            MirExpr::Literal(span(Literal::Int(1))),
+            MirExpr::Literal(span(Literal::Int(2))),
+        ));
+        assert!(
+            matches!(body_of(&collapsed), MirExpr::Literal(s) if matches!(s.node, Literal::Int(1))),
+            "true cond should collapse to then branch"
+        );
+    }
+
+    #[test]
+    fn branch_collapse_keeps_else_when_cond_is_false() {
+        let collapsed = branch_collapse(ite_program(
+            MirExpr::Literal(span(Literal::Bool(false))),
+            MirExpr::Literal(span(Literal::Int(1))),
+            MirExpr::Literal(span(Literal::Int(2))),
+        ));
+        assert!(
+            matches!(body_of(&collapsed), MirExpr::Literal(s) if matches!(s.node, Literal::Int(2))),
+            "false cond should collapse to else branch"
+        );
+    }
+
+    #[test]
+    fn branch_collapse_leaves_symbolic_cond_intact() {
+        use super::super::expr::MirLocal;
+        use super::super::program::LocalId;
+        let collapsed = branch_collapse(ite_program(
+            MirExpr::Local(span(MirLocal::at(LocalId(0)))),
+            MirExpr::Literal(span(Literal::Int(1))),
+            MirExpr::Literal(span(Literal::Int(2))),
+        ));
+        assert!(
+            matches!(body_of(&collapsed), MirExpr::IfThenElse(_)),
+            "symbolic cond must stay an IfThenElse"
+        );
+    }
+
+    #[test]
+    fn pipeline_const_fold_then_branch_collapse() {
+        // `if (5 == 5) { 1 } else { 2 }`
+        //  const-fold → `if true { 1 } else { 2 }`
+        //  branch-collapse → `1`
+        let cond = MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Eq,
+            lhs: Box::new(span(MirExpr::Literal(span(Literal::Int(5))))),
+            rhs: Box::new(span(MirExpr::Literal(span(Literal::Int(5))))),
+        }));
+        let p = ite_program(
+            cond,
+            MirExpr::Literal(span(Literal::Int(1))),
+            MirExpr::Literal(span(Literal::Int(2))),
+        );
+        let optimized = branch_collapse(const_fold(p));
+        assert!(
+            matches!(body_of(&optimized), MirExpr::Literal(s) if matches!(s.node, Literal::Int(1))),
+            "fold→collapse should reduce the whole IfThenElse to literal 1"
+        );
+    }
+
+    #[test]
+    fn pipeline_bool_match_to_if_then_branch_collapse() {
+        // match true { true → 1; false → 2 }
+        //  bool_match_to_if → if true { 1 } else { 2 }
+        //  branch_collapse  → 1
+        use super::super::expr::MirMatch;
+        let arms = vec![
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(true)),
+                body: span(MirExpr::Literal(span(Literal::Int(1)))),
+            },
+            MirMatchArm {
+                pattern: MirPattern::Literal(Literal::Bool(false)),
+                body: span(MirExpr::Literal(span(Literal::Int(2)))),
+            },
+        ];
+        let m = MirExpr::Match(span(MirMatch {
+            subject: Box::new(span(MirExpr::Literal(span(Literal::Bool(true))))),
+            arms,
+        }));
+        let optimized = branch_collapse(bool_match_to_if(one_fn_program(m)));
+        assert!(
+            matches!(body_of(&optimized), MirExpr::Literal(s) if matches!(s.node, Literal::Int(1))),
+            "match true (true=>1, false=>2) should collapse to 1 through the full chain"
         );
     }
 }

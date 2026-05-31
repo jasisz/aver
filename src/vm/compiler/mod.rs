@@ -100,24 +100,25 @@ pub fn compile_program_with_mir_fallback(
     arena: &mut Arena,
     analysis: Option<&crate::ir::AnalysisResult>,
 ) -> Result<(CodeStore, Vec<NanValue>), CompileError> {
-    // Phase 6 wave 5–9: optimize pipeline on the lowered MIR
+    // Phase 6 wave 5–10: optimize pipeline on the lowered MIR
     // before the VM walker consumes it. Order is deliberate:
     // (1) nullary-literal inlining unlocks call-site literals,
     // (2) const-fold collapses literal arithmetic,
     // (3) algebraic-simplify rewrites Int identities
-    //     (`x + 0` / `x * 1` / `Neg(Neg(x))`) that const-fold
-    //     leaves symbolic (no two-literal pattern to collapse),
+    //     (`x + 0` / `x * 1` / `Neg(Neg(x))`),
     // (4) bool-match-to-if rewrites qualifying two-arm `Bool`
-    //     match expressions into `IfThenElse` so backends get
-    //     a uniform conditional shape instead of re-implementing
-    //     the recognition (HIR's `try_emit_bool_if_else`),
-    // (5) DCE drops `let _ = <pure>; body` chains where the
+    //     match expressions into `IfThenElse`,
+    // (5) branch-collapse drops the dead branch of an
+    //     `IfThenElse` whose `cond` folded to a literal `Bool`,
+    // (6) DCE drops `let _ = <pure>; body` chains where the
     //     binding was never read.
     // Each pass is a `MirProgram → MirProgram` pure function;
     // future passes plug in by extending the chain.
-    let mir = crate::ir::mir::dead_code(crate::ir::mir::bool_match_to_if(
-        crate::ir::mir::algebraic_simplify(crate::ir::mir::const_fold(
-            crate::ir::mir::inline_nullary_literals(crate::ir::mir::lower_program(items)),
+    let mir = crate::ir::mir::dead_code(crate::ir::mir::branch_collapse(
+        crate::ir::mir::bool_match_to_if(crate::ir::mir::algebraic_simplify(
+            crate::ir::mir::const_fold(crate::ir::mir::inline_nullary_literals(
+                crate::ir::mir::lower_program(items),
+            )),
         )),
     ));
     compile_program_inner(
