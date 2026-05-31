@@ -388,7 +388,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // — HIR hardcodes the rename. The walker bounces so
             // HIR handles it.
             let rec = &spanned_rec.node;
-            let entry = emit_ctx.symbol_table.type_entry(rec.type_id);
+            // Built-in records (no user `TypeId`) ride the HIR walker.
+            let type_id = rec.type_id?;
+            let entry = emit_ctx.symbol_table.type_entry(type_id);
             if entry.key.canonical() == "Tcp.Connection" {
                 return None;
             }
@@ -405,7 +407,9 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // `{type_name} { field: value, …, ..base }`. Same
             // bare-name + Tcp.Connection gating as RecordCreate.
             let upd = &spanned_upd.node;
-            let entry = emit_ctx.symbol_table.type_entry(upd.type_id);
+            // Built-in records (no user `TypeId`) ride the HIR walker.
+            let type_id = upd.type_id?;
+            let entry = emit_ctx.symbol_table.type_entry(type_id);
             if entry.key.canonical() == "Tcp.Connection" {
                 return None;
             }
@@ -686,7 +690,8 @@ mod tests {
             value: span(MirExpr::Literal(span(crate::ast::Literal::Int(2)))),
         };
         let rec = crate::ir::mir::MirRecordCreate {
-            type_id: crate::ir::TypeId(0),
+            type_id: Some(crate::ir::TypeId(0)),
+            type_name: "Test".to_string(),
             fields: vec![field_x, field_y],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
@@ -704,7 +709,8 @@ mod tests {
         // `Tcp_Connection`) — the walker bounces so HIR
         // handles the rename.
         let rec = crate::ir::mir::MirRecordCreate {
-            type_id: crate::ir::TypeId(0),
+            type_id: Some(crate::ir::TypeId(0)),
+            type_name: "Test".to_string(),
             fields: vec![],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
@@ -726,7 +732,8 @@ mod tests {
             value: span(MirExpr::Literal(span(crate::ast::Literal::Int(1)))),
         };
         let rec = crate::ir::mir::MirRecordCreate {
-            type_id: crate::ir::TypeId(0),
+            type_id: Some(crate::ir::TypeId(0)),
+            type_name: "Test".to_string(),
             fields: vec![field],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
@@ -764,7 +771,8 @@ mod tests {
         };
         let upd = crate::ir::mir::MirRecordUpdate {
             base: Box::new(span(MirExpr::Local(span(base)))),
-            type_id: crate::ir::TypeId(0),
+            type_id: Some(crate::ir::TypeId(0)),
+            type_name: "Test".to_string(),
             updates: vec![update],
         };
         let expr = span(MirExpr::RecordUpdate(span(upd)));

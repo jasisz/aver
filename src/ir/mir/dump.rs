@@ -261,7 +261,10 @@ fn write_record_create(
     r: &MirRecordCreate,
     indent: &str,
 ) -> fmt::Result {
-    write!(f, "TypeId({}) {{ ", r.type_id.0)?;
+    match r.type_id {
+        Some(id) => write!(f, "TypeId({}) {{ ", id.0)?,
+        None => write!(f, "{} {{ ", r.type_name)?,
+    }
     write_fields(f, &r.fields, indent)?;
     write!(f, " }}")
 }
@@ -271,7 +274,10 @@ fn write_record_update(
     r: &MirRecordUpdate,
     indent: &str,
 ) -> fmt::Result {
-    write!(f, "TypeId({}).update(", r.type_id.0)?;
+    match r.type_id {
+        Some(id) => write!(f, "TypeId({}).update(", id.0)?,
+        None => write!(f, "{}.update(", r.type_name)?,
+    }
     write_expr(f, &r.base, indent)?;
     write!(f, ", ")?;
     write_fields(f, &r.updates, indent)?;
