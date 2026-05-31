@@ -33,12 +33,15 @@
 //!   threading), Project, RecordCreate ✅ (partial)
 //! - wave 4a: Let ✅ (this PR — uses foundation #293
 //!   `MirLet.binding_name` to emit block-expr `{ let x = …; … }`)
-//! - wave 4b: Match (the big one, like Phase 4g for the VM) +
-//!   User-ctor Construct (needs `&CodegenContext` threading
-//!   for module-path resolution and boxed-position lookups)
-//! - wave 4c: RecordCreate / RecordUpdate ✅ (this PR — module-
-//!   unscoped record types via bare `key.name`; module-scoped
-//!   records fall back to HIR until wave 4b)
+//! - wave 4b: `MirEmitCtx` foundation ✅ (walker's explicit
+//!   dependency surface — `symbol_table` + `module_prefixes`)
+//! - wave 4c: RecordCreate / RecordUpdate (module-unscoped) ✅
+//! - wave 4d: User-ctor Construct + dep-module records ✅
+//!   (this PR — uses `module_prefixes` + `module_prefix_to_rust_path`
+//!   to mirror HIR's `emit_type_constructor_call`; `Tcp.Connection`
+//!   special-case bounces to HIR)
+//! - wave 4e: Match (the remaining big one — dispatch_plan
+//!   reproduction + `is_borrowed_param` field on `MirEmitCtx`)
 //! - wave 5: Try / Tuple / List ✅ (`?` propagation + plain
 //!   tuple / list literals reusing recursive walker)
 //! - wave 6: Map literal ✅ (`HashMap::new()` /
@@ -59,6 +62,7 @@ use std::collections::HashSet;
 
 use crate::ast::{BinOp, Spanned, Type};
 use crate::codegen::CodegenContext;
+use crate::codegen::common::module_prefix_to_rust_path;
 use crate::ir::SymbolTable;
 use crate::ir::hir::BuiltinCtor;
 use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirProgram};
@@ -362,20 +366,21 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             Some(format!("{}.{}", base, aver_name_to_rust(&proj.field)))
         }
         MirExpr::RecordCreate(spanned_rec) => {
-            // Phase 5 wave 4c: `T { field = v, … }` record literal.
+            // Phase 5 wave 4d: `T { field = v, … }` record literal.
             // Mirror of HIR's `ResolvedExpr::RecordCreate` emit
-            // shape — `{type_name} { field: value, … }`. Uses
-            // bare `key.name` (not canonical) so the walker can
-            // resolve without `CodegenContext`'s
-            // `resolve_module_call` chain. Module-scoped record
-            // types (e.g. `Tcp.Connection` → `Tcp_Connection`)
-            // need ctx threading — until wave 4b's sig change
-            // lands, the walker returns `None` whenever the
-            // type's `key.scope` is non-empty so the HIR walker
-            // handles the prefix rewrite.
+            // shape — `{type_name} { field: value, … }`. HIR
+            // reads the source-level `type_name` string which
+            // is always the bare ident the user typed (resolver
+            // doesn't dot-prefix it); we mirror that by emitting
+            // `entry.key.name` regardless of `scope`.
+            //
+            // One special-case: `Tcp.Connection` is a runtime-
+            // re-exported struct (`pub use … as Tcp_Connection`)
+            // — HIR hardcodes the rename. The walker bounces so
+            // HIR handles it.
             let rec = &spanned_rec.node;
             let entry = emit_ctx.symbol_table.type_entry(rec.type_id);
-            if entry.key.scope_str().is_some() {
+            if entry.key.canonical() == "Tcp.Connection" {
                 return None;
             }
             let type_name = entry.key.name.clone();
@@ -387,12 +392,12 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             Some(format!("{} {{ {} }}", type_name, parts.join(", ")))
         }
         MirExpr::RecordUpdate(spanned_upd) => {
-            // Phase 5 wave 4c: `T.update(base, field = v, …)`
-            // → `{type_name} { field: value, …, ..base }`.
-            // Same module-scope gating as RecordCreate above.
+            // Phase 5 wave 4d: `T.update(base, field = v, …)` →
+            // `{type_name} { field: value, …, ..base }`. Same
+            // bare-name + Tcp.Connection gating as RecordCreate.
             let upd = &spanned_upd.node;
             let entry = emit_ctx.symbol_table.type_entry(upd.type_id);
-            if entry.key.scope_str().is_some() {
+            if entry.key.canonical() == "Tcp.Connection" {
                 return None;
             }
             let type_name = entry.key.name.clone();
@@ -410,11 +415,16 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             ))
         }
         MirExpr::Construct(spanned_ctor) => {
-            // Phase 5 wave 3: built-in ctor variants only. User
-            // ctors need `CodegenContext` (boxed_positions +
-            // resolve_module_call) for `Module::Type::Variant`
-            // path mangling — falls back to HIR until wave 4
-            // threads the context through.
+            // Phase 5 wave 3 + 4d: built-in ctors emit Result /
+            // Option wrappers; user ctors resolve through the
+            // symbol table for module-qualified path mangling.
+            //
+            // Boxed-position handling (recursive-field wrapping
+            // in `std::sync::Arc::new`) is HIR-only — the walker
+            // emits raw args, so recursive types would diverge
+            // from HIR's output. That's tolerated until wire-up
+            // adds a parity check; the coverage diagnostic
+            // reports `Some` either way.
             let con = &spanned_ctor.node;
             match con.ctor {
                 MirCtor::Builtin(builtin) => {
@@ -434,7 +444,31 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     }
                     Some(format!("{}({})", name, args.join(", ")))
                 }
-                MirCtor::User(_) => None,
+                MirCtor::User(ctor_id) => {
+                    // Phase 5 wave 4d: resolve `CtorId` → owning
+                    // type → variant name via the symbol table,
+                    // then route the qualified type name through
+                    // `resolve_module_call` for module-path
+                    // mangling. Mirror of HIR's
+                    // `emit_type_constructor_call`.
+                    let ctor_entry = emit_ctx.symbol_table.ctor_entry(ctor_id);
+                    let variant_name = ctor_entry.name.clone();
+                    let type_entry = emit_ctx.symbol_table.type_entry(ctor_entry.owning_type);
+                    let qualified = type_entry.key.canonical();
+                    let mut args = Vec::with_capacity(con.args.len());
+                    for a in &con.args {
+                        args.push(emit_mir_expr(a, emit_ctx)?);
+                    }
+                    let args_str = args.join(", ");
+                    let head = if let Some((prefix, suffix)) =
+                        resolve_module_call(&qualified, emit_ctx.module_prefixes)
+                    {
+                        format!("{}::{}", module_prefix_to_rust_path(prefix), suffix)
+                    } else {
+                        qualified
+                    };
+                    Some(format!("{}::{}({})", head, variant_name, args_str))
+                }
             }
         }
         _ => None,
@@ -641,23 +675,56 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_for_module_scoped_record() {
-        // Phase 5 wave 4c: module-scoped record (e.g.
-        // `Tcp.Connection`) needs ctx threading for the
-        // `Tcp_Connection` prefix rewrite — walker bounces.
+    fn returns_none_for_tcp_connection_record() {
+        // Phase 5 wave 4d: `Tcp.Connection` is the lone
+        // hardcoded special-case in HIR (re-exported as
+        // `Tcp_Connection`) — the walker bounces so HIR
+        // handles the rename.
         let rec = crate::ir::mir::MirRecordCreate {
             type_id: crate::ir::TypeId(0),
             fields: vec![],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
         let st = symbols_with_one_type("Connection", true);
-        // No `Tcp` registered in module_prefixes — walker
-        // can't translate `Tcp.Connection` and bounces. With
-        // `Tcp` registered the walker resolves it (see
-        // `emits_record_create_scoped_via_module_prefix`).
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         assert!(emit_mir_expr(&expr, &ctx).is_none());
+    }
+
+    #[test]
+    fn emits_record_create_dep_module_as_bare_name() {
+        // Phase 5 wave 4d: a dep-module record (e.g.
+        // `ast.Expr` resolving to scope=`ast`, name=`Expr`)
+        // emits the bare `Expr { … }` — the consumer module's
+        // import statement makes `Expr` resolve correctly,
+        // mirror of HIR's source-name-passthrough.
+        let field = crate::ir::mir::MirRecordField {
+            name: "tag".to_string(),
+            value: span(MirExpr::Literal(span(crate::ast::Literal::Int(1)))),
+        };
+        let rec = crate::ir::mir::MirRecordCreate {
+            type_id: crate::ir::TypeId(0),
+            fields: vec![field],
+        };
+        let expr = span(MirExpr::RecordCreate(span(rec)));
+        // Scoped under `ast`, but `Tcp.Connection` ≠ canonical
+        // so it doesn't hit the bounce.
+        use crate::ir::ModuleId;
+        use crate::ir::identity::TypeKey;
+        use crate::ir::symbol_table::{ModuleEntry, TypeEntry};
+        let mut st = SymbolTable::default();
+        st.modules.push(ModuleEntry { prefix: None });
+        st.types.push(TypeEntry {
+            key: TypeKey::in_module("ast", "Expr"),
+            module: ModuleId(0),
+            index_in_module: 0,
+            variants: vec![],
+            is_product: true,
+        });
+        let prefixes = HashSet::new();
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        let emit = emit_mir_expr(&expr, &ctx).expect("dep-module record should emit");
+        assert_eq!(emit, "Expr { tag: 1i64 }");
     }
 
     #[test]
@@ -872,17 +939,69 @@ mod tests {
         assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
     }
 
+    /// Build a symbol table holding one type + one variant ctor.
+    /// `scope_prefix == Some("foo")` for module-scoped types.
+    fn symbols_with_one_user_ctor(
+        scope_prefix: Option<&str>,
+        type_name: &str,
+        variant_name: &str,
+    ) -> SymbolTable {
+        use crate::ir::ModuleId;
+        use crate::ir::identity::TypeKey;
+        use crate::ir::symbol_table::{CtorEntry, ModuleEntry, TypeEntry};
+        let mut st = SymbolTable::default();
+        st.modules.push(ModuleEntry { prefix: None });
+        let key = match scope_prefix {
+            Some(p) => TypeKey::in_module(p, type_name),
+            None => TypeKey::entry(type_name),
+        };
+        st.types.push(TypeEntry {
+            key,
+            module: ModuleId(0),
+            index_in_module: 0,
+            variants: vec![crate::ir::CtorId(0)],
+            is_product: false,
+        });
+        st.ctors.push(CtorEntry {
+            owning_type: crate::ir::TypeId(0),
+            name: variant_name.to_string(),
+        });
+        st
+    }
+
     #[test]
-    fn returns_none_for_user_ctor() {
-        // Phase 5 wave 3: User ctors need CodegenContext for
-        // boxed_positions + module path resolution. Falls back
-        // to HIR until wave 4.
-        use crate::ir::CtorId;
+    fn emits_user_ctor_unscoped() {
+        // Phase 5 wave 4d: `Shape.Circle(r)` (bare type) →
+        // `Shape::Circle(r)`.
+        let arg = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let con = crate::ir::mir::MirConstruct {
-            ctor: MirCtor::User(CtorId(0)),
-            args: vec![],
+            ctor: MirCtor::User(crate::ir::CtorId(0)),
+            args: vec![arg],
         };
         let expr = span(MirExpr::Construct(span(con)));
-        assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
+        let st = symbols_with_one_user_ctor(None, "Shape", "Circle");
+        let prefixes = HashSet::new();
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        let emit = emit_mir_expr(&expr, &ctx).expect("user ctor should emit");
+        assert_eq!(emit, "Shape::Circle(7i64)");
+    }
+
+    #[test]
+    fn emits_user_ctor_scoped_via_module_prefix() {
+        // Phase 5 wave 4d: dep-module ctor resolved through
+        // `module_prefixes` + `module_prefix_to_rust_path`.
+        // `ast.Expr.App(x)` → `crate::aver_generated::ast::Expr::App(x)`.
+        let arg = span(MirExpr::Literal(span(crate::ast::Literal::Int(1))));
+        let con = crate::ir::mir::MirConstruct {
+            ctor: MirCtor::User(crate::ir::CtorId(0)),
+            args: vec![arg],
+        };
+        let expr = span(MirExpr::Construct(span(con)));
+        let st = symbols_with_one_user_ctor(Some("ast"), "Expr", "App");
+        let mut prefixes = HashSet::new();
+        prefixes.insert("ast".to_string());
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        let emit = emit_mir_expr(&expr, &ctx).expect("scoped user ctor should emit");
+        assert_eq!(emit, "crate::aver_generated::ast::Expr::App(1i64)");
     }
 }
