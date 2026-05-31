@@ -660,6 +660,17 @@ fn lower_stmt_chain(
     // around the accumulating `body`.
     for stmt in rest.iter().rev() {
         let (binding, binding_name, value_expr) = match stmt {
+            ResolvedStmt::Binding { name, value, .. } if name == "_" => {
+                // Discard binding `_ = effect()?` — the idiomatic "run an
+                // effect, drop the Ok, continue" form. The resolver
+                // assigns `_` no slot (it returns `u16::MAX` and never
+                // inserts it), so there's nothing to look up. Evaluate the
+                // value for its effects under a fresh synthetic slot the
+                // body never reads, exactly as a non-tail `Stmt::Expr`.
+                let fresh = LocalId(*next_synthetic_local);
+                *next_synthetic_local += 1;
+                (fresh, String::new(), value)
+            }
             ResolvedStmt::Binding { name, value, .. } => {
                 let slot = *resolution
                     .local_slots
