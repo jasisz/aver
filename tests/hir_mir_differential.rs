@@ -202,6 +202,24 @@ fn newtype_specialization() {
 }
 
 #[test]
+fn nullary_ctor_value_position() {
+    // `Option.None` and a nullary user variant (`Color.Black`) used in
+    // value position (as arguments / bindings), not called. The resolver
+    // now lowers these to the zero-arg `Ctor` shape; both walkers must
+    // emit the same thing (LOAD_CONST NONE / VARIANT_NEW no-fields).
+    let src = prog(
+        "type Color\n  Black\n  White\n\n\
+         fn ci(c: Color) -> Int\n    \
+         match c\n        Color.Black -> 10\n        Color.White -> 20\n\n\
+         fn oi(o: Option<Int>) -> Int\n    \
+         match o\n        Option.None -> 0\n        Option.Some(n) -> n\n\n\
+         fn run() -> Int\n    \
+         ci(Color.Black) + ci(Color.White) + oi(Option.None) + oi(Option.Some(5))\n",
+    );
+    assert_parity("nullary_ctor", &src, "run");
+}
+
+#[test]
 fn string_interpolation_buffer_intrinsics() {
     // Interpolation chains lower (via `interp_lower` deforestation) to
     // the synthesized buffer intrinsics (`__buf_new` / `__buf_append` /

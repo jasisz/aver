@@ -94,18 +94,19 @@ fn lowers_neg_over_int_literal() {
 
 #[test]
 fn drops_unsupported_fn_silently() {
-    // Bare nullary builtin ctor `Option.None` in value position
-    // lowers to `Attr(Ident("Option"), "None")` (resolver gap),
-    // which the MIR lowerer bounces with `UnresolvedIdent`. The
-    // lowerer must not panic; it just leaves the fn out.
+    // A first-class-fn call (`f(x)` where `f` is a `Fn(..)` param)
+    // lowers to a `LocalSlot` callee, which the MIR lowerer bounces
+    // with `UnsupportedCallee` — closures / first-class fns are the
+    // remaining un-lowered shape. The lowerer must not panic; it just
+    // leaves the fn out.
     //
-    // Previously the test used a list literal — wave 3c-iv now
-    // lowers those, so the fixture was repurposed to a still-
-    // dropped shape.
-    let dump = lower("fn nothing() -> Option<Int>\n    Option.None\n");
+    // The fixture was previously a list literal, then `Option.None` —
+    // both lower now (wave 3c-iv / the nullary-ctor-in-value-position
+    // resolver fix). First-class fns are what's left.
+    let dump = lower("fn nothing(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\n");
     assert!(
         !dump.contains("fn nothing"),
-        "fn referencing the bare-nullary-ctor resolver gap shouldn't lower:\n{dump}"
+        "fn calling a first-class-fn param shouldn't lower yet:\n{dump}"
     );
 }
 

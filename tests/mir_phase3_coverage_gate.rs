@@ -38,19 +38,18 @@ fn lower_stats(source: &str) -> aver::ir::mir::LowerStats {
 
 #[test]
 fn conservation_lowered_plus_skipped_equals_total() {
-    // Mix of one wave-1 supported fn and one fn that drops on
-    // the still-reachable resolver gap for bare nullary
-    // builtin ctors in value position (`Option.None`). The
-    // typechecker accepts `Option.None` as a known builtin
-    // value, but the resolver lowers it to
-    // `Attr(Ident("Option"), "None")`, which the MIR lowerer
-    // bounces with `UnresolvedIdent`. Total fns seen = 2;
-    // every fn accounted for in `lowered` or `skipped`.
+    // Mix of one wave-1 supported fn and one fn that still drops:
+    // a first-class-fn call (`f(x)` where `f` is a `Fn(..)` param)
+    // lowers to a `LocalSlot` callee, which the MIR lowerer bounces
+    // with `UnsupportedCallee` — closures / first-class fns are the
+    // remaining un-lowered shape. Total fns seen = 2; every fn
+    // accounted for in `lowered` or `skipped`.
     //
-    // List / Tuple / Map / Result.Ok no longer work as drop
-    // fixtures here — wave 3c lowered all of them.
+    // List / Tuple / Map / Result.Ok / interpolation / nullary-ctor-
+    // in-value-position (`Option.None`) no longer work as drop
+    // fixtures here — they all lower now.
     let stats = lower_stats(
-        "fn keep(x: Int) -> Int\n    x + 1\n\nfn drops_me() -> Option<Int>\n    Option.None\n",
+        "fn keep(x: Int) -> Int\n    x + 1\n\nfn drops_me(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\n",
     );
     assert_eq!(
         stats.total(),
@@ -135,12 +134,13 @@ fn wave_3c_iv_tuple_literal_no_longer_drops() {
 
 #[test]
 fn skipped_sorted_is_stable() {
-    // Two distinct skips via in-bounds reasons that *still* fire
-    // — two fns with unresolved bare idents (resolver gap) and an
-    // empty body (defensive guard). Both reasons reachable from
-    // the lowerer; sorted iteration follows `SkipReason as u8`.
+    // Skips that *still* fire after wave 3c + intrinsic + nullary-ctor
+    // lowering — two fns calling a first-class-fn param (`LocalSlot`
+    // callee → `UnsupportedCallee`). Sorted iteration follows
+    // `SkipReason as u8`; a single reason is trivially monotonic, and
+    // the map stays non-empty.
     let stats = lower_stats(
-        "fn a() -> Option<Int>\n    Option.None\n\nfn b() -> Option<Int>\n    Option.None\n",
+        "fn a(f: Fn(Int) -> Int, x: Int) -> Int\n    f(x)\n\nfn b(g: Fn(Int) -> Int, y: Int) -> Int\n    g(y)\n",
     );
     let sorted = stats.skipped_sorted();
     assert!(
