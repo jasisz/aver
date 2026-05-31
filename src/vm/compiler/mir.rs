@@ -174,6 +174,18 @@ pub(super) fn compile_mir_expr(
                     let name = fc.mir_program.map(|p| p.builtin_name(*id)).unwrap_or("");
                     let builtin =
                         lookup_vm_builtin(name).ok_or(MirVmUnsupported::UnsupportedCallee)?;
+                    // Compound leaf-op recognition — parity with the HIR
+                    // walker's fused VECTOR_GET_OR / VECTOR_SET_OR_KEEP.
+                    // Without it `Option.withDefault(Vector.set(v, i, x), v)`
+                    // emits a generic VECTOR_SET + UNWRAP_OR pair that
+                    // allocates the intermediate `Option<Vector>` and skips
+                    // the in-place mutate / OOB-keep fast path (~+25% on the
+                    // vector_ops accumulator loop once MIR became the default).
+                    if builtin == VmBuiltin::OptionWithDefault
+                        && try_emit_vector_compound(fc, args)?
+                    {
+                        return Ok(());
+                    }
                     for arg in args {
                         compile_mir_expr(fc, arg)?;
                     }
@@ -1258,6 +1270,88 @@ where
     let outer_fail = fc.emit_jump(JUMP);
     fc.patch_jump(success_skip);
     Ok(vec![outer_fail])
+}
+
+/// Extract `(slot, last_use)` if `expr` is a bare local read.
+fn mir_local_slot_last_use(expr: &MirExpr) -> Option<(u32, bool)> {
+    match expr {
+        MirExpr::Local(l) => Some((l.node.slot.0, l.node.last_use)),
+        _ => None,
+    }
+}
+
+/// Recognize the two fused vector compound shapes the HIR walker emits
+/// as single opcodes, and emit the same opcode from MIR so the
+/// VM-default path keeps the in-place / no-`Option`-alloc fast path:
+///
+/// - `Option.withDefault(Vector.set(v, i, x), v)` (same `v`) →
+///   `VECTOR_SET_OR_KEEP`. `owned` mirrors the HIR rule: last use of the
+///   inner vector slot AND the slot is not alias-prone.
+/// - `Option.withDefault(Vector.get(v, i), <literal>)` → `VECTOR_GET_OR`
+///   with the literal default inlined as a constant.
+///
+/// Returns `Ok(true)` when it emitted a fused op; `Ok(false)` leaves the
+/// generic `UNWRAP_OR` path to the caller.
+fn try_emit_vector_compound(
+    fc: &mut FnCompiler<'_>,
+    args: &[Spanned<MirExpr>],
+) -> Result<bool, MirVmUnsupported> {
+    if args.len() != 2 {
+        return Ok(false);
+    }
+    let MirExpr::Call(inner_call) = &args[0].node else {
+        return Ok(false);
+    };
+    let MirCall {
+        callee: MirCallee::Builtin(inner_id),
+        args: inner_args,
+    } = &inner_call.node
+    else {
+        return Ok(false);
+    };
+    let inner_name = fc
+        .mir_program
+        .map(|p| p.builtin_name(*inner_id))
+        .unwrap_or("");
+    match lookup_vm_builtin(inner_name) {
+        Some(VmBuiltin::VectorSet) if inner_args.len() == 3 => {
+            // The default must be the same vector the set targets —
+            // compared by slot, since the two reads carry different
+            // last-use bits and a structural compare would miss it.
+            let vec = mir_local_slot_last_use(&inner_args[0].node);
+            let def = mir_local_slot_last_use(&args[1].node);
+            let (Some((vec_slot, _)), Some((def_slot, _))) = (vec, def) else {
+                return Ok(false);
+            };
+            if vec_slot != def_slot {
+                return Ok(false);
+            }
+            // Mirror the HIR walker: `owned` keys off the INNER vector
+            // occurrence's last-use flag and the slot's alias status.
+            let owned = vec
+                .map(|(slot, last_use)| last_use && !fc.is_aliased_slot(slot as u16))
+                .unwrap_or(false);
+            compile_mir_expr(fc, &inner_args[0])?;
+            compile_mir_expr(fc, &inner_args[1])?;
+            compile_mir_expr(fc, &inner_args[2])?;
+            fc.emit_op(VECTOR_SET_OR_KEEP);
+            fc.emit_u8(u8::from(owned));
+            Ok(true)
+        }
+        Some(VmBuiltin::VectorGet) if inner_args.len() == 2 => {
+            let MirExpr::Literal(lit) = &args[1].node else {
+                return Ok(false);
+            };
+            compile_mir_expr(fc, &inner_args[0])?;
+            compile_mir_expr(fc, &inner_args[1])?;
+            let default_value = fc.nan_literal(&lit.node);
+            let const_idx = fc.add_constant(default_value);
+            fc.emit_op(VECTOR_GET_OR);
+            fc.emit_u16(const_idx);
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Phase 6 wave 4 — derive `owned_mask` for a call's args.

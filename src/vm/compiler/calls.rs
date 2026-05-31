@@ -705,7 +705,7 @@ impl<'a> FnCompiler<'a> {
         mask
     }
 
-    fn nan_literal(&mut self, lit: &Literal) -> NanValue {
+    pub(super) fn nan_literal(&mut self, lit: &Literal) -> NanValue {
         match lit {
             Literal::Int(i) => NanValue::new_int(*i, self.arena),
             Literal::Float(f) => NanValue::new_float(*f),
