@@ -34,8 +34,11 @@
 //! - wave 4a: Let ✅ (this PR — uses foundation #293
 //!   `MirLet.binding_name` to emit block-expr `{ let x = …; … }`)
 //! - wave 4b: Match (the big one, like Phase 4g for the VM) +
-//!   User-ctor Construct + RecordCreate / RecordUpdate (needs
-//!   `&CodegenContext` threading for module-path resolution)
+//!   User-ctor Construct (needs `&CodegenContext` threading
+//!   for module-path resolution and boxed-position lookups)
+//! - wave 4c: RecordCreate / RecordUpdate ✅ (this PR — module-
+//!   unscoped record types via bare `key.name`; module-scoped
+//!   records fall back to HIR until wave 4b)
 //! - wave 5: Try / Tuple / List ✅ (`?` propagation + plain
 //!   tuple / list literals reusing recursive walker)
 //! - wave 6: Map literal ✅ (`HashMap::new()` /
@@ -292,6 +295,54 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             let base = emit_mir_expr(&proj.base, symbol_table)?;
             Some(format!("{}.{}", base, aver_name_to_rust(&proj.field)))
         }
+        MirExpr::RecordCreate(spanned_rec) => {
+            // Phase 5 wave 4c: `T { field = v, … }` record literal.
+            // Mirror of HIR's `ResolvedExpr::RecordCreate` emit
+            // shape — `{type_name} { field: value, … }`. Uses
+            // bare `key.name` (not canonical) so the walker can
+            // resolve without `CodegenContext`'s
+            // `resolve_module_call` chain. Module-scoped record
+            // types (e.g. `Tcp.Connection` → `Tcp_Connection`)
+            // need ctx threading — until wave 4b's sig change
+            // lands, the walker returns `None` whenever the
+            // type's `key.scope` is non-empty so the HIR walker
+            // handles the prefix rewrite.
+            let rec = &spanned_rec.node;
+            let entry = symbol_table.type_entry(rec.type_id);
+            if entry.key.scope_str().is_some() {
+                return None;
+            }
+            let type_name = entry.key.name.clone();
+            let mut parts = Vec::with_capacity(rec.fields.len());
+            for f in &rec.fields {
+                let val = emit_mir_expr(&f.value, symbol_table)?;
+                parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
+            }
+            Some(format!("{} {{ {} }}", type_name, parts.join(", ")))
+        }
+        MirExpr::RecordUpdate(spanned_upd) => {
+            // Phase 5 wave 4c: `T.update(base, field = v, …)`
+            // → `{type_name} { field: value, …, ..base }`.
+            // Same module-scope gating as RecordCreate above.
+            let upd = &spanned_upd.node;
+            let entry = symbol_table.type_entry(upd.type_id);
+            if entry.key.scope_str().is_some() {
+                return None;
+            }
+            let type_name = entry.key.name.clone();
+            let base = emit_mir_expr(&upd.base, symbol_table)?;
+            let mut parts = Vec::with_capacity(upd.updates.len());
+            for f in &upd.updates {
+                let val = emit_mir_expr(&f.value, symbol_table)?;
+                parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
+            }
+            Some(format!(
+                "{} {{ {}, ..{} }}",
+                type_name,
+                parts.join(", "),
+                base
+            ))
+        }
         MirExpr::Construct(spanned_ctor) => {
             // Phase 5 wave 3: built-in ctor variants only. User
             // ctors need `CodegenContext` (boxed_positions +
@@ -469,6 +520,86 @@ mod tests {
         let expr = span(MirExpr::Return(Box::new(inner)));
         let emit = emit_mir_expr(&expr, &empty_symbols()).expect("return should emit");
         assert_eq!(emit, "return 7i64");
+    }
+
+    fn symbols_with_one_type(name: &str, scoped: bool) -> SymbolTable {
+        use crate::ir::ModuleId;
+        use crate::ir::identity::TypeKey;
+        use crate::ir::symbol_table::{ModuleEntry, TypeEntry};
+        let mut st = SymbolTable::default();
+        st.modules.push(ModuleEntry { prefix: None });
+        let key = if scoped {
+            TypeKey::in_module("Tcp", name)
+        } else {
+            TypeKey::entry(name)
+        };
+        st.types.push(TypeEntry {
+            key,
+            module: ModuleId(0),
+            index_in_module: 0,
+            variants: vec![],
+            is_product: true,
+        });
+        st
+    }
+
+    #[test]
+    fn emits_record_create_unscoped() {
+        // Phase 5 wave 4c: `Point { x: 1, y: 2 }` for a
+        // module-unscoped record type.
+        let field_x = crate::ir::mir::MirRecordField {
+            name: "x".to_string(),
+            value: span(MirExpr::Literal(span(crate::ast::Literal::Int(1)))),
+        };
+        let field_y = crate::ir::mir::MirRecordField {
+            name: "y".to_string(),
+            value: span(MirExpr::Literal(span(crate::ast::Literal::Int(2)))),
+        };
+        let rec = crate::ir::mir::MirRecordCreate {
+            type_id: crate::ir::TypeId(0),
+            fields: vec![field_x, field_y],
+        };
+        let expr = span(MirExpr::RecordCreate(span(rec)));
+        let st = symbols_with_one_type("Point", false);
+        let emit = emit_mir_expr(&expr, &st).expect("record create should emit");
+        assert_eq!(emit, "Point { x: 1i64, y: 2i64 }");
+    }
+
+    #[test]
+    fn returns_none_for_module_scoped_record() {
+        // Phase 5 wave 4c: module-scoped record (e.g.
+        // `Tcp.Connection`) needs ctx threading for the
+        // `Tcp_Connection` prefix rewrite — walker bounces.
+        let rec = crate::ir::mir::MirRecordCreate {
+            type_id: crate::ir::TypeId(0),
+            fields: vec![],
+        };
+        let expr = span(MirExpr::RecordCreate(span(rec)));
+        let st = symbols_with_one_type("Connection", true);
+        assert!(emit_mir_expr(&expr, &st).is_none());
+    }
+
+    #[test]
+    fn emits_record_update_unscoped() {
+        // Phase 5 wave 4c: `T { field: v, ..base }`.
+        let base = MirLocal {
+            slot: LocalId(0),
+            last_use: false,
+            name: "base".to_string(),
+        };
+        let update = crate::ir::mir::MirRecordField {
+            name: "x".to_string(),
+            value: span(MirExpr::Literal(span(crate::ast::Literal::Int(9)))),
+        };
+        let upd = crate::ir::mir::MirRecordUpdate {
+            base: Box::new(span(MirExpr::Local(span(base)))),
+            type_id: crate::ir::TypeId(0),
+            updates: vec![update],
+        };
+        let expr = span(MirExpr::RecordUpdate(span(upd)));
+        let st = symbols_with_one_type("Point", false);
+        let emit = emit_mir_expr(&expr, &st).expect("record update should emit");
+        assert_eq!(emit, "Point { x: 9i64, ..base }");
     }
 
     fn symbols_with_one_fn(name: &str) -> SymbolTable {
