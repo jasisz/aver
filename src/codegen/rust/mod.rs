@@ -4,6 +4,7 @@
 mod builtins;
 pub mod emit_ctx;
 mod expr;
+mod from_mir;
 mod pattern;
 mod policy;
 mod project;
