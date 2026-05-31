@@ -38,13 +38,19 @@
 //!   `&CodegenContext` threading for module-path resolution)
 //! - wave 5: Try / Tuple / List ✅ (`?` propagation + plain
 //!   tuple / list literals reusing recursive walker)
-//! - wave 6: Map literal ✅ (this PR — `HashMap::new()` /
+//! - wave 6: Map literal ✅ (`HashMap::new()` /
 //!   `vec![…].into_iter().collect::<HashMap<_, _>>()` mirror
 //!   of HIR's emit shape, recursive on keys + values)
-//! - wave 7: TailCall, IndependentProduct (TailCall needs
-//!   Rust's loop-rewrite shape; InterpolatedStr is dropped by
-//!   `interp_lower` before codegen so it never reaches the
-//!   walker)
+//! - wave 7: TailCall ✅ (this PR — emitted as a regular
+//!   function call; HIR's self-TCO `continue` rewrite needs
+//!   `ectx` so the wire-up's parity check is the safety net)
+//! - wave 8: IndependentProduct (replay-runtime + parallel
+//!   branch handling needs `ctx.emit_replay_runtime` and
+//!   ParallelBranch wiring — large block, deferred to its own
+//!   PR)
+//!
+//! Won't reach the walker: InterpolatedStr is dropped by
+//! `interp_lower` before codegen runs.
 
 use crate::ast::{BinOp, Spanned, Type};
 use crate::ir::SymbolTable;
@@ -135,6 +141,25 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             }
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, symbol_table)?)),
+        MirExpr::TailCall(spanned_tc) => {
+            // Phase 5 wave 7: tail call outside a self-TCO loop
+            // emits as a regular function call — mirror of HIR's
+            // `ResolvedExpr::TailCall` outside-loop branch
+            // (which the resolver leaves intact and the emitter
+            // routes through `emit_named_function_call`). When
+            // the surrounding fn IS in a TCO loop, HIR rewrites
+            // it to `continue` + param assigns — the walker
+            // can't see that without `ectx`, so the wire-up
+            // layer's parity check is the safety net (mismatch
+            // → fall back to HIR).
+            let tc = &spanned_tc.node;
+            let name = symbol_table.fn_entry(tc.target).key.canonical();
+            let mut args = Vec::with_capacity(tc.args.len());
+            for a in &tc.args {
+                args.push(emit_mir_expr(a, symbol_table)?);
+            }
+            Some(format!("{}({})", aver_name_to_rust(&name), args.join(", ")))
+        }
         MirExpr::Try(inner) => {
             // Phase 5 wave 5: `value?` propagation. Mirror of
             // HIR's `ResolvedExpr::ErrorProp` emit — append `?`
@@ -400,15 +425,45 @@ mod tests {
         assert_eq!(emit, "return 7i64");
     }
 
+    fn symbols_with_one_fn(name: &str) -> SymbolTable {
+        use crate::ir::ModuleId;
+        use crate::ir::identity::FnKey;
+        use crate::ir::symbol_table::{FnEntry, ModuleEntry};
+        let mut st = SymbolTable::default();
+        st.modules.push(ModuleEntry { prefix: None });
+        st.fns.push(FnEntry {
+            key: FnKey::entry(name),
+            module: ModuleId(0),
+            index_in_module: 0,
+        });
+        st
+    }
+
+    #[test]
+    fn emits_tail_call_as_regular_call() {
+        // Phase 5 wave 7: outside-loop `TailCall` mirrors HIR's
+        // regular-call emit shape — `name(args)`.
+        let arg = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let tc = span(MirExpr::TailCall(span(crate::ir::mir::MirTailCall {
+            target: crate::ir::FnId(0),
+            args: vec![arg],
+        })));
+        let st = symbols_with_one_fn("loop_step");
+        let emit = emit_mir_expr(&tc, &st).expect("tail call should emit");
+        assert_eq!(emit, "loop_step(7i64)");
+    }
+
     #[test]
     fn returns_none_for_unsupported_variant() {
-        // Phase 5 wave 6: MapLiteral now covered. Pick a
-        // variant the walker still bounces — TailCall.
-        let t = span(MirExpr::TailCall(span(crate::ir::mir::MirTailCall {
-            target: crate::ir::FnId(0),
-            args: vec![],
-        })));
-        assert!(emit_mir_expr(&t, &empty_symbols()).is_none());
+        // Phase 5 wave 7: TailCall now covered. Pick a variant
+        // the walker still bounces — IndependentProduct.
+        let ip = span(MirExpr::IndependentProduct(span(
+            crate::ir::mir::MirIndependentProduct {
+                items: vec![],
+                unwrap_results: false,
+            },
+        )));
+        assert!(emit_mir_expr(&ip, &empty_symbols()).is_none());
     }
 
     #[test]
