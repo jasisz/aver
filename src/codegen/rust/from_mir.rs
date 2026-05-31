@@ -28,15 +28,18 @@
 //! to the HIR walker. Same fallback shape Phase 4 used.
 //!
 //! Wider waves (planned, not in this PR):
-//! - wave 2: Call(Fn) + Call(Builtin), Let, Return
-//! - wave 3: Construct (User + Builtin), Project, RecordCreate
-//! - wave 4: Match (the big one, like Phase 4g for the VM)
+//! - wave 2: Call(Fn) + Call(Builtin), Let, Return ✅
+//! - wave 3: Construct (Builtin only — User pending ctx
+//!   threading), Project, RecordCreate ✅ (partial)
+//! - wave 4: Match (the big one, like Phase 4g for the VM) +
+//!   User-ctor Construct + RecordCreate / RecordUpdate
 //! - wave 5: Try, TailCall, List/Tuple/Map, InterpolatedStr,
 //!   IndependentProduct
 
 use crate::ast::{BinOp, Spanned, Type};
 use crate::ir::SymbolTable;
-use crate::ir::mir::{MirCallee, MirExpr};
+use crate::ir::hir::BuiltinCtor;
+use crate::ir::mir::{MirCallee, MirCtor, MirExpr};
 
 use super::expr::emit_literal;
 use super::syntax::aver_name_to_rust;
@@ -122,6 +125,44 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, symbol_table: &SymbolTable)
             }
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, symbol_table)?)),
+        MirExpr::Project(spanned_proj) => {
+            // Phase 5 wave 3: `base.field` projection. Mirror of
+            // HIR's `ResolvedLeafOp::FieldAccess` emit shape —
+            // emit_expr(base) + "." + aver_name_to_rust(field).
+            // No clone insertion here; the HIR walker handles
+            // that via `maybe_clone` at outer call sites.
+            let proj = &spanned_proj.node;
+            let base = emit_mir_expr(&proj.base, symbol_table)?;
+            Some(format!("{}.{}", base, aver_name_to_rust(&proj.field)))
+        }
+        MirExpr::Construct(spanned_ctor) => {
+            // Phase 5 wave 3: built-in ctor variants only. User
+            // ctors need `CodegenContext` (boxed_positions +
+            // resolve_module_call) for `Module::Type::Variant`
+            // path mangling — falls back to HIR until wave 4
+            // threads the context through.
+            let con = &spanned_ctor.node;
+            match con.ctor {
+                MirCtor::Builtin(builtin) => {
+                    let (name, takes_arg) = match builtin {
+                        BuiltinCtor::ResultOk => ("Ok", true),
+                        BuiltinCtor::ResultErr => ("Err", true),
+                        BuiltinCtor::OptionSome => ("Some", true),
+                        BuiltinCtor::OptionNone => ("None", false),
+                    };
+                    if !takes_arg {
+                        // `Option.None` — no args, no parens.
+                        return Some(name.to_string());
+                    }
+                    let mut args = Vec::with_capacity(con.args.len());
+                    for a in &con.args {
+                        args.push(emit_mir_expr(a, symbol_table)?);
+                    }
+                    Some(format!("{}({})", name, args.join(", ")))
+                }
+                MirCtor::User(_) => None,
+            }
+        }
         _ => None,
     }
 }
@@ -277,5 +318,66 @@ mod tests {
     fn returns_none_for_unsupported_variant() {
         let t = span(MirExpr::Tuple(vec![]));
         assert!(emit_mir_expr(&t, &empty_symbols()).is_none());
+    }
+
+    #[test]
+    fn emits_project_as_dotted_field() {
+        // Phase 5 wave 3: `base.field` projection.
+        let local = MirLocal {
+            slot: LocalId(0),
+            last_use: false,
+            name: "user".to_string(),
+        };
+        let base = span(MirExpr::Local(span(local)));
+        let proj = crate::ir::mir::MirProject {
+            base: Box::new(base),
+            field: "name".to_string(),
+        };
+        let expr = span(MirExpr::Project(span(proj)));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("project should emit");
+        assert!(
+            emit.ends_with(".name"),
+            "project should end with `.name`, got: {emit}"
+        );
+    }
+
+    #[test]
+    fn emits_result_ok_as_ok_call() {
+        // Phase 5 wave 3: BuiltinCtor::ResultOk → `Ok(arg)`.
+        let arg = span(MirExpr::Literal(span(crate::ast::Literal::Int(42))));
+        let con = crate::ir::mir::MirConstruct {
+            ctor: MirCtor::Builtin(BuiltinCtor::ResultOk),
+            args: vec![arg],
+        };
+        let expr = span(MirExpr::Construct(span(con)));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("construct should emit");
+        assert_eq!(emit, "Ok(42i64)");
+    }
+
+    #[test]
+    fn emits_option_none_as_bare_none() {
+        // Phase 5 wave 3: BuiltinCtor::OptionNone has no args
+        // and emits `None` without parens.
+        let con = crate::ir::mir::MirConstruct {
+            ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
+            args: vec![],
+        };
+        let expr = span(MirExpr::Construct(span(con)));
+        let emit = emit_mir_expr(&expr, &empty_symbols()).expect("construct should emit");
+        assert_eq!(emit, "None");
+    }
+
+    #[test]
+    fn returns_none_for_user_ctor() {
+        // Phase 5 wave 3: User ctors need CodegenContext for
+        // boxed_positions + module path resolution. Falls back
+        // to HIR until wave 4.
+        use crate::ir::CtorId;
+        let con = crate::ir::mir::MirConstruct {
+            ctor: MirCtor::User(CtorId(0)),
+            args: vec![],
+        };
+        let expr = span(MirExpr::Construct(span(con)));
+        assert!(emit_mir_expr(&expr, &empty_symbols()).is_none());
     }
 }
