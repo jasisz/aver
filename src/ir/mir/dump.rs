@@ -103,6 +103,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &Spanned<MirExpr>, indent: &str)
     match &expr.node {
         MirExpr::Literal(lit) => write!(f, "{:?}", lit.node),
         MirExpr::Local(local) => write!(f, "{}", local.node),
+        MirExpr::FnValue(name) => write!(f, "fn_value({name})"),
         MirExpr::Let(spanned) => write_let(f, &spanned.node, indent),
         MirExpr::Call(spanned) => write_call(f, &spanned.node, indent),
         MirExpr::TailCall(spanned) => write_tail_call(f, &spanned.node, indent),

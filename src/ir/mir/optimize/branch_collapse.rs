@@ -71,7 +71,7 @@ enum BranchSide {
 
 fn branch_collapse_walk_children(node: &mut MirExpr) {
     match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
         MirExpr::Neg(inner) => branch_collapse_in_place(inner),
         MirExpr::BinOp(spanned_bop) => {
             branch_collapse_in_place(&mut spanned_bop.node.lhs);

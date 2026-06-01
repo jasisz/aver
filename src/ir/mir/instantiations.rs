@@ -140,7 +140,7 @@ impl Walker {
         // from `Spanned<MirExpr>`, so we register that level's
         // stamp before recursing into children.
         match expr {
-            MirExpr::Literal(_) | MirExpr::Local(_) => {}
+            MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
             MirExpr::Neg(inner) => {
                 self.register_ty(inner.ty());
                 self.visit_expr(&inner.node);

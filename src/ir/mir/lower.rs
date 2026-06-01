@@ -74,10 +74,7 @@
 //! `sequential`) is NOT carried in MIR per RFC — that's an
 //! aver.toml runtime policy decision.
 //!
-//! Final remaining `SkipReason`s after wave 3c:
-//! - `UnresolvedIdent` — a fn referenced as a value (`callWith(dbl)`
-//!   passes `dbl` as a bare ident). Calling a fn value already lowers;
-//!   referencing one is the remaining first-class-fn shape.
+//! Final remaining `SkipReason`s after the first-class-fn waves:
 //! - `MissingResolution` / `EmptyBody` / `BindingOnlyTail` /
 //!   `BindingSlotLookupMissing` / `PatternSlotShortfall` —
 //!   defensive guards for upstream pipeline gaps.
@@ -85,6 +82,12 @@
 //!   recovery) now. Buffer intrinsics (`MirCallee::Intrinsic`) and
 //!   first-class-fn *calls* (`MirCallee::LocalSlot` → `CALL_VALUE`)
 //!   lower.
+//!
+//! Fn-value *passing* (`callWith(dbl)` → bare `dbl`) used to drop as
+//! `UnresolvedIdent`; it now lowers to `MirExpr::FnValue`, which the VM
+//! walker resolves through the shared `compile_ident` symbol path. The
+//! `UnresolvedIdent` variant is retained for the coverage gate's
+//! "no-longer-drops" assertion but is no longer produced.
 //! - `BuiltinRecord` / `BuiltinCtorConstruction` / `BuiltinCtorPattern`
 //!   / `UnsupportedTry` / `UnsupportedTailCall` / `UnsupportedList` /
 //!   `UnsupportedTuple` / `UnsupportedMap` / `UnsupportedInterpolatedStr`
@@ -503,7 +506,15 @@ fn lower_expr(
         }
 
         // ── Final catch-all ─────────────────────────────────────
-        ResolvedExpr::Ident(_) => return Err(SkipReason::UnresolvedIdent),
+        // A bare ident that survived resolution is a fn referenced as
+        // a *value* (`callWith(dbl)` passes `dbl`) — the resolver
+        // already turned locals into `Resolved`, nullary ctors into
+        // `Ctor`, and builtins into `Builtin`, so what's left is a
+        // static fn/builtin name. Carry it as `FnValue`; the backend
+        // resolves the symbol. A genuinely-dangling name (typecheck-
+        // rejected input) flows through too and surfaces as an
+        // unresolved-symbol error at the backend, not a lowering drop.
+        ResolvedExpr::Ident(name) => MirExpr::FnValue(name.clone()),
     };
     Ok(wrap(mir, expr))
 }

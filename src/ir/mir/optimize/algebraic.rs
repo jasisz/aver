@@ -166,7 +166,7 @@ fn int_literal(node: &MirExpr) -> Option<i64> {
 
 fn algebraic_walk_children(node: &mut MirExpr) {
     match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
         MirExpr::Neg(inner) => algebraic_in_place(inner),
         MirExpr::BinOp(spanned_bop) => {
             algebraic_in_place(&mut spanned_bop.node.lhs);

@@ -93,24 +93,27 @@ fn lowers_neg_over_int_literal() {
 }
 
 #[test]
-fn drops_unsupported_fn_silently() {
+fn lowers_fn_value_passing() {
     // Passing a fn as a value (`callWith(dbl)` → the bare `dbl` ident)
-    // is the remaining un-lowered shape — the MIR lowerer bounces it
-    // with `UnresolvedIdent`. The lowerer must not panic; it just leaves
-    // the fn out. (Calling a fn value, `f(x)`, already lowers via the
-    // CALL_VALUE first-class-fn path; only referencing one as a value
-    // is left.)
+    // was the last un-lowered ordinary shape. It now lowers: the bare
+    // ident becomes `MirExpr::FnValue`, so `passesFn` appears in the
+    // dump with a `fn_value(dbl)` node. (Calling a fn value, `f(x)`,
+    // already lowered via the CALL_VALUE first-class-fn path.)
     //
     // The fixture was previously a list literal, then `Option.None`,
-    // then a first-class-fn call — all lower now.
+    // then a first-class-fn call — all of which lower; this one too now.
     let dump = lower(
         "fn dbl(n: Int) -> Int\n    n + n\n\n\
          fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
          fn passesFn() -> Int\n    callWith(dbl)\n",
     );
     assert!(
-        !dump.contains("fn passesFn"),
-        "fn passing a fn value shouldn't lower yet:\n{dump}"
+        dump.contains("fn passesFn"),
+        "fn passing a fn value must lower now:\n{dump}"
+    );
+    assert!(
+        dump.contains("fn_value(dbl)"),
+        "the passed fn must render as a fn_value node:\n{dump}"
     );
 }
 

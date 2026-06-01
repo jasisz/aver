@@ -108,7 +108,7 @@ fn bool_pattern(p: &MirPattern) -> Option<BoolPat> {
 
 fn bool_match_walk_children(node: &mut MirExpr) {
     match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
         MirExpr::Neg(inner) => bool_match_in_place(inner),
         MirExpr::BinOp(spanned_bop) => {
             bool_match_in_place(&mut spanned_bop.node.lhs);

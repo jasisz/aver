@@ -38,17 +38,18 @@ fn lower_stats(source: &str) -> aver::ir::mir::LowerStats {
 
 #[test]
 fn conservation_lowered_plus_skipped_equals_total() {
-    // `dbl` and `callWith` lower (`callWith` calls its `Fn(..)` param
-    // via the CALL_VALUE first-class-fn path); `caller` still drops
-    // because it PASSES a fn as a value (`callWith(dbl)` → `dbl`
-    // resolves to a bare ident that the lowerer bounces). Passing /
-    // referencing a fn value is the remaining un-lowered shape —
-    // calling one already lowers. Total fns seen = 3; every fn
-    // accounted for in `lowered` or `skipped`.
+    // `dbl`, `callWith`, and `caller` all lower now: `callWith` calls
+    // its `Fn(..)` param via the CALL_VALUE path, and `caller` PASSES a
+    // fn as a value (`callWith(dbl)` → `dbl`), which the lowerer now
+    // carries as `MirExpr::FnValue` instead of bouncing. Fn-value
+    // passing was the last corpus-relevant drop shape; with it closed,
+    // a clean-typechecking program has no un-lowered shapes among
+    // ordinary Aver. The conservation invariant still holds:
+    // `lowered + skipped == total`, now with `skipped == 0`.
     //
     // List / Tuple / Map / Result.Ok / interpolation / nullary-ctor-in-
-    // value-position / first-class-fn *calls* no longer work as drop
-    // fixtures here — they all lower now.
+    // value-position / first-class-fn *calls* / fn-value *passing* all
+    // lower now — none survive as drop fixtures here.
     let stats = lower_stats(
         "fn dbl(n: Int) -> Int\n    n + n\n\n\
          fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
@@ -62,14 +63,34 @@ fn conservation_lowered_plus_skipped_equals_total() {
         stats
     );
     assert_eq!(
-        stats.lowered, 2,
-        "the two non-passing fns must lower: {:?}",
+        stats.lowered, 3,
+        "all three fns must lower (fn-value passing now carries as FnValue): {:?}",
         stats
     );
     assert_eq!(
         stats.skipped.values().sum::<u32>(),
-        1,
-        "exactly one fn (the fn-passer) dropped: {:?}",
+        0,
+        "no fn drops — fn-value passing lowers via MirExpr::FnValue: {:?}",
+        stats
+    );
+}
+
+#[test]
+fn fn_value_passing_no_longer_drops() {
+    // `callWith(dbl)` passes the top-level fn `dbl` by bare ident into a
+    // higher-order fn. Before `MirExpr::FnValue` this resolved to a bare
+    // `ResolvedExpr::Ident` the lowerer dropped as `UnresolvedIdent`;
+    // now it lowers and the VM walker resolves the symbol via the shared
+    // `compile_ident` path. The `UnresolvedIdent` skip counter must be 0.
+    let stats = lower_stats(
+        "fn dbl(n: Int) -> Int\n    n + n\n\n\
+         fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
+         fn caller() -> Int\n    callWith(dbl)\n",
+    );
+    assert_eq!(
+        stats.skipped.get(&SkipReason::UnresolvedIdent).copied(),
+        None,
+        "fn-value passing must not drop as UnresolvedIdent: {:?}",
         stats
     );
 }
@@ -141,17 +162,18 @@ fn wave_3c_iv_tuple_literal_no_longer_drops() {
 
 #[test]
 fn skipped_sorted_is_stable() {
-    // Skips that *still* fire after wave 3c + intrinsic + nullary-ctor +
-    // first-class-fn-call lowering — two fns that PASS a fn as a value
-    // (`callWith(dbl)` → the bare `dbl` ident the lowerer bounces).
-    // Sorted iteration follows `SkipReason as u8`; a single reason is
-    // trivially monotonic, and the map stays non-empty.
-    let stats = lower_stats(
-        "fn dbl(n: Int) -> Int\n    n + n\n\n\
-         fn callWith(f: Fn(Int) -> Int) -> Int\n    f(3)\n\n\
-         fn a() -> Int\n    callWith(dbl)\n\n\
-         fn b() -> Int\n    callWith(dbl)\n",
-    );
+    // No ordinary typecheck-clean program drops anymore (fn-value
+    // passing was the last shape, now lowered via `MirExpr::FnValue`),
+    // so the sort invariant of `skipped_sorted()` is tested by recording
+    // the remaining *defensive-guard* reasons directly. Sorted iteration
+    // must follow `SkipReason as u8` ascending regardless of insertion
+    // order, so dumps + diagnostics don't depend on `HashMap` drift.
+    let mut stats = aver::ir::mir::LowerStats::default();
+    // Insert out of discriminant order on purpose.
+    stats.record_skip(SkipReason::UnsupportedCallee);
+    stats.record_skip(SkipReason::EmptyBody);
+    stats.record_skip(SkipReason::EmptyBody);
+    stats.record_skip(SkipReason::MissingResolution);
     let sorted = stats.skipped_sorted();
     assert!(
         !sorted.is_empty(),
