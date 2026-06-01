@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–4d, 5a)
+//! ## Scope (waves 0–5b)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -104,8 +104,18 @@
 //!   `Result.Ok/Err` via `emit_result_constructor` (instantiation
 //!   resolved by single-registered / return-type / payload-type match,
 //!   then tag + T-slot + E-slot, with a `Unit` position pushing the i32
-//!   placeholder). `RecordCreate` / `RecordUpdate` / `Project` are
-//!   wave 5b.
+//!   placeholder).
+//!
+//! Wave 5b (records):
+//! - `RecordCreate` / `RecordUpdate` — mirror of `emit_record_create` /
+//!   `emit_record_update`: a newtype emits its single field; otherwise
+//!   push every declared field in order (`struct.get` from the base for
+//!   un-overridden update fields) + `struct.new`. The `Option.None` /
+//!   empty-list field special-cases use the field's *declared* type (the
+//!   bare literal's own `.ty()` may be a generic `Var`).
+//! - `Project` — mirror of `emit_attr_get`: newtype `.field` is identity,
+//!   else `struct.get` the field index; unknown / `Invalid`
+//!   (namespace-handle) record types fall back.
 //!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
@@ -123,6 +133,7 @@ use crate::ir::SymbolTable;
 use crate::ir::hir::{ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
 use crate::ir::mir::{
     BuiltinCtor, MirCallee, MirCtor, MirExpr, MirFn, MirMatch, MirMatchArm, MirPattern, MirProgram,
+    MirRecordField,
 };
 use crate::types::Type;
 
@@ -507,6 +518,47 @@ fn emit_mir_expr(
                 Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
                 None => Ok(None),
             }
+        }
+        MirExpr::RecordCreate(spanned_rec) => {
+            let rec = &spanned_rec.node;
+            match emit_mir_record_create(func, &rec.type_name, &rec.fields, slots, ctx)? {
+                Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
+                None => Ok(None),
+            }
+        }
+        MirExpr::RecordUpdate(spanned_upd) => {
+            let upd = &spanned_upd.node;
+            match emit_mir_record_update(func, &upd.type_name, &upd.base, &upd.updates, slots, ctx)?
+            {
+                Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
+                None => Ok(None),
+            }
+        }
+        MirExpr::Project(spanned_proj) => {
+            // Mirror of `emit_attr_get`. A newtype `.field` is identity —
+            // emit the base directly. Unknown / `Invalid` (namespace-
+            // handle) record types fall back so the `ResolvedExpr`
+            // emitter produces `emit_attr_get`'s diagnostic.
+            let proj = &spanned_proj.node;
+            let record_name = aver_type_str_of(&proj.base);
+            if ctx.registry.newtype_underlying(&record_name).is_some() {
+                return Ok(emit_mir_expr(func, &proj.base, slots, ctx)?
+                    .map(|_| aver_type_str_of(expr).trim() != "Unit"));
+            }
+            let (Some(type_idx), Some(field_idx)) = (
+                ctx.registry.record_type_idx(&record_name),
+                ctx.registry.record_field_index(&record_name, &proj.field),
+            ) else {
+                return Ok(None);
+            };
+            if emit_mir_expr(func, &proj.base, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: type_idx,
+                field_index: field_idx,
+            });
+            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
         }
         // FnValue (a fn referenced as a value) is higher-order — wasm-gc
         // has no first-class fn representation — so it falls back to the
@@ -1565,6 +1617,141 @@ fn emit_mir_result_constructor(
     Ok(Some(()))
 }
 
+/// Emit a record field / update value, mirroring `emit_record_create`'s
+/// per-field special-cases: an `Option.None` value emits through the
+/// constructor with the field's declared `T` (the bare-literal value's
+/// own `.ty()` may be a generic `Var`, so the field declaration is the
+/// authoritative shape), and an empty-list value emits `ref.null` of the
+/// field's declared `List<T>`. Everything else recurses via
+/// `emit_mir_expr`.
+fn emit_mir_record_field_value(
+    func: &mut Function,
+    value: &Spanned<MirExpr>,
+    decl_ty: &str,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    if let MirExpr::Construct(c) = &value.node
+        && matches!(c.node.ctor, MirCtor::Builtin(BuiltinCtor::OptionNone))
+        && let Some(inner) = decl_ty
+            .trim()
+            .strip_prefix("Option<")
+            .and_then(|s| s.strip_suffix('>'))
+    {
+        return emit_mir_option_constructor(func, None, Some(inner.trim()), slots, ctx);
+    }
+    if let MirExpr::List(items) = &value.node
+        && items.is_empty()
+    {
+        let canonical: String = decl_ty.chars().filter(|c| !c.is_whitespace()).collect();
+        if let Some(list_idx) = ctx.registry.list_type_idx(&canonical) {
+            func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                list_idx,
+            )));
+            return Ok(Some(()));
+        }
+    }
+    Ok(emit_mir_expr(func, value, slots, ctx)?.map(|_| ()))
+}
+
+/// Mirror of `emit_record_create` (emit.rs): a newtype record emits its
+/// single field's value directly; otherwise push every declared field
+/// (in declaration order) and `struct.new $type_idx`.
+fn emit_mir_record_create(
+    func: &mut Function,
+    type_name: &str,
+    fields: &[MirRecordField],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    if ctx.registry.newtype_underlying(type_name).is_some() {
+        let field = fields.first().ok_or(WasmGcError::Validation(format!(
+            "newtype record `{type_name}` requires one field"
+        )))?;
+        return Ok(emit_mir_expr(func, &field.value, slots, ctx)?.map(|_| ()));
+    }
+    let type_idx = ctx
+        .registry
+        .record_type_idx(type_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "unknown record type `{type_name}`"
+        )))?;
+    let decl_fields = ctx
+        .registry
+        .record_fields
+        .get(type_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "record `{type_name}` missing field list"
+        )))?
+        .clone();
+    for (decl_name, decl_ty) in &decl_fields {
+        let provided =
+            fields
+                .iter()
+                .find(|f| &f.name == decl_name)
+                .ok_or(WasmGcError::Validation(format!(
+                    "record `{type_name}` missing field `{decl_name}`"
+                )))?;
+        if emit_mir_record_field_value(func, &provided.value, decl_ty, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+    }
+    func.instruction(&Instruction::StructNew(type_idx));
+    Ok(Some(()))
+}
+
+/// Mirror of `emit_record_update` (emit.rs): push each declared field in
+/// order — the override value when present, else `struct.get` it from
+/// the base — then `struct.new $type_idx`.
+fn emit_mir_record_update(
+    func: &mut Function,
+    type_name: &str,
+    base: &Spanned<MirExpr>,
+    updates: &[MirRecordField],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let type_idx = ctx
+        .registry
+        .record_type_idx(type_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "unknown record type `{type_name}`"
+        )))?;
+    let decl_fields = ctx
+        .registry
+        .record_fields
+        .get(type_name)
+        .ok_or(WasmGcError::Validation(format!(
+            "record `{type_name}` missing field list"
+        )))?
+        .clone();
+    for (decl_name, decl_ty) in &decl_fields {
+        if let Some(override_field) = updates.iter().find(|f| &f.name == decl_name) {
+            if emit_mir_record_field_value(func, &override_field.value, decl_ty, slots, ctx)?
+                .is_none()
+            {
+                return Ok(None);
+            }
+        } else {
+            let field_idx = ctx
+                .registry
+                .record_field_index(type_name, decl_name)
+                .ok_or(WasmGcError::Validation(format!(
+                    "record `{type_name}` has no field `{decl_name}` to copy from base"
+                )))?;
+            if emit_mir_expr(func, base, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: type_idx,
+                field_index: field_idx,
+            });
+        }
+    }
+    func.instruction(&Instruction::StructNew(type_idx));
+    Ok(Some(()))
+}
+
 /// The numeric (`Int` / `Float`) tail of `emit_expr`'s `BinOp` arm —
 /// byte-for-byte. Returns `None` if an operand falls outside the
 /// supported subset (propagated as whole-fn fallback). The I64 / F64
@@ -1697,6 +1884,20 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
         }
         MirExpr::TailCall(spanned_tc) => spanned_tc.node.args.iter().all(mir_expr_coverable),
         MirExpr::Construct(spanned_ctor) => spanned_ctor.node.args.iter().all(mir_expr_coverable),
+        MirExpr::RecordCreate(spanned_rec) => spanned_rec
+            .node
+            .fields
+            .iter()
+            .all(|f| mir_expr_coverable(&f.value)),
+        MirExpr::RecordUpdate(spanned_upd) => {
+            mir_expr_coverable(&spanned_upd.node.base)
+                && spanned_upd
+                    .node
+                    .updates
+                    .iter()
+                    .all(|f| mir_expr_coverable(&f.value))
+        }
+        MirExpr::Project(spanned_proj) => mir_expr_coverable(&spanned_proj.node.base),
         MirExpr::Match(spanned_match) => {
             // Coarse, ctx-free mirror of `emit_mir_match`'s dispatch (the
             // predicate has no registry, so it can't model the Map.get
