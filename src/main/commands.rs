@@ -3067,8 +3067,15 @@ fn run_bench_dir(dir: &Path, target: aver::bench::BenchTarget, opts: &BenchOptio
 pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, stage_name: &str) {
     use aver::ir::{PipelineConfig, PipelineStage, TypecheckMode, dump};
 
+    // MIR isn't a pipeline stage — it's lowered from the resolved HIR
+    // after the pipeline (the same `lower_program` + optimize the VM
+    // backend runs). Recognise it here, run the pipeline to completion,
+    // and dump the `MirProgram` below.
+    let want_mir = stage_name == "mir";
     let target_stage = match stage_name {
         "parse" => None, // pre-pipeline snapshot
+        // Run the full pipeline so the resolved HIR is available to lower.
+        "mir" => Some(PipelineStage::NameResolve),
         "tco" => Some(PipelineStage::Tco),
         "typecheck" => Some(PipelineStage::Typecheck),
         "interp_lower" => Some(PipelineStage::InterpLower),
@@ -3087,7 +3094,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
                 "{}",
                 format!(
                     "unknown --emit-ir-after stage '{}'; expected one of: \
-                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower",
+                     parse, tco, typecheck, interp_lower, buffer_build, resolve, last_use, analyze, escape, build_symbols, name_resolve, refinement_lower, contract_lower, law_lower, mir",
                     other
                 )
                 .red()
@@ -3173,6 +3180,20 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     {
         eprintln!("{}", super::shared::format_type_errors(&tc.errors).red());
         process::exit(1);
+    }
+
+    // `--emit-ir-after=mir` — lower the resolved HIR to MIR and run the
+    // optimize pipeline (the exact lowering the VM backend consumes),
+    // then print the textual `MirProgram` dump.
+    if want_mir {
+        use aver::ir::mir;
+        let program = mir::dead_code(mir::branch_collapse(mir::bool_match_to_if(
+            mir::algebraic_simplify(mir::const_fold(mir::inline_nullary_literals(
+                mir::lower_program(&pipeline_result.resolved_items),
+            ))),
+        )));
+        print!("{program}");
+        return;
     }
 
     // Proof stages don't transform items — they produce a side
