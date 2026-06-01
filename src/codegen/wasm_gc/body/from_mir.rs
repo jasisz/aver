@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–1)
+//! ## Scope (waves 0–3a)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -45,6 +45,26 @@
 //!   `AVER_WASM_GC_NO_TAIL_CALL`).
 //! - `FnValue` falls back — higher-order, no first-class fn lowering.
 //!
+//! Wave 2 (builtins, breadth only):
+//! - `Call` with `MirCallee::Builtin(BuiltinId)` / `MirCallee::Intrinsic`
+//!   — mirror of `emit_dotted_builtin`'s registered-helper first branch
+//!   (push args, `call $idx`). The dotted name comes from
+//!   `EmitCtx::mir_builtins`. Custom-inline builtins (effects, Args.get,
+//!   Float / String / List / Map / Vector, wasip2) + `List.prepend` /
+//!   `List.empty` fall back — that "depth" is a later sub-wave.
+//!
+//! Wave 3a (primitive-subject match):
+//! - `Match` over a `Bool` subject (a single `if`/`else`) or an `Int`
+//!   subject (an `i64.eq` cascade, wildcard required) — mirror of
+//!   `emit_match` + `emit_int_match_cascade`. Any constructor / list /
+//!   tuple arm pattern, a `String` subject (wave 3b — needs the subject
+//!   scratch + `__wasmgc_string_eq`), or a shape `emit_match` rejects
+//!   outright falls back. (The dispatch checks arm patterns before the
+//!   subject type, the reverse of `emit_match`'s order, but the two are
+//!   equivalent: typecheck forbids a `Bool`/`Int` subject from carrying
+//!   a constructor / list / tuple arm, so neither path can reach a
+//!   branch the other wouldn't.)
+//!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
 //! `ResolvedExpr` emitter for the whole fn. That keeps the corpus +
@@ -58,13 +78,13 @@ use crate::ast::Spanned;
 use crate::ast::{BinOp, Literal};
 use crate::ir::SymbolTable;
 use crate::ir::hir::{ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
-use crate::ir::mir::{MirCallee, MirExpr, MirFn, MirProgram};
+use crate::ir::mir::{MirCallee, MirExpr, MirFn, MirMatch, MirPattern, MirProgram};
 use crate::types::Type;
 
 use super::super::WasmGcError;
-use super::super::types::TypeRegistry;
+use super::super::types::{TypeRegistry, aver_to_wasm};
 use super::emit::emit_return_call_insn;
-use super::infer::{aver_type_str_of, wasm_type_of};
+use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 use super::slots::count_value_params;
 use super::{CallerFnCollector, EmitCtx, FnMap, SlotTable, Wasip2Lowering};
 
@@ -401,6 +421,7 @@ fn emit_mir_expr(
             emit_return_call_insn(func, wasm_idx, ctx.self_wasm_idx);
             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
         }
+        MirExpr::Match(spanned_match) => emit_mir_match(func, &spanned_match.node, slots, ctx),
         // FnValue (a fn referenced as a value) is higher-order — wasm-gc
         // has no first-class fn representation — so it falls back to the
         // `ResolvedExpr` emitter pending a verified byte-identical shape.
@@ -426,6 +447,165 @@ fn emit_mir_args_then_call(
         }
     }
     func.instruction(&Instruction::Call(wasm_idx));
+    Ok(Some(()))
+}
+
+/// Mirror of `emit_match` (emit.rs) for the wave-3a primitive-subject
+/// shapes: `Bool` (a single `if`/`else`) and `Int` (an `i64.eq`
+/// cascade). Any arm carrying a constructor / list / tuple pattern is
+/// wave 4 → `Ok(None)` (whole-fn fallback). `String`-subject matches
+/// (which need the reserved subject scratch + `__wasmgc_string_eq`) and
+/// any other subject type also fall back. Shapes `emit_match` rejects
+/// outright (a `Bool` match without exactly 2 true/false/wildcard arms,
+/// an `Int` match without a wildcard, a bind pattern on a primitive
+/// subject) return `Ok(None)` here — the `ResolvedExpr` emitter then
+/// reproduces `emit_match`'s exact error, so behavior is unchanged.
+fn emit_mir_match(
+    func: &mut Function,
+    m: &MirMatch,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<bool>, WasmGcError> {
+    if m.arms.is_empty() {
+        return Err(WasmGcError::Validation("match has no arms".into()));
+    }
+    // Constructor / list / tuple patterns are wave 4 — fall back.
+    if m.arms.iter().any(|a| {
+        matches!(
+            a.pattern,
+            MirPattern::Ctor { .. }
+                | MirPattern::EmptyList
+                | MirPattern::Cons { .. }
+                | MirPattern::Tuple(_)
+        )
+    }) {
+        return Ok(None);
+    }
+
+    // Result/block type — mirror of `emit_match`. The first arm's body
+    // type is the match's type (typecheck proved all arms agree); a
+    // `Unit` match lowers to `BlockType::Empty` and produces no value.
+    let result_ty_str = aver_type_canonical(&m.arms[0].body, ctx.return_type, ctx.registry);
+    let block_ty = match aver_to_wasm(&result_ty_str, Some(ctx.registry))? {
+        Some(v) => wasm_encoder::BlockType::Result(v),
+        None => wasm_encoder::BlockType::Empty,
+    };
+    let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
+
+    match aver_type_str_of(&m.subject).trim() {
+        "Bool" => {
+            // Mirror of `emit_match`'s Bool special-case: a single
+            // `if subject { true_body } else { false_body }`.
+            if m.arms.len() != 2 {
+                return Ok(None);
+            }
+            let mut true_body: Option<&Spanned<MirExpr>> = None;
+            let mut false_body: Option<&Spanned<MirExpr>> = None;
+            for arm in &m.arms {
+                match &arm.pattern {
+                    MirPattern::Literal(Literal::Bool(true)) => true_body = Some(&arm.body),
+                    MirPattern::Literal(Literal::Bool(false)) => false_body = Some(&arm.body),
+                    MirPattern::Wildcard => {
+                        if true_body.is_none() {
+                            true_body = Some(&arm.body);
+                        } else {
+                            false_body = Some(&arm.body);
+                        }
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            let (Some(t), Some(f)) = (true_body, false_body) else {
+                return Ok(None);
+            };
+            if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::If(block_ty));
+            if emit_mir_expr(func, t, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::Else);
+            if emit_mir_expr(func, f, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::End);
+            Ok(Some(produces))
+        }
+        "Int" => {
+            // Mirror of `emit_match`'s Int path + `emit_int_match_cascade`:
+            // first-applicable wins, wildcard required.
+            let mut wildcard_body: Option<&Spanned<MirExpr>> = None;
+            let mut typed_arms: Vec<(i64, &Spanned<MirExpr>)> = Vec::new();
+            for arm in &m.arms {
+                match &arm.pattern {
+                    MirPattern::Literal(Literal::Int(n)) => typed_arms.push((*n, &arm.body)),
+                    MirPattern::Wildcard => {
+                        // First wildcard wins (source-order semantics).
+                        if wildcard_body.is_none() {
+                            wildcard_body = Some(&arm.body);
+                        }
+                    }
+                    _ => return Ok(None),
+                }
+            }
+            let Some(wildcard) = wildcard_body else {
+                return Ok(None);
+            };
+            if emit_mir_int_cascade(
+                func,
+                &m.subject,
+                &typed_arms,
+                wildcard,
+                block_ty,
+                slots,
+                ctx,
+            )?
+            .is_none()
+            {
+                return Ok(None);
+            }
+            Ok(Some(produces))
+        }
+        // String (wave 3b — needs subject scratch + __wasmgc_string_eq)
+        // and any non-primitive subject fall back.
+        _ => Ok(None),
+    }
+}
+
+/// Mirror of `emit_int_match_cascade` (emit.rs): `subject == lit ?
+/// body : <rest>`, recomputing the subject per arm (no scratch slot).
+/// Returns `None` if any subtree falls outside the supported subset.
+fn emit_mir_int_cascade(
+    func: &mut Function,
+    subject: &Spanned<MirExpr>,
+    typed_arms: &[(i64, &Spanned<MirExpr>)],
+    wildcard: &Spanned<MirExpr>,
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let Some(((pat_lit, body), rest)) = typed_arms.split_first() else {
+        // No typed arms left — emit the wildcard body.
+        if emit_mir_expr(func, wildcard, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        return Ok(Some(()));
+    };
+    if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::I64Const(*pat_lit));
+    func.instruction(&Instruction::I64Eq);
+    func.instruction(&Instruction::If(block_ty));
+    if emit_mir_expr(func, body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::Else);
+    if emit_mir_int_cascade(func, subject, rest, wildcard, block_ty, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::End);
     Ok(Some(()))
 }
 
@@ -560,6 +740,28 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
                 && spanned_call.node.args.iter().all(mir_expr_coverable)
         }
         MirExpr::TailCall(spanned_tc) => spanned_tc.node.args.iter().all(mir_expr_coverable),
+        MirExpr::Match(spanned_match) => {
+            let m = &spanned_match.node;
+            // Only literal / wildcard arms over a Bool/Int subject reach
+            // the emitting branches of `emit_mir_match`; `Bind` on a
+            // primitive subject (and every wave-4 pattern) makes it fall
+            // back, so exclude them here too — keeps the predicate honest
+            // with the emitter for the `--explain-mir-coverage` count.
+            !m.arms.is_empty()
+                && !m.arms.iter().any(|a| {
+                    matches!(
+                        a.pattern,
+                        MirPattern::Bind(..)
+                            | MirPattern::Ctor { .. }
+                            | MirPattern::EmptyList
+                            | MirPattern::Cons { .. }
+                            | MirPattern::Tuple(_)
+                    )
+                })
+                && matches!(m.subject.ty(), Some(Type::Bool | Type::Int))
+                && mir_expr_coverable(&m.subject)
+                && m.arms.iter().all(|a| mir_expr_coverable(&a.body))
+        }
         _ => false,
     }
 }
