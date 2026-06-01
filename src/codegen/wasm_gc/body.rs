@@ -217,6 +217,7 @@ pub(super) fn emit_fn_body(
         effect_idx_lookup,
         caller_fn_collector,
         wasip2_lowering,
+        mir_builtins: None,
     };
 
     for (i, stmt) in stmts.iter().enumerate() {
@@ -356,6 +357,12 @@ pub(super) struct EmitCtx<'a> {
     /// and `wasi:io/streams.[method]output-stream.blocking-write-and-
     /// flush`. Phase 1.2b1.5.
     pub(super) wasip2_lowering: Option<&'a Wasip2Lowering>,
+    /// Phase 5 (#340) — interned built-in fn names from the
+    /// [`crate::ir::mir::MirProgram`] driving the MIR body emitter, so
+    /// `MirCallee::Builtin(BuiltinId)` resolves to its dotted name
+    /// (`program.builtins[id]`). `None` on the `ResolvedExpr` emit
+    /// path, which never reads it (it carries the dotted name inline).
+    pub(super) mir_builtins: Option<&'a [String]>,
 }
 
 /// Concrete fn / global / helper indices the wasip2 call-site

@@ -2297,6 +2297,14 @@ pub(super) fn emit_module_with(
     // code-emit loops — all three see the same path per fn, so the
     // discovered locals match the emitted body and caller_fn
     // registration stays consistent.
+    //
+    // Invariant the three `emit_fn_body_via_mir` call sites rely on:
+    // `mir_program == None ⇒ mir_fn_for[i] == None` (the `and_then`
+    // below short-circuits), and `mir_dispatch[i]` is only set `true`
+    // inside `if let Some(mir_fn) = mir_fn_for[i]`. So whenever a site
+    // dispatches to MIR (`mir_dispatch[i]` true, or the pre-pass's
+    // `Some(mir_fn)`), `mir_program` is necessarily `Some` — the
+    // `.expect("MIR dispatch ⇒ program present")` is unreachable.
     let mir_fn_for: Vec<Option<&crate::ir::mir::MirFn>> = resolved_fn_defs
         .iter()
         .map(|rfd| mir_program.as_ref().and_then(|p| p.fn_by_id(rfd.fn_id)))
@@ -2322,6 +2330,9 @@ pub(super) fn emit_module_with(
                 &mut probe,
                 &resolved_fn_defs[i],
                 mir_fn,
+                mir_program
+                    .as_ref()
+                    .expect("MIR dispatch ⇒ program present"),
                 &fn_map,
                 self_wasm_idx,
                 &registry,
@@ -2586,6 +2597,9 @@ pub(super) fn emit_module_with(
                 &mut probe,
                 &resolved_fn_defs[i],
                 mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
+                mir_program
+                    .as_ref()
+                    .expect("MIR dispatch ⇒ program present"),
                 &fn_map,
                 self_wasm_idx,
                 &registry,
@@ -2621,6 +2635,9 @@ pub(super) fn emit_module_with(
                 &mut func,
                 &resolved_fn_defs[i],
                 mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
+                mir_program
+                    .as_ref()
+                    .expect("MIR dispatch ⇒ program present"),
                 &fn_map,
                 self_wasm_idx,
                 &registry,

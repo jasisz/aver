@@ -84,6 +84,7 @@ pub(crate) fn emit_fn_body_via_mir(
     func: &mut Function,
     rfd: &ResolvedFnDef,
     mir_fn: &MirFn,
+    mir_program: &MirProgram,
     fn_map: &FnMap,
     self_wasm_idx: u32,
     registry: &TypeRegistry,
@@ -125,6 +126,7 @@ pub(crate) fn emit_fn_body_via_mir(
         effect_idx_lookup,
         caller_fn_collector,
         wasip2_lowering,
+        mir_builtins: Some(&mir_program.builtins),
     };
 
     // Walk the body. `Ok(None)` mid-walk → caller falls back.
@@ -305,23 +307,73 @@ fn emit_mir_expr(
                         }
                         Some(entry) => {
                             let wasm_idx = entry.wasm_idx;
-                            for arg in &call.args {
-                                if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
-                                    return Ok(None);
-                                }
+                            if emit_mir_args_then_call(func, &call.args, slots, ctx, wasm_idx)?
+                                .is_none()
+                            {
+                                return Ok(None);
                             }
-                            func.instruction(&Instruction::Call(wasm_idx));
                             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
                         }
                     }
                 }
-                // Builtin / Intrinsic dispatch is wave 2; first-class
-                // local-slot calls are higher-order (wasm-gc has no
-                // first-class fn lowering). All fall back to the
-                // `ResolvedExpr` emitter for now.
-                MirCallee::Builtin(_) | MirCallee::Intrinsic(_) | MirCallee::LocalSlot { .. } => {
-                    Ok(None)
+                MirCallee::Builtin(id) => {
+                    // Resolve the dotted name lowering interned for this
+                    // `BuiltinId`, then mirror `emit_dotted_builtin`'s
+                    // first branch: a builtin with a registered helper
+                    // wasm fn is just "push args, call $idx". List
+                    // cons/empty (intercepted by the `ResolvedExpr` Call
+                    // arm before `emit_dotted_builtin`) and every custom
+                    // inline lowering (effects, Args.get, Float / List /
+                    // Map / Vector / String, wasip2) are NOT registered
+                    // helpers, so they fall back to the `ResolvedExpr`
+                    // emitter.
+                    // An out-of-range `BuiltinId` is a lowering-invariant
+                    // violation (every `MirCallee::Builtin` is minted via
+                    // `program.intern_builtin`, so `id` always indexes
+                    // `program.builtins`); fall back safely rather than panic.
+                    let Some(dotted) = ctx.mir_builtins.and_then(|names| names.get(id.0 as usize))
+                    else {
+                        return Ok(None);
+                    };
+                    let dotted = dotted.as_str();
+                    if (dotted == "List.prepend" && call.args.len() == 2)
+                        || (dotted == "List.empty" && call.args.is_empty())
+                    {
+                        return Ok(None);
+                    }
+                    match ctx.fn_map.builtins.get(dotted) {
+                        Some(&wasm_idx) => {
+                            if emit_mir_args_then_call(func, &call.args, slots, ctx, wasm_idx)?
+                                .is_none()
+                            {
+                                return Ok(None);
+                            }
+                            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+                        }
+                        None => Ok(None),
+                    }
                 }
+                MirCallee::Intrinsic(intr) => {
+                    // Mirror of `emit_expr`'s `Intrinsic` arm: route the
+                    // bare intrinsic name through the registered-builtin
+                    // fast path. (Buffer intrinsics aren't produced on the
+                    // wasm-gc path — it skips `buffer_build` — so this is
+                    // effectively unreachable; kept for parity.)
+                    match ctx.fn_map.builtins.get(intr.name()) {
+                        Some(&wasm_idx) => {
+                            if emit_mir_args_then_call(func, &call.args, slots, ctx, wasm_idx)?
+                                .is_none()
+                            {
+                                return Ok(None);
+                            }
+                            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+                        }
+                        None => Ok(None),
+                    }
+                }
+                // First-class local-slot calls are higher-order (wasm-gc
+                // has no first-class fn lowering) → fall back.
+                MirCallee::LocalSlot { .. } => Ok(None),
             }
         }
         MirExpr::TailCall(spanned_tc) => {
@@ -354,6 +406,27 @@ fn emit_mir_expr(
         // `ResolvedExpr` emitter pending a verified byte-identical shape.
         _ => Ok(None),
     }
+}
+
+/// Emit each MIR `arg` (returning `None` if any falls outside the
+/// supported subset, propagated as a whole-fn fallback) then
+/// `call $wasm_idx`. Shared by the `Fn` / `Builtin` / `Intrinsic`
+/// callee arms; the caller adds the `produces_value` read from the
+/// call expr's own type stamp.
+fn emit_mir_args_then_call(
+    func: &mut Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    wasm_idx: u32,
+) -> Result<Option<()>, WasmGcError> {
+    for arg in args {
+        if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+    }
+    func.instruction(&Instruction::Call(wasm_idx));
+    Ok(Some(()))
 }
 
 /// The numeric (`Int` / `Float`) tail of `emit_expr`'s `BinOp` arm —
