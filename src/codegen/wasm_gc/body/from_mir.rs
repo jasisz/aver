@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–7)
+//! ## Scope (waves 0–8)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -140,6 +140,19 @@
 //!   `return` it so the type matches the enclosing fn. `produces` is
 //!   `false` for a `Result<Unit,E>?`, else `true`.
 //!
+//! Wave 8 (string interpolation):
+//! - `InterpolatedStr(parts)` — mirror of `emit_interpolated_str`
+//!   (builtins.rs): build a `Vector<String>` of the parts and concat it
+//!   with `__wasmgc_concat_n`. Each `Literal` part is an `array.new_data`
+//!   over its segment; each `Expr` part is emitted then stringified by
+//!   the `String.from{Int,Float,Bool}` dispatch (`String` is identity).
+//!   An empty interpolation allocates a zero-length array directly. A
+//!   compound-type `Expr` part — which the oracle rejects — falls back
+//!   so the resolved-HIR path raises the identical error. The wasm-gc
+//!   pipeline runs with `run_buffer_build = false`, so interpolation
+//!   survives to MIR as `InterpolatedStr` (it is not deforested into
+//!   buffer-write intrinsics); this wave covers it on the seam path.
+//!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
 //! `ResolvedExpr` emitter for the whole fn. That keeps the corpus +
@@ -156,7 +169,7 @@ use crate::ir::SymbolTable;
 use crate::ir::hir::{ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
 use crate::ir::mir::{
     BuiltinCtor, MirCallee, MirCtor, MirExpr, MirFn, MirMatch, MirMatchArm, MirPattern, MirProgram,
-    MirRecordField,
+    MirRecordField, MirStrPart,
 };
 use crate::types::Type;
 
@@ -660,6 +673,7 @@ fn emit_mir_expr(
             None => Ok(None),
         },
         MirExpr::Try(inner) => emit_mir_try(func, inner, slots, ctx),
+        MirExpr::InterpolatedStr(parts) => emit_mir_interpolated_str(func, parts, slots, ctx),
         // FnValue (a fn referenced as a value) is higher-order — wasm-gc
         // has no first-class fn representation — so it falls back to the
         // `ResolvedExpr` emitter pending a verified byte-identical shape.
@@ -2068,6 +2082,114 @@ fn emit_mir_try(
     Ok(Some(!unit_ok))
 }
 
+/// Mirror of `emit_interpolated_str` (builtins.rs): build a
+/// `Vector<String>` of the parts and concat it with `__wasmgc_concat_n`.
+/// Each `Literal` part becomes an `array.new_data` over its segment;
+/// each `Expr` part is emitted then stringified by the same
+/// `String.from{Int,Float,Bool}` dispatch (a `String` is identity).
+/// An interpolation of a compound type — which `emit_interpolated_str`
+/// rejects outright — returns `None` so the whole fn falls back to the
+/// resolved-HIR emitter, which raises the identical error. The result
+/// is always a `String`, so `produces` is `true` (empty interpolation
+/// allocates a zero-length array directly, same as the oracle).
+fn emit_mir_interpolated_str(
+    func: &mut Function,
+    parts: &[MirStrPart],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<bool>, WasmGcError> {
+    let string_type_idx = ctx
+        .registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "InterpolatedStr reachable but no String type slot allocated".into(),
+        ))?;
+    if parts.is_empty() {
+        func.instruction(&Instruction::I32Const(0));
+        func.instruction(&Instruction::ArrayNewDefault(string_type_idx));
+        return Ok(Some(true));
+    }
+    let vec_idx = ctx
+        .registry
+        .vector_type_idx("Vector<String>")
+        .ok_or(WasmGcError::Validation(
+            "InterpolatedStr requires Vector<String> slot but it wasn't registered".into(),
+        ))?;
+    let concat_idx = ctx
+        .fn_map
+        .builtins
+        .get("__wasmgc_concat_n")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "InterpolatedStr requires __wasmgc_concat_n builtin but it wasn't registered".into(),
+        ))?;
+    for part in parts {
+        match part {
+            MirStrPart::Literal(s) => {
+                let bytes = s.as_bytes();
+                let seg_idx =
+                    ctx.registry
+                        .string_literal_segment(bytes)
+                        .ok_or(WasmGcError::Validation(format!(
+                            "Interpolation literal `{s:?}` not in segment table"
+                        )))?;
+                func.instruction(&Instruction::I32Const(0));
+                func.instruction(&Instruction::I32Const(bytes.len() as i32));
+                func.instruction(&Instruction::ArrayNewData {
+                    array_type_index: string_type_idx,
+                    array_data_index: seg_idx,
+                });
+            }
+            MirStrPart::Expr(inner) => {
+                let aver_ty = aver_type_str_of(inner);
+                if emit_mir_expr(func, inner, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                match aver_ty.trim() {
+                    "String" => { /* identity */ }
+                    "Int" => {
+                        let to_string_idx =
+                            ctx.fn_map.builtins.get("String.fromInt").copied().ok_or(
+                                WasmGcError::Validation(
+                                    "interpolation of Int requires String.fromInt builtin".into(),
+                                ),
+                            )?;
+                        func.instruction(&Instruction::Call(to_string_idx));
+                    }
+                    "Float" => {
+                        let to_string_idx =
+                            ctx.fn_map.builtins.get("String.fromFloat").copied().ok_or(
+                                WasmGcError::Validation(
+                                    "interpolation of Float requires String.fromFloat builtin"
+                                        .into(),
+                                ),
+                            )?;
+                        func.instruction(&Instruction::Call(to_string_idx));
+                    }
+                    "Bool" => {
+                        let to_string_idx =
+                            ctx.fn_map.builtins.get("String.fromBool").copied().ok_or(
+                                WasmGcError::Validation(
+                                    "interpolation of Bool requires String.fromBool builtin".into(),
+                                ),
+                            )?;
+                        func.instruction(&Instruction::Call(to_string_idx));
+                    }
+                    // Compound type: `emit_interpolated_str` errors here.
+                    // Fall back so the resolved-HIR path raises it instead.
+                    _ => return Ok(None),
+                }
+            }
+        }
+    }
+    func.instruction(&Instruction::ArrayNewFixed {
+        array_type_index: vec_idx,
+        array_size: parts.len() as u32,
+    });
+    func.instruction(&Instruction::Call(concat_idx));
+    Ok(Some(true))
+}
+
 /// The numeric (`Int` / `Float`) tail of `emit_expr`'s `BinOp` arm —
 /// byte-for-byte. Returns `None` if an operand falls outside the
 /// supported subset (propagated as whole-fn fallback). The I64 / F64
@@ -2220,6 +2342,13 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             .all(|(k, v)| mir_expr_coverable(k) && mir_expr_coverable(v)),
         MirExpr::List(items) => items.iter().all(mir_expr_coverable),
         MirExpr::Try(inner) => mir_expr_coverable(inner),
+        MirExpr::InterpolatedStr(parts) => parts.iter().all(|p| match p {
+            // Coarse: a compound-type `Expr` part falls back at emit
+            // time (the registry-free predicate can't see the type), a
+            // tolerable over-count for `--explain-mir-coverage`.
+            MirStrPart::Literal(_) => true,
+            MirStrPart::Expr(e) => mir_expr_coverable(e),
+        }),
         MirExpr::Match(spanned_match) => {
             // Coarse, ctx-free mirror of `emit_mir_match`'s dispatch (the
             // predicate has no registry, so it can't model the Map.get
