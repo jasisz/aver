@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–3b)
+//! ## Scope (waves 0–4a)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -66,6 +66,16 @@
 //!   a primitive subject from carrying a constructor / list / tuple arm,
 //!   so neither path can reach a branch the other wouldn't.)
 //!
+//! Wave 4a (built-in carrier match):
+//! - `Match` over a `Result<T,E>` or `Option<T>` subject — mirror of
+//!   `emit_result_match` / `emit_option_match`: stash the subject in the
+//!   reserved scratch, test the tag field (struct field 0), and on each
+//!   branch extract the payload (field 1 for `Ok`/`Some`, field 2 for
+//!   `Err`) into the arm's binding slot before emitting the body. A
+//!   wildcard is the `Err` / `None` catch-all. An `Option` match whose
+//!   subject is `Map.get(m, k)` falls back (it has a fused HIR-only
+//!   lowering). User-variant / list / tuple matches are wave 4b–4d.
+//!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
 //! `ResolvedExpr` emitter for the whole fn. That keeps the corpus +
@@ -79,7 +89,9 @@ use crate::ast::Spanned;
 use crate::ast::{BinOp, Literal};
 use crate::ir::SymbolTable;
 use crate::ir::hir::{ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
-use crate::ir::mir::{MirCallee, MirExpr, MirFn, MirMatch, MirPattern, MirProgram};
+use crate::ir::mir::{
+    BuiltinCtor, MirCallee, MirCtor, MirExpr, MirFn, MirMatch, MirMatchArm, MirPattern, MirProgram,
+};
 use crate::types::Type;
 
 use super::super::WasmGcError;
@@ -470,14 +482,20 @@ fn emit_mir_match(
     if m.arms.is_empty() {
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
-    // Constructor / list / tuple patterns are wave 4 — fall back.
+    // Patterns not yet covered: list (wave 4b), tuple (wave 4c), and
+    // user-variant constructors (wave 4d) — fall back. Built-in
+    // `Result` / `Option` constructor patterns (wave 4a) are handled
+    // below.
     if m.arms.iter().any(|a| {
         matches!(
             a.pattern,
-            MirPattern::Ctor { .. }
-                | MirPattern::EmptyList
+            MirPattern::EmptyList
                 | MirPattern::Cons { .. }
                 | MirPattern::Tuple(_)
+                | MirPattern::Ctor {
+                    ctor: MirCtor::User(_),
+                    ..
+                }
         )
     }) {
         return Ok(None);
@@ -492,6 +510,20 @@ fn emit_mir_match(
         None => wasm_encoder::BlockType::Empty,
     };
     let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
+
+    // Built-in `Result<T,E>` / `Option<T>` matches — tag-based dispatch.
+    // `emit_match` checks Result before Option; mirror that order. An
+    // Option match whose subject is `Map.get(m, k)` takes `emit_match`'s
+    // fused (no-Option-alloc) path — defer that optimization, fall back.
+    if m.arms.iter().any(arm_is_mir_result_ctor) {
+        return Ok(emit_mir_result_match(func, m, block_ty, slots, ctx)?.map(|()| produces));
+    }
+    if m.arms.iter().any(arm_is_mir_option_ctor) {
+        if subject_is_map_get(&m.subject, ctx) {
+            return Ok(None);
+        }
+        return Ok(emit_mir_option_match(func, m, block_ty, slots, ctx)?.map(|()| produces));
+    }
 
     match aver_type_str_of(&m.subject).trim() {
         "Bool" => {
@@ -695,6 +727,250 @@ fn emit_mir_int_cascade(
     Ok(Some(()))
 }
 
+/// `true` for an arm whose pattern is a built-in `Result.Ok` /
+/// `Result.Err` constructor (mirror of `arm_is_result_pattern_resolved`).
+fn arm_is_mir_result_ctor(arm: &MirMatchArm) -> bool {
+    matches!(
+        &arm.pattern,
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(BuiltinCtor::ResultOk | BuiltinCtor::ResultErr),
+            ..
+        }
+    )
+}
+
+/// `true` for an arm whose pattern is a built-in `Option.Some` /
+/// `Option.None` constructor (mirror of `arm_is_option_pattern_resolved`).
+fn arm_is_mir_option_ctor(arm: &MirMatchArm) -> bool {
+    matches!(
+        &arm.pattern,
+        MirPattern::Ctor {
+            ctor: MirCtor::Builtin(BuiltinCtor::OptionSome | BuiltinCtor::OptionNone),
+            ..
+        }
+    )
+}
+
+/// `true` when `subject` is `Map.get(m, k)` — the fused-match shape
+/// `emit_match` lowers without allocating an `Option<V>`. Deferred
+/// (wave 4a falls back) so the plain Option-match emit can't diverge
+/// from `emit_map_get_match_fused`.
+fn subject_is_map_get(subject: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> bool {
+    if let MirExpr::Call(call) = &subject.node
+        && let MirCallee::Builtin(id) = call.node.callee
+        && let Some(name) = ctx.mir_builtins.and_then(|names| names.get(id.0 as usize))
+    {
+        return name == "Map.get" && call.node.args.len() == 2;
+    }
+    false
+}
+
+/// The payload-binding wasm slot for a constructor-pattern arm, mirror
+/// of `emit_option_match` / `emit_result_match`'s
+/// `arm.binding_slots.get().first()` + `slot != u16::MAX` guard. The
+/// MIR `bindings` are seeded from the resolver's `binding_slots`
+/// (`lower.rs::take_pattern_bindings`), so the slot is identical; an
+/// ignored / absent binding is `u16::MAX` → `None` (no extraction).
+fn ctor_arm_binding_slot(arm: &MirMatchArm) -> Option<u32> {
+    if let MirPattern::Ctor { bindings, .. } = &arm.pattern
+        && let Some(slot) = bindings.first()
+        && slot.0 != u32::from(u16::MAX)
+    {
+        return Some(slot.0);
+    }
+    None
+}
+
+/// Mirror of `emit_option_match` (emit.rs): stash the subject, test the
+/// tag field (struct field 0 == 1 ⇒ `Some`), extract the payload
+/// (field 1) into the `Some` arm's binding slot when present, then the
+/// `if`/`else` bodies. The wildcard arm is the `None` catch-all.
+fn emit_mir_option_match(
+    func: &mut Function,
+    m: &MirMatch,
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Option match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    let subject_ty = aver_type_str_of(&m.subject);
+    let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let opt_idx = ctx
+        .registry
+        .option_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Option match: subject type `{subject_ty}` is not a registered Option<T>"
+        )))?;
+
+    // Locate Some / None arms; a wildcard is the None catch-all (then
+    // Some) — same convention as `emit_option_match`.
+    let mut some_arm: Option<&MirMatchArm> = None;
+    let mut none_arm: Option<&MirMatchArm> = None;
+    for arm in &m.arms {
+        match &arm.pattern {
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+                ..
+            } => some_arm = Some(arm),
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
+                ..
+            } => none_arm = Some(arm),
+            MirPattern::Wildcard => {
+                if none_arm.is_none() {
+                    none_arm = Some(arm);
+                } else if some_arm.is_none() {
+                    some_arm = Some(arm);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (Some(some_arm), Some(none_arm)) = (some_arm, none_arm) else {
+        // `emit_option_match` raises a Validation error here; fall back.
+        return Ok(None);
+    };
+
+    if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(opt_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(block_ty));
+
+    if let Some(slot) = ctor_arm_binding_slot(some_arm) {
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(opt_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: opt_idx,
+            field_index: 1,
+        });
+        func.instruction(&Instruction::LocalSet(slot));
+    }
+    if emit_mir_expr(func, &some_arm.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::Else);
+    if emit_mir_expr(func, &none_arm.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::End);
+    Ok(Some(()))
+}
+
+/// Mirror of `emit_result_match` (emit.rs): tag field 0 == 1 ⇒ `Ok`
+/// (payload field 1), else `Err` (payload field 2). Each arm extracts
+/// its payload into its binding slot when present. A wildcard is the
+/// `Err` catch-all (then `Ok`).
+fn emit_mir_result_match(
+    func: &mut Function,
+    m: &MirMatch,
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Result match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    let subject_ty = aver_type_str_of(&m.subject);
+    let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let res_idx = ctx
+        .registry
+        .result_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Result match: subject type `{subject_ty}` is not a registered Result<T,E>"
+        )))?;
+
+    let mut ok_arm: Option<&MirMatchArm> = None;
+    let mut err_arm: Option<&MirMatchArm> = None;
+    for arm in &m.arms {
+        match &arm.pattern {
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::ResultOk),
+                ..
+            } => ok_arm = Some(arm),
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::ResultErr),
+                ..
+            } => err_arm = Some(arm),
+            MirPattern::Wildcard => {
+                if err_arm.is_none() {
+                    err_arm = Some(arm);
+                } else if ok_arm.is_none() {
+                    ok_arm = Some(arm);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (Some(ok_arm), Some(err_arm)) = (ok_arm, err_arm) else {
+        return Ok(None);
+    };
+
+    if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
+    func.instruction(&Instruction::If(block_ty));
+
+    if let Some(slot) = ctor_arm_binding_slot(ok_arm) {
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(res_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: res_idx,
+            field_index: 1,
+        });
+        func.instruction(&Instruction::LocalSet(slot));
+    }
+    if emit_mir_expr(func, &ok_arm.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::Else);
+    if let Some(slot) = ctor_arm_binding_slot(err_arm) {
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(res_idx),
+        ));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: res_idx,
+            field_index: 2,
+        });
+        func.instruction(&Instruction::LocalSet(slot));
+    }
+    if emit_mir_expr(func, &err_arm.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::End);
+    Ok(Some(()))
+}
+
 /// The numeric (`Int` / `Float`) tail of `emit_expr`'s `BinOp` arm —
 /// byte-for-byte. Returns `None` if an operand falls outside the
 /// supported subset (propagated as whole-fn fallback). The I64 / F64
@@ -827,24 +1103,38 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
         }
         MirExpr::TailCall(spanned_tc) => spanned_tc.node.args.iter().all(mir_expr_coverable),
         MirExpr::Match(spanned_match) => {
+            // Coarse, ctx-free mirror of `emit_mir_match`'s dispatch (the
+            // predicate has no registry, so it can't model the Map.get
+            // fused-Option fallback — a tolerable over-count, since this
+            // only feeds `--explain-mir-coverage`; the real per-fn
+            // dispatch is what the wire-up + differential test use).
+            // List / tuple / user-variant arms are wave 4b/4c/4d.
             let m = &spanned_match.node;
-            // Only literal / wildcard arms over a Bool/Int subject reach
-            // the emitting branches of `emit_mir_match`; `Bind` on a
-            // primitive subject (and every wave-4 pattern) makes it fall
-            // back, so exclude them here too — keeps the predicate honest
-            // with the emitter for the `--explain-mir-coverage` count.
+            let unsupported_pat = m.arms.iter().any(|a| {
+                matches!(
+                    a.pattern,
+                    MirPattern::EmptyList
+                        | MirPattern::Cons { .. }
+                        | MirPattern::Tuple(_)
+                        | MirPattern::Ctor {
+                            ctor: MirCtor::User(_),
+                            ..
+                        }
+                )
+            });
+            // A primitive-subject match takes the Bool/Int/String branches
+            // (literal / wildcard arms only; `Bind` falls back); a
+            // Result/Option match carries built-in constructor arms.
+            let is_primitive = matches!(m.subject.ty(), Some(Type::Bool | Type::Int | Type::Str))
+                && !m
+                    .arms
+                    .iter()
+                    .any(|a| matches!(a.pattern, MirPattern::Bind(..) | MirPattern::Ctor { .. }));
+            let is_result_or_option = m.arms.iter().any(arm_is_mir_result_ctor)
+                || m.arms.iter().any(arm_is_mir_option_ctor);
             !m.arms.is_empty()
-                && !m.arms.iter().any(|a| {
-                    matches!(
-                        a.pattern,
-                        MirPattern::Bind(..)
-                            | MirPattern::Ctor { .. }
-                            | MirPattern::EmptyList
-                            | MirPattern::Cons { .. }
-                            | MirPattern::Tuple(_)
-                    )
-                })
-                && matches!(m.subject.ty(), Some(Type::Bool | Type::Int | Type::Str))
+                && !unsupported_pat
+                && (is_primitive || is_result_or_option)
                 && mir_expr_coverable(&m.subject)
                 && m.arms.iter().all(|a| mir_expr_coverable(&a.body))
         }
