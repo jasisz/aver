@@ -68,6 +68,28 @@ impl From<CompileError> for MirVmUnsupported {
     }
 }
 
+impl MirVmUnsupported {
+    /// Surface a walker rejection as a `CompileError`. `compile_top_level`
+    /// pre-checks every lowered top-level expression with
+    /// `mir_expr_compilable` before committing to the MIR walk, so this
+    /// only fires on the optimistic edge cases `can_compile` reports as
+    /// compilable (e.g. an unknown builtin name) — a real internal error
+    /// rather than a routine fallback.
+    pub(super) fn into_compile_error(self, context: &str) -> CompileError {
+        match self {
+            MirVmUnsupported::InnerError(e) => e,
+            MirVmUnsupported::UnsupportedExpr(what) => CompileError {
+                msg: format!("internal error: VM backend cannot lower `{what}` in {context}"),
+            },
+            MirVmUnsupported::UnsupportedCallee => CompileError {
+                msg: format!(
+                    "internal error: VM backend hit an unsupported callee shape in {context}"
+                ),
+            },
+        }
+    }
+}
+
 /// Walk a `MirExpr` and emit VM bytecode into the supplied
 /// `FnCompiler`. Returns `Err(MirVmUnsupported)` for any MirExpr
 /// variant outside the Phase 4 subset — the caller drops back to
@@ -808,6 +830,15 @@ pub fn classify_mir_program_coverage(mir: &MirProgram) -> MirVmCoverage {
 pub struct MirVmCoverage {
     pub covered: u32,
     pub needs_hir_fallback: u32,
+}
+
+/// Whether the MIR walker can emit bytecode for `expr` without hitting
+/// an `MirVmUnsupported`. Used by `compile_top_level` to pre-check a
+/// batch of lowered top-level value expressions before committing to
+/// the MIR walk, so a mid-emit rejection can't leave half-written
+/// bytecode — it falls back to a clean alternative path instead.
+pub(super) fn mir_expr_compilable(expr: &Spanned<MirExpr>) -> bool {
+    can_compile(expr)
 }
 
 fn can_compile(expr: &Spanned<MirExpr>) -> bool {
