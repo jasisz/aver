@@ -156,7 +156,7 @@ pub fn compile_to_wasm_gc(
     module::emit_module_with(items, None, TargetMode::AverBridge, true).map(|(bytes, _)| bytes)
 }
 
-/// `compile_to_wasm_gc` with an explicit MIR toggle — Phase 5 #340.
+/// `compile_to_wasm_gc` with an explicit MIR toggle.
 /// `enable_mir == true` is the production path (`compile_to_wasm_gc`):
 /// the MIR body emitter runs per-fn with a `ResolvedExpr` fallback.
 /// `enable_mir == false` forces the `ResolvedExpr` emitter everywhere.

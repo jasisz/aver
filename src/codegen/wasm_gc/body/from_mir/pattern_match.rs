@@ -4,10 +4,11 @@
 
 use super::*;
 
-/// Mirror of `emit_match` (emit.rs) for the wave-3a primitive-subject
-/// shapes: `Bool` (a single `if`/`else`) and `Int` (an `i64.eq`
-/// cascade). Any arm carrying a constructor / list / tuple pattern is
-/// wave 4 → `Ok(None)` (whole-fn fallback). `String`-subject matches
+/// Mirror of `emit_match` (emit.rs) for the primitive-subject shapes:
+/// `Bool` (a single `if`/`else`) and `Int` (an `i64.eq` cascade). Any
+/// arm carrying a constructor / list / tuple pattern is routed to the
+/// carrier / list / variant paths below (tuple falls back).
+/// `String`-subject matches
 /// (which need the reserved subject scratch + `__wasmgc_string_eq`) and
 /// any other subject type also fall back. Shapes `emit_match` rejects
 /// outright (a `Bool` match without exactly 2 true/false/wildcard arms,
@@ -23,10 +24,9 @@ pub(crate) fn emit_mir_match(
     if m.arms.is_empty() {
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
-    // Tuple arms are wave 4c (single-arm destructure) / the multi-arm
-    // tuple-of-constructors path — both still fall back. List (4b),
-    // built-in `Result` / `Option` (4a), and user-variant (4d)
-    // constructor patterns are handled below.
+    // Tuple arms (single-arm destructure / multi-arm tuple-of-
+    // constructors) still fall back. List, built-in `Result` / `Option`,
+    // and user-variant constructor patterns are handled below.
     if m.arms
         .iter()
         .any(|a| matches!(a.pattern, MirPattern::Tuple(_)))
@@ -316,9 +316,9 @@ pub(crate) fn arm_is_mir_option_ctor(arm: &MirMatchArm) -> bool {
 }
 
 /// `true` when `subject` is `Map.get(m, k)` — the fused-match shape
-/// `emit_match` lowers without allocating an `Option<V>`. Deferred
-/// (wave 4a falls back) so the plain Option-match emit can't diverge
-/// from `emit_map_get_match_fused`.
+/// `emit_match` lowers without allocating an `Option<V>`. This shape
+/// falls back so the plain Option-match emit can't diverge from
+/// `emit_map_get_match_fused`.
 pub(crate) fn subject_is_map_get(subject: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> bool {
     if let MirExpr::Call(call) = &subject.node
         && let MirCallee::Builtin(id) = call.node.callee

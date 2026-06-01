@@ -2271,12 +2271,12 @@ pub(super) fn emit_module_with(
     });
 
     // Lower the post-link resolved fns to MIR for the MIR-preferred
-    // body emitter (Phase 5 #340). `lower_program` runs no optimizer
-    // passes, so the MIR mirrors the resolved HIR shape 1:1 — the
-    // body walk that follows emits byte-identical wasm to the
-    // `ResolvedExpr` emitter for the variants it covers, and returns
-    // `None` (whole-fn fallback) for everything else, keeping the
-    // corpus + game suite green while coverage widens wave by wave.
+    // body emitter. `lower_program` runs no optimizer passes, so the
+    // MIR mirrors the resolved HIR shape 1:1 — the body walk that
+    // follows emits byte-identical wasm to the `ResolvedExpr` emitter
+    // for the variants it covers, and returns `None` (whole-fn
+    // fallback) for everything else, keeping the corpus + game suite
+    // green while MIR coverage widens.
     // `enable_mir == false` forces the `ResolvedExpr` path everywhere;
     // the byte-differential test (`tests/wasm_gc_differential_mir.rs`)
     // compiles both ways and asserts the emitted fn bytes match.

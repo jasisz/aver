@@ -357,7 +357,7 @@ pub(super) struct EmitCtx<'a> {
     /// and `wasi:io/streams.[method]output-stream.blocking-write-and-
     /// flush`. Phase 1.2b1.5.
     pub(super) wasip2_lowering: Option<&'a Wasip2Lowering>,
-    /// Phase 5 (#340) — interned built-in fn names from the
+    /// Interned built-in fn names from the
     /// [`crate::ir::mir::MirProgram`] driving the MIR body emitter, so
     /// `MirCallee::Builtin(BuiltinId)` resolves to its dotted name
     /// (`program.builtins[id]`). `None` on the `ResolvedExpr` emit
