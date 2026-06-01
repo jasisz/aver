@@ -8,8 +8,9 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (wave 0 — the canary)
+//! ## Scope (waves 0–1)
 //!
+//! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
 //!   `emit_expr`'s literal arms (incl. the `array.new_data` string-
 //!   literal segment path).
@@ -20,7 +21,7 @@
 //! - `BinOp` (numeric only) — the canary. Dispatches on `bop.lhs.ty()`
 //!   reading the MIR type stamp; `Int`/`Float` take the I64/F64 op set
 //!   `emit_expr` selects via `wasm_type_of`. `Str` and compound-type
-//!   operands return `None` (wave 1+ for string concat / eq helpers).
+//!   operands return `None` (a later wave does string concat / eq).
 //! - `Neg` — numeric unary minus (`f64.neg` / `i64.const 0; …; i64.sub`).
 //! - `Return` — `… ; return` (never produced by the current lowering,
 //!   carried for symmetry with the Rust walker).
@@ -31,6 +32,18 @@
 //!   lets (empty `binding_name`: non-tail `Stmt::Expr` intermediates
 //!   and `_ = expr` discards) return `None` → whole-fn HIR fallback,
 //!   same shape the Rust walker takes.
+//!
+//! Wave 1 (calls):
+//! - `Call` with `MirCallee::Fn(FnId)` — mirror of `emit_expr`'s
+//!   `ResolvedCallee::Fn` arm: `fn_map.by_id` lookup (same `FnId`
+//!   identity), emit args, `call $idx`; a missing entry whose name is a
+//!   local slot emits a polymorphic `unreachable` (higher-order
+//!   verify-only fns), otherwise a hard error. `Builtin` / `Intrinsic`
+//!   / `LocalSlot` callees fall back (later waves).
+//! - `TailCall` — mirror of `emit_tail_call`: emit args, then the
+//!   shared `emit_return_call_insn` (`return_call`, or `call` under
+//!   `AVER_WASM_GC_NO_TAIL_CALL`).
+//! - `FnValue` falls back — higher-order, no first-class fn lowering.
 //!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
@@ -45,11 +58,12 @@ use crate::ast::Spanned;
 use crate::ast::{BinOp, Literal};
 use crate::ir::SymbolTable;
 use crate::ir::hir::{ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
-use crate::ir::mir::{MirExpr, MirFn, MirProgram};
+use crate::ir::mir::{MirCallee, MirExpr, MirFn, MirProgram};
 use crate::types::Type;
 
 use super::super::WasmGcError;
 use super::super::types::TypeRegistry;
+use super::emit::emit_return_call_insn;
 use super::infer::{aver_type_str_of, wasm_type_of};
 use super::slots::count_value_params;
 use super::{CallerFnCollector, EmitCtx, FnMap, SlotTable, Wasip2Lowering};
@@ -268,6 +282,76 @@ fn emit_mir_expr(
             // The chain's tail is the return value left on the stack.
             emit_mir_expr(func, &l.body, slots, ctx)
         }
+        MirExpr::Call(spanned_call) => {
+            let call = &spanned_call.node;
+            match call.callee {
+                MirCallee::Fn(fn_id) => {
+                    // Mirror of `emit_expr`'s `ResolvedCallee::Fn` arm.
+                    match ctx.fn_map.by_id.get(&fn_id) {
+                        None => {
+                            // No wasm idx: a `Fn(..)` value parked in a
+                            // local slot (verify-only higher-order) emits
+                            // a polymorphic `unreachable`; anything else
+                            // is a hard error — identical to `emit_expr`.
+                            let name = ctx.symbol_table.fn_entry(fn_id).key.name.clone();
+                            if ctx.self_local_slot(&name).is_some() {
+                                func.instruction(&Instruction::Unreachable);
+                                Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+                            } else {
+                                Err(WasmGcError::Validation(format!(
+                                    "call to unknown fn `{name}` (FnId {fn_id:?})"
+                                )))
+                            }
+                        }
+                        Some(entry) => {
+                            let wasm_idx = entry.wasm_idx;
+                            for arg in &call.args {
+                                if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+                                    return Ok(None);
+                                }
+                            }
+                            func.instruction(&Instruction::Call(wasm_idx));
+                            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+                        }
+                    }
+                }
+                // Builtin / Intrinsic dispatch is wave 2; first-class
+                // local-slot calls are higher-order (wasm-gc has no
+                // first-class fn lowering). All fall back to the
+                // `ResolvedExpr` emitter for now.
+                MirCallee::Builtin(_) | MirCallee::Intrinsic(_) | MirCallee::LocalSlot { .. } => {
+                    Ok(None)
+                }
+            }
+        }
+        MirExpr::TailCall(spanned_tc) => {
+            // Mirror of `emit_tail_call` (emit.rs): validate the target,
+            // emit args, then the shared return-call instruction. The
+            // `return_call` makes this a terminator; in tail position
+            // `emit_fn_body_via_mir`'s trailing `End` is unreachable but
+            // valid, exactly as the `ResolvedExpr` path.
+            let tc = &spanned_tc.node;
+            let wasm_idx = match ctx.fn_map.by_id.get(&tc.target) {
+                Some(entry) => entry.wasm_idx,
+                None => {
+                    let name = ctx.symbol_table.fn_entry(tc.target).key.canonical();
+                    return Err(WasmGcError::Validation(format!(
+                        "tail call to unknown fn `{name}` (FnId {:?})",
+                        tc.target
+                    )));
+                }
+            };
+            for arg in &tc.args {
+                if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+            }
+            emit_return_call_insn(func, wasm_idx, ctx.self_wasm_idx);
+            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+        }
+        // FnValue (a fn referenced as a value) is higher-order — wasm-gc
+        // has no first-class fn representation — so it falls back to the
+        // `ResolvedExpr` emitter pending a verified byte-identical shape.
         _ => Ok(None),
     }
 }
@@ -398,6 +482,11 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
                 && mir_expr_coverable(&l.value)
                 && mir_expr_coverable(&l.body)
         }
+        MirExpr::Call(spanned_call) => {
+            matches!(spanned_call.node.callee, MirCallee::Fn(_))
+                && spanned_call.node.args.iter().all(mir_expr_coverable)
+        }
+        MirExpr::TailCall(spanned_tc) => spanned_tc.node.args.iter().all(mir_expr_coverable),
         _ => false,
     }
 }

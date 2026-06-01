@@ -3100,25 +3100,33 @@ pub(super) fn emit_tail_call(
     for arg in args {
         emit_expr(func, arg, slots, ctx)?;
     }
-    // `AVER_WASM_GC_NO_TAIL_CALL=1` swaps `return_call` for a plain
-    // `call` + fall-through return — used to A/B whether the
-    // tail-call proposal is doing meaningful work on a given bench.
-    // Deep recursion will trash the stack with this on; only flip it
-    // for shallow scenarios.
-    let no_tail_call = std::env::var_os("AVER_WASM_GC_NO_TAIL_CALL").is_some();
-    // Self-tail-call check via wasm fn idx — by_id lookup already
-    // yielded the entry, so `entry.wasm_idx == ctx.self_wasm_idx`
-    // iff `target` names the current fn. Skips the pre-PR-9.3c
-    // `target_name == ctx.self_fn_name` string compare.
-    let target_idx = if entry.wasm_idx == ctx.self_wasm_idx {
-        ctx.self_wasm_idx
+    emit_return_call_insn(func, entry.wasm_idx, ctx.self_wasm_idx);
+    Ok(())
+}
+
+/// Emit the tail-call instruction for a call to `target_wasm_idx` from
+/// the fn whose own wasm index is `self_wasm_idx`: `return_call`
+/// normally, or a plain `call` + fall-through return when
+/// `AVER_WASM_GC_NO_TAIL_CALL=1` (used to A/B whether the tail-call
+/// proposal is doing meaningful work on a bench — deep recursion will
+/// trash the stack with it on, so only flip it for shallow scenarios).
+/// Shared by the `ResolvedExpr` tail-call emitter and the MIR
+/// `TailCall` walker so both pick the byte-identical instruction.
+///
+/// The `target == self` branch is the self-tail-call check (a `FnId`
+/// lookup already yielded `target_wasm_idx`, so equality with
+/// `self_wasm_idx` means `target` names the current fn). It currently
+/// resolves to the same index either way, but is kept explicit so the
+/// self-recursion case stays a named, greppable site.
+pub(super) fn emit_return_call_insn(func: &mut Function, target_wasm_idx: u32, self_wasm_idx: u32) {
+    let target_idx = if target_wasm_idx == self_wasm_idx {
+        self_wasm_idx
     } else {
-        entry.wasm_idx
+        target_wasm_idx
     };
-    if no_tail_call {
+    if std::env::var_os("AVER_WASM_GC_NO_TAIL_CALL").is_some() {
         func.instruction(&Instruction::Call(target_idx));
     } else {
         func.instruction(&Instruction::ReturnCall(target_idx));
     }
-    Ok(())
 }
