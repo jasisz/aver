@@ -291,7 +291,7 @@ fn compile_program_inner(
         }
     }
 
-    compiler.compile_top_level(items, symbols, arena)?;
+    compiler.compile_top_level(items, symbols, arena, mir_program)?;
     compiler.code.symbols = compiler.symbols.clone();
     classify::classify_thin_functions(&mut compiler.code, arena)?;
 
@@ -878,6 +878,7 @@ impl ProgramCompiler {
         items: &[ResolvedTopLevel],
         symbols: &SymbolTable,
         arena: &mut Arena,
+        mir_program: Option<&crate::ir::mir::MirProgram>,
     ) -> Result<(), CompileError> {
         let has_stmts = items
             .iter()
@@ -895,9 +896,59 @@ impl ProgramCompiler {
         // Top-level statements never went through the resolver pass
         // (Phase E lifts `FnDef` bodies but leaves `TopLevel::Stmt`
         // as passthrough). Resolve them here against the entry's
-        // symbol table so the bytecode-emit walk operates on the
-        // same `ResolvedExpr` shape it does inside fn bodies.
+        // symbol table.
         let resolver_ctx = crate::ir::hir::ResolveCtx::new(symbols);
+        let resolved: Vec<ResolvedStmt> = items
+            .iter()
+            .filter_map(|i| match i {
+                ResolvedTopLevel::Passthrough(TopLevel::Stmt(stmt)) => {
+                    Some(resolve_stmt_for_top_level(&resolver_ctx, stmt))
+                }
+                _ => None,
+            })
+            .collect();
+
+        // Each statement stores its value to a global (`Binding`) or pops
+        // it (`Expr`); compute the store targets up front so the borrow
+        // of `self.global_names` doesn't collide with the `FnCompiler`.
+        let store_targets: Vec<Option<u16>> = resolved
+            .iter()
+            .map(|rs| match rs {
+                ResolvedStmt::Binding { name, .. } => Some(self.global_names[name.as_str()]),
+                ResolvedStmt::Expr(_) => None,
+            })
+            .collect();
+
+        // Try the MIR path: lower every value expression (the builtin /
+        // instantiation tables grow on a clone of the entry program so
+        // the BuiltinId / FnId references match the walker's program),
+        // then pre-check the whole batch with `mir_expr_compilable`. The
+        // walker emits the value; the `STORE_GLOBAL` / `POP` is emitted
+        // here, so no MIR-level global-binding node is needed. If any
+        // statement falls outside the lowerable subset (or there is no
+        // MIR program, i.e. the pure-HIR entry), the whole top-level
+        // block uses the HIR `compile_expr` walk — deciding before any
+        // emit keeps the choice clean.
+        let mut prog = mir_program.cloned().unwrap_or_default();
+        let lowered: Vec<Option<crate::ast::Spanned<crate::ir::mir::MirExpr>>> = if mir_program
+            .is_some()
+        {
+            resolved
+                .iter()
+                .map(|rs| {
+                    let value = match rs {
+                        ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => value,
+                    };
+                    crate::ir::mir::lower_top_level_value(value, &mut prog).ok()
+                })
+                .collect()
+        } else {
+            vec![None; resolved.len()]
+        };
+        let use_mir = mir_program.is_some()
+            && lowered
+                .iter()
+                .all(|low| low.as_ref().is_some_and(mir::mir_expr_compilable));
 
         let empty_mod_scope = HashMap::new();
         let mut fc = FnCompiler::new(
@@ -912,24 +963,26 @@ impl ProgramCompiler {
             &mut self.symbols,
             arena,
             symbols,
-            None,
+            if use_mir { Some(&prog) } else { None },
         );
 
-        for item in items {
-            if let ResolvedTopLevel::Passthrough(TopLevel::Stmt(stmt)) = item {
-                let resolved_stmt = resolve_stmt_for_top_level(&resolver_ctx, stmt);
-                match &resolved_stmt {
-                    ResolvedStmt::Binding { name, value, .. } => {
-                        fc.compile_expr(value)?;
-                        let idx = self.global_names[name.as_str()];
-                        fc.emit_op(STORE_GLOBAL);
-                        fc.emit_u16(idx);
-                    }
-                    ResolvedStmt::Expr(value) => {
-                        fc.compile_expr(value)?;
-                        fc.emit_op(POP);
-                    }
+        for (idx, rs) in resolved.iter().enumerate() {
+            if use_mir {
+                let low = lowered[idx].as_ref().expect("pre-checked compilable");
+                mir::compile_mir_expr(&mut fc, low)
+                    .map_err(|e| e.into_compile_error("a top-level statement"))?;
+            } else {
+                let value = match rs {
+                    ResolvedStmt::Binding { value, .. } | ResolvedStmt::Expr(value) => value,
+                };
+                fc.compile_expr(value)?;
+            }
+            match store_targets[idx] {
+                Some(global_idx) => {
+                    fc.emit_op(STORE_GLOBAL);
+                    fc.emit_u16(global_idx);
                 }
+                None => fc.emit_op(POP),
             }
         }
 

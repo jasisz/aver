@@ -156,6 +156,24 @@ pub fn lower_program(items: &[ResolvedTopLevel]) -> MirProgram {
     program
 }
 
+/// Lower a single top-level statement's value expression to MIR.
+///
+/// Top-level module statements (`x = expr` / a bare `expr` at module
+/// scope) aren't part of any `ResolvedFnDef`, so they don't go through
+/// `lower_program`. The VM compiler resolves them on the fly and lowers
+/// each value here against the supplied `program` (whose builtin /
+/// instantiation tables grow consistently with the entry program). The
+/// caller walks the result with the MIR walker and emits the
+/// `STORE_GLOBAL` / `POP` itself, so no MIR-level global-binding node is
+/// needed. Returns `Err(SkipReason)` if the expression is outside the
+/// lowerable subset.
+pub fn lower_top_level_value(
+    value: &Spanned<ResolvedExpr>,
+    program: &mut MirProgram,
+) -> Result<Spanned<MirExpr>, SkipReason> {
+    lower_expr(value, program)
+}
+
 /// Lower one `ResolvedFnDef` if its body fits the supported subset.
 /// Returns `Err(SkipReason)` for the dominant unsupported shape —
 /// the caller drops the fn from the MIR program and records the
