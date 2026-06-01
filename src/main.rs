@@ -314,8 +314,16 @@ fn main() {
             // `--explain-mir-coverage` lowers the program to MIR and reports
             // how much of it the MIR walker accepts vs. drops to the HIR
             // fallback (by blocking shape). Same short-circuit shape.
+            // `--target wasm-gc` switches to the wasm-gc backend's reach
+            // over the lowered MIR (Phase 5 #340); other targets report the
+            // VM lowering-level coverage.
             if *explain_mir_coverage {
-                commands::cmd_explain_mir_coverage(file, module_root.as_deref(), *json);
+                commands::cmd_explain_mir_coverage(
+                    file,
+                    module_root.as_deref(),
+                    *json,
+                    effective_target,
+                );
                 return;
             }
             commands::cmd_compile(commands::CompileOptions {

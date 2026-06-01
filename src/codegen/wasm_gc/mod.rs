@@ -74,6 +74,7 @@ mod wasip2_imports;
 mod wasip2_tcp;
 mod wat_helper;
 
+pub use body::{CoverageReport, coverage_report};
 pub use flatten::flatten_multimodule;
 
 /// Backend lowering mode — selects the host-bridge shape the wasm-gc
@@ -152,7 +153,27 @@ pub fn compile_to_wasm_gc(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge)
+    module::emit_module_with(items, None, TargetMode::AverBridge, true).map(|(bytes, _)| bytes)
+}
+
+/// `compile_to_wasm_gc` with an explicit MIR toggle — Phase 5 #340.
+/// `enable_mir == true` is the production path (`compile_to_wasm_gc`):
+/// the MIR body emitter runs per-fn with a `ResolvedExpr` fallback.
+/// `enable_mir == false` forces the `ResolvedExpr` emitter everywhere.
+/// Returns `(module_bytes, mir_emitted_fn_count)` — the count is how
+/// many fns the MIR body emitter actually rendered (the real
+/// `emit_fn_body_via_mir` decision, not the structural coverage
+/// predicate). The byte-differential test compiles both ways and
+/// asserts the bytes are identical (proving the MIR walk is byte-for-
+/// byte faithful) and that the count is non-zero (proving the MIR path
+/// was actually exercised, so byte-identity isn't vacuous).
+#[doc(hidden)]
+pub fn compile_to_wasm_gc_mir_toggle(
+    items: &[TopLevel],
+    _analysis: Option<&AnalysisResult>,
+    enable_mir: bool,
+) -> Result<(Vec<u8>, usize), WasmGcError> {
+    module::emit_module_with(items, None, TargetMode::AverBridge, enable_mir)
 }
 
 /// Same as `compile_to_wasm_gc` but exports a JS-callable
@@ -165,7 +186,7 @@ pub fn compile_to_wasm_gc_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: Option<&str>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, handler, TargetMode::AverBridge)
+    module::emit_module_with(items, handler, TargetMode::AverBridge, true).map(|(bytes, _)| bytes)
 }
 
 /// Compile post-pipeline IR (`items`) to a WebAssembly GC module
@@ -184,7 +205,7 @@ pub fn compile_to_wasm_gc_for_wasip2(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::Wasip2)
+    module::emit_module_with(items, None, TargetMode::Wasip2, true).map(|(bytes, _)| bytes)
 }
 
 /// `--target wasip2 --world wasi:http/proxy` entry — Phase 3 / 0.19.
@@ -208,5 +229,5 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: &str,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, Some(handler), TargetMode::Wasip2)
+    module::emit_module_with(items, Some(handler), TargetMode::Wasip2, true).map(|(bytes, _)| bytes)
 }
