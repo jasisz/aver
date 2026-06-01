@@ -72,7 +72,8 @@ fn vm_run(src: &str) -> NanValue {
     let mut arena = Arena::new();
     let (resolved, symbols) = resolve_for_vm(&items);
     let (code, globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None).expect("compile failed");
+        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+            .expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     machine.run().expect("VM execution failed")
 }
@@ -105,7 +106,8 @@ fn vm_run_with_arena(src: &str) -> (NanValue, Arena) {
     let mut arena = Arena::new();
     let (resolved, symbols) = resolve_for_vm(&items);
     let (code, globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None).expect("compile failed");
+        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+            .expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     let result = machine.run().expect("VM execution failed");
     let arena = std::mem::replace(&mut machine.arena, Arena::new());
@@ -120,7 +122,8 @@ fn vm_machine(src: &str) -> vm::VM {
     let mut arena = Arena::new();
     let (resolved, symbols) = resolve_for_vm(&items);
     let (code, globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None).expect("compile failed");
+        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+            .expect("compile failed");
     vm::VM::new(code, globals, arena)
 }
 
@@ -132,7 +135,8 @@ fn vm_compile(src: &str) -> vm::CodeStore {
     let mut arena = Arena::new();
     let (resolved, symbols) = resolve_for_vm(&items);
     let (code, _globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None).expect("compile failed");
+        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+            .expect("compile failed");
     code
 }
 
@@ -1600,7 +1604,8 @@ fn vm_effect_violation() {
     let mut arena = Arena::new();
     let (resolved, symbols) = resolve_for_vm(&items);
     let (code, globals) =
-        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None).expect("compile failed");
+        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+            .expect("compile failed");
     let mut machine = vm::VM::new(code, globals, arena);
     let result = machine.run();
     assert!(result.is_err(), "should fail with effect violation");
@@ -1701,7 +1706,8 @@ fn main() -> Result<Unit, String>
         let mut arena = Arena::new();
         let (resolved, symbols) = resolve_for_vm(&items);
         let (code, globals) =
-            vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None).expect("compile failed");
+            vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+                .expect("compile failed");
         let mut machine = vm::VM::new(code, globals, arena);
         machine.set_runtime_policy(
             ProjectConfig::parse(&format!("[independence]\nmode = \"{mode}\"\n"))
