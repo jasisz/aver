@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–5b)
+//! ## Scope (waves 0–6a)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -116,6 +116,13 @@
 //! - `Project` — mirror of `emit_attr_get`: newtype `.field` is identity,
 //!   else `struct.get` the field index; unknown / `Invalid`
 //!   (namespace-handle) record types fall back.
+//!
+//! Wave 6a (tuple / map literals):
+//! - `Tuple` — mirror of `emit_tuple_literal`: canonical from the
+//!   elements' stamped types, push each + `struct.new`.
+//! - `MapLiteral` — mirror of `emit_map_literal`: `Map.empty` then a
+//!   `Map.set` per entry (canonical from the first entry's K/V, or the
+//!   sole registered `Map<K,V>` when empty). `List` literals are wave 6b.
 //!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
@@ -558,6 +565,78 @@ fn emit_mir_expr(
                 struct_type_index: type_idx,
                 field_index: field_idx,
             });
+            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+        }
+        MirExpr::Tuple(items) => {
+            // Mirror of `emit_tuple_literal`: canonical from the elements'
+            // stamped types, then push each element + `struct.new`.
+            if items.len() < 2 {
+                return Err(WasmGcError::Validation(format!(
+                    "Tuple literal needs at least 2 elements; got {}",
+                    items.len()
+                )));
+            }
+            let elem_tys: Vec<String> = items.iter().map(aver_type_str_of).collect();
+            let canonical = format!("Tuple<{}>", elem_tys.join(","))
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>();
+            let tuple_idx =
+                ctx.registry
+                    .tuple_type_idx(&canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "Tuple literal: `{canonical}` slot not registered"
+                    )))?;
+            for item in items {
+                if emit_mir_expr(func, item, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+            }
+            func.instruction(&Instruction::StructNew(tuple_idx));
+            Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+        }
+        MirExpr::MapLiteral(entries) => {
+            // Mirror of `emit_map_literal`: `Map.empty` then a `Map.set`
+            // per entry. Canonical from the first entry's K/V stamped
+            // types, or the sole registered `Map<K,V>` when empty.
+            let canonical: String = if entries.is_empty() {
+                if ctx.registry.map_order.len() == 1 {
+                    ctx.registry.map_order[0].clone()
+                } else {
+                    return Err(WasmGcError::Validation(
+                        "empty MapLiteral: cannot resolve Map<K,V> instantiation \
+                         without context (multiple instantiations registered)"
+                            .into(),
+                    ));
+                }
+            } else {
+                let k_aver = aver_type_str_of(&entries[0].0);
+                let v_aver = aver_type_str_of(&entries[0].1);
+                format!("Map<{},{}>", k_aver.trim(), v_aver.trim())
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect()
+            };
+            let (empty_fn, set_fn) = {
+                let helpers =
+                    ctx.fn_map
+                        .map_helpers
+                        .get(&canonical)
+                        .ok_or(WasmGcError::Validation(format!(
+                            "MapLiteral: helpers missing for `{canonical}`"
+                        )))?;
+                (helpers.empty, helpers.set)
+            };
+            func.instruction(&Instruction::Call(empty_fn));
+            for (k_expr, v_expr) in entries {
+                if emit_mir_expr(func, k_expr, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                if emit_mir_expr(func, v_expr, slots, ctx)?.is_none() {
+                    return Ok(None);
+                }
+                func.instruction(&Instruction::Call(set_fn));
+            }
             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
         }
         // FnValue (a fn referenced as a value) is higher-order — wasm-gc
@@ -1898,6 +1977,10 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
                     .all(|f| mir_expr_coverable(&f.value))
         }
         MirExpr::Project(spanned_proj) => mir_expr_coverable(&spanned_proj.node.base),
+        MirExpr::Tuple(items) => items.iter().all(mir_expr_coverable),
+        MirExpr::MapLiteral(entries) => entries
+            .iter()
+            .all(|(k, v)| mir_expr_coverable(k) && mir_expr_coverable(v)),
         MirExpr::Match(spanned_match) => {
             // Coarse, ctx-free mirror of `emit_mir_match`'s dispatch (the
             // predicate has no registry, so it can't model the Map.get
