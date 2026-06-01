@@ -2280,6 +2280,15 @@ pub(super) fn emit_module_with(
     // `enable_mir == false` forces the `ResolvedExpr` path everywhere;
     // the byte-differential test (`tests/wasm_gc_differential_mir.rs`)
     // compiles both ways and asserts the emitted fn bytes match.
+    //
+    // `AVER_WASMGC_FORCE_NO_MIR=1` forces the `ResolvedExpr` path from the
+    // CLI without a flag — the multi-module games byte-differential
+    // (`tests/wasm_gc_games_differential_mir.rs`) runs `aver compile
+    // --target wasm-gc` twice (with / without the env var) and asserts
+    // the emitted `.wasm` bytes are identical, covering the rich shapes
+    // (variant / record / collection matches) that live only in the
+    // games and aren't reachable from the single-file differential.
+    let enable_mir = enable_mir && std::env::var_os("AVER_WASMGC_FORCE_NO_MIR").is_none();
     let mir_program: Option<crate::ir::mir::MirProgram> = if enable_mir {
         let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_fn_defs
             .iter()
@@ -4120,6 +4129,13 @@ pub(super) fn emit_module_with(
     // The byte-differential test asserts this is non-zero so its
     // byte-identity check can't pass vacuously with the MIR path dead.
     let mir_emitted = mir_dispatch.iter().filter(|&&used| used).count();
+    // Surface the count to the multi-module games byte-differential,
+    // which drives `aver compile` as a subprocess and can't read the
+    // return value — `AVER_WASMGC_MIR_COUNT=1` prints it so the test can
+    // assert MIR actually fired on the (flattened) game.
+    if std::env::var_os("AVER_WASMGC_MIR_COUNT").is_some() {
+        eprintln!("AVER_WASMGC_MIR_EMITTED={mir_emitted}");
+    }
     Ok((bytes, mir_emitted))
 }
 
