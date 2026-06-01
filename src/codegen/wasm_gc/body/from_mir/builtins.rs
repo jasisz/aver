@@ -21,15 +21,15 @@ pub(crate) enum MirBuiltinEmit {
 /// Mirror of the native scalar (`Float` / `Int` / `Bool`) arms of
 /// `emit_dotted_builtin` (builtins.rs): builtins that lower to a fixed
 /// inline wasm instruction sequence over `f64` / `i64` / `i32` values
-/// rather than a registered helper call (so the wave-2 `fn_map.builtins`
-/// lookup misses them and they fell back until now). Each recurses
+/// rather than a registered helper call (so the `fn_map.builtins`
+/// lookup misses them). Each recurses
 /// `emit_mir_expr` on its args — the byte-identical analogue of the
 /// oracle's `emit_expr`. `Int.abs` / `Int.min` / `Int.max` re-emit an
 /// arg more than once (an `if`/`else` select), exactly as the oracle
 /// does; a `None` from any re-emission is a clean whole-fn fallback
 /// (`func` is reset by the caller). `Int.mod` is deliberately absent: it
 /// builds a `Result<Int,String>` carrier and has a fused form, so it
-/// stays on the HIR path for a later sub-wave.
+/// stays on the HIR path.
 pub(crate) fn emit_mir_native_scalar_builtin(
     func: &mut Function,
     dotted: &str,

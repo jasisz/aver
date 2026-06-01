@@ -1,210 +1,42 @@
-//! Phase 5 wave 0 — wasm-gc backend consumes MIR.
+//! wasm-gc backend: emit function bodies from Core MIR.
 //!
 //! Mirror of [`super::emit::emit_expr`] that walks
-//! [`crate::ir::mir::MirExpr`] instead of `ResolvedExpr` and emits the
-//! **byte-identical** wasm. The point is the same deduplication #252
-//! Phase 4 brought to the VM and Phase 5 wave 1 brought to the Rust
-//! backend (`crate::codegen::rust::from_mir`): one semantic walker per
-//! construct lives in MIR, and every backend reads it instead of
-//! forking `ResolvedExpr`.
+//! [`crate::ir::mir::MirExpr`] instead of `ResolvedExpr` and emits
+//! **byte-identical** wasm — one semantic walker per construct lives in
+//! MIR, and every backend reads it instead of forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–12)
+//! [`emit_mir_expr`] is the dispatcher. Any construct it does not yet
+//! cover returns `Ok(None)`; the caller ([`emit_fn_body_via_mir`]) then
+//! discards `func` and re-runs the `ResolvedExpr` emitter for the whole
+//! function. Coverage therefore widens one construct at a time while the
+//! corpus and games stay green. Two byte-differential tests compile
+//! every single-file example and every multi-module game both ways (MIR
+//! on vs forced off) and assert the modules are identical — the gate
+//! that keeps each mirror exact.
 //!
-//! Wave 0 (the canary):
-//! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
-//!   `emit_expr`'s literal arms (incl. the `array.new_data` string-
-//!   literal segment path).
-//! - `Local { slot, .. }` — `local.get slot`. The MIR `LocalId` is
-//!   seeded from the resolver's slot index (see
-//!   [`crate::ir::mir::program::LocalId`] doc), so it is the wasm
-//!   local index 1:1, exactly like `ResolvedExpr::Resolved { slot }`.
-//! - `BinOp` (numeric only) — the canary. Dispatches on `bop.lhs.ty()`
-//!   reading the MIR type stamp; `Int`/`Float` take the I64/F64 op set
-//!   `emit_expr` selects via `wasm_type_of`. `Str` and compound-type
-//!   operands return `None` (a later wave does string concat / eq).
-//! - `Neg` — numeric unary minus (`f64.neg` / `i64.const 0; …; i64.sub`).
-//! - `Return` — `… ; return` (never produced by the current lowering,
-//!   carried for symmetry with the Rust walker).
-//! - `Let { binding_name, value, body }` — named bindings emit
-//!   `value` then `local.set slot` (slot from
-//!   `ctx.self_local_slot(name)`), mirroring `emit_fn_body`'s
-//!   `Binding` arm; the tail `body` is the return value. Synthetic
-//!   lets (empty `binding_name`: non-tail `Stmt::Expr` intermediates
-//!   and `_ = expr` discards) return `None` → whole-fn HIR fallback,
-//!   same shape the Rust walker takes.
+//! ## Covered constructs
 //!
-//! Wave 1 (calls):
-//! - `Call` with `MirCallee::Fn(FnId)` — mirror of `emit_expr`'s
-//!   `ResolvedCallee::Fn` arm: `fn_map.by_id` lookup (same `FnId`
-//!   identity), emit args, `call $idx`; a missing entry whose name is a
-//!   local slot emits a polymorphic `unreachable` (higher-order
-//!   verify-only fns), otherwise a hard error. `Builtin` / `Intrinsic`
-//!   / `LocalSlot` callees fall back (later waves).
-//! - `TailCall` — mirror of `emit_tail_call`: emit args, then the
-//!   shared `emit_return_call_insn` (`return_call`, or `call` under
-//!   `AVER_WASM_GC_NO_TAIL_CALL`).
-//! - `FnValue` falls back — higher-order, no first-class fn lowering.
+//! Dispatcher ([`emit_mir_expr`], this module): `Literal`, `Local`
+//! (`local.get` of the resolver slot), numeric `BinOp` / `Neg`,
+//! `Return`, named `Let`, `Call(Fn)` / `TailCall`, and the `Tuple` /
+//! `MapLiteral` literals. Synthetic lets (`_ = expr`, intermediate
+//! `Stmt::Expr`) and higher-order callees (`FnValue`, `LocalSlot`) fall
+//! back. Registered-helper builtins go through the `fn_map.builtins`
+//! lookup here.
 //!
-//! Wave 2 (builtins, breadth only):
-//! - `Call` with `MirCallee::Builtin(BuiltinId)` / `MirCallee::Intrinsic`
-//!   — mirror of `emit_dotted_builtin`'s registered-helper first branch
-//!   (push args, `call $idx`). The dotted name comes from
-//!   `EmitCtx::mir_builtins`. Custom-inline builtins (effects, Args.get,
-//!   Float / String / List / Map / Vector, wasip2) + `List.prepend` /
-//!   `List.empty` fall back — that "depth" is a later sub-wave.
+//! - [`pattern_match`] — `Match` over `Bool` / `Int` / `String`,
+//!   `Option` / `Result` / `List` carriers, and user sum types.
+//! - [`constructors`] — `Construct` (user variants, `Option`, `Result`).
+//! - [`records`] — `RecordCreate` / `RecordUpdate` / `Project`.
+//! - [`collections`] — `List` literals.
+//! - [`builtins`] — the custom-inline `Float` / `Int` / `Bool` scalar
+//!   ops, the `List` and `Vector` families, and the numeric `BinOp` tail.
+//! - [`strings`] — `InterpolatedStr` and the `String` `BinOp` ops.
+//! - [`control`] — `Try` (`?` propagation).
+//! - [`coverage`] — the `--explain-mir-coverage` predicate (diagnostic).
 //!
-//! Wave 3a/3b (primitive-subject match):
-//! - `Match` over a `Bool` subject (a single `if`/`else`), an `Int`
-//!   subject (an `i64.eq` cascade, wildcard required), or a `String`
-//!   subject (subject stashed in the reserved scratch, then a
-//!   `__wasmgc_string_eq` cascade with the first non-literal arm as the
-//!   default) — mirror of `emit_match` / `emit_int_match_cascade` /
-//!   `emit_string_match`. Any constructor / list / tuple arm pattern, or
-//!   a shape `emit_match` rejects outright, falls back. (The dispatch
-//!   checks arm patterns before the subject type, the reverse of
-//!   `emit_match`'s order, but the two are equivalent: typecheck forbids
-//!   a primitive subject from carrying a constructor / list / tuple arm,
-//!   so neither path can reach a branch the other wouldn't.)
-//!
-//! Wave 4a (built-in carrier match):
-//! - `Match` over a `Result<T,E>` or `Option<T>` subject — mirror of
-//!   `emit_result_match` / `emit_option_match`: stash the subject in the
-//!   reserved scratch, test the tag field (struct field 0), and on each
-//!   branch extract the payload (field 1 for `Ok`/`Some`, field 2 for
-//!   `Err`) into the arm's binding slot before emitting the body. A
-//!   wildcard is the `Err` / `None` catch-all. An `Option` match whose
-//!   subject is `Map.get(m, k)` falls back (it has a fused HIR-only
-//!   lowering). User-variant / tuple matches are wave 4c–4d.
-//!
-//! Wave 4b (list match):
-//! - `Match` over a `List<T>` subject (`[] -> …; [head, ..tail] -> …`)
-//!   — mirror of `emit_list_match`: `ref.is_null` selects the empty
-//!   arm, else the cons arm extracts head (struct field 0) + tail
-//!   (field 1) into the `Cons` pattern's binding slots before its body.
-//!   Checked before Result/Option, matching `emit_match`'s order.
-//!
-//! Wave 4d (user-variant / sum-type match):
-//! - `Match` over a user sum type — mirror of `emit_single_variant_match`
-//!   (a single irrefutable `Ctor` arm: newtype-bind / nullary-drop /
-//!   inline `ref.cast` + `struct.get`) and `emit_variant_dispatch` +
-//!   `emit_arm_body` (multi-arm: a `ref.test` cascade over the variant
-//!   struct types, extracting each matched arm's fields from the
-//!   scratch-held subject). `MirCtor::User(CtorId)` resolves to its
-//!   `VariantInfo` via the symbol table + registry, identical to the
-//!   `ctor_dotted_name` lookup. The single-file corpus barely exercises
-//!   this; the multi-module games (`Tile`, `EntityKind`, …) do, and the
-//!   games byte-differential verifies it. Tuple (wave 4c) and the
-//!   multi-arm tuple-of-constructors path still fall back.
-//!
-//! Wave 5a (constructors):
-//! - `Construct` — mirror of `emit_expr`'s `Ctor` arm: user variants via
-//!   `emit_constructor_with_args` (newtype emits the payload directly,
-//!   else push args + `struct.new`), `Option.Some/None` via
-//!   `emit_option_constructor` (tag + payload / `default<T>`), and
-//!   `Result.Ok/Err` via `emit_result_constructor` (instantiation
-//!   resolved by single-registered / return-type / payload-type match,
-//!   then tag + T-slot + E-slot, with a `Unit` position pushing the i32
-//!   placeholder).
-//!
-//! Wave 5b (records):
-//! - `RecordCreate` / `RecordUpdate` — mirror of `emit_record_create` /
-//!   `emit_record_update`: a newtype emits its single field; otherwise
-//!   push every declared field in order (`struct.get` from the base for
-//!   un-overridden update fields) + `struct.new`. The `Option.None` /
-//!   empty-list field special-cases use the field's *declared* type (the
-//!   bare literal's own `.ty()` may be a generic `Var`).
-//! - `Project` — mirror of `emit_attr_get`: newtype `.field` is identity,
-//!   else `struct.get` the field index; unknown / `Invalid`
-//!   (namespace-handle) record types fall back.
-//!
-//! Wave 6a (tuple / map literals):
-//! - `Tuple` — mirror of `emit_tuple_literal`: canonical from the
-//!   elements' stamped types, push each + `struct.new`.
-//! - `MapLiteral` — mirror of `emit_map_literal`: `Map.empty` then a
-//!   `Map.set` per entry (canonical from the first entry's K/V, or the
-//!   sole registered `Map<K,V>` when empty).
-//!
-//! Wave 6b (list literals):
-//! - `List` — mirror of `emit_list_literal`: resolve the `List<T>`
-//!   instantiation (stamped type / first-element hint / sole registered
-//!   / return type), `ref.null` for empty, else push each element +
-//!   `ref.null` + N×`call $cons_T`. `Option.None` / empty-list elements
-//!   emit against the resolved element type.
-//!
-//! Wave 7 (`?` propagation):
-//! - `Try(inner)` — mirror of `emit_error_prop`: stash the
-//!   `Result<T,E>` subject in the reserved scratch, test its tag
-//!   (struct field 0). On `Ok` push the payload (field 1; nothing for a
-//!   `Result<Unit,E>`), on `Err` rebuild a fresh `Result<EnclosingT,E>`
-//!   (tag 0, `default<EnclosingT>`, the subject's err field 2) and
-//!   `return` it so the type matches the enclosing fn. `produces` is
-//!   `false` for a `Result<Unit,E>?`, else `true`.
-//!
-//! Wave 8 (string interpolation):
-//! - `InterpolatedStr(parts)` — mirror of `emit_interpolated_str`
-//!   (builtins.rs): build a `Vector<String>` of the parts and concat it
-//!   with `__wasmgc_concat_n`. Each `Literal` part is an `array.new_data`
-//!   over its segment; each `Expr` part is emitted then stringified by
-//!   the `String.from{Int,Float,Bool}` dispatch (`String` is identity).
-//!   An empty interpolation allocates a zero-length array directly. A
-//!   compound-type `Expr` part — which the oracle rejects — falls back
-//!   so the resolved-HIR path raises the identical error. The wasm-gc
-//!   pipeline runs with `run_buffer_build = false`, so interpolation
-//!   survives to MIR as `InterpolatedStr` (it is not deforested into
-//!   buffer-write intrinsics); this wave covers it on the seam path.
-//!
-//! Wave 9 (native scalar builtins — first builtin-inline-depth slice):
-//! - `Call` with `MirCallee::Builtin` whose dotted name is a native
-//!   scalar `Float` / `Int` / `Bool` op — mirror of the inline arms of
-//!   `emit_dotted_builtin`: `Float.{fromInt,floor,ceil,round,abs,sqrt,
-//!   min,max,pi}`, `Int.{fromFloat,abs,min,max}`, `Bool.{and,or,not}`.
-//!   These lower to a fixed `f64` / `i64` / `i32` instruction sequence
-//!   (not a registered helper), so the wave-2 `fn_map.builtins` lookup
-//!   missed them. The new `emit_mir_native_scalar_builtin` is tried
-//!   before that lookup; un-recognized builtins fall through to it
-//!   unchanged. `Int.mod` (a `Result` carrier with a fused form) and the
-//!   `Vector` custom-inline family are later builtin sub-waves.
-//!
-//! Wave 10 (`List` custom-inline builtins):
-//! - `Call` with `MirCallee::Builtin` whose dotted name is a `List` op —
-//!   `emit_mir_list_builtin`, mirror of the custom-inline `List.*` arms
-//!   of `emit_dotted_builtin` plus the `List.prepend` / `List.empty`
-//!   intercepts in `emit_expr`'s `Call` arm. `reverse` / `len` /
-//!   `length` / `concat` / `take` / `drop` / `contains` dispatch to the
-//!   per-`List<T>` `fn_map.list_ops` helper; `zip` to `zip_ops`,
-//!   `fromVector` to `vfl_ops`; `prepend` is a `struct.new $list_T`,
-//!   `empty` a `ref.null $list_T`. `contains` over a non-eq-able `T`
-//!   (no registered helper) falls back. Tried after the native-scalar
-//!   path and before the `fn_map.builtins` lookup (none of these are in
-//!   that table).
-//!
-//! Wave 11 (`Vector` custom-inline builtins):
-//! - `Call` with `MirCallee::Builtin` whose dotted name is a `Vector`
-//!   op — `emit_mir_vector_builtin`, mirror of the custom-inline
-//!   `Vector.*` arms: `len` / `new` / `fromList` inline, the boxed
-//!   `get` (bounds-checked `Option<T>`) and `set` (`Option<Vector<T>>`,
-//!   in-place fast path when `mir_arg_uniquely_owned` — the MIR analogue
-//!   of `arg_uniquely_owned`, keyed on `MirLocal.last_use` — else a
-//!   clone-on-write through the scratch local). The fused
-//!   `Option.withDefault(Vector.get/set, …)` shapes are not reached:
-//!   `Option.withDefault` is uncovered, so a fused call falls the whole
-//!   fn back before its inner `Vector` op.
-//!
-//! Wave 12 (`String` binary ops):
-//! - `BinOp` with a `String` LHS — `emit_mir_string_binop`, mirror of
-//!   the `String` branches of `emit_expr`'s `BinOp` arm: `+` is
-//!   `__wasmgc_concat_n` over a 2-element `Vector<String>`, `==` / `!=`
-//!   is `__wasmgc_string_eq` (+ `i32.eqz` for `!=`), and `<` / `>` /
-//!   `<=` / `>=` is `__wasmgc_string_compare` post-composed with the
-//!   matching `i32` comparison against `0`. Checked before the numeric
-//!   branch, exactly as the oracle orders it. Compound-type `==` / `!=`
-//!   (nullary-variant `ref.test`, sum / record `__eq_*` helpers) still
-//!   fall back.
-//!
-//! Everything else returns `Ok(None)` so the caller
-//! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
-//! `ResolvedExpr` emitter for the whole fn. That keeps the corpus +
-//! game suite green from PR 1 while coverage widens wave by wave.
+//! Each submodule documents the exact `emit_expr` helper it mirrors and
+//! the shapes that still fall back to the `ResolvedExpr` emitter.
 
 pub(super) use std::collections::{HashMap, HashSet};
 
@@ -282,10 +114,8 @@ pub(crate) fn emit_fn_body_via_mir(
     // parallel type table. Source it from the HIR `rfd`, NOT from
     // `mir_fn` — `EmitCtx` is shared with the `ResolvedExpr` emitter and
     // its recognition (`classify_leaf_op` / `classify_call_plan`) keys
-    // off resolver-assigned names. Wave 0 never reaches that recognition
-    // (no covered arm reads `binding_names`), but a later Call-coverage
-    // wave will, and must keep this HIR-sourced — do not repopulate it
-    // from `MirExpr`.
+    // off resolver-assigned names, so this set must stay HIR-sourced —
+    // do not repopulate it from `MirExpr`.
     let ResolvedFnBody::Block(stmts) = rfd.body.as_ref();
     let mut binding_names: HashSet<String> = HashSet::new();
     for s in stmts {
@@ -392,11 +222,10 @@ pub(crate) fn emit_mir_expr(
         }
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
-            // Read the operand type from the MIR type stamp — the
-            // canary for the whole port. Aver's checker proved both
-            // operands share a type, so the LHS suffices. `String`
-            // operands take the dedicated concat / eq / compare builtins
-            // (wave 12); numeric operands the primitive op set (wave 0);
+            // Read the operand type from the MIR type stamp. Aver's
+            // checker proved both operands share a type, so the LHS
+            // suffices. `String` operands take the dedicated concat / eq
+            // / compare builtins; numeric operands the primitive op set;
             // compound types (variant / record eq helpers) fall back.
             if aver_type_str_of(&bop.lhs).trim() == "String" {
                 return match emit_mir_string_binop(func, bop, slots, ctx)? {

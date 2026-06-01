@@ -6,7 +6,7 @@
 
 use super::*;
 
-/// Wave-0 backend reach over a lowered [`MirProgram`]: how many fns the
+/// Backend reach over a lowered [`MirProgram`]: how many fns the
 /// wasm-gc MIR walker emits standalone vs. how many would fall back to
 /// the `ResolvedExpr` emitter. Mirror of
 /// [`crate::codegen::rust::from_mir::CoverageReport`]; drives
@@ -59,8 +59,8 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::Literal(_) | MirExpr::Local(_) => true,
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
-            // Numeric ops (wave 0) or the `String` concat / eq / compare
-            // ops (wave 12). Compound-type eq helpers fall back.
+            // Numeric ops or the `String` concat / eq / compare ops.
+            // Compound-type eq helpers fall back.
             let numeric = matches!(bop.lhs.ty(), Some(Type::Int) | Some(Type::Float));
             let string_op = aver_type_str_of(&bop.lhs).trim() == "String"
                 && matches!(
@@ -121,7 +121,7 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             // fused-Option fallback — a tolerable over-count, since this
             // only feeds `--explain-mir-coverage`; the real per-fn
             // dispatch is what the wire-up + differential test use).
-            // Tuple arms are wave 4c — not yet covered.
+            // Tuple arms are not yet covered.
             let m = &spanned_match.node;
             let unsupported_pat = m
                 .arms
