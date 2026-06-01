@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–4b, 4d)
+//! ## Scope (waves 0–4d, 5a)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -96,6 +96,17 @@
 //!   games byte-differential verifies it. Tuple (wave 4c) and the
 //!   multi-arm tuple-of-constructors path still fall back.
 //!
+//! Wave 5a (constructors):
+//! - `Construct` — mirror of `emit_expr`'s `Ctor` arm: user variants via
+//!   `emit_constructor_with_args` (newtype emits the payload directly,
+//!   else push args + `struct.new`), `Option.Some/None` via
+//!   `emit_option_constructor` (tag + payload / `default<T>`), and
+//!   `Result.Ok/Err` via `emit_result_constructor` (instantiation
+//!   resolved by single-registered / return-type / payload-type match,
+//!   then tag + T-slot + E-slot, with a `Unit` position pushing the i32
+//!   placeholder). `RecordCreate` / `RecordUpdate` / `Project` are
+//!   wave 5b.
+//!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
 //! `ResolvedExpr` emitter for the whole fn. That keeps the corpus +
@@ -117,7 +128,7 @@ use crate::types::Type;
 
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm};
-use super::emit::{emit_return_call_insn, emit_string_literal_bytes};
+use super::emit::{emit_default_value, emit_return_call_insn, emit_string_literal_bytes};
 use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 use super::slots::count_value_params;
 use super::{CallerFnCollector, EmitCtx, FnMap, SlotTable, Wasip2Lowering};
@@ -456,6 +467,47 @@ fn emit_mir_expr(
             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
         }
         MirExpr::Match(spanned_match) => emit_mir_match(func, &spanned_match.node, slots, ctx),
+        MirExpr::Construct(spanned_ctor) => {
+            // Mirror of `emit_expr`'s `Ctor` arm. A constructor always
+            // produces a value (never `Unit`).
+            let con = &spanned_ctor.node;
+            let covered = match con.ctor {
+                MirCtor::Builtin(BuiltinCtor::OptionSome) => {
+                    if con.args.len() != 1 {
+                        return Err(WasmGcError::Validation(format!(
+                            "Option.Some constructor requires 1 arg, got {}",
+                            con.args.len()
+                        )));
+                    }
+                    emit_mir_option_constructor(func, Some(&con.args[0]), None, slots, ctx)?
+                }
+                MirCtor::Builtin(BuiltinCtor::OptionNone) => {
+                    // Read T from the constructor's stamped type, mirror
+                    // of the `ResolvedExpr` arm's hint derivation.
+                    let stamped = aver_type_canonical(expr, ctx.return_type, ctx.registry);
+                    let hint: String = stamped
+                        .strip_prefix("Option<")
+                        .and_then(|s| s.strip_suffix('>'))
+                        .map(|inner| inner.to_string())
+                        .unwrap_or_else(|| ctx.return_type.to_string());
+                    emit_mir_option_constructor(func, None, Some(&hint), slots, ctx)?
+                }
+                MirCtor::Builtin(BuiltinCtor::ResultOk) => {
+                    emit_mir_result_constructor(func, "Ok", con.args.first(), slots, ctx)?
+                }
+                MirCtor::Builtin(BuiltinCtor::ResultErr) => {
+                    emit_mir_result_constructor(func, "Err", con.args.first(), slots, ctx)?
+                }
+                MirCtor::User(ctor_id) => {
+                    let info = mir_user_variant_info(ctor_id, ctx)?;
+                    emit_mir_constructor_with_args(func, info, &con.args, slots, ctx)?
+                }
+            };
+            match covered {
+                Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
+                None => Ok(None),
+            }
+        }
         // FnValue (a fn referenced as a value) is higher-order — wasm-gc
         // has no first-class fn representation — so it falls back to the
         // `ResolvedExpr` emitter pending a verified byte-identical shape.
@@ -1356,6 +1408,163 @@ fn emit_mir_arm_body(
     emit_mir_arm_body_value(func, &arm.body, slots, ctx)
 }
 
+/// Mirror of `emit_constructor_with_args` (emit.rs): a newtype emits
+/// its single payload directly (no `struct.new`); otherwise push each
+/// arg and `struct.new $variant`.
+fn emit_mir_constructor_with_args(
+    func: &mut Function,
+    info: &VariantInfo,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    if args.len() != info.fields.len() {
+        return Err(WasmGcError::Validation(format!(
+            "variant has {} field(s) but call supplied {}",
+            info.fields.len(),
+            args.len()
+        )));
+    }
+    if ctx.registry.newtype_underlying(&info.parent).is_some() {
+        return Ok(emit_mir_expr(func, &args[0], slots, ctx)?.map(|_| ()));
+    }
+    for arg in args {
+        if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+    }
+    func.instruction(&Instruction::StructNew(info.type_idx));
+    Ok(Some(()))
+}
+
+/// Mirror of `emit_option_constructor` (emit.rs): `Some(v)` →
+/// `i32.const 1; v; struct.new $option_T`; `None` →
+/// `i32.const 0; default<T>; struct.new $option_T`. `T` comes from the
+/// payload's stamped type (Some) or the caller's hint (None).
+fn emit_mir_option_constructor(
+    func: &mut Function,
+    payload: Option<&Spanned<MirExpr>>,
+    t_aver_hint: Option<&str>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let t_aver: String = match payload {
+        Some(p) => aver_type_str_of(p),
+        None => t_aver_hint
+            .ok_or(WasmGcError::Validation(
+                "Option.None without context — cannot infer the T in Option<T>".into(),
+            ))?
+            .to_string(),
+    };
+    let canonical = if t_aver.starts_with("Option<") {
+        t_aver.clone()
+    } else {
+        format!("Option<{t_aver}>")
+    };
+    let opt_idx = ctx
+        .registry
+        .option_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Option constructor: instantiation `{canonical}` was not registered"
+        )))?;
+    let inner_ty = TypeRegistry::option_element_type(&canonical).ok_or(WasmGcError::Validation(
+        format!("Option canonical `{canonical}` has no element type"),
+    ))?;
+    match payload {
+        Some(p) => {
+            func.instruction(&Instruction::I32Const(1));
+            if emit_mir_expr(func, p, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        }
+        None => {
+            func.instruction(&Instruction::I32Const(0));
+            emit_default_value(func, inner_ty, ctx.registry)?;
+        }
+    }
+    func.instruction(&Instruction::StructNew(opt_idx));
+    Ok(Some(()))
+}
+
+/// Mirror of `emit_result_constructor` (emit.rs): resolve the
+/// `Result<T,E>` instantiation (single registered / by return type / by
+/// payload-type match), then `i32.const <tag>; <T-slot>; <E-slot>;
+/// struct.new $result`. A `Unit` payload position pushes the `i32`
+/// placeholder rather than the (no-value) `Unit`.
+fn emit_mir_result_constructor(
+    func: &mut Function,
+    variant: &str,
+    payload: Option<&Spanned<MirExpr>>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let payload = payload.ok_or(WasmGcError::Validation(format!(
+        "Result.{variant} requires a payload"
+    )))?;
+    let payload_ty = aver_type_str_of(payload);
+    let canonical = if ctx.registry.result_order.len() == 1 {
+        ctx.registry.result_order[0].clone()
+    } else {
+        let return_canonical: String = ctx
+            .return_type
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        if ctx.registry.result_type_idx(&return_canonical).is_some() {
+            return_canonical
+        } else {
+            ctx.registry
+                .result_order
+                .iter()
+                .find(|c| {
+                    if let Some((t, e)) = TypeRegistry::result_te(c) {
+                        let match_pos = if variant == "Ok" { t } else { e };
+                        match_pos == payload_ty.trim()
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+                .ok_or(WasmGcError::Validation(format!(
+                    "Result.{variant}({payload_ty}) — no registered Result<T,E> instantiation matches"
+                )))?
+        }
+    };
+    let res_idx = ctx
+        .registry
+        .result_type_idx(&canonical)
+        .expect("just-resolved canonical");
+    let (t_aver, e_aver) = TypeRegistry::result_te(&canonical).ok_or(WasmGcError::Validation(
+        format!("Result canonical `{canonical}` malformed"),
+    ))?;
+
+    // A `Unit` payload position pushes nothing via `emit_mir_expr`, but
+    // the struct slot is i32-sized — push the placeholder ourselves.
+    let emit_payload = |func: &mut Function, pos_ty: &str| -> Result<Option<()>, WasmGcError> {
+        if pos_ty.trim() == "Unit" {
+            func.instruction(&Instruction::I32Const(0));
+            Ok(Some(()))
+        } else {
+            Ok(emit_mir_expr(func, payload, slots, ctx)?.map(|_| ()))
+        }
+    };
+    if variant == "Ok" {
+        func.instruction(&Instruction::I32Const(1));
+        if emit_payload(func, t_aver)?.is_none() {
+            return Ok(None);
+        }
+        emit_default_value(func, e_aver, ctx.registry)?;
+    } else {
+        func.instruction(&Instruction::I32Const(0));
+        emit_default_value(func, t_aver, ctx.registry)?;
+        if emit_payload(func, e_aver)?.is_none() {
+            return Ok(None);
+        }
+    }
+    func.instruction(&Instruction::StructNew(res_idx));
+    Ok(Some(()))
+}
+
 /// The numeric (`Int` / `Float`) tail of `emit_expr`'s `BinOp` arm —
 /// byte-for-byte. Returns `None` if an operand falls outside the
 /// supported subset (propagated as whole-fn fallback). The I64 / F64
@@ -1487,6 +1696,7 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
                 && spanned_call.node.args.iter().all(mir_expr_coverable)
         }
         MirExpr::TailCall(spanned_tc) => spanned_tc.node.args.iter().all(mir_expr_coverable),
+        MirExpr::Construct(spanned_ctor) => spanned_ctor.node.args.iter().all(mir_expr_coverable),
         MirExpr::Match(spanned_match) => {
             // Coarse, ctx-free mirror of `emit_mir_match`'s dispatch (the
             // predicate has no registry, so it can't model the Map.get
