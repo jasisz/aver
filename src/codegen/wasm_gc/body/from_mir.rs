@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–11)
+//! ## Scope (waves 0–12)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -190,6 +190,17 @@
 //!   `Option.withDefault` is uncovered, so a fused call falls the whole
 //!   fn back before its inner `Vector` op.
 //!
+//! Wave 12 (`String` binary ops):
+//! - `BinOp` with a `String` LHS — `emit_mir_string_binop`, mirror of
+//!   the `String` branches of `emit_expr`'s `BinOp` arm: `+` is
+//!   `__wasmgc_concat_n` over a 2-element `Vector<String>`, `==` / `!=`
+//!   is `__wasmgc_string_eq` (+ `i32.eqz` for `!=`), and `<` / `>` /
+//!   `<=` / `>=` is `__wasmgc_string_compare` post-composed with the
+//!   matching `i32` comparison against `0`. Checked before the numeric
+//!   branch, exactly as the oracle orders it. Compound-type `==` / `!=`
+//!   (nullary-variant `ref.test`, sum / record `__eq_*` helpers) still
+//!   fall back.
+//!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
 //! `ResolvedExpr` emitter for the whole fn. That keeps the corpus +
@@ -362,10 +373,16 @@ fn emit_mir_expr(
             let bop = &spanned_binop.node;
             // Read the operand type from the MIR type stamp — the
             // canary for the whole port. Aver's checker proved both
-            // operands share a type, so the LHS suffices. Wave 0
-            // covers numeric operands only; `Str` (string concat / eq)
-            // and compound types (variant / record / list eq helpers)
-            // fall back to the `ResolvedExpr` emitter.
+            // operands share a type, so the LHS suffices. `String`
+            // operands take the dedicated concat / eq / compare builtins
+            // (wave 12); numeric operands the primitive op set (wave 0);
+            // compound types (variant / record eq helpers) fall back.
+            if aver_type_str_of(&bop.lhs).trim() == "String" {
+                return match emit_mir_string_binop(func, bop, slots, ctx)? {
+                    Some(()) => Ok(Some(true)),
+                    None => Ok(None),
+                };
+            }
             match bop.lhs.ty() {
                 Some(Type::Int) | Some(Type::Float) => {
                     if emit_mir_numeric_binop(func, bop, slots, ctx)?.is_none() {
@@ -2804,6 +2821,98 @@ fn emit_mir_interpolated_str(
     Ok(Some(true))
 }
 
+/// The `String`-operand branches of `emit_expr`'s `BinOp` arm —
+/// byte-for-byte. `+` is `__wasmgc_concat_n` over a 2-element
+/// `Vector<String>` (mirror of `emit_string_concat2`); `==` / `!=` is
+/// `__wasmgc_string_eq` with an optional `i32.eqz` (mirror of
+/// `emit_string_eq`); `<` / `>` / `<=` / `>=` is `__wasmgc_string_compare`
+/// post-composed with the matching `i32` comparison against `0`. Each
+/// operand recurses `emit_mir_expr`; `None` propagates as whole-fn
+/// fallback. Any other op on a `String` (none exist after typecheck)
+/// falls back.
+fn emit_mir_string_binop(
+    func: &mut Function,
+    bop: &crate::ir::mir::MirBinOp,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let l = &bop.lhs;
+    let r = &bop.rhs;
+    macro_rules! e {
+        ($x:expr) => {
+            if emit_mir_expr(func, $x, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        };
+    }
+    match bop.op {
+        BinOp::Add => {
+            let vec_idx =
+                ctx.registry
+                    .vector_type_idx("Vector<String>")
+                    .ok_or(WasmGcError::Validation(
+                        "String `+` requires Vector<String> slot but it wasn't registered".into(),
+                    ))?;
+            let concat_idx = ctx
+                .fn_map
+                .builtins
+                .get("__wasmgc_concat_n")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "String `+` requires __wasmgc_concat_n builtin but it wasn't registered".into(),
+                ))?;
+            e!(l);
+            e!(r);
+            func.instruction(&Instruction::ArrayNewFixed {
+                array_type_index: vec_idx,
+                array_size: 2,
+            });
+            func.instruction(&Instruction::Call(concat_idx));
+        }
+        BinOp::Eq | BinOp::Neq => {
+            let eq_idx = ctx
+                .fn_map
+                .builtins
+                .get("__wasmgc_string_eq")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "String `==`/`!=` requires __wasmgc_string_eq builtin but it wasn't registered"
+                        .into(),
+                ))?;
+            e!(l);
+            e!(r);
+            func.instruction(&Instruction::Call(eq_idx));
+            if matches!(bop.op, BinOp::Neq) {
+                func.instruction(&Instruction::I32Eqz);
+            }
+        }
+        BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte => {
+            let cmp_idx = ctx
+                .fn_map
+                .builtins
+                .get("__wasmgc_string_compare")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "String comparison requires __wasmgc_string_compare builtin".into(),
+                ))?;
+            e!(l);
+            e!(r);
+            func.instruction(&Instruction::Call(cmp_idx));
+            func.instruction(&Instruction::I32Const(0));
+            let post = match bop.op {
+                BinOp::Lt => Instruction::I32LtS,
+                BinOp::Gt => Instruction::I32GtS,
+                BinOp::Lte => Instruction::I32LeS,
+                BinOp::Gte => Instruction::I32GeS,
+                _ => unreachable!("outer match restricts op"),
+            };
+            func.instruction(&post);
+        }
+        _ => return Ok(None),
+    }
+    Ok(Some(()))
+}
+
 /// The numeric (`Int` / `Float`) tail of `emit_expr`'s `BinOp` arm —
 /// byte-for-byte. Returns `None` if an operand falls outside the
 /// supported subset (propagated as whole-fn fallback). The I64 / F64
@@ -2919,9 +3028,21 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::Literal(_) | MirExpr::Local(_) => true,
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
-            matches!(bop.lhs.ty(), Some(Type::Int) | Some(Type::Float))
-                && mir_expr_coverable(&bop.lhs)
-                && mir_expr_coverable(&bop.rhs)
+            // Numeric ops (wave 0) or the `String` concat / eq / compare
+            // ops (wave 12). Compound-type eq helpers fall back.
+            let numeric = matches!(bop.lhs.ty(), Some(Type::Int) | Some(Type::Float));
+            let string_op = aver_type_str_of(&bop.lhs).trim() == "String"
+                && matches!(
+                    bop.op,
+                    BinOp::Add
+                        | BinOp::Eq
+                        | BinOp::Neq
+                        | BinOp::Lt
+                        | BinOp::Gt
+                        | BinOp::Lte
+                        | BinOp::Gte
+                );
+            (numeric || string_op) && mir_expr_coverable(&bop.lhs) && mir_expr_coverable(&bop.rhs)
         }
         MirExpr::Neg(inner) | MirExpr::Return(inner) => mir_expr_coverable(inner),
         MirExpr::Let(spanned_let) => {
