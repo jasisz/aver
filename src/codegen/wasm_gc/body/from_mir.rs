@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–3a)
+//! ## Scope (waves 0–3b)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -53,17 +53,18 @@
 //!   Float / String / List / Map / Vector, wasip2) + `List.prepend` /
 //!   `List.empty` fall back — that "depth" is a later sub-wave.
 //!
-//! Wave 3a (primitive-subject match):
-//! - `Match` over a `Bool` subject (a single `if`/`else`) or an `Int`
-//!   subject (an `i64.eq` cascade, wildcard required) — mirror of
-//!   `emit_match` + `emit_int_match_cascade`. Any constructor / list /
-//!   tuple arm pattern, a `String` subject (wave 3b — needs the subject
-//!   scratch + `__wasmgc_string_eq`), or a shape `emit_match` rejects
-//!   outright falls back. (The dispatch checks arm patterns before the
-//!   subject type, the reverse of `emit_match`'s order, but the two are
-//!   equivalent: typecheck forbids a `Bool`/`Int` subject from carrying
-//!   a constructor / list / tuple arm, so neither path can reach a
-//!   branch the other wouldn't.)
+//! Wave 3a/3b (primitive-subject match):
+//! - `Match` over a `Bool` subject (a single `if`/`else`), an `Int`
+//!   subject (an `i64.eq` cascade, wildcard required), or a `String`
+//!   subject (subject stashed in the reserved scratch, then a
+//!   `__wasmgc_string_eq` cascade with the first non-literal arm as the
+//!   default) — mirror of `emit_match` / `emit_int_match_cascade` /
+//!   `emit_string_match`. Any constructor / list / tuple arm pattern, or
+//!   a shape `emit_match` rejects outright, falls back. (The dispatch
+//!   checks arm patterns before the subject type, the reverse of
+//!   `emit_match`'s order, but the two are equivalent: typecheck forbids
+//!   a primitive subject from carrying a constructor / list / tuple arm,
+//!   so neither path can reach a branch the other wouldn't.)
 //!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
@@ -83,7 +84,7 @@ use crate::types::Type;
 
 use super::super::WasmGcError;
 use super::super::types::{TypeRegistry, aver_to_wasm};
-use super::emit::emit_return_call_insn;
+use super::emit::{emit_return_call_insn, emit_string_literal_bytes};
 use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 use super::slots::count_value_params;
 use super::{CallerFnCollector, EmitCtx, FnMap, SlotTable, Wasip2Lowering};
@@ -567,10 +568,95 @@ fn emit_mir_match(
             }
             Ok(Some(produces))
         }
-        // String (wave 3b — needs subject scratch + __wasmgc_string_eq)
-        // and any non-primitive subject fall back.
+        "String" => {
+            if emit_mir_string_match(func, m, block_ty, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            Ok(Some(produces))
+        }
+        // Non-primitive subjects (sum/record/etc.) fall back.
         _ => Ok(None),
     }
+}
+
+/// Mirror of `emit_string_match` (emit.rs): stash the subject in the
+/// reserved `(ref null eq)` scratch, then a cascade of
+/// `if __wasmgc_string_eq(subject, "lit") { body } else { … }` with the
+/// first non-literal arm (typically `_`) as the innermost default.
+/// Returns `None` (whole-fn fallback) if any subtree is unsupported or
+/// the shape lacks the scratch / default the `ResolvedExpr` emitter
+/// also requires.
+fn emit_mir_string_match(
+    func: &mut Function,
+    m: &MirMatch,
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "String match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    let eq_idx = ctx
+        .fn_map
+        .builtins
+        .get("__wasmgc_string_eq")
+        .copied()
+        .ok_or(WasmGcError::Validation(
+            "String match: __wasmgc_string_eq builtin wasn't registered".into(),
+        ))?;
+    let s_idx = ctx
+        .registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String match needs the String type slot allocated".into(),
+        ))?;
+
+    // Stash the subject; read once per arm (cast `(ref null eq)` back to
+    // `(ref null $string)` for `__wasmgc_string_eq`'s param shape).
+    if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    // Literal-string arms in source order, then the first non-literal
+    // arm as the single default (mirror of `emit_string_match`).
+    let mut literal_arms: Vec<(&str, &Spanned<MirExpr>)> = Vec::new();
+    let mut default_body: Option<&Spanned<MirExpr>> = None;
+    for arm in &m.arms {
+        if let MirPattern::Literal(Literal::Str(s)) = &arm.pattern {
+            literal_arms.push((s.as_str(), &arm.body));
+        } else if default_body.is_none() {
+            default_body = Some(&arm.body);
+        }
+    }
+    let Some(default_body) = default_body else {
+        // `emit_string_match` raises a Validation error here; fall back
+        // so the `ResolvedExpr` emitter reproduces it.
+        return Ok(None);
+    };
+
+    let mut ends_to_close = 0usize;
+    for (lit, body) in &literal_arms {
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNullable(
+            wasm_encoder::HeapType::Concrete(s_idx),
+        ));
+        emit_string_literal_bytes(func, lit.as_bytes(), ctx)?;
+        func.instruction(&Instruction::Call(eq_idx));
+        func.instruction(&Instruction::If(block_ty));
+        if emit_mir_expr(func, body, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        func.instruction(&Instruction::Else);
+        ends_to_close += 1;
+    }
+    if emit_mir_expr(func, default_body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    for _ in 0..ends_to_close {
+        func.instruction(&Instruction::End);
+    }
+    Ok(Some(()))
 }
 
 /// Mirror of `emit_int_match_cascade` (emit.rs): `subject == lit ?
@@ -758,7 +844,7 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
                             | MirPattern::Tuple(_)
                     )
                 })
-                && matches!(m.subject.ty(), Some(Type::Bool | Type::Int))
+                && matches!(m.subject.ty(), Some(Type::Bool | Type::Int | Type::Str))
                 && mir_expr_coverable(&m.subject)
                 && m.arms.iter().all(|a| mir_expr_coverable(&a.body))
         }
