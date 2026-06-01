@@ -2466,31 +2466,16 @@ fn startedAt() -> String
 "#;
         std::fs::write(root.join("App.av"), app_src).expect("write App.av failed");
 
-        // Compile the App module — its source file is already on disk
-        let app_source = std::fs::read_to_string(root.join("App.av")).expect("read App.av");
-        let mut items = parse(&app_source);
-        // Add a test wrapper
-        let test_items = parse("fn __test() -> String\n    startedAt()");
-        items.extend(test_items);
-        tco::transform_program(&mut items);
-        resolve_program(&mut items);
-        let mut arena = Arena::new();
-        vm::register_service_types(&mut arena);
-        let root_str = root.to_str().expect("utf-8");
-        let (resolved, symbols) = super::resolve_for_vm(&items);
-        let (code, globals) = vm::compile_program_with_modules(
-            &resolved,
-            &symbols,
-            &mut arena,
-            Some(root_str),
-            "<test>",
-            None,
-        )
-        .expect("VM compile failed");
-        let mut machine = vm::VM::new(code, globals, arena);
-        machine.run_top_level().expect("top-level failed");
+        // Build via the dep-preloading helper so the unified `SymbolTable`
+        // covers `Domain.Types`' constructors. The fully-qualified ctor in
+        // the pattern then resolves to a `CtorId` — the same shape
+        // production's typechecked path produces. (A bare
+        // `SymbolTable::build(items, &[])` leaves the cross-module ctor
+        // unresolved, which the MIR lowerer can't carry; resolving it up
+        // front is what production always does.)
+        let mut machine = vm_build_with_modules(app_src, &root);
         let out = machine
-            .run_named_function("__test", &[])
+            .run_named_function("startedAt", &[])
             .expect("call failed")
             .to_value(&machine.arena);
         assert_eq!(out, Value::Str("2026-03-08T12:00:00Z".to_string()));
