@@ -246,6 +246,17 @@ impl TypeRegistry {
             builtin_record_names.push(record.aver_name.to_string());
         }
 
+        // Deterministic walk order for the carrier-type discovery below
+        // (Option / Result / List / Vector / Map slots derived from
+        // record fields). `record_fields` is a `HashMap`, so iterating
+        // it directly registers those carrier slots in a process-random
+        // order — which makes the emitted type section, and thus the
+        // whole module, non-reproducible across builds. Sort the names
+        // once and walk that fixed order at every record-field sweep
+        // that feeds an ordered `*_order` / slot allocation.
+        let mut record_names_sorted: Vec<String> = record_fields.keys().cloned().collect();
+        record_names_sorted.sort();
+
         // Allocate the String type slot first (after records/variants)
         // so any `Vector<String>` registered below sits at a higher
         // index than `$string` and can reference it without crossing
@@ -326,7 +337,8 @@ impl TypeRegistry {
         // Record field walks — `record { nums: Vector<Int> }` only
         // shows up in the record's field list, not in any fn
         // signature. Mirror the lists / options record-field walk.
-        for (_, fields) in record_fields.iter() {
+        for name in &record_names_sorted {
+            let fields = &record_fields[name];
             for (_, ty) in fields {
                 collect_vectors_from_str(ty, &mut vector_types, &mut vector_order, &mut next_idx);
             }
@@ -407,7 +419,8 @@ impl TypeRegistry {
             // and vectors already do.
             collect_lists_from_fn_body(fd, &mut list_types, &mut list_order, &mut next_idx);
         }
-        for (_, fields) in record_fields.iter() {
+        for name in &record_names_sorted {
+            let fields = &record_fields[name];
             for (_, ty) in fields {
                 collect_lists_from_str(ty, &mut list_types, &mut list_order, &mut next_idx);
             }
@@ -476,7 +489,8 @@ impl TypeRegistry {
         // record declaration. Without this walk the canonical never
         // gets registered, and a `match state.lastAiResult` arm
         // dispatcher fails to recover its slot.
-        for (_, fields) in record_fields.iter() {
+        for name in &record_names_sorted {
+            let fields = &record_fields[name];
             for (_, ty) in fields {
                 collect_options_from_str(ty, &mut option_types, &mut option_order, &mut next_idx);
             }
@@ -503,7 +517,7 @@ impl TypeRegistry {
         // Without `Option<GameState>` in the registry the constructor
         // crashes; with it the slot exists and `wasm-opt -Oz` strips
         // unused option helpers if nothing actually instantiates them.
-        for record_name in record_fields.keys() {
+        for record_name in &record_names_sorted {
             let opt = format!("Option<{record_name}>");
             if !option_types.contains_key(&opt) {
                 option_types.insert(opt.clone(), next_idx);
@@ -518,7 +532,8 @@ impl TypeRegistry {
         // pending maps the same way the actual Map block does, then
         // grab each V.
         let mut pending_maps_for_options: Vec<String> = Vec::new();
-        for (_, fields) in record_fields.iter() {
+        for name in &record_names_sorted {
+            let fields = &record_fields[name];
             for (_, ty) in fields {
                 collect_maps_from_str(ty, &mut pending_maps_for_options);
             }
@@ -561,7 +576,8 @@ impl TypeRegistry {
         let mut pending_maps: Vec<String> = Vec::new();
         // Built-in record fields contribute too — `HttpRequest.headers`
         // / `HttpResponse.headers` carry `Map<String, List<String>>`.
-        for (_, fields) in record_fields.iter() {
+        for name in &record_names_sorted {
+            let fields = &record_fields[name];
             for (_, ty) in fields {
                 collect_maps_from_str(ty, &mut pending_maps);
             }
@@ -692,7 +708,8 @@ impl TypeRegistry {
             collect_tuples_from_fn_body(fd, &mut tuple_types, &mut tuple_order, &mut next_idx);
         }
         // Record fields can carry tuple types too.
-        for (_, fields) in record_fields.iter() {
+        for name in &record_names_sorted {
+            let fields = &record_fields[name];
             for (_, ty) in fields {
                 collect_tuples_from_str(ty, &mut tuple_types, &mut tuple_order, &mut next_idx);
             }

@@ -3503,7 +3503,12 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
 /// this is the lowering-level coverage — the upper bound on how many fns
 /// the VM walker can take off the HIR path, and the roadmap for which
 /// blocking shapes to lower next.
-pub(super) fn cmd_explain_mir_coverage(file: &str, module_root_override: Option<&str>, json: bool) {
+pub(super) fn cmd_explain_mir_coverage(
+    file: &str,
+    module_root_override: Option<&str>,
+    json: bool,
+    target: super::cli::CompileTarget,
+) {
     use aver::ir::{PipelineConfig, TypecheckMode};
 
     let module_root = resolve_module_root(module_root_override);
@@ -3541,11 +3546,62 @@ pub(super) fn cmd_explain_mir_coverage(file: &str, module_root_override: Option<
     }
 
     let mir = aver::ir::mir::lower_program(&result.resolved_items);
+
+    // `--target wasm-gc` reports the wasm-gc body emitter's reach over
+    // the lowered MIR (Phase 5 #340 — how many fns ride the MIR body
+    // walk vs. fall back to the `ResolvedExpr` emitter). Other targets
+    // report the VM lowering-level coverage (how many fns lowered to
+    // MIR at all).
+    if matches!(target, super::cli::CompileTarget::WasmGc) {
+        explain_wasm_gc_mir_coverage(&mir, json);
+        return;
+    }
+
     if json {
         print!("{}", render_mir_coverage_json(&mir.stats));
     } else {
         print!("{}", render_mir_coverage(&mir.stats));
     }
+}
+
+/// wasm-gc backend coverage over a lowered MIR program. Gated on
+/// `wasm-compile` (the feature that exposes the wasm-gc emitter); a
+/// default `aver` build without it prints a build-hint instead.
+#[cfg(feature = "wasm-compile")]
+fn explain_wasm_gc_mir_coverage(mir: &aver::ir::mir::MirProgram, json: bool) {
+    let report = aver::codegen::wasm_gc::coverage_report(mir);
+    if json {
+        println!(
+            "{{\"schema_version\":1,\"backend\":\"wasm-gc\",\"total\":{total},\"mir_covered\":{covered},\"hir_fallback\":{fallback},\"coverage_ratio\":{ratio:.4}}}",
+            total = report.total,
+            covered = report.mir_covered,
+            fallback = report.hir_fallback,
+            ratio = report.ratio(),
+        );
+    } else {
+        let mut out = String::new();
+        out.push_str("MIR coverage (wasm-gc backend) — body-emit level\n");
+        out.push_str("================================================\n\n");
+        out.push_str(&format!("MIR fns:       {}\n", report.total));
+        out.push_str(&format!(
+            "MIR-emitted:   {}  ({:.1}%)\n",
+            report.mir_covered,
+            report.ratio() * 100.0
+        ));
+        out.push_str(&format!("HIR fallback:  {}\n", report.hir_fallback));
+        print!("{out}");
+    }
+}
+
+#[cfg(not(feature = "wasm-compile"))]
+fn explain_wasm_gc_mir_coverage(_mir: &aver::ir::mir::MirProgram, _json: bool) {
+    eprintln!(
+        "{}",
+        "--explain-mir-coverage --target wasm-gc requires a wasm-enabled build \
+         (cargo build --features wasm)"
+            .red()
+    );
+    process::exit(1);
 }
 
 /// Sort skip reasons by count descending (dominant blocker first), then

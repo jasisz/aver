@@ -38,11 +38,14 @@ mod builtins;
 mod builtins_wasip2;
 mod emit;
 pub(super) mod eq_helpers;
+mod from_mir;
 pub(super) mod hash_helpers;
 mod infer;
 mod slots;
 
 use emit::emit_expr;
+pub(super) use from_mir::emit_fn_body_via_mir;
+pub use from_mir::{CoverageReport, coverage_report};
 use infer::aver_type_str_of;
 use slots::{SlotTable, count_value_params};
 

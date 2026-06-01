@@ -78,7 +78,7 @@ struct Wasip2Globals {
     tcp_next_id: Option<u32>,
 }
 use super::body::hash_helpers::{HashHelperRegistry, HashKind};
-use super::body::{FnEntry, FnMap, emit_fn_body};
+use super::body::{FnEntry, FnMap, emit_fn_body, emit_fn_body_via_mir};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
@@ -100,7 +100,8 @@ pub(super) fn emit_module_with(
     items: &[TopLevel],
     handler_name: Option<&str>,
     target: super::TargetMode,
-) -> Result<Vec<u8>, WasmGcError> {
+    enable_mir: bool,
+) -> Result<(Vec<u8>, usize), WasmGcError> {
     let fn_defs: Vec<&FnDef> = items
         .iter()
         .filter_map(|it| match it {
@@ -2269,6 +2270,39 @@ pub(super) fn emit_module_with(
             .register("aver_http_handle")
     });
 
+    // Lower the post-link resolved fns to MIR for the MIR-preferred
+    // body emitter (Phase 5 #340). `lower_program` runs no optimizer
+    // passes, so the MIR mirrors the resolved HIR shape 1:1 — the
+    // body walk that follows emits byte-identical wasm to the
+    // `ResolvedExpr` emitter for the variants it covers, and returns
+    // `None` (whole-fn fallback) for everything else, keeping the
+    // corpus + game suite green while coverage widens wave by wave.
+    // `enable_mir == false` forces the `ResolvedExpr` path everywhere;
+    // the byte-differential test (`tests/wasm_gc_differential_mir.rs`)
+    // compiles both ways and asserts the emitted fn bytes match.
+    let mir_program: Option<crate::ir::mir::MirProgram> = if enable_mir {
+        let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_fn_defs
+            .iter()
+            .cloned()
+            .map(crate::ir::hir::ResolvedTopLevel::FnDef)
+            .collect();
+        Some(crate::ir::mir::lower_program(&mir_items))
+    } else {
+        None
+    };
+    // `mir_fn_for[i]` is `Some(&MirFn)` when the i-th fn lowered to
+    // MIR. The final per-fn decision (MIR body emitter vs HIR
+    // fallback) is `mir_dispatch[i]`, computed once in the caller_fn
+    // pre-pass below and reused verbatim by the dry-run + real
+    // code-emit loops — all three see the same path per fn, so the
+    // discovered locals match the emitted body and caller_fn
+    // registration stays consistent.
+    let mir_fn_for: Vec<Option<&crate::ir::mir::MirFn>> = resolved_fn_defs
+        .iter()
+        .map(|rfd| mir_program.as_ref().and_then(|p| p.fn_by_id(rfd.fn_id)))
+        .collect();
+    let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
+
     // Pre-pass over user fn bodies — populates `caller_fn_collector`
     // with every fn name that emits caller_fn at a call site. Needed
     // before data count + data section emit because the count of
@@ -2276,21 +2310,61 @@ pub(super) fn emit_module_with(
     // data count section must precede the code section. Real body
     // emit later in the code section calls `register` again with the
     // same names; the collector is idempotent so the idx assignment
-    // matches what the call sites observed during this probe.
+    // matches what the call sites observed during this probe. This
+    // pass also decides MIR vs HIR per fn (`mir_dispatch`): the chosen
+    // emitter runs here so its caller_fn registrations match the real
+    // code-emit loop.
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         let mut probe = Function::new([]);
-        let _ = emit_fn_body(
-            &mut probe,
-            &resolved_fn_defs[i],
-            &fn_map,
-            self_wasm_idx,
-            &registry,
-            &symbol_table,
-            &effect_idx_lookup,
-            &caller_fn_collector,
-            wasip2_lowering.as_ref(),
-        )?;
+        let used_mir = if let Some(mir_fn) = mir_fn_for[i] {
+            match emit_fn_body_via_mir(
+                &mut probe,
+                &resolved_fn_defs[i],
+                mir_fn,
+                &fn_map,
+                self_wasm_idx,
+                &registry,
+                &symbol_table,
+                &effect_idx_lookup,
+                &caller_fn_collector,
+                wasip2_lowering.as_ref(),
+            )? {
+                Some(_) => true,
+                None => {
+                    // MIR hit an unsupported variant — fall back, and
+                    // collect this fn's caller_fns via the
+                    // `ResolvedExpr` emitter just like the real loop.
+                    let mut probe = Function::new([]);
+                    let _ = emit_fn_body(
+                        &mut probe,
+                        &resolved_fn_defs[i],
+                        &fn_map,
+                        self_wasm_idx,
+                        &registry,
+                        &symbol_table,
+                        &effect_idx_lookup,
+                        &caller_fn_collector,
+                        wasip2_lowering.as_ref(),
+                    )?;
+                    false
+                }
+            }
+        } else {
+            let _ = emit_fn_body(
+                &mut probe,
+                &resolved_fn_defs[i],
+                &fn_map,
+                self_wasm_idx,
+                &registry,
+                &symbol_table,
+                &effect_idx_lookup,
+                &caller_fn_collector,
+                wasip2_lowering.as_ref(),
+            )?;
+            false
+        };
+        mir_dispatch[i] = used_mir;
     }
     let caller_fn_segment_count = caller_fn_collector.borrow().names.len() as u32;
 
@@ -2502,33 +2576,78 @@ pub(super) fn emit_module_with(
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         // Dry run: discover extra locals by emitting into a throwaway
-        // fn. Cheaper than threading a separate pre-pass.
+        // fn. Cheaper than threading a separate pre-pass. The MIR /
+        // ResolvedExpr decision (`mir_dispatch[i]`) was fixed in the
+        // caller_fn pre-pass; reuse it here so the discovered locals
+        // match the body the real emit produces below.
         let mut probe = Function::new([]);
-        let extra_locals_dry = emit_fn_body(
-            &mut probe,
-            &resolved_fn_defs[i],
-            &fn_map,
-            self_wasm_idx,
-            &registry,
-            &symbol_table,
-            &effect_idx_lookup,
-            &caller_fn_collector,
-            wasip2_lowering.as_ref(),
-        )?;
+        let extra_locals_dry = if mir_dispatch[i] {
+            emit_fn_body_via_mir(
+                &mut probe,
+                &resolved_fn_defs[i],
+                mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
+                &fn_map,
+                self_wasm_idx,
+                &registry,
+                &symbol_table,
+                &effect_idx_lookup,
+                &caller_fn_collector,
+                wasip2_lowering.as_ref(),
+            )?
+            .ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "MIR dispatch desync for fn `{}` (dry-run)",
+                    resolved_fn_defs[i].name
+                ))
+            })?
+        } else {
+            emit_fn_body(
+                &mut probe,
+                &resolved_fn_defs[i],
+                &fn_map,
+                self_wasm_idx,
+                &registry,
+                &symbol_table,
+                &effect_idx_lookup,
+                &caller_fn_collector,
+                wasip2_lowering.as_ref(),
+            )?
+        };
 
         let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
         let mut func = Function::new(local_groups);
-        let _ = emit_fn_body(
-            &mut func,
-            &resolved_fn_defs[i],
-            &fn_map,
-            self_wasm_idx,
-            &registry,
-            &symbol_table,
-            &effect_idx_lookup,
-            &caller_fn_collector,
-            wasip2_lowering.as_ref(),
-        )?;
+        if mir_dispatch[i] {
+            emit_fn_body_via_mir(
+                &mut func,
+                &resolved_fn_defs[i],
+                mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
+                &fn_map,
+                self_wasm_idx,
+                &registry,
+                &symbol_table,
+                &effect_idx_lookup,
+                &caller_fn_collector,
+                wasip2_lowering.as_ref(),
+            )?
+            .ok_or_else(|| {
+                WasmGcError::Validation(format!(
+                    "MIR dispatch desync for fn `{}` (emit)",
+                    resolved_fn_defs[i].name
+                ))
+            })?;
+        } else {
+            let _ = emit_fn_body(
+                &mut func,
+                &resolved_fn_defs[i],
+                &fn_map,
+                self_wasm_idx,
+                &registry,
+                &symbol_table,
+                &effect_idx_lookup,
+                &caller_fn_collector,
+                wasip2_lowering.as_ref(),
+            )?;
+        }
         codes.function(&func);
     }
 
@@ -3978,7 +4097,13 @@ pub(super) fn emit_module_with(
         let _ = std::fs::write("/tmp/aver_wasm_gc_invalid.wasm", &bytes);
         return Err(e);
     }
-    Ok(bytes)
+    // Second return value: how many fns the MIR body emitter actually
+    // rendered (the real `emit_fn_body_via_mir` Some/None decision fixed
+    // in the pre-pass, NOT the structural `coverage_report` predicate).
+    // The byte-differential test asserts this is non-zero so its
+    // byte-identity check can't pass vacuously with the MIR path dead.
+    let mir_emitted = mir_dispatch.iter().filter(|&&used| used).count();
+    Ok((bytes, mir_emitted))
 }
 
 fn emit_user_types(
