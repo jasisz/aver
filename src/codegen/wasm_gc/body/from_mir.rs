@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–4b)
+//! ## Scope (waves 0–4b, 4d)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -83,6 +83,19 @@
 //!   (field 1) into the `Cons` pattern's binding slots before its body.
 //!   Checked before Result/Option, matching `emit_match`'s order.
 //!
+//! Wave 4d (user-variant / sum-type match):
+//! - `Match` over a user sum type — mirror of `emit_single_variant_match`
+//!   (a single irrefutable `Ctor` arm: newtype-bind / nullary-drop /
+//!   inline `ref.cast` + `struct.get`) and `emit_variant_dispatch` +
+//!   `emit_arm_body` (multi-arm: a `ref.test` cascade over the variant
+//!   struct types, extracting each matched arm's fields from the
+//!   scratch-held subject). `MirCtor::User(CtorId)` resolves to its
+//!   `VariantInfo` via the symbol table + registry, identical to the
+//!   `ctor_dotted_name` lookup. The single-file corpus barely exercises
+//!   this; the multi-module games (`Tile`, `EntityKind`, …) do, and the
+//!   games byte-differential verifies it. Tuple (wave 4c) and the
+//!   multi-arm tuple-of-constructors path still fall back.
+//!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
 //! `ResolvedExpr` emitter for the whole fn. That keeps the corpus +
@@ -94,6 +107,7 @@ use wasm_encoder::{Function, Instruction, ValType};
 
 use crate::ast::Spanned;
 use crate::ast::{BinOp, Literal};
+use crate::ir::CtorId;
 use crate::ir::SymbolTable;
 use crate::ir::hir::{ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
 use crate::ir::mir::{
@@ -102,7 +116,7 @@ use crate::ir::mir::{
 use crate::types::Type;
 
 use super::super::WasmGcError;
-use super::super::types::{TypeRegistry, aver_to_wasm};
+use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm};
 use super::emit::{emit_return_call_insn, emit_string_literal_bytes};
 use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 use super::slots::count_value_params;
@@ -489,20 +503,14 @@ fn emit_mir_match(
     if m.arms.is_empty() {
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
-    // Patterns not yet covered: tuple (wave 4c) and user-variant
-    // constructors (wave 4d) — fall back. List (wave 4b) and built-in
-    // `Result` / `Option` (wave 4a) constructor patterns are handled
-    // below.
-    if m.arms.iter().any(|a| {
-        matches!(
-            a.pattern,
-            MirPattern::Tuple(_)
-                | MirPattern::Ctor {
-                    ctor: MirCtor::User(_),
-                    ..
-                }
-        )
-    }) {
+    // Tuple arms are wave 4c (single-arm destructure) / the multi-arm
+    // tuple-of-constructors path — both still fall back. List (4b),
+    // built-in `Result` / `Option` (4a), and user-variant (4d)
+    // constructor patterns are handled below.
+    if m.arms
+        .iter()
+        .any(|a| matches!(a.pattern, MirPattern::Tuple(_)))
+    {
         return Ok(None);
     }
 
@@ -537,6 +545,28 @@ fn emit_mir_match(
             return Ok(None);
         }
         return Ok(emit_mir_option_match(func, m, block_ty, slots, ctx)?.map(|()| produces));
+    }
+
+    // User-variant (sum type) matches. `emit_match` routes a single
+    // `Ctor` arm to `emit_single_variant_match` (direct cast, no test)
+    // and a multi-arm match to `emit_variant_dispatch` (a `ref.test`
+    // cascade) — mirror that split.
+    if m.arms.iter().any(|a| {
+        matches!(
+            a.pattern,
+            MirPattern::Ctor {
+                ctor: MirCtor::User(_),
+                ..
+            }
+        )
+    }) {
+        if m.arms.len() == 1 {
+            return Ok(
+                emit_mir_single_variant_match(func, &m.subject, &m.arms[0], slots, ctx)?
+                    .map(|()| produces),
+            );
+        }
+        return Ok(emit_mir_variant_dispatch(func, m, block_ty, slots, ctx)?.map(|()| produces));
     }
 
     match aver_type_str_of(&m.subject).trim() {
@@ -1072,6 +1102,260 @@ fn emit_mir_list_match(
     Ok(Some(()))
 }
 
+/// Resolve a `MirCtor::User(CtorId)` to its registry `VariantInfo`,
+/// mirroring `emit_match`'s `ctor_dotted_name` + `variant_in` lookup:
+/// the parent type name comes from the ctor's owning type's `key.name`,
+/// the bare variant name from the ctor entry; the registry is keyed by
+/// `(parent, bare)` (with a bare-name fallback for non-colliding types).
+fn mir_user_variant_info<'a>(
+    ctor_id: CtorId,
+    ctx: &'a EmitCtx<'_>,
+) -> Result<&'a VariantInfo, WasmGcError> {
+    let ctor_entry = ctx.symbol_table.ctor_entry(ctor_id);
+    let bare = ctor_entry.name.as_str();
+    let parent = ctx
+        .symbol_table
+        .type_entry(ctor_entry.owning_type)
+        .key
+        .name
+        .clone();
+    ctx.registry
+        .variant_in(&parent, bare)
+        .or_else(|| ctx.registry.variant(bare))
+        .ok_or(WasmGcError::Validation(format!(
+            "unknown variant `{parent}.{bare}` in match"
+        )))
+}
+
+/// Emit a covered arm body, returning `None` if the body falls outside
+/// the supported subset (propagated as a whole-fn fallback).
+fn emit_mir_arm_body_value(
+    func: &mut Function,
+    body: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    Ok(emit_mir_expr(func, body, slots, ctx)?.map(|_| ()))
+}
+
+/// Mirror of `emit_single_variant_match` (emit.rs): an irrefutable
+/// single-arm sum-type destructure (the typechecker proved it's the
+/// only variant) — newtype shapes bind the subject directly, nullary
+/// constructors just drop it, single-binding uses an inline
+/// `ref.cast` + `struct.get`, and multi-binding stashes the cast
+/// subject in the reserved scratch and extracts each field. The MIR
+/// `Ctor` bindings are the resolver's `binding_slots` (`u16::MAX`
+/// sentinel for `_`), so every `local.set` matches byte-for-byte.
+fn emit_mir_single_variant_match(
+    func: &mut Function,
+    subject: &Spanned<MirExpr>,
+    arm: &MirMatchArm,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let MirPattern::Ctor {
+        ctor: MirCtor::User(ctor_id),
+        bindings,
+        ..
+    } = &arm.pattern
+    else {
+        return Ok(None);
+    };
+    let info = mir_user_variant_info(*ctor_id, ctx)?;
+    const NO_SLOT: u32 = u16::MAX as u32;
+
+    // Newtype: single-variant sum of a single primitive — bind the
+    // subject directly, no cast / struct.get.
+    if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
+        let slot = bindings[0].0;
+        if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        if slot != NO_SLOT {
+            func.instruction(&Instruction::LocalSet(slot));
+        } else {
+            func.instruction(&Instruction::Drop);
+        }
+        return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+    }
+
+    let variant_idx = info.type_idx;
+    let cast_ty = wasm_encoder::HeapType::Concrete(variant_idx);
+
+    if bindings.is_empty() {
+        // Nullary — evaluate the subject for effects, drop, emit body.
+        if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+        func.instruction(&Instruction::Drop);
+        return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+    }
+
+    if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::RefCastNonNull(cast_ty));
+
+    if bindings.len() == 1 {
+        // Single binding — the cast ref is on the stack; `struct.get`
+        // field 0 and bind (or drop for `_`).
+        let slot = bindings[0].0;
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: variant_idx,
+            field_index: 0,
+        });
+        if slot != NO_SLOT {
+            func.instruction(&Instruction::LocalSet(slot));
+        } else {
+            func.instruction(&Instruction::Drop);
+        }
+        return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+    }
+
+    // Multi-binding — stash the cast subject, re-read + re-cast per
+    // field. The scratch is `(ref null eq)`, so re-cast on each read.
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "multi-binding variant pattern needs subject_scratch but none was reserved".into(),
+    ))?;
+    func.instruction(&Instruction::LocalSet(scratch));
+    for (i, slot) in bindings.iter().enumerate() {
+        if slot.0 == NO_SLOT {
+            continue;
+        }
+        func.instruction(&Instruction::LocalGet(scratch));
+        func.instruction(&Instruction::RefCastNonNull(cast_ty));
+        func.instruction(&Instruction::StructGet {
+            struct_type_index: variant_idx,
+            field_index: i as u32,
+        });
+        func.instruction(&Instruction::LocalSet(slot.0));
+    }
+    emit_mir_arm_body_value(func, &arm.body, slots, ctx)
+}
+
+/// Mirror of `emit_variant_dispatch` (emit.rs): stash the subject in
+/// the reserved scratch, then a `ref.test` cascade over the arms.
+fn emit_mir_variant_dispatch(
+    func: &mut Function,
+    m: &MirMatch,
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "multi-arm variant match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::LocalSet(scratch));
+    emit_mir_variant_arm_cascade(func, &m.arms, block_ty, scratch, slots, ctx)
+}
+
+/// Mirror of `emit_variant_arm_cascade` (emit.rs): one arm left → the
+/// default (no test); else `ref.test` the first arm's variant, emit its
+/// body on match, recurse on the rest in the `else`.
+fn emit_mir_variant_arm_cascade(
+    func: &mut Function,
+    arms: &[MirMatchArm],
+    block_ty: wasm_encoder::BlockType,
+    subject_scratch: u32,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    if arms.is_empty() {
+        // Exhaustiveness already proven; reaching here means no arms —
+        // emit `unreachable` so the validator treats it as polymorphic.
+        func.instruction(&Instruction::Unreachable);
+        return Ok(Some(()));
+    }
+    if arms.len() == 1 {
+        return emit_mir_arm_body(func, &arms[0], subject_scratch, slots, ctx);
+    }
+    let arm = &arms[0];
+    match &arm.pattern {
+        MirPattern::Ctor {
+            ctor: MirCtor::User(ctor_id),
+            ..
+        } => {
+            let info = mir_user_variant_info(*ctor_id, ctx)?;
+            func.instruction(&Instruction::LocalGet(subject_scratch));
+            func.instruction(&Instruction::RefTestNonNull(
+                wasm_encoder::HeapType::Concrete(info.type_idx),
+            ));
+            func.instruction(&Instruction::If(block_ty));
+            if emit_mir_arm_body(func, arm, subject_scratch, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::Else);
+            if emit_mir_variant_arm_cascade(
+                func,
+                &arms[1..],
+                block_ty,
+                subject_scratch,
+                slots,
+                ctx,
+            )?
+            .is_none()
+            {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::End);
+            Ok(Some(()))
+        }
+        MirPattern::Wildcard => emit_mir_arm_body(func, arm, subject_scratch, slots, ctx),
+        // A non-Ctor / non-Wildcard arm here is `emit_match`'s
+        // Unimplemented case — fall back.
+        _ => Ok(None),
+    }
+}
+
+/// Mirror of `emit_arm_body` (emit.rs): extract a `Ctor` arm's fields
+/// from the scratch-held subject (newtype binds the scratch directly),
+/// then emit the body; a wildcard arm just emits its body.
+fn emit_mir_arm_body(
+    func: &mut Function,
+    arm: &MirMatchArm,
+    subject_scratch: u32,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    if let MirPattern::Ctor {
+        ctor: MirCtor::User(ctor_id),
+        bindings,
+        ..
+    } = &arm.pattern
+    {
+        let info = mir_user_variant_info(*ctor_id, ctx)?;
+        const NO_SLOT: u32 = u16::MAX as u32;
+        if ctx.registry.newtype_underlying(&info.parent).is_some() && bindings.len() == 1 {
+            let slot = bindings[0].0;
+            if slot != NO_SLOT {
+                func.instruction(&Instruction::LocalGet(subject_scratch));
+                func.instruction(&Instruction::LocalSet(slot));
+            }
+            return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+        }
+        for (i, slot) in bindings.iter().enumerate() {
+            if slot.0 == NO_SLOT {
+                continue;
+            }
+            func.instruction(&Instruction::LocalGet(subject_scratch));
+            func.instruction(&Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(info.type_idx),
+            ));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: info.type_idx,
+                field_index: i as u32,
+            });
+            func.instruction(&Instruction::LocalSet(slot.0));
+        }
+        return emit_mir_arm_body_value(func, &arm.body, slots, ctx);
+    }
+    // Wildcard / non-pattern arm — just emit the body.
+    emit_mir_arm_body_value(func, &arm.body, slots, ctx)
+}
+
 /// The numeric (`Int` / `Float`) tail of `emit_expr`'s `BinOp` arm —
 /// byte-for-byte. Returns `None` if an operand falls outside the
 /// supported subset (propagated as whole-fn fallback). The I64 / F64
@@ -1209,19 +1493,12 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             // fused-Option fallback — a tolerable over-count, since this
             // only feeds `--explain-mir-coverage`; the real per-fn
             // dispatch is what the wire-up + differential test use).
-            // List / tuple / user-variant arms are wave 4b/4c/4d.
+            // Tuple arms are wave 4c — not yet covered.
             let m = &spanned_match.node;
-            // Tuple (wave 4c) + user-variant (wave 4d) arms not covered.
-            let unsupported_pat = m.arms.iter().any(|a| {
-                matches!(
-                    a.pattern,
-                    MirPattern::Tuple(_)
-                        | MirPattern::Ctor {
-                            ctor: MirCtor::User(_),
-                            ..
-                        }
-                )
-            });
+            let unsupported_pat = m
+                .arms
+                .iter()
+                .any(|a| matches!(a.pattern, MirPattern::Tuple(_)));
             // A primitive-subject match takes the Bool/Int/String branches
             // (literal / wildcard arms only; `Bind` falls back); a
             // Result/Option match carries built-in constructor arms; a
@@ -1242,9 +1519,21 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
                 .arms
                 .iter()
                 .any(|a| matches!(a.pattern, MirPattern::EmptyList | MirPattern::Cons { .. }));
+            // A user-variant (sum type) match carries `MirCtor::User`
+            // constructor arms (single-arm destructure or multi-arm
+            // `ref.test` cascade).
+            let is_variant = m.arms.iter().any(|a| {
+                matches!(
+                    a.pattern,
+                    MirPattern::Ctor {
+                        ctor: MirCtor::User(_),
+                        ..
+                    }
+                )
+            });
             !m.arms.is_empty()
                 && !unsupported_pat
-                && (is_primitive || is_result_or_option || is_list)
+                && (is_primitive || is_result_or_option || is_list || is_variant)
                 && mir_expr_coverable(&m.subject)
                 && m.arms.iter().all(|a| mir_expr_coverable(&a.body))
         }
