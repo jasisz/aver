@@ -9,7 +9,7 @@ mod symbol;
 mod types;
 
 pub use compiler::{
-    compile_program, compile_program_with_loaded_modules, compile_program_with_mir_fallback,
+    compile_program_with_loaded_modules, compile_program_with_mir_fallback,
     compile_program_with_modules,
 };
 /// Phase 4 of #252 — MIR vertical slice for the VM. Re-exported

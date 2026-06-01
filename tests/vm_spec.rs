@@ -1172,7 +1172,13 @@ fn main() -> Tuple<Result<Int, String>, Result<Int, String>>
 }
 
 #[test]
-fn vm_independent_product_allows_dynamic_callable_and_global_branches() {
+fn vm_independent_product_allows_global_and_builtin_branches() {
+    // `(a, b)!` where one branch reads a top-level global (`shared`) and
+    // the other is a direct builtin call. The previous version bound a
+    // builtin to a local (`f = String.len`) — which the type checker
+    // rejects ("only in call-argument position") and only the retired HIR
+    // walker tolerated; the valid first-class-fn-value path is covered by
+    // `vm_independent_product_allows_module_local_function_branches`.
     let src = r#"
 shared = ["aa", "bbb"]
 
@@ -1182,8 +1188,7 @@ fn fromGlobal() -> Int
         _ -> 0
 
 fn main() -> Tuple<Int, Int>
-    f = String.len
-    (f("abcd"), fromGlobal())!
+    (String.len("abcd"), fromGlobal())!
 "#;
     let (result, arena) = vm_run_with_arena(src);
     assert_eq!(

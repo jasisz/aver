@@ -45,7 +45,7 @@ use crate::vm::builtin::VmBuiltin;
 use crate::vm::opcode::*;
 
 use super::VmSymbolTable;
-use super::calls::buffer_intrinsic_opcode;
+use super::resolve_helpers::buffer_intrinsic_opcode;
 
 use super::{CompileError, FnCompiler};
 
