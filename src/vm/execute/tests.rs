@@ -16,7 +16,8 @@ fn compile_vm(src: &str) -> VM {
     let symbols = crate::ir::SymbolTable::build(&items, &[]);
     let resolved = crate::ir::hir::resolve_program(&symbols, &items);
     let (code, globals) =
-        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile failed");
+        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+            .expect("compile failed");
     VM::new(code, globals, arena)
 }
 

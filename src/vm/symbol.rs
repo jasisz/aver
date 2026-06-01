@@ -352,39 +352,6 @@ impl VmSymbolTable {
             .copied()
     }
 
-    pub(crate) fn resolve_symbol_ref(&self, value: NanValue) -> Option<u32> {
-        let symbol_id = value.inline_int_value()?;
-        (symbol_id >= 0)
-            .then_some(symbol_id as u32)
-            .filter(|&id| self.get(id).is_some_and(|info| info.kind.is_some()))
-    }
-
-    pub(crate) fn resolve_namespace_path(&self, path: &str) -> Option<u32> {
-        if let Some(symbol_id) = self.find(path)
-            && self.is_namespace(symbol_id)
-        {
-            return Some(symbol_id);
-        }
-
-        let mut segments = path.split('.');
-        let first = segments.next()?;
-        let mut current_id = self.find(first)?;
-        if !self.is_namespace(current_id) {
-            return None;
-        }
-
-        for segment in segments {
-            let member_symbol_id = self.find(segment)?;
-            let member = self.resolve_member(current_id, member_symbol_id)?;
-            current_id = self.resolve_symbol_ref(member)?;
-            if !self.is_namespace(current_id) {
-                return None;
-            }
-        }
-
-        Some(current_id)
-    }
-
     #[cfg(test)]
     pub(crate) fn required_effects(&self, symbol_id: u32) -> Option<&[u32]> {
         Some(self.get(symbol_id)?.required_effects.as_slice())
@@ -482,25 +449,5 @@ mod tests {
             .expect("intern Status.Done");
 
         assert_eq!(table.resolve_variant_ctor(symbol_id), Some(ctor));
-    }
-
-    #[test]
-    fn symbol_table_builds_and_resolves_nested_namespace_paths() {
-        let mut table = VmSymbolTable::default();
-        let path = table
-            .intern_namespace_path("Domain.Types")
-            .expect("intern Domain.Types");
-
-        assert_eq!(table.find("Domain.Types"), Some(path));
-
-        let domain = table.find("Domain").expect("missing Domain");
-        let types = table.find("Types").expect("missing Types");
-        assert_eq!(
-            table
-                .resolve_member(domain, types)
-                .and_then(|value| table.resolve_symbol_ref(value)),
-            Some(path)
-        );
-        assert_eq!(table.resolve_namespace_path("Domain.Types"), Some(path));
     }
 }
