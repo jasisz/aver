@@ -4,9 +4,14 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Added
+
+- **`aver compile FILE --emit-ir-after=mir`** dumps the textual `MirProgram` — every function's body after HIR → MIR lowering and the MIR optimize pipeline. The same diagnostic surface as the other `--emit-ir-after` stages, now reaching the executable middle-end the VM actually runs. `diff` two stages to see exactly what each rewrote.
+- **`aver compile FILE --explain-mir-coverage`** reports how much of a program lowers to MIR (per function, with the dominant blocking shape for any that don't) — the meter used to drive the VM onto MIR.
+
 ### Compiler internals
 
-- **Core MIR scaffolding lands (Phase 1 of #252).** `src/ir/mir/` exists with a doc-comment summary in `mod.rs` and a full design RFC in `RFC.md`. Pinned decisions: `Try` stays a node (no desugar to `match`), `match` stays structured, identity goes through `FnId` / `TypeId` / `CtorId` / `ModuleId`, ProofIR stays separate. No data model yet — Phase 2 lands the enums + textual dump, Phase 3 lands HIR → MIR lowering in waves, Phase 4 wires the VM as the first consumer. The 0.23 stage 8b workaround (`step_fns` side-channel on `ModulePattern::ResultPipelineChain`) is the concrete motivator: with `?` preserved as a `Try` node through MIR, that side-channel goes away in 0.24.
+- **The VM now compiles through Core MIR exclusively — the second codegen path is gone.** Aver grew a canonical mid-level IR (`src/ir/mir/`, design RFC in `RFC.md`): `Try` stays a semantic node (no desugar to `match`), `match` stays structured, identity travels through `FnId` / `TypeId` / `CtorId` / `ModuleId`, and every node carries its type stamp. HIR → MIR lowering covers the full executable expression set; the VM bytecode compiler walks `MirExpr` for every function body, every dependency-module function, and top-level / REPL statements. Once MIR coverage reached 100% of the shipped corpus, the old HIR tree-walking compiler (`compile_expr` plus its call / pattern / record emitters, ~2200 lines) was deleted — a function that can't lower to MIR is now a hard compile error, not a silent fall-back to a second walker. Behavior is unchanged; there is simply one codegen path where there were two. The 0.23 stage 8b workaround (`step_fns` side-channel on `ModulePattern::ResultPipelineChain`) is the concrete motivator: with `?` preserved as a `Try` node through MIR, that side-channel is gone.
 
 ## 0.23.0 "Shape" — 2026-05-30
 
