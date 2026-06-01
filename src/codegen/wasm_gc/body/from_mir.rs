@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–9)
+//! ## Scope (waves 0–10)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -163,8 +163,20 @@
 //!   missed them. The new `emit_mir_native_scalar_builtin` is tried
 //!   before that lookup; un-recognized builtins fall through to it
 //!   unchanged. `Int.mod` (a `Result` carrier with a fused form) and the
-//!   `List` / `Vector` custom-inline families are later builtin
-//!   sub-waves.
+//!   `Vector` custom-inline family are later builtin sub-waves.
+//!
+//! Wave 10 (`List` custom-inline builtins):
+//! - `Call` with `MirCallee::Builtin` whose dotted name is a `List` op —
+//!   `emit_mir_list_builtin`, mirror of the custom-inline `List.*` arms
+//!   of `emit_dotted_builtin` plus the `List.prepend` / `List.empty`
+//!   intercepts in `emit_expr`'s `Call` arm. `reverse` / `len` /
+//!   `length` / `concat` / `take` / `drop` / `contains` dispatch to the
+//!   per-`List<T>` `fn_map.list_ops` helper; `zip` to `zip_ops`,
+//!   `fromVector` to `vfl_ops`; `prepend` is a `struct.new $list_T`,
+//!   `empty` a `ref.null $list_T`. `contains` over a non-eq-able `T`
+//!   (no registered helper) falls back. Tried after the native-scalar
+//!   path and before the `fn_map.builtins` lookup (none of these are in
+//!   that table).
 //!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
@@ -187,7 +199,7 @@ use crate::ir::mir::{
 use crate::types::Type;
 
 use super::super::WasmGcError;
-use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm};
+use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm, normalize_compound};
 use super::emit::{emit_default_value, emit_return_call_insn, emit_string_literal_bytes};
 use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 use super::slots::count_value_params;
@@ -470,10 +482,12 @@ fn emit_mir_expr(
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
                     }
-                    if (dotted == "List.prepend" && call.args.len() == 2)
-                        || (dotted == "List.empty" && call.args.is_empty())
-                    {
-                        return Ok(None);
+                    // `List.*` custom-inline ops (helper dispatch +
+                    // prepend / empty) — also not in `fn_map.builtins`.
+                    match emit_mir_list_builtin(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
                     }
                     match ctx.fn_map.builtins.get(dotted) {
                         Some(&wasm_idx) => {
@@ -2139,6 +2153,156 @@ fn emit_mir_native_scalar_builtin(
         "Bool.not" if args.len() == 1 => {
             arg!(0);
             func.instruction(&Instruction::I32Eqz);
+        }
+        _ => return Ok(MirBuiltinEmit::NotHandled),
+    }
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// Mirror of the custom-inline `List.*` arms of `emit_dotted_builtin`
+/// plus the two `List` builtins intercepted in `emit_expr`'s `Call` arm
+/// (`List.prepend`, `List.empty`). None are registered helpers:
+/// - `reverse` / `len` / `length` dispatch to the per-`List<T>`
+///   `fn_map.list_ops` helper (mirror of `emit_list_op_call`); `concat`
+///   / `take` / `drop` / `contains` to the 2-arg variant
+///   (`emit_list_op_call_2`). The canonical comes from the first list
+///   arg's stamped type via `normalize_compound`. `contains` over a
+///   non-eq-able `T` has no registered helper → fall back so the HIR
+///   path raises the same diagnostic.
+/// - `zip` → the per-`Tuple<A,B>` `zip_ops` helper (`emit_list_zip_call`),
+///   `fromVector` → the `vfl_ops` `to_list` helper (`emit_vec_to_list_call`).
+/// - `prepend` → `struct.new $list_T head tail` (`emit_list_prepend`);
+///   `empty` → `ref.null $list_T` resolved from the sole registered
+///   `List<T>` or the enclosing fn's return type (`emit_list_empty`).
+///
+/// Every arg recurses `emit_mir_expr` (the byte-identical analogue of
+/// the oracle's `emit_expr`); helper-index lookups and type canonicals
+/// are pure and already work on `MirExpr` via `.ty()`.
+fn emit_mir_list_builtin(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    macro_rules! emit_args {
+        () => {
+            for a in args {
+                if emit_mir_expr(func, a, slots, ctx)?.is_none() {
+                    return Ok(MirBuiltinEmit::Fallback);
+                }
+            }
+        };
+    }
+    match dotted {
+        // Per-`List<T>` helper dispatch (1- and 2-arg). Resolve the
+        // helper index first (emits nothing), then the args, then call —
+        // byte-identical order to `emit_list_op_call` / `_2`.
+        "List.reverse" | "List.len" | "List.length" | "List.concat" | "List.take" | "List.drop"
+        | "List.contains" => {
+            let arity_ok = match dotted {
+                "List.reverse" | "List.len" | "List.length" => args.len() == 1,
+                _ => args.len() == 2,
+            };
+            if !arity_ok {
+                return Ok(MirBuiltinEmit::NotHandled);
+            }
+            let list_aver = aver_type_str_of(&args[0]);
+            let canonical = normalize_compound(&list_aver);
+            let fn_idx = {
+                let ops = ctx
+                    .fn_map
+                    .list_ops_lookup(&canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "List op called but `{canonical}` helper wasn't registered"
+                    )))?;
+                match dotted {
+                    "List.reverse" => ops.reverse,
+                    "List.len" | "List.length" => ops.len,
+                    "List.concat" => ops.concat,
+                    "List.take" => ops.take,
+                    "List.drop" => ops.drop,
+                    // `contains` over a non-eq-able T isn't registered —
+                    // fall back so the HIR emitter raises the precise error.
+                    "List.contains" => match ops.contains {
+                        Some(idx) => idx,
+                        None => return Ok(MirBuiltinEmit::Fallback),
+                    },
+                    _ => unreachable!("outer match restricts dotted"),
+                }
+            };
+            emit_args!();
+            func.instruction(&Instruction::Call(fn_idx));
+        }
+        "List.zip" if args.len() == 2 => {
+            let la_aver = aver_type_str_of(&args[0]);
+            let lb_aver = aver_type_str_of(&args[1]);
+            let a = TypeRegistry::list_element_type(&la_aver).ok_or(WasmGcError::Validation(
+                format!("List.zip: first arg type `{la_aver}` is not a List<T>"),
+            ))?;
+            let b = TypeRegistry::list_element_type(&lb_aver).ok_or(WasmGcError::Validation(
+                format!("List.zip: second arg type `{lb_aver}` is not a List<T>"),
+            ))?;
+            let tup_canonical = format!("Tuple<{},{}>", a.trim(), b.trim());
+            let zip_fn =
+                ctx.fn_map
+                    .zip_ops_lookup(&tup_canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "List.zip: helper for `{tup_canonical}` wasn't registered"
+                    )))?;
+            emit_args!();
+            func.instruction(&Instruction::Call(zip_fn));
+        }
+        "List.fromVector" if args.len() == 1 => {
+            let vec_aver = aver_type_str_of(&args[0]);
+            let vec_canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
+            let elem = TypeRegistry::vector_element_type(&vec_canonical).ok_or(
+                WasmGcError::Validation(format!(
+                    "List.fromVector: cannot parse element type from `{vec_canonical}`"
+                )),
+            )?;
+            let list_canonical = format!("List<{}>", elem.trim());
+            let to_list = ctx
+                .fn_map
+                .vfl_ops
+                .get(&list_canonical)
+                .ok_or(WasmGcError::Validation(format!(
+                    "List.fromVector: helper for `{list_canonical}` wasn't registered"
+                )))?
+                .to_list;
+            emit_args!();
+            func.instruction(&Instruction::Call(to_list));
+        }
+        "List.prepend" if args.len() == 2 => {
+            let tail_ty = aver_type_str_of(&args[1]);
+            let canonical: String = tail_ty.chars().filter(|c| !c.is_whitespace()).collect();
+            let list_idx =
+                ctx.registry
+                    .list_type_idx(&canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "List.prepend: tail type `{tail_ty}` is not a registered List<T>"
+                    )))?;
+            emit_args!();
+            func.instruction(&Instruction::StructNew(list_idx));
+        }
+        "List.empty" if args.is_empty() => {
+            let canonical = if ctx.registry.list_order.len() == 1 {
+                ctx.registry.list_order[0].clone()
+            } else {
+                ctx.return_type
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>()
+            };
+            let list_idx =
+                ctx.registry
+                    .list_type_idx(&canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "List.empty: cannot resolve list instantiation (got `{canonical}`)"
+                    )))?;
+            func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                list_idx,
+            )));
         }
         _ => return Ok(MirBuiltinEmit::NotHandled),
     }
