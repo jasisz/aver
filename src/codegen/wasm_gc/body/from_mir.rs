@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–8)
+//! ## Scope (waves 0–9)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -152,6 +152,19 @@
 //!   pipeline runs with `run_buffer_build = false`, so interpolation
 //!   survives to MIR as `InterpolatedStr` (it is not deforested into
 //!   buffer-write intrinsics); this wave covers it on the seam path.
+//!
+//! Wave 9 (native scalar builtins — first builtin-inline-depth slice):
+//! - `Call` with `MirCallee::Builtin` whose dotted name is a native
+//!   scalar `Float` / `Int` / `Bool` op — mirror of the inline arms of
+//!   `emit_dotted_builtin`: `Float.{fromInt,floor,ceil,round,abs,sqrt,
+//!   min,max,pi}`, `Int.{fromFloat,abs,min,max}`, `Bool.{and,or,not}`.
+//!   These lower to a fixed `f64` / `i64` / `i32` instruction sequence
+//!   (not a registered helper), so the wave-2 `fn_map.builtins` lookup
+//!   missed them. The new `emit_mir_native_scalar_builtin` is tried
+//!   before that lookup; un-recognized builtins fall through to it
+//!   unchanged. `Int.mod` (a `Result` carrier with a fused form) and the
+//!   `List` / `Vector` custom-inline families are later builtin
+//!   sub-waves.
 //!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
@@ -448,6 +461,15 @@ fn emit_mir_expr(
                         return Ok(None);
                     };
                     let dotted = dotted.as_str();
+                    // Native scalar builtins (Float / Int / Bool) lower to
+                    // an inline instruction sequence, not a registered
+                    // helper, so try them before the `fn_map.builtins`
+                    // lookup (which would miss them).
+                    match emit_mir_native_scalar_builtin(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
                     if (dotted == "List.prepend" && call.args.len() == 2)
                         || (dotted == "List.empty" && call.args.is_empty())
                     {
@@ -1984,6 +2006,143 @@ fn emit_mir_list_literal(
         func.instruction(&Instruction::Call(cons_fn));
     }
     Ok(Some(()))
+}
+
+/// Outcome of trying to emit a builtin call through a specialized MIR
+/// path, so the `Call(Builtin)` arm can try paths in order without
+/// conflating "not this path's builtin" with "fall the whole fn back".
+enum MirBuiltinEmit {
+    /// Not a builtin this path recognizes — try the next path.
+    NotHandled,
+    /// Recognized, but an argument couldn't be emitted from MIR — the
+    /// whole fn falls back to the resolved-HIR emitter.
+    Fallback,
+    /// Emitted; `produces` is whether a value is left on the stack.
+    Produced(bool),
+}
+
+/// Mirror of the native scalar (`Float` / `Int` / `Bool`) arms of
+/// `emit_dotted_builtin` (builtins.rs): builtins that lower to a fixed
+/// inline wasm instruction sequence over `f64` / `i64` / `i32` values
+/// rather than a registered helper call (so the wave-2 `fn_map.builtins`
+/// lookup misses them and they fell back until now). Each recurses
+/// `emit_mir_expr` on its args — the byte-identical analogue of the
+/// oracle's `emit_expr`. `Int.abs` / `Int.min` / `Int.max` re-emit an
+/// arg more than once (an `if`/`else` select), exactly as the oracle
+/// does; a `None` from any re-emission is a clean whole-fn fallback
+/// (`func` is reset by the caller). `Int.mod` is deliberately absent: it
+/// builds a `Result<Int,String>` carrier and has a fused form, so it
+/// stays on the HIR path for a later sub-wave.
+fn emit_mir_native_scalar_builtin(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    // Emit one arg, mapping a `None` (uncovered sub-expr) to `Fallback`.
+    macro_rules! arg {
+        ($i:expr) => {
+            if emit_mir_expr(func, &args[$i], slots, ctx)?.is_none() {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+    let i64_block = wasm_encoder::BlockType::Result(ValType::I64);
+    match dotted {
+        "Float.fromInt" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::F64ConvertI64S);
+        }
+        "Int.fromFloat" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::I64TruncF64S);
+        }
+        "Float.floor" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::F64Floor);
+            func.instruction(&Instruction::I64TruncF64S);
+        }
+        "Float.ceil" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::F64Ceil);
+            func.instruction(&Instruction::I64TruncF64S);
+        }
+        "Float.round" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::F64Nearest);
+            func.instruction(&Instruction::I64TruncF64S);
+        }
+        "Float.abs" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::F64Abs);
+        }
+        "Float.sqrt" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::F64Sqrt);
+        }
+        "Float.min" if args.len() == 2 => {
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::F64Min);
+        }
+        "Float.max" if args.len() == 2 => {
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::F64Max);
+        }
+        "Float.pi" if args.is_empty() => {
+            func.instruction(&Instruction::F64Const(std::f64::consts::PI.into()));
+        }
+        "Int.abs" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::I64Const(0));
+            func.instruction(&Instruction::I64LtS);
+            func.instruction(&Instruction::If(i64_block));
+            func.instruction(&Instruction::I64Const(0));
+            arg!(0);
+            func.instruction(&Instruction::I64Sub);
+            func.instruction(&Instruction::Else);
+            arg!(0);
+            func.instruction(&Instruction::End);
+        }
+        "Int.min" if args.len() == 2 => {
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::I64LtS);
+            func.instruction(&Instruction::If(i64_block));
+            arg!(0);
+            func.instruction(&Instruction::Else);
+            arg!(1);
+            func.instruction(&Instruction::End);
+        }
+        "Int.max" if args.len() == 2 => {
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::I64GtS);
+            func.instruction(&Instruction::If(i64_block));
+            arg!(0);
+            func.instruction(&Instruction::Else);
+            arg!(1);
+            func.instruction(&Instruction::End);
+        }
+        "Bool.and" if args.len() == 2 => {
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::I32And);
+        }
+        "Bool.or" if args.len() == 2 => {
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::I32Or);
+        }
+        "Bool.not" if args.len() == 1 => {
+            arg!(0);
+            func.instruction(&Instruction::I32Eqz);
+        }
+        _ => return Ok(MirBuiltinEmit::NotHandled),
+    }
+    Ok(MirBuiltinEmit::Produced(true))
 }
 
 /// Mirror of `emit_error_prop` (emit.rs): `value?` over a `Result<T,E>`.
