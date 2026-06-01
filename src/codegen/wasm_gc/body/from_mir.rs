@@ -8,7 +8,7 @@
 //! construct lives in MIR, and every backend reads it instead of
 //! forking `ResolvedExpr`.
 //!
-//! ## Scope (waves 0–6a)
+//! ## Scope (waves 0–6b)
 //!
 //! Wave 0 (the canary):
 //! - `Literal(Int | Float | Bool | Unit | Str)` — mirror of
@@ -122,7 +122,14 @@
 //!   elements' stamped types, push each + `struct.new`.
 //! - `MapLiteral` — mirror of `emit_map_literal`: `Map.empty` then a
 //!   `Map.set` per entry (canonical from the first entry's K/V, or the
-//!   sole registered `Map<K,V>` when empty). `List` literals are wave 6b.
+//!   sole registered `Map<K,V>` when empty).
+//!
+//! Wave 6b (list literals):
+//! - `List` — mirror of `emit_list_literal`: resolve the `List<T>`
+//!   instantiation (stamped type / first-element hint / sole registered
+//!   / return type), `ref.null` for empty, else push each element +
+//!   `ref.null` + N×`call $cons_T`. `Option.None` / empty-list elements
+//!   emit against the resolved element type.
 //!
 //! Everything else returns `Ok(None)` so the caller
 //! ([`super::emit_fn_body_via_mir`]) resets `func` and re-runs the
@@ -639,6 +646,10 @@ fn emit_mir_expr(
             }
             Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
         }
+        MirExpr::List(items) => match emit_mir_list_literal(func, expr, items, slots, ctx)? {
+            Some(()) => Ok(Some(aver_type_str_of(expr).trim() != "Unit")),
+            None => Ok(None),
+        },
         // FnValue (a fn referenced as a value) is higher-order — wasm-gc
         // has no first-class fn representation — so it falls back to the
         // `ResolvedExpr` emitter pending a verified byte-identical shape.
@@ -1831,6 +1842,126 @@ fn emit_mir_record_update(
     Ok(Some(()))
 }
 
+/// `true` for a MIR `Option.None` constructor (mirror of
+/// `is_option_none_expr`) — used to give it the declared element-type
+/// hint inside list literals (its own `.ty()` may be a generic `Var`).
+fn is_mir_option_none(expr: &Spanned<MirExpr>) -> bool {
+    matches!(&expr.node,
+        MirExpr::Construct(c)
+            if matches!(c.node.ctor, MirCtor::Builtin(BuiltinCtor::OptionNone))
+                && c.node.args.is_empty())
+}
+
+/// Mirror of `emit_list_literal` (emit.rs): resolve the `List<T>`
+/// instantiation (stamped type, else first-element hint, else sole
+/// registered, else return type), then for a non-empty literal push
+/// each element left-to-right, push `null`, and `call $cons_T` N times
+/// (the cons fold needs no scratch — vital for nested literals).
+/// `Option.None` / empty-list elements emit against the resolved
+/// element type, since their own stamp can be a generic `Var`.
+fn emit_mir_list_literal(
+    func: &mut Function,
+    outer: &Spanned<MirExpr>,
+    items: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let stamped = aver_type_canonical(outer, ctx.return_type, ctx.registry);
+    let canonical =
+        if stamped.starts_with("List<") && ctx.registry.list_type_idx(&stamped).is_some() {
+            stamped
+        } else if let Some(first) = items.first() {
+            let needs_hint = matches!(&first.node, MirExpr::List(xs) if xs.is_empty())
+                || is_mir_option_none(first);
+            let elem_ty = if needs_hint {
+                let ret: String = ctx
+                    .return_type
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                if let Some(inner) = ret.strip_prefix("List<").and_then(|s| s.strip_suffix('>')) {
+                    inner.to_string()
+                } else {
+                    aver_type_str_of(first)
+                }
+            } else {
+                aver_type_str_of(first)
+            };
+            format!("List<{elem_ty}>")
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect::<String>()
+        } else if ctx.registry.list_order.len() == 1 {
+            ctx.registry.list_order[0].clone()
+        } else {
+            let ret: String = ctx
+                .return_type
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            if ret.starts_with("List<") {
+                ret
+            } else if let Some(first) = ctx.registry.list_order.first() {
+                first.clone()
+            } else {
+                ret
+            }
+        };
+    let list_idx = ctx
+        .registry
+        .list_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "List literal: cannot resolve list instantiation (got `{canonical}`)"
+        )))?;
+    if items.is_empty() {
+        func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+            list_idx,
+        )));
+        return Ok(Some(()));
+    }
+    let cons_fn = ctx
+        .fn_map
+        .list_ops_lookup(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "List literal: cons helper for `{canonical}` not registered"
+        )))?
+        .cons;
+    let elem_ty = TypeRegistry::list_element_type(&canonical).map(|s| s.to_string());
+    for item in items {
+        if let Some(elem) = elem_ty.as_deref()
+            && is_mir_option_none(item)
+            && let Some(inner) = elem
+                .strip_prefix("Option<")
+                .and_then(|s| s.strip_suffix('>'))
+        {
+            if emit_mir_option_constructor(func, None, Some(inner.trim()), slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            continue;
+        }
+        if let Some(elem) = elem_ty.as_deref()
+            && let MirExpr::List(xs) = &item.node
+            && xs.is_empty()
+            && let Some(inner_idx) = ctx.registry.list_type_idx(elem)
+        {
+            func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+                inner_idx,
+            )));
+            continue;
+        }
+        if emit_mir_expr(func, item, slots, ctx)?.is_none() {
+            return Ok(None);
+        }
+    }
+    func.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
+        list_idx,
+    )));
+    for _ in 0..items.len() {
+        func.instruction(&Instruction::Call(cons_fn));
+    }
+    Ok(Some(()))
+}
+
 /// The numeric (`Int` / `Float`) tail of `emit_expr`'s `BinOp` arm —
 /// byte-for-byte. Returns `None` if an operand falls outside the
 /// supported subset (propagated as whole-fn fallback). The I64 / F64
@@ -1981,6 +2112,7 @@ fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::MapLiteral(entries) => entries
             .iter()
             .all(|(k, v)| mir_expr_coverable(k) && mir_expr_coverable(v)),
+        MirExpr::List(items) => items.iter().all(mir_expr_coverable),
         MirExpr::Match(spanned_match) => {
             // Coarse, ctx-free mirror of `emit_mir_match`'s dispatch (the
             // predicate has no registry, so it can't model the Map.get
