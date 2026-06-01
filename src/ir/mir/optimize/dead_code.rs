@@ -55,7 +55,7 @@ fn dce_in_place(expr: &mut Spanned<MirExpr>) {
 
 fn dce_walk_children(node: &mut MirExpr) {
     match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
         MirExpr::Neg(inner) => dce_in_place(inner),
         MirExpr::BinOp(spanned_bop) => {
             let bop: &mut MirBinOp = &mut spanned_bop.node;
@@ -148,7 +148,7 @@ fn local_is_read(target: LocalId, body: &Spanned<MirExpr>) -> bool {
 
 fn visit_locals(node: &MirExpr, visit: &mut impl FnMut(LocalId)) {
     match node {
-        MirExpr::Literal(_) => {}
+        MirExpr::Literal(_) | MirExpr::FnValue(_) => {}
         MirExpr::Local(spanned_local) => visit(spanned_local.node.slot),
         MirExpr::Neg(inner) => visit_locals(&inner.node, visit),
         MirExpr::BinOp(spanned_bop) => {
@@ -231,7 +231,7 @@ fn visit_locals(node: &MirExpr, visit: &mut impl FnMut(LocalId)) {
 /// operand is pure).
 pub(super) fn is_pure(expr: &Spanned<MirExpr>) -> bool {
     match &expr.node {
-        MirExpr::Literal(_) | MirExpr::Local(_) => true,
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => true,
         MirExpr::Neg(inner) => is_pure(inner),
         MirExpr::BinOp(spanned_bop) => {
             is_pure(&spanned_bop.node.lhs) && is_pure(&spanned_bop.node.rhs)

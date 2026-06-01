@@ -310,6 +310,20 @@ pub(super) fn compile_mir_expr(
             Ok(())
         }
 
+        // ── Phase 6: fn referenced as a value ───────────────────
+        // `callWith(dbl)` passes `dbl` — a top-level fn / builtin in
+        // value position. Reuse the HIR walker's `compile_ident`
+        // verbatim: it tries local slot → global → module-scope fn
+        // (symbol_ref of the qualified name) → interned symbol with a
+        // kind. Sharing the path guarantees byte-identical emit with
+        // the HIR walker, and an unresolved name surfaces as the same
+        // `CompileError` (folded to `InnerError`, so a malformed input
+        // still drops to the HIR fallback rather than miscompiling).
+        MirExpr::FnValue(name) => {
+            fc.compile_ident(name)?;
+            Ok(())
+        }
+
         // ── Phase 4c: ctor construction ─────────────────────────
         MirExpr::Construct(spanned_construct) => {
             let c = &spanned_construct.node;
@@ -825,6 +839,11 @@ fn can_compile(expr: &Spanned<MirExpr>) -> bool {
             callee_ok && c.node.args.iter().all(can_compile)
         }
         MirExpr::Return(inner) => can_compile(inner),
+        // Phase 6: fn-as-value. Optimistic, same rationale as the
+        // `Builtin` callee above — `compile_ident` resolves the
+        // symbol on the hot path and surfaces a real error (→ HIR
+        // fallback) if the name doesn't resolve.
+        MirExpr::FnValue(_) => true,
         // Phase 4c additions:
         MirExpr::Construct(c) => c.node.args.iter().all(can_compile),
         MirExpr::Project(p) => can_compile(&p.node.base),
@@ -1527,6 +1546,8 @@ fn contains_last_use_slot_mir(expr: &MirExpr, target: u32) -> bool {
         | MirExpr::IfThenElse(_)
         | MirExpr::Let(_)
         | MirExpr::Return(_)
+        // FnValue is a bare symbol reference — no slot read.
+        | MirExpr::FnValue(_)
         | MirExpr::Literal(_) => false,
     }
 }

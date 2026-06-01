@@ -140,7 +140,7 @@ impl<'a> FnCompiler<'a> {
         Ok(())
     }
 
-    fn compile_ident(&mut self, name: &str) -> Result<(), CompileError> {
+    pub(super) fn compile_ident(&mut self, name: &str) -> Result<(), CompileError> {
         if let Some(&slot) = self.local_slots.get(name) {
             self.emit_op(LOAD_LOCAL);
             self.emit_u8(slot as u8);

@@ -177,6 +177,13 @@ pub enum MirExpr {
     /// don't return early end their body with the final expression
     /// itself; `Return` is only for the explicit early-exit case.
     Return(Box<Spanned<MirExpr>>),
+    /// A fn referenced as a *value* (not called): `callWith(dbl)` passes
+    /// `dbl`. Carries the canonical fn / builtin name; the backend
+    /// resolves it to a symbol reference (the VM pushes a `symbol_ref`
+    /// constant, mirroring the HIR walker's `StaticRef` leaf-op). The
+    /// walker falls back to HIR if the name doesn't resolve (a genuinely
+    /// unresolved ident — typecheck-rejected input).
+    FnValue(String),
 }
 
 /// `let binding = value; body`.

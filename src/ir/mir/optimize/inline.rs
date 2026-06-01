@@ -75,7 +75,7 @@ fn inline_in_place(expr: &mut Spanned<MirExpr>, candidates: &HashMap<FnId, Liter
 
 fn inline_walk_children(node: &mut MirExpr, candidates: &HashMap<FnId, Literal>) {
     match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
         MirExpr::Neg(inner) => inline_in_place(inner, candidates),
         MirExpr::BinOp(spanned_bop) => {
             inline_in_place(&mut spanned_bop.node.lhs, candidates);

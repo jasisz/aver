@@ -51,7 +51,7 @@ fn literal_span(lit: Literal, source: &Spanned<MirExpr>) -> Spanned<Literal> {
 
 fn walk_children(node: &mut MirExpr) {
     match node {
-        MirExpr::Literal(_) | MirExpr::Local(_) => {}
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
         MirExpr::Neg(inner) => fold_in_place(inner),
         MirExpr::BinOp(spanned_bop) => {
             let bop: &mut MirBinOp = &mut spanned_bop.node;
