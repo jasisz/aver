@@ -34,7 +34,8 @@
 //! - [`collections`] — `List` literals.
 //! - [`builtins`] — the custom-inline `Float` / `Int` / `Bool` scalar
 //!   ops, `Char.toCode`, the `List` / `Vector` / `Map` families, the
-//!   fused `Option.withDefault(Vector.get(v, i), <literal>)` and
+//!   fused `Option.withDefault(Vector.get(v, i), <literal>)` /
+//!   `Option.withDefault(Vector.set(v, i, x), v)` /
 //!   `Result.withDefault(Int.mod(a, b), default)`, and the numeric
 //!   `BinOp` tail.
 //! - [`strings`] — `InterpolatedStr` and the `String` `BinOp` ops.
@@ -422,7 +423,8 @@ pub(crate) fn emit_mir_expr(
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
                     }
-                    // Fused `Option.withDefault(Vector.get(v, i), <literal>)`.
+                    // Fused `Option.withDefault(Vector.get(v, i), <literal>)`
+                    // and `Option.withDefault(Vector.set(v, i, x), v)`.
                     // Other `withDefault` shapes fall through to fallback.
                     match emit_mir_option_with_default(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),

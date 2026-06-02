@@ -1,9 +1,10 @@
 //! Built-in call lowering: the custom-inline `Float` / `Int` / `Bool`
 //! scalar ops, `Char.toCode`, the `List` / `Vector` / `Map` families,
-//! the fused `Option.withDefault(Vector.get, <literal>)` and
-//! `Result.withDefault(Int.mod, default)`, and the numeric `BinOp`
-//! tail. Mirrors the custom-inline arms of `emit_dotted_builtin` and
-//! `emit_expr`'s numeric `BinOp` branch.
+//! the fused `Option.withDefault(Vector.get, <literal>)` /
+//! `Option.withDefault(Vector.set, v)` / `Result.withDefault(Int.mod,
+//! default)`, and the numeric `BinOp` tail. Mirrors the custom-inline
+//! arms of `emit_dotted_builtin` and `emit_expr`'s numeric `BinOp`
+//! branch.
 
 use super::*;
 
@@ -159,16 +160,16 @@ pub(crate) fn emit_mir_native_scalar_builtin(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
-/// The one fused `Option.withDefault` shape this emitter covers:
+/// The two fused `Option.withDefault` shapes this emitter covers, both
+/// mirroring `emit_option_with_default`'s leaf dispatch:
+/// `Option.withDefault(Vector.set(v, i, x), v)` — the
+/// `VectorSetOrDefaultSameVector` leaf (`v` repeated as the default,
+/// recognised by slot so the two occurrences' differing `last_use`
+/// flags don't defeat it) — and
 /// `Option.withDefault(Vector.get(v, i), <literal>)` — the
-/// `VectorGetOrDefaultLiteral` leaf (mirror of `emit_vector_get_or_default`
-/// via `emit_option_with_default`). Unambiguous to recognise (the
-/// default must be a `Literal`, the inner a 2-arg `Vector.get`), so no
-/// risk of over-matching the oracle's `classify_leaf_op_resolved`. The
-/// other fused shapes — `VectorSetOrDefaultSameVector` (a structural
-/// `default == vector` test that hinges on `last_use`), the `Map.get`
-/// fusion, and the real-`Option<T>` boxed fallback — return `NotHandled`
-/// so the whole fn falls back to the resolved-HIR emitter.
+/// `VectorGetOrDefaultLiteral` leaf. The `Map.get` fusion and the
+/// real-`Option<T>` boxed fallback return `NotHandled`, so the whole fn
+/// falls back to the resolved-HIR emitter.
 pub(crate) fn emit_mir_option_with_default(
     func: &mut Function,
     dotted: &str,
@@ -179,11 +180,8 @@ pub(crate) fn emit_mir_option_with_default(
     if dotted != "Option.withDefault" || args.len() != 2 {
         return Ok(MirBuiltinEmit::NotHandled);
     }
-    // Default must be a literal (the `VectorGetOrDefaultLiteral` shape).
-    if !matches!(args[1].node, MirExpr::Literal(_)) {
-        return Ok(MirBuiltinEmit::NotHandled);
-    }
-    // Inner must be a 2-arg `Vector.get` builtin call.
+    let default = &args[1];
+    // The inner (option-producing) arg must be a builtin call.
     let MirExpr::Call(inner) = &args[0].node else {
         return Ok(MirBuiltinEmit::NotHandled);
     };
@@ -194,12 +192,41 @@ pub(crate) fn emit_mir_option_with_default(
     let Some(inner_dotted) = ctx.mir_builtins.and_then(|n| n.get(inner_id.0 as usize)) else {
         return Ok(MirBuiltinEmit::NotHandled);
     };
-    if inner_dotted != "Vector.get" || inner.args.len() != 2 {
+
+    // `Option.withDefault(Vector.set(v, i, x), v)` — the in-place /
+    // clone-on-write set. The `default == vector` test of
+    // `classify_vector_set_or_default` is checked by slot equality: both
+    // sides are the same binding, but the lowerer stamps the trailing
+    // (default) occurrence as `last_use` and the inner one as not, so the
+    // `MirLocal`s aren't structurally equal — compare slots, which the
+    // oracle's `AnnotBool`-ignoring `PartialEq` effectively does too.
+    if inner_dotted == "Vector.set" && inner.args.len() == 3 {
+        let same_local = matches!(
+            (&default.node, &inner.args[0].node),
+            (MirExpr::Local(d), MirExpr::Local(v)) if d.node.slot == v.node.slot
+        );
+        if !same_local {
+            return Ok(MirBuiltinEmit::NotHandled);
+        }
+        return emit_mir_vector_set_or_default(
+            func,
+            &inner.args[0],
+            &inner.args[1],
+            &inner.args[2],
+            slots,
+            ctx,
+        );
+    }
+
+    // `Option.withDefault(Vector.get(v, i), <literal>)`.
+    if inner_dotted != "Vector.get"
+        || inner.args.len() != 2
+        || !matches!(default.node, MirExpr::Literal(_))
+    {
         return Ok(MirBuiltinEmit::NotHandled);
     }
     let vector = &inner.args[0];
     let index = &inner.args[1];
-    let default = &args[1];
 
     // Mirror of `emit_vector_get_or_default`: bounds-check
     // `0 <= i < len`, `array.get` on success, the literal default on OOB.
@@ -242,6 +269,115 @@ pub(crate) fn emit_mir_option_with_default(
     func.instruction(&Instruction::Else);
     e!(default);
     func.instruction(&Instruction::End);
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// Mirror of `emit_vector_set_or_default`: the fused
+/// `Option.withDefault(Vector.set(v, i, x), v)`. When
+/// `mir_arg_uniquely_owned` says `v` is a dead, non-aliased binding the
+/// engine array is mutated in place (`array.set` on the original handle,
+/// no allocation); otherwise the array is cloned (`array.new_default` +
+/// `array.copy`) and the copy mutated. The ownership verdict and the
+/// instruction sequence match the HIR oracle byte-for-byte —
+/// `mir_arg_uniquely_owned` reads the same `last_use` / `aliased_slots`
+/// the oracle's `arg_uniquely_owned` does, on the same `v` occurrence
+/// (`Vector.set`'s first arg).
+fn emit_mir_vector_set_or_default(
+    func: &mut Function,
+    vector: &Spanned<MirExpr>,
+    index: &Spanned<MirExpr>,
+    value: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    let vec_aver = aver_type_str_of(vector);
+    let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let vec_idx = ctx
+        .registry
+        .vector_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Vector.set: vector arg of type `{vec_aver}` is not a registered Vector<T>"
+        )))?;
+
+    macro_rules! e {
+        ($x:expr) => {
+            if emit_mir_expr(func, $x, slots, ctx)?.is_none() {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+
+    // Fast path: dead, non-aliased binding → mutate the engine array in
+    // place and return the same handle. No scratch, no allocation.
+    if mir_arg_uniquely_owned(vector, ctx) {
+        e!(index);
+        func.instruction(&Instruction::I64Const(0));
+        func.instruction(&Instruction::I64GeS);
+        e!(index);
+        func.instruction(&Instruction::I32WrapI64);
+        e!(vector);
+        func.instruction(&Instruction::ArrayLen);
+        func.instruction(&Instruction::I32LtU);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+        e!(vector);
+        e!(index);
+        func.instruction(&Instruction::I32WrapI64);
+        e!(value);
+        func.instruction(&Instruction::ArraySet(vec_idx));
+        func.instruction(&Instruction::End);
+        e!(vector);
+        return Ok(MirBuiltinEmit::Produced(true));
+    }
+
+    // Slow path (clone-on-write): the slot may share its engine array
+    // with another live binding. Allocate a fresh array, copy every
+    // cell, mutate the copy.
+    let scratch = slots
+        .vector_set_scratch
+        .get(&canonical)
+        .copied()
+        .ok_or_else(|| {
+            WasmGcError::Validation(format!(
+                "Vector.set: scratch local for `{canonical}` not reserved \
+                 (slot-pre-pass missed this site)"
+            ))
+        })?;
+
+    e!(vector);
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::ArrayNewDefault(vec_idx));
+    func.instruction(&Instruction::LocalSet(scratch));
+
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::I32Const(0));
+    e!(vector);
+    func.instruction(&Instruction::I32Const(0));
+    e!(vector);
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: vec_idx,
+        array_type_index_src: vec_idx,
+    });
+
+    e!(index);
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::I64GeS);
+    e!(index);
+    func.instruction(&Instruction::I32WrapI64);
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::I32LtU);
+    func.instruction(&Instruction::I32And);
+    func.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    func.instruction(&Instruction::LocalGet(scratch));
+    e!(index);
+    func.instruction(&Instruction::I32WrapI64);
+    e!(value);
+    func.instruction(&Instruction::ArraySet(vec_idx));
+    func.instruction(&Instruction::End);
+
+    func.instruction(&Instruction::LocalGet(scratch));
     Ok(MirBuiltinEmit::Produced(true))
 }
 
