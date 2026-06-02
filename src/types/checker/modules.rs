@@ -56,11 +56,12 @@ impl TypeChecker {
                     match parse_type_str_strict(ty_str) {
                         Ok(ty) => {
                             let canon = self.canonicalize_named(ty);
-                            self.report_ambiguous_named(
-                                &canon,
-                                f.line,
-                                &format!("Function '{}', parameter '{}'", f.name, param_name),
-                            );
+                            let ctx = format!("Function '{}', parameter '{}'", f.name, param_name);
+                            self.report_ambiguous_named(&canon, f.line, &ctx);
+                            // A parameter MAY be a `Fn(...)` callback (the one
+                            // sanctioned first-class position) — but a `Fn`
+                            // nested inside it is still rejected.
+                            self.reject_fn_in_type(&canon, true, f.line, &ctx);
                             params.push(canon);
                         }
                         Err(unknown) => {
@@ -75,11 +76,9 @@ impl TypeChecker {
                 let ret = match parse_type_str_strict(&f.return_type) {
                     Ok(ty) => {
                         let canon = self.canonicalize_named(ty);
-                        self.report_ambiguous_named(
-                            &canon,
-                            f.line,
-                            &format!("Function '{}' return type", f.name),
-                        );
+                        let ctx = format!("Function '{}' return type", f.name);
+                        self.report_ambiguous_named(&canon, f.line, &ctx);
+                        self.reject_fn_in_type(&canon, false, f.line, &ctx);
                         canon
                     }
                     Err(unknown) => {
@@ -443,11 +442,9 @@ impl TypeChecker {
                             let canon = self.canonicalize_named(
                                 parse_type_str_strict(f).unwrap_or(Type::Invalid),
                             );
-                            self.report_ambiguous_named(
-                                &canon,
-                                *line,
-                                &format!("Type '{}', variant '{}'", type_name, variant.name),
-                            );
+                            let ctx = format!("Type '{}', variant '{}'", type_name, variant.name);
+                            self.report_ambiguous_named(&canon, *line, &ctx);
+                            self.reject_fn_in_type(&canon, false, *line, &ctx);
                             canon
                         })
                         .collect();
@@ -536,11 +533,9 @@ impl TypeChecker {
                 for (field_name, ty_str) in fields {
                     let field_ty = self
                         .canonicalize_named(parse_type_str_strict(ty_str).unwrap_or(Type::Invalid));
-                    self.report_ambiguous_named(
-                        &field_ty,
-                        *line,
-                        &format!("Type '{}', field '{}'", type_name, field_name),
-                    );
+                    let ctx = format!("Type '{}', field '{}'", type_name, field_name);
+                    self.report_ambiguous_named(&field_ty, *line, &ctx);
+                    self.reject_fn_in_type(&field_ty, false, *line, &ctx);
                     let canonical_type = if module_name != type_name {
                         canonical_name(module_name, type_name)
                     } else {
