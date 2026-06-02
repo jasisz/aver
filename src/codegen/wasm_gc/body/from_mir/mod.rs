@@ -17,11 +17,12 @@
 //!
 //! Dispatcher ([`emit_mir_expr`], this module): `Literal`, `Local`
 //! (`local.get` of the resolver slot), numeric `BinOp` / `Neg`,
-//! `Return`, named `Let`, `Call(Fn)` / `TailCall`, `Project` (mirroring
-//! `emit_attr_get`), and the `Tuple` / `MapLiteral` literals. Synthetic
-//! lets (`_ = expr`, intermediate
-//! `Stmt::Expr`) and higher-order callees (`FnValue`, `LocalSlot`) fall
-//! back. Registered-helper builtins and effect imports (`Console.*` /
+//! `Return`, `Let` (both named bindings and the statement-sequencing
+//! synthetic lets — `_ = expr` discards and non-tail `Stmt::Expr`, which
+//! emit the value, `drop` it if it produced one, then the body),
+//! `Call(Fn)` / `TailCall`, `Project` (mirroring `emit_attr_get`), and
+//! the `Tuple` / `MapLiteral` literals. Higher-order callees (`FnValue`,
+//! `LocalSlot`) fall back. Registered-helper builtins and effect imports (`Console.*` /
 //! `Disk.*` / `Tcp.*` / `Http.*` / `Random.*` / `Time.*`, each carrying
 //! the host's `caller_fn` stamp) go through the `fn_map.builtins` /
 //! `fn_map.effects` lookups here.
@@ -277,11 +278,15 @@ pub(crate) fn emit_mir_expr(
         MirExpr::Let(spanned_let) => {
             let l = &spanned_let.node;
             if l.binding_name.is_empty() {
-                // Synthetic let (non-tail `Stmt::Expr` intermediate, or
-                // `_ = expr` discard — both lower to an empty
-                // `binding_name`). No source ident; fall back to HIR,
-                // same as the Rust walker.
-                return Ok(None);
+                // DIAG: synthetic let coverage (emit value, drop-if-
+                // produces, emit body) — reproducing the checkers divergence.
+                let Some(value_produces) = emit_mir_expr(func, &l.value, slots, ctx)? else {
+                    return Ok(None);
+                };
+                if value_produces {
+                    func.instruction(&Instruction::Drop);
+                }
+                return emit_mir_expr(func, &l.body, slots, ctx);
             }
             // Mirror of `emit_fn_body`'s `Binding` arm.
             let Some(value_produces) = emit_mir_expr(func, &l.value, slots, ctx)? else {
@@ -354,6 +359,16 @@ pub(crate) fn emit_mir_expr(
                         return Ok(None);
                     };
                     let dotted = dotted.as_str();
+                    // `Args.get` is intercepted *before* the effect /
+                    // builtin dispatch in `emit_dotted_builtin` and
+                    // expands to a custom inline (`emit_args_get_inline`)
+                    // that this emitter does not mirror — even though it
+                    // is also registered in `fn_map.effects`. Fall back so
+                    // the `ResolvedExpr` emitter produces that inline,
+                    // rather than the effect-import shape below.
+                    if dotted == "Args.get" {
+                        return Ok(None);
+                    }
                     // Registered effect import (`Console.*`, `Disk.*`,
                     // `Tcp.*`, `Http.*`, `Random.*`, `Time.*`, …) on the
                     // AverBridge target — mirror of `emit_dotted_builtin`'s
