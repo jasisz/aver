@@ -326,7 +326,8 @@ pub(super) fn emit_expr(
                     func.instruction(&Instruction::I32Eqz);
                 }
             } else if matches!(op, BinOp::Eq | BinOp::Neq)
-                && let Some(eq_fn_idx) = sum_or_record_eq_fn(l, ctx)
+                && let Some(lty) = l.ty()
+                && let Some(eq_fn_idx) = sum_or_record_eq_fn(lty, ctx)
             {
                 // Sum / record `==` / `!=`: structural equality via
                 // per-type `__eq_<TypeName>` helper. Both operands push
@@ -611,8 +612,7 @@ pub(super) fn emit_expr(
 /// reachable site, so a miss surfaces as `None` and the call falls
 /// through to the default arm where wasm validation will catch the
 /// type mismatch.
-fn sum_or_record_eq_fn(operand: &Spanned<ResolvedExpr>, ctx: &EmitCtx<'_>) -> Option<u32> {
-    let ty = operand.ty()?;
+pub(super) fn sum_or_record_eq_fn(ty: &crate::types::Type, ctx: &EmitCtx<'_>) -> Option<u32> {
     match ty {
         // Resolve the registry key through the post-flatten symbol
         // table: non-colliding dep types map to their bare

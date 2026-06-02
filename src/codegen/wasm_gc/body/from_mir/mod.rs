@@ -67,7 +67,7 @@ pub(super) use super::super::WasmGcError;
 pub(super) use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm, normalize_compound};
 pub(super) use super::emit::{
     emit_branch_marker, emit_caller_fn_idx, emit_default_value, emit_group_call,
-    emit_return_call_insn, emit_string_literal_bytes,
+    emit_return_call_insn, emit_string_literal_bytes, sum_or_record_eq_fn,
 };
 pub(super) use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 pub(super) use super::slots::count_value_params;
@@ -248,6 +248,32 @@ pub(crate) fn emit_mir_expr(
                 Some(Type::Int) | Some(Type::Float) => {
                     if emit_mir_numeric_binop(func, bop, slots, ctx)?.is_none() {
                         return Ok(None);
+                    }
+                    Ok(Some(true))
+                }
+                // Structural `==` / `!=` on a sum / record / carrier type —
+                // mirror of `emit_expr`'s per-type `__eq_<T>` helper branch:
+                // push both operands (eqrefs), `call $eq`, then `i32.eqz`
+                // for `!=`. GUARD: if either operand is a `Construct`, the
+                // oracle may take its nullary-variant `ref.test` path
+                // instead, so fall back to keep byte-identity with it.
+                Some(lty)
+                    if matches!(bop.op, BinOp::Eq | BinOp::Neq)
+                        && !matches!(bop.lhs.node, MirExpr::Construct(_))
+                        && !matches!(bop.rhs.node, MirExpr::Construct(_)) =>
+                {
+                    let Some(eq_fn) = sum_or_record_eq_fn(lty, ctx) else {
+                        return Ok(None);
+                    };
+                    if emit_mir_expr(func, &bop.lhs, slots, ctx)?.is_none() {
+                        return Ok(None);
+                    }
+                    if emit_mir_expr(func, &bop.rhs, slots, ctx)?.is_none() {
+                        return Ok(None);
+                    }
+                    func.instruction(&Instruction::Call(eq_fn));
+                    if matches!(bop.op, BinOp::Neq) {
+                        func.instruction(&Instruction::I32Eqz);
                     }
                     Ok(Some(true))
                 }
