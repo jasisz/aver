@@ -19,8 +19,8 @@
 //! many fns the MIR emitter actually rendered, so the identity check
 //! can't pass vacuously with the MIR path dead on the flattened game.
 //!
-//! This is the gate that verifies every later match wave (variant /
-//! record / collection) byte-for-byte on the shapes that exercise them.
+//! This is the gate that verifies the richer shapes (variant / record /
+//! collection / Vector) byte-for-byte on the programs that exercise them.
 
 #![cfg(feature = "wasm")]
 
@@ -172,11 +172,17 @@ fn mir_and_resolved_emitters_agree_byte_for_byte_on_games() {
         );
     }
 
-    // Non-vacuous: the MIR emitter must actually render fns on the
-    // flattened games (else byte-identity is meaningless).
+    // Coverage floor on the flattened games (richer shapes than the
+    // single-file corpus: variant / record / collection / Vector). A
+    // drop below the floor means a covered construct silently regressed
+    // to the HIR fallback — fail CI rather than pass quietly. Raise
+    // `MIN_MIR_EMITTED` when new coverage lands; never lower it without
+    // a deliberate reason.
+    const MIN_MIR_EMITTED: usize = 549;
     assert!(
-        total_mir_emitted > 0,
-        "MIR emitter rendered 0 fns across {compared} games — byte-identity is vacuous"
+        total_mir_emitted >= MIN_MIR_EMITTED,
+        "MIR emitter rendered {total_mir_emitted} fns across {compared} games, below the floor \
+         of {MIN_MIR_EMITTED} — MIR coverage regressed. If this drop is intentional, lower the floor."
     );
 
     let _ = fs::remove_dir_all(&tmp);
