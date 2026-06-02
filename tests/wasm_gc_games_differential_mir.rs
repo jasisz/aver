@@ -1,26 +1,26 @@
-//! Multi-module games byte-differential for the wasm-gc → MIR port
-//! (Phase 5 #340).
+//! Multi-module games MIR coverage + validity gate (Phase 6 #340/#252).
 //!
-//! The single-file differential (`wasm_gc_differential_mir.rs`)
-//! saturates for the rich match shapes — user-variant, record, and
-//! collection destructuring live almost entirely in the multi-module
-//! games (snake / rogue / checkers / doom: sum types + records), which
-//! that test can't reach (multi-module compilation needs the CLI's
-//! `load_compile_deps` + `flatten_multimodule`). This test closes the
-//! gap by driving the real `aver compile --target wasm-gc` pipeline as
-//! a subprocess: for each game it compiles twice —
-//!   * default — the MIR body emitter per-fn (with `ResolvedExpr`
-//!     fallback);
-//!   * `AVER_WASMGC_FORCE_NO_MIR=1` — the `ResolvedExpr` emitter
-//!     everywhere;
-//! and asserts the emitted `.wasm` bytes are **identical**. (The games
-//! compile byte-deterministically, so two independent runs are
-//! comparable.) `AVER_WASMGC_MIR_COUNT=1` makes the compiler print how
-//! many fns the MIR emitter actually rendered, so the identity check
-//! can't pass vacuously with the MIR path dead on the flattened game.
+//! The single-file gate (`wasm_gc_differential_mir.rs`) can't reach the
+//! rich match shapes — user-variant, record, and collection
+//! destructuring live almost entirely in the multi-module games (snake /
+//! rogue / checkers / doom: sum types + records), which need the CLI's
+//! `load_compile_deps` + `flatten_multimodule`. This test closes the gap
+//! by driving the real `aver compile --target wasm-gc` pipeline as a
+//! subprocess: for each game it compiles once (the production MIR path),
+//! asserts the emit succeeds (the backend validates the bytes via
+//! `wasmparser` before writing them, so a successful compile is a
+//! validation pass), and holds a MIR-coverage floor.
 //!
-//! This is the gate that verifies the richer shapes (variant / record /
-//! collection / Vector) byte-for-byte on the programs that exercise them.
+//! `AVER_WASMGC_MIR_COUNT=1` makes the compiler print how many fns the
+//! MIR emitter rendered, so the coverage floor catches a covered
+//! construct silently regressing to the `unreachable` trap stub on the
+//! flattened game.
+//!
+//! The historical A/B byte-differential (MIR-on vs a forced
+//! `ResolvedExpr` baseline) is gone with the HIR walker — there is no
+//! baseline to diff against. Per-scenario size/speed is tracked by
+//! `aver bench`; behavioural correctness by `aver run --wasm-gc` smoke
+//! runs.
 
 #![cfg(feature = "wasm")]
 
@@ -51,13 +51,12 @@ fn multi_module_games() -> Vec<PathBuf> {
 }
 
 /// Compile `<game>/main.av` to wasm-gc via the real CLI, returning the
-/// emitted module bytes plus how many fns the MIR emitter rendered
-/// (`None` when MIR is force-disabled). `force_no_mir` toggles the
-/// `ResolvedExpr`-only path.
-fn compile_game(game_dir: &Path, out_dir: &Path, force_no_mir: bool) -> Result<Vec<u8>, String> {
+/// emitted module bytes. A successful compile means the bytes passed the
+/// backend's built-in validation.
+fn compile_game(game_dir: &Path, out_dir: &Path) -> Result<Vec<u8>, String> {
     let main = game_dir.join("main.av");
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_aver"));
-    cmd.arg("compile")
+    let output = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .arg("compile")
         .arg(&main)
         .arg("--target")
         .arg("wasm-gc")
@@ -65,11 +64,7 @@ fn compile_game(game_dir: &Path, out_dir: &Path, force_no_mir: bool) -> Result<V
         .arg(game_dir)
         .arg("-o")
         .arg(out_dir)
-        .env("AVER_WASMGC_MIR_COUNT", "1");
-    if force_no_mir {
-        cmd.env("AVER_WASMGC_FORCE_NO_MIR", "1");
-    }
-    let output = cmd
+        .env("AVER_WASMGC_MIR_COUNT", "1")
         .output()
         .map_err(|e| format!("spawn `aver compile` failed: {e}"))?;
     if !output.status.success() {
@@ -83,7 +78,7 @@ fn compile_game(game_dir: &Path, out_dir: &Path, force_no_mir: bool) -> Result<V
     fs::read(&wasm).map_err(|e| format!("read {}: {e}", wasm.display()))
 }
 
-/// Parse `AVER_WASMGC_MIR_EMITTED=N` out of the MIR-on run's stderr.
+/// Parse `AVER_WASMGC_MIR_EMITTED=N` out of the compile run's stderr.
 fn mir_emitted_count(game_dir: &Path, out_dir: &Path) -> Result<usize, String> {
     let main = game_dir.join("main.av");
     let output = Command::new(env!("CARGO_BIN_EXE_aver"))
@@ -107,7 +102,7 @@ fn mir_emitted_count(game_dir: &Path, out_dir: &Path) -> Result<usize, String> {
 }
 
 #[test]
-fn mir_and_resolved_emitters_agree_byte_for_byte_on_games() {
+fn mir_body_emitter_compiles_and_validates_every_game() {
     let games = multi_module_games();
     assert!(
         !games.is_empty(),
@@ -120,48 +115,32 @@ fn mir_and_resolved_emitters_agree_byte_for_byte_on_games() {
 
     let mut failures: Vec<String> = Vec::new();
     let mut total_mir_emitted = 0usize;
-    let mut compared = 0usize;
+    let mut compiled = 0usize;
 
     for game in &games {
         let name = game.file_name().unwrap().to_string_lossy().into_owned();
-        let on_dir = tmp.join(format!("{name}_on"));
-        let off_dir = tmp.join(format!("{name}_off"));
+        let out_dir = tmp.join(&name);
 
-        let via_mir = match compile_game(game, &on_dir, false) {
+        let bytes = match compile_game(game, &out_dir) {
             Ok(b) => b,
             Err(e) => {
-                failures.push(format!("{name}: compile (mir on): {e}"));
+                failures.push(format!("{name}: compile: {e}"));
                 continue;
             }
         };
-        let via_resolved = match compile_game(game, &off_dir, true) {
-            Ok(b) => b,
-            Err(e) => {
-                failures.push(format!("{name}: compile (mir off): {e}"));
-                continue;
-            }
-        };
+        // Non-empty module — a sanity check beyond "compile didn't error".
+        assert!(!bytes.is_empty(), "{name}: emitted an empty wasm module");
 
-        // `via_resolved` (forced MIR off) is the unoptimized HIR baseline;
-        // `via_mir` (MIR on) runs the shared `optimize` pipeline, so they
-        // are no longer byte-identical and a size comparison is not a sound
-        // gate (inlining can trade size for speed). This now asserts only
-        // that both paths compile and that MIR coverage holds (the floor
-        // below); the games are correct by construction (semantics-
-        // preserving passes over byte-verified emission), and per-scenario
-        // size/speed is tracked by `aver bench`.
-        let _ = (&via_mir, &via_resolved);
-
-        match mir_emitted_count(game, &on_dir) {
+        match mir_emitted_count(game, &out_dir) {
             Ok(n) => total_mir_emitted += n,
             Err(e) => failures.push(format!("{name}: mir count: {e}")),
         }
-        compared += 1;
+        compiled += 1;
     }
 
     if !failures.is_empty() {
         panic!(
-            "{} of {} games failed to compile through one of the two paths:\n  - {}",
+            "{} of {} games failed to compile / validate through the MIR path:\n  - {}",
             failures.len(),
             games.len(),
             failures.join("\n  - ")
@@ -171,19 +150,19 @@ fn mir_and_resolved_emitters_agree_byte_for_byte_on_games() {
     // Coverage floor on the flattened games (richer shapes than the
     // single-file corpus: variant / record / collection / Vector). A
     // drop below the floor means a covered construct silently regressed
-    // to the HIR fallback — fail CI rather than pass quietly. Raise
-    // `MIN_MIR_EMITTED` when new coverage lands; never lower it without
-    // a deliberate reason.
+    // to the `unreachable` trap stub — fail CI rather than pass quietly.
+    // Raise `MIN_MIR_EMITTED` when new coverage lands; never lower it
+    // without a deliberate reason.
     const MIN_MIR_EMITTED: usize = 681;
     assert!(
         total_mir_emitted >= MIN_MIR_EMITTED,
-        "MIR emitter rendered {total_mir_emitted} fns across {compared} games, below the floor \
+        "MIR emitter rendered {total_mir_emitted} fns across {compiled} games, below the floor \
          of {MIN_MIR_EMITTED} — MIR coverage regressed. If this drop is intentional, lower the floor."
     );
 
     let _ = fs::remove_dir_all(&tmp);
     eprintln!(
-        "mir_and_resolved_emitters_agree_byte_for_byte_on_games: {compared} games compiled both \
-         ways (optimized + baseline); MIR rendered {total_mir_emitted} fns total"
+        "mir_body_emitter_compiles_and_validates_every_game: {compiled} games compiled + \
+         validated; MIR rendered {total_mir_emitted} fns total"
     );
 }

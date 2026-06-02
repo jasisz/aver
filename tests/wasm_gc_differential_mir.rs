@@ -1,31 +1,24 @@
-//! wasm-gc MIR body-emitter byte-differential.
+//! wasm-gc MIR body-emitter coverage + validity gate (single-file).
 //!
-//! For every single-file `examples/**/*.av` program, compile it twice
-//! through `compile_to_wasm_gc_mir_toggle`:
-//!   * `enable_mir = false` — the `ResolvedExpr` body emitter everywhere.
-//!   * `enable_mir = true`  — the MIR body emitter per-fn, with a
-//!     `ResolvedExpr` fallback for anything the MIR walk doesn't cover.
+//! MIR is the only wasm-gc codegen path: the `ResolvedExpr` body walker
+//! was retired, so fns the MIR walker doesn't cover (today only
+//! higher-order / `MirCallee::LocalSlot` shapes) get an `unreachable`
+//! trap-stub body rather than a second walker. This test compiles every
+//! single-file `examples/**/*.av` program through the production path and
+//! asserts:
+//!   * it compiles (no hard error), and the emitted bytes are valid
+//!     wasm-gc (the compiler runs `wasmparser` validation before
+//!     returning, so a successful compile *is* a validation pass), and
+//!   * the MIR body emitter rendered at least `MIN_MIR_EMITTED` fns
+//!     across the corpus — a coverage floor that fails CI if a covered
+//!     construct silently regresses to the trap stub.
 //!
-//! and assert the emitted module bytes are **identical**. Each build
-//! reconstructs the same type registry, fn-map, slot table, and data
-//! segments from the same resolved program — only the per-fn body walk
-//! differs — so any covered fn whose MIR emission diverges by a single
-//! byte trips this test before it can reach the corpus / game suite.
-//! (Whole-module byte-identity across two independent builds is only
-//! meaningful because the type registry's carrier-slot ordering is
-//! deterministic; this test therefore also guards that determinism.)
-//! This is the safety net the port leans on: a divergence is caught
-//! mechanically, not by eyeballing wasm.
-//!
-//! A second check holds a coverage floor so byte-identity can't pass
-//! vacuously with zero MIR coverage, and so a covered construct
-//! silently regressing to the HIR fallback fails CI:
-//! `compile_to_wasm_gc_mir_toggle` returns how many fns the body emitter
-//! *actually rendered* from MIR — the real `emit_fn_body_via_mir`
-//! Some/None decision the seam makes, not the structural
-//! `coverage_report` predicate — and the test asserts that count stays
-//! at or above the floor. Keying it off the emitter rather than the
-//! predicate means an over-conservative predicate can't move it.
+//! The historical A/B byte-differential (MIR-on vs a forced
+//! `ResolvedExpr` baseline) is gone with the HIR walker — there is no
+//! baseline to diff against. Correctness of the emitted output is gated
+//! behaviourally by `wasm_gc_spec` / `wasm_gc_capture_output` (which run
+//! the module) and per-scenario size/speed by `aver bench`; both are
+//! strictly stronger than byte-identity.
 
 #![cfg(feature = "wasm-compile")]
 
@@ -67,7 +60,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
             // Exclude only genuinely multi-module files (a non-empty
             // `depends [...]`). An empty `depends []` declares no real
             // dependency, so the file compiles standalone and belongs in
-            // the byte-differential.
+            // the coverage gate.
             let has_real_depends = text.lines().any(|ln| {
                 let t = ln.trim_start();
                 t.starts_with("depends [") && t.trim_end() != "depends []"
@@ -80,8 +73,8 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// Run the same pipeline shape `aver compile --target wasm-gc` uses
-/// (skip the VM-only interp_lower / buffer_build passes). Returns both
-/// the post-pipeline items fed to the compiler.
+/// (skip the VM-only interp_lower / buffer_build passes). Returns the
+/// post-pipeline items fed to the compiler.
 fn run_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer.tokenize().map_err(|e| format!("lex: {:?}", e))?;
@@ -109,7 +102,7 @@ fn run_pipeline(source: &str) -> Result<Vec<TopLevel>, String> {
 }
 
 #[test]
-fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
+fn mir_body_emitter_compiles_and_validates_every_single_file_example() {
     let files = single_file_examples();
     assert!(
         !files.is_empty(),
@@ -117,10 +110,9 @@ fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
     );
 
     let mut failures: Vec<String> = Vec::new();
-    let mut compared = 0usize;
+    let mut compiled = 0usize;
     let mut total_mir_emitted = 0usize;
-    let mut total_opt_bytes = 0usize;
-    let mut total_base_bytes = 0usize;
+    let mut total_bytes = 0usize;
 
     for path in &files {
         let source = match fs::read_to_string(path) {
@@ -138,70 +130,48 @@ fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
             }
         };
 
-        let (via_resolved, _) =
-            match aver::codegen::wasm_gc::compile_to_wasm_gc_mir_toggle(&items, None, false) {
-                Ok(b) => b,
-                Err(e) => {
-                    failures.push(format!("{}: compile (mir off): {}", path.display(), e));
-                    continue;
-                }
-            };
-        let (via_mir, mir_emitted) =
-            match aver::codegen::wasm_gc::compile_to_wasm_gc_mir_toggle(&items, None, true) {
-                Ok(b) => b,
-                Err(e) => {
-                    failures.push(format!("{}: compile (mir on): {}", path.display(), e));
-                    continue;
-                }
-            };
-
-        // `via_resolved` (MIR off) is the unoptimized HIR baseline;
-        // `via_mir` (MIR on) runs the shared `optimize` pipeline. They are
-        // no longer byte-identical — the optimizer diverges where a pass
-        // fires (mostly shrinking, but inlining can trade size for speed).
-        // So this is no longer a byte/size GATE; it asserts both paths
-        // compile and that MIR coverage holds (the floor below), and
-        // reports the aggregate size A/B for information. Correctness of the
-        // optimized output is gated behaviourally by `wasm_gc_spec` /
-        // `wasm_gc_capture_output` (which run the module), and per-scenario
-        // size/speed by `aver bench` — both strictly stronger than the
-        // byte-identity this used to assert.
-        total_opt_bytes += via_mir.len();
-        total_base_bytes += via_resolved.len();
-        total_mir_emitted += mir_emitted;
-        compared += 1;
+        // `compile_to_wasm_gc_with_mir_count` is the production
+        // `compile_to_wasm_gc` plus the per-fn MIR-coverage count. A
+        // successful return means the emitted bytes passed the backend's
+        // built-in `wasmparser` validation (it validates before
+        // returning) — so a compile is a validity pass.
+        match aver::codegen::wasm_gc::compile_to_wasm_gc_with_mir_count(&items, None) {
+            Ok((bytes, mir_emitted)) => {
+                total_bytes += bytes.len();
+                total_mir_emitted += mir_emitted;
+                compiled += 1;
+            }
+            Err(e) => failures.push(format!("{}: compile: {}", path.display(), e)),
+        }
     }
 
     if !failures.is_empty() {
         panic!(
-            "{} of {} single-file examples failed to compile through one of the two paths:\n  - {}",
+            "{} of {} single-file examples failed to compile / validate through the MIR path:\n  - {}",
             failures.len(),
             files.len(),
             failures.join("\n  - ")
         );
     }
 
-    // Coverage floor. Byte-identity is meaningless if the MIR body
-    // emitter never fired, so this counts the *real* per-fn MIR dispatch
-    // the seam made (the `emit_fn_body_via_mir` Some/None decision), not
-    // the structural coverage predicate — an over-conservative predicate
-    // can't make it pass vacuously. The floor is the gate the review
-    // asked for: a drop below it (a covered construct silently regressing
-    // to the HIR fallback) fails CI rather than passing quietly. Raise
-    // `MIN_MIR_EMITTED` when new coverage lands; never lower it without a
-    // deliberate reason.
+    // Coverage floor. Keyed off the *real* per-fn MIR dispatch the seam
+    // made (the `emit_fn_body_via_mir` Some/None decision), not the
+    // structural coverage predicate — an over-conservative predicate
+    // can't make it pass vacuously. A drop below it (a covered construct
+    // silently regressing to a trap stub) fails CI rather than passing
+    // quietly. Raise `MIN_MIR_EMITTED` when new coverage lands; never
+    // lower it without a deliberate reason.
     const MIN_MIR_EMITTED: usize = 734;
     assert!(
         total_mir_emitted >= MIN_MIR_EMITTED,
-        "MIR body emitter rendered {total_mir_emitted} fns across {compared} examples, \
+        "MIR body emitter rendered {total_mir_emitted} fns across {compiled} examples, \
          below the floor of {MIN_MIR_EMITTED} — MIR coverage regressed (a covered construct \
-         fell back to the `ResolvedExpr` emitter). If this drop is intentional, lower the floor."
+         fell back to the trap stub). If this drop is intentional, lower the floor."
     );
 
-    let delta = total_base_bytes as i64 - total_opt_bytes as i64;
     eprintln!(
-        "mir_and_resolved_body_emitters_agree_byte_for_byte: {compared} examples compiled both \
-         ways; MIR body emitter rendered {total_mir_emitted} fns; optimized {total_opt_bytes} B \
-         vs baseline {total_base_bytes} B (optimizer saved {delta} B)"
+        "mir_body_emitter_compiles_and_validates_every_single_file_example: {compiled} examples \
+         compiled + validated; MIR body emitter rendered {total_mir_emitted} fns; \
+         {total_bytes} B total"
     );
 }

@@ -67,7 +67,9 @@ pub(super) struct MapKVHelpers {
     /// `Option.withDefault(Map.get(m, k), default)` without ever
     /// allocating an `Option<V>`. Same probe loop as `get` but
     /// returns `values[idx]` directly on a key match and the supplied
-    /// default on an empty slot.
+    /// default on an empty slot. Read by the MIR emitter's
+    /// `emit_mir_option_with_default` (from_mir/builtins.rs) for the
+    /// `Map.get` → `withDefault` fusion.
     pub(super) get_or_default: u32,
     /// `get_pair(m, k) -> (i32 found, V value)`. Multi-result return
     /// that backs the fused `match Map.get(m, k) { Some(v) -> ...;
@@ -92,7 +94,9 @@ pub(super) struct MapKVHelpers {
     /// occupied slot builds a Tuple and prepends onto a cons list.
     pub(super) entries: u32,
     /// `from_list(l) -> Map<K, V>`. Walks `l`, struct.get's the
-    /// (K, V) from each tuple, calls the per-(K, V) `set` helper.
+    /// (K, V) from each tuple, calls the per-(K, V) `set` helper. Read
+    /// by the MIR emitter's `emit_mir_map_builtin` (from_mir/builtins.rs)
+    /// for `Map.fromList`.
     pub(super) from_list: u32,
     /// `__eq_Map<K,V>(a, b) -> i32`. Structural eq — `a.size ==
     /// b.size && ∀ k ∈ a: get(b, k) == Some(a[k])`. Insertion order

@@ -12,7 +12,9 @@
 //! 3. **Export section** — `_start` (always at fn idx 0) plus every
 //!    user fn by name.
 //! 4. **Code section** — `_start` calls `main` and drops any return
-//!    value; user fns get their bodies from `body::emit_fn_body`.
+//!    value; user fns get their bodies from the MIR body emitter
+//!    (`body::emit_fn_body_via_mir`), with an `unreachable` trap stub
+//!    for the rare shape it doesn't cover (higher-order dispatch).
 //!
 //! Validation runs `wasmparser` with GC + tail-call features before
 //! returning bytes.
@@ -78,7 +80,7 @@ struct Wasip2Globals {
     tcp_next_id: Option<u32>,
 }
 use super::body::hash_helpers::{HashHelperRegistry, HashKind};
-use super::body::{FnEntry, FnMap, emit_fn_body, emit_fn_body_via_mir};
+use super::body::{FnEntry, FnMap, emit_fn_body_via_mir};
 use super::builtins::{BuiltinName, BuiltinRegistry};
 use super::effects::{EffectName, EffectRegistry};
 use super::maps::MapHelperRegistry;
@@ -96,11 +98,24 @@ use crate::types::Type as AverType;
 
 use crate::ast::{FnDef, TopLevel, TypeDef};
 
+/// Emit a trap-stub body into `func`: just `unreachable; end`.
+///
+/// Used for the (sole) fn shape the MIR body emitter doesn't cover —
+/// higher-order dynamic dispatch (`MirCallee::LocalSlot`, e.g. the
+/// verify-only `pairSpec`). `unreachable` is a polymorphic stack-type
+/// instruction, so it validates for ANY fn signature with zero extra
+/// locals. This is observably equivalent to the retired `ResolvedExpr`
+/// walker, whose output for those shapes also trapped at runtime —
+/// wasm-gc cannot execute first-class callable values.
+fn emit_trap_stub_body(func: &mut Function) {
+    func.instruction(&Instruction::Unreachable);
+    func.instruction(&Instruction::End);
+}
+
 pub(super) fn emit_module_with(
     items: &[TopLevel],
     handler_name: Option<&str>,
     target: super::TargetMode,
-    enable_mir: bool,
 ) -> Result<(Vec<u8>, usize), WasmGcError> {
     let fn_defs: Vec<&FnDef> = items
         .iter()
@@ -2274,51 +2289,35 @@ pub(super) fn emit_module_with(
     // `optimize` pipeline — the SAME six passes the VM consumes
     // (`ir::mir::optimize`). This is the realization of "one optimizer
     // pass benefits every backend": wasm-gc and wasip2 (which reuses
-    // this seam) now emit from optimized MIR, not the raw 1:1-HIR shape.
-    // The body walk emits the optimized form for the variants it covers
-    // (including `IfThenElse` from `bool_match_to_if`) and returns `None`
-    // (whole-fn fallback to the `ResolvedExpr` emitter) for anything it
-    // doesn't — so an uncovered optimized shape degrades to the
-    // unoptimized HIR emission, never to wrong code.
+    // this seam) emit from optimized MIR, not the raw 1:1-HIR shape.
     //
-    // `enable_mir == false` (and `AVER_WASMGC_FORCE_NO_MIR=1`) force the
-    // `ResolvedExpr` path everywhere — the UNOPTIMIZED baseline. The
-    // toggle is therefore an A/B harness: `compile_to_wasm_gc_mir_toggle`
-    // false = HIR baseline, true = optimized MIR; the differential tests
-    // assert the optimized module is valid and no larger than the
-    // baseline (perf/size), and the behavioural `wasm_gc_spec` /
-    // `wasm_gc_capture_output` tests assert it still computes correctly.
-    let enable_mir = enable_mir && std::env::var_os("AVER_WASMGC_FORCE_NO_MIR").is_none();
-    let mir_program: Option<crate::ir::mir::MirProgram> = if enable_mir {
+    // MIR is the only codegen path. The body walk emits the optimized
+    // form for the variants it covers; the single shape it does NOT
+    // cover is higher-order dynamic dispatch (`MirCallee::LocalSlot`,
+    // e.g. the verify-only `pairSpec`), for which it returns `None`. Such
+    // fns get a `unreachable` trap-stub body (`emit_trap_stub_body`) —
+    // observably equivalent to the retired `ResolvedExpr` walker, which
+    // also trapped at runtime on those shapes since wasm-gc cannot
+    // execute first-class callable values.
+    let mir_program: crate::ir::mir::MirProgram = {
         let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_fn_defs
             .iter()
             .cloned()
             .map(crate::ir::hir::ResolvedTopLevel::FnDef)
             .collect();
-        Some(crate::ir::mir::optimize(crate::ir::mir::lower_program(
-            &mir_items,
-        )))
-    } else {
-        None
+        crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items))
     };
     // `mir_fn_for[i]` is `Some(&MirFn)` when the i-th fn lowered to
-    // MIR. The final per-fn decision (MIR body emitter vs HIR
-    // fallback) is `mir_dispatch[i]`, computed once in the caller_fn
-    // pre-pass below and reused verbatim by the dry-run + real
-    // code-emit loops — all three see the same path per fn, so the
-    // discovered locals match the emitted body and caller_fn
-    // registration stays consistent.
-    //
-    // Invariant the three `emit_fn_body_via_mir` call sites rely on:
-    // `mir_program == None ⇒ mir_fn_for[i] == None` (the `and_then`
-    // below short-circuits), and `mir_dispatch[i]` is only set `true`
-    // inside `if let Some(mir_fn) = mir_fn_for[i]`. So whenever a site
-    // dispatches to MIR (`mir_dispatch[i]` true, or the pre-pass's
-    // `Some(mir_fn)`), `mir_program` is necessarily `Some` — the
-    // `.expect("MIR dispatch ⇒ program present")` is unreachable.
+    // MIR (always true on valid input — every resolved fn lowers).
+    // `mir_dispatch[i]` is the final per-fn decision: `true` when the
+    // MIR body emitter rendered the fn, `false` when it returned `None`
+    // and the fn got a trap-stub body instead. It is computed once in
+    // the caller_fn pre-pass below and reused verbatim by the dry-run +
+    // real code-emit loops, so all three see the same path per fn and
+    // the discovered locals / caller_fn registration stay consistent.
     let mir_fn_for: Vec<Option<&crate::ir::mir::MirFn>> = resolved_fn_defs
         .iter()
-        .map(|rfd| mir_program.as_ref().and_then(|p| p.fn_by_id(rfd.fn_id)))
+        .map(|rfd| mir_program.fn_by_id(rfd.fn_id))
         .collect();
     let mut mir_dispatch: Vec<bool> = vec![false; fn_defs.len()];
 
@@ -2330,20 +2329,19 @@ pub(super) fn emit_module_with(
     // emit later in the code section calls `register` again with the
     // same names; the collector is idempotent so the idx assignment
     // matches what the call sites observed during this probe. This
-    // pass also decides MIR vs HIR per fn (`mir_dispatch`): the chosen
-    // emitter runs here so its caller_fn registrations match the real
-    // code-emit loop.
+    // pass also decides MIR-emit vs trap-stub per fn (`mir_dispatch`):
+    // the chosen emitter runs here so its caller_fn registrations match
+    // the real code-emit loop. A trap-stub body emits no calls, so the
+    // pre-pass simply skips caller_fn collection for those fns.
     for (i, _fd) in fn_defs.iter().enumerate() {
         let self_wasm_idx = import_count + 1 + (i as u32);
         let mut probe = Function::new([]);
-        let used_mir = if let Some(mir_fn) = mir_fn_for[i] {
-            match emit_fn_body_via_mir(
+        let used_mir = match mir_fn_for[i] {
+            Some(mir_fn) => emit_fn_body_via_mir(
                 &mut probe,
                 &resolved_fn_defs[i],
                 mir_fn,
-                mir_program
-                    .as_ref()
-                    .expect("MIR dispatch ⇒ program present"),
+                &mir_program,
                 &fn_map,
                 self_wasm_idx,
                 &registry,
@@ -2351,59 +2349,27 @@ pub(super) fn emit_module_with(
                 &effect_idx_lookup,
                 &caller_fn_collector,
                 wasip2_lowering.as_ref(),
-            )? {
-                Some(_) => true,
-                None => {
-                    // MIR hit an unsupported variant — fall back, and
-                    // collect this fn's caller_fns via the
-                    // `ResolvedExpr` emitter just like the real loop.
-                    let mut probe = Function::new([]);
-                    let _ = emit_fn_body(
-                        &mut probe,
-                        &resolved_fn_defs[i],
-                        &fn_map,
-                        self_wasm_idx,
-                        &registry,
-                        &symbol_table,
-                        &effect_idx_lookup,
-                        &caller_fn_collector,
-                        wasip2_lowering.as_ref(),
-                    )?;
-                    false
-                }
-            }
-        } else {
-            let _ = emit_fn_body(
-                &mut probe,
-                &resolved_fn_defs[i],
-                &fn_map,
-                self_wasm_idx,
-                &registry,
-                &symbol_table,
-                &effect_idx_lookup,
-                &caller_fn_collector,
-                wasip2_lowering.as_ref(),
-            )?;
-            false
+            )?
+            .is_some(),
+            None => false,
         };
         mir_dispatch[i] = used_mir;
     }
 
-    // `AVER_WASMGC_REQUIRE_MIR=1` turns the per-fn HIR fallback into a
-    // hard error that lists every fn which did NOT emit from MIR — the
-    // graduation worklist (what still falls back), keyed off the real
-    // `mir_dispatch` decision, not the approximate coverage predicate.
+    // `AVER_WASMGC_REQUIRE_MIR=1` turns the per-fn trap-stub fallback
+    // into a hard error that lists every fn which did NOT emit from MIR
+    // (today only higher-order verify-only shapes like `pairSpec`).
     // Diagnostic / development only: the production path leaves it unset
-    // and falls back silently.
-    if enable_mir && std::env::var_os("AVER_WASMGC_REQUIRE_MIR").is_some() {
+    // and emits the trap stub silently.
+    if std::env::var_os("AVER_WASMGC_REQUIRE_MIR").is_some() {
         let fell_back: Vec<&str> = (0..mir_dispatch.len())
             .filter(|&i| !mir_dispatch[i])
             .map(|i| resolved_fn_defs[i].name.as_str())
             .collect();
         if !fell_back.is_empty() {
             return Err(WasmGcError::Validation(format!(
-                "AVER_WASMGC_REQUIRE_MIR: {} of {} fns fell back to the ResolvedExpr emitter \
-                 (not yet covered by the MIR body emitter): {}",
+                "AVER_WASMGC_REQUIRE_MIR: {} of {} fns were not covered by the MIR body \
+                 emitter (emitted a trap stub instead): {}",
                 fell_back.len(),
                 mir_dispatch.len(),
                 fell_back.join(", ")
@@ -2625,15 +2591,18 @@ pub(super) fn emit_module_with(
         // ResolvedExpr decision (`mir_dispatch[i]`) was fixed in the
         // caller_fn pre-pass; reuse it here so the discovered locals
         // match the body the real emit produces below.
-        let mut probe = Function::new([]);
+        // A fn the MIR walker doesn't cover (`mir_dispatch[i] == false`)
+        // gets a `unreachable` trap stub with zero extra locals —
+        // `unreachable` is polymorphic so it validates for any
+        // signature. So the dry-run only needs locals for the MIR path;
+        // the stub path contributes none.
         let extra_locals_dry = if mir_dispatch[i] {
+            let mut probe = Function::new([]);
             emit_fn_body_via_mir(
                 &mut probe,
                 &resolved_fn_defs[i],
                 mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
-                mir_program
-                    .as_ref()
-                    .expect("MIR dispatch ⇒ program present"),
+                &mir_program,
                 &fn_map,
                 self_wasm_idx,
                 &registry,
@@ -2649,17 +2618,7 @@ pub(super) fn emit_module_with(
                 ))
             })?
         } else {
-            emit_fn_body(
-                &mut probe,
-                &resolved_fn_defs[i],
-                &fn_map,
-                self_wasm_idx,
-                &registry,
-                &symbol_table,
-                &effect_idx_lookup,
-                &caller_fn_collector,
-                wasip2_lowering.as_ref(),
-            )?
+            Vec::new()
         };
 
         let local_groups: Vec<(u32, ValType)> = extra_locals_dry.iter().map(|v| (1, *v)).collect();
@@ -2669,9 +2628,7 @@ pub(super) fn emit_module_with(
                 &mut func,
                 &resolved_fn_defs[i],
                 mir_fn_for[i].expect("mir_dispatch ⇒ mir_fn_for is Some"),
-                mir_program
-                    .as_ref()
-                    .expect("MIR dispatch ⇒ program present"),
+                &mir_program,
                 &fn_map,
                 self_wasm_idx,
                 &registry,
@@ -2687,17 +2644,7 @@ pub(super) fn emit_module_with(
                 ))
             })?;
         } else {
-            let _ = emit_fn_body(
-                &mut func,
-                &resolved_fn_defs[i],
-                &fn_map,
-                self_wasm_idx,
-                &registry,
-                &symbol_table,
-                &effect_idx_lookup,
-                &caller_fn_collector,
-                wasip2_lowering.as_ref(),
-            )?;
+            emit_trap_stub_body(&mut func);
         }
         codes.function(&func);
     }

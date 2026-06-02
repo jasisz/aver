@@ -24,14 +24,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use wasm_encoder::{Function, Instruction, ValType};
-
-use super::WasmGcError;
 use super::types::TypeRegistry;
 
 use crate::ir::CallLowerCtx;
 use crate::ir::SymbolTable;
-use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
 use crate::types::Type;
 
 mod builtins;
@@ -43,11 +39,9 @@ pub(super) mod hash_helpers;
 mod infer;
 mod slots;
 
-use emit::emit_expr;
 pub(super) use from_mir::emit_fn_body_via_mir;
 pub use from_mir::{CoverageReport, coverage_report};
-use infer::aver_type_str_of;
-use slots::{SlotTable, count_value_params};
+use slots::SlotTable;
 
 /// Maps fn identity → wasm fn index + return type. Built once per
 /// module in `module::emit_module_with`. PR 9.3c keyed dispatch by
@@ -158,130 +152,6 @@ pub(super) struct FnEntry {
     /// by `--explain-passes` retains the field.
     #[allow(dead_code)]
     pub(super) return_type: String,
-}
-
-/// Lower the body of `fd` into the supplied wasm `Function` builder.
-/// Returns the list of *extra* locals (beyond params) needed for the
-/// fn signature; caller passes these to `Function::new`.
-///
-/// `self_wasm_idx` is the current fn's own wasm index — used for
-/// emitting `return_call $self` on `Expr::TailCall` to the same fn.
-/// Mutual-TCO across SCC members goes through a `return_call_indirect`
-/// table; that wiring lives in module.rs.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn emit_fn_body(
-    func: &mut Function,
-    rfd: &ResolvedFnDef,
-    fn_map: &FnMap,
-    self_wasm_idx: u32,
-    registry: &TypeRegistry,
-    symbol_table: &SymbolTable,
-    effect_idx_lookup: &HashMap<String, u32>,
-    caller_fn_collector: &std::cell::RefCell<CallerFnCollector>,
-    wasip2_lowering: Option<&Wasip2Lowering>,
-) -> Result<Vec<ValType>, WasmGcError> {
-    let slots = SlotTable::build_for_fn(rfd, registry, fn_map)?;
-    let ResolvedFnBody::Block(stmts) = rfd.body.as_ref();
-    let last_idx = stmts.len().saturating_sub(1);
-
-    // Source-shape canonical of the enclosing fn's return type. Many
-    // emit helpers (Option.None hint, ErrorProp enclosing fixup, list
-    // empty literal fallback) want the string form once; compute it
-    // here so the per-emit-site reads stay a cheap `&str`.
-    let return_type_str = rfd.return_type.display();
-
-    // Precollect every `let`-bound name so `CallLowerCtx::is_local_value`
-    // can recognise locals without a parallel type table — the wasm-gc
-    // backend's IR shape recognition (`classify_leaf_op` /
-    // `classify_call_plan`) only needs the name, not the type.
-    let mut binding_names: HashSet<String> = HashSet::new();
-    fn collect_names(stmts: &[ResolvedStmt], out: &mut HashSet<String>) {
-        for s in stmts {
-            if let ResolvedStmt::Binding { name, .. } = s {
-                out.insert(name.clone());
-            }
-        }
-    }
-    collect_names(stmts, &mut binding_names);
-
-    let ctx = EmitCtx {
-        fn_map,
-        self_wasm_idx,
-        self_fn_name: rfd.name.as_str(),
-        return_type: &return_type_str,
-        registry,
-        symbol_table,
-        resolution: rfd.resolution.as_ref(),
-        // HIR path: alias facts come straight from the resolver table.
-        aliased_slots: rfd
-            .resolution
-            .as_ref()
-            .map(|r| r.aliased_slots.as_slice())
-            .unwrap_or(&[]),
-        params: &rfd.params,
-        binding_names: &binding_names,
-        effect_idx_lookup,
-        caller_fn_collector,
-        wasip2_lowering,
-        mir_builtins: None,
-    };
-
-    for (i, stmt) in stmts.iter().enumerate() {
-        let is_last = i == last_idx;
-        match stmt {
-            ResolvedStmt::Binding { name, value, .. } => {
-                emit_expr(func, value, &slots, &ctx)?;
-                let produces_value = aver_type_str_of(value).trim() != "Unit";
-                if name == "_" {
-                    // `_ = expr` — sequence-only binding. Drop the
-                    // value (if any) and move on; the resolver
-                    // doesn't allocate a slot for `_`.
-                    if produces_value {
-                        func.instruction(&Instruction::Drop);
-                    }
-                    continue;
-                }
-                let slot = ctx
-                    .self_local_slot(name)
-                    .ok_or(WasmGcError::Validation(format!(
-                        "binding `{name}` has no resolver slot"
-                    )))?;
-                // Unit expressions push nothing — there's nothing to
-                // stash, and the slot itself is an i32 placeholder
-                // (kept around to preserve resolver slot indices).
-                if produces_value && (slot as usize) < slots.by_slot.len() {
-                    func.instruction(&Instruction::LocalSet(slot));
-                }
-            }
-            ResolvedStmt::Expr(spanned) => {
-                emit_expr(func, spanned, &slots, &ctx)?;
-                // Whether the expression leaves a value on the stack
-                // is decided structurally (typecheck stamps `Unit` on
-                // pure-effect expressions, every other shape pushes a
-                // value). We avoid `aver_to_wasm` here so that a type
-                // carrying an unresolved `Type::Var` (e.g. for a
-                // generic call site the registry can't lower without
-                // context) doesn't poison the trailing-drop decision.
-                let produces_value = aver_type_str_of(spanned).trim() != "Unit";
-                if !is_last && produces_value {
-                    func.instruction(&Instruction::Drop);
-                }
-                if is_last {
-                    if return_type_str.trim() == "Unit" && produces_value {
-                        func.instruction(&Instruction::Drop);
-                    } else if return_type_str.trim() != "Unit" && !produces_value {
-                        return Err(WasmGcError::Validation(format!(
-                            "fn `{}` returns {} but trailing expression yields no value",
-                            rfd.name, return_type_str
-                        )));
-                    }
-                }
-            }
-        }
-    }
-    func.instruction(&Instruction::End);
-
-    Ok(slots.extra_locals(count_value_params(&rfd.params)))
 }
 
 /// Lazy-populated registry of caller_fn names actually emitted by the
@@ -611,29 +481,14 @@ impl<'a> EmitCtx<'a> {
     /// so an empty table only happens in test paths that pre-resolve
     /// manually. Reads the `aliased_slots` field, which is
     /// resolution-sourced on the HIR path and `MirFn`-sourced on the
-    /// MIR path — identical bits, different home.
+    /// MIR path — identical bits, different home. Read by the MIR
+    /// emitter's `mir_arg_uniquely_owned` (from_mir/builtins.rs), which
+    /// is the only caller now that the `ResolvedExpr` walker is gone.
     pub(super) fn is_aliased_slot(&self, slot: u16) -> bool {
         self.aliased_slots
             .get(slot as usize)
             .copied()
             .unwrap_or(false)
-    }
-
-    /// True when `arg` is a `Resolved` slot whose binding is dead
-    /// after this expression (`last_use=true`) AND not flagged
-    /// alias-prone — the underlying engine array / struct is
-    /// uniquely owned, so the alias-aware fast path is sound.
-    /// Used by `Vector.set` (skips `array.copy` of the backing array)
-    /// and `Map.set` (picks the `set_in_place` helper). Anonymous
-    /// expressions land here as a transient stack value with no
-    /// binding to alias against, which counts as uniquely owned.
-    pub(super) fn arg_uniquely_owned(&self, arg: &crate::ast::Spanned<ResolvedExpr>) -> bool {
-        match &arg.node {
-            ResolvedExpr::Resolved { slot, last_use, .. } => {
-                last_use.0 && !self.is_aliased_slot(*slot)
-            }
-            _ => true,
-        }
     }
 }
 

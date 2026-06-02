@@ -2,20 +2,25 @@
 //! builtins. Each function here is the wasip2 counterpart of an
 //! aver-bridge handler in `builtins.rs`'s main switch — `Console.*`,
 //! `Args.get`, `Env.get`, `Time.*`, `Random.*`, `Disk.*` — and is
-//! dispatched to from `emit_dotted_builtin` when the surrounding
-//! emit ctx is in `TargetMode::Wasip2`.
+//! dispatched to from the MIR builtin emitter
+//! (`from_mir::emit_mir_wasip2_effect`) when the surrounding emit ctx
+//! is in `TargetMode::Wasip2`.
 //!
 //! The actual canonical-ABI helper bodies live one layer deeper in
 //! `wasip2_helpers.rs` (sibling of `module.rs`); the functions here
-//! are call-site marshalling — push args, `Call(helper_fn_idx)`.
+//! are call-site marshalling — push args (via `emit_mir_expr`),
+//! `Call(helper_fn_idx)`. They take MIR-form args because MIR is the
+//! only codegen path; they never inspect arg structure beyond passing
+//! each one to `emit_mir_expr`, so the conversion was purely a type +
+//! emit-call swap.
 
 use wasm_encoder::Instruction;
 
 use crate::ast::Spanned;
-use crate::ir::hir::ResolvedExpr;
+use crate::ir::mir::MirExpr;
 
 use super::super::WasmGcError;
-use super::emit::emit_expr;
+use super::from_mir::emit_mir_expr;
 use super::{EmitCtx, SlotTable};
 
 /// Phase 1.2b1.5 — call-site lowering for `Console.print` /
@@ -40,7 +45,7 @@ use super::{EmitCtx, SlotTable};
 pub(super) fn emit_console_print_wasip2(
     func: &mut wasm_encoder::Function,
     method: &str,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -125,7 +130,7 @@ pub(super) fn emit_console_print_wasip2(
             "Console.* on wasip2: __rt_println_to_lm fn idx missing — bridge not allocated".into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(println_to_lm));
     func.instruction(&Instruction::LocalSet(len_local));
 
@@ -248,7 +253,7 @@ pub(super) fn emit_args_get_wasip2(
 /// > itself so call sites don't need to.
 pub(super) fn emit_env_get_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -290,7 +295,7 @@ pub(super) fn emit_env_get_wasip2(
     let key_len_local = scratch[1];
 
     // key bytes → LM[0..key_len], stash key_len.
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(str_to_lm));
     func.instruction(&Instruction::LocalSet(key_len_local));
 
@@ -332,7 +337,7 @@ pub(super) fn emit_env_get_wasip2(
 /// emitted on wasip2 with imports, so the page-1 LM is available.
 pub(super) fn emit_time_unix_ms_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
@@ -387,7 +392,7 @@ pub(super) fn emit_time_unix_ms_wasip2(
 /// to be reused immediately afterwards.
 pub(super) fn emit_time_now_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
@@ -444,7 +449,7 @@ pub(super) fn emit_time_now_wasip2(
 /// instruction: `Call $__rt_console_read_line`.
 pub(super) fn emit_console_read_line_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
@@ -477,7 +482,7 @@ pub(super) fn emit_console_read_line_wasip2(
 /// implementation detail.
 pub(super) fn emit_time_sleep_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -495,7 +500,7 @@ pub(super) fn emit_time_sleep_wasip2(
             "Time.sleep on wasip2: __rt_time_sleep fn idx missing — helper not allocated".into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?; // ms: i64
+    emit_mir_expr(func, &args[0], slots, ctx)?; // ms: i64
     func.instruction(&Instruction::Call(sleep_fn));
     Ok(())
 }
@@ -507,7 +512,7 @@ pub(super) fn emit_time_sleep_wasip2(
 /// `false` on no-preopens / Err / wasi-error; `true` on Ok.
 pub(super) fn emit_disk_exists_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -527,7 +532,7 @@ pub(super) fn emit_disk_exists_wasip2(
                 .into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?; // path: ref string
+    emit_mir_expr(func, &args[0], slots, ctx)?; // path: ref string
     func.instruction(&Instruction::Call(exists_fn));
     Ok(())
 }
@@ -537,7 +542,7 @@ pub(super) fn emit_disk_exists_wasip2(
 /// light `__rt_tcp_ping` wrapper.
 pub(super) fn emit_tcp_ping_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -553,8 +558,8 @@ pub(super) fn emit_tcp_ping_wasip2(
     let ping_fn = lowering.tcp_ping_fn_idx.ok_or_else(|| {
         WasmGcError::Validation("Tcp.ping on wasip2: __rt_tcp_ping fn idx missing".into())
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
-    emit_expr(func, &args[1], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[1], slots, ctx)?;
     func.instruction(&Instruction::Call(ping_fn));
     Ok(())
 }
@@ -566,7 +571,7 @@ pub(super) fn emit_tcp_ping_wasip2(
 /// helper.
 pub(super) fn emit_tcp_send_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -582,9 +587,9 @@ pub(super) fn emit_tcp_send_wasip2(
     let send_fn = lowering.tcp_send_fn_idx.ok_or_else(|| {
         WasmGcError::Validation("Tcp.send on wasip2: __rt_tcp_send fn idx missing".into())
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
-    emit_expr(func, &args[1], slots, ctx)?;
-    emit_expr(func, &args[2], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[1], slots, ctx)?;
+    emit_mir_expr(func, &args[2], slots, ctx)?;
     func.instruction(&Instruction::Call(send_fn));
     Ok(())
 }
@@ -593,7 +598,7 @@ pub(super) fn emit_tcp_send_wasip2(
 /// on `--target wasip2`. Pushes conn and calls the helper.
 pub(super) fn emit_tcp_read_line_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -609,7 +614,7 @@ pub(super) fn emit_tcp_read_line_wasip2(
     let read_line_fn = lowering.tcp_read_line_fn_idx.ok_or_else(|| {
         WasmGcError::Validation("Tcp.readLine on wasip2: __rt_tcp_read_line fn idx missing".into())
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(read_line_fn));
     Ok(())
 }
@@ -619,7 +624,7 @@ pub(super) fn emit_tcp_read_line_wasip2(
 /// `__rt_tcp_write_line` helper.
 pub(super) fn emit_tcp_write_line_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -637,8 +642,8 @@ pub(super) fn emit_tcp_write_line_wasip2(
             "Tcp.writeLine on wasip2: __rt_tcp_write_line fn idx missing".into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
-    emit_expr(func, &args[1], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[1], slots, ctx)?;
     func.instruction(&Instruction::Call(write_line_fn));
     Ok(())
 }
@@ -648,7 +653,7 @@ pub(super) fn emit_tcp_write_line_wasip2(
 /// ref onto the stack and calls the `__rt_tcp_close` helper.
 pub(super) fn emit_tcp_close_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -666,7 +671,7 @@ pub(super) fn emit_tcp_close_wasip2(
             "Tcp.close on wasip2: __rt_tcp_close fn idx missing — helper not allocated".into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(close_fn));
     Ok(())
 }
@@ -679,7 +684,7 @@ pub(super) fn emit_tcp_close_wasip2(
 /// Phase 4.2.2+ — this dispatcher stays put.
 pub(super) fn emit_tcp_connect_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -700,15 +705,15 @@ pub(super) fn emit_tcp_connect_wasip2(
                 .into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?; // host: ref string
-    emit_expr(func, &args[1], slots, ctx)?; // port: i64
+    emit_mir_expr(func, &args[0], slots, ctx)?; // host: ref string
+    emit_mir_expr(func, &args[1], slots, ctx)?; // port: i64
     func.instruction(&Instruction::Call(connect_fn));
     Ok(())
 }
 
 pub(super) fn emit_disk_read_text_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -728,7 +733,7 @@ pub(super) fn emit_disk_read_text_wasip2(
                 .into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?; // path: ref string
+    emit_mir_expr(func, &args[0], slots, ctx)?; // path: ref string
     func.instruction(&Instruction::Call(read_fn));
     Ok(())
 }
@@ -743,7 +748,7 @@ pub(super) fn emit_disk_read_text_wasip2(
 /// shape via `aver/random_int`).
 pub(super) fn emit_random_int_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -779,11 +784,11 @@ pub(super) fn emit_random_int_wasip2(
     //   push min_scratch
     //   push (get-random-u64() % (max - min + 1))
     //   i64.add
-    emit_expr(func, &args[0], slots, ctx)?; // min: i64
+    emit_mir_expr(func, &args[0], slots, ctx)?; // min: i64
     func.instruction(&Instruction::LocalSet(min_scratch));
     func.instruction(&Instruction::LocalGet(min_scratch));
     func.instruction(&Instruction::Call(rand_fn)); // u64 -> i64 representation
-    emit_expr(func, &args[1], slots, ctx)?; // max
+    emit_mir_expr(func, &args[1], slots, ctx)?; // max
     func.instruction(&Instruction::LocalGet(min_scratch));
     func.instruction(&Instruction::I64Sub);
     func.instruction(&Instruction::I64Const(1));
@@ -803,7 +808,7 @@ pub(super) fn emit_random_int_wasip2(
 /// bits with no exponent bits set.
 pub(super) fn emit_random_float_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     let lowering = ctx.wasip2_lowering.ok_or_else(|| {
@@ -839,7 +844,7 @@ pub(super) fn emit_random_float_wasip2(
 /// blocking-write-and-flush + per-call resource drops.
 pub(super) fn emit_disk_write_text_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -859,8 +864,8 @@ pub(super) fn emit_disk_write_text_wasip2(
                 .into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?; // path
-    emit_expr(func, &args[1], slots, ctx)?; // content
+    emit_mir_expr(func, &args[0], slots, ctx)?; // path
+    emit_mir_expr(func, &args[1], slots, ctx)?; // content
     func.instruction(&Instruction::Call(write_fn));
     Ok(())
 }
@@ -870,7 +875,7 @@ pub(super) fn emit_disk_write_text_wasip2(
 /// `__rt_disk_delete` (single wasi `unlink-file-at` underneath).
 pub(super) fn emit_disk_delete_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -888,7 +893,7 @@ pub(super) fn emit_disk_delete_wasip2(
             "Disk.delete on wasip2: __rt_disk_delete fn idx missing — helper not allocated".into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
@@ -896,7 +901,7 @@ pub(super) fn emit_disk_delete_wasip2(
 /// Phase 1.5.4 — `Disk.deleteDir(path) -> Result<Unit, String>`.
 pub(super) fn emit_disk_delete_dir_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -914,7 +919,7 @@ pub(super) fn emit_disk_delete_dir_wasip2(
             "Disk.deleteDir on wasip2: __rt_disk_delete_dir fn idx missing".into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
@@ -922,7 +927,7 @@ pub(super) fn emit_disk_delete_dir_wasip2(
 /// Phase 1.5.4 — `Disk.makeDir(path) -> Result<Unit, String>`.
 pub(super) fn emit_disk_make_dir_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -938,7 +943,7 @@ pub(super) fn emit_disk_make_dir_wasip2(
     let fn_idx = lowering.disk_make_dir_fn_idx.ok_or_else(|| {
         WasmGcError::Validation("Disk.makeDir on wasip2: __rt_disk_make_dir fn idx missing".into())
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
@@ -949,7 +954,7 @@ pub(super) fn emit_disk_make_dir_wasip2(
 /// emitter as `__rt_disk_write_text` flipped to append mode.
 pub(super) fn emit_disk_append_text_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -967,8 +972,8 @@ pub(super) fn emit_disk_append_text_wasip2(
             "Disk.appendText on wasip2: __rt_disk_append_text fn idx missing".into(),
         )
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
-    emit_expr(func, &args[1], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[1], slots, ctx)?;
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
@@ -979,7 +984,7 @@ pub(super) fn emit_disk_append_text_wasip2(
 /// read-directory + entry-iteration loop + drops.
 pub(super) fn emit_disk_list_dir_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -995,7 +1000,7 @@ pub(super) fn emit_disk_list_dir_wasip2(
     let fn_idx = lowering.disk_list_dir_fn_idx.ok_or_else(|| {
         WasmGcError::Validation("Disk.listDir on wasip2: __rt_disk_list_dir fn idx missing".into())
     })?;
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
@@ -1016,7 +1021,7 @@ fn emit_http_simple_method_wasip2(
     method_name: &str,
     method_tag: i32,
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1047,7 +1052,7 @@ fn emit_http_simple_method_wasip2(
         })?;
 
     func.instruction(&Instruction::I32Const(method_tag));
-    emit_expr(func, &args[0], slots, ctx)?;
+    emit_mir_expr(func, &args[0], slots, ctx)?;
     // Empty content_type
     func.instruction(&Instruction::I32Const(0));
     func.instruction(&Instruction::ArrayNewDefault(string_idx));
@@ -1076,7 +1081,7 @@ fn emit_http_body_method_wasip2(
     method_name: &str,
     method_tag: i32,
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1095,17 +1100,17 @@ fn emit_http_body_method_wasip2(
         ))
     })?;
     func.instruction(&Instruction::I32Const(method_tag));
-    emit_expr(func, &args[0], slots, ctx)?; // url
-    emit_expr(func, &args[1], slots, ctx)?; // content_type
-    emit_expr(func, &args[2], slots, ctx)?; // body
-    emit_expr(func, &args[3], slots, ctx)?; // headers
+    emit_mir_expr(func, &args[0], slots, ctx)?; // url
+    emit_mir_expr(func, &args[1], slots, ctx)?; // content_type
+    emit_mir_expr(func, &args[2], slots, ctx)?; // body
+    emit_mir_expr(func, &args[3], slots, ctx)?; // headers
     func.instruction(&Instruction::Call(fn_idx));
     Ok(())
 }
 
 pub(super) fn emit_http_get_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1114,7 +1119,7 @@ pub(super) fn emit_http_get_wasip2(
 
 pub(super) fn emit_http_head_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1123,7 +1128,7 @@ pub(super) fn emit_http_head_wasip2(
 
 pub(super) fn emit_http_delete_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1132,7 +1137,7 @@ pub(super) fn emit_http_delete_wasip2(
 
 pub(super) fn emit_http_post_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1141,7 +1146,7 @@ pub(super) fn emit_http_post_wasip2(
 
 pub(super) fn emit_http_put_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
@@ -1150,7 +1155,7 @@ pub(super) fn emit_http_put_wasip2(
 
 pub(super) fn emit_http_patch_wasip2(
     func: &mut wasm_encoder::Function,
-    args: &[Spanned<ResolvedExpr>],
+    args: &[Spanned<MirExpr>],
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
