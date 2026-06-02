@@ -2386,6 +2386,29 @@ pub(super) fn emit_module_with(
         };
         mir_dispatch[i] = used_mir;
     }
+
+    // `AVER_WASMGC_REQUIRE_MIR=1` turns the per-fn HIR fallback into a
+    // hard error that lists every fn which did NOT emit from MIR — the
+    // graduation worklist (what still falls back), keyed off the real
+    // `mir_dispatch` decision, not the approximate coverage predicate.
+    // Diagnostic / development only: the production path leaves it unset
+    // and falls back silently.
+    if enable_mir && std::env::var_os("AVER_WASMGC_REQUIRE_MIR").is_some() {
+        let fell_back: Vec<&str> = (0..mir_dispatch.len())
+            .filter(|&i| !mir_dispatch[i])
+            .map(|i| resolved_fn_defs[i].name.as_str())
+            .collect();
+        if !fell_back.is_empty() {
+            return Err(WasmGcError::Validation(format!(
+                "AVER_WASMGC_REQUIRE_MIR: {} of {} fns fell back to the ResolvedExpr emitter \
+                 (not yet covered by the MIR body emitter): {}",
+                fell_back.len(),
+                mir_dispatch.len(),
+                fell_back.join(", ")
+            )));
+        }
+    }
+
     let caller_fn_segment_count = caller_fn_collector.borrow().names.len() as u32;
 
     // ── Data count section (must precede code when using passive
