@@ -3530,6 +3530,10 @@ pub(super) fn cmd_explain_mir_coverage(
             typecheck: Some(TypecheckMode::Full {
                 base_dir: Some(&module_root),
             }),
+            // Rust coverage needs the symbol table to resolve `FnId` /
+            // `TypeId` / `CtorId` through `MirEmitCtx`. Cheap to build;
+            // the VM/wasm-gc paths read it too once a ctx is assembled.
+            run_build_symbols: true,
             dep_modules: &dep_modules,
             ..Default::default()
         },
@@ -3545,11 +3549,19 @@ pub(super) fn cmd_explain_mir_coverage(
 
     // `--target wasm-gc` reports the wasm-gc body emitter's reach over
     // the lowered MIR (Phase 5 #340 — how many fns ride the MIR body
-    // walk vs. fall back to the `ResolvedExpr` emitter). Other targets
-    // report the VM lowering-level coverage (how many fns lowered to
-    // MIR at all).
+    // walk vs. fall back to the `ResolvedExpr` emitter). `--target rust`
+    // reports the Rust `from_mir` body emitter's reach (Wave 0 of the
+    // rust-on-MIR port — how many fns the MIR-to-Rust walker emits
+    // standalone vs fall back to the HIR walker), with a first-blocker
+    // histogram so each wave's reach is measurable. Other targets report
+    // the VM lowering-level coverage (how many fns lowered to MIR at
+    // all).
     if matches!(target, super::cli::CompileTarget::WasmGc) {
         explain_wasm_gc_mir_coverage(&mir, json);
+        return;
+    }
+    if matches!(target, super::cli::CompileTarget::Rust) {
+        explain_rust_mir_coverage(&mir, &result.symbol_table, &dep_modules, json);
         return;
     }
 
@@ -3557,6 +3569,70 @@ pub(super) fn cmd_explain_mir_coverage(
         print!("{}", render_mir_coverage_json(&mir.stats));
     } else {
         print!("{}", render_mir_coverage(&mir.stats));
+    }
+}
+
+/// Rust backend coverage over a lowered MIR program — the body-emit
+/// level reach of the `from_mir` walker that the rust-on-MIR port
+/// will eventually swap into the production emit path. Reports total
+/// fns, MIR-emitted vs HIR-fallback counts, and a first-blocker
+/// histogram (which `MirExpr` variant / `MirCallee` kind caused the
+/// first `None` in each fallback fn) so each porting wave's reach is
+/// measurable. The walker resolves `FnId`/`TypeId`/`CtorId` through
+/// the pipeline `SymbolTable` and module-scoped names through the dep
+/// module prefixes — the same inputs the production rust transpile
+/// path builds via `build_context`.
+fn explain_rust_mir_coverage(
+    mir: &aver::ir::mir::MirProgram,
+    symbol_table: &aver::ir::SymbolTable,
+    dep_modules: &[ModuleInfo],
+    json: bool,
+) {
+    let module_prefixes: HashSet<String> = dep_modules.iter().map(|m| m.prefix.clone()).collect();
+    let emit_ctx = rust_codegen::MirEmitCtx::for_test(symbol_table, &module_prefixes);
+    let (report, blockers) = rust_codegen::coverage_report_with_blockers(mir, &emit_ctx);
+
+    // Sort blockers by count descending (dominant first), then by label
+    // for stable ties — so the report reads as a porting worklist.
+    let mut sorted: Vec<(&&str, &usize)> = blockers.iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+
+    if json {
+        let blocker_json: Vec<String> = sorted
+            .iter()
+            .map(|(label, count)| {
+                format!(
+                    "{{\"shape\":\"{}\",\"count\":{count}}}",
+                    label.replace('"', "\\\"")
+                )
+            })
+            .collect();
+        println!(
+            "{{\"schema_version\":1,\"backend\":\"rust\",\"total\":{total},\"mir_covered\":{covered},\"hir_fallback\":{fallback},\"coverage_ratio\":{ratio:.4},\"first_blockers\":[{blockers}]}}",
+            total = report.total,
+            covered = report.mir_covered,
+            fallback = report.hir_fallback,
+            ratio = report.ratio(),
+            blockers = blocker_json.join(","),
+        );
+    } else {
+        let mut out = String::new();
+        out.push_str("MIR coverage (rust backend) — body-emit level\n");
+        out.push_str("=============================================\n\n");
+        out.push_str(&format!("MIR fns:       {}\n", report.total));
+        out.push_str(&format!(
+            "MIR-emitted:   {}  ({:.1}%)\n",
+            report.mir_covered,
+            report.ratio() * 100.0
+        ));
+        out.push_str(&format!("HIR fallback:  {}\n", report.hir_fallback));
+        if !sorted.is_empty() {
+            out.push_str("\nfirst blocker per fallback fn (dominant first):\n");
+            for (label, count) in sorted {
+                out.push_str(&format!("  {count:>4}  {label}\n"));
+            }
+        }
+        print!("{out}");
     }
 }
 

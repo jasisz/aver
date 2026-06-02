@@ -141,16 +141,179 @@ impl CoverageReport {
 /// `Some` / `None`. Suitable for `--explain-mir-coverage`–style
 /// diagnostics; the codegen path itself is untouched.
 pub fn coverage_report(program: &MirProgram, emit_ctx: &MirEmitCtx<'_>) -> CoverageReport {
+    coverage_report_with_blockers(program, emit_ctx).0
+}
+
+/// Same reach measurement as [`coverage_report`], plus a histogram
+/// of the *first* construct that blocked each HIR-fallback fn.
+///
+/// For every fn the walker can't emit, `first_blocker` does the same
+/// recursive `emit_mir_expr`-shaped walk but, instead of building a
+/// string, returns a stable label for the first `MirExpr` variant /
+/// `MirCallee` kind that would have returned `None`. Counting those
+/// labels gives a per-wave roadmap: "lower `Match` next" reads
+/// straight off the dominant bucket. The returned map is keyed by
+/// label and ordered (BTreeMap) for deterministic report output.
+///
+/// This is diagnostic-only — it does not touch the production emit
+/// path, and the walk is the exact mirror of [`emit_mir_expr`] so the
+/// blocker it names is the one the wired-up backend would hit.
+pub fn coverage_report_with_blockers(
+    program: &MirProgram,
+    emit_ctx: &MirEmitCtx<'_>,
+) -> (
+    CoverageReport,
+    std::collections::BTreeMap<&'static str, usize>,
+) {
     let mut report = CoverageReport::default();
+    let mut blockers: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
     for (_, mir_fn) in program.iter() {
         report.total += 1;
         if emit_mir_expr(&mir_fn.body, emit_ctx).is_some() {
             report.mir_covered += 1;
         } else {
             report.hir_fallback += 1;
+            let label = first_blocker(&mir_fn.body, emit_ctx).unwrap_or("Unknown");
+            *blockers.entry(label).or_insert(0) += 1;
         }
     }
-    report
+    (report, blockers)
+}
+
+/// Recursively find the first construct that makes [`emit_mir_expr`]
+/// return `None` for `expr`, and name it with a stable label. Returns
+/// `None` only when the whole subtree emits cleanly (the caller treats
+/// that as "no blocker"). The traversal order matches
+/// `emit_mir_expr`'s argument-evaluation order exactly so the label
+/// pins the *same* node the emit walk would have bailed on.
+fn first_blocker(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<&'static str> {
+    // Leaf check: if this node emits cleanly on its own, no blocker
+    // lives at-or-below it.
+    if emit_mir_expr(expr, emit_ctx).is_some() {
+        return None;
+    }
+    // The node (or one of its children) blocks. Recurse into children
+    // first so we report the deepest / leftmost actual blocker, not the
+    // wrapper that merely propagated a child's `None`.
+    match &expr.node {
+        MirExpr::Neg(inner) | MirExpr::Return(inner) | MirExpr::Try(inner) => {
+            first_blocker(inner, emit_ctx).or(Some(label_for(&expr.node)))
+        }
+        MirExpr::BinOp(b) => first_blocker(&b.node.lhs, emit_ctx)
+            .or_else(|| first_blocker(&b.node.rhs, emit_ctx))
+            .or(Some("BinOp")),
+        MirExpr::Call(c) => {
+            // A `Builtin` / `Intrinsic` / `LocalSlot` callee is itself
+            // the blocker — report the callee kind so the histogram
+            // distinguishes "builtin call" from "closure call".
+            match &c.node.callee {
+                MirCallee::Builtin(_) => return Some("Call(Builtin)"),
+                MirCallee::Intrinsic(_) => return Some("Call(Intrinsic)"),
+                MirCallee::LocalSlot { .. } => return Some("Call(LocalSlot)"),
+                MirCallee::Fn(_) => {}
+            }
+            for a in &c.node.args {
+                if let Some(b) = first_blocker(a, emit_ctx) {
+                    return Some(b);
+                }
+            }
+            Some("Call(Fn)")
+        }
+        MirExpr::TailCall(tc) => {
+            for a in &tc.node.args {
+                if let Some(b) = first_blocker(a, emit_ctx) {
+                    return Some(b);
+                }
+            }
+            Some("TailCall")
+        }
+        MirExpr::Tuple(items) | MirExpr::List(items) => {
+            for item in items {
+                if let Some(b) = first_blocker(item, emit_ctx) {
+                    return Some(b);
+                }
+            }
+            Some(label_for(&expr.node))
+        }
+        MirExpr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                if let Some(b) = first_blocker(k, emit_ctx) {
+                    return Some(b);
+                }
+                if let Some(b) = first_blocker(v, emit_ctx) {
+                    return Some(b);
+                }
+            }
+            Some("MapLiteral")
+        }
+        MirExpr::Let(l) => first_blocker(&l.node.value, emit_ctx)
+            .or_else(|| first_blocker(&l.node.body, emit_ctx))
+            .or(Some("Let(synthetic)")),
+        MirExpr::Project(p) => first_blocker(&p.node.base, emit_ctx).or(Some("Project")),
+        MirExpr::RecordCreate(r) => {
+            for f in &r.node.fields {
+                if let Some(b) = first_blocker(&f.value, emit_ctx) {
+                    return Some(b);
+                }
+            }
+            Some("RecordCreate(builtin/Tcp)")
+        }
+        MirExpr::RecordUpdate(u) => {
+            if let Some(b) = first_blocker(&u.node.base, emit_ctx) {
+                return Some(b);
+            }
+            for f in &u.node.updates {
+                if let Some(b) = first_blocker(&f.value, emit_ctx) {
+                    return Some(b);
+                }
+            }
+            Some("RecordUpdate(builtin/Tcp)")
+        }
+        MirExpr::Construct(c) => {
+            for a in &c.node.args {
+                if let Some(b) = first_blocker(a, emit_ctx) {
+                    return Some(b);
+                }
+            }
+            Some("Construct")
+        }
+        MirExpr::IfThenElse(ite) => first_blocker(&ite.node.cond, emit_ctx)
+            .or_else(|| first_blocker(&ite.node.then_branch, emit_ctx))
+            .or_else(|| first_blocker(&ite.node.else_branch, emit_ctx))
+            .or(Some("IfThenElse")),
+        // Variants `emit_mir_expr` never recurses into (it returns
+        // `None` immediately): they are themselves the blocker.
+        other => Some(label_for(other)),
+    }
+}
+
+/// Stable histogram label for a `MirExpr` variant. Kept short and
+/// variant-named so the report reads as a worklist.
+fn label_for(expr: &MirExpr) -> &'static str {
+    match expr {
+        MirExpr::Literal(_) => "Literal",
+        MirExpr::Local(_) => "Local(synthetic)",
+        MirExpr::Let(_) => "Let(synthetic)",
+        MirExpr::Call(_) => "Call",
+        MirExpr::TailCall(_) => "TailCall",
+        MirExpr::BinOp(_) => "BinOp",
+        MirExpr::Neg(_) => "Neg",
+        MirExpr::Match(_) => "Match",
+        MirExpr::Construct(_) => "Construct",
+        MirExpr::RecordCreate(_) => "RecordCreate",
+        MirExpr::RecordUpdate(_) => "RecordUpdate",
+        MirExpr::Project(_) => "Project",
+        MirExpr::IfThenElse(_) => "IfThenElse",
+        MirExpr::Try(_) => "Try",
+        MirExpr::List(_) => "List",
+        MirExpr::Tuple(_) => "Tuple",
+        MirExpr::MapLiteral(_) => "MapLiteral",
+        MirExpr::InterpolatedStr(_) => "InterpolatedStr",
+        MirExpr::IndependentProduct(_) => "IndependentProduct",
+        MirExpr::Return(_) => "Return",
+        MirExpr::FnValue(_) => "FnValue",
+    }
 }
 
 /// Try to emit Rust source for `expr` directly from MIR.
@@ -1003,5 +1166,82 @@ mod tests {
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("scoped user ctor should emit");
         assert_eq!(emit, "crate::aver_generated::ast::Expr::App(1i64)");
+    }
+
+    #[test]
+    fn first_blocker_names_a_top_level_match() {
+        // A bare `Match` is an uncovered variant — `first_blocker`
+        // must name it "Match" so the coverage histogram reads as a
+        // worklist.
+        let m = span(MirExpr::Match(span(crate::ir::mir::MirMatch {
+            subject: Box::new(span(MirExpr::Literal(span(crate::ast::Literal::Int(0))))),
+            arms: vec![],
+        })));
+        assert!(emit_mir_expr(&m, &empty_ctx()).is_none());
+        assert_eq!(first_blocker(&m, &empty_ctx()), Some("Match"));
+    }
+
+    #[test]
+    fn first_blocker_recurses_to_deepest_builtin_call() {
+        // `return (builtinCall(...))` — the outer Return emits cleanly
+        // over a covered child, so the blocker the histogram reports
+        // must be the *builtin call kind*, not the Return wrapper.
+        let call = span(MirExpr::Call(span(MirCall {
+            callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
+            args: vec![span(MirExpr::Literal(span(crate::ast::Literal::Int(1))))],
+        })));
+        let ret = span(MirExpr::Return(Box::new(call)));
+        assert!(emit_mir_expr(&ret, &empty_ctx()).is_none());
+        assert_eq!(first_blocker(&ret, &empty_ctx()), Some("Call(Builtin)"));
+    }
+
+    #[test]
+    fn first_blocker_is_none_for_fully_covered_body() {
+        // A clean integer literal has no blocker.
+        let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(42))));
+        assert!(first_blocker(&lit, &empty_ctx()).is_none());
+    }
+
+    /// Minimal `MirFn` carrying just a body — every other field is a
+    /// neutral default so the coverage walk (which only reads `body`)
+    /// has something well-formed to traverse.
+    fn fn_with_body(fn_id: crate::ir::FnId, body: Spanned<MirExpr>) -> crate::ir::mir::MirFn {
+        crate::ir::mir::MirFn {
+            fn_id,
+            name: String::new(),
+            params: vec![],
+            return_type: String::new(),
+            effects: vec![],
+            body,
+            local_count: 0,
+            aliased_slots: std::sync::Arc::new(vec![]),
+        }
+    }
+
+    #[test]
+    fn coverage_with_blockers_counts_and_buckets() {
+        // Build a two-fn program: one emits (a literal), one blocks on
+        // Match. The report must read 1 covered / 1 fallback with a
+        // single "Match" bucket of count 1.
+        let mut program = MirProgram::default();
+        let covered_body = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let blocked_body = span(MirExpr::Match(span(crate::ir::mir::MirMatch {
+            subject: Box::new(span(MirExpr::Literal(span(crate::ast::Literal::Int(0))))),
+            arms: vec![],
+        })));
+        program.fns.insert(
+            crate::ir::FnId(0),
+            fn_with_body(crate::ir::FnId(0), covered_body),
+        );
+        program.fns.insert(
+            crate::ir::FnId(1),
+            fn_with_body(crate::ir::FnId(1), blocked_body),
+        );
+
+        let (report, blockers) = coverage_report_with_blockers(&program, &empty_ctx());
+        assert_eq!(report.total, 2);
+        assert_eq!(report.mir_covered, 1);
+        assert_eq!(report.hir_fallback, 1);
+        assert_eq!(blockers.get("Match"), Some(&1));
     }
 }
