@@ -819,7 +819,7 @@ fn borrow_mask_from_fn_def(
 /// `FnDef` AST annotations when the callee isn't in the view (only TCO
 /// status reads from the AST `FnDef`).
 /// TCO functions (self or mutual) never use borrow-by-default.
-fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
+pub(super) fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
     // First, try to find the FnDef to check for TCO (which overrides everything)
     let fd = find_fn_def_by_name(name, ctx);
     if let Some(fd) = fd {
