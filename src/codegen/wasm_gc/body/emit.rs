@@ -1721,11 +1721,20 @@ pub(super) fn emit_tuple_match(
     ))?;
     emit_expr(func, subject, slots, ctx)?;
     func.instruction(&Instruction::LocalSet(scratch));
-    // pat_items align 1:1 with the resolver-allocated arm_slots —
-    // tuple destructure currently only supports flat `Pattern::Ident`
-    // items (multi-binding nested tuples land elsewhere).
-    for (field_idx, (pat, &slot)) in pat_items.iter().zip(arm_slots.iter()).enumerate() {
-        if matches!(pat, ResolvedPattern::Ident(_)) && slot != u16::MAX {
+    // `arm_slots` holds one slot per *binding* in preorder (a `Wildcard`
+    // item contributes none), so pair each `Ident` field with the next
+    // binding slot rather than zipping positionally against `pat_items`
+    // — a positional zip drops every binding that follows a wildcard
+    // (`(_, value)` left `value` unextracted). Tuple destructure
+    // currently only supports flat `Pattern::Ident` items.
+    let mut binding_cursor = 0usize;
+    for (field_idx, pat) in pat_items.iter().enumerate() {
+        if !matches!(pat, ResolvedPattern::Ident(_)) {
+            continue;
+        }
+        let slot = arm_slots.get(binding_cursor).copied().unwrap_or(u16::MAX);
+        binding_cursor += 1;
+        if slot != u16::MAX {
             func.instruction(&Instruction::LocalGet(scratch));
             func.instruction(&Instruction::RefCastNonNull(
                 wasm_encoder::HeapType::Concrete(tuple_idx),

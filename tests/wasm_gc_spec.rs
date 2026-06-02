@@ -915,6 +915,31 @@ fn main() -> Int
     );
 }
 
+// Regression: a tuple-destructure binding that follows a wildcard must
+// still be extracted. The original `emit_tuple_match` zipped the tuple
+// fields against the (bindings-only) slot list positionally, which
+// dropped `value` in `(_, value)` and left its slot at its zero
+// default — `second((7, 42))` returned 0, not 42.
+#[test]
+fn tuple_match_binding_after_wildcard() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "tuple destructure binding after wildcard"
+    depends []
+
+fn second(pair: Tuple<Int, Int>) -> Int
+    match pair
+        (_, value) -> value
+
+fn main() -> Int
+    second((7, 42))
+"#
+        ),
+        42
+    );
+}
+
 // ────────────────────────────────────────────────────────────────────
 // String surface (numeric reductions only — return Int)
 // ────────────────────────────────────────────────────────────────────
