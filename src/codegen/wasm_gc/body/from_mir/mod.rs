@@ -172,6 +172,29 @@ pub(crate) fn emit_fn_body_via_mir(
     Ok(Some(slots.extra_locals(count_value_params(&rfd.params))))
 }
 
+/// Mirror of `emit_expr`'s `nullary_variant_idx`: if `operand` is a
+/// nullary user-variant value (`Tile.Floor`, lowered to a `Construct`
+/// with no args of a zero-field variant), return that variant struct's
+/// type index — so `<expr> == Tile.Floor` can lower to a `ref.test`
+/// rather than a structural eq-helper call, matching the oracle.
+fn mir_nullary_variant_idx(operand: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> Option<u32> {
+    let MirExpr::Construct(c) = &operand.node else {
+        return None;
+    };
+    let MirCtor::User(ctor_id) = c.node.ctor else {
+        return None;
+    };
+    if !c.node.args.is_empty() {
+        return None;
+    }
+    let info = mir_user_variant_info(ctor_id, ctx).ok()?;
+    if info.fields.is_empty() {
+        Some(info.type_idx)
+    } else {
+        None
+    }
+}
+
 /// Emit instructions for a MIR `expr`, returning `Ok(Some(produces))`
 /// where `produces` is `true` when evaluating `expr` leaves a value on
 /// the stack (i.e. its type is not `Unit`) — the same
@@ -252,17 +275,38 @@ pub(crate) fn emit_mir_expr(
                     }
                     Ok(Some(true))
                 }
-                // Structural `==` / `!=` on a sum / record / carrier type —
-                // mirror of `emit_expr`'s per-type `__eq_<T>` helper branch:
-                // push both operands (eqrefs), `call $eq`, then `i32.eqz`
-                // for `!=`. GUARD: if either operand is a `Construct`, the
-                // oracle may take its nullary-variant `ref.test` path
-                // instead, so fall back to keep byte-identity with it.
-                Some(lty)
-                    if matches!(bop.op, BinOp::Eq | BinOp::Neq)
-                        && !matches!(bop.lhs.node, MirExpr::Construct(_))
-                        && !matches!(bop.rhs.node, MirExpr::Construct(_)) =>
-                {
+                // `==` / `!=` on a user type — mirror of `emit_expr`'s
+                // three sub-branches, in the SAME order so the bytes match:
+                // (1) `<expr> == NullaryVariant` and (2) the flipped form
+                // lower to a `ref.test` on the variant struct; (3) any
+                // other sum / record / carrier compare goes through the
+                // per-type `__eq_<T>` helper. `!=` appends `i32.eqz`.
+                Some(lty) if matches!(bop.op, BinOp::Eq | BinOp::Neq) => {
+                    let neq = matches!(bop.op, BinOp::Neq);
+                    if let Some(vidx) = mir_nullary_variant_idx(&bop.rhs, ctx) {
+                        if emit_mir_expr(func, &bop.lhs, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::RefTestNonNull(
+                            wasm_encoder::HeapType::Concrete(vidx),
+                        ));
+                        if neq {
+                            func.instruction(&Instruction::I32Eqz);
+                        }
+                        return Ok(Some(true));
+                    }
+                    if let Some(vidx) = mir_nullary_variant_idx(&bop.lhs, ctx) {
+                        if emit_mir_expr(func, &bop.rhs, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::RefTestNonNull(
+                            wasm_encoder::HeapType::Concrete(vidx),
+                        ));
+                        if neq {
+                            func.instruction(&Instruction::I32Eqz);
+                        }
+                        return Ok(Some(true));
+                    }
                     let Some(eq_fn) = sum_or_record_eq_fn(lty, ctx) else {
                         return Ok(None);
                     };
@@ -273,7 +317,7 @@ pub(crate) fn emit_mir_expr(
                         return Ok(None);
                     }
                     func.instruction(&Instruction::Call(eq_fn));
-                    if matches!(bop.op, BinOp::Neq) {
+                    if neq {
                         func.instruction(&Instruction::I32Eqz);
                     }
                     Ok(Some(true))
