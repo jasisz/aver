@@ -1,8 +1,9 @@
 //! Built-in call lowering: the custom-inline `Float` / `Int` / `Bool`
 //! scalar ops, `Char.toCode`, the `List` / `Vector` / `Map` families,
-//! the fused `Option.withDefault(Vector.get, <literal>)`, and the
-//! numeric `BinOp` tail. Mirrors the custom-inline arms of
-//! `emit_dotted_builtin` and `emit_expr`'s numeric `BinOp` branch.
+//! the fused `Option.withDefault(Vector.get, <literal>)` and
+//! `Result.withDefault(Int.mod, default)`, and the numeric `BinOp`
+//! tail. Mirrors the custom-inline arms of `emit_dotted_builtin` and
+//! `emit_expr`'s numeric `BinOp` branch.
 
 use super::*;
 
@@ -240,6 +241,72 @@ pub(crate) fn emit_mir_option_with_default(
     func.instruction(&Instruction::ArrayGet(vec_idx));
     func.instruction(&Instruction::Else);
     e!(default);
+    func.instruction(&Instruction::End);
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// The one fused `Result.withDefault` shape this emitter covers:
+/// `Result.withDefault(Int.mod(a, b), default)` — mirror of the fused
+/// branch in `emit_result_with_default`. `Int.mod` lowers to the
+/// Euclidean-modulo helper and never materialises a `Result` struct, so
+/// this emits the guarded form directly: push `default` when `b == 0`,
+/// else `__int_mod_euclid(a, b)`. Any other (boxed) `Result.withDefault`
+/// returns `NotHandled` so the whole fn falls back to the resolved-HIR
+/// emitter, which reads the real `Result<T,E>` tag.
+pub(crate) fn emit_mir_result_with_default(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    if dotted != "Result.withDefault" || args.len() != 2 {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    let default = &args[1];
+    // Inner must be a 2-arg `Int.mod` builtin call.
+    let MirExpr::Call(inner) = &args[0].node else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    let inner = &inner.node;
+    let MirCallee::Builtin(inner_id) = inner.callee else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    let Some(inner_dotted) = ctx.mir_builtins.and_then(|n| n.get(inner_id.0 as usize)) else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    if inner_dotted != "Int.mod" || inner.args.len() != 2 {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    let a = &inner.args[0];
+    let b = &inner.args[1];
+    let mod_idx =
+        ctx.fn_map
+            .builtins
+            .get("__int_mod_euclid")
+            .copied()
+            .ok_or(WasmGcError::Validation(
+                "Int.mod requires __int_mod_euclid helper to be registered".into(),
+            ))?;
+
+    macro_rules! e {
+        ($x:expr) => {
+            if emit_mir_expr(func, $x, slots, ctx)?.is_none() {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+    let block_ty = wasm_encoder::BlockType::Result(ValType::I64);
+    // if b == 0 -> default, else __int_mod_euclid(a, b)
+    e!(b);
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::I64Eq);
+    func.instruction(&Instruction::If(block_ty));
+    e!(default);
+    func.instruction(&Instruction::Else);
+    e!(a);
+    e!(b);
+    func.instruction(&Instruction::Call(mod_idx));
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
 }

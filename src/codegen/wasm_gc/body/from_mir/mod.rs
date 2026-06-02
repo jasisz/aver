@@ -34,8 +34,9 @@
 //! - [`collections`] — `List` literals.
 //! - [`builtins`] — the custom-inline `Float` / `Int` / `Bool` scalar
 //!   ops, `Char.toCode`, the `List` / `Vector` / `Map` families, the
-//!   fused `Option.withDefault(Vector.get(v, i), <literal>)`, and the
-//!   numeric `BinOp` tail.
+//!   fused `Option.withDefault(Vector.get(v, i), <literal>)` and
+//!   `Result.withDefault(Int.mod(a, b), default)`, and the numeric
+//!   `BinOp` tail.
 //! - [`strings`] — `InterpolatedStr` and the `String` `BinOp` ops.
 //! - [`control`] — `Try` (`?` propagation) and `IndependentProduct`
 //!   (`(a, b, c)!` / `?!`).
@@ -424,6 +425,14 @@ pub(crate) fn emit_mir_expr(
                     // Fused `Option.withDefault(Vector.get(v, i), <literal>)`.
                     // Other `withDefault` shapes fall through to fallback.
                     match emit_mir_option_with_default(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
+                    // Fused `Result.withDefault(Int.mod(a, b), default)` —
+                    // the guarded Euclidean-modulo form. Boxed
+                    // `Result.withDefault` falls through to fallback.
+                    match emit_mir_result_with_default(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
