@@ -26,12 +26,23 @@ pub(crate) fn emit_mir_match(
     if m.arms.is_empty() {
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
+    // Result/block type — mirror of `emit_match`. The first arm's body
+    // type is the match's type (typecheck proved all arms agree); a
+    // `Unit` match lowers to `BlockType::Empty` and produces no value.
+    let result_ty_str = aver_type_canonical(&m.arms[0].body, ctx.return_type, ctx.registry);
+    let block_ty = match aver_to_wasm(&result_ty_str, Some(ctx.registry))? {
+        Some(v) => wasm_encoder::BlockType::Result(v),
+        None => wasm_encoder::BlockType::Empty,
+    };
+    let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
+
     // Tuple arms. The single-arm flat destructure `(a, b, …) -> body`
-    // (every component a `Bind` or `Wildcard`) is emitted here — mirror
-    // of `emit_match`'s `arms.len() == 1 && Tuple && items >= 2` →
-    // `emit_tuple_match` branch. The multi-arm tuple-of-constructors
-    // cascade (`emit_tuple_constructor_match`) and any nested
-    // per-element pattern still fall back to the resolved-HIR emitter.
+    // (every component a `Bind` or `Wildcard`) goes to `emit_mir_tuple_match`
+    // — mirror of `emit_match`'s `arms.len() == 1 && Tuple && items >= 2`
+    // branch. A multi-arm tuple-of-constructors match (`(Result.Ok(a),
+    // Result.Err(e)) -> …`) goes to `emit_mir_tuple_constructor_match`,
+    // which falls back (`Ok(None)`) for any element shape the oracle's
+    // `emit_tuple_constructor_match` doesn't support.
     if m.arms
         .iter()
         .any(|a| matches!(a.pattern, MirPattern::Tuple(_)))
@@ -45,18 +56,10 @@ pub(crate) fn emit_mir_match(
         {
             return emit_mir_tuple_match(func, &m.subject, &m.arms[0], slots, ctx);
         }
-        return Ok(None);
+        return Ok(
+            emit_mir_tuple_constructor_match(func, m, block_ty, slots, ctx)?.map(|()| produces),
+        );
     }
-
-    // Result/block type — mirror of `emit_match`. The first arm's body
-    // type is the match's type (typecheck proved all arms agree); a
-    // `Unit` match lowers to `BlockType::Empty` and produces no value.
-    let result_ty_str = aver_type_canonical(&m.arms[0].body, ctx.return_type, ctx.registry);
-    let block_ty = match aver_to_wasm(&result_ty_str, Some(ctx.registry))? {
-        Some(v) => wasm_encoder::BlockType::Result(v),
-        None => wasm_encoder::BlockType::Empty,
-    };
-    let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
 
     // List match (`[] -> …; [head, ..tail] -> …`). `emit_match` checks
     // this before Result/Option, so mirror that order.
@@ -247,6 +250,257 @@ fn emit_mir_tuple_match(
         return Ok(None);
     };
     Ok(Some(produces))
+}
+
+/// Mirror of `emit_tuple_constructor_match` + `emit_tuple_constructor_arm_cascade`
+/// (emit.rs): a multi-arm match on a tuple whose elements carry built-in
+/// `Result` constructors — e.g. `match r { (Result.Ok(a), Result.Err(e))
+/// -> …; _ -> … }` — lowered to a nested `if`/`else` cascade. Each arm
+/// AND's together a per-element `Result` tag test; on the matching branch
+/// it extracts each element's `Ok`/`Err` payload into its binding slot
+/// and emits the body; the failure branch recurses into the remaining
+/// arms; a trailing `Wildcard` / `Bind` arm closes the cascade. A
+/// pre-pass rejects (returns `Ok(None)` → whole-fn fallback) any shape
+/// the oracle's cascade doesn't support — a non-`Result` element ctor, an
+/// element with no registered `Result<T,E>` slot, an arity mismatch, or a
+/// non-tuple/bind/wildcard arm — so the resolved-HIR emitter handles
+/// those byte-identically.
+fn emit_mir_tuple_constructor_match(
+    func: &mut Function,
+    m: &MirMatch,
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let subject_ty = aver_type_str_of(&m.subject);
+    let canonical: String = subject_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let Some(tuple_idx) = ctx.registry.tuple_type_idx(&canonical) else {
+        return Ok(None);
+    };
+    let Some(elems) = TypeRegistry::tuple_elements(&canonical) else {
+        return Ok(None);
+    };
+    let elems: Vec<String> = elems.into_iter().map(|s| s.to_string()).collect();
+
+    // Pre-pass: only emit when every arm is a shape the cascade fully
+    // supports, so the emit pass can't half-write then bail. Require at
+    // least one tuple arm carrying a built-in `Result` ctor (otherwise
+    // this isn't the constructor-cascade shape and the caller's other
+    // dispatch arms own it).
+    let mut any_result_ctor = false;
+    for arm in &m.arms {
+        match &arm.pattern {
+            MirPattern::Wildcard | MirPattern::Bind(..) => {}
+            MirPattern::Tuple(items) => {
+                if items.len() != elems.len() {
+                    return Ok(None);
+                }
+                for (i, pat) in items.iter().enumerate() {
+                    match pat {
+                        MirPattern::Bind(..) | MirPattern::Wildcard => {}
+                        MirPattern::Ctor {
+                            ctor: MirCtor::Builtin(BuiltinCtor::ResultOk | BuiltinCtor::ResultErr),
+                            ..
+                        } => {
+                            any_result_ctor = true;
+                            let elem_canonical: String =
+                                elems[i].chars().filter(|c| !c.is_whitespace()).collect();
+                            if ctx.registry.result_type_idx(&elem_canonical).is_none() {
+                                return Ok(None);
+                            }
+                        }
+                        _ => return Ok(None),
+                    }
+                }
+            }
+            _ => return Ok(None),
+        }
+    }
+    if !any_result_ctor {
+        return Ok(None);
+    }
+
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "multi-arm tuple match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    if emit_mir_expr(func, &m.subject, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::LocalSet(scratch));
+    emit_mir_tuple_constructor_arm_cascade(
+        func, scratch, tuple_idx, &elems, &m.arms, block_ty, slots, ctx,
+    )
+}
+
+/// The recursive cascade body — mirror of `emit_tuple_constructor_arm_cascade`.
+/// Reads each binding slot straight off the `MirPattern` node (`Bind`'s
+/// `LocalId`, the `Ctor`'s `bindings`), which `lower.rs` seeded from the
+/// resolver's `binding_slots` in the same preorder the oracle walks — so
+/// no parallel slot cursor is needed.
+#[allow(clippy::too_many_arguments)]
+fn emit_mir_tuple_constructor_arm_cascade(
+    func: &mut Function,
+    scratch: u32,
+    tuple_idx: u32,
+    elems: &[String],
+    arms: &[MirMatchArm],
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    let Some(arm) = arms.first() else {
+        // Exhaustiveness is proven by the typechecker; an empty tail is
+        // unreachable, emitted as a stack-polymorphic `unreachable`.
+        func.instruction(&Instruction::Unreachable);
+        return Ok(Some(()));
+    };
+    match &arm.pattern {
+        MirPattern::Wildcard => {
+            if emit_mir_expr(func, &arm.body, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        }
+        MirPattern::Bind(slot, _) => {
+            if slot.0 != u32::from(u16::MAX) {
+                func.instruction(&Instruction::LocalGet(scratch));
+                func.instruction(&Instruction::LocalSet(slot.0));
+            }
+            if emit_mir_expr(func, &arm.body, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+        }
+        MirPattern::Tuple(items) => {
+            // Verdict: AND together each element's `Result` tag test.
+            let mut tests_emitted = 0u32;
+            for (i, pat) in items.iter().enumerate() {
+                if let MirPattern::Ctor {
+                    ctor: MirCtor::Builtin(bc),
+                    ..
+                } = pat
+                    && matches!(bc, BuiltinCtor::ResultOk | BuiltinCtor::ResultErr)
+                {
+                    let elem_canonical: String =
+                        elems[i].chars().filter(|c| !c.is_whitespace()).collect();
+                    let res_idx = ctx.registry.result_type_idx(&elem_canonical).ok_or(
+                        WasmGcError::Validation(
+                            "tuple-of-constructors match: element is not a registered Result"
+                                .into(),
+                        ),
+                    )?;
+                    let expected_tag: i32 = if matches!(bc, BuiltinCtor::ResultOk) {
+                        1
+                    } else {
+                        0
+                    };
+                    func.instruction(&Instruction::LocalGet(scratch));
+                    func.instruction(&Instruction::RefCastNonNull(
+                        wasm_encoder::HeapType::Concrete(tuple_idx),
+                    ));
+                    func.instruction(&Instruction::StructGet {
+                        struct_type_index: tuple_idx,
+                        field_index: i as u32,
+                    });
+                    func.instruction(&Instruction::RefCastNonNull(
+                        wasm_encoder::HeapType::Concrete(res_idx),
+                    ));
+                    func.instruction(&Instruction::StructGet {
+                        struct_type_index: res_idx,
+                        field_index: 0,
+                    });
+                    func.instruction(&Instruction::I32Const(expected_tag));
+                    func.instruction(&Instruction::I32Eq);
+                    if tests_emitted > 0 {
+                        func.instruction(&Instruction::I32And);
+                    }
+                    tests_emitted += 1;
+                }
+            }
+            if tests_emitted == 0 {
+                func.instruction(&Instruction::I32Const(1));
+            }
+            func.instruction(&Instruction::If(block_ty));
+            // Bindings: a direct `Bind` element captures the whole tuple
+            // field; a `Result` ctor element captures its payload.
+            for (i, pat) in items.iter().enumerate() {
+                match pat {
+                    MirPattern::Bind(slot, _) if slot.0 != u32::from(u16::MAX) => {
+                        func.instruction(&Instruction::LocalGet(scratch));
+                        func.instruction(&Instruction::RefCastNonNull(
+                            wasm_encoder::HeapType::Concrete(tuple_idx),
+                        ));
+                        func.instruction(&Instruction::StructGet {
+                            struct_type_index: tuple_idx,
+                            field_index: i as u32,
+                        });
+                        func.instruction(&Instruction::LocalSet(slot.0));
+                    }
+                    MirPattern::Ctor {
+                        ctor: MirCtor::Builtin(bc),
+                        bindings,
+                        ..
+                    } if matches!(bc, BuiltinCtor::ResultOk | BuiltinCtor::ResultErr) => {
+                        let elem_canonical: String =
+                            elems[i].chars().filter(|c| !c.is_whitespace()).collect();
+                        let res_idx =
+                            ctx.registry
+                                .result_type_idx(&elem_canonical)
+                                .ok_or(WasmGcError::Validation(
+                                "tuple-of-constructors match: element is not a registered Result"
+                                    .into(),
+                            ))?;
+                        let payload_field: u32 = if matches!(bc, BuiltinCtor::ResultOk) {
+                            1
+                        } else {
+                            2
+                        };
+                        for binding in bindings {
+                            if binding.0 == u32::from(u16::MAX) {
+                                continue;
+                            }
+                            func.instruction(&Instruction::LocalGet(scratch));
+                            func.instruction(&Instruction::RefCastNonNull(
+                                wasm_encoder::HeapType::Concrete(tuple_idx),
+                            ));
+                            func.instruction(&Instruction::StructGet {
+                                struct_type_index: tuple_idx,
+                                field_index: i as u32,
+                            });
+                            func.instruction(&Instruction::RefCastNonNull(
+                                wasm_encoder::HeapType::Concrete(res_idx),
+                            ));
+                            func.instruction(&Instruction::StructGet {
+                                struct_type_index: res_idx,
+                                field_index: payload_field,
+                            });
+                            func.instruction(&Instruction::LocalSet(binding.0));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if emit_mir_expr(func, &arm.body, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::Else);
+            if emit_mir_tuple_constructor_arm_cascade(
+                func,
+                scratch,
+                tuple_idx,
+                elems,
+                &arms[1..],
+                block_ty,
+                slots,
+                ctx,
+            )?
+            .is_none()
+            {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::End);
+        }
+        _ => return Ok(None),
+    }
+    Ok(Some(()))
 }
 
 /// Mirror of `emit_string_match` (emit.rs): stash the subject in the
