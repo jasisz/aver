@@ -77,10 +77,10 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
         }
         MirExpr::Neg(inner) | MirExpr::Return(inner) => mir_expr_coverable(inner),
         MirExpr::Let(spanned_let) => {
+            // Named bindings and statement-sequencing synthetic lets
+            // (empty `binding_name`) are both covered.
             let l = &spanned_let.node;
-            !l.binding_name.is_empty()
-                && mir_expr_coverable(&l.value)
-                && mir_expr_coverable(&l.body)
+            mir_expr_coverable(&l.value) && mir_expr_coverable(&l.body)
         }
         MirExpr::Call(spanned_call) => {
             matches!(spanned_call.node.callee, MirCallee::Fn(_))
