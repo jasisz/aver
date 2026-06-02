@@ -1,6 +1,7 @@
 //! Built-in call lowering: the custom-inline `Float` / `Int` / `Bool`
 //! scalar ops, `Char.toCode`, the `List` / `Vector` / `Map` families,
-//! and the numeric `BinOp` tail. Mirrors the custom-inline arms of
+//! the fused `Option.withDefault(Vector.get, <literal>)`, and the
+//! numeric `BinOp` tail. Mirrors the custom-inline arms of
 //! `emit_dotted_builtin` and `emit_expr`'s numeric `BinOp` branch.
 
 use super::*;
@@ -154,6 +155,92 @@ pub(crate) fn emit_mir_native_scalar_builtin(
         }
         _ => return Ok(MirBuiltinEmit::NotHandled),
     }
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// The one fused `Option.withDefault` shape this emitter covers:
+/// `Option.withDefault(Vector.get(v, i), <literal>)` — the
+/// `VectorGetOrDefaultLiteral` leaf (mirror of `emit_vector_get_or_default`
+/// via `emit_option_with_default`). Unambiguous to recognise (the
+/// default must be a `Literal`, the inner a 2-arg `Vector.get`), so no
+/// risk of over-matching the oracle's `classify_leaf_op_resolved`. The
+/// other fused shapes — `VectorSetOrDefaultSameVector` (a structural
+/// `default == vector` test that hinges on `last_use`), the `Map.get`
+/// fusion, and the real-`Option<T>` boxed fallback — return `NotHandled`
+/// so the whole fn falls back to the resolved-HIR emitter.
+pub(crate) fn emit_mir_option_with_default(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    if dotted != "Option.withDefault" || args.len() != 2 {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    // Default must be a literal (the `VectorGetOrDefaultLiteral` shape).
+    if !matches!(args[1].node, MirExpr::Literal(_)) {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    // Inner must be a 2-arg `Vector.get` builtin call.
+    let MirExpr::Call(inner) = &args[0].node else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    let inner = &inner.node;
+    let MirCallee::Builtin(inner_id) = inner.callee else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    let Some(inner_dotted) = ctx.mir_builtins.and_then(|n| n.get(inner_id.0 as usize)) else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    if inner_dotted != "Vector.get" || inner.args.len() != 2 {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    let vector = &inner.args[0];
+    let index = &inner.args[1];
+    let default = &args[1];
+
+    // Mirror of `emit_vector_get_or_default`: bounds-check
+    // `0 <= i < len`, `array.get` on success, the literal default on OOB.
+    let vec_aver = aver_type_str_of(vector);
+    let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let vec_idx = ctx
+        .registry
+        .vector_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Vector.get: vector arg of type `{vec_aver}` is not a registered Vector<T>"
+        )))?;
+    let element = TypeRegistry::vector_element_type(&canonical).ok_or(WasmGcError::Validation(
+        format!("Vector.get: cannot parse element type from `{canonical}`"),
+    ))?;
+    let elem_val = aver_to_wasm(element, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
+        format!("Vector.get: element type `{element}` has no wasm representation"),
+    ))?;
+    let block_ty = wasm_encoder::BlockType::Result(elem_val);
+    macro_rules! e {
+        ($x:expr) => {
+            if emit_mir_expr(func, $x, slots, ctx)?.is_none() {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+    e!(index);
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::I64GeS);
+    e!(index);
+    func.instruction(&Instruction::I32WrapI64);
+    e!(vector);
+    func.instruction(&Instruction::ArrayLen);
+    func.instruction(&Instruction::I32LtU);
+    func.instruction(&Instruction::I32And);
+    func.instruction(&Instruction::If(block_ty));
+    e!(vector);
+    e!(index);
+    func.instruction(&Instruction::I32WrapI64);
+    func.instruction(&Instruction::ArrayGet(vec_idx));
+    func.instruction(&Instruction::Else);
+    e!(default);
+    func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
 }
 

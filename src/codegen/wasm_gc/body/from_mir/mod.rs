@@ -33,7 +33,8 @@
 //! - [`records`] — `RecordCreate` / `RecordUpdate`.
 //! - [`collections`] — `List` literals.
 //! - [`builtins`] — the custom-inline `Float` / `Int` / `Bool` scalar
-//!   ops, `Char.toCode`, the `List` / `Vector` / `Map` families, and the
+//!   ops, `Char.toCode`, the `List` / `Vector` / `Map` families, the
+//!   fused `Option.withDefault(Vector.get(v, i), <literal>)`, and the
 //!   numeric `BinOp` tail.
 //! - [`strings`] — `InterpolatedStr` and the `String` `BinOp` ops.
 //! - [`control`] — `Try` (`?` propagation) and `IndependentProduct`
@@ -416,6 +417,13 @@ pub(crate) fn emit_mir_expr(
                     // `Map.*` per-instantiation helper dispatch — also not
                     // in `fn_map.builtins`.
                     match emit_mir_map_builtin(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
+                    // Fused `Option.withDefault(Vector.get(v, i), <literal>)`.
+                    // Other `withDefault` shapes fall through to fallback.
+                    match emit_mir_option_with_default(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
