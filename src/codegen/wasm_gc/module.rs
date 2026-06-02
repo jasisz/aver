@@ -2275,8 +2275,8 @@ pub(super) fn emit_module_with(
     // MIR mirrors the resolved HIR shape 1:1 — the body walk that
     // follows emits byte-identical wasm to the `ResolvedExpr` emitter
     // for the variants it covers, and returns `None` (whole-fn
-    // fallback) for everything else, keeping the corpus + game suite
-    // green while MIR coverage widens.
+    // fallback) for everything else, so the corpus + game suite stay
+    // green over whatever subset of variants the body walk covers.
     // `enable_mir == false` forces the `ResolvedExpr` path everywhere;
     // the byte-differential test (`tests/wasm_gc_differential_mir.rs`)
     // compiles both ways and asserts the emitted fn bytes match.

@@ -5,12 +5,13 @@
 use super::*;
 
 /// Mirror of `emit_match` (emit.rs) for the primitive-subject shapes:
-/// `Bool` (a single `if`/`else`) and `Int` (an `i64.eq` cascade). Any
-/// arm carrying a constructor / list / tuple pattern is routed to the
-/// carrier / list / variant paths below (tuple falls back).
-/// `String`-subject matches
-/// (which need the reserved subject scratch + `__wasmgc_string_eq`) and
-/// any other subject type also fall back. Shapes `emit_match` rejects
+/// `Bool` (a single `if`/`else`) and `Int` (an `i64.eq` cascade). An
+/// arm carrying a constructor or list pattern is routed to the carrier
+/// / list / variant paths below; a tuple pattern falls back (handled by
+/// the `ResolvedExpr` emitter, not here). `String`-subject matches go to
+/// `emit_mir_string_match` below (which uses the reserved subject
+/// scratch + `__wasmgc_string_eq`); any other subject type falls back.
+/// Shapes `emit_match` rejects
 /// outright (a `Bool` match without exactly 2 true/false/wildcard arms,
 /// an `Int` match without a wildcard, a bind pattern on a primitive
 /// subject) return `Ok(None)` here — the `ResolvedExpr` emitter then
