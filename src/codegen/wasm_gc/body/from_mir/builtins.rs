@@ -295,7 +295,7 @@ pub(crate) fn emit_mir_list_builtin(
 /// MIR analogue of `EmitCtx::arg_uniquely_owned` (body.rs). The
 /// ownership fast-path key — `last_use` on a non-alias-prone local — is
 /// carried verbatim on `MirLocal` (the lowerer copies it from
-/// `ResolvedExpr::Resolved { last_use }`, see `lower.rs`), and
+/// `ResolvedExpr::Resolved { last_use }`, see `crate::ir::mir::lower`), and
 /// `is_aliased_slot` reads the same resolver `aliased_slots` table, so
 /// this returns the identical verdict to the HIR oracle for the same
 /// source expression. Anonymous / transient args are uniquely owned.
@@ -621,7 +621,3 @@ pub(crate) fn emit_mir_numeric_binop(
     func.instruction(&inst);
     Ok(Some(()))
 }
-
-// ---------------------------------------------------------------------------
-// Coverage diagnostic (mirrors `crate::codegen::rust::from_mir`)
-// ---------------------------------------------------------------------------

@@ -5,11 +5,10 @@
 //! **byte-identical** wasm — one semantic walker per construct lives in
 //! MIR, and every backend reads it instead of forking `ResolvedExpr`.
 //!
-//! [`emit_mir_expr`] is the dispatcher. Any construct it does not yet
-//! cover returns `Ok(None)`; the caller ([`emit_fn_body_via_mir`]) then
+//! [`emit_mir_expr`] is the dispatcher. Any construct it does not cover
+//! returns `Ok(None)`; the caller ([`emit_fn_body_via_mir`]) then
 //! discards `func` and re-runs the `ResolvedExpr` emitter for the whole
-//! function. Coverage therefore widens one construct at a time while the
-//! corpus and games stay green. Two byte-differential tests compile
+//! function. Two byte-differential tests compile
 //! every single-file example and every multi-module game both ways (MIR
 //! on vs forced off) and assert the modules are identical — the gate
 //! that keeps each mirror exact.
@@ -18,8 +17,9 @@
 //!
 //! Dispatcher ([`emit_mir_expr`], this module): `Literal`, `Local`
 //! (`local.get` of the resolver slot), numeric `BinOp` / `Neg`,
-//! `Return`, named `Let`, `Call(Fn)` / `TailCall`, and the `Tuple` /
-//! `MapLiteral` literals. Synthetic lets (`_ = expr`, intermediate
+//! `Return`, named `Let`, `Call(Fn)` / `TailCall`, `Project` (mirroring
+//! `emit_attr_get`), and the `Tuple` / `MapLiteral` literals. Synthetic
+//! lets (`_ = expr`, intermediate
 //! `Stmt::Expr`) and higher-order callees (`FnValue`, `LocalSlot`) fall
 //! back. Registered-helper builtins go through the `fn_map.builtins`
 //! lookup here.
@@ -27,7 +27,7 @@
 //! - [`pattern_match`] — `Match` over `Bool` / `Int` / `String`,
 //!   `Option` / `Result` / `List` carriers, and user sum types.
 //! - [`constructors`] — `Construct` (user variants, `Option`, `Result`).
-//! - [`records`] — `RecordCreate` / `RecordUpdate` / `Project`.
+//! - [`records`] — `RecordCreate` / `RecordUpdate`.
 //! - [`collections`] — `List` literals.
 //! - [`builtins`] — the custom-inline `Float` / `Int` / `Bool` scalar
 //!   ops, the `List` and `Vector` families, and the numeric `BinOp` tail.
@@ -596,9 +596,12 @@ pub(crate) fn emit_mir_expr(
         },
         MirExpr::Try(inner) => emit_mir_try(func, inner, slots, ctx),
         MirExpr::InterpolatedStr(parts) => emit_mir_interpolated_str(func, parts, slots, ctx),
-        // FnValue (a fn referenced as a value) is higher-order — wasm-gc
-        // has no first-class fn representation — so it falls back to the
-        // `ResolvedExpr` emitter pending a verified byte-identical shape.
+        // Catch-all fallback to the `ResolvedExpr` emitter. Reaches here:
+        // `FnValue` (a fn referenced as a value — wasm-gc has no
+        // first-class fn representation) and `IndependentProduct`
+        // (`(a, b, c)?!`). `IfThenElse` would too, but only the
+        // `bool_match_to_if` optimizer produces it and this path's
+        // `lower_program` runs no optimizer passes, so it never arrives.
         _ => Ok(None),
     }
 }

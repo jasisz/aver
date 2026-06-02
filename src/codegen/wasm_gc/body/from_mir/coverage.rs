@@ -120,8 +120,9 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             // predicate has no registry, so it can't model the Map.get
             // fused-Option fallback — a tolerable over-count, since this
             // only feeds `--explain-mir-coverage`; the real per-fn
-            // dispatch is what the wire-up + differential test use).
-            // Tuple arms are not yet covered.
+            // dispatch in `emit_mir_match` is what the byte-differential
+            // test checks). Tuple-pattern arms fall back to the
+            // `ResolvedExpr` emitter (mirror of `emit_mir_match`).
             let m = &spanned_match.node;
             let unsupported_pat = m
                 .arms
