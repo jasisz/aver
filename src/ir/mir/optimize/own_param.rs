@@ -92,6 +92,37 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
         return program;
     }
 
+    // Aggregate-capture aliasing. A slot whose value is stored DIRECTLY
+    // into an aggregate (record / record-update / variant / tuple / list /
+    // map literal / independent product) is shared with that aggregate —
+    // an in-place mutation of the slot would corrupt the aggregate's copy.
+    // `last_use` marks the slot dead (the aggregate field, not the slot,
+    // is read later) and alias.rs RULE 2 does not model the capture, so
+    // without this the analysis would treat such a slot as uniquely owned
+    // and un-flag a param fed by it — a silent corruption (a vector
+    // aliased into a record field, then own-mutated through that param).
+    // Flag every captured slot up front so it is never un-flagged and
+    // never owned-mutated. (Only DIRECT `Local` field/element values
+    // alias; a `Local` nested inside a sub-computation is consumed by it,
+    // not stored into the aggregate.)
+    for (_, f) in program.fns.iter_mut() {
+        let mut captured: HashSet<u32> = HashSet::new();
+        collect_captured_slots(&f.body.node, &mut captured);
+        if captured.is_empty() {
+            continue;
+        }
+        let mut slots = f.aliased_slots.as_ref().clone();
+        if let Some(&max) = captured.iter().max()
+            && (max as usize) >= slots.len()
+        {
+            slots.resize(max as usize + 1, false);
+        }
+        for s in captured {
+            slots[s as usize] = true;
+        }
+        f.aliased_slots = Arc::new(slots);
+    }
+
     // Address-taken fns: any name appearing in a `MirExpr::FnValue`.
     let mut address_taken: HashSet<String> = HashSet::new();
     for (_, f) in program.iter() {
@@ -410,6 +441,56 @@ fn collect_let_bindings(e: &MirExpr, out: &mut HashMap<u32, Spanned<MirExpr>>) {
             .or_insert_with(|| (*l.node.value).clone());
     }
     visit_children(e, &mut |c| collect_let_bindings(c, out));
+}
+
+/// Collect slots whose value is captured DIRECTLY as a field/element of
+/// an aggregate constructor — the aggregate then shares the slot's
+/// backing, so mutating the slot in place would corrupt the aggregate.
+/// Only direct `Local` operands alias; a `Local` nested inside a
+/// sub-computation is consumed by it (its result, not the slot, lands in
+/// the aggregate), so the recursive `visit_children` walk picks up
+/// deeper aggregates without over-flagging those consumed operands.
+fn collect_captured_slots(e: &MirExpr, out: &mut HashSet<u32>) {
+    fn flag(item: &Spanned<MirExpr>, out: &mut HashSet<u32>) {
+        if let MirExpr::Local(l) = &item.node {
+            out.insert(l.node.slot.0);
+        }
+    }
+    match e {
+        MirExpr::RecordCreate(r) => {
+            for f in &r.node.fields {
+                flag(&f.value, out);
+            }
+        }
+        MirExpr::RecordUpdate(u) => {
+            for f in &u.node.updates {
+                flag(&f.value, out);
+            }
+        }
+        MirExpr::Construct(c) => {
+            for a in &c.node.args {
+                flag(a, out);
+            }
+        }
+        MirExpr::Tuple(items) | MirExpr::List(items) => {
+            for i in items {
+                flag(i, out);
+            }
+        }
+        MirExpr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                flag(k, out);
+                flag(v, out);
+            }
+        }
+        MirExpr::IndependentProduct(ip) => {
+            for i in &ip.node.items {
+                flag(i, out);
+            }
+        }
+        _ => {}
+    }
+    visit_children(e, &mut |c| collect_captured_slots(c, out));
 }
 
 /// Collect visible `Call(Fn)` / `TailCall` edges made from `caller`.

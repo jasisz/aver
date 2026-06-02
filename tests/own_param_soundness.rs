@@ -183,6 +183,41 @@ fn main() -> Unit
     assert_sound("map_set", src, "7");
 }
 
+/// Aggregate-capture aliasing: a vector stored into a record field, then
+/// own-mutated through a param the refinement would otherwise un-flag.
+/// `last_use` marks the slot dead (only the record field is read after),
+/// but the field aliases the same backing — so an in-place mutation would
+/// corrupt it. Correct = `7`; corruption surfaces as `99`. This is the
+/// class the first soundness suite missed (a shipped VM corruption found
+/// by an adversarial pass): the captured slot must stay flagged.
+#[test]
+fn vector_aliased_into_record_field_is_not_mutated_in_place() {
+    let src = r#"module Rec
+    intent = "vector aliased into a record field, then own-mutated through a param"
+    depends []
+    effects [Console.print]
+
+record Box
+    v: Vector<Int>
+
+fn clobber(w: Vector<Int>) -> Int
+    ? "self-keep set on param w"
+    c = Option.withDefault(Vector.set(w, 0, 99), w)
+    Option.withDefault(Vector.get(c, 0), 0 - 1)
+
+fn run() -> Int
+    a = Vector.new(2, 7)
+    box = Box(v = a)
+    x = clobber(a)
+    Option.withDefault(Vector.get(box.v, 0), 0 - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("record_capture", src, "7");
+}
+
 /// The headline win: a linearly-threaded vector param the refinement
 /// *should* un-flag. Asserts the fill+sum result is correct (so the
 /// optimization is exercised, not silently a no-op) and identical with
