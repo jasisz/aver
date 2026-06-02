@@ -79,7 +79,9 @@ pub(crate) fn emit_mir_match(
     }
     if m.arms.iter().any(arm_is_mir_option_ctor) {
         if subject_is_map_get(&m.subject, ctx) {
-            return Ok(None);
+            return Ok(
+                emit_mir_map_get_match_fused(func, m, block_ty, slots, ctx)?.map(|()| produces)
+            );
         }
         return Ok(emit_mir_option_match(func, m, block_ty, slots, ctx)?.map(|()| produces));
     }
@@ -500,6 +502,100 @@ fn emit_mir_tuple_constructor_arm_cascade(
         }
         _ => return Ok(None),
     }
+    Ok(Some(()))
+}
+
+/// Mirror of `emit_map_get_match_fused` (emit.rs): the fused
+/// `match Map.get(m, k) { Option.Some(v) -> …; Option.None -> … }`,
+/// lowered through the per-(K,V) `get_pair` helper (multi-result
+/// `(i32 found, V value)`) without ever allocating an `Option<V>`. The
+/// value is popped into the `Some` binding slot (or dropped when there's
+/// no binding) **before** the branch — wasm needs a balanced stack
+/// across the `if`/`else` — then `found` selects the arm. Returns
+/// `Ok(None)` (whole-fn fallback) if the subject isn't a 2-arg
+/// `Map.get`, the map has no registered helpers, or a Some/None arm is
+/// missing.
+fn emit_mir_map_get_match_fused(
+    func: &mut Function,
+    m: &MirMatch,
+    block_ty: wasm_encoder::BlockType,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<()>, WasmGcError> {
+    // Subject is `Map.get(map, key)` — `subject_is_map_get` already
+    // proved the builtin name + arity at the call site.
+    let MirExpr::Call(call) = &m.subject.node else {
+        return Ok(None);
+    };
+    let call = &call.node;
+    if call.args.len() != 2 {
+        return Ok(None);
+    }
+    let map = &call.args[0];
+    let key = &call.args[1];
+
+    let map_aver = aver_type_str_of(map);
+    let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let Some(helpers) = ctx.fn_map.map_helpers_lookup(&canonical) else {
+        return Ok(None);
+    };
+    let get_pair = helpers.get_pair;
+
+    // Locate the Some / None arms (a wildcard is the None catch-all; a
+    // second wildcard fills Some) — mirror of the oracle's arm scan.
+    let mut some_arm: Option<&MirMatchArm> = None;
+    let mut none_arm: Option<&MirMatchArm> = None;
+    for arm in &m.arms {
+        match &arm.pattern {
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::OptionSome),
+                ..
+            } => some_arm = Some(arm),
+            MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
+                ..
+            } => none_arm = Some(arm),
+            MirPattern::Wildcard => {
+                if none_arm.is_none() {
+                    none_arm = Some(arm);
+                } else if some_arm.is_none() {
+                    some_arm = Some(arm);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (Some(some_arm), Some(none_arm)) = (some_arm, none_arm) else {
+        return Ok(None);
+    };
+
+    if emit_mir_expr(func, map, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    if emit_mir_expr(func, key, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::Call(get_pair));
+    // Stack: [..., found(i32), value(V)]. Pop V into the Some binding
+    // (or drop it) unconditionally so the stack is balanced across the
+    // branch; the value is harmlessly dead on the None side.
+    match ctor_arm_binding_slot(some_arm) {
+        Some(slot) => {
+            func.instruction(&Instruction::LocalSet(slot));
+        }
+        None => {
+            func.instruction(&Instruction::Drop);
+        }
+    }
+    func.instruction(&Instruction::If(block_ty));
+    if emit_mir_expr(func, &some_arm.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::Else);
+    if emit_mir_expr(func, &none_arm.body, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::End);
     Ok(Some(()))
 }
 
