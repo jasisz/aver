@@ -36,7 +36,8 @@
 //!   ops, `Char.toCode`, the `List` / `Vector` / `Map` families, and the
 //!   numeric `BinOp` tail.
 //! - [`strings`] — `InterpolatedStr` and the `String` `BinOp` ops.
-//! - [`control`] — `Try` (`?` propagation).
+//! - [`control`] — `Try` (`?` propagation) and `IndependentProduct`
+//!   (`(a, b, c)!` / `?!`).
 //! - [`coverage`] — the `--explain-mir-coverage` predicate (diagnostic).
 //!
 //! Each submodule documents the exact `emit_expr` helper it mirrors and
@@ -52,15 +53,16 @@ pub(super) use crate::ir::CtorId;
 pub(super) use crate::ir::SymbolTable;
 pub(super) use crate::ir::hir::{ResolvedFnBody, ResolvedFnDef, ResolvedStmt};
 pub(super) use crate::ir::mir::{
-    BuiltinCtor, MirCallee, MirCtor, MirExpr, MirFn, MirMatch, MirMatchArm, MirPattern, MirProgram,
-    MirRecordField, MirStrPart,
+    BuiltinCtor, MirCallee, MirCtor, MirExpr, MirFn, MirIndependentProduct, MirMatch, MirMatchArm,
+    MirPattern, MirProgram, MirRecordField, MirStrPart,
 };
 pub(super) use crate::types::Type;
 
 pub(super) use super::super::WasmGcError;
 pub(super) use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm, normalize_compound};
 pub(super) use super::emit::{
-    emit_caller_fn_idx, emit_default_value, emit_return_call_insn, emit_string_literal_bytes,
+    emit_branch_marker, emit_caller_fn_idx, emit_default_value, emit_group_call,
+    emit_return_call_insn, emit_string_literal_bytes,
 };
 pub(super) use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 pub(super) use super::slots::count_value_params;
@@ -639,12 +641,15 @@ pub(crate) fn emit_mir_expr(
         },
         MirExpr::Try(inner) => emit_mir_try(func, inner, slots, ctx),
         MirExpr::InterpolatedStr(parts) => emit_mir_interpolated_str(func, parts, slots, ctx),
+        MirExpr::IndependentProduct(spanned_ip) => {
+            emit_mir_independent_product(func, &spanned_ip.node, slots, ctx)
+        }
         // Catch-all fallback to the `ResolvedExpr` emitter. Reaches here:
         // `FnValue` (a fn referenced as a value — wasm-gc has no
-        // first-class fn representation) and `IndependentProduct`
-        // (`(a, b, c)?!`). `IfThenElse` would too, but only the
-        // `bool_match_to_if` optimizer produces it and this path's
-        // `lower_program` runs no optimizer passes, so it never arrives.
+        // first-class fn representation). `IfThenElse` would too, but
+        // only the `bool_match_to_if` optimizer produces it and this
+        // path's `lower_program` runs no optimizer passes, so it never
+        // arrives.
         _ => Ok(None),
     }
 }

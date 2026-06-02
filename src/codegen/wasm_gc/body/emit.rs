@@ -1421,7 +1421,7 @@ pub(super) fn emit_independent_product_unwrap(
 /// `caller_fn` stamp every effect import now carries; the host
 /// ignores it for group markers but the wasm signature still has
 /// to match.
-fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
+pub(super) fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
     if let Some(idx) = ctx.effect_idx_lookup.get(op) {
         if emit_caller_fn_idx(func, ctx).is_err() {
             // Should never trip — every fn def has a global allocated
@@ -1437,7 +1437,7 @@ fn emit_group_call(func: &mut Function, ctx: &EmitCtx<'_>, op: &str) {
 /// to switch the recorder's active branch before evaluating each
 /// element. Trailing caller_fn ignored host-side but its slot is
 /// part of the import signature.
-fn emit_branch_marker(func: &mut Function, ctx: &EmitCtx<'_>, branch_idx: u32) {
+pub(super) fn emit_branch_marker(func: &mut Function, ctx: &EmitCtx<'_>, branch_idx: u32) {
     if let Some(idx) = ctx.effect_idx_lookup.get("__record_set_branch") {
         func.instruction(&Instruction::I64Const(branch_idx as i64));
         if emit_caller_fn_idx(func, ctx).is_err() {
