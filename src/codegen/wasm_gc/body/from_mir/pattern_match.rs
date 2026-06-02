@@ -7,8 +7,9 @@ use super::*;
 /// Mirror of `emit_match` (emit.rs) for the primitive-subject shapes:
 /// `Bool` (a single `if`/`else`) and `Int` (an `i64.eq` cascade). An
 /// arm carrying a constructor or list pattern is routed to the carrier
-/// / list / variant paths below; a tuple pattern falls back (handled by
-/// the `ResolvedExpr` emitter, not here). `String`-subject matches go to
+/// / list / variant paths below; a single-arm flat tuple destructure
+/// goes to `emit_mir_tuple_match` and any other tuple shape falls back.
+/// `String`-subject matches go to
 /// `emit_mir_string_match` below (which uses the reserved subject
 /// scratch + `__wasmgc_string_eq`); any other subject type falls back.
 /// Shapes `emit_match` rejects
@@ -25,13 +26,25 @@ pub(crate) fn emit_mir_match(
     if m.arms.is_empty() {
         return Err(WasmGcError::Validation("match has no arms".into()));
     }
-    // Tuple arms (single-arm destructure / multi-arm tuple-of-
-    // constructors) still fall back. List, built-in `Result` / `Option`,
-    // and user-variant constructor patterns are handled below.
+    // Tuple arms. The single-arm flat destructure `(a, b, …) -> body`
+    // (every component a `Bind` or `Wildcard`) is emitted here — mirror
+    // of `emit_match`'s `arms.len() == 1 && Tuple && items >= 2` →
+    // `emit_tuple_match` branch. The multi-arm tuple-of-constructors
+    // cascade (`emit_tuple_constructor_match`) and any nested
+    // per-element pattern still fall back to the resolved-HIR emitter.
     if m.arms
         .iter()
         .any(|a| matches!(a.pattern, MirPattern::Tuple(_)))
     {
+        if m.arms.len() == 1
+            && let MirPattern::Tuple(items) = &m.arms[0].pattern
+            && items.len() >= 2
+            && items
+                .iter()
+                .all(|p| matches!(p, MirPattern::Bind(..) | MirPattern::Wildcard))
+        {
+            return emit_mir_tuple_match(func, &m.subject, &m.arms[0], slots, ctx);
+        }
         return Ok(None);
     }
 
@@ -174,6 +187,66 @@ pub(crate) fn emit_mir_match(
         // Non-primitive subjects (sum/record/etc.) fall back.
         _ => Ok(None),
     }
+}
+
+/// Mirror of `emit_tuple_match` (emit.rs): the single-arm flat tuple
+/// destructure `match pair { (a, b, …) -> body }`. Stash the subject in
+/// the reserved scratch, then for each `Bind` component `struct.get` the
+/// field into its resolver-allocated slot (a `Wildcard` component binds
+/// nothing, exactly as the oracle skips non-`Ident` items); finally emit
+/// the arm body, whose value is the match's value. Variadic arity
+/// (any N >= 2). Returns `None` (whole-fn fallback) if the subject type
+/// has no registered `Tuple<…>` slot, the scratch is missing, or a
+/// subtree is unsupported.
+fn emit_mir_tuple_match(
+    func: &mut Function,
+    subject: &Spanned<MirExpr>,
+    arm: &MirMatchArm,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<Option<bool>, WasmGcError> {
+    let MirPattern::Tuple(items) = &arm.pattern else {
+        return Ok(None);
+    };
+    let subj_ty = aver_type_str_of(subject);
+    let canonical: String = subj_ty.chars().filter(|c| !c.is_whitespace()).collect();
+    let tuple_idx = ctx
+        .registry
+        .tuple_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Tuple match: subject type `{subj_ty}` is not a registered Tuple<A,B>"
+        )))?;
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Tuple match needs a subject scratch slot but none was reserved".into(),
+    ))?;
+    if emit_mir_expr(func, subject, slots, ctx)?.is_none() {
+        return Ok(None);
+    }
+    func.instruction(&Instruction::LocalSet(scratch));
+    // Each `Bind` field is extracted into its slot; the MIR `Bind`
+    // slot is seeded from the resolver's `binding_slots`, so it matches
+    // the oracle's `arm_slots` entry. An ignored binding (`u16::MAX`)
+    // and a `Wildcard` component both extract nothing.
+    for (field_idx, pat) in items.iter().enumerate() {
+        if let MirPattern::Bind(slot, _) = pat
+            && slot.0 != u32::from(u16::MAX)
+        {
+            func.instruction(&Instruction::LocalGet(scratch));
+            func.instruction(&Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(tuple_idx),
+            ));
+            func.instruction(&Instruction::StructGet {
+                struct_type_index: tuple_idx,
+                field_index: field_idx as u32,
+            });
+            func.instruction(&Instruction::LocalSet(slot.0));
+        }
+    }
+    // The arm body's value is the match's value, left on the stack.
+    let Some(produces) = emit_mir_expr(func, &arm.body, slots, ctx)? else {
+        return Ok(None);
+    };
+    Ok(Some(produces))
 }
 
 /// Mirror of `emit_string_match` (emit.rs): stash the subject in the
