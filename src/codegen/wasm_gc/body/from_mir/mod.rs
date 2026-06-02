@@ -65,9 +65,10 @@ pub(super) use crate::types::Type;
 
 pub(super) use super::super::WasmGcError;
 pub(super) use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm, normalize_compound};
+pub(super) use super::builtins::emit_args_get_inline;
 pub(super) use super::emit::{
     emit_branch_marker, emit_caller_fn_idx, emit_default_value, emit_group_call,
-    emit_return_call_insn, emit_string_literal_bytes,
+    emit_return_call_insn, emit_string_literal_bytes, sum_or_record_eq_fn,
 };
 pub(super) use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 pub(super) use super::slots::count_value_params;
@@ -171,6 +172,29 @@ pub(crate) fn emit_fn_body_via_mir(
     Ok(Some(slots.extra_locals(count_value_params(&rfd.params))))
 }
 
+/// Mirror of `emit_expr`'s `nullary_variant_idx`: if `operand` is a
+/// nullary user-variant value (`Tile.Floor`, lowered to a `Construct`
+/// with no args of a zero-field variant), return that variant struct's
+/// type index — so `<expr> == Tile.Floor` can lower to a `ref.test`
+/// rather than a structural eq-helper call, matching the oracle.
+fn mir_nullary_variant_idx(operand: &Spanned<MirExpr>, ctx: &EmitCtx<'_>) -> Option<u32> {
+    let MirExpr::Construct(c) = &operand.node else {
+        return None;
+    };
+    let MirCtor::User(ctor_id) = c.node.ctor else {
+        return None;
+    };
+    if !c.node.args.is_empty() {
+        return None;
+    }
+    let info = mir_user_variant_info(ctor_id, ctx).ok()?;
+    if info.fields.is_empty() {
+        Some(info.type_idx)
+    } else {
+        None
+    }
+}
+
 /// Emit instructions for a MIR `expr`, returning `Ok(Some(produces))`
 /// where `produces` is `true` when evaluating `expr` leaves a value on
 /// the stack (i.e. its type is not `Unit`) — the same
@@ -248,6 +272,53 @@ pub(crate) fn emit_mir_expr(
                 Some(Type::Int) | Some(Type::Float) => {
                     if emit_mir_numeric_binop(func, bop, slots, ctx)?.is_none() {
                         return Ok(None);
+                    }
+                    Ok(Some(true))
+                }
+                // `==` / `!=` on a user type — mirror of `emit_expr`'s
+                // three sub-branches, in the SAME order so the bytes match:
+                // (1) `<expr> == NullaryVariant` and (2) the flipped form
+                // lower to a `ref.test` on the variant struct; (3) any
+                // other sum / record / carrier compare goes through the
+                // per-type `__eq_<T>` helper. `!=` appends `i32.eqz`.
+                Some(lty) if matches!(bop.op, BinOp::Eq | BinOp::Neq) => {
+                    let neq = matches!(bop.op, BinOp::Neq);
+                    if let Some(vidx) = mir_nullary_variant_idx(&bop.rhs, ctx) {
+                        if emit_mir_expr(func, &bop.lhs, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::RefTestNonNull(
+                            wasm_encoder::HeapType::Concrete(vidx),
+                        ));
+                        if neq {
+                            func.instruction(&Instruction::I32Eqz);
+                        }
+                        return Ok(Some(true));
+                    }
+                    if let Some(vidx) = mir_nullary_variant_idx(&bop.lhs, ctx) {
+                        if emit_mir_expr(func, &bop.rhs, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::RefTestNonNull(
+                            wasm_encoder::HeapType::Concrete(vidx),
+                        ));
+                        if neq {
+                            func.instruction(&Instruction::I32Eqz);
+                        }
+                        return Ok(Some(true));
+                    }
+                    let Some(eq_fn) = sum_or_record_eq_fn(lty, ctx) else {
+                        return Ok(None);
+                    };
+                    if emit_mir_expr(func, &bop.lhs, slots, ctx)?.is_none() {
+                        return Ok(None);
+                    }
+                    if emit_mir_expr(func, &bop.rhs, slots, ctx)?.is_none() {
+                        return Ok(None);
+                    }
+                    func.instruction(&Instruction::Call(eq_fn));
+                    if neq {
+                        func.instruction(&Instruction::I32Eqz);
                     }
                     Ok(Some(true))
                 }
@@ -368,14 +439,15 @@ pub(crate) fn emit_mir_expr(
                     };
                     let dotted = dotted.as_str();
                     // `Args.get` is intercepted *before* the effect /
-                    // builtin dispatch in `emit_dotted_builtin` and
-                    // expands to a custom inline (`emit_args_get_inline`)
-                    // that this emitter does not mirror — even though it
-                    // is also registered in `fn_map.effects`. Fall back so
-                    // the `ResolvedExpr` emitter produces that inline,
-                    // rather than the effect-import shape below.
+                    // builtin dispatch in `emit_dotted_builtin` and expands
+                    // to a custom inline (the `Args.len` loop building a
+                    // `List<String>`), even though it is also registered in
+                    // `fn_map.effects`. Reuse the oracle's inline verbatim —
+                    // it is `ResolvedExpr`-free (func + slots + ctx) — so the
+                    // bytes match and `Args.get` no longer forces a fallback.
                     if dotted == "Args.get" {
-                        return Ok(None);
+                        emit_args_get_inline(func, slots, ctx)?;
+                        return Ok(Some(aver_type_str_of(expr).trim() != "Unit"));
                     }
                     // Registered effect import (`Console.*`, `Disk.*`,
                     // `Tcp.*`, `Http.*`, `Random.*`, `Time.*`, …) on the

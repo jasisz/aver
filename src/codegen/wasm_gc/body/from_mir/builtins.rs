@@ -199,16 +199,17 @@ pub(crate) fn emit_mir_native_scalar_builtin(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
-/// The two fused `Option.withDefault` shapes this emitter covers, both
-/// mirroring `emit_option_with_default`'s leaf dispatch:
-/// `Option.withDefault(Vector.set(v, i, x), v)` — the
-/// `VectorSetOrDefaultSameVector` leaf (`v` repeated as the default,
-/// recognised by slot so the two occurrences' differing `last_use`
-/// flags don't defeat it) — and
-/// `Option.withDefault(Vector.get(v, i), <literal>)` — the
-/// `VectorGetOrDefaultLiteral` leaf. The `Map.get` fusion and the
-/// real-`Option<T>` boxed fallback return `NotHandled`, so the whole fn
-/// falls back to the resolved-HIR emitter.
+/// Full mirror of `emit_option_with_default`. The two fused leaves —
+/// `Option.withDefault(Vector.set(v, i, x), v)` (the
+/// `VectorSetOrDefaultSameVector` in-place/clone set, with `default == v`
+/// recognised by slot since the occurrences carry different `last_use`)
+/// and `Option.withDefault(Vector.get(v, i), <literal>)` (the
+/// `VectorGetOrDefaultLiteral` bounds-checked `array.get`) — are emitted
+/// inline; every other `Option.withDefault` lowers to the boxed
+/// `Option<T>` unwrap (tag-dispatch returning the `Some` payload or the
+/// default). `Option.withDefault(Map.get(m, k), …)` returns `NotHandled`
+/// so the oracle's `get_or_default` fusion handles it (the MIR emitter
+/// doesn't mirror that fusion, so boxing here would diverge).
 pub(crate) fn emit_mir_option_with_default(
     func: &mut Function,
     dotted: &str,
@@ -219,71 +220,9 @@ pub(crate) fn emit_mir_option_with_default(
     if dotted != "Option.withDefault" || args.len() != 2 {
         return Ok(MirBuiltinEmit::NotHandled);
     }
+    let opt_arg = &args[0];
     let default = &args[1];
-    // The inner (option-producing) arg must be a builtin call.
-    let MirExpr::Call(inner) = &args[0].node else {
-        return Ok(MirBuiltinEmit::NotHandled);
-    };
-    let inner = &inner.node;
-    let MirCallee::Builtin(inner_id) = inner.callee else {
-        return Ok(MirBuiltinEmit::NotHandled);
-    };
-    let Some(inner_dotted) = ctx.mir_builtins.and_then(|n| n.get(inner_id.0 as usize)) else {
-        return Ok(MirBuiltinEmit::NotHandled);
-    };
 
-    // `Option.withDefault(Vector.set(v, i, x), v)` — the in-place /
-    // clone-on-write set. The `default == vector` test of
-    // `classify_vector_set_or_default` is checked by slot equality: both
-    // sides are the same binding, but the lowerer stamps the trailing
-    // (default) occurrence as `last_use` and the inner one as not, so the
-    // `MirLocal`s aren't structurally equal — compare slots, which the
-    // oracle's `AnnotBool`-ignoring `PartialEq` effectively does too.
-    if inner_dotted == "Vector.set" && inner.args.len() == 3 {
-        let same_local = matches!(
-            (&default.node, &inner.args[0].node),
-            (MirExpr::Local(d), MirExpr::Local(v)) if d.node.slot == v.node.slot
-        );
-        if !same_local {
-            return Ok(MirBuiltinEmit::NotHandled);
-        }
-        return emit_mir_vector_set_or_default(
-            func,
-            &inner.args[0],
-            &inner.args[1],
-            &inner.args[2],
-            slots,
-            ctx,
-        );
-    }
-
-    // `Option.withDefault(Vector.get(v, i), <literal>)`.
-    if inner_dotted != "Vector.get"
-        || inner.args.len() != 2
-        || !matches!(default.node, MirExpr::Literal(_))
-    {
-        return Ok(MirBuiltinEmit::NotHandled);
-    }
-    let vector = &inner.args[0];
-    let index = &inner.args[1];
-
-    // Mirror of `emit_vector_get_or_default`: bounds-check
-    // `0 <= i < len`, `array.get` on success, the literal default on OOB.
-    let vec_aver = aver_type_str_of(vector);
-    let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
-    let vec_idx = ctx
-        .registry
-        .vector_type_idx(&canonical)
-        .ok_or(WasmGcError::Validation(format!(
-            "Vector.get: vector arg of type `{vec_aver}` is not a registered Vector<T>"
-        )))?;
-    let element = TypeRegistry::vector_element_type(&canonical).ok_or(WasmGcError::Validation(
-        format!("Vector.get: cannot parse element type from `{canonical}`"),
-    ))?;
-    let elem_val = aver_to_wasm(element, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
-        format!("Vector.get: element type `{element}` has no wasm representation"),
-    ))?;
-    let block_ty = wasm_encoder::BlockType::Result(elem_val);
     macro_rules! e {
         ($x:expr) => {
             if emit_mir_expr(func, $x, slots, ctx)?.is_none() {
@@ -291,20 +230,136 @@ pub(crate) fn emit_mir_option_with_default(
             }
         };
     }
-    e!(index);
-    func.instruction(&Instruction::I64Const(0));
-    func.instruction(&Instruction::I64GeS);
-    e!(index);
-    func.instruction(&Instruction::I32WrapI64);
-    e!(vector);
-    func.instruction(&Instruction::ArrayLen);
-    func.instruction(&Instruction::I32LtU);
-    func.instruction(&Instruction::I32And);
+
+    // Fused shapes — only when the option-producing arg is the specific
+    // builtin call the oracle's `classify_leaf_op` / `Map.get` checks key
+    // off. Anything else falls through to the boxed `Option<T>` unwrap.
+    if let MirExpr::Call(inner_sp) = &opt_arg.node
+        && let MirCallee::Builtin(inner_id) = inner_sp.node.callee
+        && let Some(inner_dotted) = ctx.mir_builtins.and_then(|n| n.get(inner_id.0 as usize))
+    {
+        let inner = &inner_sp.node;
+
+        // `Option.withDefault(Vector.set(v, i, x), v)` — in-place /
+        // clone-on-write set. `default == vector` is checked by slot
+        // (the two occurrences carry different `last_use`, so the
+        // `MirLocal`s aren't structurally equal). A *different* default
+        // is a real boxed `Option<Vector>` and falls through below.
+        if inner_dotted == "Vector.set"
+            && inner.args.len() == 3
+            && matches!(
+                (&default.node, &inner.args[0].node),
+                (MirExpr::Local(d), MirExpr::Local(v)) if d.node.slot == v.node.slot
+            )
+        {
+            return emit_mir_vector_set_or_default(
+                func,
+                &inner.args[0],
+                &inner.args[1],
+                &inner.args[2],
+                slots,
+                ctx,
+            );
+        }
+
+        // `Option.withDefault(Vector.get(v, i), <literal>)` — the
+        // `VectorGetOrDefaultLiteral` leaf: bounds-check + `array.get`,
+        // literal default on OOB. A non-literal default boxes (below).
+        if inner_dotted == "Vector.get"
+            && inner.args.len() == 2
+            && matches!(default.node, MirExpr::Literal(_))
+        {
+            let vector = &inner.args[0];
+            let index = &inner.args[1];
+            let vec_aver = aver_type_str_of(vector);
+            let canonical: String = vec_aver.chars().filter(|c| !c.is_whitespace()).collect();
+            let vec_idx =
+                ctx.registry
+                    .vector_type_idx(&canonical)
+                    .ok_or(WasmGcError::Validation(format!(
+                        "Vector.get: vector arg of type `{vec_aver}` is not a registered Vector<T>"
+                    )))?;
+            let element =
+                TypeRegistry::vector_element_type(&canonical).ok_or(WasmGcError::Validation(
+                    format!("Vector.get: cannot parse element type from `{canonical}`"),
+                ))?;
+            let elem_val =
+                aver_to_wasm(element, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
+                    format!("Vector.get: element type `{element}` has no wasm representation"),
+                ))?;
+            let block_ty = wasm_encoder::BlockType::Result(elem_val);
+            e!(index);
+            func.instruction(&Instruction::I64Const(0));
+            func.instruction(&Instruction::I64GeS);
+            e!(index);
+            func.instruction(&Instruction::I32WrapI64);
+            e!(vector);
+            func.instruction(&Instruction::ArrayLen);
+            func.instruction(&Instruction::I32LtU);
+            func.instruction(&Instruction::I32And);
+            func.instruction(&Instruction::If(block_ty));
+            e!(vector);
+            e!(index);
+            func.instruction(&Instruction::I32WrapI64);
+            func.instruction(&Instruction::ArrayGet(vec_idx));
+            func.instruction(&Instruction::Else);
+            e!(default);
+            func.instruction(&Instruction::End);
+            return Ok(MirBuiltinEmit::Produced(true));
+        }
+
+        // `Option.withDefault(Map.get(m, k), default)` — the oracle fuses
+        // this into the per-`Map` `get_or_default` helper (no `Option`
+        // alloc). The MIR emitter doesn't mirror that fusion, so fall
+        // back rather than emit the boxed form below (which would diverge
+        // from the oracle's bytes).
+        if inner_dotted == "Map.get" {
+            return Ok(MirBuiltinEmit::NotHandled);
+        }
+    }
+
+    // Boxed `Option<T>` unwrap — mirror of `emit_option_with_default_boxed`:
+    // stash the option in the subject scratch, read its tag (field 0),
+    // return the `Some` payload (field 1) on tag 1, else the default.
+    let opt_aver = aver_type_str_of(opt_arg);
+    let canonical: String = opt_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let opt_idx = ctx
+        .registry
+        .option_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Option.withDefault: opt arg of type `{opt_aver}` is not a registered Option<T>"
+        )))?;
+    let element = TypeRegistry::option_element_type(&canonical).ok_or(WasmGcError::Validation(
+        format!("Option.withDefault: cannot parse element type from `{canonical}`"),
+    ))?;
+    let elem_val = aver_to_wasm(element, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
+        format!("Option.withDefault: element type `{element}` has no wasm representation"),
+    ))?;
+    let block_ty = wasm_encoder::BlockType::Result(elem_val);
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Option.withDefault (boxed) needs a scratch slot but none was reserved".into(),
+    ))?;
+    e!(opt_arg);
+    func.instruction(&Instruction::LocalSet(scratch));
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(opt_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(block_ty));
-    e!(vector);
-    e!(index);
-    func.instruction(&Instruction::I32WrapI64);
-    func.instruction(&Instruction::ArrayGet(vec_idx));
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(opt_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: opt_idx,
+        field_index: 1,
+    });
     func.instruction(&Instruction::Else);
     e!(default);
     func.instruction(&Instruction::End);
