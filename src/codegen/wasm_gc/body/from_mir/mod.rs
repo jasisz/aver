@@ -433,9 +433,9 @@ pub(crate) fn emit_mir_expr(
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
                     }
-                    // Fused `Result.withDefault(Int.mod(a, b), default)` —
-                    // the guarded Euclidean-modulo form. Boxed
-                    // `Result.withDefault` falls through to fallback.
+                    // `Result.withDefault` — the fused Euclidean-modulo
+                    // form `(Int.mod(a, b), default)` and the boxed
+                    // tag-dispatch form for every other Result.
                     match emit_mir_result_with_default(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
                         MirBuiltinEmit::Fallback => return Ok(None),

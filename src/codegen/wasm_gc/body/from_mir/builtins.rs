@@ -420,14 +420,15 @@ fn emit_mir_vector_set_or_default(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
-/// The one fused `Result.withDefault` shape this emitter covers:
-/// `Result.withDefault(Int.mod(a, b), default)` — mirror of the fused
-/// branch in `emit_result_with_default`. `Int.mod` lowers to the
-/// Euclidean-modulo helper and never materialises a `Result` struct, so
-/// this emits the guarded form directly: push `default` when `b == 0`,
-/// else `__int_mod_euclid(a, b)`. Any other (boxed) `Result.withDefault`
-/// returns `NotHandled` so the whole fn falls back to the resolved-HIR
-/// emitter, which reads the real `Result<T,E>` tag.
+/// Full mirror of `emit_result_with_default`. Two shapes:
+///
+/// 1. **Fused** `Result.withDefault(Int.mod(a, b), default)` — `Int.mod`
+///    lowers to the Euclidean-modulo helper and never materialises a
+///    `Result` struct, so emit the guarded form directly: push `default`
+///    when `b == 0`, else `__int_mod_euclid(a, b)`.
+/// 2. **Boxed** — any other `Result.withDefault(res, default)`: stash the
+///    concrete `Result<T,E>` in the subject scratch, read its tag, return
+///    the `Ok` payload (field 1) on tag `1`, else the default.
 pub(crate) fn emit_mir_result_with_default(
     func: &mut Function,
     dotted: &str,
@@ -438,31 +439,8 @@ pub(crate) fn emit_mir_result_with_default(
     if dotted != "Result.withDefault" || args.len() != 2 {
         return Ok(MirBuiltinEmit::NotHandled);
     }
+    let res_arg = &args[0];
     let default = &args[1];
-    // Inner must be a 2-arg `Int.mod` builtin call.
-    let MirExpr::Call(inner) = &args[0].node else {
-        return Ok(MirBuiltinEmit::NotHandled);
-    };
-    let inner = &inner.node;
-    let MirCallee::Builtin(inner_id) = inner.callee else {
-        return Ok(MirBuiltinEmit::NotHandled);
-    };
-    let Some(inner_dotted) = ctx.mir_builtins.and_then(|n| n.get(inner_id.0 as usize)) else {
-        return Ok(MirBuiltinEmit::NotHandled);
-    };
-    if inner_dotted != "Int.mod" || inner.args.len() != 2 {
-        return Ok(MirBuiltinEmit::NotHandled);
-    }
-    let a = &inner.args[0];
-    let b = &inner.args[1];
-    let mod_idx =
-        ctx.fn_map
-            .builtins
-            .get("__int_mod_euclid")
-            .copied()
-            .ok_or(WasmGcError::Validation(
-                "Int.mod requires __int_mod_euclid helper to be registered".into(),
-            ))?;
 
     macro_rules! e {
         ($x:expr) => {
@@ -471,17 +449,82 @@ pub(crate) fn emit_mir_result_with_default(
             }
         };
     }
-    let block_ty = wasm_encoder::BlockType::Result(ValType::I64);
-    // if b == 0 -> default, else __int_mod_euclid(a, b)
-    e!(b);
-    func.instruction(&Instruction::I64Const(0));
-    func.instruction(&Instruction::I64Eq);
+
+    // Fused `Result.withDefault(Int.mod(a, b), default)`.
+    if let MirExpr::Call(inner) = &res_arg.node {
+        let inner = &inner.node;
+        if let MirCallee::Builtin(inner_id) = inner.callee
+            && let Some(inner_dotted) = ctx.mir_builtins.and_then(|n| n.get(inner_id.0 as usize))
+            && inner_dotted == "Int.mod"
+            && inner.args.len() == 2
+        {
+            let a = &inner.args[0];
+            let b = &inner.args[1];
+            let mod_idx = ctx.fn_map.builtins.get("__int_mod_euclid").copied().ok_or(
+                WasmGcError::Validation(
+                    "Int.mod requires __int_mod_euclid helper to be registered".into(),
+                ),
+            )?;
+            let block_ty = wasm_encoder::BlockType::Result(ValType::I64);
+            // if b == 0 -> default, else __int_mod_euclid(a, b)
+            e!(b);
+            func.instruction(&Instruction::I64Const(0));
+            func.instruction(&Instruction::I64Eq);
+            func.instruction(&Instruction::If(block_ty));
+            e!(default);
+            func.instruction(&Instruction::Else);
+            e!(a);
+            e!(b);
+            func.instruction(&Instruction::Call(mod_idx));
+            func.instruction(&Instruction::End);
+            return Ok(MirBuiltinEmit::Produced(true));
+        }
+    }
+
+    // Boxed path — read the concrete `Result<T,E>` tag, return the `Ok`
+    // payload or the default.
+    let res_aver = aver_type_str_of(res_arg);
+    let canonical: String = res_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    let res_idx = ctx
+        .registry
+        .result_type_idx(&canonical)
+        .ok_or(WasmGcError::Validation(format!(
+            "Result.withDefault: arg of type `{res_aver}` is not a registered Result<T,E>"
+        )))?;
+    let (t_aver, _) = TypeRegistry::result_te(&canonical).ok_or(WasmGcError::Validation(
+        format!("Result canonical `{canonical}` malformed"),
+    ))?;
+    let elem_val = aver_to_wasm(t_aver, Some(ctx.registry))?.ok_or(WasmGcError::Validation(
+        format!("Result.withDefault: T type `{t_aver}` has no wasm representation"),
+    ))?;
+    let block_ty = wasm_encoder::BlockType::Result(elem_val);
+    let scratch = slots.subject_scratch.ok_or(WasmGcError::Validation(
+        "Result.withDefault needs a scratch slot but none was reserved".into(),
+    ))?;
+
+    e!(res_arg);
+    func.instruction(&Instruction::LocalSet(scratch));
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 0,
+    });
+    func.instruction(&Instruction::I32Const(1));
+    func.instruction(&Instruction::I32Eq);
     func.instruction(&Instruction::If(block_ty));
-    e!(default);
+    func.instruction(&Instruction::LocalGet(scratch));
+    func.instruction(&Instruction::RefCastNonNull(
+        wasm_encoder::HeapType::Concrete(res_idx),
+    ));
+    func.instruction(&Instruction::StructGet {
+        struct_type_index: res_idx,
+        field_index: 1,
+    });
     func.instruction(&Instruction::Else);
-    e!(a);
-    e!(b);
-    func.instruction(&Instruction::Call(mod_idx));
+    e!(default);
     func.instruction(&Instruction::End);
     Ok(MirBuiltinEmit::Produced(true))
 }
