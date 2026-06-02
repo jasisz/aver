@@ -65,6 +65,7 @@ pub(super) use crate::types::Type;
 
 pub(super) use super::super::WasmGcError;
 pub(super) use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm, normalize_compound};
+pub(super) use super::builtins::emit_args_get_inline;
 pub(super) use super::emit::{
     emit_branch_marker, emit_caller_fn_idx, emit_default_value, emit_group_call,
     emit_return_call_insn, emit_string_literal_bytes, sum_or_record_eq_fn,
@@ -394,14 +395,15 @@ pub(crate) fn emit_mir_expr(
                     };
                     let dotted = dotted.as_str();
                     // `Args.get` is intercepted *before* the effect /
-                    // builtin dispatch in `emit_dotted_builtin` and
-                    // expands to a custom inline (`emit_args_get_inline`)
-                    // that this emitter does not mirror — even though it
-                    // is also registered in `fn_map.effects`. Fall back so
-                    // the `ResolvedExpr` emitter produces that inline,
-                    // rather than the effect-import shape below.
+                    // builtin dispatch in `emit_dotted_builtin` and expands
+                    // to a custom inline (the `Args.len` loop building a
+                    // `List<String>`), even though it is also registered in
+                    // `fn_map.effects`. Reuse the oracle's inline verbatim —
+                    // it is `ResolvedExpr`-free (func + slots + ctx) — so the
+                    // bytes match and `Args.get` no longer forces a fallback.
                     if dotted == "Args.get" {
-                        return Ok(None);
+                        emit_args_get_inline(func, slots, ctx)?;
+                        return Ok(Some(aver_type_str_of(expr).trim() != "Unit"));
                     }
                     // Registered effect import (`Console.*`, `Disk.*`,
                     // `Tcp.*`, `Http.*`, `Random.*`, `Time.*`, …) on the
