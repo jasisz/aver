@@ -3187,11 +3187,7 @@ pub(super) fn cmd_emit_ir_after(file: &str, module_root_override: Option<&str>, 
     // then print the textual `MirProgram` dump.
     if want_mir {
         use aver::ir::mir;
-        let program = mir::dead_code(mir::branch_collapse(mir::bool_match_to_if(
-            mir::algebraic_simplify(mir::const_fold(mir::inline_nullary_literals(
-                mir::lower_program(&pipeline_result.resolved_items),
-            ))),
-        )));
+        let program = mir::optimize(mir::lower_program(&pipeline_result.resolved_items));
         print!("{program}");
         return;
     }
