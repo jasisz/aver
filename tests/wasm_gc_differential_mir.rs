@@ -64,10 +64,15 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
             let Ok(text) = fs::read_to_string(&path) else {
                 continue;
             };
-            if !text
-                .lines()
-                .any(|ln| ln.trim_start().starts_with("depends ["))
-            {
+            // Exclude only genuinely multi-module files (a non-empty
+            // `depends [...]`). An empty `depends []` declares no real
+            // dependency, so the file compiles standalone and belongs in
+            // the byte-differential.
+            let has_real_depends = text.lines().any(|ln| {
+                let t = ln.trim_start();
+                t.starts_with("depends [") && t.trim_end() != "depends []"
+            });
+            if !has_real_depends {
                 out.push(path);
             }
         }
@@ -186,7 +191,7 @@ fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
     // to the HIR fallback) fails CI rather than passing quietly. Raise
     // `MIN_MIR_EMITTED` when new coverage lands; never lower it without a
     // deliberate reason.
-    const MIN_MIR_EMITTED: usize = 475;
+    const MIN_MIR_EMITTED: usize = 698;
     assert!(
         total_mir_emitted >= MIN_MIR_EMITTED,
         "MIR body emitter rendered {total_mir_emitted} fns across {compared} examples, \
