@@ -737,12 +737,36 @@ pub(crate) fn emit_mir_expr(
         MirExpr::IndependentProduct(spanned_ip) => {
             emit_mir_independent_product(func, &spanned_ip.node, slots, ctx)
         }
+        // `if cond { then } else { else }` — produced by the
+        // `bool_match_to_if` optimizer from a two-arm `Bool` match.
+        // Byte-equivalent to that match's lowering (`emit_mir_match`'s
+        // `Bool` arm): the then-branch type is the result type (typecheck
+        // proved both branches agree); a `Unit` if produces no value.
+        MirExpr::IfThenElse(ite) => {
+            let ite = &ite.node;
+            let result_ty = aver_type_canonical(&ite.then_branch, ctx.return_type, ctx.registry);
+            let block_ty = match aver_to_wasm(&result_ty, Some(ctx.registry))? {
+                Some(v) => wasm_encoder::BlockType::Result(v),
+                None => wasm_encoder::BlockType::Empty,
+            };
+            let produces = !matches!(block_ty, wasm_encoder::BlockType::Empty);
+            if emit_mir_expr(func, &ite.cond, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::If(block_ty));
+            if emit_mir_expr(func, &ite.then_branch, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::Else);
+            if emit_mir_expr(func, &ite.else_branch, slots, ctx)?.is_none() {
+                return Ok(None);
+            }
+            func.instruction(&Instruction::End);
+            Ok(Some(produces))
+        }
         // Catch-all fallback to the `ResolvedExpr` emitter. Reaches here:
         // `FnValue` (a fn referenced as a value — wasm-gc has no
-        // first-class fn representation). `IfThenElse` would too, but
-        // only the `bool_match_to_if` optimizer produces it and this
-        // path's `lower_program` runs no optimizer passes, so it never
-        // arrives.
+        // first-class fn representation).
         _ => Ok(None),
     }
 }

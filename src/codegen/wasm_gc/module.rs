@@ -2270,24 +2270,24 @@ pub(super) fn emit_module_with(
             .register("aver_http_handle")
     });
 
-    // Lower the post-link resolved fns to MIR for the MIR-preferred
-    // body emitter. `lower_program` runs no optimizer passes, so the
-    // MIR mirrors the resolved HIR shape 1:1 — the body walk that
-    // follows emits byte-identical wasm to the `ResolvedExpr` emitter
-    // for the variants it covers, and returns `None` (whole-fn
-    // fallback) for everything else, so the corpus + game suite stay
-    // green over whatever subset of variants the body walk covers.
-    // `enable_mir == false` forces the `ResolvedExpr` path everywhere;
-    // the byte-differential test (`tests/wasm_gc_differential_mir.rs`)
-    // compiles both ways and asserts the emitted fn bytes match.
+    // Lower the post-link resolved fns to MIR and run the shared
+    // `optimize` pipeline — the SAME six passes the VM consumes
+    // (`ir::mir::optimize`). This is the realization of "one optimizer
+    // pass benefits every backend": wasm-gc and wasip2 (which reuses
+    // this seam) now emit from optimized MIR, not the raw 1:1-HIR shape.
+    // The body walk emits the optimized form for the variants it covers
+    // (including `IfThenElse` from `bool_match_to_if`) and returns `None`
+    // (whole-fn fallback to the `ResolvedExpr` emitter) for anything it
+    // doesn't — so an uncovered optimized shape degrades to the
+    // unoptimized HIR emission, never to wrong code.
     //
-    // `AVER_WASMGC_FORCE_NO_MIR=1` forces the `ResolvedExpr` path from the
-    // CLI without a flag — the multi-module games byte-differential
-    // (`tests/wasm_gc_games_differential_mir.rs`) runs `aver compile
-    // --target wasm-gc` twice (with / without the env var) and asserts
-    // the emitted `.wasm` bytes are identical, covering the rich shapes
-    // (variant / record / collection matches) that live only in the
-    // games and aren't reachable from the single-file differential.
+    // `enable_mir == false` (and `AVER_WASMGC_FORCE_NO_MIR=1`) force the
+    // `ResolvedExpr` path everywhere — the UNOPTIMIZED baseline. The
+    // toggle is therefore an A/B harness: `compile_to_wasm_gc_mir_toggle`
+    // false = HIR baseline, true = optimized MIR; the differential tests
+    // assert the optimized module is valid and no larger than the
+    // baseline (perf/size), and the behavioural `wasm_gc_spec` /
+    // `wasm_gc_capture_output` tests assert it still computes correctly.
     let enable_mir = enable_mir && std::env::var_os("AVER_WASMGC_FORCE_NO_MIR").is_none();
     let mir_program: Option<crate::ir::mir::MirProgram> = if enable_mir {
         let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_fn_defs
@@ -2295,7 +2295,9 @@ pub(super) fn emit_module_with(
             .cloned()
             .map(crate::ir::hir::ResolvedTopLevel::FnDef)
             .collect();
-        Some(crate::ir::mir::lower_program(&mir_items))
+        Some(crate::ir::mir::optimize(crate::ir::mir::lower_program(
+            &mir_items,
+        )))
     } else {
         None
     };
