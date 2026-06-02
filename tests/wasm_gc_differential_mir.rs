@@ -1,4 +1,4 @@
-//! wasm-gc MIR body-emitter byte-differential (Phase 5 #340 wave 0).
+//! wasm-gc MIR body-emitter byte-differential.
 //!
 //! For every single-file `examples/**/*.av` program, compile it twice
 //! through `compile_to_wasm_gc_mir_toggle`:
@@ -14,19 +14,18 @@
 //! (Whole-module byte-identity across two independent builds is only
 //! meaningful because the type registry's carrier-slot ordering is
 //! deterministic; this test therefore also guards that determinism.)
-//! This is the safety net the port leans on: it lets each wave widen
-//! coverage knowing a divergence is caught mechanically, not by
-//! eyeballing wasm.
+//! This is the safety net the port leans on: a divergence is caught
+//! mechanically, not by eyeballing wasm.
 //!
-//! A second check proves the MIR walk actually fires somewhere in the
-//! corpus (otherwise byte-identity would hold vacuously with zero MIR
-//! coverage): `compile_to_wasm_gc_mir_toggle` returns how many fns the
-//! body emitter *actually rendered* from MIR — the real
-//! `emit_fn_body_via_mir` Some/None decision the seam fixed, not the
-//! structural `coverage_report` predicate — and the test asserts that
-//! count is non-zero. Keying the canary off the emitter rather than the
-//! predicate means an over-conservative predicate can't make this pass
-//! vacuously.
+//! A second check holds a coverage floor so byte-identity can't pass
+//! vacuously with zero MIR coverage, and so a covered construct
+//! silently regressing to the HIR fallback fails CI:
+//! `compile_to_wasm_gc_mir_toggle` returns how many fns the body emitter
+//! *actually rendered* from MIR — the real `emit_fn_body_via_mir`
+//! Some/None decision the seam makes, not the structural
+//! `coverage_report` predicate — and the test asserts that count stays
+//! at or above the floor. Keying it off the emitter rather than the
+//! predicate means an over-conservative predicate can't move it.
 
 #![cfg(feature = "wasm-compile")]
 
@@ -178,16 +177,21 @@ fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
         );
     }
 
-    // Canary: byte-identity is meaningless if the MIR body emitter never
-    // fired. This counts the *real* per-fn MIR dispatch the seam made
-    // (the `emit_fn_body_via_mir` Some/None decision), not the structural
-    // coverage predicate — so an over-conservative predicate can't make
-    // it pass vacuously. Wave 0 covers Literal / Local / numeric BinOp /
-    // Neg / Return / named Let, so the corpus must surface at least one.
+    // Coverage floor. Byte-identity is meaningless if the MIR body
+    // emitter never fired, so this counts the *real* per-fn MIR dispatch
+    // the seam made (the `emit_fn_body_via_mir` Some/None decision), not
+    // the structural coverage predicate — an over-conservative predicate
+    // can't make it pass vacuously. The floor is the gate the review
+    // asked for: a drop below it (a covered construct silently regressing
+    // to the HIR fallback) fails CI rather than passing quietly. Raise
+    // `MIN_MIR_EMITTED` when new coverage lands; never lower it without a
+    // deliberate reason.
+    const MIN_MIR_EMITTED: usize = 365;
     assert!(
-        total_mir_emitted > 0,
-        "MIR body emitter rendered 0 fns across {compared} examples — byte-identity is vacuous; \
-         the wave-0 emitter or the seam dispatch regressed"
+        total_mir_emitted >= MIN_MIR_EMITTED,
+        "MIR body emitter rendered {total_mir_emitted} fns across {compared} examples, \
+         below the floor of {MIN_MIR_EMITTED} — MIR coverage regressed (a covered construct \
+         fell back to the `ResolvedExpr` emitter). If this drop is intentional, lower the floor."
     );
 
     eprintln!(
