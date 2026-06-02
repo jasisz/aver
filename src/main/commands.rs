@@ -3608,7 +3608,7 @@ fn explain_rust_mir_coverage(
             })
             .collect();
         println!(
-            "{{\"schema_version\":1,\"backend\":\"rust\",\"total\":{total},\"mir_covered\":{covered},\"hir_fallback\":{fallback},\"coverage_ratio\":{ratio:.4},\"first_blockers\":[{blockers}]}}",
+            "{{\"schema_version\":1,\"backend\":\"rust\",\"total\":{total},\"mir_lowered\":{covered},\"hir_fallback\":{fallback},\"coverage_ratio\":{ratio:.4},\"blocked_by_shape\":[{blockers}]}}",
             total = report.total,
             covered = report.mir_covered,
             fallback = report.hir_fallback,
