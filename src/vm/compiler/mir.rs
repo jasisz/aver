@@ -222,7 +222,7 @@ pub(super) fn compile_mir_expr(
                     // wait for wave 4's last-use revival; until
                     // then `owned_mask = 0` everywhere on the
                     // MIR path, same as Phase 4e.
-                    let owned_mask = compute_owned_mask(args, fc);
+                    let owned_mask = compute_builtin_owned_mask(args, fc);
                     match builtin {
                         VmBuiltin::ListLen => fc.emit_op(LIST_LEN),
                         VmBuiltin::ListPrepend => fc.emit_op(LIST_PREPEND),
@@ -1495,23 +1495,45 @@ fn try_emit_vector_compound(
     }
 }
 
-/// Phase 6 wave 4 — derive `owned_mask` for a call's args.
-/// Bit `i` is set when arg `i` carries (transitively) a last-use
-/// read of slot `i`. Mirrors HIR's `compute_builtin_owned_mask`
-/// / tail-call mask derivation. Caps at 8 args (mask is u8).
+/// Tail-call owned mask: bit `i` is set when arg `i` carries a last-use
+/// read of slot `i` — i.e. param slot `i` is threaded straight back into
+/// the callee's slot `i` and is dead afterwards, so it can be moved
+/// rather than copied. Keyed on the arg-index == slot-index convention
+/// that only holds for the slot-aligned tail-call args. Caps at 8 args
+/// (mask is u8).
 ///
-/// The alias-prone slot guard mirrors HIR's `compute_builtin_owned_mask`:
-/// a bit is dropped when its slot is flagged on `FnResolution.aliased_slots`
-/// (propagated onto `fc` via `set_aliased_slots`). The guard is load-bearing
-/// — the owned builtin path empties the arena slot in place
-/// (`take_map_value` / vector take), so marking an aliased `Vector`/`Map`
-/// param owned would mutate a binding the caller still holds. Without it the
-/// MIR walker diverged from HIR, emitting `owned = 1` on a slot it knew was
-/// aliased.
+/// The alias-prone slot guard is load-bearing: the owned path empties
+/// the arena slot in place (`take_map_value` / vector take), so marking
+/// an aliased `Vector`/`Map` slot owned would mutate a binding the
+/// caller still holds.
 fn compute_owned_mask(args: &[Spanned<MirExpr>], fc: &FnCompiler<'_>) -> u8 {
     let mut mask = 0u8;
     for (i, arg) in args.iter().enumerate().take(8) {
         if contains_last_use_slot_mir(&arg.node, i as u32) && !fc.is_aliased_slot(i as u16) {
+            mask |= 1 << i;
+        }
+    }
+    mask
+}
+
+/// Builtin owned mask: bit `i` is set when arg `i` is itself a last-use
+/// read of a non-aliased slot (uniquely owned, safe to take in place) —
+/// keyed on the arg's OWN slot, NOT the arg index. A builtin's arguments
+/// do not line up with slot indices (`Map.set(m, k, v)` reads `m` from
+/// whatever slot it was bound to), so the tail-call mask above silently
+/// misses them. The runtime honors only bit 0 and only for
+/// `Map.set` / `Vector.set` (`invoke_builtin_with_owned`), so a broader
+/// mask is harmless for every other builtin. The `!is_aliased_slot`
+/// guard stays load-bearing — `own_param` is what makes a linearly
+/// threaded `Vector`/`Map` param non-aliased, and only then does the
+/// in-place take fire.
+fn compute_builtin_owned_mask(args: &[Spanned<MirExpr>], fc: &FnCompiler<'_>) -> u8 {
+    let mut mask = 0u8;
+    for (i, arg) in args.iter().enumerate().take(8) {
+        if let Some((slot, last_use)) = mir_local_slot_last_use(&arg.node)
+            && last_use
+            && !fc.is_aliased_slot(slot as u16)
+        {
             mask |= 1 << i;
         }
     }

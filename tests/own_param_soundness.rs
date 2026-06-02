@@ -122,6 +122,67 @@ fn main() -> Unit
     assert_sound("two_params", src, "7");
 }
 
+/// The plain-builtin path: a vector aliased through a user-fn return,
+/// bound to a local, then mutated via a single-use `Vector.set` (not the
+/// self-keep `withDefault` shape). The builtin owned-mask must not take
+/// `b` in place, because `b` aliases the still-live `a`. Correct = `0`;
+/// corruption surfaces as `99` or `-1` (the owned take empties `a`'s
+/// arena slot). Guards the `alias.rs` RULE-2 backstop that flags
+/// user-fn-call results as alias sources.
+#[test]
+fn plain_set_on_user_fn_return_local_is_not_mutated_in_place() {
+    let src = r#"module PlainCorrupt
+    intent = "plain Vector.set on a user-fn-return-bound local, original live"
+    depends []
+    effects [Console.print]
+
+fn aliasVec(v: Vector<Int>) -> Vector<Int>
+    ? "returns its arg — result aliases backing"
+    v
+
+fn run() -> Int
+    a = Vector.new(2, 0)
+    b = aliasVec(a)
+    c = match Vector.set(b, 0, 99)
+        Option.Some(x) -> x
+        Option.None -> Vector.new(2, 0 - 1)
+    Option.withDefault(Vector.get(a, 0), 0 - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("plain_set", src, "0");
+}
+
+/// The Map analogue: a map aliased through a user-fn return, then a
+/// `Map.set` on the alias. The original must keep its value. Correct =
+/// `7`; corruption surfaces as `99`. Exercises the same backstop +
+/// builtin owned-mask on the `Map.set` path that map_build accelerates.
+#[test]
+fn map_set_on_user_fn_return_local_is_not_mutated_in_place() {
+    let src = r#"module MapCorrupt
+    intent = "Map.set on a user-fn-return-aliased map, original live"
+    depends []
+    effects [Console.print]
+
+fn aliasMap(m: Map<String, Int>) -> Map<String, Int>
+    ? "returns its arg — result aliases backing"
+    m
+
+fn run() -> Int
+    a = Map.set({}, "k", 7)
+    b = aliasMap(a)
+    c = Map.set(b, "k", 99)
+    Option.withDefault(Map.get(a, "k"), 0 - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("map_set", src, "7");
+}
+
 /// The headline win: a linearly-threaded vector param the refinement
 /// *should* un-flag. Asserts the fill+sum result is correct (so the
 /// optimization is exercised, not silently a no-op) and identical with
