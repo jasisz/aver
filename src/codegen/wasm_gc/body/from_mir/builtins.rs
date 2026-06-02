@@ -1,10 +1,11 @@
 //! Built-in call lowering: the custom-inline `Float` / `Int` / `Bool`
-//! scalar ops, `Char.toCode`, the `List` / `Vector` / `Map` families,
-//! the fused `Option.withDefault(Vector.get, <literal>)` /
-//! `Option.withDefault(Vector.set, v)` / `Result.withDefault(Int.mod,
-//! default)`, and the numeric `BinOp` tail. Mirrors the custom-inline
-//! arms of `emit_dotted_builtin` and `emit_expr`'s numeric `BinOp`
-//! branch.
+//! scalar ops, `Char.toCode`, the custom-inline `String` ops
+//! (`length` / `byteLength` / `split` / `join`), the `List` / `Vector`
+//! / `Map` families, the fused `Option.withDefault(Vector.get,
+//! <literal>)` / `Option.withDefault(Vector.set, v)` /
+//! `Result.withDefault(Int.mod, default)`, and the numeric `BinOp`
+//! tail. Mirrors the custom-inline arms of `emit_dotted_builtin` and
+//! `emit_expr`'s numeric `BinOp` branch.
 
 use super::*;
 
@@ -21,18 +22,24 @@ pub(crate) enum MirBuiltinEmit {
     Produced(bool),
 }
 
-/// Mirror of the native scalar (`Float` / `Int` / `Bool`) arms of
-/// `emit_dotted_builtin` (builtins.rs): builtins that lower to a fixed
-/// inline wasm instruction sequence over `f64` / `i64` / `i32` values
-/// rather than a registered helper call (so the `fn_map.builtins`
-/// lookup misses them). Each recurses
-/// `emit_mir_expr` on its args — the byte-identical analogue of the
-/// oracle's `emit_expr`. `Int.abs` / `Int.min` / `Int.max` re-emit an
-/// arg more than once (an `if`/`else` select), exactly as the oracle
-/// does; a `None` from any re-emission is a clean whole-fn fallback
-/// (`func` is reset by the caller). `Int.mod` is deliberately absent: it
-/// builds a `Result<Int,String>` carrier and has a fused form, so it
-/// stays on the HIR path.
+/// Mirror of the custom-inline arms of `emit_dotted_builtin`
+/// (builtins.rs): builtins that lower to a fixed inline wasm sequence
+/// rather than a `fn_map.builtins`-keyed helper call, so a plain
+/// `fn_map.builtins.get(dotted)` lookup misses them. Covers the native
+/// scalar `Float` / `Int` / `Bool` ops, `Char.toCode`, and the `String`
+/// ops whose helper is keyed under a *different* name than the surface
+/// builtin — `String.length` / `String.byteLength` dispatch to the
+/// `String.len` helper, and `String.split` / `String.join` to the
+/// singleton `string_split_ops`. Each recurses `emit_mir_expr` on its
+/// args — the byte-identical analogue of the oracle's `emit_expr`.
+/// `Int.abs` / `Int.min` / `Int.max` re-emit an arg more than once (an
+/// `if`/`else` select), exactly as the oracle does; a `None` from any
+/// re-emission is a clean whole-fn fallback (`func` is reset by the
+/// caller). `Int.mod` is deliberately absent: it builds a
+/// `Result<Int,String>` carrier and has a fused form, so it stays on the
+/// HIR path. (`String.fromInt` / `String.fromFloat` are *not* here —
+/// their helper is keyed under the surface name, so the dispatcher's
+/// `fn_map.builtins` path already covers them byte-identically.)
 pub(crate) fn emit_mir_native_scalar_builtin(
     func: &mut Function,
     dotted: &str,
@@ -154,6 +161,38 @@ pub(crate) fn emit_mir_native_scalar_builtin(
             func.instruction(&Instruction::I32Const(0));
             func.instruction(&Instruction::ArrayGetU(s_idx));
             func.instruction(&Instruction::I64ExtendI32U);
+        }
+        // Both surface spellings dispatch to the one `String.len`
+        // helper (keyed under `String.len`, not the surface name).
+        "String.length" | "String.byteLength" if args.len() == 1 => {
+            let len_idx =
+                ctx.fn_map
+                    .builtins
+                    .get("String.len")
+                    .copied()
+                    .ok_or(WasmGcError::Validation(
+                        "String.length / byteLength require the String.len builtin".into(),
+                    ))?;
+            arg!(0);
+            func.instruction(&Instruction::Call(len_idx));
+        }
+        // `String.split` / `String.join` ride the singleton (T=String)
+        // `string_split_ops`, not `fn_map.builtins`.
+        "String.split" if args.len() == 2 => {
+            let ops = ctx.fn_map.string_split_ops.ok_or(WasmGcError::Validation(
+                "String.split called but split helper wasn't registered".into(),
+            ))?;
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::Call(ops.split));
+        }
+        "String.join" if args.len() == 2 => {
+            let ops = ctx.fn_map.string_split_ops.ok_or(WasmGcError::Validation(
+                "String.join called but join helper wasn't registered".into(),
+            ))?;
+            arg!(0);
+            arg!(1);
+            func.instruction(&Instruction::Call(ops.join));
         }
         _ => return Ok(MirBuiltinEmit::NotHandled),
     }

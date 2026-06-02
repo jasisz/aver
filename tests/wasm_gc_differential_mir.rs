@@ -191,7 +191,7 @@ fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
     // to the HIR fallback) fails CI rather than passing quietly. Raise
     // `MIN_MIR_EMITTED` when new coverage lands; never lower it without a
     // deliberate reason.
-    const MIN_MIR_EMITTED: usize = 722;
+    const MIN_MIR_EMITTED: usize = 729;
     assert!(
         total_mir_emitted >= MIN_MIR_EMITTED,
         "MIR body emitter rendered {total_mir_emitted} fns across {compared} examples, \
