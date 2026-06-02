@@ -178,7 +178,7 @@ fn mir_and_resolved_emitters_agree_byte_for_byte_on_games() {
     // to the HIR fallback — fail CI rather than pass quietly. Raise
     // `MIN_MIR_EMITTED` when new coverage lands; never lower it without
     // a deliberate reason.
-    const MIN_MIR_EMITTED: usize = 673;
+    const MIN_MIR_EMITTED: usize = 674;
     assert!(
         total_mir_emitted >= MIN_MIR_EMITTED,
         "MIR emitter rendered {total_mir_emitted} fns across {compared} games, below the floor \
