@@ -108,6 +108,9 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             .all(|(k, v)| mir_expr_coverable(k) && mir_expr_coverable(v)),
         MirExpr::List(items) => items.iter().all(mir_expr_coverable),
         MirExpr::Try(inner) => mir_expr_coverable(inner),
+        MirExpr::IndependentProduct(spanned_ip) => {
+            spanned_ip.node.items.iter().all(mir_expr_coverable)
+        }
         MirExpr::InterpolatedStr(parts) => parts.iter().all(|p| match p {
             // Coarse: a compound-type `Expr` part falls back at emit
             // time (the registry-free predicate can't see the type), a
