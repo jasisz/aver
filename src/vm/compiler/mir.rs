@@ -1452,17 +1452,26 @@ fn try_emit_vector_compound(
             // last-use bits and a structural compare would miss it.
             let vec = mir_local_slot_last_use(&inner_args[0].node);
             let def = mir_local_slot_last_use(&args[1].node);
-            let (Some((vec_slot, _)), Some((def_slot, _))) = (vec, def) else {
+            let (Some((vec_slot, vec_last_use)), Some((def_slot, def_last_use))) = (vec, def)
+            else {
                 return Ok(false);
             };
             if vec_slot != def_slot {
                 return Ok(false);
             }
-            // Mirror the HIR walker: `owned` keys off the INNER vector
-            // occurrence's last-use flag and the slot's alias status.
-            let owned = vec
-                .map(|(slot, last_use)| last_use && !fc.is_aliased_slot(slot as u16))
-                .unwrap_or(false);
+            // Self-keep fusion ownership collapse. The inner `Vector.set`
+            // and the `withDefault` default read the SAME slot
+            // (vec_slot == def_slot), and the fused `VECTOR_SET_OR_KEEP`
+            // returns exactly one of those two handles — so the slot is
+            // dead after the op iff EITHER occurrence is its last use.
+            // `last_use` annotates only the textually-last read (the
+            // default, arg[1]), leaving the inner read last_use=false; OR
+            // the two bits so a linearly-threaded vector takes the
+            // in-place path. Still gated on `!is_aliased_slot`: the
+            // owned-param refinement (`own_param.rs`) is what proves a
+            // threaded `Vector`/`Map` param non-aliased, and only then
+            // does the in-place set fire — keeping the guard load-bearing.
+            let owned = (vec_last_use || def_last_use) && !fc.is_aliased_slot(vec_slot as u16);
             compile_mir_expr(fc, &inner_args[0])?;
             compile_mir_expr(fc, &inner_args[1])?;
             compile_mir_expr(fc, &inner_args[2])?;
