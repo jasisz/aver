@@ -766,9 +766,12 @@ impl ProgramCompiler {
         );
         fc.source_file = self.source_file.clone();
         fc.note_line(rfd.line);
-        if let Some(res) = resolution {
-            fc.set_aliased_slots(res.aliased_slots.clone());
-        }
+        // Alias facts now ride the MIR fn (cloned from the resolver at
+        // lowering) rather than the AST `FnResolution` side-channel —
+        // the VM reads aliasedness off MIR like every other MIR-sourced
+        // fact. Identical bits today; the move lets the analysis
+        // re-home into a MIR pass later without touching this site.
+        fc.set_aliased_slots(mir_fn.aliased_slots.clone());
 
         mir::compile_mir_fn_body(&mut fc, mir_fn)?;
         Ok(fc.finish())

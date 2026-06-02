@@ -184,6 +184,7 @@ fn build_a_tiny_function_by_hand() {
         }],
         body,
         local_count: 1,
+        aliased_slots: std::sync::Arc::new(Vec::new()),
     };
     let mut program = MirProgram::empty();
     program.fns.insert(f.fn_id, f);

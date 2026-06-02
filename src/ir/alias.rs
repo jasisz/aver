@@ -126,6 +126,24 @@ fn contains_alias_source_call(expr: &Expr) -> bool {
                 {
                     return true;
                 }
+                // Module-qualified call into a USER module (not a built-in
+                // namespace): the callee may return an alias of a
+                // Vector/Map argument (`fn id(v) = v`), which neither RULE
+                // 1 nor the get/new cases can see. Conservatively treat the
+                // result as a possible alias source so a binding fed by it
+                // never takes the owned in-place path. Built-in namespaces
+                // (`Vector.set`, `Map.set`, `String.fromInt`, …) return
+                // fresh or derived values — handled above or fall through.
+                if !crate::ir::is_builtin_namespace(p) {
+                    return true;
+                }
+            } else if matches!(&callee.node, Expr::Ident(_)) {
+                // Bare-ident callee — a user fn (or fn value); may return an
+                // alias of an argument. Same conservative treatment. (The
+                // precise alternative is a returns-fresh interprocedural
+                // analysis; deferred — over-flagging only costs the owned
+                // fast path on a user-fn-derived binding, never soundness.)
+                return true;
             }
             if contains_alias_source_call(&callee.node) {
                 return true;

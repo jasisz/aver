@@ -51,6 +51,7 @@ pub mod branch_collapse;
 pub mod const_fold;
 pub mod dead_code;
 pub mod inline;
+pub mod own_param;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;
@@ -61,15 +62,23 @@ pub use branch_collapse::branch_collapse;
 pub use const_fold::const_fold;
 pub use dead_code::dead_code;
 pub use inline::inline_nullary_literals;
+pub use own_param::own_param_refine;
 
-/// The canonical Core-MIR optimization pipeline: the six passes applied
+/// The canonical Core-MIR optimization pipeline: the passes applied
 /// in dependency order
 /// (`inline → const_fold → algebraic → bool_match → branch_collapse →
-/// dead_code`). Every backend that runs the optimizer calls this single
-/// entry, so the pass set and their order live in one place instead of
-/// being re-nested per call site. `lower_program` produces the input.
+/// dead_code → own_param`). Every backend that runs the optimizer calls
+/// this single entry, so the pass set and their order live in one place
+/// instead of being re-nested per call site. `lower_program` produces
+/// the input.
+///
+/// `own_param_refine` runs LAST: it reads the final slot↔`LocalId`
+/// mapping (after any inlining that mints fresh locals) so its
+/// interprocedural Vector/Map-param un-flagging keys off slots that
+/// won't shift under a later pass — avoiding the
+/// `aliased_slots`-vs-`LocalId` desync class.
 pub fn optimize(program: crate::ir::mir::MirProgram) -> crate::ir::mir::MirProgram {
-    dead_code(branch_collapse(bool_match_to_if(algebraic_simplify(
-        const_fold(inline_nullary_literals(program)),
+    own_param_refine(dead_code(branch_collapse(bool_match_to_if(
+        algebraic_simplify(const_fold(inline_nullary_literals(program))),
     ))))
 }

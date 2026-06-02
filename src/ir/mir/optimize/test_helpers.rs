@@ -28,6 +28,7 @@ pub(crate) fn one_fn_program(body: MirExpr) -> MirProgram {
             effects: vec![],
             body: span(body),
             local_count: 0,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
         },
     );
     p

@@ -137,6 +137,19 @@ pub struct MirFn {
     /// many slots; using the resolver's count alone underruns the
     /// frame when the body stores into a synthetic slot.
     pub local_count: u32,
+    /// Per-slot alias-proneness, indexed by `LocalId`/slot: `true`
+    /// when the resolver's alias analysis flagged the slot as possibly
+    /// sharing its backing engine array/struct with another binding.
+    /// Backends combine it with a node's `last_use` to gate the
+    /// owned-mutate fast path (`owned = last_use && !aliased`) — the
+    /// VM's owned-mask and the wasm-gc clone-on-write skip. Carried on
+    /// the MIR fn so MIR consumers read this ownership fact off MIR
+    /// instead of reaching back into the AST `FnResolution`
+    /// side-channel. Cloned from the resolver at lowering today; a
+    /// later phase recomputes it as a MIR analysis pass. An
+    /// out-of-range slot reads `false` (not aliased → fast path sound),
+    /// matching the resolver tables.
+    pub aliased_slots: std::sync::Arc<Vec<bool>>,
 }
 
 /// One formal parameter. The `LocalId` is assigned at lowering
