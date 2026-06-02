@@ -22,6 +22,74 @@ pub(crate) enum MirBuiltinEmit {
     Produced(bool),
 }
 
+/// `--target wasip2` effect lowering — the MIR analogue of the
+/// `ctx.wasip2_lowering.is_some()` block in `emit_dotted_builtin`
+/// (builtins.rs). On wasip2 every Console / Args / Env / Time / Random
+/// / Disk / Http / Tcp effect lowers to a canonical-ABI call sequence
+/// (in `builtins_wasip2.rs`), NOT the AverBridge `fn_map.effects` host
+/// import — so this must run BEFORE the `fn_map.effects` branch in the
+/// `MirCallee::Builtin` arm, exactly as the HIR dispatch ordered it.
+/// Returns `NotHandled` when wasip2 lowering isn't active or `dotted`
+/// isn't a wasip2-lowered effect (so the caller tries the AverBridge
+/// effect / builtin paths next). The wasip2 emitters already take MIR
+/// args and recurse `emit_mir_expr`, so no per-arg pre-emission is
+/// needed here.
+pub(crate) fn emit_mir_wasip2_effect(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    expr: &Spanned<MirExpr>,
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    use super::super::builtins_wasip2::*;
+    if ctx.wasip2_lowering.is_none() {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    let produces = aver_type_str_of(expr).trim() != "Unit";
+    let Some((parent, method)) = dotted.split_once('.') else {
+        return Ok(MirBuiltinEmit::NotHandled);
+    };
+    // `Args.get()` is intercepted before this (see the
+    // `MirCallee::Builtin` arm), but route it here too for symmetry with
+    // the HIR dispatch — on wasip2 it's the canonical-ABI variant.
+    match (parent, method) {
+        ("Args", "get") if args.is_empty() => emit_args_get_wasip2(func, slots, ctx)?,
+        ("Console", "print" | "error" | "warn") => {
+            emit_console_print_wasip2(func, method, args, slots, ctx)?
+        }
+        ("Console", "readLine") => emit_console_read_line_wasip2(func, args, ctx)?,
+        ("Time", "unixMs") => emit_time_unix_ms_wasip2(func, args, ctx)?,
+        ("Time", "now") => emit_time_now_wasip2(func, args, ctx)?,
+        ("Time", "sleep") => emit_time_sleep_wasip2(func, args, slots, ctx)?,
+        ("Random", "int") => emit_random_int_wasip2(func, args, slots, ctx)?,
+        ("Random", "float") => emit_random_float_wasip2(func, args, ctx)?,
+        ("Env", "get") => emit_env_get_wasip2(func, args, slots, ctx)?,
+        ("Disk", "exists") => emit_disk_exists_wasip2(func, args, slots, ctx)?,
+        ("Disk", "readText") => emit_disk_read_text_wasip2(func, args, slots, ctx)?,
+        ("Disk", "writeText") => emit_disk_write_text_wasip2(func, args, slots, ctx)?,
+        ("Disk", "appendText") => emit_disk_append_text_wasip2(func, args, slots, ctx)?,
+        ("Disk", "delete") => emit_disk_delete_wasip2(func, args, slots, ctx)?,
+        ("Disk", "deleteDir") => emit_disk_delete_dir_wasip2(func, args, slots, ctx)?,
+        ("Disk", "makeDir") => emit_disk_make_dir_wasip2(func, args, slots, ctx)?,
+        ("Disk", "listDir") => emit_disk_list_dir_wasip2(func, args, slots, ctx)?,
+        ("Http", "get") => emit_http_get_wasip2(func, args, slots, ctx)?,
+        ("Http", "head") => emit_http_head_wasip2(func, args, slots, ctx)?,
+        ("Http", "delete") => emit_http_delete_wasip2(func, args, slots, ctx)?,
+        ("Http", "post") => emit_http_post_wasip2(func, args, slots, ctx)?,
+        ("Http", "put") => emit_http_put_wasip2(func, args, slots, ctx)?,
+        ("Http", "patch") => emit_http_patch_wasip2(func, args, slots, ctx)?,
+        ("Tcp", "connect") => emit_tcp_connect_wasip2(func, args, slots, ctx)?,
+        ("Tcp", "close") => emit_tcp_close_wasip2(func, args, slots, ctx)?,
+        ("Tcp", "writeLine") => emit_tcp_write_line_wasip2(func, args, slots, ctx)?,
+        ("Tcp", "readLine") => emit_tcp_read_line_wasip2(func, args, slots, ctx)?,
+        ("Tcp", "send") => emit_tcp_send_wasip2(func, args, slots, ctx)?,
+        ("Tcp", "ping") => emit_tcp_ping_wasip2(func, args, slots, ctx)?,
+        _ => return Ok(MirBuiltinEmit::NotHandled),
+    }
+    Ok(MirBuiltinEmit::Produced(produces))
+}
+
 /// Mirror of the custom-inline arms of `emit_dotted_builtin`
 /// (builtins.rs): builtins that lower to a fixed inline wasm sequence
 /// rather than a `fn_map.builtins`-keyed helper call, so a plain
@@ -308,13 +376,30 @@ pub(crate) fn emit_mir_option_with_default(
             return Ok(MirBuiltinEmit::Produced(true));
         }
 
-        // `Option.withDefault(Map.get(m, k), default)` — the oracle fuses
-        // this into the per-`Map` `get_or_default` helper (no `Option`
-        // alloc). The MIR emitter doesn't mirror that fusion, so fall
-        // back rather than emit the boxed form below (which would diverge
-        // from the oracle's bytes).
-        if inner_dotted == "Map.get" {
-            return Ok(MirBuiltinEmit::NotHandled);
+        // `Option.withDefault(Map.get(m, k), default)` — fuse into the
+        // per-`Map` `get_or_default` helper (no `Option<V>` ever allocs
+        // on the hot lookup path). Mirror of the retired HIR
+        // `emit_map_get_or_default`: emit map, key, default, then call
+        // the helper. `Map.get` always carries exactly 2 args
+        // (map, key); a malformed shape falls back.
+        if inner_dotted == "Map.get" && inner.args.len() == 2 {
+            let map = &inner.args[0];
+            let key = &inner.args[1];
+            let map_aver = aver_type_str_of(map);
+            let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
+            let get_or_default = ctx
+                .fn_map
+                .map_helpers_lookup(&canonical)
+                .ok_or(WasmGcError::Validation(format!(
+                    "Map.get fusion: map argument has type `{map_aver}` but no helpers are \
+                     registered"
+                )))?
+                .get_or_default;
+            e!(map);
+            e!(key);
+            e!(default);
+            func.instruction(&Instruction::Call(get_or_default));
+            return Ok(MirBuiltinEmit::Produced(true));
         }
     }
 
@@ -597,6 +682,36 @@ pub(crate) fn emit_mir_map_builtin(
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<MirBuiltinEmit, WasmGcError> {
+    // `Map.fromList(l: List<Tuple<K, V>>) -> Map<K, V>` — the arg is a
+    // List, not a Map, so it doesn't fit the `args[0]: Map` shape of the
+    // methods below. Mirror of the retired HIR `emit_map_from_list_call`:
+    // derive `Map<K,V>` from the list element's `Tuple<K,V>`, emit the
+    // list, then call the per-(K,V) `from_list` helper.
+    if dotted == "Map.fromList" && args.len() == 1 {
+        let list_arg = &args[0];
+        let list_aver = aver_type_str_of(list_arg);
+        let list_canonical: String = list_aver.chars().filter(|c| !c.is_whitespace()).collect();
+        let elem =
+            TypeRegistry::list_element_type(&list_canonical).ok_or(WasmGcError::Validation(
+                format!("Map.fromList: input `{list_aver}` is not a List<Tuple<K,V>>"),
+            ))?;
+        let (k, v) = TypeRegistry::tuple_ab(elem).ok_or(WasmGcError::Validation(format!(
+            "Map.fromList: list element `{elem}` is not a Tuple<K, V>"
+        )))?;
+        let map_canonical = format!("Map<{},{}>", k.trim(), v.trim());
+        let from_list = ctx
+            .fn_map
+            .map_helpers_lookup(&map_canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "Map.fromList: helpers for `{map_canonical}` not registered"
+            )))?
+            .from_list;
+        if emit_mir_expr(func, list_arg, slots, ctx)?.is_none() {
+            return Ok(MirBuiltinEmit::Fallback);
+        }
+        func.instruction(&Instruction::Call(from_list));
+        return Ok(MirBuiltinEmit::Produced(true));
+    }
     let method = match dotted {
         "Map.set" => "set",
         "Map.get" => "get",

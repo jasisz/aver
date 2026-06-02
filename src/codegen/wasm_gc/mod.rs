@@ -153,27 +153,23 @@ pub fn compile_to_wasm_gc(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge, true).map(|(bytes, _)| bytes)
+    module::emit_module_with(items, None, TargetMode::AverBridge).map(|(bytes, _)| bytes)
 }
 
-/// `compile_to_wasm_gc` with an explicit MIR toggle.
-/// `enable_mir == true` is the production path (`compile_to_wasm_gc`):
-/// the MIR body emitter runs per-fn with a `ResolvedExpr` fallback.
-/// `enable_mir == false` forces the `ResolvedExpr` emitter everywhere.
-/// Returns `(module_bytes, mir_emitted_fn_count)` — the count is how
-/// many fns the MIR body emitter actually rendered (the real
-/// `emit_fn_body_via_mir` decision, not the structural coverage
-/// predicate). The byte-differential test compiles both ways and
-/// asserts the bytes are identical (proving the MIR walk is byte-for-
-/// byte faithful) and that the count is non-zero (proving the MIR path
-/// was actually exercised, so byte-identity isn't vacuous).
+/// `compile_to_wasm_gc` returning the MIR-coverage count alongside the
+/// module bytes. MIR is the only codegen path; the count is how many
+/// fns the MIR body emitter actually rendered (the real
+/// `emit_fn_body_via_mir` Some/None decision, not the structural
+/// coverage predicate). Fns it doesn't cover get an `unreachable`
+/// trap-stub body. The single-file differential test uses this to hold
+/// a coverage floor — a covered construct silently regressing to a trap
+/// stub drops the count below the floor and fails CI.
 #[doc(hidden)]
-pub fn compile_to_wasm_gc_mir_toggle(
+pub fn compile_to_wasm_gc_with_mir_count(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
-    enable_mir: bool,
 ) -> Result<(Vec<u8>, usize), WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::AverBridge, enable_mir)
+    module::emit_module_with(items, None, TargetMode::AverBridge)
 }
 
 /// Same as `compile_to_wasm_gc` but exports a JS-callable
@@ -186,7 +182,7 @@ pub fn compile_to_wasm_gc_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: Option<&str>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, handler, TargetMode::AverBridge, true).map(|(bytes, _)| bytes)
+    module::emit_module_with(items, handler, TargetMode::AverBridge).map(|(bytes, _)| bytes)
 }
 
 /// Compile post-pipeline IR (`items`) to a WebAssembly GC module
@@ -205,7 +201,7 @@ pub fn compile_to_wasm_gc_for_wasip2(
     items: &[TopLevel],
     _analysis: Option<&AnalysisResult>,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, None, TargetMode::Wasip2, true).map(|(bytes, _)| bytes)
+    module::emit_module_with(items, None, TargetMode::Wasip2).map(|(bytes, _)| bytes)
 }
 
 /// `--target wasip2 --world wasi:http/proxy` entry — Phase 3 / 0.19.
@@ -229,5 +225,5 @@ pub fn compile_to_wasm_gc_for_wasip2_with_handler(
     _analysis: Option<&AnalysisResult>,
     handler: &str,
 ) -> Result<Vec<u8>, WasmGcError> {
-    module::emit_module_with(items, Some(handler), TargetMode::Wasip2, true).map(|(bytes, _)| bytes)
+    module::emit_module_with(items, Some(handler), TargetMode::Wasip2).map(|(bytes, _)| bytes)
 }

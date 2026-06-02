@@ -313,7 +313,18 @@ pub(crate) fn emit_mir_expr(
                         return Ok(Some(true));
                     }
                     let Some(eq_fn) = sum_or_record_eq_fn(lty, ctx) else {
-                        return Ok(None);
+                        // No `__eq_<T>` helper. Mirror of `emit_expr`'s
+                        // final `else`: a single-field record flattens to
+                        // a newtype whose wasm representation IS the
+                        // underlying primitive, so `==` / `!=` lower to a
+                        // plain `i64.eq` / `f64.eq` via the numeric select
+                        // (`wasm_type_of` unwraps the newtype). A genuine
+                        // unresolvable type yields `None` from
+                        // `emit_mir_numeric_binop` → whole-fn fallback.
+                        if emit_mir_numeric_binop(func, bop, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                        return Ok(Some(true));
                     };
                     if emit_mir_expr(func, &bop.lhs, slots, ctx)?.is_none() {
                         return Ok(None);
@@ -443,6 +454,19 @@ pub(crate) fn emit_mir_expr(
                         return Ok(None);
                     };
                     let dotted = dotted.as_str();
+                    // `--target wasip2`: every effect lowers to a
+                    // canonical-ABI call sequence (Console / Args / Env /
+                    // Time / Random / Disk / Http / Tcp), NOT the AverBridge
+                    // `fn_map.effects` host import — so this runs FIRST,
+                    // mirroring the `ctx.wasip2_lowering.is_some()` block at
+                    // the top of `emit_dotted_builtin`. It also covers the
+                    // wasip2 `Args.get` (canonical-ABI variant), which is
+                    // why it precedes the AverBridge `Args.get` inline below.
+                    match emit_mir_wasip2_effect(func, dotted, &call.args, expr, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
                     // `Args.get` is intercepted *before* the effect /
                     // builtin dispatch in `emit_dotted_builtin` and expands
                     // to a custom inline (the `Args.len` loop building a
@@ -460,8 +484,8 @@ pub(crate) fn emit_mir_expr(
                     // `fn_map.effects` branch: emit args, push the
                     // `caller_fn` idx the host stamps onto the recorded
                     // effect, then `call` the import. (The wasip2 effect
-                    // lowerings are a different target whose branches don't
-                    // run on the AverBridge path the MIR emitter serves.)
+                    // lowerings are handled by `emit_mir_wasip2_effect`
+                    // above; this branch serves only the AverBridge target.)
                     if let Some(&effect_idx) = ctx.fn_map.effects.get(dotted) {
                         for arg in &call.args {
                             if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
