@@ -57,6 +57,7 @@ fn one_fn_dump_pins_skeleton() {
             effects: vec![],
             body,
             local_count: 0,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
         },
     );
 
@@ -104,6 +105,7 @@ fn try_bind_via_let_composition_dump_shape() {
             effects: vec![],
             body,
             local_count: 0,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
         },
     );
     let dump = format!("{program}");
@@ -160,6 +162,7 @@ fn match_dump_shape() {
             effects: vec![],
             body,
             local_count: 0,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
         },
     );
     let dump = format!("{program}");
@@ -205,6 +208,7 @@ fn ctor_pattern_dump_uses_ctor_id() {
             effects: vec![],
             body,
             local_count: 0,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
         },
     );
     let dump = format!("{program}");
@@ -235,6 +239,7 @@ fn effects_render_on_fn_header() {
             ],
             body,
             local_count: 0,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
         },
     );
     let dump = format!("{program}");
@@ -261,6 +266,7 @@ fn fns_render_in_fn_id_order() {
                 effects: vec![],
                 body: span(MirExpr::Literal(span(Literal::Int(raw as i64)))),
                 local_count: 0,
+                aliased_slots: std::sync::Arc::new(Vec::new()),
             },
         );
     }
@@ -294,6 +300,7 @@ fn let_dump_shape() {
             effects: vec![],
             body,
             local_count: 0,
+            aliased_slots: std::sync::Arc::new(Vec::new()),
         },
     );
     let dump = format!("{program}");

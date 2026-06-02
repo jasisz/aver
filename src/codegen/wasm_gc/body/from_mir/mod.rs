@@ -144,6 +144,11 @@ pub(crate) fn emit_fn_body_via_mir(
         registry,
         symbol_table,
         resolution: rfd.resolution.as_ref(),
+        // MIR path: alias facts ride the MIR fn (cloned from the
+        // resolver at lowering), so the owned-mutate fast path reads
+        // its gate off MIR rather than the AST `FnResolution`. Identical
+        // bits to the resolver table today; the home is what changes.
+        aliased_slots: mir_fn.aliased_slots.as_slice(),
         params: &rfd.params,
         binding_names: &binding_names,
         effect_idx_lookup,

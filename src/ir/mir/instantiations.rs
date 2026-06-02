@@ -440,6 +440,7 @@ mod tests {
                 effects: vec![],
                 body,
                 local_count: 0,
+                aliased_slots: std::sync::Arc::new(Vec::new()),
             },
         );
         p

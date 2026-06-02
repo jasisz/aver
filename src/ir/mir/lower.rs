@@ -247,6 +247,17 @@ fn lower_fn(fd: &ResolvedFnDef, program: &mut MirProgram) -> Result<MirFn, SkipR
         effects,
         body,
         local_count,
+        // Carry the resolver's per-slot alias table onto the MIR fn so
+        // backends read ownership off MIR (see `MirFn::aliased_slots`).
+        // Fns lowered without a resolution (single-expr bodies that
+        // skipped slot resolution) get an empty table — every slot then
+        // reads not-aliased, matching the resolver's out-of-range
+        // default.
+        aliased_slots: fd
+            .resolution
+            .as_ref()
+            .map(|r| r.aliased_slots.clone())
+            .unwrap_or_default(),
     })
 }
 

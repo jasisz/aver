@@ -212,6 +212,12 @@ pub(super) fn emit_fn_body(
         registry,
         symbol_table,
         resolution: rfd.resolution.as_ref(),
+        // HIR path: alias facts come straight from the resolver table.
+        aliased_slots: rfd
+            .resolution
+            .as_ref()
+            .map(|r| r.aliased_slots.as_slice())
+            .unwrap_or(&[]),
         params: &rfd.params,
         binding_names: &binding_names,
         effect_idx_lookup,
@@ -326,6 +332,14 @@ pub(super) struct EmitCtx<'a> {
     /// pipeline always populates it for production paths; tests may
     /// pre-resolve manually).
     pub(super) resolution: Option<&'a crate::ast::FnResolution>,
+    /// Per-slot alias-proneness for the current fn, indexed by slot.
+    /// On the `ResolvedExpr` path this mirrors `resolution.aliased_slots`;
+    /// on the MIR path it is sourced from `MirFn::aliased_slots`, so the
+    /// owned-mutate fast path reads its gate off MIR rather than reaching
+    /// back into the AST `FnResolution` side-channel. `is_aliased_slot`
+    /// reads this; an out-of-range slot is `false` (not aliased → fast
+    /// path sound).
+    pub(super) aliased_slots: &'a [bool],
     /// Param name → resolved aver type. Used by `CallLowerCtx` for
     /// local-name recognition; the typed-AST refactor (Step 3) made
     /// the *type* portion redundant for emit, but the param list is
@@ -591,15 +605,15 @@ impl<'a> EmitCtx<'a> {
 
     /// Whether `slot` is flagged as alias-prone by `ir::alias`. Backends
     /// that want to skip clone-on-write must check this first; default
-    /// `false` for slots outside the table (resolution missing,
-    /// scratch slots) is the safe-but-fast answer (no aliasing
-    /// suspicion → in-place is sound). The IR pass always runs in real
-    /// builds, so an absent table only happens in test paths that
-    /// pre-resolve manually.
+    /// `false` for slots outside the table (empty table, scratch
+    /// slots) is the safe-but-fast answer (no aliasing suspicion →
+    /// in-place is sound). The alias pass always runs in real builds,
+    /// so an empty table only happens in test paths that pre-resolve
+    /// manually. Reads the `aliased_slots` field, which is
+    /// resolution-sourced on the HIR path and `MirFn`-sourced on the
+    /// MIR path — identical bits, different home.
     pub(super) fn is_aliased_slot(&self, slot: u16) -> bool {
-        self.resolution
-            .and_then(|r| r.aliased_slots.get(slot as usize).copied())
-            .unwrap_or(false)
+        self.aliased_slots.get(slot as usize).copied().unwrap_or(false)
     }
 
     /// True when `arg` is a `Resolved` slot whose binding is dead

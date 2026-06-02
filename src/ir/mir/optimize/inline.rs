@@ -172,6 +172,7 @@ mod tests {
                 effects: vec![],
                 body: span(callee_body),
                 local_count: 0,
+                aliased_slots: std::sync::Arc::new(Vec::new()),
             },
         );
         p.fns.insert(
@@ -184,6 +185,7 @@ mod tests {
                 effects: vec![],
                 body: span(caller_body),
                 local_count: 0,
+                aliased_slots: std::sync::Arc::new(Vec::new()),
             },
         );
         p
@@ -224,6 +226,7 @@ mod tests {
                 effects: vec![],
                 body: span(MirExpr::Literal(span(Literal::Int(42)))),
                 local_count: 1,
+                aliased_slots: std::sync::Arc::new(Vec::new()),
             },
         );
         let caller_body_expr = MirExpr::Call(span(MirCall {
@@ -240,6 +243,7 @@ mod tests {
                 effects: vec![],
                 body: span(caller_body_expr),
                 local_count: 0,
+                aliased_slots: std::sync::Arc::new(Vec::new()),
             },
         );
         let inlined = inline_nullary_literals(p);
