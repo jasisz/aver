@@ -613,7 +613,10 @@ impl<'a> EmitCtx<'a> {
     /// resolution-sourced on the HIR path and `MirFn`-sourced on the
     /// MIR path — identical bits, different home.
     pub(super) fn is_aliased_slot(&self, slot: u16) -> bool {
-        self.aliased_slots.get(slot as usize).copied().unwrap_or(false)
+        self.aliased_slots
+            .get(slot as usize)
+            .copied()
+            .unwrap_or(false)
     }
 
     /// True when `arg` is a `Resolved` slot whose binding is dead

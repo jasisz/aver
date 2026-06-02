@@ -226,7 +226,10 @@ fn uniquely_owned(
         MirExpr::MapLiteral(_) => true,
         MirExpr::Call(c) => match &c.node.callee {
             MirCallee::Builtin(id) => {
-                let name = builtins.get(id.0 as usize).map(String::as_str).unwrap_or("");
+                let name = builtins
+                    .get(id.0 as usize)
+                    .map(String::as_str)
+                    .unwrap_or("");
                 match name {
                     // Vector.new(n, default): owned iff the default is a
                     // scalar literal (a compound default makes every cell
@@ -240,7 +243,15 @@ fn uniquely_owned(
                     // set returns its (mutated) vector/map — owned iff the
                     // target is owned.
                     "Vector.set" | "Map.set" => c.node.args.first().is_some_and(|v| {
-                        uniquely_owned(&v.node, caller, program, owned, provenance, builtins, depth + 1)
+                        uniquely_owned(
+                            &v.node,
+                            caller,
+                            program,
+                            owned,
+                            provenance,
+                            builtins,
+                            depth + 1,
+                        )
                     }),
                     "Option.withDefault" if c.node.args.len() == 2 => {
                         // Self-keep fusion shape:
@@ -268,13 +279,34 @@ fn uniquely_owned(
                             let live = v.node.last_use || d.node.last_use;
                             return live
                                 && slot_owned(
-                                    v.node.slot.0, caller, program, owned, provenance, builtins, depth + 1,
+                                    v.node.slot.0,
+                                    caller,
+                                    program,
+                                    owned,
+                                    provenance,
+                                    builtins,
+                                    depth + 1,
                                 );
                         }
                         // General: both branches independently owned (the
                         // surviving handle is one of them).
-                        uniquely_owned(&c.node.args[0].node, caller, program, owned, provenance, builtins, depth + 1)
-                            && uniquely_owned(&c.node.args[1].node, caller, program, owned, provenance, builtins, depth + 1)
+                        uniquely_owned(
+                            &c.node.args[0].node,
+                            caller,
+                            program,
+                            owned,
+                            provenance,
+                            builtins,
+                            depth + 1,
+                        ) && uniquely_owned(
+                            &c.node.args[1].node,
+                            caller,
+                            program,
+                            owned,
+                            provenance,
+                            builtins,
+                            depth + 1,
+                        )
                     }
                     // Vector.get / Map.get return an alias into the source;
                     // every other builtin result is not provably owned.
@@ -289,7 +321,15 @@ fn uniquely_owned(
         // A live (last-use), owned slot read.
         MirExpr::Local(l) => {
             l.node.last_use
-                && slot_owned(l.node.slot.0, caller, program, owned, provenance, builtins, depth + 1)
+                && slot_owned(
+                    l.node.slot.0,
+                    caller,
+                    program,
+                    owned,
+                    provenance,
+                    builtins,
+                    depth + 1,
+                )
         }
         _ => false,
     }
@@ -319,11 +359,19 @@ fn slot_owned(
     let is_param = (slot as usize) < caller_fn.params.len();
     // Flagged in the caller's table (RULE 1 param or RULE 2 intra-proc
     // alias such as a Vector.get handle).
-    if caller_fn.aliased_slots.get(slot as usize).copied().unwrap_or(false) {
+    if caller_fn
+        .aliased_slots
+        .get(slot as usize)
+        .copied()
+        .unwrap_or(false)
+    {
         // A flagged param may yet be un-flagged — consult the lattice.
         // A flagged non-param slot is a real intra-procedural alias.
         if is_param {
-            return owned.get(&(caller, slot as usize)).copied().unwrap_or(false);
+            return owned
+                .get(&(caller, slot as usize))
+                .copied()
+                .unwrap_or(false);
         }
         return false;
     }
@@ -334,7 +382,15 @@ fn slot_owned(
     }
     // A let-bound local: owned iff its binding RHS is owned.
     match provenance.get(&caller).and_then(|m| m.get(&slot)) {
-        Some(rhs) => uniquely_owned(&rhs.node, caller, program, owned, provenance, builtins, depth + 1),
+        Some(rhs) => uniquely_owned(
+            &rhs.node,
+            caller,
+            program,
+            owned,
+            provenance,
+            builtins,
+            depth + 1,
+        ),
         None => false,
     }
 }
@@ -350,7 +406,8 @@ fn collect_fn_values(e: &MirExpr, out: &mut HashSet<String>) {
 /// Collect `slot → binding-RHS` for every `Let` in the body.
 fn collect_let_bindings(e: &MirExpr, out: &mut HashMap<u32, Spanned<MirExpr>>) {
     if let MirExpr::Let(l) = e {
-        out.entry(l.node.binding.0).or_insert_with(|| (*l.node.value).clone());
+        out.entry(l.node.binding.0)
+            .or_insert_with(|| (*l.node.value).clone());
     }
     visit_children(e, &mut |c| collect_let_bindings(c, out));
 }
