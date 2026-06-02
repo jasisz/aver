@@ -197,7 +197,7 @@ impl TypeChecker {
                             // before Iron 0.21. Lift the rejection into
                             // typecheck so the same message lands on every
                             // target.
-                            if matches!(&inferred, Type::Fn(..)) {
+                            if self.type_contains_fn(&inferred) {
                                 self.error(format!(
                                     "Binding '{}' to a fn reference is not supported. Aver allows top-level fns as first-class values only in call-argument position (e.g. `HttpServer.listen(port, {})`). For local use, call it: `{} = <fn>(...)`.",
                                     name, name, name
@@ -207,11 +207,9 @@ impl TypeChecker {
                                 match crate::types::parse_type_str_strict(ann_src) {
                                     Ok(annotated) => {
                                         let annotated = self.canonicalize_named(annotated);
-                                        self.report_ambiguous_named(
-                                            &annotated,
-                                            expr.line,
-                                            &format!("Binding '{}' annotation", name),
-                                        );
+                                        let ctx = format!("Binding '{}' annotation", name);
+                                        self.report_ambiguous_named(&annotated, expr.line, &ctx);
+                                        self.reject_fn_in_type(&annotated, false, expr.line, &ctx);
                                         if !self.compatible(&inferred, &annotated) {
                                             self.error(format!(
                                                 "Binding '{}': expression has type {}, annotation says {}",
@@ -613,7 +611,7 @@ impl TypeChecker {
                         // Mirror the top-level rejection above — fn refs
                         // aren't supported as local bindings, period. See
                         // `flow.rs:175` for the rationale.
-                        if matches!(&inferred, Type::Fn(..)) {
+                        if self.type_contains_fn(&inferred) {
                             self.error(format!(
                                 "Binding '{}' to a fn reference is not supported. Aver allows top-level fns as first-class values only in call-argument position (e.g. `HttpServer.listen(port, {})`). For local use, call it: `{} = <fn>(...)`.",
                                 name, name, name
@@ -623,11 +621,9 @@ impl TypeChecker {
                             match crate::types::parse_type_str_strict(ann_src) {
                                 Ok(annotated) => {
                                     let annotated = self.canonicalize_named(annotated);
-                                    self.report_ambiguous_named(
-                                        &annotated,
-                                        expr.line,
-                                        &format!("Binding '{}' annotation", name),
-                                    );
+                                    let ctx = format!("Binding '{}' annotation", name);
+                                    self.report_ambiguous_named(&annotated, expr.line, &ctx);
+                                    self.reject_fn_in_type(&annotated, false, expr.line, &ctx);
                                     if !self.compatible(&inferred, &annotated) {
                                         self.error(format!(
                                             "Binding '{}': expression has type {}, annotation says {}",

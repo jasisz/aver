@@ -838,3 +838,133 @@ proptest::proptest! {
         );
     }
 }
+
+// ────────────────────────────────────────────────────────────────────
+// `Fn(...)` may appear ONLY as a direct function parameter type. Every
+// other position (return, record / variant field, collection element,
+// nested inside another `Fn`, any binding) is a type error, so function
+// values cannot escape call-argument position — which keeps the concrete
+// callee, and therefore its effects, statically knowable.
+// ────────────────────────────────────────────────────────────────────
+
+/// The one legal shape: a `Fn(...)` parameter, passed a named fn in
+/// call-argument position. Must NOT be rejected.
+#[test]
+fn fn_value_legal_as_parameter_and_call_argument() {
+    let items = parse_items(
+        r#"
+fn double(n: Int) -> Int
+    n * 2
+
+fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int
+    f(f(x))
+
+fn main() -> Int
+    applyTwice(double, 5)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        !errs.iter().any(|e| e.contains("not allowed here")),
+        "param `Fn(...)` + call-argument fn value must stay legal, got: {errs:?}"
+    );
+}
+
+#[test]
+fn fn_value_rejected_in_return_position() {
+    let items = parse_items(
+        r#"
+fn double(n: Int) -> Int
+    n * 2
+
+fn inc(n: Int) -> Int
+    n + 1
+
+fn pick(b: Bool) -> Fn(Int) -> Int
+    match b
+        true -> double
+        false -> inc
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("Function 'pick' return type") && e.contains("not allowed here")),
+        "a function returning a `Fn(...)` must be rejected, got: {errs:?}"
+    );
+}
+
+#[test]
+fn fn_value_rejected_in_record_field() {
+    let items = parse_items(
+        r#"
+record FnBox
+    handler: Fn(Int) -> Int
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("field 'handler'") && e.contains("not allowed here")),
+        "a `Fn(...)` record field must be rejected, got: {errs:?}"
+    );
+}
+
+#[test]
+fn fn_value_rejected_in_collection_element() {
+    let items = parse_items(
+        r#"
+fn callFromList(fns: List<Fn(Int) -> Int>, x: Int) -> Int
+    match fns
+        [] -> x
+        [f, ..rest] -> f(x)
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter().any(|e| e.contains("not allowed here")),
+        "a `Fn(...)` nested in a collection (List element) must be rejected, got: {errs:?}"
+    );
+}
+
+#[test]
+fn fn_value_rejected_in_map_value() {
+    let items = parse_items(
+        r#"
+fn callFromMap(m: Map<String, Fn(Int) -> Int>, k: String, x: Int) -> Int
+    match Map.get(m, k)
+        Option.Some(f) -> f(x)
+        Option.None -> x
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter().any(|e| e.contains("not allowed here")),
+        "a `Fn(...)` as a Map value must be rejected, got: {errs:?}"
+    );
+}
+
+/// The extended binding guard: a function value cannot be bound in ANY
+/// shape, including wrapped in a collection literal.
+#[test]
+fn fn_value_rejected_when_bound_inside_collection_literal() {
+    let items = parse_items(
+        r#"
+fn double(n: Int) -> Int
+    n * 2
+
+fn inc(n: Int) -> Int
+    n + 1
+
+fn main() -> Int
+    gs = [double, inc]
+    0
+"#,
+    );
+    let errs = errors(items);
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("to a fn reference is not supported")),
+        "binding a collection literal of fn values must be rejected, got: {errs:?}"
+    );
+}

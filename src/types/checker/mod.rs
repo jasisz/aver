@@ -781,6 +781,99 @@ impl TypeChecker {
         }
     }
 
+    /// Narrowing: a function TYPE (`Fn(...)`) may appear only as a *direct
+    /// function parameter type*. Reject it in every other declared-type
+    /// position — return types, record / sum-variant fields, collection /
+    /// map-value / tuple elements, binding annotations, and nested inside
+    /// another `Fn`. Aver functions are first-class values only in
+    /// call-argument position (`HttpServer.listen(port, handler)`); letting a
+    /// function value be returned, stored, or otherwise escape would make the
+    /// concrete callee — and therefore its effects — runtime-determined,
+    /// which is exactly what the static effect / Oracle / verify guarantees
+    /// rely on NOT happening.
+    ///
+    /// `allow_top_level_param` is true only at the parameter site: a parameter
+    /// may itself be a `Fn(...)` callback, but a `Fn` nested inside that
+    /// callback's own params/return is still rejected. Emits at most one error
+    /// per offending position (stops descending past a rejected `Fn`), so a
+    /// `-> Fn(A) -> Fn(B) -> C` return yields one diagnostic, not a cascade.
+    pub(super) fn reject_fn_in_type(
+        &mut self,
+        ty: &Type,
+        allow_top_level_param: bool,
+        line: usize,
+        source_ctx: &str,
+    ) {
+        match ty {
+            Type::Fn(params, ret, _) => {
+                if !allow_top_level_param {
+                    self.error_at_line(
+                        line,
+                        format!(
+                            "{source_ctx}: a function type `{}` is not allowed here. Aver permits `Fn(...)` only as a direct function parameter type \
+                             (e.g. `fn run(step: Fn(Int) -> Int) -> Int`); functions are first-class values only in call-argument position \
+                             (`HttpServer.listen(port, handler)`). Return a concrete value and call the function at its use site.",
+                            ty.display()
+                        ),
+                    );
+                    return;
+                }
+                // A callback parameter may not itself take or return a fn.
+                for p in params {
+                    self.reject_fn_in_type(p, false, line, source_ctx);
+                }
+                self.reject_fn_in_type(ret, false, line, source_ctx);
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.reject_fn_in_type(inner, false, line, source_ctx);
+            }
+            Type::Result(ok, err) => {
+                self.reject_fn_in_type(ok, false, line, source_ctx);
+                self.reject_fn_in_type(err, false, line, source_ctx);
+            }
+            Type::Map(k, v) => {
+                self.reject_fn_in_type(k, false, line, source_ctx);
+                self.reject_fn_in_type(v, false, line, source_ctx);
+            }
+            Type::Tuple(items) => {
+                for item in items {
+                    self.reject_fn_in_type(item, false, line, source_ctx);
+                }
+            }
+            Type::Named { .. }
+            | Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => {}
+        }
+    }
+
+    /// `true` if `ty` is a `Fn(...)` or structurally contains one (in a
+    /// collection element, tuple slot, etc.). Used to reject binding a
+    /// function value in any shape (`g = double`, `gs = [double, inc]`).
+    pub(super) fn type_contains_fn(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Fn(..) => true,
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => {
+                self.type_contains_fn(inner)
+            }
+            Type::Result(ok, err) => self.type_contains_fn(ok) || self.type_contains_fn(err),
+            Type::Map(k, v) => self.type_contains_fn(k) || self.type_contains_fn(v),
+            Type::Tuple(items) => items.iter().any(|i| self.type_contains_fn(i)),
+            Type::Named { .. }
+            | Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => false,
+        }
+    }
+
     /// Register a bare → `FnId` alias, marking it `Ambiguous` if a
     /// different identity is already registered under the same bare
     /// name. Duplicate registration of the same identity (e.g. an
