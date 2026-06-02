@@ -21,8 +21,10 @@
 //! `emit_attr_get`), and the `Tuple` / `MapLiteral` literals. Synthetic
 //! lets (`_ = expr`, intermediate
 //! `Stmt::Expr`) and higher-order callees (`FnValue`, `LocalSlot`) fall
-//! back. Registered-helper builtins go through the `fn_map.builtins`
-//! lookup here.
+//! back. Registered-helper builtins and effect imports (`Console.*` /
+//! `Disk.*` / `Tcp.*` / `Http.*` / `Random.*` / `Time.*`, each carrying
+//! the host's `caller_fn` stamp) go through the `fn_map.builtins` /
+//! `fn_map.effects` lookups here.
 //!
 //! - [`pattern_match`] — `Match` over `Bool` / `Int` / `String`,
 //!   `Option` / `Result` / `List` carriers, and user sum types.
@@ -56,7 +58,7 @@ pub(super) use crate::types::Type;
 pub(super) use super::super::WasmGcError;
 pub(super) use super::super::types::{TypeRegistry, VariantInfo, aver_to_wasm, normalize_compound};
 pub(super) use super::emit::{
-    emit_default_value, emit_return_call_insn, emit_string_literal_bytes,
+    emit_caller_fn_idx, emit_default_value, emit_return_call_insn, emit_string_literal_bytes,
 };
 pub(super) use super::infer::{aver_type_canonical, aver_type_str_of, wasm_type_of};
 pub(super) use super::slots::count_value_params;
@@ -352,6 +354,24 @@ pub(crate) fn emit_mir_expr(
                         return Ok(None);
                     };
                     let dotted = dotted.as_str();
+                    // Registered effect import (`Console.*`, `Disk.*`,
+                    // `Tcp.*`, `Http.*`, `Random.*`, `Time.*`, …) on the
+                    // AverBridge target — mirror of `emit_dotted_builtin`'s
+                    // `fn_map.effects` branch: emit args, push the
+                    // `caller_fn` idx the host stamps onto the recorded
+                    // effect, then `call` the import. (The wasip2 effect
+                    // lowerings are a different target whose branches don't
+                    // run on the AverBridge path the MIR emitter serves.)
+                    if let Some(&effect_idx) = ctx.fn_map.effects.get(dotted) {
+                        for arg in &call.args {
+                            if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+                                return Ok(None);
+                            }
+                        }
+                        emit_caller_fn_idx(func, ctx)?;
+                        func.instruction(&Instruction::Call(effect_idx));
+                        return Ok(Some(aver_type_str_of(expr).trim() != "Unit"));
+                    }
                     // Native scalar builtins (Float / Int / Bool) lower to
                     // an inline instruction sequence, not a registered
                     // helper, so try them before the `fn_map.builtins`
