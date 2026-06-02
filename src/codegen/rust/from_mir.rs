@@ -1,62 +1,35 @@
-//! Phase 5 wave 1 — Rust backend consumes MIR.
+//! Rust backend: emit expressions from Core MIR.
 //!
 //! Mirror of [`super::expr::emit_expr`] that walks
-//! [`crate::ir::mir::MirExpr`] instead of `ResolvedExpr` and
-//! emits the same Rust source string. The point is to land the
-//! same deduplication that #252 Phase 4 brought to the VM: one
-//! semantic walker per construct lives in MIR, and every
-//! backend (VM done, Rust this wave, wasm-gc / wasip2 later)
+//! [`crate::ir::mir::MirExpr`] instead of `ResolvedExpr` and emits the
+//! same Rust source string — the same deduplication MIR brought to the
+//! VM: one semantic walker per construct lives in MIR, and every backend
 //! reads from it instead of forking `ResolvedExpr`.
 //!
-//! ## Scope (Phase 5 wave 1)
+//! [`emit_mir_expr`] is the dispatcher; [`coverage_report`] measures how
+//! much of a program it can already render. It is **not yet wired into
+//! the Rust backend's production emit path** — that path still uses the
+//! HIR walker; this is the tested groundwork for moving the Rust backend
+//! onto MIR (hence `#[allow(dead_code)]` on the entry points). Once
+//! wired, a construct it returns `None` for is the signal to fall back
+//! to the HIR walker for that expression.
 //!
-//! Subset of `MirExpr` covered here — mirrors Phase 4a's
-//! starting subset on the VM side:
+//! ## Covered constructs
 //!
-//! - `Literal` — `super::expr::emit_literal`
-//! - `Local { name, .. }` — `aver_name_to_rust(&name)`
-//! - `BinOp` — `(lhs op rhs)` (Add / Sub / Mul / Div / Eq /
-//!   Neq / Lt / Gt / Lte / Gte). String-concat / numeric
-//!   inference is *not* mirrored — the HIR walker reads
-//!   `ectx` to disambiguate `+` between numeric add and
-//!   `AverStr` concat; MIR's type stamps would let us do the
-//!   same but we keep this PoC numeric-only.
-//! - `Neg(inner)` — `(-inner)`
+//! `Literal`, `Local`, `Neg`, `BinOp` (numeric ops, plus `Str` `+`
+//! concat — the right side borrowed for `AverStr`'s `Add<&AverStr>` —
+//! disambiguated from numeric add by the operands' type stamps),
+//! `Call` (`Fn` / `Builtin`), `Return`, `TailCall` (emitted as a plain
+//! call; the HIR self-TCO `continue` rewrite needs `ectx`, so the
+//! wire-up's parity check is the safety net), `Try` (`?`), `Tuple`,
+//! `List`, `MapLiteral`, `Let` (block-expr `{ let x = …; … }`),
+//! `Project`, `RecordCreate` / `RecordUpdate`, `Construct` (built-in and
+//! user ctors, including dep-module records resolved through
+//! `module_prefixes`), and `IfThenElse`.
 //!
-//! Everything else returns `None` so the caller knows the MIR
-//! walker can't cover the construct yet and should fall back
-//! to the HIR walker. Same fallback shape Phase 4 used.
-//!
-//! Wider waves (planned, not in this PR):
-//! - wave 2: Call(Fn) + Call(Builtin), Let, Return ✅
-//! - wave 3: Construct (Builtin only — User pending ctx
-//!   threading), Project, RecordCreate ✅ (partial)
-//! - wave 4a: Let ✅ (this PR — uses foundation #293
-//!   `MirLet.binding_name` to emit block-expr `{ let x = …; … }`)
-//! - wave 4b: `MirEmitCtx` foundation ✅ (walker's explicit
-//!   dependency surface — `symbol_table` + `module_prefixes`)
-//! - wave 4c: RecordCreate / RecordUpdate (module-unscoped) ✅
-//! - wave 4d: User-ctor Construct + dep-module records ✅
-//!   (this PR — uses `module_prefixes` + `module_prefix_to_rust_path`
-//!   to mirror HIR's `emit_type_constructor_call`; `Tcp.Connection`
-//!   special-case bounces to HIR)
-//! - wave 4e: Match (the remaining big one — dispatch_plan
-//!   reproduction + `is_borrowed_param` field on `MirEmitCtx`)
-//! - wave 5: Try / Tuple / List ✅ (`?` propagation + plain
-//!   tuple / list literals reusing recursive walker)
-//! - wave 6: Map literal ✅ (`HashMap::new()` /
-//!   `vec![…].into_iter().collect::<HashMap<_, _>>()` mirror
-//!   of HIR's emit shape, recursive on keys + values)
-//! - wave 7: TailCall ✅ (this PR — emitted as a regular
-//!   function call; HIR's self-TCO `continue` rewrite needs
-//!   `ectx` so the wire-up's parity check is the safety net)
-//! - wave 8: IndependentProduct (replay-runtime + parallel
-//!   branch handling needs `ctx.emit_replay_runtime` and
-//!   ParallelBranch wiring — large block, deferred to its own
-//!   PR)
-//!
-//! Won't reach the walker: InterpolatedStr is dropped by
-//! `interp_lower` before codegen runs.
+//! Not covered — these fall back to the HIR walker: `Match`,
+//! `IndependentProduct`, and `FnValue`. `InterpolatedStr` never reaches
+//! the walker — `interp_lower` lowers it away before codegen runs.
 
 use std::collections::HashSet;
 
@@ -116,10 +89,6 @@ impl<'a> MirEmitCtx<'a> {
 /// `toplevel.rs`: find the longest registered module prefix
 /// inside a dotted name. Returns `(prefix, suffix)` on hit,
 /// `None` when no registered prefix matches.
-///
-/// First consumer lands in Phase 5 wave 4d (User-ctor
-/// Construct + dep-module records); landing the helper with
-/// `MirEmitCtx` keeps the foundation PR self-contained.
 #[allow(dead_code)]
 fn resolve_module_call<'a>(
     dotted: &'a str,
@@ -138,7 +107,7 @@ fn resolve_module_call<'a>(
     best
 }
 
-/// Phase 5 diagnostic: how many fns the MIR walker can emit
+/// How many fns the MIR walker can emit
 /// standalone vs how many need HIR fallback. Pre-wire-up signal
 /// so callers can track walker reach across the shipped corpus
 /// without altering the codegen path.
@@ -185,8 +154,8 @@ pub fn coverage_report(program: &MirProgram, emit_ctx: &MirEmitCtx<'_>) -> Cover
 }
 
 /// Try to emit Rust source for `expr` directly from MIR.
-/// Returns `None` for any variant outside the Phase 5 wave 1
-/// subset — caller falls back to the HIR walker.
+/// Returns `None` for any variant outside the covered subset —
+/// the signal to fall back to the HIR walker.
 ///
 /// Mirror of [`super::expr::emit_expr`] for the covered
 /// subset; output strings should be character-for-character
@@ -194,9 +163,10 @@ pub fn coverage_report(program: &MirProgram, emit_ctx: &MirEmitCtx<'_>) -> Cover
 /// (modulo type-disambiguation paths the HIR walker takes via
 /// `EmitCtx`, which we don't have access to here).
 ///
-/// Dead-code-allowed until Phase 5 wave 2 wires the consumer
-/// inside [`super::expr::emit_expr`] (try MIR first, fall back
-/// to HIR walker on `None`).
+/// Allowed dead: not yet called from the production emit path
+/// (see the module docs) — wiring it into [`super::expr::emit_expr`]
+/// (try MIR first, fall back to the HIR walker on `None`) is the
+/// step that switches the Rust backend onto MIR.
 #[allow(dead_code)]
 pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     match &expr.node {
@@ -229,7 +199,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 BinOp::Lte => "<=",
                 BinOp::Gte => ">=",
             };
-            // Phase 5 wave 2: read type stamps to disambiguate
+            // Read type stamps to disambiguate
             // numeric `+` from `AverStr` concat. Same shape HIR
             // walker takes via `ectx.expr_is_numeric`. When both
             // operands are non-numeric (Str), the right side is
@@ -260,7 +230,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 }
                 // Builtin / closure / unresolved callees ride the
                 // HIR walker's classification (`CallPlan`) — too
-                // many shapes to mirror in wave 2. Buffer intrinsics
+                // many shapes to mirror here. Buffer intrinsics
                 // likewise fall back (the Rust backend deforests
                 // differently).
                 MirCallee::Builtin(_) | MirCallee::Intrinsic(_) | MirCallee::LocalSlot { .. } => {
@@ -270,7 +240,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, emit_ctx)?)),
         MirExpr::TailCall(spanned_tc) => {
-            // Phase 5 wave 7: tail call outside a self-TCO loop
+            // Tail call outside a self-TCO loop
             // emits as a regular function call — mirror of HIR's
             // `ResolvedExpr::TailCall` outside-loop branch
             // (which the resolver leaves intact and the emitter
@@ -289,13 +259,13 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             Some(format!("{}({})", aver_name_to_rust(&name), args.join(", ")))
         }
         MirExpr::Try(inner) => {
-            // Phase 5 wave 5: `value?` propagation. Mirror of
+            // `value?` propagation. Mirror of
             // HIR's `ResolvedExpr::ErrorProp` emit — append `?`
             // to the inner expression's Rust form.
             Some(format!("{}?", emit_mir_expr(inner, emit_ctx)?))
         }
         MirExpr::Tuple(items) => {
-            // Phase 5 wave 5: `(a, b, c)` tuple literal. Mirror
+            // `(a, b, c)` tuple literal. Mirror
             // of HIR's `ResolvedExpr::Tuple` emit, minus the
             // `clone_arg` insertion (no `ectx` here — borrowed-
             // param Locals signal the gap by returning their
@@ -309,7 +279,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             Some(format!("({})", parts.join(", ")))
         }
         MirExpr::List(items) => {
-            // Phase 5 wave 5: `[a, b, c]` list literal. Mirror
+            // `[a, b, c]` list literal. Mirror
             // of HIR's `ResolvedExpr::List` — empty case folds
             // to `aver_rt::AverList::empty()`, non-empty to
             // `from_vec(vec![...])`.
@@ -326,7 +296,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             ))
         }
         MirExpr::MapLiteral(entries) => {
-            // Phase 5 wave 6: `{"k" => v, …}` map literal.
+            // `{"k" => v, …}` map literal.
             // Mirror of HIR's `ResolvedExpr::MapLiteral` — empty
             // → `HashMap::new()`, non-empty →
             // `vec![(k, v), …].into_iter().collect::<HashMap<_, _>>()`.
@@ -347,7 +317,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             ))
         }
         MirExpr::Let(spanned_let) => {
-            // Phase 5 wave 4a: `let binding = value; body` →
+            // `let binding = value; body` →
             // Rust block-expression `{ let x = value; body }`.
             // Synthetic locals (intermediate effectful
             // `Stmt::Expr` at non-tail position) carry
@@ -365,7 +335,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             Some(format!("{{ let {} = {}; {} }}", name, value, body))
         }
         MirExpr::Project(spanned_proj) => {
-            // Phase 5 wave 3: `base.field` projection. Mirror of
+            // `base.field` projection. Mirror of
             // HIR's `ResolvedLeafOp::FieldAccess` emit shape —
             // emit_expr(base) + "." + aver_name_to_rust(field).
             // No clone insertion here; the HIR walker handles
@@ -375,7 +345,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             Some(format!("{}.{}", base, aver_name_to_rust(&proj.field)))
         }
         MirExpr::RecordCreate(spanned_rec) => {
-            // Phase 5 wave 4d: `T { field = v, … }` record literal.
+            // `T { field = v, … }` record literal.
             // Mirror of HIR's `ResolvedExpr::RecordCreate` emit
             // shape — `{type_name} { field: value, … }`. HIR
             // reads the source-level `type_name` string which
@@ -403,7 +373,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             Some(format!("{} {{ {} }}", type_name, parts.join(", ")))
         }
         MirExpr::RecordUpdate(spanned_upd) => {
-            // Phase 5 wave 4d: `T.update(base, field = v, …)` →
+            // `T.update(base, field = v, …)` →
             // `{type_name} { field: value, …, ..base }`. Same
             // bare-name + Tcp.Connection gating as RecordCreate.
             let upd = &spanned_upd.node;
@@ -428,7 +398,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             ))
         }
         MirExpr::Construct(spanned_ctor) => {
-            // Phase 5 wave 3 + 4d: built-in ctors emit Result /
+            // Built-in ctors emit Result /
             // Option wrappers; user ctors resolve through the
             // symbol table for module-qualified path mangling.
             //
@@ -458,7 +428,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     Some(format!("{}({})", name, args.join(", ")))
                 }
                 MirCtor::User(ctor_id) => {
-                    // Phase 5 wave 4d: resolve `CtorId` → owning
+                    // Resolve `CtorId` → owning
                     // type → variant name via the symbol table,
                     // then route the qualified type name through
                     // `resolve_module_call` for module-path
@@ -485,7 +455,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             }
         }
         MirExpr::IfThenElse(spanned_ite) => {
-            // Phase 6 wave 9: direct conditional. Emits as a
+            // Direct conditional. Emits as a
             // Rust `if … { … } else { … }` expression. Each
             // subtree must emit cleanly or the whole node
             // falls back to HIR.
@@ -502,7 +472,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
     }
 }
 
-/// Phase 5 wave 2 helper: is the type stamp a primitive numeric?
+/// Is the type stamp a primitive numeric?
 /// `Int` / `Float` / `Byte` count; everything else (incl. `Str`)
 /// doesn't. Mirror of HIR's `EmitCtx::expr_is_numeric` for the
 /// MIR walker's `+` dispatch.
@@ -605,7 +575,7 @@ mod tests {
 
     #[test]
     fn emits_str_binop_add_as_concat() {
-        // Phase 5 wave 2: when both operands are stamped `Str`,
+        // When both operands are stamped `Str`,
         // the BinOp::Add path emits `(l + &r)` to match HIR's
         // `AverStr` concat shape.
         let s = MirLocal {
@@ -679,7 +649,7 @@ mod tests {
 
     #[test]
     fn emits_record_create_unscoped() {
-        // Phase 5 wave 4c: `Point { x: 1, y: 2 }` for a
+        // `Point { x: 1, y: 2 }` for a
         // module-unscoped record type.
         let field_x = crate::ir::mir::MirRecordField {
             name: "x".to_string(),
@@ -704,7 +674,7 @@ mod tests {
 
     #[test]
     fn returns_none_for_tcp_connection_record() {
-        // Phase 5 wave 4d: `Tcp.Connection` is the lone
+        // `Tcp.Connection` is the lone
         // hardcoded special-case in HIR (re-exported as
         // `Tcp_Connection`) — the walker bounces so HIR
         // handles the rename.
@@ -722,7 +692,7 @@ mod tests {
 
     #[test]
     fn emits_record_create_dep_module_as_bare_name() {
-        // Phase 5 wave 4d: a dep-module record (e.g.
+        // A dep-module record (e.g.
         // `ast.Expr` resolving to scope=`ast`, name=`Expr`)
         // emits the bare `Expr { … }` — the consumer module's
         // import statement makes `Expr` resolve correctly,
@@ -759,7 +729,7 @@ mod tests {
 
     #[test]
     fn emits_record_update_unscoped() {
-        // Phase 5 wave 4c: `T { field: v, ..base }`.
+        // `T { field: v, ..base }`.
         let base = MirLocal {
             slot: LocalId(0),
             last_use: false,
@@ -799,7 +769,7 @@ mod tests {
 
     #[test]
     fn emits_tail_call_as_regular_call() {
-        // Phase 5 wave 7: outside-loop `TailCall` mirrors HIR's
+        // Outside-loop `TailCall` mirrors HIR's
         // regular-call emit shape — `name(args)`.
         let arg = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let tc = span(MirExpr::TailCall(span(crate::ir::mir::MirTailCall {
@@ -815,8 +785,7 @@ mod tests {
 
     #[test]
     fn returns_none_for_unsupported_variant() {
-        // Phase 5 wave 7: TailCall now covered. Pick a variant
-        // the walker still bounces — IndependentProduct.
+        // Pick a variant the walker doesn't cover — IndependentProduct.
         let ip = span(MirExpr::IndependentProduct(span(
             crate::ir::mir::MirIndependentProduct {
                 items: vec![],
@@ -828,7 +797,7 @@ mod tests {
 
     #[test]
     fn emits_empty_map_as_hashmap_new() {
-        // Phase 5 wave 6: empty map literal.
+        // Empty map literal.
         let expr = span(MirExpr::MapLiteral(vec![]));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("map should emit");
         assert_eq!(emit, "HashMap::new()");
@@ -836,7 +805,7 @@ mod tests {
 
     #[test]
     fn emits_nonempty_map_as_vec_into_iter_collect() {
-        // Phase 5 wave 6: non-empty map literal.
+        // Non-empty map literal.
         let k1 = span(MirExpr::Literal(span(crate::ast::Literal::Int(1))));
         let v1 = span(MirExpr::Literal(span(crate::ast::Literal::Int(10))));
         let k2 = span(MirExpr::Literal(span(crate::ast::Literal::Int(2))));
@@ -851,7 +820,7 @@ mod tests {
 
     #[test]
     fn emits_try_as_question_mark() {
-        // Phase 5 wave 5: `Try(inner)` → `inner?`.
+        // `Try(inner)` → `inner?`.
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let expr = span(MirExpr::Try(Box::new(inner)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("try should emit");
@@ -860,7 +829,7 @@ mod tests {
 
     #[test]
     fn emits_tuple_literal_as_paren_list() {
-        // Phase 5 wave 5: `(7, 9)` tuple.
+        // `(7, 9)` tuple.
         let a = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(9))));
         let expr = span(MirExpr::Tuple(vec![a, b]));
@@ -886,7 +855,7 @@ mod tests {
 
     #[test]
     fn emits_project_as_dotted_field() {
-        // Phase 5 wave 3: `base.field` projection.
+        // `base.field` projection.
         let local = MirLocal {
             slot: LocalId(0),
             last_use: false,
@@ -907,7 +876,7 @@ mod tests {
 
     #[test]
     fn emits_result_ok_as_ok_call() {
-        // Phase 5 wave 3: BuiltinCtor::ResultOk → `Ok(arg)`.
+        // BuiltinCtor::ResultOk → `Ok(arg)`.
         let arg = span(MirExpr::Literal(span(crate::ast::Literal::Int(42))));
         let con = crate::ir::mir::MirConstruct {
             ctor: MirCtor::Builtin(BuiltinCtor::ResultOk),
@@ -920,7 +889,7 @@ mod tests {
 
     #[test]
     fn emits_option_none_as_bare_none() {
-        // Phase 5 wave 3: BuiltinCtor::OptionNone has no args
+        // BuiltinCtor::OptionNone has no args
         // and emits `None` without parens.
         let con = crate::ir::mir::MirConstruct {
             ctor: MirCtor::Builtin(BuiltinCtor::OptionNone),
@@ -933,7 +902,7 @@ mod tests {
 
     #[test]
     fn emits_let_as_block_expr() {
-        // Phase 5 wave 4a: `let x = 7; x` → `{ let x = 7i64; x }`.
+        // `let x = 7; x` → `{ let x = 7i64; x }`.
         let value = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let body_local = MirLocal {
             slot: LocalId(0),
@@ -954,7 +923,7 @@ mod tests {
 
     #[test]
     fn returns_none_for_synthetic_let() {
-        // Phase 5 wave 4a: synthetic Let (intermediate
+        // Synthetic Let (intermediate
         // effectful Stmt::Expr at non-tail position) carries an
         // empty `binding_name`. Walker must fall back to HIR
         // since there's no source ident to bind in Rust.
@@ -1002,7 +971,7 @@ mod tests {
 
     #[test]
     fn emits_user_ctor_unscoped() {
-        // Phase 5 wave 4d: `Shape.Circle(r)` (bare type) →
+        // `Shape.Circle(r)` (bare type) →
         // `Shape::Circle(r)`.
         let arg = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let con = crate::ir::mir::MirConstruct {
@@ -1019,7 +988,7 @@ mod tests {
 
     #[test]
     fn emits_user_ctor_scoped_via_module_prefix() {
-        // Phase 5 wave 4d: dep-module ctor resolved through
+        // Dep-module ctor resolved through
         // `module_prefixes` + `module_prefix_to_rust_path`.
         // `ast.Expr.App(x)` → `crate::aver_generated::ast::Expr::App(x)`.
         let arg = span(MirExpr::Literal(span(crate::ast::Literal::Int(1))));
