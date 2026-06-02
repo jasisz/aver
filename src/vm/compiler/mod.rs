@@ -118,13 +118,7 @@ enum ModuleSource<'a> {
 /// `let _ = <pure>` chains. Shared by the entry compile and per-dep-module
 /// MIR builds so both backends see identical lowered+optimized shapes.
 fn build_optimized_mir(items: &[ResolvedTopLevel]) -> crate::ir::mir::MirProgram {
-    crate::ir::mir::dead_code(crate::ir::mir::branch_collapse(
-        crate::ir::mir::bool_match_to_if(crate::ir::mir::algebraic_simplify(
-            crate::ir::mir::const_fold(crate::ir::mir::inline_nullary_literals(
-                crate::ir::mir::lower_program(items),
-            )),
-        )),
-    ))
+    crate::ir::mir::optimize(crate::ir::mir::lower_program(items))
 }
 
 fn compile_program_inner(

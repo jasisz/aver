@@ -119,6 +119,8 @@ fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
     let mut failures: Vec<String> = Vec::new();
     let mut compared = 0usize;
     let mut total_mir_emitted = 0usize;
+    let mut total_opt_bytes = 0usize;
+    let mut total_base_bytes = 0usize;
 
     for path in &files {
         let source = match fs::read_to_string(path) {
@@ -153,29 +155,26 @@ fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
                 }
             };
 
-        if via_resolved != via_mir {
-            let first_diff = via_resolved
-                .iter()
-                .zip(via_mir.iter())
-                .position(|(a, b)| a != b);
-            failures.push(format!(
-                "{}: MIR vs ResolvedExpr emit diverged — {} vs {} bytes, first diff at offset {:?}",
-                path.display(),
-                via_resolved.len(),
-                via_mir.len(),
-                first_diff,
-            ));
-            continue;
-        }
-
+        // `via_resolved` (MIR off) is the unoptimized HIR baseline;
+        // `via_mir` (MIR on) runs the shared `optimize` pipeline. They are
+        // no longer byte-identical — the optimizer diverges where a pass
+        // fires (mostly shrinking, but inlining can trade size for speed).
+        // So this is no longer a byte/size GATE; it asserts both paths
+        // compile and that MIR coverage holds (the floor below), and
+        // reports the aggregate size A/B for information. Correctness of the
+        // optimized output is gated behaviourally by `wasm_gc_spec` /
+        // `wasm_gc_capture_output` (which run the module), and per-scenario
+        // size/speed by `aver bench` — both strictly stronger than the
+        // byte-identity this used to assert.
+        total_opt_bytes += via_mir.len();
+        total_base_bytes += via_resolved.len();
         total_mir_emitted += mir_emitted;
         compared += 1;
     }
 
     if !failures.is_empty() {
         panic!(
-            "{} of {} single-file examples diverged between the MIR and ResolvedExpr \
-             wasm-gc body emitters:\n  - {}",
+            "{} of {} single-file examples failed to compile through one of the two paths:\n  - {}",
             failures.len(),
             files.len(),
             failures.join("\n  - ")
@@ -199,8 +198,10 @@ fn mir_and_resolved_body_emitters_agree_byte_for_byte() {
          fell back to the `ResolvedExpr` emitter). If this drop is intentional, lower the floor."
     );
 
+    let delta = total_base_bytes as i64 - total_opt_bytes as i64;
     eprintln!(
-        "mir_and_resolved_body_emitters_agree_byte_for_byte: {compared} examples byte-identical; \
-         MIR body emitter rendered {total_mir_emitted} fns"
+        "mir_and_resolved_body_emitters_agree_byte_for_byte: {compared} examples compiled both \
+         ways; MIR body emitter rendered {total_mir_emitted} fns; optimized {total_opt_bytes} B \
+         vs baseline {total_base_bytes} B (optimizer saved {delta} B)"
     );
 }

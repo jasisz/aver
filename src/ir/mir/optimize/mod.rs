@@ -61,3 +61,15 @@ pub use branch_collapse::branch_collapse;
 pub use const_fold::const_fold;
 pub use dead_code::dead_code;
 pub use inline::inline_nullary_literals;
+
+/// The canonical Core-MIR optimization pipeline: the six passes applied
+/// in dependency order
+/// (`inline → const_fold → algebraic → bool_match → branch_collapse →
+/// dead_code`). Every backend that runs the optimizer calls this single
+/// entry, so the pass set and their order live in one place instead of
+/// being re-nested per call site. `lower_program` produces the input.
+pub fn optimize(program: crate::ir::mir::MirProgram) -> crate::ir::mir::MirProgram {
+    dead_code(branch_collapse(bool_match_to_if(algebraic_simplify(
+        const_fold(inline_nullary_literals(program)),
+    ))))
+}
