@@ -7,12 +7,17 @@
 //! reads from it instead of forking `ResolvedExpr`.
 //!
 //! [`emit_mir_expr`] is the dispatcher; [`coverage_report`] measures how
-//! much of a program it can already render. It is **not yet wired into
-//! the Rust backend's production emit path** — that path still uses the
-//! HIR walker; this is the tested groundwork for moving the Rust backend
-//! onto MIR (hence `#[allow(dead_code)]` on the entry points). Once
-//! wired, a construct it returns `None` for is the signal to fall back
-//! to the HIR walker for that expression.
+//! much of a program it can render standalone. [`emit_mir_fn_body`] wraps
+//! it into the full single-expr-plan body format the HIR walker emits,
+//! and [`parity_gated_body`] is the Wave-1 production wire-up: for each
+//! fn it compares the MIR-walker body against the HIR-walker body and
+//! emits the MIR one **only when byte-identical** (counting it
+//! "graduated"), else falls back to HIR. The byte-exact gate makes the
+//! production output identical to HIR by construction — it cannot
+//! regress — while the MIR path is exercised + verified for the
+//! graduated subset on every compile. A construct the walker returns
+//! `None` for (or any borrow decision that doesn't match HIR) blocks
+//! graduation and the fn falls back to the HIR walker.
 //!
 //! ## Covered constructs
 //!
@@ -31,56 +36,158 @@
 //! `IndependentProduct`, and `FnValue`. `InterpolatedStr` never reaches
 //! the walker — `interp_lower` lowers it away before codegen runs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{BinOp, Spanned, Type};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::module_prefix_to_rust_path;
 use crate::ir::SymbolTable;
 use crate::ir::hir::BuiltinCtor;
-use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirProgram};
+use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirLocal, MirProgram};
 
-use super::expr::emit_literal;
+use super::emit_ctx::{is_copy_type, should_borrow_param};
+use super::expr::{callee_borrow_mask, constructor_boxed_positions, emit_literal};
 use super::syntax::aver_name_to_rust;
 
-/// Walker-side emit context. Holds *only* the slice of the
-/// `CodegenContext` the MIR-to-Rust walker actually reads —
-/// keeping the dependency surface explicit so future
-/// `CodegenContext` refactors don't ripple through the walker,
-/// and so other backends (wasm-gc, wasip2) can introduce their
-/// own emit-ctx structs without inheriting Rust-specific fields.
+/// Walker-side emit context. Holds the slice of the
+/// `CodegenContext` the MIR-to-Rust walker reads — kept explicit
+/// so future `CodegenContext` refactors don't ripple through the
+/// walker, and so other backends (wasm-gc, wasip2) can introduce
+/// their own emit-ctx structs without inheriting Rust-specific
+/// fields.
 ///
-/// Fields grow only when the walker needs them. Today's scope:
-/// - `symbol_table` — `FnId` / `TypeId` / `CtorId` resolution.
-/// - `module_prefixes` — `resolve_module_call` for module-scoped
-///   record types and (eventually) User-ctor module paths.
-#[derive(Debug, Clone, Copy)]
+/// Two distinct shapes share this struct:
+///
+/// - **coverage / test** (`for_test`): only `symbol_table` +
+///   `module_prefixes` are populated; `codegen` is `None` and the
+///   borrow fields are empty. The coverage walk only asks "does
+///   this fn emit `Some`", so it never needs the borrow machinery
+///   or the full `CodegenContext`.
+/// - **production parity gate** (`for_fn`): carries the full
+///   `&CodegenContext` plus the per-fn borrow policy
+///   (`local_types` / `rc_wrapped` / `borrowed_params` /
+///   `current_module_scope`), recomputed from the `ResolvedFnDef`
+///   the HIR walker uses. This is the slice of
+///   [`super::emit_ctx::EmitCtx`] the covered arms need so their
+///   clone / borrow / `Arc::new` decisions match HIR byte-for-byte.
+#[derive(Clone, Copy)]
 pub struct MirEmitCtx<'a> {
     pub symbol_table: &'a SymbolTable,
     pub module_prefixes: &'a HashSet<String>,
+    /// Full codegen context — `Some` only on the production parity
+    /// gate path. `constructor_boxed_positions` /
+    /// `callee_borrow_mask` need it; the coverage walk leaves it
+    /// `None` (no borrow decisions, just structural reach).
+    pub codegen: Option<&'a CodegenContext>,
+    /// Local variable types (fn params + let bindings) for
+    /// copy-type elision. Empty on the coverage path.
+    pub local_types: &'a HashMap<String, Type>,
+    /// Params passed as `Rc<T>` (self-TCO) / `&T` (mutual-TCO).
+    pub rc_wrapped: &'a HashSet<String>,
+    /// Params emitted as `&T` (borrow-by-default for non-Copy,
+    /// non-Str params).
+    pub borrowed_params: &'a HashSet<String>,
+    /// Owning module prefix for the fn whose body this ctx emits.
+    pub current_module_scope: Option<&'a str>,
 }
 
 impl<'a> MirEmitCtx<'a> {
-    /// Construct a walker ctx from the full `CodegenContext`.
-    /// Production callers (codegen pipeline, `coverage_report`
-    /// driven from `aver compile --explain-mir-coverage`) use
-    /// this; test fixtures use [`Self::for_test`] with hand-
-    /// rolled symbol-table + empty prefixes.
-    pub fn for_codegen(ctx: &'a CodegenContext) -> Self {
-        Self {
-            symbol_table: &ctx.symbol_table,
-            module_prefixes: &ctx.module_prefixes,
-        }
-    }
-
-    /// Construct a minimal walker ctx for tests. Caller supplies
-    /// a hand-built symbol table; `module_prefixes` defaults to
-    /// the caller's owned empty set (or a populated one when the
-    /// test needs to exercise module-scoped name resolution).
+    /// Construct a minimal walker ctx for the coverage walk /
+    /// tests. Caller supplies a hand-built symbol table;
+    /// `module_prefixes` defaults to the caller's owned empty set
+    /// (or a populated one when the test needs to exercise
+    /// module-scoped name resolution). No `CodegenContext`, no
+    /// borrow policy — the covered arms emit conservative output
+    /// (no clone / borrow / `Arc::new`), which is fine because the
+    /// coverage walk only inspects `Some` vs `None`.
     pub fn for_test(symbol_table: &'a SymbolTable, module_prefixes: &'a HashSet<String>) -> Self {
+        static EMPTY_TYPES: std::sync::OnceLock<HashMap<String, Type>> = std::sync::OnceLock::new();
+        static EMPTY_SET: std::sync::OnceLock<HashSet<String>> = std::sync::OnceLock::new();
         Self {
             symbol_table,
             module_prefixes,
+            codegen: None,
+            local_types: EMPTY_TYPES.get_or_init(HashMap::new),
+            rc_wrapped: EMPTY_SET.get_or_init(HashSet::new),
+            borrowed_params: EMPTY_SET.get_or_init(HashSet::new),
+            current_module_scope: None,
+        }
+    }
+
+    /// Construct a borrow-aware walker ctx for the production
+    /// parity gate. `policy` is the [`MirFnEmitPolicy`] recomputed
+    /// per-fn from the `ResolvedFnDef` (the same inputs
+    /// `build_fn_ectx_from_resolved` feeds the HIR walker), and
+    /// `ctx` is the full codegen context the borrow helpers query.
+    pub(super) fn for_fn(ctx: &'a CodegenContext, policy: &'a MirFnEmitPolicy) -> Self {
+        Self {
+            symbol_table: &ctx.symbol_table,
+            module_prefixes: &ctx.module_prefixes,
+            codegen: Some(ctx),
+            local_types: &policy.local_types,
+            rc_wrapped: &policy.rc_wrapped,
+            borrowed_params: &policy.borrowed_params,
+            current_module_scope: policy.current_module_scope.as_deref(),
+        }
+    }
+
+    /// Is this local a Copy type in Rust (i64 / f64 / bool / ())?
+    fn is_copy(&self, name: &str) -> bool {
+        self.local_types.get(name).is_some_and(is_copy_type)
+    }
+
+    fn is_rc_wrapped(&self, name: &str) -> bool {
+        self.rc_wrapped.contains(name)
+    }
+
+    fn is_borrowed_param(&self, name: &str) -> bool {
+        self.borrowed_params.contains(name)
+    }
+}
+
+/// Per-fn borrow policy for the MIR walker — the slice of
+/// [`super::emit_ctx::EmitCtx`] the covered arms read, owned so a
+/// borrowing [`MirEmitCtx`] can be built from it. Recomputed per
+/// fn from the `ResolvedFnDef`, mirroring `for_fn` /
+/// `for_fn_no_borrow` on `EmitCtx`.
+pub(super) struct MirFnEmitPolicy {
+    pub local_types: HashMap<String, Type>,
+    pub rc_wrapped: HashSet<String>,
+    pub borrowed_params: HashSet<String>,
+    pub current_module_scope: Option<String>,
+}
+
+impl MirFnEmitPolicy {
+    /// Build the borrow policy from a `ResolvedFnDef`'s param
+    /// types. `borrow_by_default` mirrors `EmitCtx::for_fn` (true)
+    /// vs `EmitCtx::for_fn_no_borrow` (false, the TCO / memo path):
+    /// when false, no param is borrowed-by-default. `rc_wrapped`
+    /// starts empty (set later for TCO pass-through, which the
+    /// covered subset doesn't graduate).
+    pub(super) fn from_resolved(
+        resolved: &crate::ir::hir::ResolvedFnDef,
+        scope: Option<&str>,
+        borrow_by_default: bool,
+    ) -> Self {
+        let local_types: HashMap<String, Type> = resolved
+            .params
+            .iter()
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect();
+        let borrowed_params = if borrow_by_default {
+            local_types
+                .iter()
+                .filter(|(_, ty)| should_borrow_param(ty))
+                .map(|(name, _)| name.clone())
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        Self {
+            local_types,
+            rc_wrapped: HashSet::new(),
+            borrowed_params,
+            current_module_scope: scope.map(String::from),
         }
     }
 }
@@ -89,7 +196,6 @@ impl<'a> MirEmitCtx<'a> {
 /// `toplevel.rs`: find the longest registered module prefix
 /// inside a dotted name. Returns `(prefix, suffix)` on hit,
 /// `None` when no registered prefix matches.
-#[allow(dead_code)]
 fn resolve_module_call<'a>(
     dotted: &'a str,
     module_prefixes: &HashSet<String>,
@@ -320,17 +426,14 @@ fn label_for(expr: &MirExpr) -> &'static str {
 /// Returns `None` for any variant outside the covered subset —
 /// the signal to fall back to the HIR walker.
 ///
-/// Mirror of [`super::expr::emit_expr`] for the covered
-/// subset; output strings should be character-for-character
-/// identical to the HIR walker's output on the same input
-/// (modulo type-disambiguation paths the HIR walker takes via
-/// `EmitCtx`, which we don't have access to here).
-///
-/// Allowed dead: not yet called from the production emit path
-/// (see the module docs) — wiring it into [`super::expr::emit_expr`]
-/// (try MIR first, fall back to the HIR walker on `None`) is the
-/// step that switches the Rust backend onto MIR.
-#[allow(dead_code)]
+/// Mirror of [`super::expr::emit_expr`] for the covered subset;
+/// output strings are character-for-character identical to the HIR
+/// walker's output on the same input when the per-fn borrow policy
+/// (`local_types` / `rc_wrapped` / `borrowed_params`) is threaded
+/// through the [`MirEmitCtx`] (the production parity-gate path).
+/// The parity gate ([`parity_gated_body`]) is the safety net: a body
+/// only graduates onto the production path when its MIR rendering is
+/// byte-equal to the HIR rendering.
 pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     match &expr.node {
         MirExpr::Literal(lit) => Some(emit_literal(&lit.node)),
@@ -364,15 +467,35 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             };
             // Read type stamps to disambiguate
             // numeric `+` from `AverStr` concat. Same shape HIR
-            // walker takes via `ectx.expr_is_numeric`. When both
-            // operands are non-numeric (Str), the right side is
-            // borrowed via `&` for `AverStr`'s `Add<&AverStr>`
-            // impl.
+            // walker takes via `ectx.expr_is_numeric`. HIR's
+            // disambiguation is `expr_is_numeric(lhs) ||
+            // expr_is_numeric(rhs)` → plain add; otherwise the
+            // `AverStr` concat path, where the LHS is run through
+            // `maybe_clone` (it's consumed by `Add`, the RHS is
+            // borrowed via `&` for `Add<&AverStr>`). Mirror that
+            // exactly so Str + Str matches byte-for-byte.
             if matches!(bop.op, BinOp::Add)
                 && !ty_is_numeric(bop.lhs.ty())
                 && !ty_is_numeric(bop.rhs.ty())
             {
+                let l = mir_maybe_clone(l, &bop.lhs.node, emit_ctx);
                 Some(format!("({} + &{})", l, r))
+            } else if matches!(bop.op, BinOp::Eq | BinOp::Neq) {
+                // HIR derefs `AverStr` (Rc<str>) to `&str` when one
+                // side is a string literal, since `Rc<str>` doesn't
+                // impl `PartialEq<&str>`. Mirror that so string
+                // equality matches.
+                if let MirExpr::Literal(lit) = &bop.rhs.node
+                    && let crate::ast::Literal::Str(s) = &lit.node
+                {
+                    return Some(format!("(&*{} {} {:?})", l, op_str, s));
+                }
+                if let MirExpr::Literal(lit) = &bop.lhs.node
+                    && let crate::ast::Literal::Str(s) = &lit.node
+                {
+                    return Some(format!("({:?} {} &*{})", s, op_str, r));
+                }
+                Some(format!("({} {} {})", l, op_str, r))
             } else {
                 Some(format!("({} {} {})", l, op_str, r))
             }
@@ -382,14 +505,15 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             match &call.callee {
                 MirCallee::Fn(fn_id) => {
                     // Resolve canonical name through the same
-                    // symbol table the HIR walker uses; emit
-                    // `name(arg1, arg2, …)` in source order.
+                    // symbol table the HIR walker uses, then emit
+                    // the call exactly as HIR's
+                    // `emit_named_function_call` does: each arg goes
+                    // through `borrow_arg` (when the callee's i-th
+                    // param is borrowed-by-default `&T`) or
+                    // `clone_arg` (owned), and the module-qualified
+                    // head is path-mangled via `resolve_module_call`.
                     let name = emit_ctx.symbol_table.fn_entry(*fn_id).key.canonical();
-                    let mut args = Vec::with_capacity(call.args.len());
-                    for a in &call.args {
-                        args.push(emit_mir_expr(a, emit_ctx)?);
-                    }
-                    Some(format!("{}({})", aver_name_to_rust(&name), args.join(", ")))
+                    emit_named_call(&name, &call.args, emit_ctx)
                 }
                 // Builtin / closure / unresolved callees ride the
                 // HIR walker's classification (`CallPlan`) — too
@@ -415,11 +539,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // → fall back to HIR).
             let tc = &spanned_tc.node;
             let name = emit_ctx.symbol_table.fn_entry(tc.target).key.canonical();
-            let mut args = Vec::with_capacity(tc.args.len());
-            for a in &tc.args {
-                args.push(emit_mir_expr(a, emit_ctx)?);
-            }
-            Some(format!("{}({})", aver_name_to_rust(&name), args.join(", ")))
+            emit_named_call(&name, &tc.args, emit_ctx)
         }
         MirExpr::Try(inner) => {
             // `value?` propagation. Mirror of
@@ -429,15 +549,15 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         MirExpr::Tuple(items) => {
             // `(a, b, c)` tuple literal. Mirror
-            // of HIR's `ResolvedExpr::Tuple` emit, minus the
-            // `clone_arg` insertion (no `ectx` here — borrowed-
-            // param Locals signal the gap by returning their
-            // raw name and the outer caller still gets a
-            // well-formed string). For pure-value subtrees the
-            // output is character-identical to HIR.
+            // of HIR's `ResolvedExpr::Tuple` emit — each element
+            // routed through `clone_arg` for ownership.
             let mut parts = Vec::with_capacity(items.len());
             for item in items {
-                parts.push(emit_mir_expr(item, emit_ctx)?);
+                parts.push(mir_clone_arg(
+                    emit_mir_expr(item, emit_ctx)?,
+                    &item.node,
+                    emit_ctx,
+                ));
             }
             Some(format!("({})", parts.join(", ")))
         }
@@ -445,13 +565,17 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // `[a, b, c]` list literal. Mirror
             // of HIR's `ResolvedExpr::List` — empty case folds
             // to `aver_rt::AverList::empty()`, non-empty to
-            // `from_vec(vec![...])`.
+            // `from_vec(vec![...])` with `clone_arg` elements.
             if items.is_empty() {
                 return Some("aver_rt::AverList::empty()".to_string());
             }
             let mut parts = Vec::with_capacity(items.len());
             for item in items {
-                parts.push(emit_mir_expr(item, emit_ctx)?);
+                parts.push(mir_clone_arg(
+                    emit_mir_expr(item, emit_ctx)?,
+                    &item.node,
+                    emit_ctx,
+                ));
             }
             Some(format!(
                 "aver_rt::AverList::from_vec(vec![{}])",
@@ -462,16 +586,15 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // `{"k" => v, …}` map literal.
             // Mirror of HIR's `ResolvedExpr::MapLiteral` — empty
             // → `HashMap::new()`, non-empty →
-            // `vec![(k, v), …].into_iter().collect::<HashMap<_, _>>()`.
-            // No clone_arg insertion; pure-value subtrees match
-            // HIR character-for-character.
+            // `vec![(k, v), …].into_iter().collect::<HashMap<_, _>>()`,
+            // keys + values routed through `clone_arg`.
             if entries.is_empty() {
                 return Some("HashMap::new()".to_string());
             }
             let mut parts = Vec::with_capacity(entries.len());
             for (k, v) in entries {
-                let key_str = emit_mir_expr(k, emit_ctx)?;
-                let val_str = emit_mir_expr(v, emit_ctx)?;
+                let key_str = mir_clone_arg(emit_mir_expr(k, emit_ctx)?, &k.node, emit_ctx);
+                let val_str = mir_clone_arg(emit_mir_expr(v, emit_ctx)?, &v.node, emit_ctx);
                 parts.push(format!("({}, {})", key_str, val_str));
             }
             Some(format!(
@@ -510,67 +633,65 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         MirExpr::RecordCreate(spanned_rec) => {
             // `T { field = v, … }` record literal.
             // Mirror of HIR's `ResolvedExpr::RecordCreate` emit
-            // shape — `{type_name} { field: value, … }`. HIR
-            // reads the source-level `type_name` string which
-            // is always the bare ident the user typed (resolver
-            // doesn't dot-prefix it); we mirror that by emitting
-            // `entry.key.name` regardless of `scope`.
-            //
-            // One special-case: `Tcp.Connection` is a runtime-
-            // re-exported struct (`pub use … as Tcp_Connection`)
-            // — HIR hardcodes the rename. The walker bounces so
-            // HIR handles it.
+            // shape exactly — HIR reads the source-level
+            // `type_name` string (verbatim on `MirRecordCreate`)
+            // and only special-cases `Tcp.Connection` → the
+            // re-exported `Tcp_Connection` struct. Fields route
+            // through `clone_arg`.
             let rec = &spanned_rec.node;
-            // Built-in records (no user `TypeId`) ride the HIR walker.
-            let type_id = rec.type_id?;
-            let entry = emit_ctx.symbol_table.type_entry(type_id);
-            if entry.key.canonical() == "Tcp.Connection" {
-                return None;
-            }
-            let type_name = entry.key.name.clone();
+            let rust_type = if rec.type_name == "Tcp.Connection" {
+                "Tcp_Connection"
+            } else {
+                rec.type_name.as_str()
+            };
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
-                let val = emit_mir_expr(&f.value, emit_ctx)?;
+                let val =
+                    mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx);
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
-            Some(format!("{} {{ {} }}", type_name, parts.join(", ")))
+            Some(format!("{} {{ {} }}", rust_type, parts.join(", ")))
         }
         MirExpr::RecordUpdate(spanned_upd) => {
             // `T.update(base, field = v, …)` →
             // `{type_name} { field: value, …, ..base }`. Same
-            // bare-name + Tcp.Connection gating as RecordCreate.
+            // verbatim-type-name + Tcp.Connection rename as
+            // RecordCreate; base + updates route through
+            // `clone_arg`.
             let upd = &spanned_upd.node;
-            // Built-in records (no user `TypeId`) ride the HIR walker.
-            let type_id = upd.type_id?;
-            let entry = emit_ctx.symbol_table.type_entry(type_id);
-            if entry.key.canonical() == "Tcp.Connection" {
-                return None;
-            }
-            let type_name = entry.key.name.clone();
-            let base = emit_mir_expr(&upd.base, emit_ctx)?;
+            let rust_type = if upd.type_name == "Tcp.Connection" {
+                "Tcp_Connection"
+            } else {
+                upd.type_name.as_str()
+            };
+            let base = mir_clone_arg(
+                emit_mir_expr(&upd.base, emit_ctx)?,
+                &upd.base.node,
+                emit_ctx,
+            );
             let mut parts = Vec::with_capacity(upd.updates.len());
             for f in &upd.updates {
-                let val = emit_mir_expr(&f.value, emit_ctx)?;
+                let val =
+                    mir_clone_arg(emit_mir_expr(&f.value, emit_ctx)?, &f.value.node, emit_ctx);
                 parts.push(format!("{}: {}", aver_name_to_rust(&f.name), val));
             }
             Some(format!(
                 "{} {{ {}, ..{} }}",
-                type_name,
+                rust_type,
                 parts.join(", "),
                 base
             ))
         }
         MirExpr::Construct(spanned_ctor) => {
-            // Built-in ctors emit Result /
-            // Option wrappers; user ctors resolve through the
-            // symbol table for module-qualified path mangling.
-            //
-            // Boxed-position handling (recursive-field wrapping
-            // in `std::sync::Arc::new`) is HIR-only — the walker
-            // emits raw args, so recursive types would diverge
-            // from HIR's output. That's tolerated until wire-up
-            // adds a parity check; the coverage diagnostic
-            // reports `Some` either way.
+            // Built-in ctors emit Result / Option wrappers; user
+            // ctors resolve through the symbol table for
+            // module-qualified path mangling. Both mirror HIR's
+            // `clone_arg` on every arg; the User-ctor path also
+            // wraps recursive (self-typed) fields in
+            // `std::sync::Arc::new(...)` via
+            // `constructor_boxed_positions` so recursive types
+            // (`Tree.Node(left: Tree, …)`) emit byte-identical to
+            // HIR's `emit_type_constructor_call`.
             let con = &spanned_ctor.node;
             match con.ctor {
                 MirCtor::Builtin(builtin) => {
@@ -586,26 +707,52 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     }
                     let mut args = Vec::with_capacity(con.args.len());
                     for a in &con.args {
-                        args.push(emit_mir_expr(a, emit_ctx)?);
+                        args.push(mir_clone_arg(
+                            emit_mir_expr(a, emit_ctx)?,
+                            &a.node,
+                            emit_ctx,
+                        ));
                     }
                     Some(format!("{}({})", name, args.join(", ")))
                 }
                 MirCtor::User(ctor_id) => {
-                    // Resolve `CtorId` → owning
-                    // type → variant name via the symbol table,
-                    // then route the qualified type name through
+                    // Resolve `CtorId` → owning type → variant name
+                    // via the symbol table, then route the
+                    // qualified type name through
                     // `resolve_module_call` for module-path
                     // mangling. Mirror of HIR's
-                    // `emit_type_constructor_call`.
+                    // `emit_type_constructor_call`, including the
+                    // boxed-position `Arc::new` on recursive fields
+                    // (queried via `constructor_boxed_positions`,
+                    // keyed by the `Type.Variant` name).
                     let ctor_entry = emit_ctx.symbol_table.ctor_entry(ctor_id);
                     let variant_name = ctor_entry.name.clone();
                     let type_entry = emit_ctx.symbol_table.type_entry(ctor_entry.owning_type);
                     let qualified = type_entry.key.canonical();
+                    let boxed_positions = match emit_ctx.codegen {
+                        Some(cg) => {
+                            let ctor_name = format!("{}.{}", qualified, variant_name);
+                            constructor_boxed_positions(&ctor_name, cg)
+                        }
+                        // Coverage path: no ctx → no boxed-position
+                        // info. The parity gate isn't active here
+                        // (coverage only reads Some/None), so an
+                        // empty set is fine.
+                        None => HashSet::new(),
+                    };
                     let mut args = Vec::with_capacity(con.args.len());
-                    for a in &con.args {
-                        args.push(emit_mir_expr(a, emit_ctx)?);
+                    for (idx, a) in con.args.iter().enumerate() {
+                        let arg = mir_clone_arg(emit_mir_expr(a, emit_ctx)?, &a.node, emit_ctx);
+                        if boxed_positions.contains(&idx) {
+                            args.push(format!("std::sync::Arc::new({})", arg));
+                        } else {
+                            args.push(arg);
+                        }
                     }
                     let args_str = args.join(", ");
+                    // HIR emits a nullary variant as a unit variant
+                    // (`E::Point`, no parens). Mirror that so
+                    // zero-arg ctors match.
                     let head = if let Some((prefix, suffix)) =
                         resolve_module_call(&qualified, emit_ctx.module_prefixes)
                     {
@@ -613,7 +760,11 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     } else {
                         qualified
                     };
-                    Some(format!("{}::{}({})", head, variant_name, args_str))
+                    if con.args.is_empty() {
+                        Some(format!("{}::{}", head, variant_name))
+                    } else {
+                        Some(format!("{}::{}({})", head, variant_name, args_str))
+                    }
                 }
             }
         }
@@ -635,12 +786,295 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
     }
 }
 
+/// Emit the FULL function body the MIR walker would produce for a
+/// single-expression body, in the exact format
+/// [`super::toplevel::emit_fn_body`]'s single-expr-plan path emits
+/// — the leading `    crate::cancel_checkpoint();\n    ` then the
+/// body expression. Returns `None` when the walker can't render the
+/// body (any uncovered construct anywhere in the tree).
+///
+/// This is the unit the production parity gate compares against the
+/// HIR walker's `emit_fn_body` output: byte-equal → emit MIR
+/// (graduated), else fall back to HIR. Because the comparison is
+/// exact, the production output can only ever be the HIR output OR a
+/// byte-identical MIR rendering — it cannot regress.
+///
+/// One return-position detail mirrored from
+/// `emit_body_expr_plan_with_options`: a field access (`Project`) on
+/// a borrowed param in tail/return position needs `.clone()` to
+/// produce an owned value (`emit_mir_expr` emits `obj.field`
+/// without it). Multi-statement bodies (a top-level `Let` chain)
+/// emit as a Rust block-expr `{ let … ; … }`, which never matches
+/// HIR's flat `let …;`-line block format — so they fall back via
+/// the byte comparison. That's the intended Wave-1 boundary.
+pub(super) fn emit_mir_fn_body(
+    body: &Spanned<MirExpr>,
+    emit_ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let mut code = emit_mir_expr(body, emit_ctx)?;
+    // Return-position field access on a borrowed param → clone for
+    // an owned result. Mirror of HIR's
+    // `emit_body_expr_plan_with_options` `Leaf`/`Expr` arms.
+    if let MirExpr::Project(p) = &body.node
+        && let Some(local) = local_of(&p.node.base.node)
+        && emit_ctx.is_borrowed_param(&local.name)
+    {
+        code = format!("{}.clone()", code);
+    }
+    Some(format!("    crate::cancel_checkpoint();\n    {}", code))
+}
+
+// ── Production parity gate + graduated-fn counter ───────────────────────
+//
+// The parity gate is the safety net that lets the MIR walker into
+// the production Rust emit path with ZERO regression risk: for a fn,
+// compute the MIR-walker body and the HIR-walker body; if they're
+// byte-identical, emit the MIR one (and count it "graduated");
+// otherwise emit the HIR one (fallback). Production output is
+// therefore always either the unchanged HIR output or a string
+// equal to it, so it cannot change — yet the MIR path is exercised
+// + verified for the graduated subset on every compile.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// How many fns the parity gate has graduated (MIR body byte-equal
+/// to HIR) since process start, and how many it has considered.
+/// Process-global counters so `aver compile --explain-mir-coverage
+/// --target rust` and the differential harness can report the
+/// graduated fraction after a transpile run without threading a
+/// counter through the whole emit pipeline.
+static GRADUATED: AtomicUsize = AtomicUsize::new(0);
+static CONSIDERED: AtomicUsize = AtomicUsize::new(0);
+
+/// Reset the parity-gate counters. Called at the start of a
+/// transpile so a fresh compile reports its own numbers.
+pub(super) fn reset_parity_counters() {
+    GRADUATED.store(0, Ordering::Relaxed);
+    CONSIDERED.store(0, Ordering::Relaxed);
+}
+
+/// `(graduated, considered)` since the last [`reset_parity_counters`].
+pub fn parity_counters() -> (usize, usize) {
+    (
+        GRADUATED.load(Ordering::Relaxed),
+        CONSIDERED.load(Ordering::Relaxed),
+    )
+}
+
+/// Production parity gate for one fn body. `hir_body` is the body
+/// the HIR walker already produced (the format `emit_fn_body`
+/// returns). When a `MirFn` is available, render its body via the
+/// MIR walker and compare: byte-equal → return the MIR string and
+/// bump the graduated counter; otherwise → return `hir_body`
+/// unchanged (fallback). Either way `considered` bumps so the
+/// reported fraction is graduated / considered.
+///
+/// `resolved` supplies the per-fn borrow policy (param types /
+/// borrow-by-default), recomputed exactly as
+/// `build_fn_ectx_from_resolved` does for the HIR walker.
+/// `borrow_by_default` is `false` only on the TCO/memo no-borrow
+/// path (which never graduates — those bodies aren't single-expr
+/// plans the MIR walker renders identically — but the flag keeps
+/// the policy honest).
+pub(super) fn parity_gated_body(
+    hir_body: String,
+    mir_fn: Option<&crate::ir::mir::MirFn>,
+    resolved: &crate::ir::hir::ResolvedFnDef,
+    scope: Option<&str>,
+    borrow_by_default: bool,
+    ctx: &CodegenContext,
+) -> String {
+    CONSIDERED.fetch_add(1, Ordering::Relaxed);
+    let Some(mir_fn) = mir_fn else {
+        return hir_body;
+    };
+    let policy = MirFnEmitPolicy::from_resolved(resolved, scope, borrow_by_default);
+    let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+    match emit_mir_fn_body(&mir_fn.body, &emit_ctx) {
+        Some(mir_body) if mir_body == hir_body => {
+            GRADUATED.fetch_add(1, Ordering::Relaxed);
+            mir_body
+        }
+        other => {
+            // `AVER_RUST_MIR_DIFF=1` dumps every covered-but-not-
+            // graduated fn (MIR walker emitted `Some`, but it didn't
+            // byte-match HIR) — the Wave-1 long-pole worklist.
+            if std::env::var_os("AVER_RUST_MIR_DIFF").is_some()
+                && let Some(mir_body) = other
+            {
+                eprintln!(
+                    "[mir-diff] {}\n  HIR: {:?}\n  MIR: {:?}",
+                    resolved.name, hir_body, mir_body
+                );
+            }
+            hir_body
+        }
+    }
+}
+
 /// Is the type stamp a primitive numeric?
 /// `Int` / `Float` / `Byte` count; everything else (incl. `Str`)
 /// doesn't. Mirror of HIR's `EmitCtx::expr_is_numeric` for the
 /// MIR walker's `+` dispatch.
 fn ty_is_numeric(ty: Option<&Type>) -> bool {
     matches!(ty, Some(Type::Int | Type::Float))
+}
+
+// ── MIR-side borrow / clone machinery ───────────────────────────────────
+//
+// Mirror of the HIR walker's `expr_skip_clone` / `maybe_clone` /
+// `clone_arg` / `borrow_arg` (emit_ctx.rs + expr.rs), keyed off
+// `MirLocal` (slot + `last_use` + source `name`) instead of
+// `ResolvedExpr::Resolved`. The covered arms route every arg /
+// field / element / base through these so their output matches HIR
+// byte-for-byte on the borrow decisions. When the walker has no
+// `CodegenContext` (coverage path), the local-name lookups still
+// work off the (empty) policy fields and degrade to the
+// conservative `last_use ? move : clone` shape — which is fine
+// because the coverage walk only inspects `Some` vs `None`.
+
+/// `&MirExpr` reference to a source-named local, if any. Synthetic
+/// locals (empty name) are excluded — the walker already bails on
+/// them upstream.
+fn local_of(expr: &MirExpr) -> Option<&MirLocal> {
+    match expr {
+        MirExpr::Local(l) if !l.node.name.is_empty() => Some(&l.node),
+        _ => None,
+    }
+}
+
+/// Should `.clone()` be skipped for this MIR expr? Mirror of HIR's
+/// `expr_skip_clone`. A local read skips clone on its last use or
+/// when Copy; `rc_wrapped` / `borrowed_params` never skip (they
+/// need the special clone paths in `mir_maybe_clone`). A name that
+/// isn't a known local is treated as a global / namespace and
+/// always skips. Non-locals (literals, nested exprs) never need a
+/// clone wrapper here.
+fn mir_expr_skip_clone(expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> bool {
+    match local_of(expr) {
+        Some(local) => {
+            let name = local.name.as_str();
+            if ctx.is_rc_wrapped(name) || ctx.is_borrowed_param(name) {
+                return false;
+            }
+            local.last_use || ctx.is_copy(name)
+        }
+        None => true,
+    }
+}
+
+/// Mirror of HIR's `maybe_clone`: wrap a local read in the right
+/// clone shape for an owning position (arg, return, ctor field,
+/// tuple / list / map element). `code` is the already-emitted
+/// expression text for `expr`.
+fn mir_maybe_clone(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
+    if let Some(local) = local_of(expr) {
+        let name = local.name.as_str();
+        return if mir_expr_skip_clone(expr, ctx) {
+            code
+        } else if ctx.is_rc_wrapped(name) {
+            // Pass-through param (Rc<T> / &T): deref then clone.
+            format!("(*{}).clone()", code)
+        } else {
+            // Borrowed param or plain owned local: clone to own.
+            format!("{}.clone()", code)
+        };
+    }
+    // Field access (`Project`): emit_mir_expr produces `base.field`
+    // without clone; clone here for ownership. Matches HIR's
+    // `maybe_clone` `Attr` arm — builtin namespace access never
+    // reaches the MIR walker (it lowers to a `Call`), so no
+    // namespace special-case is needed.
+    if matches!(expr, MirExpr::Project(_)) {
+        return format!("{}.clone()", code);
+    }
+    code
+}
+
+/// Mirror of HIR's `clone_arg`: emit an expression as an owning
+/// argument. The Project field-Copy elision the HIR walker does
+/// requires record-field-type introspection (`attr_result_is_copy`)
+/// that the MIR walker can't reproduce identically, so a `Project`
+/// on a Copy-typed field would diverge from HIR — the parity gate
+/// catches that as a mismatch and falls back. For the common case
+/// (non-Project args) this matches HIR exactly.
+fn mir_clone_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
+    mir_maybe_clone(code, expr, ctx)
+}
+
+/// Emit a named user-function call (`Call(Fn)` /
+/// outside-loop `TailCall`). Mirror of HIR's
+/// `emit_named_function_call`: per-arg `borrow_arg` (when the
+/// callee's i-th param is borrowed-by-default `&T`) or `clone_arg`
+/// (owned), and `resolve_module_call` head path-mangling.
+///
+/// `callee_borrow_mask` needs the full `CodegenContext`; on the
+/// coverage path (`codegen == None`) there's no mask, so every arg
+/// rides `clone_arg` (conservative — coverage only reads Some/None,
+/// and the production parity gate never runs without a ctx).
+fn emit_named_call(name: &str, args: &[Spanned<MirExpr>], ctx: &MirEmitCtx<'_>) -> Option<String> {
+    let borrow_mask = match ctx.codegen {
+        Some(cg) => callee_borrow_mask(name, args.len(), cg),
+        None => vec![false; args.len()],
+    };
+    let mut arg_strs = Vec::with_capacity(args.len());
+    for (i, a) in args.iter().enumerate() {
+        let code = emit_mir_expr(a, ctx)?;
+        let s = if borrow_mask.get(i).copied().unwrap_or(false) {
+            mir_borrow_arg(code, &a.node, ctx)
+        } else {
+            mir_clone_arg(code, &a.node, ctx)
+        };
+        arg_strs.push(s);
+    }
+    if let Some((prefix, suffix)) = resolve_module_call(name, ctx.module_prefixes) {
+        Some(format!(
+            "{}::{}({})",
+            module_prefix_to_rust_path(prefix),
+            aver_name_to_rust(suffix),
+            arg_strs.join(", ")
+        ))
+    } else {
+        Some(format!(
+            "{}({})",
+            aver_name_to_rust(name),
+            arg_strs.join(", ")
+        ))
+    }
+}
+
+/// Mirror of HIR's `borrow_arg`: emit an expression for passing to
+/// a user fn whose param is `&T`. `code` is the already-emitted
+/// text for `expr`.
+fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
+    let Some(local) = local_of(expr) else {
+        // Complex expression: borrow the temporary.
+        return format!("&{}", code);
+    };
+    let name = local.name.as_str();
+    if ctx.is_copy(name) {
+        // Copy type: by value.
+        code
+    } else if matches!(ctx.local_types.get(name), Some(Type::Str)) {
+        // AverStr (Rc<str>): by value; last-use moves, else clone.
+        if local.last_use {
+            code
+        } else if ctx.is_rc_wrapped(name) {
+            format!("(*{}).clone()", code)
+        } else {
+            format!("{}.clone()", code)
+        }
+    } else if ctx.is_borrowed_param(name) {
+        // Already `&T` — pass directly.
+        code
+    } else if ctx.is_rc_wrapped(name) {
+        // Pass-through TCO param: deref to `&T`.
+        format!("&*{}", code)
+    } else {
+        // Owned local: borrow it (last-use and non-last-use both
+        // emit `&code` in the HIR walker).
+        format!("&{}", code)
+    }
 }
 
 #[cfg(test)]
@@ -812,8 +1246,10 @@ mod tests {
 
     #[test]
     fn emits_record_create_unscoped() {
-        // `Point { x: 1, y: 2 }` for a
-        // module-unscoped record type.
+        // `Point { x: 1, y: 2 }`. HIR-parity: the walker emits the
+        // verbatim source-level `type_name` (`MirRecordCreate.type_name`),
+        // the same string the HIR walker reads — not a symbol-table
+        // lookup. The resolver leaves the user-typed name bare.
         let field_x = crate::ir::mir::MirRecordField {
             name: "x".to_string(),
             value: span(MirExpr::Literal(span(crate::ast::Literal::Int(1)))),
@@ -824,7 +1260,7 @@ mod tests {
         };
         let rec = crate::ir::mir::MirRecordCreate {
             type_id: Some(crate::ir::TypeId(0)),
-            type_name: "Test".to_string(),
+            type_name: "Point".to_string(),
             fields: vec![field_x, field_y],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
@@ -836,42 +1272,41 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_for_tcp_connection_record() {
-        // `Tcp.Connection` is the lone
-        // hardcoded special-case in HIR (re-exported as
-        // `Tcp_Connection`) — the walker bounces so HIR
-        // handles the rename.
+    fn emits_tcp_connection_record_with_rename() {
+        // `Tcp.Connection` is the lone hardcoded special-case: HIR
+        // renames it to the re-exported `Tcp_Connection` struct
+        // inline. The MIR walker mirrors that exactly (no bounce) so
+        // the output is byte-identical to HIR.
         let rec = crate::ir::mir::MirRecordCreate {
             type_id: Some(crate::ir::TypeId(0)),
-            type_name: "Test".to_string(),
+            type_name: "Tcp.Connection".to_string(),
             fields: vec![],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
         let st = symbols_with_one_type("Connection", true);
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
-        assert!(emit_mir_expr(&expr, &ctx).is_none());
+        let emit = emit_mir_expr(&expr, &ctx).expect("tcp connection record should emit");
+        assert_eq!(emit, "Tcp_Connection {  }");
     }
 
     #[test]
     fn emits_record_create_dep_module_as_bare_name() {
-        // A dep-module record (e.g.
-        // `ast.Expr` resolving to scope=`ast`, name=`Expr`)
-        // emits the bare `Expr { … }` — the consumer module's
-        // import statement makes `Expr` resolve correctly,
-        // mirror of HIR's source-name-passthrough.
+        // A dep-module record emits the bare type name the user
+        // typed (`Expr { … }`) — the resolver doesn't dot-prefix
+        // `RecordCreate.type_name`, and the consumer module's import
+        // makes `Expr` resolve. HIR-parity via the verbatim
+        // `type_name` string.
         let field = crate::ir::mir::MirRecordField {
             name: "tag".to_string(),
             value: span(MirExpr::Literal(span(crate::ast::Literal::Int(1)))),
         };
         let rec = crate::ir::mir::MirRecordCreate {
             type_id: Some(crate::ir::TypeId(0)),
-            type_name: "Test".to_string(),
+            type_name: "Expr".to_string(),
             fields: vec![field],
         };
         let expr = span(MirExpr::RecordCreate(span(rec)));
-        // Scoped under `ast`, but `Tcp.Connection` ≠ canonical
-        // so it doesn't hit the bounce.
         use crate::ir::ModuleId;
         use crate::ir::identity::TypeKey;
         use crate::ir::symbol_table::{ModuleEntry, TypeEntry};
@@ -892,7 +1327,9 @@ mod tests {
 
     #[test]
     fn emits_record_update_unscoped() {
-        // `T { field: v, ..base }`.
+        // `T { field: v, ..base }`. Verbatim `type_name`; `base`
+        // routed through `clone_arg` (here the empty borrow policy
+        // means a non-last-use local clones).
         let base = MirLocal {
             slot: LocalId(0),
             last_use: false,
@@ -905,7 +1342,7 @@ mod tests {
         let upd = crate::ir::mir::MirRecordUpdate {
             base: Box::new(span(MirExpr::Local(span(base)))),
             type_id: Some(crate::ir::TypeId(0)),
-            type_name: "Test".to_string(),
+            type_name: "Point".to_string(),
             updates: vec![update],
         };
         let expr = span(MirExpr::RecordUpdate(span(upd)));
@@ -913,7 +1350,12 @@ mod tests {
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("record update should emit");
-        assert_eq!(emit, "Point { x: 9i64, ..base }");
+        // `base` is a non-last-use, non-Copy local → `clone_arg`
+        // clones it, exactly as HIR's `maybe_clone` does for a
+        // `Resolved { last_use: false }` non-Copy local. (A
+        // `MirLocal` is always a local read — the resolver's
+        // global-Ident passthrough doesn't apply.)
+        assert_eq!(emit, "Point { x: 9i64, ..base.clone() }");
     }
 
     fn symbols_with_one_fn(name: &str) -> SymbolTable {

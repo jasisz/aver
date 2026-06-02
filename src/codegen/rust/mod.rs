@@ -5,7 +5,9 @@ mod builtins;
 pub mod emit_ctx;
 mod expr;
 mod from_mir;
-pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
+pub use from_mir::{
+    CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers, parity_counters,
+};
 mod pattern;
 mod policy;
 mod project;
@@ -72,6 +74,10 @@ fn synthesize_rust_module_cascade(
 
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
+    // Fresh rust-on-MIR parity-gate counters for this transpile so
+    // `parity_counters()` reports the graduated / considered fraction
+    // for exactly this program.
+    from_mir::reset_parity_counters();
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
     let embedded_independence_cancel = ctx

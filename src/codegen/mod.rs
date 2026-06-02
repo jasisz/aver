@@ -271,6 +271,16 @@ pub struct CodegenContext {
     /// ctx by hand without calling `build_context`; downstream callers
     /// should treat that as opt-out (preserve legacy detection path).
     pub program_shape: Option<crate::analysis::shape::ProgramShape>,
+    /// Optimized Core MIR for the whole codegen input (entry + dep
+    /// module fns), `FnId`-keyed. Built once at `build_context` from
+    /// the resolved program — the same lowering + optimizer pass the
+    /// VM / wasm-gc / wasip2 backends run. The Rust backend's
+    /// rust-on-MIR port reads `fn_by_id(fn_id)` here to drive its
+    /// per-fn parity gate (`from_mir::parity_gated_body`): a fn body
+    /// graduates onto the MIR emit path only when the MIR walker
+    /// renders it byte-identical to the HIR walker. `None` for
+    /// hand-assembled test contexts that skip `build_context`.
+    pub mir_program: Option<crate::ir::mir::MirProgram>,
 }
 
 /// Output files from a codegen backend.
@@ -503,6 +513,29 @@ pub fn build_context(
         ))
     };
 
+    // Lower the whole resolved program (entry + dep-module fns) to
+    // optimized Core MIR, once, and key it by `FnId`. The Rust
+    // backend's rust-on-MIR port reads `fn_by_id` here for its
+    // per-fn parity gate; building it here (rather than per-fn)
+    // keeps the lowering cost O(program) instead of O(program²).
+    // Same `lower_program` → `optimize` pass the other MIR backends
+    // run, so the body the gate compares is the optimized shape.
+    let mir_program = {
+        let mut mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_program
+            .entry_fns()
+            .cloned()
+            .map(crate::ir::hir::ResolvedTopLevel::FnDef)
+            .collect();
+        for m in &resolved_program.modules {
+            for fd in &m.fn_defs {
+                mir_items.push(crate::ir::hir::ResolvedTopLevel::FnDef(fd.clone()));
+            }
+        }
+        Some(crate::ir::mir::optimize(crate::ir::mir::lower_program(
+            &mir_items,
+        )))
+    };
+
     let ctx = CodegenContext {
         items,
         memo_fns,
@@ -537,6 +570,7 @@ pub fn build_context(
         current_module_scope: std::cell::RefCell::new(None),
         program_shape,
         resolved_program,
+        mir_program,
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);

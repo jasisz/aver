@@ -2934,6 +2934,7 @@ mod tests {
             current_module_scope: std::cell::RefCell::new(None),
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
+            mir_program: None,
         };
         ctx.proof_ir
             .refined_types

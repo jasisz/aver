@@ -829,7 +829,29 @@ fn emit_fn_def_with_visibility(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        lines.push(emit_fn_body(&resolved_fd.body, ctx, &ectx));
+        // rust-on-MIR Wave 1 parity gate. Compute the HIR-walker
+        // body, then let `parity_gated_body` swap in the MIR-walker
+        // body iff it renders byte-identical (counting the fn
+        // "graduated"); otherwise it returns the HIR body unchanged.
+        // The byte-exact check makes the emitted source identical to
+        // the pre-port output by construction — it cannot regress —
+        // while exercising + verifying the MIR path for the covered
+        // subset. Borrow-by-default matches `ectx` here (this branch
+        // is the non-TCO / non-memo path, so `for_fn` borrow rules).
+        let hir_body = emit_fn_body(&resolved_fd.body, ctx, &ectx);
+        let mir_fn = ctx
+            .mir_program
+            .as_ref()
+            .and_then(|p| p.fn_by_id(resolved_fd.fn_id));
+        let body = super::from_mir::parity_gated_body(
+            hir_body,
+            mir_fn,
+            resolved_fd,
+            scope,
+            /* borrow_by_default */ true,
+            ctx,
+        );
+        lines.push(body);
         lines.push("}".to_string());
     }
 
@@ -3135,6 +3157,7 @@ mod tests {
             current_module_scope: std::cell::RefCell::new(None),
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
+            mir_program: None,
         }
     }
 
