@@ -1,7 +1,7 @@
 //! Built-in call lowering: the custom-inline `Float` / `Int` / `Bool`
-//! scalar ops, the `List` and `Vector` families, and the numeric
-//! `BinOp` tail. Mirrors the custom-inline arms of `emit_dotted_builtin`
-//! and `emit_expr`'s numeric `BinOp` branch.
+//! scalar ops, `Char.toCode`, the `List` / `Vector` / `Map` families,
+//! and the numeric `BinOp` tail. Mirrors the custom-inline arms of
+//! `emit_dotted_builtin` and `emit_expr`'s numeric `BinOp` branch.
 
 use super::*;
 
@@ -137,8 +137,110 @@ pub(crate) fn emit_mir_native_scalar_builtin(
             arg!(0);
             func.instruction(&Instruction::I32Eqz);
         }
+        // `Char.toCode(s) -> Int` — first byte of the 1-char string
+        // (`array.get_u 0` + widen). Aver `Char` is a single-byte
+        // `String`. Mirror of `emit_dotted_builtin`'s arm.
+        "Char.toCode" if args.len() == 1 => {
+            let s_idx = ctx
+                .registry
+                .string_array_type_idx
+                .ok_or(WasmGcError::Validation(
+                    "Char.toCode requires the String slot allocated".into(),
+                ))?;
+            arg!(0);
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::ArrayGetU(s_idx));
+            func.instruction(&Instruction::I64ExtendI32U);
+        }
         _ => return Ok(MirBuiltinEmit::NotHandled),
     }
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
+/// Mirror of `emit_map_kv_call`: the `Map.*` methods dispatch to the
+/// per-`Map<K,V>` helpers (`fn_map.map_helpers_lookup`). `has` reuses
+/// the `get_pair` helper and drops the value; `set` picks `set_in_place`
+/// vs the clone-on-write `set` by `mir_arg_uniquely_owned` (the MIR
+/// analogue of the oracle's `arg_uniquely_owned`). The canonical comes
+/// from the map arg's stamped type; every arg recurses `emit_mir_expr`.
+pub(crate) fn emit_mir_map_builtin(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    let method = match dotted {
+        "Map.set" => "set",
+        "Map.get" => "get",
+        "Map.has" => "has",
+        "Map.len" => "len",
+        "Map.keys" => "keys",
+        "Map.values" => "values",
+        "Map.remove" => "remove",
+        "Map.entries" => "entries",
+        _ => return Ok(MirBuiltinEmit::NotHandled),
+    };
+    let arity = match method {
+        "set" => 3,
+        "get" | "has" | "remove" => 2,
+        _ => 1,
+    };
+    if args.len() != arity {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    let map_aver = aver_type_str_of(&args[0]);
+    let canonical: String = map_aver.chars().filter(|c| !c.is_whitespace()).collect();
+    macro_rules! emit_args {
+        () => {
+            for a in args {
+                if emit_mir_expr(func, a, slots, ctx)?.is_none() {
+                    return Ok(MirBuiltinEmit::Fallback);
+                }
+            }
+        };
+    }
+    // `has` reuses `get_pair` and drops the value, leaving the `found`
+    // i32 — no `Option<V>` ever allocates.
+    if method == "has" {
+        let get_pair = ctx
+            .fn_map
+            .map_helpers_lookup(&canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "Map.has: map argument has type `{map_aver}` but no helpers are registered"
+            )))?
+            .get_pair;
+        emit_args!();
+        func.instruction(&Instruction::Call(get_pair));
+        func.instruction(&Instruction::Drop);
+        return Ok(MirBuiltinEmit::Produced(true));
+    }
+    let target = {
+        let helpers = ctx
+            .fn_map
+            .map_helpers_lookup(&canonical)
+            .ok_or(WasmGcError::Validation(format!(
+                "Map.{method}: map argument has type `{map_aver}` but no helpers are registered"
+            )))?;
+        match method {
+            "set" => {
+                if mir_arg_uniquely_owned(&args[0], ctx) {
+                    helpers.set_in_place
+                } else {
+                    helpers.set
+                }
+            }
+            "get" => helpers.get,
+            "len" => helpers.len,
+            "keys" => helpers.keys,
+            "values" => helpers.values,
+            "remove" => helpers.remove,
+            "entries" => helpers.entries,
+            _ => unreachable!("outer match restricts method"),
+        }
+    };
+    emit_args!();
+    func.instruction(&Instruction::Call(target));
     Ok(MirBuiltinEmit::Produced(true))
 }
 

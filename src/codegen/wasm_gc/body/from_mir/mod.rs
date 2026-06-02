@@ -33,7 +33,8 @@
 //! - [`records`] — `RecordCreate` / `RecordUpdate`.
 //! - [`collections`] — `List` literals.
 //! - [`builtins`] — the custom-inline `Float` / `Int` / `Bool` scalar
-//!   ops, the `List` and `Vector` families, and the numeric `BinOp` tail.
+//!   ops, `Char.toCode`, the `List` / `Vector` / `Map` families, and the
+//!   numeric `BinOp` tail.
 //! - [`strings`] — `InterpolatedStr` and the `String` `BinOp` ops.
 //! - [`control`] — `Try` (`?` propagation).
 //! - [`coverage`] — the `--explain-mir-coverage` predicate (diagnostic).
@@ -406,6 +407,13 @@ pub(crate) fn emit_mir_expr(
                     // `Vector.*` custom-inline ops (len / new / get / set
                     // / fromList) — likewise not registered helpers.
                     match emit_mir_vector_builtin(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
+                    // `Map.*` per-instantiation helper dispatch — also not
+                    // in `fn_map.builtins`.
+                    match emit_mir_map_builtin(func, dotted, &call.args, slots, ctx)? {
                         MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
