@@ -440,6 +440,54 @@ fn render_generated_module(depends: Vec<String>, sections: Vec<String>) -> Strin
     }
 }
 
+/// Emit one mutual-TCO block, routing through the MIR walker when
+/// `AVER_RUST_MIR_TCO=1` and every member resolves to a `MirFn` +
+/// `ResolvedFnDef`; otherwise the proven HIR emitter
+/// ([`toplevel::emit_mutual_tco_block`]). Behavioral net only — TCO
+/// never byte-graduates, so there's no parity gate here.
+fn emit_mutual_tco_block_routed(
+    group_id: usize,
+    group_fns: &[&FnDef],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    visibility: &str,
+) -> String {
+    if from_mir::mir_tco_enabled() {
+        // Resolve every member to its (MirFn, ResolvedFnDef) pair. The
+        // whole block falls back to HIR if any member is missing one
+        // (synthetic / un-lowered) — the trampoline is all-or-nothing.
+        let resolved: Option<Vec<(&crate::ir::mir::MirFn, &crate::ir::hir::ResolvedFnDef)>> =
+            ctx.mir_program.as_ref().and_then(|prog| {
+                group_fns
+                    .iter()
+                    .map(|fd| {
+                        let fn_id = crate::codegen::common::fn_id_for_decl(ctx, fd)?;
+                        let mir_fn = prog.fn_by_id(fn_id)?;
+                        let resolved_fd = ctx.resolved_program.fn_by_id(fn_id)?;
+                        Some((mir_fn, resolved_fd))
+                    })
+                    .collect()
+            });
+        if let Some(pairs) = resolved {
+            let mir_fns: Vec<&crate::ir::mir::MirFn> = pairs.iter().map(|(m, _)| *m).collect();
+            let resolved_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
+                pairs.iter().map(|(_, r)| *r).collect();
+            if let Some(code) = from_mir::emit_mir_mutual_tco_block(
+                group_id,
+                group_fns,
+                &mir_fns,
+                &resolved_fns,
+                ctx,
+                scope,
+                visibility,
+            ) {
+                return code;
+            }
+        }
+    }
+    toplevel::emit_mutual_tco_block(group_id, group_fns, ctx, scope, visibility)
+}
+
 fn entry_module_sections(
     ctx: &CodegenContext,
     main_fn: Option<&FnDef>,
@@ -472,7 +520,7 @@ fn entry_module_sections(
 
     for (group_id, group_indices) in mutual_groups.iter().enumerate() {
         let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| non_main_fns[idx]).collect();
-        sections.push(toplevel::emit_mutual_tco_block(
+        sections.push(emit_mutual_tco_block_routed(
             group_id + 1,
             &group_fns,
             ctx,
@@ -570,7 +618,7 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
 
     for (group_id, group_indices) in mutual_groups.iter().enumerate() {
         let group_fns: Vec<&FnDef> = group_indices.iter().map(|&idx| fn_refs[idx]).collect();
-        sections.push(toplevel::emit_mutual_tco_block(
+        sections.push(emit_mutual_tco_block_routed(
             group_id + 1,
             &group_fns,
             ctx,

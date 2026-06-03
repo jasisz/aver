@@ -970,3 +970,145 @@ fn full_plain_stdout_parity_with_vm() {
         failures.join("\n  - ")
     );
 }
+
+// ─── Mode (e): MIR-synthesized TCO (Wave 5) ──────────────────────────────
+//
+// Wave 5 synthesizes the self-TCO loop and the mutual-recursion
+// trampoline from `MirExpr::TailCall` in the MIR walker, behind the
+// `AVER_RUST_MIR_TCO=1` flag. TCO never byte-graduates (the loop /
+// trampoline STRUCTURE has no HIR analogue to compare against), so it is
+// verified BEHAVIORALLY here: build + RUN the MIR-synthesized binary and
+// assert (1) stdout parity with the VM AND (2) the deep self-recursion
+// case does NOT stack-overflow — which proves the emitted code is a
+// genuine loop, not a recursive call that merely happens to compute the
+// right answer at shallow depth.
+//
+// ## Revert-proof (what makes this a real net, not theater)
+//
+// Break the synthesized self-loop in
+// `src/codegen/rust/from_mir.rs::emit_mir_self_tco_continue` by replacing
+// the `continue;` line with a recursive self-call that returns instead of
+// looping, e.g.:
+//
+// ```rust
+// // lines.push("            continue;".to_string());
+// lines.push(format!(
+//     "            return {}({});",
+//     "countUp",
+//     arg_strs.join(", ")
+// ));
+// ```
+//
+// The shallow mutual case still passes (correct answer), but the DEEP
+// self-recursion case (10M) overflows the stack → the binary aborts with
+// a non-zero exit → `mir_tco_deep_self_and_mutual_recursion_behaves`
+// fails on the "compiled binary exited non-zero" branch. Restoring
+// `continue;` turns it green again. (Verified during Wave 5 development:
+// the test goes RED with the loop broken, GREEN with it intact.)
+
+/// Deep self-TCO (sum to 10M — overflows WITHOUT a real loop) + a
+/// 2-cycle and a 3-cycle of mutual recursion, all in one program so a
+/// single cargo build amortizes. Console-only, deterministic.
+const MIR_TCO_PROBE: &str = r#"module TcoProbe
+    intent =
+        "Deep self-TCO that would stack-overflow without a real loop, plus"
+        "mutual recursion (a 2-cycle and a 3-cycle). Probes the Wave-5 MIR"
+        "TCO synthesis: the deep case proves the loop, the cycles the trampoline."
+    effects [Console]
+
+fn countUp(n: Int, acc: Int) -> Int
+    ? "Tail-recursive sum from n down to 0 — deep enough to overflow without TCO."
+    match n == 0
+        true -> acc
+        false -> countUp(n - 1, acc + n)
+
+fn isEven(n: Int) -> Bool
+    ? "True when n is even (mutual recursion with isOdd)."
+    match n == 0
+        true -> true
+        false -> isOdd(n - 1)
+
+fn isOdd(n: Int) -> Bool
+    ? "True when n is odd (mutual recursion with isEven)."
+    match n == 0
+        true -> false
+        false -> isEven(n - 1)
+
+fn cycleA(n: Int) -> Int
+    ? "Three-cycle member A."
+    match n == 0
+        true -> 100
+        false -> cycleB(n - 1)
+
+fn cycleB(n: Int) -> Int
+    ? "Three-cycle member B."
+    match n == 0
+        true -> 200
+        false -> cycleC(n - 1)
+
+fn cycleC(n: Int) -> Int
+    ? "Three-cycle member C."
+    match n == 0
+        true -> 300
+        false -> cycleA(n - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    total = countUp(10000000, 0)
+    e = isEven(5000000)
+    o = isOdd(5000000)
+    c = cycleA(7)
+    Console.print("total={total} even={e} odd={o} cycle={c}")
+"#;
+
+#[test]
+fn mir_tco_deep_self_and_mutual_recursion_behaves() {
+    let ws = temp_dir("mir_tco");
+    let src = ws.join("tco_probe.av");
+    fs::write(&src, MIR_TCO_PROBE).expect("write TCO probe source");
+
+    // The VM oracle: a deep tail-recursive loop the VM runs via frame
+    // reuse, so it produces the answer without overflowing.
+    let vm_stdout = run_vm(&src, None).unwrap_or_else(|e| panic!("VM run failed: {e}"));
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "mir_tco_probe";
+
+    let result = (|| -> Result<(), String> {
+        // Flag ON: force the Wave-5 MIR TCO synthesis onto the loop +
+        // trampoline. (Production default leaves this OFF and uses the
+        // proven HIR emitter; this test specifically exercises MIR.)
+        compile_rust_env(
+            &src,
+            &project,
+            name,
+            None,
+            &[],
+            &[("AVER_RUST_MIR_TCO", "1")],
+        )?;
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        if !out.status.success() {
+            // A non-zero exit on the DEEP case is the stack overflow the
+            // loop is supposed to prevent — the revert-proof failure mode.
+            return Err(format!(
+                "MIR-TCO binary exited non-zero — the deep self-recursion likely \
+                 stack-overflowed (the synthesized loop is broken):\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "MIR-TCO stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust (MIR TCO) ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
