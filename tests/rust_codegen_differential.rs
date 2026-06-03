@@ -125,6 +125,22 @@ fn compile_rust(
     module_root: Option<&Path>,
     extra: &[&str],
 ) -> Result<(), String> {
+    compile_rust_env(file, project_dir, name, module_root, extra, &[])
+}
+
+/// As [`compile_rust`], but sets extra env vars on the `aver compile`
+/// process. Used by the MIR-forced security test to set
+/// `AVER_RUST_MIR_ONLY=1` so the parity gate forces the MIR walker to
+/// OWN the effectful builtin emission (replay / policy / bare framing)
+/// instead of falling back to the byte-equal HIR body.
+fn compile_rust_env(
+    file: &Path,
+    project_dir: &Path,
+    name: &str,
+    module_root: Option<&Path>,
+    extra: &[&str],
+    env: &[(&str, &str)],
+) -> Result<(), String> {
     let mut cmd = Command::new(aver_bin());
     cmd.current_dir(repo_root())
         .arg("compile")
@@ -139,6 +155,9 @@ fn compile_rust(
         cmd.arg("--module-root").arg(root);
     }
     cmd.args(extra);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     let out = cmd
         .output()
         .expect("expected `aver compile --target rust` to spawn");
@@ -149,6 +168,57 @@ fn compile_rust(
         ));
     }
     Ok(())
+}
+
+/// `aver compile … --explain-mir-coverage --target rust --json` →
+/// parse the `graduated` count. Used by the MIR-forced security test to
+/// PROVE the parity gate actually graduated the effectful fn onto the
+/// MIR path (so the deny / replay assertions exercise MIR-emitted
+/// effects, not an accidental HIR fallback).
+fn graduated_count(
+    file: &Path,
+    module_root: Option<&Path>,
+    extra: &[&str],
+    env: &[(&str, &str)],
+) -> Result<u64, String> {
+    let mut cmd = Command::new(aver_bin());
+    cmd.current_dir(repo_root())
+        .arg("compile")
+        .arg(file)
+        .arg("--explain-mir-coverage")
+        .arg("--target")
+        .arg("rust")
+        .arg("--json");
+    if let Some(root) = module_root {
+        cmd.arg("--module-root").arg(root);
+    }
+    cmd.args(extra);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd
+        .output()
+        .expect("expected `aver compile --explain-mir-coverage` to spawn");
+    if !out.status.success() {
+        return Err(format!(
+            "explain-mir-coverage failed:\n{}",
+            format_output(&out)
+        ));
+    }
+    let json = String::from_utf8_lossy(&out.stdout);
+    // Tiny field extractor — avoids pulling serde into the test.
+    let needle = "\"graduated\":";
+    let start = json
+        .find(needle)
+        .ok_or_else(|| format!("no `graduated` field in coverage JSON:\n{json}"))?
+        + needle.len();
+    let rest = &json[start..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end]
+        .parse::<u64>()
+        .map_err(|e| format!("bad graduated count {:?}: {e}", &rest[..end]))
 }
 
 /// `cargo build` the emitted project against the shared target dir.
@@ -479,6 +549,345 @@ fn record_replay_roundtrips_effects_through_invoke_wrapper() {
         if !replayed.status.success() {
             return Err(format!(
                 "replay run failed — the recorded session did not roundtrip:\n{}",
+                format_output(&replayed)
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+// ─── Mode (d): MIR-FORCED effectful security probe (Wave 3b) ─────────────
+//
+// SECURITY-SENSITIVE. Wave 3b lets the MIR walker OWN effectful builtin
+// emission (replay / policy / bare framing). A dropped wrapper there
+// silently disables aver.toml DENY enforcement or record/replay capture
+// — and it's invisible to rustc, to coverage, and to happy-path stdout.
+//
+// The byte-parity gate would normally fall an effectful fn back to HIR
+// the instant the MIR body diverged, so a dropped MIR wrapper would
+// hide behind the HIR fallback. The `AVER_RUST_MIR_ONLY=1` escape hatch
+// disables the byte-exact fallback: for any fn the MIR walker renders,
+// the MIR body is forced onto production EVEN IF it diverges from HIR.
+// That makes the MIR walker provably OWN the effect emission, so a
+// dropped MIR wrapper actually reaches the built binary and these
+// probes catch it.
+//
+// `graduated_count(... AVER_RUST_MIR_ONLY=1)` asserts up front that the
+// effectful fn really graduated onto the MIR path — without that guard
+// a silent HIR fallback would let the probe pass for the wrong reason.
+
+/// Single-fn Disk-write program for the embedded-policy probe. The
+/// write rides a helper fn (`writeIt`) that is a single-expr body — the
+/// shape the parity gate graduates onto MIR — so the `aver_policy::
+/// check_disk` wrapper is emitted by the MIR walker under the hatch.
+/// `__PATH__` is substituted at test time.
+const MIR_DISK_WRITE_PROBE: &str = r#"module MirDiskProbe
+    intent =
+        "Writes one file then prints DONE. Probes the MIR-emitted policy"
+        "wrapper: under a deny policy the write must be rejected at runtime."
+    effects [Console, Disk]
+
+fn writeIt(path: String) -> Result<Unit, String>
+    ? "Writes a fixed payload to the given path."
+    ! [Disk.writeText]
+    Disk.writeText(path, "payload")
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.writeText]
+    written = writeIt("__PATH__")?
+    shown = Console.print("DONE")
+    Result.Ok(Unit)
+"#;
+
+fn write_embedded_disk_policy(dir: &Path, allowed_path: &str) {
+    fs::create_dir_all(dir).expect("create policy dir");
+    fs::write(
+        dir.join("aver.toml"),
+        format!("[effects.Disk]\npaths = [{allowed_path:?}]\n"),
+    )
+    .expect("write aver.toml");
+}
+
+#[test]
+#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --include-ignored"]
+fn mir_forced_embedded_policy_rejects_denied_disk_write() {
+    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
+        eprintln!("skipping MIR-forced policy probe — set AVER_RUST_DIFF_FULL=1");
+        return;
+    }
+
+    let ws = temp_dir("mir-deny");
+    // The embedded aver.toml is read from the module root at compile
+    // time, so the source + the deny aver.toml share a dir.
+    let proj_root = ws.join("src-root");
+    fs::create_dir_all(&proj_root).expect("create src root");
+    let out_path = ws.join("out.txt");
+    let src = proj_root.join("disk_probe.av");
+    fs::write(
+        &src,
+        MIR_DISK_WRITE_PROBE.replace("__PATH__", &aver_path_literal(&out_path)),
+    )
+    .expect("write probe source");
+
+    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
+
+    let result = (|| -> Result<(), String> {
+        // (0) PROVE the MIR path is actually exercised: the effectful
+        // `writeIt` must graduate onto MIR under the hatch. Without
+        // this, a silent HIR fallback would make the probe meaningless.
+        let grad = graduated_count(&src, Some(&proj_root), &["--policy", "embed"], &hatch)?;
+        if grad == 0 {
+            return Err(
+                "no fn graduated onto the MIR path under AVER_RUST_MIR_ONLY=1 — the \
+                 effectful builtin emit is not being exercised by the MIR walker; \
+                 the probe would be testing the HIR fallback instead"
+                    .to_string(),
+            );
+        }
+
+        // (1) DENY: embed an aver.toml whose allow-list names a
+        // DIFFERENT path → the write to out.txt is denied at compile-
+        // baked policy. Compile under the hatch so the MIR walker emits
+        // the `aver_policy::check_disk` wrapper, then build + run.
+        write_embedded_disk_policy(&proj_root, "/aver/nonexistent/allowed/only");
+        let project = ws.join("project-deny");
+        fs::create_dir_all(&project).expect("create project dir");
+        let name = "mir_deny_disk_probe";
+        compile_rust_env(
+            &src,
+            &project,
+            name,
+            Some(&proj_root),
+            &["--policy", "embed"],
+            &hatch,
+        )?;
+        // Sanity: the emitted source must carry the MIR-emitted policy
+        // wrapper. (If a future refactor drops it, the run-time assert
+        // below is the real gate; this is a fast structural tripwire.)
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted module: {e}"))?;
+        if !emitted.contains("aver_policy::check_disk") {
+            return Err(format!(
+                "emitted Rust is missing the `aver_policy::check_disk` wrapper — \
+                 the MIR effectful policy wrap was dropped:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, name)?;
+        let denied = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("run denied binary: {e}"))?;
+        if denied.status.success() {
+            return Err(format!(
+                "deny run unexpectedly SUCCEEDED — the MIR-emitted policy wrapper \
+                 was not enforced:\n{}",
+                format_output(&denied)
+            ));
+        }
+        let denied_stderr = String::from_utf8_lossy(&denied.stderr);
+        if !denied_stderr.contains("denied by aver.toml policy") {
+            return Err(format!(
+                "deny run failed for the wrong reason (expected a policy \
+                 violation):\n{}",
+                format_output(&denied)
+            ));
+        }
+        if out_path.exists() {
+            return Err(format!(
+                "deny run wrote {} despite the deny policy — the MIR-emitted \
+                 check ran AFTER the effect (or not at all)",
+                out_path.display()
+            ));
+        }
+
+        // (2) ALLOW: re-embed an aver.toml whose allow-list names the
+        // real write path → the write is permitted. Proves the deny in
+        // (1) was the policy, not an unconditional failure.
+        write_embedded_disk_policy(&proj_root, &out_path.to_string_lossy());
+        let project_allow = ws.join("project-allow");
+        fs::create_dir_all(&project_allow).expect("create allow project dir");
+        let name_allow = "mir_allow_disk_probe";
+        compile_rust_env(
+            &src,
+            &project_allow,
+            name_allow,
+            Some(&proj_root),
+            &["--policy", "embed"],
+            &hatch,
+        )?;
+        let bin_allow = cargo_build(&project_allow, name_allow)?;
+        let allowed = Command::new(&bin_allow)
+            .output()
+            .map_err(|e| format!("run allowed binary: {e}"))?;
+        if !allowed.status.success() {
+            return Err(format!(
+                "allow run failed — the probe should succeed when the write path \
+                 is permitted:\n{}",
+                format_output(&allowed)
+            ));
+        }
+        if !out_path.exists() {
+            return Err(format!(
+                "allow run did not write {} — the effect was suppressed even \
+                 though the policy allowed it",
+                out_path.display()
+            ));
+        }
+        if !String::from_utf8_lossy(&allowed.stdout).contains("DONE") {
+            return Err(format!(
+                "allow run did not print DONE:\n{}",
+                format_output(&allowed)
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Reads a file, then echoes its contents via Console.print — same
+/// shape as `READ_ECHO_PROBE`, but compiled under
+/// `AVER_RUST_MIR_ONLY=1` so the MIR walker emits the
+/// `aver_replay::invoke_effect` reroute for BOTH effects. `__PATH__` is
+/// substituted at test time.
+const MIR_READ_ECHO_PROBE: &str = r#"module MirRwProbe
+    intent =
+        "Reads a file and echoes its contents. The record captures the read"
+        "result; replay serves it back. Probes the MIR-emitted replay wrapper."
+    effects [Console, Disk]
+
+fn readIt(path: String) -> Result<String, String>
+    ? "Reads the file at the given path."
+    ! [Disk.readText]
+    Disk.readText(path)
+
+fn main() -> Result<Unit, String>
+    ! [Console.print, Disk.readText]
+    content = readIt("__PATH__")?
+    shown = Console.print("READ:{content}")
+    Result.Ok(Unit)
+"#;
+
+#[test]
+#[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --include-ignored"]
+fn mir_forced_record_replay_captures_effects_through_invoke_wrapper() {
+    if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
+        eprintln!("skipping MIR-forced replay probe — set AVER_RUST_DIFF_FULL=1");
+        return;
+    }
+
+    let ws = temp_dir("mir-replay");
+    let data_path = ws.join("data.txt");
+    fs::write(&data_path, "recorded-bytes").expect("write probe data");
+    let src = ws.join("rw_probe.av");
+    fs::write(
+        &src,
+        MIR_READ_ECHO_PROBE.replace("__PATH__", &aver_path_literal(&data_path)),
+    )
+    .expect("write probe source");
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "mir_rw_probe";
+    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
+
+    let result = (|| -> Result<(), String> {
+        // (0) PROVE the MIR path is exercised: the effectful `readIt`
+        // must graduate onto MIR under the hatch.
+        let grad = graduated_count(&src, None, &["--with-replay"], &hatch)?;
+        if grad == 0 {
+            return Err(
+                "no fn graduated onto the MIR path under AVER_RUST_MIR_ONLY=1 — the \
+                 MIR replay reroute is not being exercised"
+                    .to_string(),
+            );
+        }
+
+        compile_rust_env(&src, &project, name, None, &["--with-replay"], &hatch)?;
+
+        // Structural tripwire: the emitted Rust must carry the MIR-
+        // emitted `invoke_effect` reroute for the read.
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted module: {e}"))?;
+        if !emitted.contains("aver_replay::invoke_effect") {
+            return Err(format!(
+                "emitted Rust is missing the `aver_replay::invoke_effect` reroute — \
+                 the MIR effectful replay wrap was dropped:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, name)?;
+
+        // (1) RECORD: run live, capturing the effects into a session.
+        let session = ws.join("session.json");
+        let recorded = Command::new(&bin)
+            .env("AVER_REPLAY_RECORD", &session)
+            .output()
+            .map_err(|e| format!("run record binary: {e}"))?;
+        if !recorded.status.success() {
+            return Err(format!("record run failed:\n{}", format_output(&recorded)));
+        }
+        if !String::from_utf8_lossy(&recorded.stdout).contains("READ:recorded-bytes") {
+            return Err(format!(
+                "record run did not echo the read bytes (live read broken):\n{}",
+                format_output(&recorded)
+            ));
+        }
+        if !session.exists() {
+            return Err("record run did not write the session JSON".to_string());
+        }
+
+        // BOTH effects must be captured through invoke_effect — a
+        // dropped MIR replay wrapper makes one (or both) vanish.
+        let session_json = fs::read_to_string(&session).expect("read session");
+        if !session_json.contains("\"Disk.readText\"") {
+            return Err(format!(
+                "session is missing the Disk.readText effect — the MIR replay \
+                 wrapper was dropped on the read:\n{session_json}"
+            ));
+        }
+        if !session_json.contains("\"Console.print\"") {
+            return Err(format!(
+                "session is missing the Console.print effect — the MIR replay \
+                 wrapper was dropped on the print:\n{session_json}"
+            ));
+        }
+        if !session_json.contains("READ:recorded-bytes") {
+            return Err(format!(
+                "session does not carry the woven read result in the Console.print \
+                 arg — per-effect arg-json shape is wrong:\n{session_json}"
+            ));
+        }
+
+        // (2) REPLAY: mutate the data file so a LIVE read would differ,
+        // then replay. Replay must serve the recorded bytes (not re-read
+        // the mutated file) and roundtrip without a position mismatch.
+        fs::write(&data_path, "MUTATED-ON-DISK").expect("mutate data file");
+        let replayed = Command::new(&bin)
+            .env("AVER_REPLAY_REPLAY", &session)
+            .output()
+            .map_err(|e| format!("run replay binary: {e}"))?;
+        if !replayed.status.success() {
+            return Err(format!(
+                "replay run failed — the recorded session did not roundtrip (a \
+                 dropped or mis-ordered MIR invoke_effect reroute trips a position \
+                 mismatch here):\n{}",
                 format_output(&replayed)
             ));
         }

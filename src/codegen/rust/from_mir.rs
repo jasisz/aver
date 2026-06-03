@@ -620,18 +620,21 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     let name = emit_ctx.symbol_table.fn_entry(*fn_id).key.canonical();
                     emit_named_call(&name, &call.args, emit_ctx)
                 }
-                // Wave 3a: resolve the interned dotted name and
-                // dispatch the PURE builtins through
-                // `emit_mir_builtin_call`. EFFECTFUL builtins (and any
-                // out-of-range id, a lowering-invariant violation we
-                // tolerate defensively) return `None` → HIR fallback;
-                // they stay on the HIR walker (Wave 3b).
+                // Resolve the interned dotted name and dispatch:
+                //   - EFFECTFUL builtins (Wave 3b) →
+                //     `emit_mir_effectful_builtin_call`, which mirrors
+                //     HIR's `emit_builtin_call` replay-reroute / policy-
+                //     wrap / bare-frame machinery byte-for-byte.
+                //   - PURE builtins (Wave 3a) → `emit_mir_builtin_call`.
+                // An out-of-range id (a lowering-invariant violation we
+                // tolerate defensively) returns `None` → HIR fallback.
                 MirCallee::Builtin(id) => {
                     let name = emit_ctx.mir_builtins.get(id.0 as usize)?.as_str();
                     if super::builtins::builtin_is_effectful(name) {
-                        return None;
+                        emit_mir_effectful_builtin_call(name, &call.args, emit_ctx)
+                    } else {
+                        emit_mir_builtin_call(name, &call.args, emit_ctx)
                     }
-                    emit_mir_builtin_call(name, &call.args, emit_ctx)
                 }
                 // Wave 3a: the 5 deforestation intrinsics (buffer build
                 // + `__to_str`). Args are by-value (no clone / borrow),
@@ -1376,6 +1379,16 @@ pub(super) fn reset_parity_counters() {
     CONSIDERED.store(0, Ordering::Relaxed);
 }
 
+/// Is the `AVER_RUST_MIR_ONLY=1` escape hatch active? When set, the
+/// parity gate forces the MIR walker's body onto the production path
+/// (even when it diverges from HIR) for any fn the walker can render,
+/// so the security differential test can make the MIR path own effect
+/// emission. Read from the env each call (cheap; only on the codegen
+/// path) so a test can toggle it per-process without a rebuild.
+fn mir_only_hatch_enabled() -> bool {
+    std::env::var_os("AVER_RUST_MIR_ONLY").is_some_and(|v| v == "1")
+}
+
 /// `(graduated, considered)` since the last [`reset_parity_counters`].
 pub fn parity_counters() -> (usize, usize) {
     (
@@ -1413,6 +1426,22 @@ pub(super) fn parity_gated_body(
     };
     let policy = MirFnEmitPolicy::from_resolved(resolved, scope, borrow_by_default);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+    // SECURITY-TEST ESCAPE HATCH (`AVER_RUST_MIR_ONLY=1`): when set,
+    // force the MIR body onto the production path for any fn whose MIR
+    // walker renders successfully, even if it is NOT byte-identical to
+    // HIR — disabling the byte-exact fallback. Production default (env
+    // UNSET) is unchanged: the parity gate still governs, so normal
+    // compiles never see this branch and cannot regress. The hatch
+    // exists solely so the differential security test can force the MIR
+    // walker to OWN effect emission (replay / policy / bare framing) —
+    // otherwise an effectful fn always falls back to HIR and the test
+    // would silently exercise the HIR path instead.
+    if mir_only_hatch_enabled()
+        && let Some(mir_body) = emit_mir_fn_body(&mir_fn.body, &emit_ctx)
+    {
+        GRADUATED.fetch_add(1, Ordering::Relaxed);
+        return mir_body;
+    }
     match emit_mir_fn_body(&mir_fn.body, &emit_ctx) {
         Some(mir_body) if mir_body == hir_body => {
             GRADUATED.fetch_add(1, Ordering::Relaxed);
@@ -1639,9 +1668,9 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
 // (`builtins.rs`) for the ~88 PURE builtins (Result / Option / Int /
 // Float / String / List / Map / Vector / Bool / Char / Byte). The
 // EFFECTFUL families (Args / Console / Http / HttpServer / Disk / Env /
-// Random / SelfHostRuntime / Tcp / Terminal / Time) are gated out at the
-// `Call(Builtin)` arm (`builtin_is_effectful` → `None` → HIR fallback) —
-// Wave 3b, deliberately left on the HIR walker and never reached here.
+// Random / SelfHostRuntime / Tcp / Terminal / Time) are split off at the
+// `Call(Builtin)` arm to `emit_mir_effectful_builtin_call` (Wave 3b,
+// below) — they are NOT handled here.
 //
 // Each arm copies its HIR sibling's shape verbatim, substituting:
 //   `emit_arg(i)`                  → `emit_mir_expr(&args[i], ctx)?`
@@ -1934,6 +1963,95 @@ fn emit_mir_builtin_call(
     }
 }
 
+// ── Wave 3b: EFFECTFUL builtin calls (replay / policy / bare framing) ───
+//
+// SECURITY-SENSITIVE. Mirror of the HIR oracle `emit_builtin_call`
+// (`builtins.rs`) for the 11 EFFECTFUL families (Args / Console / Http /
+// HttpServer / Disk / Env / Random / SelfHostRuntime / Tcp / Terminal /
+// Time). Wave 3a gated these out (`builtin_is_effectful` → `None` → HIR
+// fallback); Wave 3b emits them, threading `ctx.policy` +
+// `ctx.emit_replay_runtime` (reachable through `ctx.codegen`).
+//
+// The three wrappers HIR applies are reproduced by the SAME shared
+// composers `emit_builtin_call` calls — `compose_replay_effect_call`
+// (replay reroute), `compose_effectful_builtin_raw` (the raw `aver_rt::*`
+// body), and `compose_effect_wrap` (policy `check_*` + bare
+// `cancel_checkpoint` framing) — so the MIR output is byte-identical to
+// HIR by construction. The only walker-specific inputs are the per-arg
+// renders: `mir_clone_arg` (the replay temps, HIR's `clone_arg`) and the
+// raw `emit_mir_expr` (the non-replay args + the policy first arg, HIR's
+// `emit_expr`).
+//
+// A dropped composer here silently disables aver.toml DENY enforcement
+// or record/replay capture (invisible to rustc + coverage + happy-path
+// stdout) — the differential security test under `AVER_RUST_MIR_ONLY=1`
+// forces this path and is revert-proofed against exactly that drop.
+
+/// Emit an EFFECTFUL builtin call from MIR, byte-identical to the HIR
+/// oracle's `emit_builtin_call`. `name` is already known effectful (the
+/// `Call(Builtin)` arm routed it here). Returns `None` (→ HIR fallback)
+/// when an arg can't render, when the production `CodegenContext` is
+/// absent (coverage path — no policy/replay info), or when the raw
+/// effect body isn't one the oracle covers.
+fn emit_mir_effectful_builtin_call(
+    name: &str,
+    args: &[Spanned<MirExpr>],
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    // The policy / replay flags live on the full `CodegenContext`. The
+    // coverage / test path has none → fall back to HIR (which the
+    // coverage walk reads as a `None`, conservative + fine). The
+    // production parity gate always carries a ctx.
+    let codegen = ctx.codegen?;
+
+    // (1) Replay reroute — mirror of `emit_builtin_call`'s
+    //     `if ctx.emit_replay_runtime && builtin_is_effectful(name)`.
+    //     Each arg is bound to `__effect_argN` via the `clone_arg`
+    //     mirror; the shared composer emits the
+    //     `cancel_checkpoint` + `invoke_effect(<effect>, vec![json], || raw)`
+    //     block from the temp names.
+    if codegen.emit_replay_runtime {
+        let mut arg_clones = Vec::with_capacity(args.len());
+        for a in args {
+            arg_clones.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
+        }
+        return super::builtins::compose_replay_effect_call(name, &arg_clones);
+    }
+
+    // (2) Raw effect body — mirror of `emit_builtin_call_inner`'s
+    //     effectful arms, every arg by-value (raw `emit_mir_expr`, HIR's
+    //     `emit_arg`). The shared composer renders the `aver_rt::*` call.
+    let mut arg_strs = Vec::with_capacity(args.len());
+    for a in args {
+        arg_strs.push(emit_mir_expr(a, ctx)?);
+    }
+    let result = super::builtins::compose_effectful_builtin_raw(name, &arg_strs)?;
+
+    // `.into_aver()` post-step for String-returning effectful builtins
+    // (mirror of `emit_builtin_call`'s `builtin_needs_str_conversion`).
+    let result = if super::builtins::builtin_needs_str_conversion(name) {
+        format!("({}).into_aver()", result)
+    } else {
+        result
+    };
+
+    // (3) Policy wrap (Http/Disk/Env) + bare `cancel_checkpoint` framing
+    //     — mirror of `emit_builtin_call`'s tail. The first arg for the
+    //     `check_*` call is rendered raw (HIR's `emit_expr`).
+    let policy_active = codegen.policy.is_some() && !codegen.emit_replay_runtime;
+    let first_arg = if policy_active && !args.is_empty() {
+        Some(emit_mir_expr(&args[0], ctx)?)
+    } else {
+        None
+    };
+    Some(super::builtins::compose_effect_wrap(
+        name,
+        result,
+        policy_active,
+        first_arg,
+    ))
+}
+
 /// Emit one of the 5 deforestation intrinsics from MIR, byte-identical
 /// to the HIR oracle's `emit_builtin_call_inner` intrinsic arms. Args
 /// are by-value (raw `emit_mir_expr`, no clone / borrow), matching the
@@ -2181,9 +2299,13 @@ mod tests {
     }
 
     #[test]
-    fn effectful_builtin_returns_none() {
-        // EFFECTFUL builtins are gated out at the call arm — they stay
-        // on the HIR walker (Wave 3b). `Console.print` must NOT emit.
+    fn effectful_builtin_returns_none_without_codegen_ctx() {
+        // Wave 3b: effectful builtins DO emit on the production path, but
+        // they need the `CodegenContext` (for `ctx.policy` /
+        // `ctx.emit_replay_runtime`). The coverage / test path carries no
+        // ctx, so `Console.print` returns `None` → HIR fallback there,
+        // which the coverage walk reads conservatively. (Production emit
+        // is exercised by the differential security test.)
         let call = MirCall {
             callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
             args: vec![span(MirExpr::Literal(span(crate::ast::Literal::Str(
@@ -2193,7 +2315,8 @@ mod tests {
         let expr = span(MirExpr::Call(span(call)));
         assert!(
             emit_mir_expr(&expr, &ctx_with_builtin("Console.print")).is_none(),
-            "effectful Console.print must fall back to HIR"
+            "effectful Console.print needs a CodegenContext; without one it \
+             falls back to HIR"
         );
     }
 

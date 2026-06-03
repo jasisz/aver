@@ -189,8 +189,35 @@ fn emit_replay_effect_call(
     ctx: &CodegenContext,
     ectx: &EmitCtx,
 ) -> Option<String> {
+    // The only walker-specific input is how each arg is rendered as an
+    // owning binding for the `__effect_argN` temp (HIR's `clone_arg`).
+    // Everything downstream (the raw effect call, the arg-json shapes,
+    // the `cancel_checkpoint` + `invoke_effect` framing) keys off the
+    // *temp names*, not the source exprs, so it lives in the shared
+    // `compose_replay_effect_call` that both HIR and the MIR walker
+    // call with the same temp count.
+    let arg_clones: Vec<String> = args
+        .iter()
+        .map(|arg| clone_arg(&arg.node, ctx, ectx))
+        .collect();
+    compose_replay_effect_call(name, &arg_clones)
+}
+
+/// Shared replay-reroute composer (security-sensitive: a dropped
+/// `invoke_effect` here silently disables record/replay capture for an
+/// effect). Both the HIR oracle (`emit_replay_effect_call`) and the MIR
+/// walker (`from_mir::emit_mir_effectful_builtin_call`) call this with
+/// the per-arg owning-binding strings already rendered by their own
+/// `clone_arg` mirror, so the emitted block is byte-identical across
+/// backends by construction.
+///
+/// `arg_clones[i]` is the Rust expression bound to `__effect_argi`. The
+/// raw effect call + the arg-json both reference those temps, so they
+/// depend only on the *count* of args, not on how each was rendered —
+/// which is why the shared composer can stay walker-agnostic.
+pub(super) fn compose_replay_effect_call(name: &str, arg_clones: &[String]) -> Option<String> {
     let effect_name = builtin_effect_name(name);
-    let temp_names = (0..args.len())
+    let temp_names = (0..arg_clones.len())
         .map(|idx| format!("__effect_arg{}", idx))
         .collect::<Vec<_>>();
     let raw = emit_effectful_builtin_call_with_temps(name, &temp_names)?;
@@ -202,9 +229,8 @@ fn emit_replay_effect_call(
 
     let mut lines = Vec::new();
     lines.push("{".to_string());
-    for (idx, arg) in args.iter().enumerate() {
-        let emitted = clone_arg(&arg.node, ctx, ectx);
-        lines.push(format!("    let {} = {};", temp_names[idx], emitted));
+    for (idx, clone) in arg_clones.iter().enumerate() {
+        lines.push(format!("    let {} = {};", temp_names[idx], clone));
     }
     lines.push("    crate::cancel_checkpoint();".to_string());
     let json_args = emit_replay_effect_arg_json(effect_name, &temp_names).join(", ");
@@ -266,35 +292,72 @@ pub fn emit_builtin_call(
         result
     };
 
-    // Wrap Http/Disk/Env calls with policy checks when aver.toml policy is present.
-    if ctx.policy.is_some() && !ctx.emit_replay_runtime {
-        if name.starts_with("Http.") && !args.is_empty() {
-            let url_arg = emit_expr(&args[0].node, ctx, ectx);
-            return Some(format!(
-                "{{ crate::cancel_checkpoint(); aver_policy::check_http(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
-                name, url_arg, result
-            ));
-        }
-        if name.starts_with("Disk.") && !args.is_empty() {
-            let path_arg = emit_expr(&args[0].node, ctx, ectx);
-            return Some(format!(
-                "{{ crate::cancel_checkpoint(); aver_policy::check_disk(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
-                name, path_arg, result
-            ));
-        }
-        if name.starts_with("Env.") && !args.is_empty() {
-            let key_arg = emit_expr(&args[0].node, ctx, ectx);
-            return Some(format!(
-                "{{ crate::cancel_checkpoint(); aver_policy::check_env(\"{}\", &{}).expect(\"aver.toml policy violation\"); {} }}",
-                name, key_arg, result
-            ));
-        }
+    // Policy-wrap / bare-frame the (already `.into_aver()`-converted)
+    // result. The only walker-specific input is the first arg rendered
+    // as a borrowable value for the `check_*` call (HIR's `emit_expr`);
+    // the rest of the wrapping is shared with the MIR walker via
+    // `compose_effect_wrap` so both emit byte-identical framing.
+    let policy_active = ctx.policy.is_some() && !ctx.emit_replay_runtime;
+    let first_arg = if policy_active && !args.is_empty() {
+        Some(emit_expr(&args[0].node, ctx, ectx))
+    } else {
+        None
+    };
+    Some(compose_effect_wrap(name, result, policy_active, first_arg))
+}
+
+/// Which policy `check_*` helper guards a built-in namespace, if any.
+/// Returns the helper name for `Http.` / `Disk.` / `Env.` prefixes,
+/// `None` for every other (effectful or pure) builtin. Shared between
+/// the HIR oracle and the MIR walker so the policy-prefix decision is
+/// made in exactly one place.
+fn policy_check_helper(name: &str) -> Option<&'static str> {
+    if name.starts_with("Http.") {
+        Some("aver_policy::check_http")
+    } else if name.starts_with("Disk.") {
+        Some("aver_policy::check_disk")
+    } else if name.starts_with("Env.") {
+        Some("aver_policy::check_env")
+    } else {
+        None
+    }
+}
+
+/// Shared policy-wrap / bare-frame composer (security-sensitive: a
+/// dropped `check_*` here silently disables aver.toml DENY enforcement
+/// for an effect). Applies, in HIR's exact order:
+///
+/// 1. **policy wrap** — when `policy_active` and `name` is an
+///    `Http.`/`Disk.`/`Env.` call with a first arg
+///    (`first_arg = Some(emitted)`): prepend `cancel_checkpoint()` +
+///    the matching `check_*(<method>, &<arg0>).expect(...)`.
+/// 2. **bare framing** — every other effectful builtin gets the bare
+///    `{ cancel_checkpoint(); <result> }`.
+/// 3. **pure passthrough** — a non-effectful builtin returns `result`
+///    unwrapped.
+///
+/// Both backends call this with `result` already `.into_aver()`-
+/// converted and `first_arg` rendered by their own `emit_expr` mirror,
+/// so the emitted framing is byte-identical by construction.
+pub(super) fn compose_effect_wrap(
+    name: &str,
+    result: String,
+    policy_active: bool,
+    first_arg: Option<String>,
+) -> String {
+    if policy_active
+        && let Some(arg) = first_arg
+        && let Some(helper) = policy_check_helper(name)
+    {
+        return format!(
+            "{{ crate::cancel_checkpoint(); {helper}(\"{name}\", &{arg}).expect(\"aver.toml policy violation\"); {result} }}"
+        );
     }
 
     if builtin_is_effectful(name) {
-        Some(format!("{{ crate::cancel_checkpoint(); {} }}", result))
+        format!("{{ crate::cancel_checkpoint(); {} }}", result)
     } else {
-        Some(result)
+        result
     }
 }
 
@@ -354,22 +417,6 @@ fn emit_builtin_call_inner(
                 arg
             ))
         }
-
-        // ---- Console ----
-        "Console.print" => {
-            let arg = emit_arg(0);
-            Some(format!("aver_rt::console_print(&{})", arg))
-        }
-        "Console.error" | "Console.warn" => {
-            let arg = emit_arg(0);
-            let helper = if name == "Console.warn" {
-                "console_warn"
-            } else {
-                "console_error"
-            };
-            Some(format!("aver_rt::{}(&{})", helper, arg))
-        }
-        "Console.readLine" => Some("aver_rt::read_line()".to_string()),
 
         // ---- Result ----
         "Result.Ok" => {
@@ -775,184 +822,146 @@ fn emit_builtin_call_inner(
             Some(format!("{}.to_list()", vec))
         }
 
+        // ---- Effectful families (Console / Tcp / Http / HttpServer /
+        // SelfHostRuntime / Disk / Env / Args / Time / Random /
+        // Terminal) ----
+        // Every effectful arm renders each arg with a plain `emit_arg`
+        // (raw `emit_expr`, no clone / borrow), so the bodies depend
+        // only on the arg *strings* and live in the shared
+        // `compose_effectful_builtin_raw` that the MIR walker also calls
+        // (Wave 3b). Render the args here and delegate; `None` means
+        // not-a-builtin (→ caller's fallback).
+        _ if builtin_is_effectful(name) => {
+            let arg_strs: Vec<String> = (0..args.len()).map(emit_arg).collect();
+            compose_effectful_builtin_raw(name, &arg_strs)
+        }
+
+        _ => None,
+    }
+}
+
+/// Shared raw-body composer for the effectful builtins' NON-replay
+/// path: the `aver_rt::*` / `crate::*` call before any
+/// `cancel_checkpoint` / policy / `.into_aver()` wrapping. Every arm
+/// renders its args by-value (the caller's `emit_arg` mirror), so this
+/// keys off the pre-emitted arg strings only and is byte-identical
+/// across the HIR oracle (`emit_builtin_call_inner`) and the MIR walker
+/// (`from_mir::emit_mir_effectful_builtin_call`). Returns `None` for a
+/// non-effectful / unknown name.
+///
+/// NOTE: this is the NON-replay raw body. The replay path uses
+/// [`emit_effectful_builtin_call_with_temps`], which differs for a few
+/// arms (`Args.get` → `aver_replay::current_cli_args()`, `Terminal.print`
+/// → `format!` instead of `aver_display`); both are reachable from both
+/// backends so the divergence is preserved identically on each.
+pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Option<String> {
+    let a = |i: usize| args[i].as_str();
+    match name {
+        // ---- Console ----
+        "Console.print" => Some(format!("aver_rt::console_print(&{})", a(0))),
+        "Console.error" | "Console.warn" => {
+            let helper = if name == "Console.warn" {
+                "console_warn"
+            } else {
+                "console_error"
+            };
+            Some(format!("aver_rt::{}(&{})", helper, a(0)))
+        }
+        "Console.readLine" => Some("aver_rt::read_line()".to_string()),
+
         // ---- Tcp ----
-        "Tcp.connect" => {
-            let host = emit_arg(0);
-            let port = emit_arg(1);
-            Some(format!("aver_rt::tcp::connect(&{}, {})", host, port))
-        }
-        "Tcp.writeLine" => {
-            let conn = emit_arg(0);
-            let line = emit_arg(1);
-            Some(format!("aver_rt::tcp::write_line(&{}, &{})", conn, line))
-        }
-        "Tcp.readLine" => {
-            let conn = emit_arg(0);
-            Some(format!("aver_rt::tcp::read_line(&{})", conn))
-        }
-        "Tcp.close" => {
-            let conn = emit_arg(0);
-            Some(format!("aver_rt::tcp::close(&{})", conn))
-        }
-        "Tcp.send" => {
-            let host = emit_arg(0);
-            let port = emit_arg(1);
-            let msg = emit_arg(2);
-            Some(format!("aver_rt::tcp::send(&{}, {}, &{})", host, port, msg))
-        }
-        "Tcp.ping" => {
-            let host = emit_arg(0);
-            let port = emit_arg(1);
-            Some(format!("aver_rt::tcp::ping(&{}, {})", host, port))
-        }
+        "Tcp.connect" => Some(format!("aver_rt::tcp::connect(&{}, {})", a(0), a(1))),
+        "Tcp.writeLine" => Some(format!("aver_rt::tcp::write_line(&{}, &{})", a(0), a(1))),
+        "Tcp.readLine" => Some(format!("aver_rt::tcp::read_line(&{})", a(0))),
+        "Tcp.close" => Some(format!("aver_rt::tcp::close(&{})", a(0))),
+        "Tcp.send" => Some(format!(
+            "aver_rt::tcp::send(&{}, {}, &{})",
+            a(0),
+            a(1),
+            a(2)
+        )),
+        "Tcp.ping" => Some(format!("aver_rt::tcp::ping(&{}, {})", a(0), a(1))),
 
         // ---- Http ----
-        "Http.get" => {
-            let url = emit_arg(0);
-            Some(format!("aver_rt::http::get(&{})", url))
-        }
-        "Http.head" => {
-            let url = emit_arg(0);
-            Some(format!("aver_rt::http::head(&{})", url))
-        }
-        "Http.delete" => {
-            let url = emit_arg(0);
-            Some(format!("aver_rt::http::delete(&{})", url))
-        }
-        "Http.post" => {
-            let url = emit_arg(0);
-            let body = emit_arg(1);
-            let ct = emit_arg(2);
-            let headers = emit_arg(3);
-            Some(format!(
-                "aver_rt::http::post(&{}, &{}, &{}, &{})",
-                url, body, ct, headers
-            ))
-        }
-        "Http.put" => {
-            let url = emit_arg(0);
-            let body = emit_arg(1);
-            let ct = emit_arg(2);
-            let headers = emit_arg(3);
-            Some(format!(
-                "aver_rt::http::put(&{}, &{}, &{}, &{})",
-                url, body, ct, headers
-            ))
-        }
-        "Http.patch" => {
-            let url = emit_arg(0);
-            let body = emit_arg(1);
-            let ct = emit_arg(2);
-            let headers = emit_arg(3);
-            Some(format!(
-                "aver_rt::http::patch(&{}, &{}, &{}, &{})",
-                url, body, ct, headers
-            ))
-        }
+        "Http.get" => Some(format!("aver_rt::http::get(&{})", a(0))),
+        "Http.head" => Some(format!("aver_rt::http::head(&{})", a(0))),
+        "Http.delete" => Some(format!("aver_rt::http::delete(&{})", a(0))),
+        "Http.post" => Some(format!(
+            "aver_rt::http::post(&{}, &{}, &{}, &{})",
+            a(0),
+            a(1),
+            a(2),
+            a(3)
+        )),
+        "Http.put" => Some(format!(
+            "aver_rt::http::put(&{}, &{}, &{}, &{})",
+            a(0),
+            a(1),
+            a(2),
+            a(3)
+        )),
+        "Http.patch" => Some(format!(
+            "aver_rt::http::patch(&{}, &{}, &{}, &{})",
+            a(0),
+            a(1),
+            a(2),
+            a(3)
+        )),
 
         // ---- HttpServer ----
-        "HttpServer.listen" => {
-            let port = emit_arg(0);
-            let handler = emit_arg(1);
-            Some(format!(
-                "{{ if let Err(e) = crate::http_server_listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
-                port, handler
-            ))
-        }
-        "HttpServer.listenWith" => {
-            let port = emit_arg(0);
-            let context = emit_arg(1);
-            let handler = emit_arg(2);
-            Some(format!(
-                "{{ if let Err(e) = crate::http_server_listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
-                port, context, handler
-            ))
-        }
-        "SelfHostRuntime.httpServerListen" => {
-            let port = emit_arg(0);
-            let handler = emit_arg(1);
-            Some(format!(
-                "crate::self_host_support::http_server_listen({}, {})",
-                port, handler
-            ))
-        }
-        "SelfHostRuntime.httpServerListenWith" => {
-            let port = emit_arg(0);
-            let context = emit_arg(1);
-            let handler = emit_arg(2);
-            Some(format!(
-                "crate::self_host_support::http_server_listen_with({}, {}.clone(), {})",
-                port, context, handler
-            ))
-        }
+        "HttpServer.listen" => Some(format!(
+            "{{ if let Err(e) = crate::http_server_listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
+            a(0),
+            a(1)
+        )),
+        "HttpServer.listenWith" => Some(format!(
+            "{{ if let Err(e) = crate::http_server_listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+            a(0),
+            a(1),
+            a(2)
+        )),
+        "SelfHostRuntime.httpServerListen" => Some(format!(
+            "crate::self_host_support::http_server_listen({}, {})",
+            a(0),
+            a(1)
+        )),
+        "SelfHostRuntime.httpServerListenWith" => Some(format!(
+            "crate::self_host_support::http_server_listen_with({}, {}.clone(), {})",
+            a(0),
+            a(1),
+            a(2)
+        )),
 
         // ---- Disk ----
-        "Disk.readText" => {
-            let path = emit_arg(0);
-            Some(format!("aver_rt::read_text(&{})", path))
-        }
-        "Disk.writeText" => {
-            let path = emit_arg(0);
-            let content = emit_arg(1);
-            Some(format!("aver_rt::write_text(&{}, &{})", path, content))
-        }
-        "Disk.appendText" => {
-            let path = emit_arg(0);
-            let content = emit_arg(1);
-            Some(format!("aver_rt::append_text(&{}, &{})", path, content))
-        }
-        "Disk.exists" => {
-            let path = emit_arg(0);
-            Some(format!("aver_rt::path_exists(&{})", path))
-        }
-        "Disk.delete" => {
-            let path = emit_arg(0);
-            Some(format!("aver_rt::delete_file(&{})", path))
-        }
-        "Disk.deleteDir" => {
-            let path = emit_arg(0);
-            Some(format!("aver_rt::delete_dir(&{})", path))
-        }
-        "Disk.listDir" => {
-            let path = emit_arg(0);
-            Some(format!("aver_rt::list_dir(&{})", path))
-        }
-        "Disk.makeDir" => {
-            let path = emit_arg(0);
-            Some(format!("aver_rt::make_dir(&{})", path))
-        }
+        "Disk.readText" => Some(format!("aver_rt::read_text(&{})", a(0))),
+        "Disk.writeText" => Some(format!("aver_rt::write_text(&{}, &{})", a(0), a(1))),
+        "Disk.appendText" => Some(format!("aver_rt::append_text(&{}, &{})", a(0), a(1))),
+        "Disk.exists" => Some(format!("aver_rt::path_exists(&{})", a(0))),
+        "Disk.delete" => Some(format!("aver_rt::delete_file(&{})", a(0))),
+        "Disk.deleteDir" => Some(format!("aver_rt::delete_dir(&{})", a(0))),
+        "Disk.listDir" => Some(format!("aver_rt::list_dir(&{})", a(0))),
+        "Disk.makeDir" => Some(format!("aver_rt::make_dir(&{})", a(0))),
 
         // ---- Env ----
-        "Env.get" => {
-            let key = emit_arg(0);
-            Some(format!("aver_rt::env_get(&{})", key))
-        }
-        "Env.set" => {
-            let key = emit_arg(0);
-            let value = emit_arg(1);
-            Some(format!(
-                "aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")",
-                key, value
-            ))
-        }
+        "Env.get" => Some(format!("aver_rt::env_get(&{})", a(0))),
+        "Env.set" => Some(format!(
+            "aver_rt::env_set(&{}, &{}).expect(\"Env.set failed\")",
+            a(0),
+            a(1)
+        )),
         "Args.get" => Some("aver_rt::cli_args().into_aver()".to_string()),
 
         // ---- Time ----
         "Time.now" => Some("aver_rt::time_now()".to_string()),
         "Time.unixMs" => Some("aver_rt::time_unix_ms()".to_string()),
-        "Time.sleep" => {
-            let ms = emit_arg(0);
-            Some(format!("aver_rt::time_sleep({})", ms))
-        }
+        "Time.sleep" => Some(format!("aver_rt::time_sleep({})", a(0))),
 
-        "Random.int" => {
-            let min = emit_arg(0);
-            let max = emit_arg(1);
-            Some(format!(
-                "aver_rt::random::random_int({}, {}).unwrap()",
-                min, max
-            ))
-        }
+        // ---- Random ----
+        "Random.int" => Some(format!(
+            "aver_rt::random::random_int({}, {}).unwrap()",
+            a(0),
+            a(1)
+        )),
         "Random.float" => Some("aver_rt::random::random_float()".to_string()),
 
         // ---- Terminal ----
@@ -963,27 +972,21 @@ fn emit_builtin_call_inner(
             Some("aver_rt::terminal_disable_raw_mode().unwrap()".to_string())
         }
         "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
-        "Terminal.moveTo" => {
-            let x = emit_arg(0);
-            let y = emit_arg(1);
-            Some(format!("aver_rt::terminal_move_to({}, {}).unwrap()", x, y))
-        }
-        "Terminal.print" => {
-            let s = emit_arg(0);
-            Some(format!(
-                "{{ let __s = aver_rt::aver_display(&{}); aver_rt::terminal_print(&__s).unwrap() }}",
-                s
-            ))
-        }
-        "Terminal.setColor" => {
-            let c = emit_arg(0);
-            Some(format!("aver_rt::terminal_set_color(&{}).unwrap()", c))
-        }
+        "Terminal.moveTo" => Some(format!(
+            "aver_rt::terminal_move_to({}, {}).unwrap()",
+            a(0),
+            a(1)
+        )),
+        "Terminal.print" => Some(format!(
+            "{{ let __s = aver_rt::aver_display(&{}); aver_rt::terminal_print(&__s).unwrap() }}",
+            a(0)
+        )),
+        "Terminal.setColor" => Some(format!("aver_rt::terminal_set_color(&{}).unwrap()", a(0))),
         "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
         "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
-        "Terminal.size" => {
-            Some("{ let (w, h) = aver_rt::terminal_size().unwrap(); aver_rt::TerminalSize { width: w, height: h } }".to_string())
-        }
+        "Terminal.size" => Some(
+            "{ let (w, h) = aver_rt::terminal_size().unwrap(); aver_rt::TerminalSize { width: w, height: h } }".to_string(),
+        ),
         "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
         "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),
         "Terminal.flush" => Some("aver_rt::terminal_flush().unwrap()".to_string()),
