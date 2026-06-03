@@ -801,20 +801,22 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         MirExpr::Let(spanned_let) => {
             // `let binding = value; body` →
             // Rust block-expression `{ let x = value; body }`.
-            // Synthetic locals (intermediate effectful
-            // `Stmt::Expr` at non-tail position) carry
-            // `binding_name.is_empty()` — the Rust walker can't
-            // emit them as named idents, so we fall back to
-            // HIR. Mirror of the `MirLocal { name }` empty-name
-            // fallback on the read side.
+            // A discarded intermediate (an effectful `Stmt::Expr` at
+            // non-tail position, or a `_ = effect()` discard) carries
+            // `binding_name.is_empty()` — there's no source ident to
+            // bind, so the value is emitted as a bare statement
+            // (`{ value; body }`), evaluated for its effect with the
+            // result dropped. Mirror of HIR's discarded-`Stmt::Expr`
+            // shape.
             let let_node = &spanned_let.node;
-            if let_node.binding_name.is_empty() {
-                return None;
-            }
             let value = emit_mir_expr(&let_node.value, emit_ctx)?;
             let body = emit_mir_expr(&let_node.body, emit_ctx)?;
-            let name = aver_name_to_rust(&let_node.binding_name);
-            Some(format!("{{ let {} = {}; {} }}", name, value, body))
+            if let_node.binding_name.is_empty() {
+                Some(format!("{{ {}; {} }}", value, body))
+            } else {
+                let name = aver_name_to_rust(&let_node.binding_name);
+                Some(format!("{{ let {} = {}; {} }}", name, value, body))
+            }
         }
         MirExpr::Project(spanned_proj) => {
             // `base.field` projection. Mirror of
@@ -1683,11 +1685,13 @@ pub(super) fn emit_mir_fn_body(
     emit_ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
     // A top-level `Let` is a multi-statement body. HIR emits it as
-    // flat `let …;`-lines (one per binding) then the final
-    // expression on its own line — never a nested block-expr. Mirror
-    // that line shape so multi-statement bodies graduate.
+    // flat statement lines (named binding → `let …;`, discarded
+    // intermediate `Stmt::Expr` → bare `…;`) then the final expression
+    // on its own line — never a nested block-expr. Mirror that line
+    // shape so multi-statement bodies graduate. The chain handles both
+    // named and empty-`binding_name` (discarded) bindings, so no
+    // first-binding guard is needed.
     if let MirExpr::Let(spanned_let) = &body.node
-        && !spanned_let.node.binding_name.is_empty()
         && let Some(lines) = emit_mir_let_chain_flat(&spanned_let.node, emit_ctx)
     {
         return Some(format!("    crate::cancel_checkpoint();\n    {}", lines));
@@ -1713,12 +1717,15 @@ pub(super) fn emit_mir_fn_body(
 /// 4-space indented and `\n`-joined, terminated by the chain's final
 /// expression rendered raw on its own line.
 ///
-/// The chain is the run of directly-nested `Let` nodes: a `Let` whose
-/// body is itself a (named) `Let` continues the chain; the first body
-/// that isn't a named `Let` is the final expression. Returns `None`
-/// when any binding value or the final expression can't render, or
-/// when a binding carries no source name (synthetic intermediate —
-/// HIR can't emit it as a `let` either, so it stays on fallback).
+/// The chain is the run of directly-nested `Let` nodes: each one emits
+/// its statement line and continues into its body until a body that
+/// isn't a `Let` becomes the final expression. A named binding emits
+/// `let {name} = {value};`; an empty-`binding_name` binding (a
+/// discarded intermediate `Stmt::Expr` or a `_ = effect()` discard)
+/// emits a bare `{value};` statement (the value evaluated for its
+/// effects, result dropped) — the exact mirror of HIR's `emit_fn_body`
+/// non-last `ResolvedStmt::Expr` arm (`{expr};`). Returns `None` only
+/// when a binding value or the final expression can't render.
 fn emit_mir_let_chain_flat(
     let_node: &crate::ir::mir::MirLet,
     ctx: &MirEmitCtx<'_>,
@@ -1726,22 +1733,26 @@ fn emit_mir_let_chain_flat(
     let mut lines: Vec<String> = Vec::new();
     let mut current = let_node;
     loop {
-        if current.binding_name.is_empty() {
-            // Synthetic intermediate binding — no source ident to
-            // bind. HIR doesn't reach the flat-let path for these
-            // either; fall back.
-            return None;
-        }
         let value = emit_mir_expr(&current.value, ctx)?;
-        let name = aver_name_to_rust(&current.binding_name);
-        lines.push(format!("let {} = {};", name, value));
+        if current.binding_name.is_empty() {
+            // Discarded intermediate (`Stmt::Expr` at non-tail position,
+            // or a `_ = effect()` discard binding). No source ident to
+            // bind — emit the value as a bare statement and drop it, the
+            // exact mirror of HIR's non-last `ResolvedStmt::Expr` arm
+            // (`{expr};`). Typically an effectful builtin call
+            // (`Console.print(…)`) evaluated for its effect.
+            lines.push(format!("{};", value));
+        } else {
+            let name = aver_name_to_rust(&current.binding_name);
+            lines.push(format!("let {} = {};", name, value));
+        }
 
-        // Continue the chain only when the body is another *named*
-        // `Let`. A synthetic-named `Let` body would force the nested
-        // block shape on HIR's side too, so stop and render it as the
-        // final expression (which then bails via `emit_mir_expr`).
+        // Continue the chain when the body is another `Let` (named or a
+        // discarded intermediate); the first non-`Let` body is the final
+        // expression. Both binder shapes lower to flat statement lines,
+        // so the nested-block shape never needs to appear.
         match &current.body.node {
-            MirExpr::Let(next) if !next.node.binding_name.is_empty() => {
+            MirExpr::Let(next) => {
                 current = &next.node;
             }
             _ => {
@@ -2079,21 +2090,23 @@ fn emit_mir_tco_body(
     let mut lines = Vec::new();
     lines.push("        crate::cancel_checkpoint();".to_string());
 
-    // Walk the leading `Let` chain (named bindings) as plain `let`
-    // statements, then the final expression as a tail expr. Synthetic
-    // (empty-name) bindings can't render as a `let` — bail to HIR.
+    // Walk the leading `Let` chain as plain statements, then the final
+    // expression as a tail expr. A named binding emits `let x = v;`; an
+    // empty-`binding_name` binding (a discarded intermediate `Stmt::Expr`
+    // or a `_ = effect()` discard) emits a bare `v;` statement (the value
+    // evaluated for its effect, result dropped) — the mirror of HIR's
+    // non-last `Stmt::Expr` arm.
     let mut current = body;
-    loop {
-        match &current.node {
-            MirExpr::Let(spanned_let) if !spanned_let.node.binding_name.is_empty() => {
-                let let_node = &spanned_let.node;
-                let value = emit_mir_expr(&let_node.value, ctx)?;
-                let name = aver_name_to_rust(&let_node.binding_name);
-                lines.push(format!("        let {} = {};", name, value));
-                current = &let_node.body;
-            }
-            _ => break,
+    while let MirExpr::Let(spanned_let) = &current.node {
+        let let_node = &spanned_let.node;
+        let value = emit_mir_expr(&let_node.value, ctx)?;
+        if let_node.binding_name.is_empty() {
+            lines.push(format!("        {};", value));
+        } else {
+            let name = aver_name_to_rust(&let_node.binding_name);
+            lines.push(format!("        let {} = {};", name, value));
         }
+        current = &let_node.body;
     }
 
     let tail = emit_mir_tco_tail_expr(current, self_fn, params, passthrough, ctx)?;
@@ -2481,17 +2494,18 @@ fn emit_mir_trampoline_body(
     lines.push("                crate::cancel_checkpoint();".to_string());
 
     let mut current = body;
-    loop {
-        match &current.node {
-            MirExpr::Let(spanned_let) if !spanned_let.node.binding_name.is_empty() => {
-                let let_node = &spanned_let.node;
-                let value = emit_mir_expr(&let_node.value, ctx)?;
-                let name = aver_name_to_rust(&let_node.binding_name);
-                lines.push(format!("                let {} = {};", name, value));
-                current = &let_node.body;
-            }
-            _ => break,
+    while let MirExpr::Let(spanned_let) = &current.node {
+        let let_node = &spanned_let.node;
+        let value = emit_mir_expr(&let_node.value, ctx)?;
+        if let_node.binding_name.is_empty() {
+            // Discarded intermediate (`Stmt::Expr` / `_ = effect()`)
+            // — bare statement, result dropped.
+            lines.push(format!("                {};", value));
+        } else {
+            let name = aver_name_to_rust(&let_node.binding_name);
+            lines.push(format!("                let {} = {};", name, value));
         }
+        current = &let_node.body;
     }
 
     let tail = emit_mir_trampoline_tail_expr(current, members, enum_name, rc_names, ctx)?;
@@ -4022,11 +4036,12 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_for_synthetic_let() {
-        // Synthetic Let (intermediate
-        // effectful Stmt::Expr at non-tail position) carries an
-        // empty `binding_name`. Walker must fall back to HIR
-        // since there's no source ident to bind in Rust.
+    fn synthetic_let_emits_bare_statement_not_none() {
+        // A synthetic Let (intermediate effectful `Stmt::Expr` at non-tail
+        // position, or a `_ = effect()` discard) carries an empty
+        // `binding_name`. Stage-3 closes the former None gap: the walker
+        // now emits the value as a bare statement (`{ value; body }`,
+        // result dropped) instead of bailing to HIR.
         let value = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let body = span(MirExpr::Literal(span(crate::ast::Literal::Int(0))));
         let let_node = crate::ir::mir::MirLet {
@@ -4036,7 +4051,10 @@ mod tests {
             body: Box::new(body),
         };
         let expr = span(MirExpr::Let(span(let_node)));
-        assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
+        assert_eq!(
+            emit_mir_expr(&expr, &empty_ctx()).as_deref(),
+            Some("{ 7i64; 0i64 }")
+        );
     }
 
     /// Build a symbol table holding one type + one variant ctor.
@@ -4226,6 +4244,79 @@ mod tests {
             emit,
             "    crate::cancel_checkpoint();\n    let a = 1i64;\n    let b = 2i64;\n    a"
         );
+    }
+
+    #[test]
+    fn fn_body_emits_discarded_intermediate_as_bare_statement() {
+        // A discarded intermediate (`Stmt::Expr` at non-tail position, or
+        // a `_ = effect()` discard) is modeled as a `Let` with an EMPTY
+        // `binding_name`. It must render as a bare `value;` statement (the
+        // value evaluated, result dropped) — the mirror of HIR's non-last
+        // `ResolvedStmt::Expr` arm — NOT fall back to HIR. This is the
+        // dominant Stage-3 None gap.
+        //
+        // Shape: `g = <1>; <2 discarded>; g`
+        let g_local = MirLocal {
+            slot: LocalId(0),
+            last_use: true,
+            name: "g".to_string(),
+        };
+        let body = let_chain(
+            ("g", int_lit(1)),
+            ("", int_lit(2)), // discarded intermediate — empty binding_name
+            span(MirExpr::Local(span(g_local))),
+        );
+        let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("discarded stmt emits");
+        assert_eq!(
+            emit,
+            "    crate::cancel_checkpoint();\n    let g = 1i64;\n    2i64;\n    g"
+        );
+    }
+
+    #[test]
+    fn fn_body_emits_leading_discarded_statement() {
+        // A body whose FIRST statement is a discard (empty binding_name)
+        // must still take the flat path (no first-binding guard) and emit
+        // the leading bare statement.
+        //
+        // Shape: `<1 discarded>; g = <2>; g`
+        let g_local = MirLocal {
+            slot: LocalId(1),
+            last_use: true,
+            name: "g".to_string(),
+        };
+        let body = let_chain(
+            ("", int_lit(1)), // leading discard
+            ("g", int_lit(2)),
+            span(MirExpr::Local(span(g_local))),
+        );
+        let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("leading discard emits");
+        assert_eq!(
+            emit,
+            "    crate::cancel_checkpoint();\n    1i64;\n    let g = 2i64;\n    g"
+        );
+    }
+
+    #[test]
+    fn inline_discarded_let_renders_as_bare_block_statement() {
+        // An inline `Let` with an empty binding_name (discard not at the
+        // body top-level) renders as `{ value; body }` — bare statement,
+        // result dropped — not a `let _ = …`.
+        let value = int_lit(7);
+        let body_local = MirLocal {
+            slot: LocalId(0),
+            last_use: true,
+            name: "x".to_string(),
+        };
+        let let_node = crate::ir::mir::MirLet {
+            binding: LocalId(0),
+            binding_name: String::new(),
+            value: Box::new(value),
+            body: Box::new(span(MirExpr::Local(span(body_local)))),
+        };
+        let expr = span(MirExpr::Let(span(let_node)));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("inline discard emits");
+        assert_eq!(emit, "{ 7i64; x }");
     }
 
     #[test]
