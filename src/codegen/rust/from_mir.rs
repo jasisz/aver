@@ -1754,7 +1754,8 @@ pub(super) fn reset_parity_counters() {
 /// emission. Read from the env each call (cheap; only on the codegen
 /// path) so a test can toggle it per-process without a rebuild.
 fn mir_only_hatch_enabled() -> bool {
-    std::env::var_os("AVER_RUST_MIR_ONLY").is_some_and(|v| v == "1")
+    // W6/Stage-2: default ON; set `AVER_RUST_MIR_ONLY=0` to restore the byte-exact HIR fallback.
+    std::env::var_os("AVER_RUST_MIR_ONLY").is_none_or(|v| v != "0")
 }
 
 /// Is the rust-on-MIR Wave-5 TCO path active (`AVER_RUST_MIR_TCO=1`)?
@@ -1768,11 +1769,10 @@ fn mir_only_hatch_enabled() -> bool {
 /// not change effect-emission ownership, and vice versa.
 ///
 /// Read from the env each call (cheap; only on the codegen path) so a
-/// test can toggle it per-process without a rebuild. Production default
-/// (UNSET) keeps the proven HIR TCO emitter — zero regression risk to
-/// the self-host regen path until W6 retires the HIR walker.
+/// test can toggle it per-process without a rebuild. W6/Stage-2: default
+/// ON; set `AVER_RUST_MIR_TCO=0` to restore the HIR TCO emitter (rollback).
 pub(super) fn mir_tco_enabled() -> bool {
-    std::env::var_os("AVER_RUST_MIR_TCO").is_some_and(|v| v == "1")
+    std::env::var_os("AVER_RUST_MIR_TCO").is_none_or(|v| v != "0")
 }
 
 /// Is the rust-on-MIR W6/Stage-0 verify path active
@@ -1791,12 +1791,10 @@ pub(super) fn mir_tco_enabled() -> bool {
 /// and of effect-emission ownership.
 ///
 /// Read from the env each call (cheap; only on the codegen path) so a
-/// test can toggle it per-process without a rebuild. Production default
-/// (UNSET) keeps the proven HIR verify emitter — the emitted test
-/// module is identical to the pre-port output, so the self-host regen
-/// path cannot regress until W6 retires the HIR walker.
+/// test can toggle it per-process without a rebuild. W6/Stage-2: default
+/// ON; set `AVER_RUST_MIR_VERIFY=0` to restore the HIR verify emitter.
 pub(super) fn mir_verify_enabled() -> bool {
-    std::env::var_os("AVER_RUST_MIR_VERIFY").is_some_and(|v| v == "1")
+    std::env::var_os("AVER_RUST_MIR_VERIFY").is_none_or(|v| v != "0")
 }
 
 /// Is the rust-on-MIR W6/Stage-0 main / top-level-statement path active
@@ -1821,12 +1819,10 @@ pub(super) fn mir_verify_enabled() -> bool {
 /// ownership.
 ///
 /// Read from the env each call (cheap; only on the codegen path) so a
-/// test can toggle it per-process without a rebuild. Production default
-/// (UNSET) keeps the proven HIR main emitter — the emitted `fn main`
-/// is byte-identical to the pre-port output, so the self-host regen path
-/// cannot regress until W6 retires the HIR walker.
+/// test can toggle it per-process without a rebuild. W6/Stage-2: default
+/// ON; set `AVER_RUST_MIR_MAIN=0` to restore the HIR main emitter.
 pub(super) fn mir_main_enabled() -> bool {
-    std::env::var_os("AVER_RUST_MIR_MAIN").is_some_and(|v| v == "1")
+    std::env::var_os("AVER_RUST_MIR_MAIN").is_none_or(|v| v != "0")
 }
 
 /// `(graduated, considered)` since the last [`reset_parity_counters`].

@@ -1094,7 +1094,7 @@ record Audit
 
 fn useTwice(audit: Audit) -> List<Audit>
     first = [audit]
-    [audit]
+    List.concat(first, [audit])
 "#,
             "demo",
         );
@@ -1102,6 +1102,9 @@ fn useTwice(audit: Audit) -> List<Audit>
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
+        // `first` is consumed by `List.concat` so it stays live (an unused
+        // binding is correctly dead-code-eliminated); both `[audit]` literals
+        // then clone the borrowed `audit` because it is used more than once.
         assert!(entry.contains("let first = aver_rt::AverList::from_vec(vec![audit.clone()]);"));
         // Borrowed param always needs .clone() when consumed
         assert!(entry.contains("aver_rt::AverList::from_vec(vec![audit.clone()])"));
@@ -1119,7 +1122,7 @@ record PaymentState
 
 fn touch(state: PaymentState) -> String
     updated = PaymentState.update(state, currency = "EUR")
-    state.paymentId
+    "{updated.currency}-{state.paymentId}"
 "#,
             "demo",
         );
@@ -1127,6 +1130,9 @@ fn touch(state: PaymentState) -> String
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
+        // `updated` is consumed by the interpolation so it stays live; the
+        // record update then clones the borrowed `state` because `state` is
+        // used again afterward (`state.paymentId`).
         assert!(entry.contains("..state.clone()"));
     }
 
