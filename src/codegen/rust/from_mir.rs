@@ -2755,6 +2755,145 @@ fn mir_str_arg_or_deref(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option
     Some(format!("&*{}", code))
 }
 
+/// Resolve a nested expression that is itself a `Call(Builtin(id))` to
+/// its canonical dotted name + arg slice. MIR lowering wipes the
+/// syntactic shape the HIR `ResolvedLeafOp` classifiers key off
+/// (`Option.withDefault` / `Result.withDefault` / `Vector.get` over a
+/// nested builtin), so the fusion recognizers
+/// ([`try_emit_mir_fusion`]) re-match the pattern over this resolved
+/// `(name, args)` form instead. Returns `None` for any non-`Call`, a
+/// non-`Builtin` callee, or an out-of-range / unresolved `BuiltinId`
+/// (the same defensive fallthrough the `Call(Builtin)` arm takes).
+fn mir_builtin_call_parts<'a, 'c>(
+    expr: &'a MirExpr,
+    ctx: &MirEmitCtx<'c>,
+) -> Option<(&'c str, &'a [Spanned<MirExpr>])> {
+    let MirExpr::Call(spanned_call) = expr else {
+        return None;
+    };
+    let call = &spanned_call.node;
+    let MirCallee::Builtin(id) = &call.callee else {
+        return None;
+    };
+    let name = ctx.mir_builtins.get(id.0 as usize)?.as_str();
+    Some((name, &call.args))
+}
+
+/// Two MIR exprs that name the SAME source local. Used by the
+/// `VectorSetOrDefaultSameVector` fusion's same-vector guard (HIR's
+/// `default_expr.node != inner_args[0].node` check). Compares by slot,
+/// not the whole `MirLocal`, because the two reads can carry different
+/// `last_use` flags (the outer default read is typically the last use
+/// of the slot, the inner `Vector.set` read is not) yet still denote
+/// the same vector. Synthetic / unnamed locals never match.
+fn mir_same_local(a: &MirExpr, b: &MirExpr) -> bool {
+    match (local_of(a), local_of(b)) {
+        (Some(la), Some(lb)) => la.slot == lb.slot,
+        _ => false,
+    }
+}
+
+/// Re-recognize the three codegen FUSIONS the HIR walker performs over
+/// pre-lowering `ResolvedLeafOp` shapes but MIR lowering flattens into
+/// nested builtin `Call`s. The HIR classifiers
+/// (`classify_vector_set_or_default` / `classify_int_mod_or_default` /
+/// `classify_list_index_get` in `ir::hir::classify`) match the
+/// syntactic AST; here we re-match the equivalent `MirExpr::Call`
+/// nesting and emit the EXACT fused Rust form the HIR `ResolvedLeafOp`
+/// emitter (`emit_leaf_op_with_options`, `expr.rs`) produces, so the
+/// byte-parity gate graduates these fns instead of falling back to the
+/// (un-fused, slower) generic builtin emit. Returns `None` when the
+/// outer call isn't one of the three fusion heads or the nested shape
+/// doesn't match — the caller then emits the generic builtin form.
+fn try_emit_mir_fusion(
+    name: &str,
+    args: &[Spanned<MirExpr>],
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    match name {
+        // Fusion #1: `Option.withDefault(Vector.set(v, i, x), v)` where
+        // both `v` are the SAME local → in-place bounds-checked set.
+        // HIR: `ResolvedLeafOp::VectorSetOrDefaultSameVector`.
+        "Option.withDefault" if args.len() == 2 => {
+            let (inner_name, inner_args) = mir_builtin_call_parts(&args[0].node, ctx)?;
+            if inner_name != "Vector.set" || inner_args.len() != 3 {
+                return None;
+            }
+            // Same-vector guard: the default arm (`args[1]`) must be the
+            // same local as the vector being set (`inner_args[0]`).
+            if !mir_same_local(&args[1].node, &inner_args[0].node) {
+                return None;
+            }
+            // HIR: vector + value via `clone_arg`, index via raw emit.
+            let vector = mir_clone_arg(
+                emit_mir_expr(&inner_args[0], ctx)?,
+                &inner_args[0].node,
+                ctx,
+            );
+            let index = emit_mir_expr(&inner_args[1], ctx)?;
+            let value = mir_clone_arg(
+                emit_mir_expr(&inner_args[2], ctx)?,
+                &inner_args[2].node,
+                ctx,
+            );
+            Some(format!(
+                "{{ let __vec = {}; let __idx = {} as usize; if __idx < __vec.len() {{ __vec.set_unchecked(__idx, {}) }} else {{ __vec }} }}",
+                vector, index, value
+            ))
+        }
+        // Fusion #2: `Result.withDefault(Int.mod(a, b), default)` → skip
+        // the `Result` allocation. HIR:
+        // `ResolvedLeafOp::IntModOrDefaultLiteral`.
+        "Result.withDefault" if args.len() == 2 => {
+            let (inner_name, inner_args) = mir_builtin_call_parts(&args[0].node, ctx)?;
+            if inner_name != "Int.mod" || inner_args.len() != 2 {
+                return None;
+            }
+            // The default arm must be a literal (HIR's
+            // `classify_int_mod_or_default` requires a literal default).
+            let MirExpr::Literal(default_lit) = &args[1].node else {
+                return None;
+            };
+            let a = &inner_args[0];
+            let b = &inner_args[1];
+            // Non-zero literal divisor → skip the runtime zero check.
+            if let MirExpr::Literal(b_lit) = &b.node
+                && let crate::ast::Literal::Int(n) = &b_lit.node
+                && *n != 0
+            {
+                let a_str = emit_mir_expr(a, ctx)?;
+                let b_str = emit_literal(&crate::ast::Literal::Int(*n));
+                Some(format!("({}).rem_euclid({})", a_str, b_str))
+            } else {
+                let a_str = emit_mir_expr(a, ctx)?;
+                let b_str = emit_mir_expr(b, ctx)?;
+                let default = emit_literal(&default_lit.node);
+                Some(format!(
+                    "{{ let __b = {}; if __b == 0i64 {{ {} }} else {{ ({}).rem_euclid(__b) }} }}",
+                    b_str, default, a_str
+                ))
+            }
+        }
+        // Fusion #3: `Vector.get(Vector.fromList(list), index)` → index
+        // the materialized `Vec` directly, skipping the intermediate
+        // `AverVector::from_vec` (an extra `Rc::new`). HIR:
+        // `ResolvedLeafOp::ListIndexGet`.
+        "Vector.get" if args.len() == 2 => {
+            let (inner_name, inner_args) = mir_builtin_call_parts(&args[0].node, ctx)?;
+            if inner_name != "Vector.fromList" || inner_args.len() != 1 {
+                return None;
+            }
+            let list = emit_mir_expr(&inner_args[0], ctx)?;
+            let index = emit_mir_expr(&args[1], ctx)?;
+            Some(format!(
+                "{}.to_vec().get({} as usize).cloned()",
+                list, index
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// Emit a PURE builtin call from MIR, byte-identical to the HIR
 /// oracle's `emit_builtin_call` (minus the effectful / replay / policy
 /// branches, which never reach here). Returns `None` for any builtin
@@ -2765,6 +2904,17 @@ fn emit_mir_builtin_call(
     args: &[Spanned<MirExpr>],
     ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
+    // FUSIONS first: the HIR walker recognizes these
+    // `Option.withDefault` / `Result.withDefault` / `Vector.get` over a
+    // nested builtin shapes PRE-lowering and emits a fused form. MIR
+    // lowering flattens the shape, so re-recognize it here before the
+    // generic per-builtin arms below produce the un-fused (slower)
+    // output. Anything that doesn't match falls through to the generic
+    // emit, byte-identical to HIR's non-fused path.
+    if let Some(fused) = try_emit_mir_fusion(name, args, ctx) {
+        return Some(fused);
+    }
+
     // `emit_arg(i)`: raw emit (HIR's `emit_expr(&args[i].node, …)`).
     macro_rules! arg {
         ($i:expr) => {
