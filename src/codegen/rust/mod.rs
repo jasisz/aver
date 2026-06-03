@@ -562,7 +562,18 @@ fn entry_module_sections(
     }
 
     if main_fn.is_some() || !top_level_stmts.is_empty() {
-        sections.push(toplevel::emit_public_main(main_fn, top_level_stmts, ctx));
+        // rust-on-MIR W6/Stage-0: `main` carries a `ResolvedFnDef` (and so
+        // a lowered `MirFn`), reachable through the same identity-keyed
+        // `fn_id_for_decl` lookup the entry loop above runs for every
+        // other fn. Thread the FnId so the main-body emit can route the
+        // body through the MIR walker behind `AVER_RUST_MIR_MAIN`.
+        let main_fn_id = main_fn.and_then(|fd| crate::codegen::common::fn_id_for_decl(ctx, fd));
+        sections.push(toplevel::emit_public_main(
+            main_fn,
+            top_level_stmts,
+            ctx,
+            main_fn_id,
+        ));
     }
 
     sections

@@ -2864,23 +2864,35 @@ fn try_emit_trampoline_bool_if_else(
 }
 
 /// Emit the main function, incorporating top-level statements.
+///
+/// `main_fn_id` is the resolved-main `FnId` (the caller computes it via
+/// `fn_id_for_decl`); it lets the body route through the MIR walker under
+/// `AVER_RUST_MIR_MAIN`. `None` when there is no `main` fn (top-stmts-only
+/// entry) or the decl has no resolved twin.
 #[allow(dead_code)]
-pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenContext) -> String {
-    emit_main_with_visibility(main_fn, top_stmts, ctx, false)
+pub fn emit_main(
+    main_fn: Option<&FnDef>,
+    top_stmts: &[&Stmt],
+    ctx: &CodegenContext,
+    main_fn_id: Option<crate::ir::FnId>,
+) -> String {
+    emit_main_with_visibility(main_fn, top_stmts, ctx, main_fn_id, false)
 }
 
 pub fn emit_public_main(
     main_fn: Option<&FnDef>,
     top_stmts: &[&Stmt],
     ctx: &CodegenContext,
+    main_fn_id: Option<crate::ir::FnId>,
 ) -> String {
-    emit_main_with_visibility(main_fn, top_stmts, ctx, true)
+    emit_main_with_visibility(main_fn, top_stmts, ctx, main_fn_id, true)
 }
 
 fn emit_main_with_visibility(
     main_fn: Option<&FnDef>,
     top_stmts: &[&Stmt],
     ctx: &CodegenContext,
+    main_fn_id: Option<crate::ir::FnId>,
     public: bool,
 ) -> String {
     let mut out = String::new();
@@ -2914,39 +2926,111 @@ fn emit_main_with_visibility(
         }
     }
 
-    // Top-level statements first
-    for stmt in top_stmts {
-        let indent = if guest_wrap_main { "        " } else { "    " };
-        writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &ectx)).unwrap();
+    let indent = if guest_wrap_main { "        " } else { "    " };
+
+    // Top-level statements first. rust-on-MIR W6/Stage-0: behind
+    // `AVER_RUST_MIR_MAIN`, render every statement VALUE through the MIR
+    // walker all-or-nothing (the VM #338 isolation), then re-apply the
+    // `let {name} = …;` / bare-expr `…;` templating per statement so the
+    // emitted shape matches `emit_stmt` exactly. If any statement value
+    // falls outside the lowerable / renderable subset, the helper returns
+    // `None` and the whole block falls back to the HIR `emit_stmt_legacy`
+    // path (so we never leave a half-MIR / half-HIR set of statements).
+    let mir_top_stmts = if super::from_mir::mir_main_enabled() && !top_stmts.is_empty() {
+        let resolved: Vec<Spanned<crate::ir::hir::ResolvedExpr>> = top_stmts
+            .iter()
+            .map(|stmt| {
+                let value = match stmt {
+                    Stmt::Binding(_, _, value) => value,
+                    Stmt::Expr(value) => value,
+                };
+                ctx.resolve_expr(value, ectx.current_module_scope.as_deref())
+            })
+            .collect();
+        let refs: Vec<&Spanned<crate::ir::hir::ResolvedExpr>> = resolved.iter().collect();
+        super::from_mir::emit_mir_top_stmt_values(&refs, ctx)
+    } else {
+        None
+    };
+    match mir_top_stmts {
+        Some(values) => {
+            for (stmt, value) in top_stmts.iter().zip(values.iter()) {
+                // Same templating as `emit_stmt`: `Binding` → a named
+                // `let`, `Expr` → a discarded statement.
+                let rendered = match stmt {
+                    Stmt::Binding(name, _, _) => {
+                        format!("let {} = {};", aver_name_to_rust(name), value)
+                    }
+                    Stmt::Expr(_) => format!("{};", value),
+                };
+                writeln!(out, "{}{}", indent, rendered).unwrap();
+            }
+        }
+        None => {
+            for stmt in top_stmts {
+                writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &ectx)).unwrap();
+            }
+        }
     }
 
-    // Main function body
+    // Main function body. rust-on-MIR W6/Stage-0: behind
+    // `AVER_RUST_MIR_MAIN`, main carries a `ResolvedFnDef` (and a lowered
+    // `MirFn`), so render its whole body via the MIR walker
+    // (`emit_mir_main_body` — `for_fn` borrow policy, same as the
+    // production parity gate) and splice it in (re-indented one level
+    // deeper under the guest-scope wrapper). Falls back to the HIR
+    // per-statement emit when there's no MIR program / the main FnId has
+    // no lowered body / the walker can't render it.
     if let Some(fd) = main_fn {
-        let main_ectx = build_fn_ectx(fd, ctx, None);
-        let stmts = fd.body.stmts();
-        for (i, stmt) in stmts.iter().enumerate() {
-            let is_last = i == stmts.len() - 1;
-            if is_last && returns_result {
-                match stmt {
-                    Stmt::Binding(_, _, _) => {
-                        let indent = if guest_wrap_main { "        " } else { "    " };
+        let mir_body = if super::from_mir::mir_main_enabled() {
+            main_fn_id.and_then(|fn_id| super::from_mir::emit_mir_main_body(fn_id, ctx))
+        } else {
+            None
+        };
+        match mir_body {
+            Some(body) => {
+                // `emit_mir_main_body` returns a 4-space-indented body
+                // (`    crate::cancel_checkpoint();\n    …`); bump it one
+                // more level when wrapped in the guest scope so it lines
+                // up under the closure.
+                let body = if guest_wrap_main {
+                    indent_block(&body, 1)
+                } else {
+                    body
+                };
+                writeln!(out, "{}", body).unwrap();
+            }
+            None => {
+                let main_ectx = build_fn_ectx(fd, ctx, None);
+                let stmts = fd.body.stmts();
+                for (i, stmt) in stmts.iter().enumerate() {
+                    let is_last = i == stmts.len() - 1;
+                    if is_last && returns_result {
+                        match stmt {
+                            Stmt::Binding(_, _, _) => {
+                                writeln!(
+                                    out,
+                                    "{}{}",
+                                    indent,
+                                    emit_stmt_legacy(stmt, ctx, &main_ectx)
+                                )
+                                .unwrap();
+                            }
+                            Stmt::Expr(expr) => {
+                                writeln!(
+                                    out,
+                                    "{}{}",
+                                    indent,
+                                    emit_expr_legacy(&expr.node, ctx, &main_ectx)
+                                )
+                                .unwrap();
+                            }
+                        }
+                    } else {
                         writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &main_ectx))
                             .unwrap();
                     }
-                    Stmt::Expr(expr) => {
-                        let indent = if guest_wrap_main { "        " } else { "    " };
-                        writeln!(
-                            out,
-                            "{}{}",
-                            indent,
-                            emit_expr_legacy(&expr.node, ctx, &main_ectx)
-                        )
-                        .unwrap();
-                    }
                 }
-            } else {
-                let indent = if guest_wrap_main { "        " } else { "    " };
-                writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &main_ectx)).unwrap();
             }
         }
     }
