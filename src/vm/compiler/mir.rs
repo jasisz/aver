@@ -308,7 +308,11 @@ pub(super) fn compile_mir_expr(
                     }
                     Ok(())
                 }
-                MirCallee::LocalSlot { slot, last_use } => {
+                MirCallee::LocalSlot {
+                    slot,
+                    last_use,
+                    name: _,
+                } => {
                     // First-class fn value: push the slot (the callee),
                     // then the args, then dynamic-dispatch via CALL_VALUE.
                     // Mirror of the HIR walker's compile_call fallback +

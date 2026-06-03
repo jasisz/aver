@@ -24,13 +24,16 @@
 //! `Literal`, `Local`, `Neg`, `BinOp` (numeric ops, plus `Str` `+`
 //! concat — the right side borrowed for `AverStr`'s `Add<&AverStr>` —
 //! disambiguated from numeric add by the operands' type stamps),
-//! `Call` (`Fn` / `Builtin`), `Return`, `TailCall` (emitted as a plain
-//! call; the HIR self-TCO `continue` rewrite needs `ectx`, so the
-//! wire-up's parity check is the safety net), `Try` (`?`), `Tuple`,
-//! `List`, `MapLiteral`, `Let` (block-expr `{ let x = …; … }`),
+//! `Call` (`Fn` / `Builtin` / `Intrinsic` / `LocalSlot` — the last a
+//! first-class fn-pointer call `name(args…)`, post-#379 always a plain
+//! fn-pointer since `Type::Fn` is param-only), `Return`, `TailCall`
+//! (emitted as a plain call; the HIR self-TCO `continue` rewrite needs
+//! `ectx`, so the wire-up's parity check is the safety net), `Try` (`?`),
+//! `Tuple`, `List`, `MapLiteral`, `Let` (block-expr `{ let x = …; … }`),
 //! `Project`, `RecordCreate` / `RecordUpdate`, `Construct` (built-in and
 //! user ctors, including dep-module records resolved through
-//! `module_prefixes`), and `IfThenElse`.
+//! `module_prefixes`), `IfThenElse`, `IndependentProduct`, and `FnValue`
+//! (a fn referenced as a value — the `StaticRef` shape).
 //!
 //! `Match` (Wave 2) — `MirExpr::Match` emits through [`emit_mir_match`],
 //! mirroring HIR's `emit_match` / `emit_dispatch_table_match` /
@@ -42,9 +45,11 @@
 //! matches never reach this arm — the MIR optimizer's `bool_match_to_if`
 //! pass already rewrote them to `IfThenElse` (handled above).
 //!
-//! Not covered — these fall back to the HIR walker:
-//! `IndependentProduct` and `FnValue`. `InterpolatedStr` never reaches
-//! the walker — `interp_lower` lowers it away before codegen runs.
+//! `InterpolatedStr` never reaches the walker — `interp_lower` lowers it
+//! away before codegen runs. With `FnValue` + `LocalSlot` graduated
+//! (W6/Stage-0), every reachable MIR construct now has a walker arm; the
+//! remaining HIR fallbacks are per-fn byte-parity misses (e.g. the
+//! TCO-loop `continue` rewrite), not construct gaps.
 
 use std::collections::{HashMap, HashSet};
 
@@ -403,17 +408,13 @@ fn first_blocker(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<&
             .or_else(|| first_blocker(&b.node.rhs, emit_ctx))
             .or(Some("BinOp")),
         MirExpr::Call(c) => {
-            // A `LocalSlot` callee (first-class fn value) is itself the
-            // blocker — the walker never recurses into it. `Fn`,
-            // `Builtin` and `Intrinsic` callees can all emit cleanly
-            // (Wave 3a graduated the pure builtins + intrinsics), so
-            // recurse into the args first and only report the callee
-            // kind when every arg emits but the call as a whole still
-            // returned `None` (an effectful / unresolved builtin, or an
-            // intrinsic / Fn shape the walker can't render).
-            if let MirCallee::LocalSlot { .. } = &c.node.callee {
-                return Some("Call(LocalSlot)");
-            }
+            // `Fn`, `Builtin`, `Intrinsic` and `LocalSlot` callees can all
+            // emit cleanly (Wave 3a graduated the pure builtins +
+            // intrinsics; W6/Stage-0 graduated the first-class `LocalSlot`
+            // fn-pointer call), so recurse into the args first and only
+            // report the callee kind when every arg emits but the call as a
+            // whole still returned `None` (an effectful / unresolved
+            // builtin, or a shape the walker can't render).
             for a in &c.node.args {
                 if let Some(b) = first_blocker(a, emit_ctx) {
                     return Some(b);
@@ -699,10 +700,25 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 MirCallee::Intrinsic(intrinsic) => {
                     emit_mir_intrinsic_call(*intrinsic, &call.args, emit_ctx)
                 }
-                // First-class fn value held in a slot — too many
-                // dynamic-dispatch shapes to mirror here; ride the HIR
-                // walker.
-                MirCallee::LocalSlot { .. } => None,
+                // First-class fn value held in a slot — calling a `Fn(..)`
+                // param. Post-#379 the slot holds a plain fn-pointer (no
+                // closures / `dyn Fn` — `Type::Fn` is param-only), so this
+                // emits the direct call-by-name `name(args…)`. Mirror of
+                // HIR's `CallPlan::Dynamic` (`emit_fn_call_with_options`):
+                // the head is `aver_name_to_rust(name)` and every arg goes
+                // through `clone_arg`.
+                MirCallee::LocalSlot { name, .. } => {
+                    let func = aver_name_to_rust(name);
+                    let mut arg_strs = Vec::with_capacity(call.args.len());
+                    for a in &call.args {
+                        arg_strs.push(mir_clone_arg(
+                            emit_mir_expr(a, emit_ctx)?,
+                            &a.node,
+                            emit_ctx,
+                        ));
+                    }
+                    Some(format!("{}({})", func, arg_strs.join(", ")))
+                }
             }
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, emit_ctx)?)),
@@ -953,7 +969,64 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         MirExpr::IndependentProduct(spanned_ip) => {
             emit_mir_independent_product(&spanned_ip.node, emit_ctx)
         }
+        // A fn referenced as a *value* (`callWith(dbl)` passes `dbl`).
+        // Post-#379, a fn value only ever enters through a `Fn(..)` param,
+        // so the name is always a plain fn name — but mirror HIR's
+        // `ResolvedLeafOp::StaticRef` in full (incl. the variant-vs-fn
+        // refinement + module-path mangling) so the emit is byte-identical.
+        // The VM does the same (`compile_ident` → `symbol_ref`).
+        MirExpr::FnValue(name) => Some(emit_mir_static_ref(name, emit_ctx)),
         _ => None,
+    }
+}
+
+/// Mirror of HIR's `ResolvedLeafOp::StaticRef` emit
+/// (`src/codegen/rust/expr.rs`): a fn / variant referenced as a value.
+/// Refines a dotted name that resolves to a known user-defined variant to
+/// the Rust enum-variant form (`Shape::Point`); otherwise emits the
+/// module-mangled fn reference (`Fibonacci::fib`) or the bare
+/// `aver_name_to_rust(name)`. `Option.None` / `None` collapse to `None`.
+///
+/// `is_user_type` needs the full `CodegenContext`; on the coverage /
+/// test path (`codegen` is `None`) the variant refinement is skipped —
+/// the parity gate isn't active there, so the conservative fn-reference
+/// shape is fine (coverage only inspects `Some` vs `None`).
+fn emit_mir_static_ref(name: &str, ctx: &MirEmitCtx<'_>) -> String {
+    if name == "Option.None" || name == "None" {
+        return "None".to_string();
+    }
+    if let Some((type_name, variant_name)) = name.rsplit_once('.')
+        && let Some(cg) = ctx.codegen
+    {
+        let is_user = |n: &str| crate::codegen::common::is_user_type(n, cg);
+        if is_user(type_name) {
+            return if let Some((prefix, _)) = resolve_module_call(name, ctx.module_prefixes) {
+                let module_path = module_prefix_to_rust_path(prefix);
+                let bare_type = type_name
+                    .rsplit_once('.')
+                    .map(|(_, t)| t)
+                    .unwrap_or(type_name);
+                format!("{}::{}::{}", module_path, bare_type, variant_name)
+            } else {
+                format!("{}::{}", type_name, variant_name)
+            };
+        }
+        if let Some((_, bare_type)) = type_name.rsplit_once('.')
+            && is_user(bare_type)
+        {
+            return if let Some((prefix, _)) = resolve_module_call(name, ctx.module_prefixes) {
+                let module_path = module_prefix_to_rust_path(prefix);
+                format!("{}::{}::{}", module_path, bare_type, variant_name)
+            } else {
+                format!("{}::{}", bare_type, variant_name)
+            };
+        }
+    }
+    if let Some((prefix, bare)) = resolve_module_call(name, ctx.module_prefixes) {
+        let module_path = module_prefix_to_rust_path(prefix);
+        format!("{}::{}", module_path, aver_name_to_rust(bare))
+    } else {
+        aver_name_to_rust(name)
     }
 }
 
