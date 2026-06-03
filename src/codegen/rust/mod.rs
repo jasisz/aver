@@ -1370,6 +1370,42 @@ fn bucket(n: Int) -> Int
     }
 
     #[test]
+    fn wave2_generic_user_sum_match_emits_native_rust_match() {
+        // rust-on-MIR Wave 2: a generic match over a user sum type (no
+        // bool / list / dispatch-table shortcut) graduates through
+        // `emit_mir_match`. The production output is byte-identical to
+        // the HIR walker by the parity gate, so asserting the shape here
+        // pins the graduated emit. `Shape.Circle(r)` / `Shape.Square(s)`
+        // → a native Rust `match` with `Demo_Shape::Circle(r) => { … }`
+        // arms.
+        let mut ctx = ctx_from_source(
+            r#"
+module Demo
+
+type Shape
+    Circle(Float)
+    Square(Float)
+
+fn area(sh: Shape) -> Float
+    match sh
+        Shape.Circle(r) -> r * r * 3.14
+        Shape.Square(s) -> s * s
+"#,
+            "demo",
+        );
+
+        let out = transpile(&mut ctx);
+        let entry = generated_rust_entry_file(&out);
+
+        assert!(
+            entry.contains("match sh.clone() {"),
+            "generic user-sum match should emit a native Rust match on the cloned subject: {entry}"
+        );
+        assert!(entry.contains("Shape::Circle(r) =>"));
+        assert!(entry.contains("Shape::Square(s) =>"));
+    }
+
+    #[test]
     fn optimized_self_tco_uses_dispatch_table_for_wrapper_match() {
         let mut ctx = ctx_from_source(
             r#"

@@ -1897,7 +1897,7 @@ pub(super) fn constructor_boxed_bindings(
 
 /// When matching on a reference (`&T`), pattern bindings are `&Inner`.
 /// Emit `let b = b.clone();` for each binding to produce owned values.
-fn emit_ref_match_rebindings(pattern: &ResolvedPattern) -> String {
+pub(super) fn emit_ref_match_rebindings(pattern: &ResolvedPattern) -> String {
     let bindings = resolved_pattern_bindings(pattern);
     if bindings.is_empty() {
         return String::new();
@@ -1910,7 +1910,7 @@ fn emit_ref_match_rebindings(pattern: &ResolvedPattern) -> String {
     format!("{}\n            ", lines.join("\n            "))
 }
 
-fn emit_pattern_rebindings(pattern: &ResolvedPattern, ctx: &CodegenContext) -> String {
+pub(super) fn emit_pattern_rebindings(pattern: &ResolvedPattern, ctx: &CodegenContext) -> String {
     let mut lines = Vec::new();
     if let ResolvedPattern::Ctor(ctor, bindings) = pattern {
         // Constructor bindings: only Box-wrapped fields (recursive types) need deref.
