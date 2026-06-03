@@ -53,12 +53,6 @@ pub(super) fn print_type_errors(errors: &[TypeError]) {
     }
 }
 
-// `compute_memo_fns` and `is_memo_safe_type` moved to
-// `aver::diagnostics::context` so the playground/LSP share one
-// implementation. Re-exported for the rest of `src/main/` that still
-// imports them from `super::shared`.
-pub(super) use aver::diagnostics::context::compute_memo_fns;
-
 pub(super) fn format_type_errors(errors: &[TypeError]) -> String {
     let mut out = Vec::new();
     for te in errors {

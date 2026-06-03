@@ -130,8 +130,6 @@ Module shape as seen from the entry file. Dependency bodies are **not expanded**
     "signature": "fn run(cmd: String) -> Result<Report, String>",
     "description": "Execute a single payment command.",
     "effects": ["Http.get"],
-    "qualifiers": ["PURE", "RECURSIVE", "SAFE_ARGS"],
-    "auto_memo": false,
     "auto_tco": false,
     "recursive_callsites": 0,
     "verify_count": 3,

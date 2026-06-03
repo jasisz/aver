@@ -664,9 +664,6 @@ fn materialize_selection(contexts: &[FileContext], state: &SelectionState) -> Ve
                 .retain(|name, _| selected_fns.contains(name));
             next.verify_samples
                 .retain(|name, _| selected_fns.contains(name));
-            next.fn_auto_memo.retain(|name| selected_fns.contains(name));
-            next.fn_memo_qual
-                .retain(|name, _| selected_fns.contains(name));
             next.fn_auto_tco.retain(|name| selected_fns.contains(name));
             next.fn_recursive_callsites
                 .retain(|name, _| selected_fns.contains(name));
@@ -681,8 +678,6 @@ fn materialize_selection(contexts: &[FileContext], state: &SelectionState) -> Ve
             next.verify_blocks.clear();
             next.verify_counts.clear();
             next.verify_samples.clear();
-            next.fn_auto_memo.clear();
-            next.fn_memo_qual.clear();
             next.fn_auto_tco.clear();
             next.fn_recursive_callsites.clear();
             next.fn_recursive_scc_id.clear();
@@ -781,9 +776,6 @@ fn score_function(
     score += (ctx.fn_specs.get(&fd.name).map_or(0, Vec::len).min(3) as i32) * 20;
     if !fd.effects.is_empty() {
         score += 20;
-    }
-    if ctx.fn_auto_memo.contains(&fd.name) {
-        score += 15;
     }
     if ctx.fn_auto_tco.contains(&fd.name) {
         score += 15;
@@ -1400,10 +1392,6 @@ fn filter_contexts_to_focus(
             .retain(|name, _| local_selected.contains(name));
         next.verify_samples
             .retain(|name, _| local_selected.contains(name));
-        next.fn_auto_memo
-            .retain(|name| local_selected.contains(name));
-        next.fn_memo_qual
-            .retain(|name, _| local_selected.contains(name));
         next.fn_auto_tco
             .retain(|name| local_selected.contains(name));
         next.fn_recursive_callsites
@@ -1686,8 +1674,6 @@ mod tests {
             main_effects: None,
             fn_defs: fns.clone(),
             all_fn_defs: fns,
-            fn_auto_memo: HashSet::new(),
-            fn_memo_qual: HashMap::new(),
             fn_auto_tco: HashSet::new(),
             fn_recursive_callsites: HashMap::new(),
             fn_recursive_scc_id: HashMap::new(),

@@ -29,10 +29,10 @@ use std::fmt::Write as _;
 
 /// Source-shape variant of [`emit_expr`] for emitters that still hold
 /// a pre-resolve [`Expr`] borrow (TCO hoisting / loop, mutual-TCO
-/// trampoline, memo wrapper, verify cases, main body). Lifts the
-/// expression on demand through the entry's resolver and dispatches
-/// through the migrated emitter. The cost is one resolver lift per
-/// call — cheap for the small subtrees these helpers walk.
+/// trampoline, verify cases, main body). Lifts the expression on
+/// demand through the entry's resolver and dispatches through the
+/// migrated emitter. The cost is one resolver lift per call — cheap
+/// for the small subtrees these helpers walk.
 fn emit_expr_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let spanned = Spanned::bare(expr.clone());
     let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
@@ -89,10 +89,9 @@ fn classify_body_expr_plan_source<'a>(
 }
 
 /// Source-shape variant of [`super::expr::emit_stmt`] for sites that
-/// still walk pre-resolve [`Stmt`] (memo wrappers, TCO loop emit,
-/// trampoline arms, verify cases, main fn body). Lifts on-demand
-/// through [`CodegenContext::resolve_stmt`] and calls the migrated
-/// emit.
+/// still walk pre-resolve [`Stmt`] (TCO loop emit, trampoline arms,
+/// verify cases, main fn body). Lifts on-demand through
+/// [`CodegenContext::resolve_stmt`] and calls the migrated emit.
 fn emit_stmt_legacy(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
     let resolved = ctx.resolve_stmt(stmt, ectx.current_module_scope.as_deref());
     emit_stmt(&resolved, ctx, ectx)
@@ -372,34 +371,6 @@ fn type_can_derive_hash_eq(td: &TypeDef, ctx: &CodegenContext) -> bool {
     rust_hash_eq_safe_named(&key, ctx, &mut visiting)
 }
 
-/// Memo-eligibility predicate: a fn supports the Rust memoization
-/// wrapper only if every one of its declared param types is hash+eq
-/// safe in the Rust lowering. Reads param types directly from the
-/// `ResolvedFnDef` (typed-HIR canonical source) — #180 Phase 7's
-/// projection of `ctx.fn_sigs` onto the resolved view. Memo wrappers
-/// are synthesised in the entry scope, so the `&FnDef` is unambiguous;
-/// `fn_id_for_decl` resolves it through the symbol-table-keyed view.
-fn fn_supports_rust_memo(fd: &FnDef, ctx: &CodegenContext) -> bool {
-    let Some(fn_id) = crate::codegen::common::fn_id_for_decl(ctx, fd) else {
-        return false;
-    };
-    let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
-        return false;
-    };
-    rfd.params.iter().all(|(_, param)| {
-        let mut visiting = HashSet::new();
-        rust_hash_eq_safe_type(param, ctx, &mut visiting)
-    })
-}
-
-fn memo_key_component_expr(name: &str, ty: &crate::types::Type) -> String {
-    if is_copy_type(ty) {
-        name.to_string()
-    } else {
-        format!("{}.clone()", name)
-    }
-}
-
 fn emit_sum_type(
     name: &str,
     variants: &[TypeVariant],
@@ -617,7 +588,7 @@ fn build_fn_ectx_from_resolved(
 }
 
 /// Build an EmitCtx for a function WITHOUT borrow-by-default.
-/// Used for TCO and memo functions where params need to be owned/mutable.
+/// Used for TCO functions where params need to be owned/mutable.
 fn build_fn_ectx_no_borrow(fd: &FnDef, ctx: &CodegenContext, scope: Option<&str>) -> EmitCtx {
     EmitCtx::for_fn_no_borrow(collect_fn_local_types(fd, ctx)).with_scope(scope)
 }
@@ -642,21 +613,19 @@ fn build_fn_ectx_no_borrow_from_resolved(
 pub fn emit_fn_def(
     fd: &FnDef,
     resolved_fd: &crate::ir::hir::ResolvedFnDef,
-    is_memo: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
-    emit_fn_def_with_visibility(fd, resolved_fd, is_memo, ctx, scope, false)
+    emit_fn_def_with_visibility(fd, resolved_fd, ctx, scope, false)
 }
 
 pub fn emit_public_fn_def(
     fd: &FnDef,
     resolved_fd: &crate::ir::hir::ResolvedFnDef,
-    is_memo: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
 ) -> String {
-    emit_fn_def_with_visibility(fd, resolved_fd, is_memo, ctx, scope, true)
+    emit_fn_def_with_visibility(fd, resolved_fd, ctx, scope, true)
 }
 
 /// Emit a Rust fn def from a paired (`&FnDef`, `&ResolvedFnDef`)
@@ -673,7 +642,6 @@ pub fn emit_public_fn_def(
 fn emit_fn_def_with_visibility(
     fd: &FnDef,
     resolved_fd: &crate::ir::hir::ResolvedFnDef,
-    is_memo: bool,
     ctx: &CodegenContext,
     scope: Option<&str>,
     public: bool,
@@ -699,17 +667,15 @@ fn emit_fn_def_with_visibility(
     let fn_name = aver_name_to_rust(&fd.name);
     let visibility = visibility_prefix(public);
 
-    let use_memo = is_memo && fn_supports_rust_memo(fd, ctx);
     let is_guest_entry = ctx.guest_entry.as_deref() == Some(fd.name.as_str());
 
     // TCO functions need owned/mutable params, no borrow-by-default.
-    // Memo functions always use borrow-by-default (memo wrapper takes &T).
     // Normal functions use borrow-by-default for non-Copy, non-Str params.
     // **Epic #180 Phase 3**: read param types directly from the
     // `ResolvedFnDef` (typed-HIR canonical source) instead of the
     // legacy `ctx.fn_sigs.get(name)` + `parse_type_str(string)`
     // side-channel chain.
-    let ectx = if has_tco && !use_memo {
+    let ectx = if has_tco {
         build_fn_ectx_no_borrow_from_resolved(resolved_fd, scope)
     } else {
         build_fn_ectx_from_resolved(resolved_fd, scope)
@@ -818,17 +784,11 @@ fn emit_fn_def_with_visibility(
         return lines.join("\n");
     }
 
-    if use_memo {
-        lines.push(emit_memo_fn(
-            fd, &fn_name, &params, &ret_type, ctx, &ectx, visibility,
-        ));
-    } else if has_tco {
+    if has_tco {
         // rust-on-MIR Wave 5: synthesize the self-TCO loop from MIR
         // behind `AVER_RUST_MIR_TCO=1`. Behavioral (build + run vs VM +
         // self-host regen), not byte-parity — TCO never byte-graduates.
         // Production default (flag unset) keeps the proven HIR emitter.
-        // `memo` precedence is preserved: this branch is `else if`, so a
-        // memoized fn never reaches the TCO path.
         let mir_tco = if super::from_mir::mir_tco_enabled() {
             ctx.mir_program
                 .as_ref()
@@ -865,7 +825,7 @@ fn emit_fn_def_with_visibility(
         // the pre-port output by construction — it cannot regress —
         // while exercising + verifying the MIR path for the covered
         // subset. Borrow-by-default matches `ectx` here (this branch
-        // is the non-TCO / non-memo path, so `for_fn` borrow rules).
+        // is the non-TCO path, so `for_fn` borrow rules).
         let hir_body = emit_fn_body(&resolved_fd.body, ctx, &ectx);
         let mir_fn = ctx
             .mir_program
@@ -2903,118 +2863,6 @@ fn try_emit_trampoline_bool_if_else(
     Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
 
-/// Emit a memoized function with thread_local cache.
-fn emit_memo_fn(
-    fd: &FnDef,
-    fn_name: &str,
-    _params_str: &str,
-    ret_type: &str,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    visibility: &str,
-) -> String {
-    let cache_name = fn_name.to_uppercase() + "_CACHE";
-
-    // Build the key type and value type
-    let param_types: Vec<String> = fd
-        .params
-        .iter()
-        .map(|(_, ty)| type_annotation_to_rust(ty))
-        .collect();
-    let param_key_types: Vec<crate::types::Type> = fd
-        .params
-        .iter()
-        .map(|(_, ty)| crate::types::parse_type_str(ty))
-        .collect();
-
-    let key_type = if param_types.len() == 1 {
-        param_types[0].clone()
-    } else {
-        format!("({})", param_types.join(", "))
-    };
-
-    let param_names: Vec<String> = fd
-        .params
-        .iter()
-        .map(|(n, _)| aver_name_to_rust(n))
-        .collect();
-
-    let key_expr = if param_names.len() == 1 {
-        memo_key_component_expr(&param_names[0], &param_key_types[0])
-    } else {
-        let parts: Vec<String> = param_names
-            .iter()
-            .zip(param_key_types.iter())
-            .map(|(name, ty)| memo_key_component_expr(name, ty))
-            .collect();
-        format!("({},)", parts.join(", "))
-    };
-
-    let params = emit_fn_params(&fd.params, false);
-
-    let mut out = String::new();
-    writeln!(out, "thread_local! {{").unwrap();
-    writeln!(
-        out,
-        "    static {}: std::cell::RefCell<std::collections::HashMap<{}, {}>> = std::cell::RefCell::new(std::collections::HashMap::new());",
-        cache_name, key_type, ret_type
-    )
-    .unwrap();
-    writeln!(out, "}}").unwrap();
-    writeln!(out).unwrap();
-    writeln!(
-        out,
-        "{}fn {}({}) -> {} {{",
-        visibility, fn_name, params, ret_type
-    )
-    .unwrap();
-    writeln!(out, "    {}.with(|cache| {{", cache_name).unwrap();
-    writeln!(out, "        let __memo_key = {};", key_expr).unwrap();
-    writeln!(
-        out,
-        "        if let Some(r) = cache.borrow().get(&__memo_key).cloned() {{ return r; }}"
-    )
-    .unwrap();
-
-    // Emit the actual body
-    writeln!(
-        out,
-        "        let __result = {{ {} }};",
-        emit_memo_inner_body(&fd.body, ctx, ectx)
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "        cache.borrow_mut().insert(__memo_key, __result.clone());"
-    )
-    .unwrap();
-    writeln!(out, "        __result").unwrap();
-    writeln!(out, "    }})").unwrap();
-    writeln!(out, "}}").unwrap();
-
-    out.trim_end().to_string()
-}
-
-fn emit_memo_inner_body(body: &FnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    let stmts = body.stmts();
-    let mut parts = Vec::new();
-    parts.push("crate::cancel_checkpoint();".to_string());
-    for (i, stmt) in stmts.iter().enumerate() {
-        let is_last = i == stmts.len() - 1;
-        match stmt {
-            Stmt::Binding(_, _, _) => parts.push(emit_stmt_legacy(stmt, ctx, ectx)),
-            Stmt::Expr(expr) => {
-                if is_last {
-                    parts.push(emit_expr_legacy(&expr.node, ctx, ectx));
-                } else {
-                    parts.push(format!("{};", emit_expr_legacy(&expr.node, ctx, ectx)));
-                }
-            }
-        }
-    }
-    parts.join(" ")
-}
-
 /// Emit the main function, incorporating top-level statements.
 #[allow(dead_code)]
 pub fn emit_main(main_fn: Option<&FnDef>, top_stmts: &[&Stmt], ctx: &CodegenContext) -> String {
@@ -3169,8 +3017,6 @@ mod tests {
     fn empty_ctx() -> CodegenContext {
         CodegenContext {
             items: vec![],
-            memo_fns: HashSet::new(),
-            memo_safe_types: HashSet::new(),
             type_defs: vec![],
             fn_defs: vec![],
             project_name: "test".to_string(),
@@ -3493,7 +3339,7 @@ mod tests {
 
         let emitted = {
             let r = ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), false, &ctx, None)
+            emit_public_fn_def(&fd, r.as_ref(), &ctx, None)
         };
         assert!(emitted.contains("let __aver_inv0 = score(tag(pick));"));
         // Numeric add no longer uses &rhs
@@ -3502,7 +3348,7 @@ mod tests {
     }
 
     #[test]
-    fn recursive_sum_type_used_by_memo_can_derive_eq_hash() {
+    fn recursive_sum_type_can_derive_eq_hash() {
         let td = TypeDef::Sum {
             name: "Tree".to_string(),
             variants: vec![
@@ -3522,89 +3368,6 @@ mod tests {
 
         let emitted = emit_public_type_def(&td, &ctx);
         assert!(emitted.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
-    }
-
-    #[test]
-    fn float_param_fn_does_not_use_rust_memo_cache() {
-        let fd = FnDef {
-            name: "f".to_string(),
-            line: 1,
-            params: vec![("x".to_string(), "Float".to_string())],
-            return_type: "Float".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Ident(
-                "x".to_string(),
-            )))),
-            resolution: None,
-        };
-        let mut ctx = empty_ctx();
-        ctx.items.push(TopLevel::FnDef(fd.clone()));
-        ctx.fn_defs.push(fd.clone());
-        ctx.refresh_facts();
-
-        let emitted = {
-            let r = ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), true, &ctx, None)
-        };
-        assert!(!emitted.contains("thread_local!"));
-    }
-
-    #[test]
-    fn memoized_named_param_clones_cache_key_before_body() {
-        let td = TypeDef::Sum {
-            name: "Tree".to_string(),
-            variants: vec![
-                TypeVariant {
-                    name: "Empty".to_string(),
-                    fields: vec![],
-                },
-                TypeVariant {
-                    name: "Node".to_string(),
-                    fields: vec!["Tree".to_string(), "Int".to_string(), "Tree".to_string()],
-                },
-            ],
-            line: 1,
-        };
-        let fd = FnDef {
-            name: "member".to_string(),
-            line: 1,
-            params: vec![("t".to_string(), "Tree".to_string())],
-            return_type: "Bool".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
-                subject: Box::new(Spanned::bare(Expr::Ident("t".to_string()))),
-                arms: vec![
-                    MatchArm {
-                        pattern: Pattern::Constructor("Tree.Empty".to_string(), vec![]),
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(false)))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                    MatchArm {
-                        pattern: Pattern::Wildcard,
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(true)))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                ],
-            }))),
-            resolution: None,
-        };
-
-        let mut ctx = empty_ctx();
-        ctx.type_defs.push(td.clone());
-        ctx.items.push(TopLevel::TypeDef(td));
-        ctx.items.push(TopLevel::FnDef(fd.clone()));
-        ctx.fn_defs.push(fd.clone());
-        ctx.refresh_facts();
-
-        let emitted = {
-            let r = ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), true, &ctx, None)
-        };
-        assert!(emitted.contains("let __memo_key = t.clone();"));
-        assert!(emitted.contains("get(&__memo_key)"));
-        assert!(emitted.contains("insert(__memo_key, __result.clone())"));
     }
 
     #[test]
@@ -3858,7 +3621,7 @@ mod tests {
         semantic_ctx.refresh_facts();
         let semantic = {
             let r = semantic_ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), false, &semantic_ctx, None)
+            emit_public_fn_def(&fd, r.as_ref(), &semantic_ctx, None)
         };
         // Both modes now emit #[inline(always)] for thin wrappers
         assert!(semantic.contains("#[inline(always)]"));
@@ -3906,7 +3669,7 @@ mod tests {
         semantic_ctx.refresh_facts();
         let semantic = {
             let r = semantic_ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), false, &semantic_ctx, None)
+            emit_public_fn_def(&fd, r.as_ref(), &semantic_ctx, None)
         };
         // Both modes now emit #[inline(always)] for leaf wrappers
         assert!(semantic.contains("#[inline(always)]"));
@@ -3973,7 +3736,7 @@ mod tests {
         semantic_ctx.refresh_facts();
         let semantic = {
             let r = semantic_ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), false, &semantic_ctx, None)
+            emit_public_fn_def(&fd, r.as_ref(), &semantic_ctx, None)
         };
         // Both modes now emit #[inline(always)] for binding-block wrappers
         assert!(semantic.contains("#[inline(always)]"));

@@ -24,7 +24,6 @@ use aver::ir::proof_ir::{
     DecreaseProof, FuelMetric, Measure, PreservationProof, QuantifierType, RecursionContract,
 };
 use aver::source::parse_source;
-use std::collections::HashSet;
 
 fn build_ctx(src: &str) -> CodegenContext {
     let mut items = parse_source(src).expect("parse");
@@ -61,7 +60,6 @@ fn build_ctx(src: &str) -> CodegenContext {
         items,
         &tc,
         pipeline_result.analysis.as_ref(),
-        HashSet::new(),
         "diff".to_string(),
         vec![],
         pipeline_result.symbol_table,

@@ -1604,9 +1604,9 @@ fn emit_fn_body_result_do(body: &FnBody, ctx: &CodegenContext) -> String {
 fn emit_fn_body_for(fd: &FnDef, body: &FnBody, ctx: &CodegenContext) -> String {
     // Pointer-eq scope (`fn_id_for_decl`) → resolved view by `FnId`
     // so a same-bare-name entry/dep twin never accidentally
-    // provides this fn's return type. Synthetic FnDefs (memo
-    // wrappers, TCO hoists, mid-rewrite fns) the resolver never
-    // saw fall through to `ctx.resolve_fn_def`'s on-demand lift.
+    // provides this fn's return type. Synthetic FnDefs (TCO hoists,
+    // mid-rewrite fns) the resolver never saw fall through to
+    // `ctx.resolve_fn_def`'s on-demand lift.
     let resolved_fd = crate::codegen::common::fn_id_for_decl(ctx, fd)
         .and_then(|id| ctx.resolved_program.fn_by_id(id));
     let resolved_owned = match resolved_fd {

@@ -118,8 +118,8 @@ pub struct AnalysisResult {
     /// TCO and aren't in this set.
     pub mutual_tco_members: HashSet<String>,
     /// Names of fns that call themselves directly or transitively.
-    /// Used by the type checker's flow analysis, the proof exporters,
-    /// and the memo-eligibility check.
+    /// Used by the type checker's flow analysis and the proof
+    /// exporters.
     pub recursive_fns: HashSet<String>,
 }
 
@@ -136,12 +136,10 @@ pub struct FnAnalysis {
     /// codegen). Backends use this to gate trampoline emission.
     pub mutual_tco_member: bool,
     /// `true` if the fn calls itself directly or transitively. Used by
-    /// the type checker's flow analysis, the proof exporters, and the
-    /// memo-eligibility check.
+    /// the type checker's flow analysis and the proof exporters.
     pub recursive: bool,
     /// Number of recursive call sites in the fn body. `0` for non-recursive
-    /// fns. Memo eligibility requires `>= 2` (single-call recursion is
-    /// linear and the memo overhead would dominate).
+    /// fns. Surfaced in the IR dump's `recursive×N` annotation.
     pub recursive_call_count: usize,
 }
 

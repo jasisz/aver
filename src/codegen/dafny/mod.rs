@@ -691,8 +691,6 @@ mod tests {
     use crate::codegen::build_context;
     use crate::source::parse_source;
 
-    use std::collections::HashSet;
-
     fn ctx_from_source(src: &str, project_name: &str) -> CodegenContext {
         let mut items = parse_source(src).expect("parse");
         // Proof-mode minimal pipeline — same shape as `lean::tests::
@@ -735,7 +733,6 @@ mod tests {
             items,
             &tc,
             pipeline_result.analysis.as_ref(),
-            HashSet::new(),
             project_name.to_string(),
             vec![],
             pipeline_result.symbol_table,

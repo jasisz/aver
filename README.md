@@ -485,7 +485,7 @@ Aver is intentionally small. The core model is:
 - top-level functions only, with no closures
 - explicit method-level effects
 - module-based structure via `module`, `depends`, and `exposes`
-- automatic memoization and tail-call optimization for eligible code
+- automatic tail-call optimization for eligible code
 
 For the surface-language guide, see [docs/language.md](docs/language.md).
 

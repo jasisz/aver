@@ -1023,8 +1023,6 @@ mod tests {
     fn empty_ctx() -> CodegenContext {
         CodegenContext {
             items: vec![],
-            memo_fns: HashSet::new(),
-            memo_safe_types: HashSet::new(),
             type_defs: vec![],
             fn_defs: vec![],
             project_name: "test".to_string(),

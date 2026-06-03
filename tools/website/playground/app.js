@@ -3191,26 +3191,13 @@ function renderContextPanel(ctx) {
                 t.textContent = "private";
                 tags.appendChild(t);
             }
-            for (const q of f.qualifiers || []) {
-                const t = document.createElement("span");
-                t.className = "ctx-tag" + (q === "PURE" ? " pure" : "");
-                t.textContent = q;
-                tags.appendChild(t);
-            }
-            if (f.auto_memo) {
-                const t = document.createElement("span");
-                t.className = "ctx-tag pure";
-                t.textContent = "AUTO_MEMO";
-                tags.appendChild(t);
-            }
             if (f.auto_tco) {
                 const t = document.createElement("span");
                 t.className = "ctx-tag pure";
                 t.textContent = "AUTO_TCO";
                 tags.appendChild(t);
             }
-            // Empty effects == PURE (which qualifiers already carries),
-            // so don't double-tag it. Only render explicit effects.
+            // Render explicit effects (empty effects == PURE, untagged).
             for (const e of effects) {
                 const t = document.createElement("span");
                 t.className = "ctx-tag effect";

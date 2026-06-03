@@ -127,10 +127,6 @@ pub struct CodegenContext {
     /// discovery access. Backends iterating fn bodies should reach
     /// `resolved_program.entry_fns()` instead.
     pub items: Vec<TopLevel>,
-    /// Functions eligible for auto-memoization.
-    pub memo_fns: HashSet<String>,
-    /// Set of type names whose values are memo-safe.
-    pub memo_safe_types: HashSet<String>,
     /// User-defined type definitions (for struct/enum generation).
     ///
     /// **Source metadata.** Type-id-keyed lookups go through
@@ -146,7 +142,7 @@ pub struct CodegenContext {
     /// **Source metadata.** Backends mid-migration walk this for
     /// fn-signature shape; new identity-sensitive code reaches
     /// `resolved_program.entry_fns()` / `fn_by_id(fn_id)` instead.
-    /// Synthesized FnDefs (memo wrappers, TCO hoists) appended after
+    /// Synthesized FnDefs (TCO hoists) appended after
     /// the pipeline ran live here too; the on-demand resolver
     /// (`Self::resolve_fn_def`) lifts them through the symbol table.
     pub fn_defs: Vec<FnDef>,
@@ -308,9 +304,8 @@ pub struct ProjectOutput {
 #[allow(clippy::too_many_arguments)]
 pub fn build_context(
     items: Vec<TopLevel>,
-    tc_result: &TypeCheckResult,
+    _tc_result: &TypeCheckResult,
     entry_analysis: Option<&crate::ir::AnalysisResult>,
-    memo_fns: HashSet<String>,
     project_name: String,
     modules: Vec<ModuleInfo>,
     symbol_table: crate::ir::SymbolTable,
@@ -538,8 +533,6 @@ pub fn build_context(
 
     let ctx = CodegenContext {
         items,
-        memo_fns,
-        memo_safe_types: tc_result.memo_safe_types.clone(),
         type_defs,
         fn_defs,
         project_name,
@@ -768,9 +761,9 @@ impl CodegenContext {
     /// [`resolved_module_fn_defs`]. Falls back to a fresh per-call
     /// resolver lift against the entry's [`crate::ir::SymbolTable`]
     /// when neither path covers `fd` — this happens for synthetic
-    /// FnDefs inserted between `build_context` and emit (memo
-    /// wrappers, TCO hoist rewrites, test fixtures) which the
-    /// resolver hasn't lifted upfront.
+    /// FnDefs inserted between `build_context` and emit (TCO hoist
+    /// rewrites, test fixtures) which the resolver hasn't lifted
+    /// upfront.
     ///
     /// `scope` is the owning module prefix when `fd` came from a
     /// dependency module's `module.fn_defs`, `None` when `fd` is part
@@ -821,9 +814,9 @@ impl CodegenContext {
             // production this shouldn't happen.
         }
 
-        // Synthetic FnDef path — memo wrappers, TCO hoist rewrites,
-        // test fixtures the resolver never saw. Lift on demand
-        // against the entry's resolver context.
+        // Synthetic FnDef path — TCO hoist rewrites, test fixtures
+        // the resolver never saw. Lift on demand against the entry's
+        // resolver context.
         let module_name = self.items.iter().find_map(|i| match i {
             TopLevel::Module(m) => Some(m.name.clone()),
             _ => None,

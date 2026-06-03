@@ -1557,8 +1557,6 @@ mod tests {
     fn empty_ctx() -> CodegenContext {
         CodegenContext {
             items: vec![],
-            memo_fns: HashSet::new(),
-            memo_safe_types: HashSet::new(),
             type_defs: vec![],
             fn_defs: vec![],
             project_name: "verify_mode".to_string(),
@@ -1631,7 +1629,6 @@ mod tests {
             items,
             &tc,
             pipeline_result.analysis.as_ref(),
-            HashSet::new(),
             project_name.to_string(),
             vec![],
             pipeline_result.symbol_table,

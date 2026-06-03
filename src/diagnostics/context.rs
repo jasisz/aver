@@ -15,11 +15,8 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 
 use crate::ast::{DecisionBlock, FnDef, TopLevel, TypeDef, VerifyBlock};
-use crate::call_graph::{
-    direct_calls, find_recursive_fns, recursive_callsite_counts, recursive_scc_ids,
-};
+use crate::call_graph::{direct_calls, recursive_callsite_counts, recursive_scc_ids};
 use crate::checker::expr_to_str;
-use crate::types::checker::TypeCheckResult;
 use crate::verify_law::canonical_spec_ref;
 
 // ─── Canonical, CLI-shaped FileContext ────────────────────────────────────────
@@ -39,8 +36,6 @@ pub struct FileContext {
     pub fn_defs: Vec<FnDef>,
     /// Every fn def, unfiltered. Used by callers that need private fns too.
     pub all_fn_defs: Vec<FnDef>,
-    pub fn_auto_memo: HashSet<String>,
-    pub fn_memo_qual: HashMap<String, Vec<String>>,
     pub fn_auto_tco: HashSet<String>,
     pub fn_recursive_callsites: HashMap<String, usize>,
     pub fn_recursive_scc_id: HashMap<String, usize>,
@@ -67,8 +62,6 @@ impl FileContext {
             main_effects: None,
             fn_defs: vec![],
             all_fn_defs: vec![],
-            fn_auto_memo: HashSet::new(),
-            fn_memo_qual: HashMap::new(),
             fn_auto_tco: HashSet::new(),
             fn_recursive_callsites: HashMap::new(),
             fn_recursive_scc_id: HashMap::new(),
@@ -127,16 +120,12 @@ pub fn build_context_for_items(
 
     let flags = compute_context_fn_flags(items, module_root);
     let ContextFnFlags {
-        auto_memo,
         auto_tco,
-        memo_qual,
         recursive_callsites,
         recursive_scc_id,
         fn_sigs,
     } = flags;
-    ctx.fn_auto_memo = auto_memo;
     ctx.fn_auto_tco = auto_tco;
-    ctx.fn_memo_qual = memo_qual;
     ctx.fn_recursive_callsites = recursive_callsites;
     ctx.fn_recursive_scc_id = recursive_scc_id;
     ctx.fn_direct_calls = direct_calls(items);
@@ -223,8 +212,6 @@ pub struct ContextFnSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub effects: Vec<String>,
-    pub qualifiers: Vec<String>,
-    pub auto_memo: bool,
     pub auto_tco: bool,
     pub recursive_callsites: usize,
     pub verify_count: usize,
@@ -260,7 +247,6 @@ pub fn summarize(ctx: &FileContext) -> ContextSummary {
         .iter()
         .map(|fd| {
             let effects: Vec<String> = fd.effects.iter().map(|e| e.node.clone()).collect();
-            let qualifiers = ctx.fn_memo_qual.get(&fd.name).cloned().unwrap_or_default();
             let description = fd.desc.clone();
             let signature = render_signature(fd);
             let is_exposed = ctx.exposes.is_empty() || ctx.exposes.contains(&fd.name);
@@ -275,8 +261,6 @@ pub fn summarize(ctx: &FileContext) -> ContextSummary {
                 signature,
                 description,
                 effects,
-                qualifiers,
-                auto_memo: ctx.fn_auto_memo.contains(&fd.name),
                 auto_tco: ctx.fn_auto_tco.contains(&fd.name),
                 recursive_callsites: ctx
                     .fn_recursive_callsites
@@ -426,9 +410,6 @@ pub fn render_context_md(summary: &ContextSummary) -> String {
         if !fd.effects.is_empty() {
             out.push_str(&format!("effects: `[{}]`  \n", fd.effects.join(", ")));
         }
-        if fd.auto_memo {
-            out.push_str("memo: `true`  \n");
-        }
         if fd.auto_tco {
             out.push_str("tco: `true`  \n");
         }
@@ -492,79 +473,6 @@ fn render_signature(fd: &FnDef) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("fn {}({}) -> {}", fd.name, params, fd.return_type)
-}
-
-// ─── Pure helpers exposed to CLI / playground ────────────────────────────────
-
-/// Functions that qualify for auto-memoization: pure, recursive with
-/// branching, and all parameter types memo-safe.
-///
-/// Reads recursion facts from `PipelineResult.analysis` when the pipeline
-/// has run; falls back to ad-hoc computation when the analysis isn't
-/// available (callers that haven't migrated to the pipeline). The fallback
-/// path will go away once every consumer reads from analysis directly.
-pub fn compute_memo_fns(
-    items: &[TopLevel],
-    tc_result: &TypeCheckResult,
-    analysis: Option<&crate::ir::AnalysisResult>,
-) -> HashSet<String> {
-    let mut memo = HashSet::new();
-
-    let memo_check = |fn_name: &str, recursive_calls: usize| -> bool {
-        let Some((params, _ret, effects)) = tc_result.fn_sigs.get(fn_name) else {
-            return false;
-        };
-        if !effects.is_empty() {
-            return false;
-        }
-        if recursive_calls < 2 {
-            return false;
-        }
-        params
-            .iter()
-            .all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types))
-    };
-
-    if let Some(analysis) = analysis {
-        for fn_name in &analysis.recursive_fns {
-            let calls = analysis
-                .fn_analyses
-                .get(fn_name)
-                .map(|a| a.recursive_call_count)
-                .unwrap_or(0);
-            if memo_check(fn_name, calls) {
-                memo.insert(fn_name.clone());
-            }
-        }
-    } else {
-        let recursive = find_recursive_fns(items);
-        let recursive_calls = recursive_callsite_counts(items);
-        for fn_name in &recursive {
-            let calls = recursive_calls.get(fn_name).copied().unwrap_or(0);
-            if memo_check(fn_name, calls) {
-                memo.insert(fn_name.clone());
-            }
-        }
-    }
-
-    memo
-}
-
-pub fn is_memo_safe_type(ty: &crate::types::Type, safe_named: &HashSet<String>) -> bool {
-    use crate::types::Type;
-    match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Unit => true,
-        Type::Str => false,
-        Type::Tuple(items) => items.iter().all(|item| is_memo_safe_type(item, safe_named)),
-        Type::List(_)
-        | Type::Vector(_)
-        | Type::Map(_, _)
-        | Type::Fn(_, _, _)
-        | Type::Invalid
-        | Type::Var(_) => false,
-        Type::Result(_, _) | Type::Option(_) => false,
-        Type::Named { name, .. } => safe_named.contains(name),
-    }
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
@@ -768,9 +676,7 @@ fn build_verify_summaries(
 }
 
 struct ContextFnFlags {
-    auto_memo: HashSet<String>,
     auto_tco: HashSet<String>,
-    memo_qual: HashMap<String, Vec<String>>,
     recursive_callsites: HashMap<String, usize>,
     recursive_scc_id: HashMap<String, usize>,
     fn_sigs: HashMap<String, (Vec<crate::types::Type>, crate::types::Type, Vec<String>)>,
@@ -825,10 +731,8 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> Co
             _ => None,
         })
         .collect::<HashSet<_>>();
-    let recursive = find_recursive_fns(&transformed);
     let recursive_callsites = recursive_callsite_counts(&transformed);
     let recursive_scc_id = recursive_scc_ids(&transformed);
-    let mut memo_qual = HashMap::new();
 
     let tc_result = crate::ir::pipeline::typecheck(
         &transformed,
@@ -836,57 +740,9 @@ fn compute_context_fn_flags(items: &[TopLevel], module_root: Option<&str>) -> Co
             base_dir: module_root,
         },
     );
-    if !tc_result.errors.is_empty() {
-        for item in &transformed {
-            if let TopLevel::FnDef(fd) = item {
-                let mut qual = Vec::new();
-                if fd.effects.is_empty() {
-                    qual.push("PURE".to_string());
-                }
-                if recursive.contains(&fd.name) {
-                    qual.push("RECURSIVE".to_string());
-                }
-                memo_qual.insert(fd.name.clone(), qual);
-            }
-        }
-        return ContextFnFlags {
-            auto_memo: HashSet::new(),
-            auto_tco: tco_fns,
-            memo_qual,
-            recursive_callsites,
-            recursive_scc_id,
-            fn_sigs: tc_result.fn_sigs,
-        };
-    }
-
-    for item in &transformed {
-        if let TopLevel::FnDef(fd) = item {
-            let mut qual = Vec::new();
-            if let Some((params, _ret, effects)) = tc_result.fn_sigs.get(&fd.name) {
-                if effects.is_empty() {
-                    qual.push("PURE".to_string());
-                }
-                if recursive.contains(&fd.name) {
-                    qual.push("RECURSIVE".to_string());
-                }
-                let safe_args = params
-                    .iter()
-                    .all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types));
-                if safe_args {
-                    qual.push("SAFE_ARGS".to_string());
-                }
-            }
-            memo_qual.insert(fd.name.clone(), qual);
-        }
-    }
 
     ContextFnFlags {
-        // `aver context` doesn't run the full pipeline (its IR shape is
-        // pre-resolve/pre-analyze for diagnostic display), so pass `None`
-        // and let the fallback path compute recursion facts ad-hoc.
-        auto_memo: compute_memo_fns(&transformed, &tc_result, None),
         auto_tco: tco_fns,
-        memo_qual,
         recursive_callsites,
         recursive_scc_id,
         fn_sigs: tc_result.fn_sigs,

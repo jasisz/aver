@@ -2361,8 +2361,8 @@ fn main() -> Int
     }
 
     #[test]
-    fn memo_cache_does_not_collide_with_imported_same_name() {
-        let root = temp_module_root("memo_collision");
+    fn local_fn_does_not_collide_with_imported_same_name() {
+        let root = temp_module_root("fn_name_collision");
         let math_src = r#"
 module Math
     exposes [fib]
@@ -2621,16 +2621,11 @@ fn inspect(expr: Expr, fallback: Int) -> Int
 }
 
 // ---------------------------------------------------------------------------
-// Auto-memoization tests
+// Recursive function correctness tests
 // ---------------------------------------------------------------------------
 
-/// Helper: VM handles memoization at compile time, so just use call_fn.
-fn call_fn_with_memo(src: &str, fn_name: &str, args: Vec<Value>) -> Value {
-    call_fn(src, fn_name, args)
-}
-
 #[test]
-fn memo_fib_30_returns_correct_result() {
+fn naive_fib_30_returns_correct_result() {
     let src = r#"
 fn fib(n: Int) -> Int
     match n
@@ -2638,15 +2633,14 @@ fn fib(n: Int) -> Int
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
 "#;
-    // fib(30) = 832040 — without memo this would take exponential time
     assert_eq!(
-        call_fn_with_memo(src, "fib", vec![Value::Int(30)]),
+        call_fn(src, "fib", vec![Value::Int(30)]),
         Value::Int(832040)
     );
 }
 
 #[test]
-fn memo_fib_small_values() {
+fn naive_fib_small_values() {
     let src = r#"
 fn fib(n: Int) -> Int
     match n
@@ -2654,32 +2648,19 @@ fn fib(n: Int) -> Int
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
 "#;
-    assert_eq!(
-        call_fn_with_memo(src, "fib", vec![Value::Int(0)]),
-        Value::Int(0)
-    );
-    assert_eq!(
-        call_fn_with_memo(src, "fib", vec![Value::Int(1)]),
-        Value::Int(1)
-    );
-    assert_eq!(
-        call_fn_with_memo(src, "fib", vec![Value::Int(10)]),
-        Value::Int(55)
-    );
+    assert_eq!(call_fn(src, "fib", vec![Value::Int(0)]), Value::Int(0));
+    assert_eq!(call_fn(src, "fib", vec![Value::Int(1)]), Value::Int(1));
+    assert_eq!(call_fn(src, "fib", vec![Value::Int(10)]), Value::Int(55));
 }
 
 #[test]
-fn memo_non_recursive_fn_still_works() {
-    // Non-recursive functions should work normally (not memoized but not broken)
+fn non_recursive_fn_still_works() {
     let src = "fn double(x: Int) -> Int\n    x + x\n";
-    assert_eq!(
-        call_fn_with_memo(src, "double", vec![Value::Int(5)]),
-        Value::Int(10)
-    );
+    assert_eq!(call_fn(src, "double", vec![Value::Int(5)]), Value::Int(10));
 }
 
 #[test]
-fn memo_tuple_args_do_not_collide() {
+fn tuple_args_do_not_collide() {
     let src = r#"
 fn pick(p: Tuple<Int, Int>) -> Int
     match p == (1, 2)
@@ -2803,7 +2784,7 @@ fn isOdd(n: Int) -> Bool
 
 #[test]
 fn tco_non_tail_fib_still_works() {
-    // fib is NOT tail-recursive — should still work (via memoization or normal recursion)
+    // fib is NOT tail-recursive — should still work via normal recursion
     let src = r#"
 fn fib(n: Int) -> Int
     match n
@@ -2811,7 +2792,6 @@ fn fib(n: Int) -> Int
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
 "#;
-    // Small values work even without memo (normal recursion)
     assert_eq!(
         call_fn_with_tco(src, "fib", vec![Value::Int(0)]),
         Value::Int(0)

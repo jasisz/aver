@@ -66,8 +66,6 @@ struct JsonRecord<'a> {
 #[derive(Serialize)]
 struct JsonAnalysis {
     #[serde(skip_serializing_if = "Option::is_none")]
-    memo: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     tco: Option<bool>,
 }
 
@@ -252,10 +250,8 @@ fn module_to_json(ctx: &FileContext) -> JsonModule<'_> {
             .iter()
             .filter(|fd| fd.name != "main")
             .map(|fd| {
-                let has_memo = ctx.fn_auto_memo.contains(&fd.name);
                 let has_tco = ctx.fn_auto_tco.contains(&fd.name);
-                let analysis = (has_memo || has_tco).then_some(JsonAnalysis {
-                    memo: has_memo.then_some(true),
+                let analysis = has_tco.then_some(JsonAnalysis {
                     tco: has_tco.then_some(true),
                 });
                 let specs = ctx
@@ -484,9 +480,6 @@ pub(super) fn format_context_md(
             out.push_str(&format!("### `{}`\n", fn_sig_with_effects(fd)));
 
             // Only show analysis flags when non-default
-            if ctx.fn_auto_memo.contains(&fd.name) {
-                out.push_str("memo: `true`  \n");
-            }
             if ctx.fn_auto_tco.contains(&fd.name) {
                 out.push_str("tco: `true`  \n");
             }
@@ -773,8 +766,6 @@ mod tests {
                 body: std::sync::Arc::new(aver::ast::FnBody::Block(vec![])),
                 resolution: None,
             }],
-            fn_auto_memo: HashSet::new(),
-            fn_memo_qual: HashMap::new(),
             fn_auto_tco: HashSet::new(),
             fn_recursive_callsites: HashMap::new(),
             fn_recursive_scc_id: HashMap::new(),
@@ -830,12 +821,10 @@ mod tests {
     #[test]
     fn json_context_renders_compact_analysis() {
         let mut ctx = file_context_with_spec();
-        ctx.fn_auto_memo.insert("fib".to_string());
         ctx.fn_auto_tco.insert("fib".to_string());
 
         let out = format_context_json(&[ctx], "examples/spec.av", None);
         let json: serde_json::Value = serde_json::from_str(&out).expect("valid context JSON");
-        assert_eq!(json["modules"][0]["functions"][0]["analysis"]["memo"], true);
         assert_eq!(json["modules"][0]["functions"][0]["analysis"]["tco"], true);
     }
 
@@ -871,8 +860,6 @@ mod tests {
                 body: std::sync::Arc::new(aver::ast::FnBody::Block(vec![])),
                 resolution: None,
             }],
-            fn_auto_memo: HashSet::new(),
-            fn_memo_qual: HashMap::new(),
             fn_auto_tco: HashSet::new(),
             fn_recursive_callsites: HashMap::new(),
             fn_recursive_scc_id: HashMap::new(),
