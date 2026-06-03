@@ -85,7 +85,42 @@ fn self_host_regenerates_and_compiles_and_runs() {
         );
         return;
     }
+    // Production path: no MIR flags. The emitted self-host is byte-
+    // identical to what `release.py` ships into `src/self_host`.
+    run_self_host_regen(&[], "production");
+}
 
+/// All four MIR flags — Stage-1 forces the MIR walker to OWN the entire
+/// emit (body, TCO, verify, main + top-stmt) across the ~26k-line
+/// self-host compiler. This is the densest real-world MIR exercise in the
+/// net: a Rust-codegen regression on ANY construct surfaces as the
+/// regenerated self-host failing to build or miscompiling the corpus.
+const FORCED_MIR: &[(&str, &str)] = &[
+    ("AVER_RUST_MIR_ONLY", "1"),
+    ("AVER_RUST_MIR_TCO", "1"),
+    ("AVER_RUST_MIR_VERIFY", "1"),
+    ("AVER_RUST_MIR_MAIN", "1"),
+];
+
+#[test]
+#[ignore = "self-host regen + build is minutes of wall-time; set AVER_SELF_HOST_REGEN=1 and run with --ignored"]
+fn forced_mir_self_host_regenerates_and_compiles_and_runs() {
+    if std::env::var("AVER_SELF_HOST_REGEN").is_err() {
+        eprintln!(
+            "skipping forced-MIR self-host regen gate — set AVER_SELF_HOST_REGEN=1 to \
+             run (regenerates the self-host under ALL FOUR MIR flags, cargo-builds it, \
+             runs corpus parity — the densest MIR exercise in the Stage-1 net)"
+        );
+        return;
+    }
+    run_self_host_regen(FORCED_MIR, "forced-MIR (all four flags)");
+}
+
+/// Regenerate the self-host compiler to a temp dir under the given MIR
+/// env (empty = production HIR path), cargo-build it, and run the corpus
+/// asserting stdout parity with the host VM. `label` tags the eprintln /
+/// panic messages so the production vs forced-MIR runs are distinguishable.
+fn run_self_host_regen(mir_env: &[(&str, &str)], label: &str) {
     let repo = repo_root();
     let ws = temp_dir("ws");
     let out = ws.join("out");
@@ -94,8 +129,10 @@ fn self_host_regenerates_and_compiles_and_runs() {
     // ── (1) Regenerate the self-host compiler to a temp dir ──────────
     // Exactly the `release.py::regenerate_self_host` invocation. We
     // emit OUTSIDE the repo (temp dir) so the gate never mutates the
-    // checked-in `src/self_host` — it's a read-only canary.
-    let regen = Command::new(aver_bin())
+    // checked-in `src/self_host` — it's a read-only canary. The MIR env
+    // (if any) forces the MIR walker to own the emit.
+    let mut regen_cmd = Command::new(aver_bin());
+    regen_cmd
         .current_dir(&repo)
         .arg("compile")
         .arg("self_hosted/main.av")
@@ -110,12 +147,16 @@ fn self_host_regenerates_and_compiles_and_runs() {
         .arg("runGuestCliProgram")
         .arg("--with-replay")
         .arg("--policy")
-        .arg("runtime")
+        .arg("runtime");
+    for (k, v) in mir_env {
+        regen_cmd.env(k, v);
+    }
+    let regen = regen_cmd
         .output()
         .expect("expected `aver compile self_hosted/main.av` to spawn");
     assert!(
         regen.status.success(),
-        "self-host regeneration failed:\n{}",
+        "self-host regeneration ({label}) failed:\n{}",
         format_output(&regen)
     );
 
@@ -150,7 +191,7 @@ fn self_host_regenerates_and_compiles_and_runs() {
         .expect("expected cargo build of regenerated self-host to spawn");
     assert!(
         build.status.success(),
-        "regenerated self-host CLI failed to compile — a Rust-codegen \
+        "regenerated self-host CLI ({label}) failed to compile — a Rust-codegen \
          regression broke the self-host path:\n{}",
         format_output(&build)
     );
@@ -202,7 +243,7 @@ fn self_host_regenerates_and_compiles_and_runs() {
 
     let pass = PARITY_CORPUS.len() - failures.len();
     eprintln!(
-        "self_host_regenerates_and_compiles_and_runs: compiled OK ({generated_files} src files), \
+        "self-host regen [{label}]: compiled OK ({generated_files} src files), \
          corpus parity {pass}/{}",
         PARITY_CORPUS.len()
     );
@@ -211,7 +252,7 @@ fn self_host_regenerates_and_compiles_and_runs() {
 
     assert!(
         failures.is_empty(),
-        "{} of {} corpus programs failed self-host parity:\n  - {}",
+        "self-host regen [{label}]: {} of {} corpus programs failed parity:\n  - {}",
         failures.len(),
         PARITY_CORPUS.len(),
         failures.join("\n  - ")
