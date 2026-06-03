@@ -706,7 +706,23 @@ fn emit_fn_def_with_visibility(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        let mut wrapped_body = emit_fn_body(&resolved_fd.body, ctx, &ectx);
+        // rust-on-MIR W6/Stage-2 (guest-entry): render the INNER body
+        // through the MIR walker behind the same `AVER_RUST_MIR_MAIN`
+        // gate the main wave (#395) uses — guest-entry is the last
+        // construct still pinned to the HIR expr walker. The
+        // `with_guest_scope[_args][_result]` / `with_program_fn_store`
+        // wrappers below stay UNCHANGED template text around the body.
+        // Falls back to the HIR `emit_fn_body` when there's no MIR program
+        // / the guest-entry FnId has no lowered `MirFn` / the walker
+        // returns `None`, so it stays non-regressing while HIR is still
+        // compiled.
+        let mir_body = if super::from_mir::mir_main_enabled() {
+            super::from_mir::emit_mir_guest_entry_body(resolved_fd, scope, ctx)
+        } else {
+            None
+        };
+        let mut wrapped_body =
+            mir_body.unwrap_or_else(|| emit_fn_body(&resolved_fd.body, ctx, &ectx));
         if let Some((prog_name, module_fns_name)) = &self_host_state {
             wrapped_body = format!(
                 "crate::self_host_support::with_program_fn_store({}.fns.clone(), {}.clone(), || {{\n{}\n}})",
