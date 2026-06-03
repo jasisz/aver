@@ -936,40 +936,7 @@ fn emit_mir_if_then_else(
     // `&*name == "_"`. Mirror that by emitting the comparison cond
     // directly here from the raw operand renders, bypassing the
     // deref-applying `BinOp` arm.
-    let canonical_compare = |op: BinOp| -> Option<(&'static str, bool)> {
-        match op {
-            BinOp::Eq => Some(("==", false)),
-            BinOp::Neq => Some(("==", true)),
-            BinOp::Lt => Some(("<", false)),
-            BinOp::Gte => Some(("<", true)),
-            BinOp::Gt => Some((">", false)),
-            BinOp::Lte => Some((">", true)),
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => None,
-        }
-    };
-
-    let (cond, then_src, else_src) = match &ite.cond.node {
-        MirExpr::BinOp(spanned_binop) if canonical_compare(spanned_binop.node.op).is_some() => {
-            let bop = &spanned_binop.node;
-            let (op_str, invert) = canonical_compare(bop.op).expect("checked by guard");
-            // Raw operand renders — HIR's bool-if-else uses `emit_expr`
-            // directly (no `&*`/literal-deref, no `maybe_clone`).
-            let l = emit_mir_expr(&bop.lhs, emit_ctx)?;
-            let r = emit_mir_expr(&bop.rhs, emit_ctx)?;
-            let cond = format!("({} {} {})", l, op_str, r);
-            if invert {
-                (cond, &ite.else_branch, &ite.then_branch)
-            } else {
-                (cond, &ite.then_branch, &ite.else_branch)
-            }
-        }
-        _ => {
-            // Non-comparison subject (`ResolvedBoolSubjectPlan::Expr`):
-            // HIR emits the subject as-is, branches in source order.
-            let cond = emit_mir_expr(&ite.cond, emit_ctx)?;
-            (cond, &ite.then_branch, &ite.else_branch)
-        }
-    };
+    let (cond, then_src, else_src) = mir_if_cond_and_branches(ite, emit_ctx)?;
 
     let then_branch = mir_maybe_clone(emit_mir_expr(then_src, emit_ctx)?, &then_src.node, emit_ctx);
     let else_branch = mir_maybe_clone(emit_mir_expr(else_src, emit_ctx)?, &else_src.node, emit_ctx);
@@ -1092,6 +1059,28 @@ fn synthetic_arm(pattern: ResolvedPattern) -> ResolvedMatchArm {
 /// any arm body can't render, when a pattern can't translate, or when
 /// the match shape isn't one the walker reproduces yet.
 fn emit_mir_match(m: &MirMatch, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
+    // Default (non-TCO) arm-body renderer: emit the arm body through
+    // the MIR walker, then `maybe_clone` for the owning position —
+    // exactly HIR's per-arm
+    // `maybe_clone(emit_expr(&arm.body.node, …), &arm.body.node, …)`.
+    emit_mir_match_with(m, emit_ctx, &|arm_body, ctx| {
+        let body = emit_mir_expr(arm_body, ctx)?;
+        Some(mir_maybe_clone(body, &arm_body.node, ctx))
+    })
+}
+
+/// Core of [`emit_mir_match`], parameterized over how each arm body is
+/// rendered. `render_arm` turns one arm's `Spanned<MirExpr>` body into
+/// Rust source (or `None` → fall back). The default path renders bodies
+/// as values (`maybe_clone`); the Wave-5 self-TCO loop path renders them
+/// in tail position (self-`TailCall` → rebind + `continue`, value arm →
+/// `return <expr>;`), so the same dispatch/list/generic machinery is
+/// reused for TCO matches instead of forking the recognition.
+fn emit_mir_match_with(
+    m: &MirMatch,
+    emit_ctx: &MirEmitCtx<'_>,
+    render_arm: &dyn Fn(&Spanned<MirExpr>, &MirEmitCtx<'_>) -> Option<String>,
+) -> Option<String> {
     // Translate patterns up front — bail if any pattern can't map.
     let mut arms: Vec<ResolvedMatchArm> = Vec::with_capacity(m.arms.len());
     for arm in &m.arms {
@@ -1101,15 +1090,12 @@ fn emit_mir_match(m: &MirMatch, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
         )?));
     }
 
-    // Pre-render every arm body through the MIR walker, in arm order.
-    // `body_for_arm` (below) maps a `&ResolvedMatchArm` back to its
-    // index by pointer offset into `arms`, then reads the matching
-    // pre-rendered string. Mirror of HIR's per-arm
-    // `maybe_clone(emit_expr(&arm.body.node, …), &arm.body.node, …)`.
+    // Pre-render every arm body, in arm order. `body_for_arm` (below)
+    // maps a `&ResolvedMatchArm` back to its index by pointer offset
+    // into `arms`, then reads the matching pre-rendered string.
     let mut arm_bodies: Vec<String> = Vec::with_capacity(m.arms.len());
     for arm in &m.arms {
-        let body = emit_mir_expr(&arm.body, emit_ctx)?;
-        arm_bodies.push(mir_maybe_clone(body, &arm.body.node, emit_ctx));
+        arm_bodies.push(render_arm(&arm.body, emit_ctx)?);
     }
 
     let body_for_arm = |arm: &ResolvedMatchArm| -> String {
@@ -1389,6 +1375,24 @@ fn mir_only_hatch_enabled() -> bool {
     std::env::var_os("AVER_RUST_MIR_ONLY").is_some_and(|v| v == "1")
 }
 
+/// Is the rust-on-MIR Wave-5 TCO path active (`AVER_RUST_MIR_TCO=1`)?
+///
+/// When set, the self-TCO loop and the mutual-recursion trampoline are
+/// synthesized from `MirExpr::TailCall` by the MIR walker
+/// ([`emit_mir_tco_fn`] / [`emit_mir_mutual_tco_block`]) instead of from
+/// the source-AST HIR emitter (`emit_tco_fn` / `emit_mutual_tco_block`).
+/// Deliberately a SEPARATE flag from `AVER_RUST_MIR_ONLY` (the security
+/// hatch the differential tests depend on): toggling TCO onto MIR must
+/// not change effect-emission ownership, and vice versa.
+///
+/// Read from the env each call (cheap; only on the codegen path) so a
+/// test can toggle it per-process without a rebuild. Production default
+/// (UNSET) keeps the proven HIR TCO emitter — zero regression risk to
+/// the self-host regen path until W6 retires the HIR walker.
+pub(super) fn mir_tco_enabled() -> bool {
+    std::env::var_os("AVER_RUST_MIR_TCO").is_some_and(|v| v == "1")
+}
+
 /// `(graduated, considered)` since the last [`reset_parity_counters`].
 pub fn parity_counters() -> (usize, usize) {
     (
@@ -1470,6 +1474,625 @@ pub(super) fn parity_gated_body(
 /// MIR walker's `+` dispatch.
 fn ty_is_numeric(ty: Option<&Type>) -> bool {
     matches!(ty, Some(Type::Int | Type::Float))
+}
+
+// ── Wave 5: TCO loop / trampoline synthesis from MIR ────────────────────
+//
+// Rust has no TCO primitive — the VM emits a `TAIL_CALL` opcode and
+// wasm-gc a `return_call`, both flat instructions. In generated Rust the
+// loop (self-recursive) and the trampoline (mutual-recursive) STRUCTURE
+// is synthesized in source. Waves 1-4 put every NON-TCO construct on
+// MIR behind a byte-parity gate; TCO is the last holdout because the
+// rewrite is structural (a self-`TailCall` arm becomes `continue` after
+// rebinding the loop's mutable params; a value arm becomes `return`).
+//
+// Approach B (full-lift): the MIR walker emits its OWN correct loop /
+// trampoline, verified BEHAVIORALLY (build + run vs VM + self-host
+// regen), not by byte-parity (TCO never byte-graduates). Two
+// simplifications the behavioral net unlocks vs the HIR emitter:
+//
+//   * **Always-snapshot param rebind.** For every rebound param, emit
+//     `let __tcoN = <arg>;` for ALL of them first, then
+//     `param = __tcoN;` in order, then `continue;`. Strictly correct
+//     (no read-after-write clobber), no substring heuristic. Identity
+//     rebinds (`arg == param`) and pass-through (rc) params are skipped.
+//   * **No loop-invariant hoisting.** That was a byte-parity
+//     optimization, not correctness — deferred.
+//
+// The ownership / borrow facts (rc pass-through params Arc-wrapped on
+// the self-loop / `&T` extra trampoline args; non-rc owned params `mut`
+// with NO borrow-by-default) are re-derived from the AST `FnDef` via the
+// same `compute_rc_params` / `compute_self_passthrough_params` the HIR
+// emitter uses — those are name/structure based and SCC discovery reuses
+// the existing `find_mutual_tco_groups`. Get the ownership wrong → rustc
+// rejects, which the build gate catches.
+
+/// Emit a self-TCO fn entirely from MIR: the public signature
+/// (`mut`-owned params, rc params Arc-wrapped before the loop) + the
+/// `loop { cancel_checkpoint(); <tco-body> }` wrapper, where the body
+/// renders self-`TailCall` arms as `{ rebind; continue }` and value arms
+/// as `return <expr>;`.
+///
+/// `fd` supplies param names/types + drives the AST-based rc /
+/// pass-through computation (mirroring `emit_tco_fn`); `mir_fn.body` is
+/// the MIR body walked in tail position. Returns `None` (→ HIR fallback)
+/// when any sub-expression can't render.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_mir_tco_fn(
+    fd: &crate::ast::FnDef,
+    resolved_fd: &crate::ir::hir::ResolvedFnDef,
+    mir_fn: &crate::ir::mir::MirFn,
+    fn_name: &str,
+    ret_type: &str,
+    visibility: &str,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    use super::toplevel::{compute_rc_params, compute_self_passthrough_params, rc_param_names};
+
+    let passthrough_indices = compute_self_passthrough_params(fd);
+    let rc_indices = compute_rc_params(std::slice::from_ref(&fd), ctx);
+    let rc_names = rc_param_names(&fd.params, &rc_indices);
+
+    // Borrow policy: no borrow-by-default (owned `mut` params), rc
+    // params wrapped (`(*x).clone()` on read). Mirror of
+    // `emit_tco_fn`'s `build_fn_ectx_no_borrow_from_resolved` +
+    // `with_rc_wrapped`.
+    let mut policy = MirFnEmitPolicy::from_resolved(resolved_fd, scope, /* borrow */ false);
+    policy.rc_wrapped = rc_names.clone();
+    let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+
+    // Render the body in tail position FIRST — bail before emitting any
+    // signature if the walker can't render it.
+    let body_code = emit_mir_tco_body(
+        &mir_fn.body,
+        mir_fn.fn_id,
+        &fd.params,
+        &passthrough_indices,
+        &emit_ctx,
+    )?;
+
+    let params = emit_tco_params_mir(&fd.params, &rc_indices);
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "{}fn {}({}) -> {} {{",
+        visibility, fn_name, params, ret_type
+    ));
+    // Wrap pass-through params in Arc before the loop (shadowing the
+    // original binding). Mirror of `emit_tco_fn`.
+    for &i in &rc_indices {
+        let rust_name = aver_name_to_rust(&fd.params[i].0);
+        lines.push(format!(
+            "    let {} = std::sync::Arc::new({});",
+            rust_name, rust_name
+        ));
+    }
+    lines.push("    loop {".to_string());
+    lines.push(body_code);
+    lines.push("    }".to_string());
+    lines.push("}".to_string());
+    Some(lines.join("\n"))
+}
+
+/// Self-TCO param signature: non-rc params are `mut T` (rebound in the
+/// loop), rc params are plain `T` (shadowed by the Arc::new binding).
+/// Mirror of `emit_fn_params_tco`.
+fn emit_tco_params_mir(
+    params: &[(String, String)],
+    rc_indices: &std::collections::HashSet<usize>,
+) -> String {
+    params
+        .iter()
+        .enumerate()
+        .map(|(i, (name, type_ann))| {
+            let rust_type = super::types::type_annotation_to_rust(type_ann);
+            let rust_name = aver_name_to_rust(name);
+            if rc_indices.contains(&i) {
+                format!("{}: {}", rust_name, rust_type)
+            } else {
+                format!("mut {}: {}", rust_name, rust_type)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Emit the self-TCO loop body (inside `loop { … }`). Leads with
+/// `cancel_checkpoint();`, then renders the MIR body in tail position. A
+/// top-level `Let` chain (leading bindings) emits flat `let x = v;` lines
+/// then recurses into the chain's final expression as a tail expr.
+fn emit_mir_tco_body(
+    body: &Spanned<MirExpr>,
+    self_fn: crate::ir::FnId,
+    params: &[(String, String)],
+    passthrough: &std::collections::HashSet<usize>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let mut lines = Vec::new();
+    lines.push("        crate::cancel_checkpoint();".to_string());
+
+    // Walk the leading `Let` chain (named bindings) as plain `let`
+    // statements, then the final expression as a tail expr. Synthetic
+    // (empty-name) bindings can't render as a `let` — bail to HIR.
+    let mut current = body;
+    loop {
+        match &current.node {
+            MirExpr::Let(spanned_let) if !spanned_let.node.binding_name.is_empty() => {
+                let let_node = &spanned_let.node;
+                let value = emit_mir_expr(&let_node.value, ctx)?;
+                let name = aver_name_to_rust(&let_node.binding_name);
+                lines.push(format!("        let {} = {};", name, value));
+                current = &let_node.body;
+            }
+            _ => break,
+        }
+    }
+
+    let tail = emit_mir_tco_tail_expr(current, self_fn, params, passthrough, ctx)?;
+    lines.push(format!("        {}", tail));
+    Some(lines.join("\n"))
+}
+
+/// Emit a MIR expression in self-TCO tail position. Self-`TailCall` →
+/// `{ rebind; continue }`; `Match` / `IfThenElse` recurse into arms
+/// (still tail position); anything else is a base-case value → `return
+/// <expr>;`.
+fn emit_mir_tco_tail_expr(
+    expr: &Spanned<MirExpr>,
+    self_fn: crate::ir::FnId,
+    params: &[(String, String)],
+    passthrough: &std::collections::HashSet<usize>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    match &expr.node {
+        MirExpr::TailCall(spanned_tc) => {
+            let tc = &spanned_tc.node;
+            if tc.target == self_fn && tc.args.len() == params.len() {
+                emit_mir_self_tco_continue(&tc.args, params, passthrough, ctx)
+            } else {
+                // Tail call to a DIFFERENT fn (out of this self-loop):
+                // emit a plain call + return. The leverage note's
+                // module-DAG invariant means a self-TCO body's tail
+                // calls target itself; a foreign target here is rare but
+                // handled correctly.
+                let name = ctx.symbol_table.fn_entry(tc.target).key.canonical();
+                Some(format!(
+                    "return {};",
+                    emit_named_call(&name, &tc.args, ctx)?
+                ))
+            }
+        }
+        MirExpr::Match(spanned_match) => {
+            emit_mir_match_with(&spanned_match.node, ctx, &|arm_body, ctx| {
+                emit_mir_tco_tail_expr(arm_body, self_fn, params, passthrough, ctx)
+            })
+        }
+        MirExpr::IfThenElse(spanned_ite) => {
+            emit_mir_tco_if_then_else(&spanned_ite.node, self_fn, params, passthrough, ctx)
+        }
+        // Base-case value (or `?` / let-bound value): `return <expr>;`.
+        _ => Some(format!("return {};", emit_mir_value_return(expr, ctx)?)),
+    }
+}
+
+/// Render a MIR `IfThenElse` in TCO tail position — both branches stay
+/// in tail position (recurse). Reuses the condition canonicalization
+/// from [`emit_mir_if_then_else`] would be ideal, but that helper
+/// renders branches as values; here branches are tail exprs, so we
+/// re-derive the condition the same way (the MIR `bool_match_to_if` pass
+/// is the only producer).
+fn emit_mir_tco_if_then_else(
+    ite: &crate::ir::mir::MirIfThenElse,
+    self_fn: crate::ir::FnId,
+    params: &[(String, String)],
+    passthrough: &std::collections::HashSet<usize>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let (cond, then_src, else_src) = mir_if_cond_and_branches(ite, ctx)?;
+    let then_branch = emit_mir_tco_tail_expr(then_src, self_fn, params, passthrough, ctx)?;
+    let else_branch = emit_mir_tco_tail_expr(else_src, self_fn, params, passthrough, ctx)?;
+    Some(format!(
+        "if {} {{ {} }} else {{ {} }}",
+        cond, then_branch, else_branch
+    ))
+}
+
+/// Render a value expression for a `return` in a TCO / trampoline base
+/// case. Mirror of `emit_mir_expr` + the owning-position `maybe_clone`,
+/// plus the HIR `emit_tco_expr` `_` arm's bare-rc-ident deref-clone:
+/// returning a pass-through param (Arc<T> / &T) needs `(*x).clone()` to
+/// yield an owned `T`.
+fn emit_mir_value_return(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    let code = emit_mir_expr(expr, ctx)?;
+    Some(mir_maybe_clone(code, &expr.node, ctx))
+}
+
+/// Emit the self-TCO `{ rebind; continue }` block from the tail-call
+/// args, using the always-snapshot rule. Pass-through (rc) params and
+/// identity rebinds (`arg == param`) are skipped; every other rebound
+/// param gets a `let __tcoN = <arg>;` snapshot first (avoiding
+/// read-after-write clobber), then `param = __tcoN;` in order, then
+/// `continue;`.
+fn emit_mir_self_tco_continue(
+    args: &[Spanned<MirExpr>],
+    params: &[(String, String)],
+    passthrough: &std::collections::HashSet<usize>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let mut arg_strs = Vec::with_capacity(args.len());
+    for a in args {
+        arg_strs.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
+    }
+
+    // Which positions are actually rebound (non-passthrough, non-identity)?
+    let mut rebind: Vec<bool> = vec![false; params.len()];
+    for (i, (name, _)) in params.iter().enumerate() {
+        if passthrough.contains(&i) {
+            continue;
+        }
+        if arg_strs[i] == aver_name_to_rust(name) {
+            continue; // identity — no-op
+        }
+        rebind[i] = true;
+    }
+
+    let mut lines = Vec::new();
+    lines.push("{".to_string());
+    // Phase 1: snapshot ALL rebound args into temps (always-snapshot).
+    for (i, arg_str) in arg_strs.iter().enumerate() {
+        if rebind[i] {
+            lines.push(format!("            let __tco{} = {};", i, arg_str));
+        }
+    }
+    // Phase 2: assign temps back to params, in order.
+    for (i, (name, _)) in params.iter().enumerate() {
+        if rebind[i] {
+            lines.push(format!(
+                "            {} = __tco{};",
+                aver_name_to_rust(name),
+                i
+            ));
+        }
+    }
+    lines.push("            continue;".to_string());
+    lines.push("        }".to_string());
+    Some(lines.join("\n"))
+}
+
+/// Recompute the canonicalized condition + the (possibly swapped) tail
+/// branches for a MIR `IfThenElse`. Shared by the value emitter
+/// ([`emit_mir_if_then_else`]) and the TCO emitter — extracted so the
+/// condition-rewrite logic lives in one place.
+fn mir_if_cond_and_branches<'a>(
+    ite: &'a crate::ir::mir::MirIfThenElse,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<(String, &'a Spanned<MirExpr>, &'a Spanned<MirExpr>)> {
+    let canonical_compare = |op: BinOp| -> Option<(&'static str, bool)> {
+        match op {
+            BinOp::Eq => Some(("==", false)),
+            BinOp::Neq => Some(("==", true)),
+            BinOp::Lt => Some(("<", false)),
+            BinOp::Gte => Some(("<", true)),
+            BinOp::Gt => Some((">", false)),
+            BinOp::Lte => Some((">", true)),
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => None,
+        }
+    };
+    match &ite.cond.node {
+        MirExpr::BinOp(spanned_binop) if canonical_compare(spanned_binop.node.op).is_some() => {
+            let bop = &spanned_binop.node;
+            let (op_str, invert) = canonical_compare(bop.op).expect("checked by guard");
+            let l = emit_mir_expr(&bop.lhs, ctx)?;
+            let r = emit_mir_expr(&bop.rhs, ctx)?;
+            let cond = format!("({} {} {})", l, op_str, r);
+            if invert {
+                Some((cond, &ite.else_branch, &ite.then_branch))
+            } else {
+                Some((cond, &ite.then_branch, &ite.else_branch))
+            }
+        }
+        _ => {
+            let cond = emit_mir_expr(&ite.cond, ctx)?;
+            Some((cond, &ite.then_branch, &ite.else_branch))
+        }
+    }
+}
+
+// ── Wave 5: mutual-recursion trampoline from MIR ────────────────────────
+
+/// Emit a mutual-TCO block from MIR: a state enum (one variant per
+/// member, payload = non-rc param values), a trampoline dispatch loop
+/// (member-`TailCall` bounces to a new enum variant, a value `return`s),
+/// and thin wrapper fns. Mirror of
+/// [`super::toplevel::emit_mutual_tco_block`], but the member bodies are
+/// walked from MIR (`MirFn.body`) instead of the source AST.
+///
+/// `group_fns` is the SCC (from the existing AST-based
+/// `find_mutual_tco_groups`); `mir_fns` are the matching `MirFn`s in the
+/// same order. Returns `None` (→ HIR fallback for the whole block) when
+/// any member body can't render — the block is all-or-nothing because
+/// the members share one trampoline.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_mir_mutual_tco_block(
+    group_id: usize,
+    group_fns: &[&crate::ast::FnDef],
+    mir_fns: &[&crate::ir::mir::MirFn],
+    resolved_fns: &[&crate::ir::hir::ResolvedFnDef],
+    ctx: &CodegenContext,
+    scope: Option<&str>,
+    visibility: &str,
+) -> Option<String> {
+    use super::toplevel::{compute_rc_params, fn_name_to_variant, rc_param_names};
+
+    if group_fns.is_empty() {
+        return None;
+    }
+    let enum_name = format!("__MutualTco{}", group_id);
+    let trampoline_name = format!("__mutual_tco_trampoline_{}", group_id);
+    let ret_type = if group_fns[0].return_type.is_empty() {
+        "()".to_string()
+    } else {
+        super::types::type_annotation_to_rust(&group_fns[0].return_type)
+    };
+
+    let member_fn_ids: HashSet<crate::ir::FnId> = mir_fns.iter().map(|m| m.fn_id).collect();
+    let rc_indices = compute_rc_params(group_fns, ctx);
+    let rc_names = rc_param_names(&group_fns[0].params, &rc_indices);
+
+    // Render every member's trampoline-arm body FIRST — bail before
+    // emitting anything if a member can't render (all-or-nothing block).
+    let mut arm_bodies: Vec<String> = Vec::with_capacity(group_fns.len());
+    for (i, mir_fn) in mir_fns.iter().enumerate() {
+        // Trampoline arm policy: no borrow-by-default, rc params wrapped.
+        let mut policy = MirFnEmitPolicy::from_resolved(resolved_fns[i], scope, false);
+        policy.rc_wrapped = rc_names.clone();
+        let arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
+        let body = emit_mir_trampoline_body(
+            &mir_fn.body,
+            &member_fn_ids,
+            &enum_name,
+            &rc_names,
+            &arm_ctx,
+        )?;
+        arm_bodies.push(body);
+    }
+
+    let mut sections = Vec::new();
+
+    // 1. Enum — one variant per member, payload = non-rc param types.
+    let mut enum_lines = Vec::new();
+    enum_lines.push("#[allow(non_camel_case_types)]".to_string());
+    enum_lines.push(format!("enum {} {{", enum_name));
+    for fd in group_fns {
+        let variant = fn_name_to_variant(&fd.name);
+        let param_types: Vec<String> = fd
+            .params
+            .iter()
+            .filter(|(name, _)| !rc_names.contains(name))
+            .map(|(_, ty)| super::types::type_annotation_to_rust(ty))
+            .collect();
+        if param_types.is_empty() {
+            enum_lines.push(format!("    {},", variant));
+        } else {
+            enum_lines.push(format!("    {}({}),", variant, param_types.join(", ")));
+        }
+    }
+    enum_lines.push("}".to_string());
+    sections.push(enum_lines.join("\n"));
+
+    // 2. Trampoline fn — rc params are extra `&T` args.
+    let rc_extra_params: String = mutual_rc_param_sig(group_fns[0], &rc_names);
+    let mut tramp_lines = Vec::new();
+    tramp_lines.push(format!(
+        "fn {}(mut __state: {}{}) -> {} {{",
+        trampoline_name, enum_name, rc_extra_params, ret_type
+    ));
+    tramp_lines.push("    loop {".to_string());
+    tramp_lines.push("        __state = match __state {".to_string());
+    for (fd, arm_body) in group_fns.iter().zip(&arm_bodies) {
+        let variant = fn_name_to_variant(&fd.name);
+        let param_bindings: Vec<String> = fd
+            .params
+            .iter()
+            .filter(|(name, _)| !rc_names.contains(name))
+            .map(|(name, _)| format!("mut {}", aver_name_to_rust(name)))
+            .collect();
+        let binding = if param_bindings.is_empty() {
+            format!("{}::{}", enum_name, variant)
+        } else {
+            format!("{}::{}({})", enum_name, variant, param_bindings.join(", "))
+        };
+        tramp_lines.push(format!("            {} => {{", binding));
+        tramp_lines.push(arm_body.clone());
+        tramp_lines.push("            }".to_string());
+    }
+    tramp_lines.push("        };".to_string());
+    tramp_lines.push("    }".to_string());
+    tramp_lines.push("}".to_string());
+    sections.push(tramp_lines.join("\n"));
+
+    // 3. Wrapper fns — borrow-by-default params, clone borrowed into the
+    //    enum variant, pass rc params as `&T` extra trampoline args.
+    for fd in group_fns {
+        let fn_name = aver_name_to_rust(&fd.name);
+        let variant = fn_name_to_variant(&fd.name);
+        let params = super::toplevel::emit_fn_params_pub(&fd.params, false);
+        let variant_arg_names: Vec<String> = fd
+            .params
+            .iter()
+            .filter(|(name, _)| !rc_names.contains(name))
+            .map(|(name, type_ann)| {
+                let rust_name = aver_name_to_rust(name);
+                let ty = crate::types::parse_type_str(type_ann);
+                if should_borrow_param(&ty) {
+                    format!("{}.clone()", rust_name)
+                } else {
+                    rust_name
+                }
+            })
+            .collect();
+        let variant_call = if variant_arg_names.is_empty() {
+            format!("{}::{}", enum_name, variant)
+        } else {
+            format!(
+                "{}::{}({})",
+                enum_name,
+                variant,
+                variant_arg_names.join(", ")
+            )
+        };
+        let rc_extra_args: String = {
+            let parts: Vec<String> = fd
+                .params
+                .iter()
+                .filter(|(name, _)| rc_names.contains(name))
+                .map(|(name, _)| format!("&{}", aver_name_to_rust(name)))
+                .collect();
+            if parts.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", parts.join(", "))
+            }
+        };
+        let mut wrapper = Vec::new();
+        if let Some(desc) = &fd.desc {
+            wrapper.push(format!("/// {}", desc));
+        }
+        wrapper.push(format!(
+            "{}fn {}({}) -> {} {{",
+            visibility, fn_name, params, ret_type
+        ));
+        wrapper.push(format!(
+            "    {}({}{})",
+            trampoline_name, variant_call, rc_extra_args
+        ));
+        wrapper.push("}".to_string());
+        sections.push(wrapper.join("\n"));
+    }
+
+    Some(sections.join("\n\n"))
+}
+
+/// Build the rc-param extra `&T` argument list for the mutual
+/// trampoline signature (`, x: &T, y: &U`), or empty when no rc params.
+fn mutual_rc_param_sig(fd: &crate::ast::FnDef, rc_names: &HashSet<String>) -> String {
+    if rc_names.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = fd
+        .params
+        .iter()
+        .filter(|(name, _)| rc_names.contains(name))
+        .map(|(name, ty)| {
+            format!(
+                "{}: &{}",
+                aver_name_to_rust(name),
+                super::types::type_annotation_to_rust(ty)
+            )
+        })
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", parts.join(", "))
+    }
+}
+
+/// Emit one trampoline arm body from MIR: leads with
+/// `cancel_checkpoint();`, walks the leading `Let` chain as plain `let`
+/// statements, then renders the final expression in trampoline tail
+/// position (member-`TailCall` → enum variant bounce, value → `return`).
+fn emit_mir_trampoline_body(
+    body: &Spanned<MirExpr>,
+    members: &HashSet<crate::ir::FnId>,
+    enum_name: &str,
+    rc_names: &HashSet<String>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let mut lines = Vec::new();
+    lines.push("                crate::cancel_checkpoint();".to_string());
+
+    let mut current = body;
+    loop {
+        match &current.node {
+            MirExpr::Let(spanned_let) if !spanned_let.node.binding_name.is_empty() => {
+                let let_node = &spanned_let.node;
+                let value = emit_mir_expr(&let_node.value, ctx)?;
+                let name = aver_name_to_rust(&let_node.binding_name);
+                lines.push(format!("                let {} = {};", name, value));
+                current = &let_node.body;
+            }
+            _ => break,
+        }
+    }
+
+    let tail = emit_mir_trampoline_tail_expr(current, members, enum_name, rc_names, ctx)?;
+    lines.push(format!("                {}", tail));
+    Some(lines.join("\n"))
+}
+
+/// Render a MIR expression in trampoline tail position. A `TailCall` to
+/// a group member becomes an enum-variant bounce (excluding rc args); a
+/// `TailCall` to a non-member, or any base-case value, becomes a
+/// `return`. `Match` / `IfThenElse` recurse (still tail position).
+fn emit_mir_trampoline_tail_expr(
+    expr: &Spanned<MirExpr>,
+    members: &HashSet<crate::ir::FnId>,
+    enum_name: &str,
+    rc_names: &HashSet<String>,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    match &expr.node {
+        MirExpr::TailCall(spanned_tc) => {
+            let tc = &spanned_tc.node;
+            if members.contains(&tc.target) {
+                // Bounce → enum variant for the TARGET member, excluding
+                // its rc (pass-through) args. The target's param names
+                // drive which positional args are rc — read them off the
+                // target fn entry's source-level signature so the rc
+                // filter matches the target, not the caller.
+                let target_name = ctx.symbol_table.fn_entry(tc.target).key.name.clone();
+                let variant = super::toplevel::fn_name_to_variant(&target_name);
+                let mut arg_strs = Vec::new();
+                for a in &tc.args {
+                    // Skip rc args by the arg's source-level name: a
+                    // pass-through arg is a bare local read whose name is
+                    // in `rc_names` (shared across the SCC by name+type).
+                    if let Some(local) = local_of(&a.node)
+                        && rc_names.contains(&local.name)
+                    {
+                        continue;
+                    }
+                    arg_strs.push(mir_clone_arg(emit_mir_expr(a, ctx)?, &a.node, ctx));
+                }
+                if arg_strs.is_empty() {
+                    Some(format!("{}::{}", enum_name, variant))
+                } else {
+                    Some(format!(
+                        "{}::{}({})",
+                        enum_name,
+                        variant,
+                        arg_strs.join(", ")
+                    ))
+                }
+            } else {
+                let name = ctx.symbol_table.fn_entry(tc.target).key.canonical();
+                Some(format!("return {}", emit_named_call(&name, &tc.args, ctx)?))
+            }
+        }
+        MirExpr::Match(spanned_match) => {
+            emit_mir_match_with(&spanned_match.node, ctx, &|arm_body, ctx| {
+                emit_mir_trampoline_tail_expr(arm_body, members, enum_name, rc_names, ctx)
+            })
+        }
+        MirExpr::IfThenElse(spanned_ite) => {
+            let (cond, then_src, else_src) = mir_if_cond_and_branches(&spanned_ite.node, ctx)?;
+            let t = emit_mir_trampoline_tail_expr(then_src, members, enum_name, rc_names, ctx)?;
+            let e = emit_mir_trampoline_tail_expr(else_src, members, enum_name, rc_names, ctx)?;
+            Some(format!("if {} {{ {} }} else {{ {} }}", cond, t, e))
+        }
+        _ => Some(format!("return {}", emit_mir_value_return(expr, ctx)?)),
+    }
 }
 
 // ── MIR-side borrow / clone machinery ───────────────────────────────────

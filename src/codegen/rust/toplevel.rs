@@ -823,7 +823,35 @@ fn emit_fn_def_with_visibility(
             fd, &fn_name, &params, &ret_type, ctx, &ectx, visibility,
         ));
     } else if has_tco {
-        lines.push(emit_tco_fn(fd, &fn_name, &ret_type, ctx, &ectx, visibility));
+        // rust-on-MIR Wave 5: synthesize the self-TCO loop from MIR
+        // behind `AVER_RUST_MIR_TCO=1`. Behavioral (build + run vs VM +
+        // self-host regen), not byte-parity — TCO never byte-graduates.
+        // Production default (flag unset) keeps the proven HIR emitter.
+        // `memo` precedence is preserved: this branch is `else if`, so a
+        // memoized fn never reaches the TCO path.
+        let mir_tco = if super::from_mir::mir_tco_enabled() {
+            ctx.mir_program
+                .as_ref()
+                .and_then(|p| p.fn_by_id(resolved_fd.fn_id))
+                .and_then(|mir_fn| {
+                    super::from_mir::emit_mir_tco_fn(
+                        fd,
+                        resolved_fd,
+                        mir_fn,
+                        &fn_name,
+                        &ret_type,
+                        visibility,
+                        scope,
+                        ctx,
+                    )
+                })
+        } else {
+            None
+        };
+        match mir_tco {
+            Some(code) => lines.push(code),
+            None => lines.push(emit_tco_fn(fd, &fn_name, &ret_type, ctx, &ectx, visibility)),
+        }
     } else {
         lines.push(format!(
             "{}fn {}({}) -> {} {{",
@@ -860,6 +888,12 @@ fn emit_fn_def_with_visibility(
 
 fn emit_fn_params(params: &[(String, String)], mutable: bool) -> String {
     emit_fn_params_with_rc(params, mutable, &HashSet::new())
+}
+
+/// `pub(super)` shim so the MIR walker's mutual-TCO wrapper emits the
+/// same borrow-by-default param signature as the HIR emitter's wrappers.
+pub(super) fn emit_fn_params_pub(params: &[(String, String)], mutable: bool) -> String {
+    emit_fn_params(params, mutable)
 }
 
 /// Emit function params for self-TCO: non-Rc params are `mut`, Rc params are not
@@ -1010,7 +1044,7 @@ fn is_expensive_clone_type(ty: &crate::types::Type) -> bool {
 /// For a group of mutually-recursive functions (or a single self-recursive fn),
 /// find param indices that are "pass-through" — never rebound in tail calls.
 /// These can safely be passed as `&T` borrows to avoid deep cloning.
-fn compute_rc_params(group_fns: &[&FnDef], _ctx: &CodegenContext) -> HashSet<usize> {
+pub(super) fn compute_rc_params(group_fns: &[&FnDef], _ctx: &CodegenContext) -> HashSet<usize> {
     if group_fns.is_empty() {
         return HashSet::new();
     }
@@ -1225,7 +1259,10 @@ fn check_expr_tailcalls_for_rc(
 }
 
 /// Build a set of param names that should be borrowed (`&T`), given rc_indices.
-fn rc_param_names(params: &[(String, String)], rc_indices: &HashSet<usize>) -> HashSet<String> {
+pub(super) fn rc_param_names(
+    params: &[(String, String)],
+    rc_indices: &HashSet<usize>,
+) -> HashSet<String> {
     rc_indices
         .iter()
         .filter_map(|&i| params.get(i).map(|(name, _)| name.clone()))
@@ -2409,7 +2446,7 @@ fn emit_tco_expr(
     }
 }
 
-fn compute_self_passthrough_params(fd: &FnDef) -> HashSet<usize> {
+pub(super) fn compute_self_passthrough_params(fd: &FnDef) -> HashSet<usize> {
     let mut candidates: HashSet<usize> = (0..fd.params.len()).collect();
     let member_names = HashSet::from([fd.name.as_str()]);
     check_tailcalls_for_rc(&fd.body, &member_names, &fd.params, &mut candidates);
@@ -2440,7 +2477,7 @@ pub fn find_mutual_tco_groups(fn_defs: &[&FnDef]) -> Vec<Vec<usize>> {
 }
 
 /// Convert an Aver function name to a PascalCase enum variant name.
-fn fn_name_to_variant(name: &str) -> String {
+pub(super) fn fn_name_to_variant(name: &str) -> String {
     let rust_name = aver_name_to_rust(name);
     let mut chars = rust_name.chars();
     match chars.next() {
