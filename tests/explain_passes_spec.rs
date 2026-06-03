@@ -8,14 +8,23 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// Parallel test fns share this binary's process, so a process-wide atomic
+// counter (plus pid) makes every `tempfile` path unique. nanos alone raced:
+// same-nanosecond callers got the same path and clobbered / removed each
+// other's files mid-compile, so a varying subset of tests failed per run.
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn tempfile(prefix: &str, suffix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    std::env::temp_dir().join(format!("{prefix}-{nanos}{suffix}"))
+    let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    std::env::temp_dir().join(format!("{prefix}-{pid}-{nanos}-{seq}{suffix}"))
 }
 
 fn run_explain_passes(source: &str) -> serde_json::Value {
