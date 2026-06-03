@@ -1207,3 +1207,144 @@ fn mir_forced_independent_product_builds_and_matches_vm() {
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));
 }
+
+// ─── Mode (g): MIR-emitted first-class fn values ──────────────────────────
+//
+// W6/Stage-0 (the final construct gap): the MIR walker now emits
+// `MirExpr::FnValue` (a named fn used as a value — `applyIt(dbl, 21)`
+// passes `dbl`) and `MirCallee::LocalSlot` (calling a fn-typed param —
+// `f(v)` inside `applyIt`). Post-#379 a fn value can only enter through a
+// `Fn(..)` param, so the emitted Rust is a plain fn-pointer
+// (`fn(i64)->i64`) — no closure / `dyn Fn`, no monomorphization. Rust CAN
+// execute these (unlike wasm-gc, which traps), so this is an EMIT path,
+// not a trap-stub, and must produce VM-identical output.
+//
+// The corpus is thin on higher-order (only `pairSpec` in
+// `examples/formal/oracle_independent_products.av`, verify-only), so this
+// is an inline RUNTIME probe: `dbl` / `inc` are passed into `applyIt`
+// (FnValue in arg position), `applyIt` calls them through its slot
+// (LocalSlot). Under `AVER_RUST_MIR_ONLY=1` the FnValue / LocalSlot fns
+// are FORCED onto the MIR path, so the built binary's `a=42 b=42` proves
+// the MIR walker OWNS the first-class-fn emission (a dropped FnValue arg
+// or a mis-emitted slot call would change stdout or fail to build).
+const MIR_HIGHER_ORDER_PROBE: &str = r#"module HigherOrderProbe
+    intent =
+        "Probes first-class fn values: a fn passed as a Fn(..) param value"
+        "(MirExpr::FnValue) and called through that slot (MirCallee::LocalSlot)."
+    effects [Console]
+
+fn dbl(x: Int) -> Int
+    ? "Double a number."
+    x * 2
+
+fn inc(x: Int) -> Int
+    ? "Increment a number."
+    x + 1
+
+fn applyIt(f: Fn(Int) -> Int, v: Int) -> Int
+    ? "Apply a first-class fn value to v (calls through the slot — LocalSlot)."
+    f(v)
+
+fn runDouble(v: Int) -> Int
+    ? "Pass dbl as a fn value into applyIt (FnValue in arg position)."
+    applyIt(dbl, v)
+
+fn runInc(v: Int) -> Int
+    ? "Pass inc as a fn value into applyIt (FnValue in arg position)."
+    applyIt(inc, v)
+
+fn main() -> Unit
+    ! [Console.print]
+    a = runDouble(21)
+    b = runInc(41)
+    Console.print("a={a} b={b}")
+"#;
+
+#[test]
+fn mir_first_class_fn_value_builds_and_matches_vm() {
+    let ws = temp_dir("mir_ho");
+    let src = ws.join("higher_order_probe.av");
+    fs::write(&src, MIR_HIGHER_ORDER_PROBE).expect("write higher-order probe source");
+
+    let vm_stdout = run_vm(&src, None).unwrap_or_else(|e| panic!("VM run failed: {e}"));
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "mir_ho_probe";
+    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
+
+    let result = (|| -> Result<(), String> {
+        // (0) PROVE the MIR path is exercised: the FnValue / LocalSlot fns
+        // (`applyIt`, `runDouble`, `runInc`) must graduate onto MIR under
+        // the hatch. Without this guard a silent HIR fallback would let
+        // the probe pass for the wrong reason (the FnValue / LocalSlot
+        // emit would never run). `dbl` / `inc` / the three higher-order
+        // fns graduate; only `main` (a `Console.print` interpolation,
+        // `Call(Builtin)`) stays on HIR — so ≥ 5 must graduate.
+        let grad = graduated_count(&src, None, &[], &hatch)?;
+        if grad < 5 {
+            return Err(format!(
+                "expected ≥ 5 fns to graduate onto MIR under AVER_RUST_MIR_ONLY=1 \
+                 (dbl, inc, applyIt, runDouble, runInc) — got {grad}. The FnValue / \
+                 LocalSlot emit is not being exercised by the MIR walker."
+            ));
+        }
+
+        // Force the MIR body onto production for every renderable fn, so
+        // the FnValue arg + LocalSlot call are MIR-emitted (not the
+        // byte-equal HIR fallback), then build + run.
+        compile_rust_env(&src, &project, name, None, &[], &hatch)?;
+
+        // Structural tripwire: the emitted Rust must carry the fn-pointer
+        // param (`f: fn(i64) -> i64`), the FnValue passed by bare name
+        // (`applyIt(dbl, v)`), and the call-through-slot (`f(v)`). A
+        // dropped FnValue or a mis-emitted slot call would erase these.
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted module: {e}"))?;
+        if !emitted.contains("f: fn(i64) -> i64") {
+            return Err(format!(
+                "emitted Rust is missing the fn-pointer param `f: fn(i64) -> i64` — \
+                 the LocalSlot param lowering was dropped:\n{emitted}"
+            ));
+        }
+        if !emitted.contains("applyIt(dbl, v)") || !emitted.contains("applyIt(inc, v)") {
+            return Err(format!(
+                "emitted Rust is missing the FnValue arg `applyIt(dbl, v)` / \
+                 `applyIt(inc, v)` — the FnValue emit was dropped:\n{emitted}"
+            ));
+        }
+        if !emitted.contains("f(v)") {
+            return Err(format!(
+                "emitted Rust is missing the call-through-slot `f(v)` — the \
+                 LocalSlot call emit was dropped:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "MIR first-class-fn binary exited non-zero:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "MIR first-class-fn stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust (MIR) ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}

@@ -215,7 +215,14 @@ pub struct MirCall {
 /// — backends look up the canonical name via
 /// `SymbolTable::builtin_entry(id)` when they need to dispatch
 /// against the existing string-keyed runtime registries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Not `Copy`: the `LocalSlot` variant carries the source param
+/// `name` (re-added in W6/Stage-0 so the Rust walker can emit the
+/// fn-pointer call by name), and `String` isn't `Copy`. The
+/// slot-/id-keyed consumers (VM, wasm-gc) never copied the callee
+/// out by value — they pattern-match through a `&MirCall` — so the
+/// loss of `Copy` is inert there.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirCallee {
     /// User-defined function (any module, including the current
     /// one). Resolved at HIR → MIR lowering — never a string.
@@ -239,7 +246,17 @@ pub enum MirCallee {
     /// The backend pushes the slot value (the callee) then the args and
     /// dispatches dynamically (the VM's `CALL_VALUE`). `last_use` lets
     /// the read use `MOVE_LOCAL` over `LOAD_LOCAL`.
-    LocalSlot { slot: u16, last_use: bool },
+    ///
+    /// `name` carries the source-level binder of the slot (the `Fn(..)`
+    /// param name). The slot-addressed VM ignores it; the Rust walker
+    /// needs it to emit the fn-pointer call by name (`name(args…)`),
+    /// mirroring HIR's `ResolvedCallee::LocalSlot { name, .. }`. Threaded
+    /// through verbatim from HIR at lowering (`lower.rs`).
+    LocalSlot {
+        slot: u16,
+        name: String,
+        last_use: bool,
+    },
 }
 
 /// `target(args…)` in tail position — same SCC as the surrounding fn.

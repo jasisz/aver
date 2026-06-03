@@ -305,9 +305,16 @@ fn lower_expr(
                 ResolvedCallee::Intrinsic(intrinsic) => MirCallee::Intrinsic(*intrinsic),
                 // First-class fn value in a local slot — `f(x)` where `f`
                 // is a `Fn(..)` param / let-bound fn. Dispatches through
-                // the VM's `CALL_VALUE` at the walker.
-                ResolvedCallee::LocalSlot { slot, last_use, .. } => MirCallee::LocalSlot {
+                // the VM's `CALL_VALUE` at the walker. `name` is threaded
+                // verbatim so the Rust walker can emit the fn-pointer call
+                // by name; the VM addresses by slot and ignores it.
+                ResolvedCallee::LocalSlot {
+                    slot,
+                    name,
+                    last_use,
+                } => MirCallee::LocalSlot {
                     slot: *slot,
+                    name: name.clone(),
                     last_use: last_use.0,
                 },
                 // Unresolved callees (typecheck-rejected recovery) still
