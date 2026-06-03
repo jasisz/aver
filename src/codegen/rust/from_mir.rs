@@ -32,8 +32,18 @@
 //! user ctors, including dep-module records resolved through
 //! `module_prefixes`), and `IfThenElse`.
 //!
-//! Not covered — these fall back to the HIR walker: `Match`,
-//! `IndependentProduct`, and `FnValue`. `InterpolatedStr` never reaches
+//! `Match` (Wave 2) — `MirExpr::Match` emits through [`emit_mir_match`],
+//! mirroring HIR's `emit_match` / `emit_dispatch_table_match` /
+//! `emit_list_match` selection byte-for-byte. The shared classifiers
+//! (`classify_match_dispatch_plan_resolved` etc.) + `emit_pattern` +
+//! the dispatch/list emitters are reused directly by translating each
+//! `MirPattern` → `ResolvedPattern` and feeding a `body_for_arm`
+//! closure that renders the matching arm's MIR body. Bool two-arm
+//! matches never reach this arm — the MIR optimizer's `bool_match_to_if`
+//! pass already rewrote them to `IfThenElse` (handled above).
+//!
+//! Not covered — these fall back to the HIR walker:
+//! `IndependentProduct` and `FnValue`. `InterpolatedStr` never reaches
 //! the walker — `interp_lower` lowers it away before codegen runs.
 
 use std::collections::{HashMap, HashSet};
@@ -41,12 +51,20 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{BinOp, Spanned, Type};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::module_prefix_to_rust_path;
-use crate::ir::SymbolTable;
-use crate::ir::hir::BuiltinCtor;
-use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirLocal, MirProgram};
+use crate::ir::hir::{
+    BuiltinCtor, ResolvedCtor, ResolvedMatchArm, ResolvedPattern,
+    classify_match_dispatch_plan_resolved,
+};
+use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirLocal, MirMatch, MirPattern, MirProgram};
+use crate::ir::{MatchDispatchPlan, SymbolTable};
 
 use super::emit_ctx::{is_copy_type, should_borrow_param};
-use super::expr::{callee_borrow_mask, constructor_boxed_positions, emit_literal};
+use super::expr::{
+    callee_borrow_mask, constructor_boxed_positions, emit_dispatch_table_match, emit_list_match,
+    emit_literal, emit_pattern_rebindings, emit_ref_match_rebindings, has_list_patterns,
+    has_string_literal_patterns,
+};
+use super::pattern::emit_pattern;
 use super::syntax::aver_name_to_rust;
 
 /// Walker-side emit context. Holds the slice of the
@@ -388,6 +406,21 @@ fn first_blocker(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<&
             .or_else(|| first_blocker(&ite.node.then_branch, emit_ctx))
             .or_else(|| first_blocker(&ite.node.else_branch, emit_ctx))
             .or(Some("IfThenElse")),
+        MirExpr::Match(m) => {
+            if let Some(b) = first_blocker(&m.node.subject, emit_ctx) {
+                return Some(b);
+            }
+            for arm in &m.node.arms {
+                if let Some(b) = first_blocker(&arm.body, emit_ctx) {
+                    return Some(b);
+                }
+            }
+            // Subject + every arm body emit cleanly, yet the Match as a
+            // whole returned `None` — the blocker is the match shape
+            // itself (an untranslatable pattern, or a dispatch shape the
+            // walker can't reproduce byte-identically yet).
+            Some("Match")
+        }
         // Variants `emit_mir_expr` never recurses into (it returns
         // `None` immediately): they are themselves the blocker.
         other => Some(label_for(other)),
@@ -782,8 +815,277 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 cond, then_branch, else_branch
             ))
         }
+        MirExpr::Match(spanned_match) => emit_mir_match(&spanned_match.node, emit_ctx),
         _ => None,
     }
+}
+
+// ── Match (Wave 2) ──────────────────────────────────────────────────────
+//
+// `MirExpr::Match` → Rust source byte-identical to HIR's `emit_match`
+// (`src/codegen/rust/expr.rs`). The strategy is to reuse the *shared*
+// recognition + emit machinery the HIR walker already routes through:
+//
+//   1. Translate each `MirPattern` → `ResolvedPattern` (resolving ctor
+//      identity through the symbol table, exactly as the resolver
+//      stamped it). Build synthetic `ResolvedMatchArm`s carrying those
+//      patterns + neutral bodies.
+//   2. Pre-render every arm body via the MIR walker (`emit_mir_expr` +
+//      `mir_maybe_clone`). If any arm body can't render, the whole
+//      match falls back to HIR. The dispatch/list emitters take a
+//      `body_for_arm` closure; we map each synthetic arm back to its
+//      pre-rendered MIR body by pointer offset into the synthetic slice.
+//   3. Drive the SAME selection ladder `emit_match` uses (single-arm
+//      irrefutable → `let`; borrowed-param `match_on_ref`; list match;
+//      dispatch table; generic `match`) using the SAME shared
+//      classifier (`classify_match_dispatch_plan_resolved`) and the
+//      SAME `emit_dispatch_table_match` / `emit_list_match` /
+//      `emit_pattern` / `emit_pattern_rebindings` functions.
+//
+// Bool two-arm matches never reach here — the MIR optimizer's
+// `bool_match_to_if` already rewrote them to `MirExpr::IfThenElse`
+// (handled by the dedicated arm in `emit_mir_expr`). So this arm only
+// ever sees list / dispatch-table / generic shapes, exactly the
+// non-bool subset HIR's `emit_match` reaches after its own bool short
+// circuit. Any shape the walker can't reproduce byte-identically
+// returns `None` and the parity gate falls back safely.
+
+/// Mirror of HIR's `is_irrefutable_pattern` over `ResolvedPattern`.
+fn resolved_pattern_is_irrefutable(pat: &ResolvedPattern) -> bool {
+    match pat {
+        ResolvedPattern::Wildcard | ResolvedPattern::Ident(_) => true,
+        ResolvedPattern::Tuple(pats) => pats.iter().all(resolved_pattern_is_irrefutable),
+        _ => false,
+    }
+}
+
+/// Translate a `MirPattern` → `ResolvedPattern`, resolving ctor
+/// identity through the symbol table the same way the resolver pass
+/// stamped it (so `emit_pattern` / `emit_pattern_rebindings` /
+/// `classify_*` see the exact `ResolvedPattern` shape the HIR walker
+/// would have). Returns `None` for any pattern shape the walker can't
+/// translate yet (none currently — every `MirPattern` maps).
+fn mir_pattern_to_resolved(pat: &MirPattern, ctx: &MirEmitCtx<'_>) -> Option<ResolvedPattern> {
+    Some(match pat {
+        MirPattern::Wildcard => ResolvedPattern::Wildcard,
+        MirPattern::Literal(lit) => ResolvedPattern::Literal(lit.clone()),
+        // A `Bind` is HIR's `Ident` binding (`x -> …`). The source
+        // binder name is what HIR emits.
+        MirPattern::Bind(_, name) => ResolvedPattern::Ident(name.clone()),
+        MirPattern::EmptyList => ResolvedPattern::EmptyList,
+        MirPattern::Cons {
+            head_name,
+            tail_name,
+            ..
+        } => ResolvedPattern::Cons(head_name.clone(), tail_name.clone()),
+        MirPattern::Tuple(sub) => {
+            let mut parts = Vec::with_capacity(sub.len());
+            for p in sub {
+                parts.push(mir_pattern_to_resolved(p, ctx)?);
+            }
+            ResolvedPattern::Tuple(parts)
+        }
+        MirPattern::Ctor {
+            ctor,
+            binding_names,
+            ..
+        } => {
+            let resolved_ctor = match ctor {
+                MirCtor::Builtin(b) => ResolvedCtor::Builtin(*b),
+                MirCtor::User(ctor_id) => {
+                    // Resolve `CtorId` → owning type + variant name,
+                    // exactly as the resolver stamped a user
+                    // `ResolvedCtor::User`. `semantic_constructor_from_resolved_ctor`
+                    // (used downstream by `emit_pattern` /
+                    // `emit_pattern_rebindings`) reads `type_id` + `name`.
+                    let entry = ctx.symbol_table.ctor_entry(*ctor_id);
+                    ResolvedCtor::User {
+                        ctor_id: *ctor_id,
+                        type_id: entry.owning_type,
+                        name: entry.name.clone(),
+                    }
+                }
+            };
+            ResolvedPattern::Ctor(resolved_ctor, binding_names.clone())
+        }
+    })
+}
+
+/// Build a neutral-bodied [`ResolvedMatchArm`] carrying just `pattern`.
+/// The dispatch/list emitters only read `arm.pattern` + call the
+/// `body_for_arm` closure; they never touch `arm.body`, so a `Unit`
+/// literal placeholder is safe and the real MIR-rendered body is
+/// supplied through the closure.
+fn synthetic_arm(pattern: ResolvedPattern) -> ResolvedMatchArm {
+    ResolvedMatchArm {
+        pattern,
+        body: Box::new(Spanned {
+            node: crate::ir::hir::ResolvedExpr::Literal(crate::ast::Literal::Unit),
+            line: 0,
+            ty: std::sync::OnceLock::new(),
+        }),
+        binding_slots: std::sync::OnceLock::new(),
+    }
+}
+
+/// Emit Rust for a `MirExpr::Match`, byte-identical to HIR's
+/// `emit_match`. Returns `None` (→ HIR fallback) when the subject or
+/// any arm body can't render, when a pattern can't translate, or when
+/// the match shape isn't one the walker reproduces yet.
+fn emit_mir_match(m: &MirMatch, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
+    // Translate patterns up front — bail if any pattern can't map.
+    let mut arms: Vec<ResolvedMatchArm> = Vec::with_capacity(m.arms.len());
+    for arm in &m.arms {
+        arms.push(synthetic_arm(mir_pattern_to_resolved(
+            &arm.pattern,
+            emit_ctx,
+        )?));
+    }
+
+    // Pre-render every arm body through the MIR walker, in arm order.
+    // `body_for_arm` (below) maps a `&ResolvedMatchArm` back to its
+    // index by pointer offset into `arms`, then reads the matching
+    // pre-rendered string. Mirror of HIR's per-arm
+    // `maybe_clone(emit_expr(&arm.body.node, …), &arm.body.node, …)`.
+    let mut arm_bodies: Vec<String> = Vec::with_capacity(m.arms.len());
+    for arm in &m.arms {
+        let body = emit_mir_expr(&arm.body, emit_ctx)?;
+        arm_bodies.push(mir_maybe_clone(body, &arm.body.node, emit_ctx));
+    }
+
+    let body_for_arm = |arm: &ResolvedMatchArm| -> String {
+        // The dispatch/list emitters always hand back a reference to an
+        // element of `arms` (they index `&arms[i]`), so identity match
+        // by address recovers the arm's position → its pre-rendered MIR
+        // body. Falls back to an empty body only if an emitter ever
+        // passed a foreign reference (it doesn't), which the parity
+        // gate would then reject as a mismatch.
+        arms.iter()
+            .position(|candidate| std::ptr::eq(candidate, arm))
+            .map(|idx| arm_bodies[idx].clone())
+            .unwrap_or_default()
+    };
+
+    // ── 1. Single-arm irrefutable → `let` destructuring. ──
+    // Mirror of `emit_match`'s first branch.
+    if arms.len() == 1 && resolved_pattern_is_irrefutable(&arms[0].pattern) {
+        let subj = mir_clone_arg(
+            emit_mir_expr(&m.subject, emit_ctx)?,
+            &m.subject.node,
+            emit_ctx,
+        );
+        let codegen = emit_ctx.codegen?;
+        let pat = emit_pattern(&arms[0].pattern, false, codegen);
+        let body = arm_bodies[0].clone();
+        return Some(match &arms[0].pattern {
+            ResolvedPattern::Wildcard => body,
+            ResolvedPattern::Ident(name) => {
+                let name = aver_name_to_rust(name);
+                format!("{{ let {} = {}; {} }}", name, subj, body)
+            }
+            _ => format!("{{ let {} = {}; {} }}", pat, subj, body),
+        });
+    }
+
+    // The shared dispatch/list/pattern emitters all need a real
+    // `CodegenContext` (boxed-field lookup, module-prefix mangling).
+    // The coverage walk runs without one — there the match only needs
+    // to report "would emit", so we still translate + recurse but bail
+    // before the ctx-dependent emit. (Production parity always has a
+    // ctx; coverage only reads Some/None and matches will fall into the
+    // None bucket on the coverage path, which is conservative + fine.)
+    let codegen = emit_ctx.codegen?;
+
+    // ── 2. Borrowed-param subject → match on the reference. ──
+    // Mirror of `emit_match`'s `match_on_ref` special case: only when
+    // no arm has pattern bindings.
+    let no_bindings = arms
+        .iter()
+        .all(|arm| crate::ir::vars::resolved_pattern_bindings(&arm.pattern).is_empty());
+    let match_on_ref = no_bindings && mir_subject_is_borrowed_param(&m.subject.node, emit_ctx);
+    let subj = if match_on_ref {
+        emit_mir_expr(&m.subject, emit_ctx)?
+    } else {
+        mir_clone_arg(
+            emit_mir_expr(&m.subject, emit_ctx)?,
+            &m.subject.node,
+            emit_ctx,
+        )
+    };
+
+    let dispatch_plan = classify_match_dispatch_plan_resolved(&arms);
+
+    // Bool match → if/else is unreachable here: the MIR optimizer
+    // already rewrote two-arm bool matches into `IfThenElse`. If a
+    // `Bool` plan somehow survived (hand-built MIR in a test), fall
+    // back rather than re-implement `try_emit_bool_if_else` (which
+    // needs the subject's `ResolvedExpr` form for the compare-invert
+    // rewrite the MIR walker can't reproduce).
+    if matches!(dispatch_plan.as_ref(), Some(MatchDispatchPlan::Bool(_))) {
+        return None;
+    }
+
+    // ── 3. List match. ──
+    if has_list_patterns(&arms) {
+        let list_shape = match dispatch_plan.as_ref() {
+            Some(MatchDispatchPlan::List(shape)) => Some(*shape),
+            _ => None,
+        };
+        return Some(emit_list_match(
+            subj,
+            &arms,
+            list_shape,
+            true,
+            codegen,
+            body_for_arm,
+        ));
+    }
+
+    // ── 4. Dispatch table (literals / wrapper tags). ──
+    if let Some(MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
+        return Some(emit_dispatch_table_match(subj, &arms, shape, body_for_arm));
+    }
+
+    // ── 5. Generic `match`. ──
+    // Mirror of `emit_match`'s tail. `needs_as_str` is always `true`
+    // in HIR (`subject_might_be_string` is a `true` stub), so the
+    // string-literal-pattern case derefs the subject to `&str`.
+    let needs_as_str = true;
+    let match_expr = if needs_as_str && has_string_literal_patterns(&arms) {
+        format!("&*{}", subj)
+    } else {
+        subj
+    };
+
+    let mut arm_strs = Vec::with_capacity(arms.len());
+    for (idx, arm) in arms.iter().enumerate() {
+        let pat = emit_pattern(&arm.pattern, needs_as_str, codegen);
+        let body = arm_bodies[idx].clone();
+        let mut rebindings = emit_pattern_rebindings(&arm.pattern, codegen);
+        if match_on_ref {
+            let ref_rebinds = emit_ref_match_rebindings(&arm.pattern);
+            if !ref_rebinds.is_empty() {
+                rebindings = format!("{}{}", ref_rebinds, rebindings);
+            }
+        }
+        arm_strs.push(format!(
+            "        {} => {{\n            {}{}\n        }}",
+            pat, rebindings, body
+        ));
+    }
+
+    Some(format!(
+        "match {} {{\n{}\n    }}",
+        match_expr,
+        arm_strs.join(",\n")
+    ))
+}
+
+/// Is the match subject a read of a borrowed-param local? Mirror of
+/// `emit_match`'s `match_on_ref` subject check
+/// (`ResolvedExpr::Ident | Resolved` whose name `is_borrowed_param`).
+fn mir_subject_is_borrowed_param(subject: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -> bool {
+    local_of(subject).is_some_and(|local| emit_ctx.is_borrowed_param(&local.name))
 }
 
 /// Emit the FULL function body the MIR walker would produce for a
