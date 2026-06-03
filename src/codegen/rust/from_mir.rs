@@ -1090,6 +1090,42 @@ pub(super) fn emit_mir_main_body(fn_id: crate::ir::FnId, ctx: &CodegenContext) -
     emit_mir_fn_body(&mir_fn.body, &emit_ctx)
 }
 
+/// rust-on-MIR W6/Stage-2 (guest-entry): render a **guest-entry fn's
+/// inner body** through the MIR walker. The guest-entry fn (the
+/// self-host's `runGuestCliProgram`) is the last construct still pinned
+/// to the HIR expr walker: its body is wrapped in the
+/// `aver_replay::with_guest_scope[_args][_result]` (replay scope) and
+/// `crate::self_host_support::with_program_fn_store` (self-host state)
+/// templates — pure string wrappers the caller keeps unchanged — but the
+/// INNER body string was still produced by `emit_fn_body` (HIR).
+///
+/// Unlike `main`, the caller already holds the `&ResolvedFnDef` (and its
+/// `fn_id`), so this takes the resolved fn directly rather than looking it
+/// up by `FnId`. The borrow policy is rebuilt exactly as the guest-entry
+/// HIR path's `ectx` is (`build_fn_ectx_from_resolved` — borrow-by-default,
+/// the non-TCO shape; guest-entry returns before the `has_tco` branch).
+/// `scope` is the owning module prefix (`None` for the entry-module
+/// guest-entry).
+///
+/// Returns `None` (→ HIR `emit_fn_body` fallback, so this stays
+/// non-regressing while HIR is still compiled) when there's no MIR
+/// program, the guest-entry FnId has no lowered `MirFn`, or the walker
+/// can't render the body. The covered subset (a `Match` over a user-fn
+/// call + `Str`-concat) renders cleanly, so under forced-MIR this is the
+/// MIR path; only the body string moves onto MIR, the replay /
+/// self-host-state wrappers stay template text.
+pub(super) fn emit_mir_guest_entry_body(
+    resolved_fd: &crate::ir::hir::ResolvedFnDef,
+    scope: Option<&str>,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let mir_fn = ctx.mir_program.as_ref()?.fn_by_id(resolved_fd.fn_id)?;
+    let policy =
+        MirFnEmitPolicy::from_resolved(resolved_fd, scope, /* borrow_by_default */ true);
+    let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+    emit_mir_fn_body(&mir_fn.body, &emit_ctx)
+}
+
 /// rust-on-MIR W6/Stage-0: render every **top-level statement value**
 /// through the MIR walker, all-or-nothing. Free-standing module-scope
 /// statements (`x = expr` / a bare `expr`) belong to no `ResolvedFnDef`,
