@@ -148,7 +148,7 @@ To add a new generated backend such as `js`, `go`, or `python`:
 3. Add the command handler in `src/main/commands.rs`
 4. Add `pub mod <target>;` in `src/codegen/mod.rs`
 
-`CodegenContext` is backend-agnostic. It carries the type-checked AST, function signatures, memo metadata, module dependencies, and the IR-level analysis facts (`mutual_tco_members`, `recursive_fns`, `fn_analyses`) populated by the pipeline's `analyze` stage.
+`CodegenContext` is backend-agnostic. It carries the type-checked AST, function signatures, module dependencies, and the IR-level analysis facts (`mutual_tco_members`, `recursive_fns`, `fn_analyses`) populated by the pipeline's `analyze` stage.
 
 ### Pipeline contract — what your backend sees
 

@@ -156,7 +156,6 @@ All language features are transpilable:
 | Map literals, `Map.*` operations | OK |
 | Tuple literals, tuple patterns | OK |
 | Error propagation (`?`) | OK |
-| Auto-memoization | OK |
 | Tail-call optimization | OK |
 | Module imports (`depends [X]`) | OK |
 | `Console` service | OK |

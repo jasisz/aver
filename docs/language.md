@@ -286,10 +286,6 @@ updated = Vector.set(grid, 42, 1)  // Option<Vector<Int>>
 value = Vector.get(grid, 42)       // Option<Int>
 ```
 
-## Auto-memoization
-
-Pure recursive functions with memo-safe arguments (scalars, records/variants of scalars) are automatically memoized at runtime. No keyword needed — the compiler detects eligibility via call-graph analysis (Tarjan SCC). Cache is capped at 4096 entries per function.
-
 ## Tail-call optimization
 
 Self and mutual tail recursion is optimized automatically. A transform pass after parsing rewrites tail-position calls into a trampoline — no stack growth for recursive functions in tail position. Tail position = last expression in function body, or each arm body in a `match` at tail position.
