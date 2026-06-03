@@ -2959,6 +2959,26 @@ fn emit_main_with_visibility(
     out.trim_end().to_string()
 }
 
+/// Render one `verify`-case expression (the `left` / `right` of an
+/// `assert_eq!`). rust-on-MIR W6/Stage-0: behind `AVER_RUST_MIR_VERIFY=1`,
+/// resolve the free-standing AST expr on demand (the same
+/// `ctx.resolve_expr` `emit_expr_legacy` does) and render it through the
+/// MIR walker with a program-level `MirEmitCtx`; if it doesn't lower or
+/// the walker returns `None`, fall back to `emit_expr_legacy` for that
+/// one expression. With the flag OFF (production default) this is exactly
+/// `emit_expr_legacy` — the emitted test module is byte-identical to the
+/// pre-port output.
+fn emit_verify_case_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
+    if super::from_mir::mir_verify_enabled() {
+        let spanned = Spanned::bare(expr.clone());
+        let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
+        if let Some(code) = super::from_mir::emit_mir_verify_expr(&resolved, ctx) {
+            return code;
+        }
+    }
+    emit_expr_legacy(expr, ctx, ectx)
+}
+
 /// Emit verify blocks as Rust #[cfg(test)] module.
 pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) -> String {
     let mut out = String::new();
@@ -2978,8 +2998,8 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;
             let test_name = format!("test_{}_case_{}", fn_key, *counter);
-            let left_str = emit_expr_legacy(&left.node, ctx, &ectx);
-            let right_str = emit_expr_legacy(&right.node, ctx, &ectx);
+            let left_str = emit_verify_case_expr(&left.node, ctx, &ectx);
+            let right_str = emit_verify_case_expr(&right.node, ctx, &ectx);
 
             // Check if either side uses `?` operator
             let uses_error_prop =

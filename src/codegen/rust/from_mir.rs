@@ -144,6 +144,46 @@ impl<'a> MirEmitCtx<'a> {
         }
     }
 
+    /// Construct a **program-level** walker ctx for free-standing
+    /// expressions that belong to no `ResolvedFnDef` — verify cases
+    /// (this wave) and, next wave, `main` / top-level statements. The
+    /// MIR mirror of `EmitCtx::empty()`: carries the full
+    /// `&CodegenContext` (so ctor boxing / `callee_borrow_mask` / match
+    /// emission work, unlike the coverage `for_test` path which leaves
+    /// `codegen` `None`), but with an **empty per-fn policy** — no
+    /// params, no locals, nothing borrowed-by-default. Every name a
+    /// covered arm sees is treated owned / non-Copy, exactly as
+    /// `EmitCtx::empty()` does for the HIR walker on these same
+    /// free-standing exprs.
+    ///
+    /// Shared infra: both the verify wire-up and the next-wave
+    /// main/top-stmt wire-up build their `MirEmitCtx` from here, so the
+    /// "no-anchor" emit policy lives in one place.
+    ///
+    /// `mir_builtins` is passed explicitly rather than read off
+    /// `ctx.mir_program`: free-standing exprs are lowered against a
+    /// *clone* of the entry program (so builtin / instantiation table
+    /// growth stays local), and `Call(Builtin(id))` must resolve `id`
+    /// through that grown clone's table — not the entry program's,
+    /// which may lack a builtin the lowering just interned. The caller
+    /// owns the clone and lends its `builtins` slice here.
+    pub(super) fn program_level(
+        ctx: &'a CodegenContext,
+        policy: &'a MirFnEmitPolicy,
+        mir_builtins: &'a [String],
+    ) -> Self {
+        Self {
+            symbol_table: &ctx.symbol_table,
+            module_prefixes: &ctx.module_prefixes,
+            codegen: Some(ctx),
+            local_types: &policy.local_types,
+            rc_wrapped: &policy.rc_wrapped,
+            borrowed_params: &policy.borrowed_params,
+            current_module_scope: policy.current_module_scope.as_deref(),
+            mir_builtins,
+        }
+    }
+
     /// Construct a borrow-aware walker ctx for the production
     /// parity gate. `policy` is the [`MirFnEmitPolicy`] recomputed
     /// per-fn from the `ResolvedFnDef` (the same inputs
@@ -198,6 +238,19 @@ pub(super) struct MirFnEmitPolicy {
 }
 
 impl MirFnEmitPolicy {
+    /// The empty / no-anchor borrow policy — no params, no locals,
+    /// nothing borrowed-by-default. Feeds [`MirEmitCtx::program_level`]
+    /// for free-standing expressions (verify cases, main / top-level
+    /// statements). The MIR mirror of `EmitCtx::empty()`.
+    pub(super) fn empty() -> Self {
+        Self {
+            local_types: HashMap::new(),
+            rc_wrapped: HashSet::new(),
+            borrowed_params: HashSet::new(),
+            current_module_scope: None,
+        }
+    }
+
     /// Build the borrow policy from a `ResolvedFnDef`'s param
     /// types. `borrow_by_default` mirrors `EmitCtx::for_fn` (true)
     /// vs `EmitCtx::for_fn_no_borrow` (false, the TCO path):
@@ -904,6 +957,37 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
     }
 }
 
+/// rust-on-MIR W6/Stage-0: render one free-standing `verify`-case
+/// expression through the MIR walker. `resolved` is the already-lifted
+/// `ResolvedExpr` (the caller does the on-demand `ctx.resolve_expr` the
+/// HIR `emit_expr_legacy` does). Lowers it via `lower_top_level_value`
+/// against a clone of the entry `MirProgram` (the same isolation the VM
+/// uses for top-level statements: builtin / instantiation table growth
+/// stays local to the clone), then emits it with a **program-level**
+/// [`MirEmitCtx`] (no params / locals — verify exprs have no fn anchor).
+///
+/// Returns `None` when the expr is outside the lowerable subset OR the
+/// walker can't render it — the per-expr signal for the caller to fall
+/// back to `emit_expr_legacy` for that one expression. The `#[test]` /
+/// `assert_eq!` / Result-`?` scaffolding is unaffected; only the
+/// expression string changes.
+pub(super) fn emit_mir_verify_expr(
+    resolved: &Spanned<crate::ir::hir::ResolvedExpr>,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let base = ctx.mir_program.as_ref()?;
+    // Clone so the lowerer's builtin / instantiation table growth stays
+    // local to this expression (mirrors the VM top-level path #338).
+    let mut prog = base.clone();
+    let lowered = crate::ir::mir::lower_top_level_value(resolved, &mut prog).ok()?;
+    let policy = MirFnEmitPolicy::empty();
+    // Lend the grown clone's builtin table (it backs `Call(Builtin(id))`
+    // resolution and may carry a builtin the lowering just interned) plus
+    // the full `ctx` for the borrow / ctor helpers.
+    let emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
+    emit_mir_expr(&lowered, &emit_ctx)
+}
+
 /// Emit `MirExpr::IndependentProduct` (`(a, b, c)!` / `(a, b, c)?!`)
 /// byte-identical to HIR's `ResolvedExpr::IndependentProduct` arm
 /// (`super::expr`). The Rust backend is the one target that truly
@@ -1544,6 +1628,30 @@ fn mir_only_hatch_enabled() -> bool {
 /// the self-host regen path until W6 retires the HIR walker.
 pub(super) fn mir_tco_enabled() -> bool {
     std::env::var_os("AVER_RUST_MIR_TCO").is_some_and(|v| v == "1")
+}
+
+/// Is the rust-on-MIR W6/Stage-0 verify path active
+/// (`AVER_RUST_MIR_VERIFY=1`)?
+///
+/// When set, each `verify` case's left/right expression is lowered to
+/// MIR (via `lower_top_level_value`) and rendered by the MIR walker
+/// (with a program-level [`MirEmitCtx`]) instead of the source-AST HIR
+/// emitter (`emit_expr_legacy`). The `#[test]` / `assert_eq!` / Result
+/// `?` scaffolding is unchanged template text; only the two per-case
+/// expression strings move onto MIR. Per-expr fallback to the HIR
+/// emitter when the expr doesn't lower / the walker returns `None`.
+///
+/// A SEPARATE flag from `AVER_RUST_MIR_TCO` / `AVER_RUST_MIR_ONLY`:
+/// routing verify emission through MIR is independent of TCO synthesis
+/// and of effect-emission ownership.
+///
+/// Read from the env each call (cheap; only on the codegen path) so a
+/// test can toggle it per-process without a rebuild. Production default
+/// (UNSET) keeps the proven HIR verify emitter — the emitted test
+/// module is identical to the pre-port output, so the self-host regen
+/// path cannot regress until W6 retires the HIR walker.
+pub(super) fn mir_verify_enabled() -> bool {
+    std::env::var_os("AVER_RUST_MIR_VERIFY").is_some_and(|v| v == "1")
 }
 
 /// `(graduated, considered)` since the last [`reset_parity_counters`].
@@ -2946,6 +3054,46 @@ mod tests {
         };
         let expr = span(MirExpr::Local(span(local)));
         assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
+    }
+
+    #[test]
+    fn empty_fn_policy_has_no_anchor() {
+        // The shared no-anchor policy: no params/locals, nothing
+        // borrowed-by-default — the MIR mirror of `EmitCtx::empty()`.
+        let policy = MirFnEmitPolicy::empty();
+        assert!(policy.local_types.is_empty());
+        assert!(policy.rc_wrapped.is_empty());
+        assert!(policy.borrowed_params.is_empty());
+        assert!(policy.current_module_scope.is_none());
+    }
+
+    #[test]
+    fn program_level_ctx_renders_free_expr() {
+        // A program-level ctx (empty policy + a real symbol table /
+        // codegen) renders a free-standing literal — the verify-case
+        // shape (no fn anchor). We can't build a full `CodegenContext`
+        // cheaply here, so assert the policy/ctx wiring via the
+        // walker on a literal that needs no `codegen`.
+        let policy = MirFnEmitPolicy::empty();
+        use std::sync::OnceLock;
+        static SYMBOLS: OnceLock<SymbolTable> = OnceLock::new();
+        static PREFIXES: OnceLock<HashSet<String>> = OnceLock::new();
+        static BUILTINS: OnceLock<Vec<String>> = OnceLock::new();
+        // `program_level` needs a `&CodegenContext`; the literal arm
+        // never reads it, so exercise the borrow-field plumbing via
+        // `for_test` + the empty policy's slices instead (same shapes).
+        let ctx = MirEmitCtx {
+            symbol_table: SYMBOLS.get_or_init(SymbolTable::default),
+            module_prefixes: PREFIXES.get_or_init(HashSet::new),
+            codegen: None,
+            local_types: &policy.local_types,
+            rc_wrapped: &policy.rc_wrapped,
+            borrowed_params: &policy.borrowed_params,
+            current_module_scope: policy.current_module_scope.as_deref(),
+            mir_builtins: BUILTINS.get_or_init(Vec::new),
+        };
+        let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        assert_eq!(emit_mir_expr(&lit, &ctx).as_deref(), Some("7i64"));
     }
 
     #[test]
