@@ -72,7 +72,7 @@ pub fn emit_expr(expr: &ResolvedExpr, ctx: &CodegenContext, ectx: &EmitCtx) -> S
     emit_expr_with_options(expr, ctx, ectx, true)
 }
 
-fn emit_tuple_from_vars(prefix: &str, count: usize) -> String {
+pub(super) fn emit_tuple_from_vars(prefix: &str, count: usize) -> String {
     match count {
         0 => "()".to_string(),
         1 => format!("({prefix}0,)"),
@@ -86,7 +86,11 @@ fn emit_tuple_from_vars(prefix: &str, count: usize) -> String {
     }
 }
 
-fn emit_result_tuple_unwrap(result_prefix: &str, value_prefix: &str, count: usize) -> String {
+pub(super) fn emit_result_tuple_unwrap(
+    result_prefix: &str,
+    value_prefix: &str,
+    count: usize,
+) -> String {
     let matched_results = emit_tuple_from_vars(result_prefix, count);
     let ok_pattern = match count {
         0 => "()".to_string(),
@@ -114,7 +118,7 @@ fn emit_result_tuple_unwrap(result_prefix: &str, value_prefix: &str, count: usiz
     out
 }
 
-fn emit_parallel_result_tuple_unwrap(
+pub(super) fn emit_parallel_result_tuple_unwrap(
     branch_prefix: &str,
     result_prefix: &str,
     value_prefix: &str,
