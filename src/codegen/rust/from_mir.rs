@@ -988,6 +988,78 @@ pub(super) fn emit_mir_verify_expr(
     emit_mir_expr(&lowered, &emit_ctx)
 }
 
+/// rust-on-MIR W6/Stage-0: render the **`main` fn body** through the MIR
+/// walker. `main` is the one entry-point that DOES carry a
+/// `ResolvedFnDef` (reachable via `fn_id_for_decl` →
+/// `resolved_program.fn_by_id` → `mir_program.fn_by_id`), so — unlike the
+/// free-standing verify / top-stmt exprs — its body has a real fn anchor:
+/// we build the borrow policy from the resolved main (`from_resolved`,
+/// borrow-by-default like the non-TCO HIR path) and emit via the same
+/// `for_fn` ctx + `emit_mir_fn_body` the production parity gate uses for
+/// every other fn.
+///
+/// `fn_id` is the resolved-main FnId the caller already computed
+/// (`entry_module_sections` runs `fn_id_for_decl` for every fn). Returns
+/// `None` when there's no MIR program, the main FnId has no lowered
+/// `MirFn` (body outside the lowerable subset — e.g. multi-statement
+/// bodies whose intermediate `Stmt::Expr` lower to synthetic-named lets),
+/// or the walker can't render the body — the signal for the caller to
+/// fall back to the HIR per-statement main-body emit. The `fn main()` /
+/// `-> Result<…>` signature and the guest/replay wrappers are unaffected;
+/// only the body string moves onto MIR.
+pub(super) fn emit_mir_main_body(fn_id: crate::ir::FnId, ctx: &CodegenContext) -> Option<String> {
+    let mir_fn = ctx.mir_program.as_ref()?.fn_by_id(fn_id)?;
+    let resolved = ctx.resolved_program.fn_by_id(fn_id)?;
+    // Main lives in the entry module → no module scope. Borrow-by-default
+    // matches the non-TCO HIR path the main body uses (`build_fn_ectx`).
+    let policy = MirFnEmitPolicy::from_resolved(resolved, None, /* borrow_by_default */ true);
+    let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
+    emit_mir_fn_body(&mir_fn.body, &emit_ctx)
+}
+
+/// rust-on-MIR W6/Stage-0: render every **top-level statement value**
+/// through the MIR walker, all-or-nothing. Free-standing module-scope
+/// statements (`x = expr` / a bare `expr`) belong to no `ResolvedFnDef`,
+/// so this mirrors the VM top-level path (#338): clone the entry
+/// `MirProgram` ONCE (so the lowerer's builtin / instantiation table
+/// growth stays consistent across all the statements that share it),
+/// lower each statement's already-resolved value via
+/// `lower_top_level_value`, and **pre-check** that every value both
+/// lowers AND the walker renders it — deciding before emitting anything
+/// so a mid-walk reject never leaves a half-written main body (exactly
+/// what the VM `compile_top_level` does with `mir_expr_compilable`).
+///
+/// Returns the rendered value strings in statement order on full success
+/// (the caller wraps each in the `let {name} = …;` / bare-expr-discard
+/// `…;` templating, identical to the HIR `emit_stmt` shapes), or `None`
+/// if there's no MIR program or ANY statement falls outside the lowerable
+/// / renderable subset — the signal for the caller to fall back to the
+/// HIR per-statement `emit_stmt_legacy` path for the whole block.
+pub(super) fn emit_mir_top_stmt_values(
+    resolved_values: &[&Spanned<crate::ir::hir::ResolvedExpr>],
+    ctx: &CodegenContext,
+) -> Option<Vec<String>> {
+    let base = ctx.mir_program.as_ref()?;
+    // One clone shared across every statement: the lowerer grows its
+    // builtin / instantiation tables in place, so all the `Call(Builtin)`
+    // ids the walker resolves key off the same grown table (mirrors the
+    // VM lowering one `prog` for the whole `__top_level__` chunk).
+    let mut prog = base.clone();
+    let lowered: Vec<Spanned<MirExpr>> = resolved_values
+        .iter()
+        .map(|value| crate::ir::mir::lower_top_level_value(value, &mut prog).ok())
+        .collect::<Option<_>>()?;
+    let policy = MirFnEmitPolicy::empty();
+    let emit_ctx = MirEmitCtx::program_level(ctx, &policy, &prog.builtins);
+    // All-or-nothing: render every value before returning any, so a
+    // single un-renderable statement falls the WHOLE block back to HIR
+    // rather than leaving a half-MIR / half-HIR main body.
+    lowered
+        .iter()
+        .map(|low| emit_mir_expr(low, &emit_ctx))
+        .collect::<Option<Vec<_>>>()
+}
+
 /// Emit `MirExpr::IndependentProduct` (`(a, b, c)!` / `(a, b, c)?!`)
 /// byte-identical to HIR's `ResolvedExpr::IndependentProduct` arm
 /// (`super::expr`). The Rust backend is the one target that truly
@@ -1652,6 +1724,36 @@ pub(super) fn mir_tco_enabled() -> bool {
 /// path cannot regress until W6 retires the HIR walker.
 pub(super) fn mir_verify_enabled() -> bool {
     std::env::var_os("AVER_RUST_MIR_VERIFY").is_some_and(|v| v == "1")
+}
+
+/// Is the rust-on-MIR W6/Stage-0 main / top-level-statement path active
+/// (`AVER_RUST_MIR_MAIN=1`)?
+///
+/// When set, the `main` fn BODY is rendered by the MIR walker (via
+/// [`emit_mir_main_body`] — main carries a real `ResolvedFnDef`, so it
+/// uses the same `for_fn` borrow policy as the production parity gate)
+/// and the TOP-LEVEL STATEMENT values are rendered all-or-nothing through
+/// [`emit_mir_top_stmt_values`] (the VM #338 isolation: one cloned
+/// program, pre-check every value renders before emitting any), instead
+/// of the source-AST HIR emitters (`emit_stmt_legacy` / `emit_expr_legacy`).
+/// The `fn main()` / `-> Result<…>` signature and the
+/// `aver_replay::with_guest_scope[_result]` guest wrapper stay unchanged
+/// template text; only the body / statement-value strings move onto MIR.
+/// Per-surface fallback to the HIR emit when the MIR body / any top-stmt
+/// value doesn't lower / the walker returns `None`.
+///
+/// A SEPARATE flag from `AVER_RUST_MIR_VERIFY` / `AVER_RUST_MIR_TCO` /
+/// `AVER_RUST_MIR_ONLY`: routing main / top-stmt emission through MIR is
+/// independent of verify routing, TCO synthesis, and effect-emission
+/// ownership.
+///
+/// Read from the env each call (cheap; only on the codegen path) so a
+/// test can toggle it per-process without a rebuild. Production default
+/// (UNSET) keeps the proven HIR main emitter — the emitted `fn main`
+/// is byte-identical to the pre-port output, so the self-host regen path
+/// cannot regress until W6 retires the HIR walker.
+pub(super) fn mir_main_enabled() -> bool {
+    std::env::var_os("AVER_RUST_MIR_MAIN").is_some_and(|v| v == "1")
 }
 
 /// `(graduated, considered)` since the last [`reset_parity_counters`].
@@ -3094,6 +3196,35 @@ mod tests {
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         assert_eq!(emit_mir_expr(&lit, &ctx).as_deref(), Some("7i64"));
+    }
+
+    #[test]
+    fn main_body_policy_borrows_by_default_like_hir() {
+        // `emit_mir_main_body` builds its policy from the resolved-main
+        // via `from_resolved(.., borrow_by_default = true)` — the same
+        // non-TCO borrow rules the HIR main body uses (`build_fn_ectx`).
+        // A `List<Int>` param borrows; an `Int` param does not. (Main
+        // usually has no params, but the policy must honour the same
+        // rule so a `main(args: List<String>)`-style entry borrows
+        // identically to every other fn.)
+        let resolved = crate::ir::hir::ResolvedFnDef {
+            fn_id: crate::ir::FnId(0),
+            name: "main".to_string(),
+            line: 1,
+            params: vec![
+                ("xs".to_string(), Type::List(Box::new(Type::Int))),
+                ("n".to_string(), Type::Int),
+            ],
+            return_type: Type::Unit,
+            effects: vec![],
+            desc: None,
+            body: std::sync::Arc::new(crate::ir::hir::ResolvedFnBody::Block(vec![])),
+            resolution: None,
+        };
+        let policy = MirFnEmitPolicy::from_resolved(&resolved, None, true);
+        assert!(policy.borrowed_params.contains("xs"));
+        assert!(!policy.borrowed_params.contains("n"));
+        assert!(policy.current_module_scope.is_none());
     }
 
     #[test]
