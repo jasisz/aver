@@ -769,29 +769,38 @@ mod tests {
 
     fn ctx_from_source(source: &str, project_name: &str) -> crate::codegen::CodegenContext {
         let mut items = parse_source(source).expect("source should parse");
-        crate::ir::pipeline::tco(&mut items);
-        let tc = crate::ir::pipeline::typecheck(
-            &items,
-            &crate::ir::TypecheckMode::Full { base_dir: None },
+        // Run the canonical compiler pipeline exactly as the CLI
+        // (`main::commands::compile`) does, so the in-process
+        // `resolved_items` / `symbol_table` / `analysis` — and the MIR
+        // `build_context` lowers from them — match the real pipeline.
+        // The previous hand-rolled tco + typecheck + `resolve_program`
+        // skipped the `last_use` and `analyze` stages, so its resolved
+        // AST carried no `last_use` stamps; the per-fn MIR then diverged
+        // from the CLI's (e.g. the `Option.withDefault(Vector.set(v, …),
+        // v)` fusion's same-vector reads lost their last-use ownership),
+        // silently testing a different MIR shape than production emits.
+        let pipeline_result = crate::ir::pipeline::run(
+            &mut items,
+            crate::ir::PipelineConfig {
+                typecheck: Some(crate::ir::TypecheckMode::Full { base_dir: None }),
+                run_build_symbols: true,
+                ..Default::default()
+            },
         );
+        let tc = pipeline_result.typecheck.expect("typecheck was requested");
         assert!(
             tc.errors.is_empty(),
             "source should typecheck without errors: {:?}",
             tc.errors
         );
-        // No pipeline analyze stage run here — supply a locally-built
-        // SymbolTable so build_context can populate its FnId-keyed
-        // sets. Cheap traversal, no analysis.
-        let symbol_table = crate::ir::SymbolTable::build(&items, &[]);
-        let resolved_items = crate::ir::hir::resolve_program(&symbol_table, &items);
         build_context(
             items,
             &tc,
-            None,
+            pipeline_result.analysis.as_ref(),
             project_name.to_string(),
             vec![],
-            symbol_table,
-            resolved_items,
+            pipeline_result.symbol_table,
+            pipeline_result.resolved_items,
         )
     }
 
@@ -1466,8 +1475,11 @@ fn loop(r: Result<Int, String>) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        // Uses native Rust match directly (r cloned since not-Copy Ident without last_use info)
-        assert!(entry.contains("match r.clone() {"));
+        // Uses native Rust match directly. `r` is the match subject's
+        // last use, so the `last_use` pass (now run by `ctx_from_source`
+        // via the full pipeline, matching the CLI) lets it move into the
+        // match without a `.clone()`.
+        assert!(entry.contains("match r {"));
         assert!(entry.contains("Ok(n)"));
         assert!(!entry.contains("__dispatch_subject"));
     }
@@ -1494,8 +1506,11 @@ fn right(r: Result<Int, String>) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        // Uses native Rust match directly (r cloned since not-Copy Ident without last_use info)
-        assert!(entry.contains("match r.clone() {"));
+        // Uses native Rust match directly. `r` is the match subject's
+        // last use, so the `last_use` pass (now run by `ctx_from_source`
+        // via the full pipeline, matching the CLI) lets it move into the
+        // match without a `.clone()`.
+        assert!(entry.contains("match r {"));
         assert!(entry.contains("Ok(n)"));
         assert!(!entry.contains("__dispatch_subject"));
     }
