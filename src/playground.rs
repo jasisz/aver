@@ -1,6 +1,6 @@
 //! Browser-facing entry points for the Aver playground.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::ast::TopLevel;
 use crate::codegen;
@@ -294,7 +294,6 @@ fn build_ctx(
         items,
         &tc_result,
         pipeline_result.analysis.as_ref(),
-        HashSet::new(),
         "playground".to_string(),
         vec![],
         pipeline_result.symbol_table,
@@ -391,7 +390,6 @@ fn build_project_ctx(
         entry_items,
         &tc_result,
         pipeline_result.analysis.as_ref(),
-        HashSet::new(),
         "playground".to_string(),
         modules,
         pipeline_result.symbol_table,

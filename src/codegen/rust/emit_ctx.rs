@@ -57,7 +57,7 @@ impl EmitCtx {
         }
     }
 
-    /// Build context for a function WITHOUT borrow-by-default (e.g. TCO, memo).
+    /// Build context for a function WITHOUT borrow-by-default (e.g. TCO).
     pub fn for_fn_no_borrow(param_types: HashMap<String, Type>) -> Self {
         EmitCtx {
             local_types: param_types,

@@ -1618,7 +1618,7 @@ fn contains_last_use_slot_mir(expr: &MirExpr, target: u32) -> bool {
 /// names not in the builtin table — the caller drops back to HIR
 /// via `MirVmUnsupported::UnsupportedCallee`. The table is small
 /// (~60 entries) so linear scan is fine; a future Phase 6 can
-/// memoize.
+/// cache it.
 fn lookup_vm_builtin(name: &str) -> Option<VmBuiltin> {
     VmBuiltin::ALL.iter().copied().find(|b| b.name() == name)
 }

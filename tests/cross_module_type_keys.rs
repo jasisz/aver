@@ -14,7 +14,6 @@ use aver::codegen::{ModuleInfo, build_context};
 use aver::ir::pipeline::{self, PipelineConfig, TypecheckMode};
 use aver::source::{LoadedModule, parse_source};
 use aver::types::Type;
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 const ENTRY_SRC: &str = r#"module Entry
@@ -79,7 +78,6 @@ fn build_three_module_ctx() -> aver::codegen::CodegenContext {
         entry_items.clone(),
         tc,
         result.analysis.as_ref(),
-        HashSet::new(),
         "test".to_string(),
         modules,
         result.symbol_table,

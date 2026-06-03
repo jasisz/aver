@@ -799,12 +799,9 @@ fn borrow_mask_from_fn_def(
 ) -> Vec<bool> {
     // Mutual-TCO members are emitted as wrappers with borrow-by-default,
     // even if they also have self-TailCalls. Don't skip borrow for them.
-    // Memo functions always use borrow-by-default (memo wrapper takes &T),
-    // even if the body has self-tail-calls.
-    let is_memo = ctx.memo_fns.contains(&fd.name);
     let is_mutual_tco = crate::codegen::common::fn_id_for_decl(ctx, fd)
         .is_some_and(|id| ctx.mutual_tco_members.contains(&id));
-    if !is_memo && !is_mutual_tco && super::toplevel::body_has_self_tailcall(&fd.body, &fd.name) {
+    if !is_mutual_tco && super::toplevel::body_has_self_tailcall(&fd.body, &fd.name) {
         return vec![false; arg_count];
     }
     fd.params

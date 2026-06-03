@@ -2908,8 +2908,6 @@ mod tests {
 
         let mut ctx = CodegenContext {
             items,
-            memo_fns: HashSet::new(),
-            memo_safe_types: HashSet::new(),
             type_defs: Vec::new(),
             fn_defs: Vec::new(),
             project_name: "scope-test".to_string(),

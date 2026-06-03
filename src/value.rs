@@ -16,10 +16,6 @@ use thiserror::Error;
 use crate::ast::FnBody;
 use crate::nan_value::NanValue;
 
-mod memo;
-
-pub use memo::hash_memo_args;
-
 // ---------------------------------------------------------------------------
 // RuntimeError
 // ---------------------------------------------------------------------------
@@ -116,7 +112,6 @@ pub struct FunctionValue {
     pub body: Rc<FnBody>,
     /// Compile-time resolution metadata (slot layout for locals).
     pub resolution: Option<crate::ast::FnResolution>,
-    pub memo_eligible: bool,
     /// Optional function-specific global scope (used by imported module
     /// functions so they resolve names in their home module).
     pub home_globals: Option<Rc<HashMap<String, NanValue>>>,

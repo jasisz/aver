@@ -17,6 +17,7 @@ use crate::ast::{
 use crate::ir::{FnId, FnKey, SymbolTable, TypeId, TypeKey};
 
 mod builtins;
+mod check;
 pub mod effect_classification;
 pub mod effect_lifting;
 mod exhaustiveness;
@@ -24,7 +25,6 @@ mod flow;
 pub mod hostile_effects;
 pub mod hostile_values;
 mod infer;
-mod memo;
 mod modules;
 pub mod oracle_subtypes;
 pub mod proof_trust_header;
@@ -52,15 +52,12 @@ pub struct TypeErrorSpan {
     pub label: String,
 }
 
-/// Result of type-checking that also carries memo-safety metadata.
+/// Result of type-checking.
 #[derive(Debug)]
 pub struct TypeCheckResult {
     pub errors: Vec<TypeError>,
     /// For each user-defined fn: (param_types, return_type, effects).
-    /// Used by the memo system to decide which fns qualify.
     pub fn_sigs: HashMap<String, (Vec<Type>, Type, Vec<String>)>,
-    /// Set of type names whose values are memo-safe (hashable scalars / records of scalars).
-    pub memo_safe_types: HashSet<String>,
     /// Unused binding warnings: (binding_name, fn_name, line).
     pub unused_bindings: Vec<(String, String, usize)>,
 }
@@ -273,14 +270,11 @@ fn finalize_check_result(mut checker: TypeChecker, items: &[TopLevel]) -> TypeCh
             .or_insert_with(|| (sig.params.clone(), sig.ret.clone(), sig.effects.clone()));
     }
 
-    let memo_safe_types = checker.compute_memo_safe_types(items);
-
     check_module_effect_boundary(items, &mut checker.errors);
 
     TypeCheckResult {
         errors: checker.errors,
         fn_sigs,
-        memo_safe_types,
         unused_bindings: checker.unused_warnings,
     }
 }

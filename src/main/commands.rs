@@ -25,8 +25,8 @@ use super::diagnostic;
 use aver::tty_render::render_tty;
 
 use crate::shared::{
-    apply_runtime_policy_to_vm, compute_memo_fns, format_type_errors, load_runtime_policy,
-    parse_file, print_type_errors, read_file, resolve_module_root,
+    apply_runtime_policy_to_vm, format_type_errors, load_runtime_policy, parse_file,
+    print_type_errors, read_file, resolve_module_root,
 };
 
 pub(super) fn generate_request_id() -> String {
@@ -2514,12 +2514,6 @@ fn build_codegen_context(
         process::exit(1);
     }
 
-    // Memo eligibility reads from `PipelineResult.analysis` — the analyze
-    // stage already collected `recursive_fns` and `recursive_call_count`
-    // facts; `compute_memo_fns` just filters by typecheck signature
-    // (effects, memo-safe param types).
-    let memo_fns = compute_memo_fns(&items, &tc_result, pipeline_result.analysis.as_ref());
-
     // Derive project name from file if not specified
     let name = project_name.map(|s| s.to_string()).unwrap_or_else(|| {
         Path::new(file)
@@ -2557,7 +2551,6 @@ fn build_codegen_context(
         items,
         &tc_result,
         pipeline_result.analysis.as_ref(),
-        memo_fns,
         name,
         modules,
         pipeline_result.symbol_table,
@@ -5474,8 +5467,6 @@ mod tests {
     fn empty_codegen_ctx() -> CodegenContext {
         CodegenContext {
             items: vec![],
-            memo_fns: HashSet::new(),
-            memo_safe_types: HashSet::new(),
             type_defs: vec![],
             fn_defs: vec![],
             project_name: "test".to_string(),

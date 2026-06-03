@@ -545,29 +545,20 @@ fn entry_module_sections(
             continue;
         }
         let Some(resolved_fd) = ctx.resolved_program.fn_by_id(fn_id) else {
-            // Synthetic FnDefs (memo wrappers, TCO hoists) inserted
-            // post-pipeline don't have a resolved twin yet — fall back
-            // to on-demand resolve for those. `temporary-migration-bridge`:
-            // PR E moves synthetic-fn resolve into a typed builder.
+            // Synthetic FnDefs (TCO hoists) inserted post-pipeline don't
+            // have a resolved twin yet — fall back to on-demand resolve
+            // for those. `temporary-migration-bridge`: PR E moves
+            // synthetic-fn resolve into a typed builder.
             let resolved_owned = ctx.resolve_fn_def(fd, None);
-            let is_memo = ctx.memo_fns.contains(&fd.name);
             sections.push(toplevel::emit_public_fn_def(
                 fd,
                 resolved_owned.as_ref(),
-                is_memo,
                 ctx,
                 None,
             ));
             continue;
         };
-        let is_memo = ctx.memo_fns.contains(&fd.name);
-        sections.push(toplevel::emit_public_fn_def(
-            fd,
-            resolved_fd,
-            is_memo,
-            ctx,
-            None,
-        ));
+        sections.push(toplevel::emit_public_fn_def(fd, resolved_fd, ctx, None));
     }
 
     if main_fn.is_some() || !top_level_stmts.is_empty() {
@@ -631,7 +622,6 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
         if module_mutual.contains(&fd.name) {
             continue;
         }
-        let is_memo = ctx.memo_fns.contains(&fd.name);
         // Same pair-API as the entry loop above. Module fns route
         // through `fn_id_for_decl` (pointer-eq scope on `&FnDef`) →
         // `resolved_program.fn_by_id(fn_id)` so a same-bare-name
@@ -650,7 +640,6 @@ fn module_sections(module: &crate::codegen::ModuleInfo, ctx: &CodegenContext) ->
         sections.push(toplevel::emit_public_fn_def(
             fd,
             resolved_ref,
-            is_memo,
             ctx,
             Some(&module.prefix),
         ));
@@ -767,8 +756,6 @@ mod tests {
     use crate::codegen::build_context;
     use crate::source::parse_source;
 
-    use std::collections::HashSet;
-
     fn ctx_from_source(source: &str, project_name: &str) -> crate::codegen::CodegenContext {
         let mut items = parse_source(source).expect("source should parse");
         crate::ir::pipeline::tco(&mut items);
@@ -790,7 +777,6 @@ mod tests {
             items,
             &tc,
             None,
-            HashSet::new(),
             project_name.to_string(),
             vec![],
             symbol_table,
@@ -878,7 +864,6 @@ mod tests {
             entry_items,
             &tc,
             None,
-            HashSet::new(),
             project_name.to_string(),
             modules,
             symbol_table,

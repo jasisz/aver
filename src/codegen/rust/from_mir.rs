@@ -200,7 +200,7 @@ pub(super) struct MirFnEmitPolicy {
 impl MirFnEmitPolicy {
     /// Build the borrow policy from a `ResolvedFnDef`'s param
     /// types. `borrow_by_default` mirrors `EmitCtx::for_fn` (true)
-    /// vs `EmitCtx::for_fn_no_borrow` (false, the TCO / memo path):
+    /// vs `EmitCtx::for_fn_no_borrow` (false, the TCO path):
     /// when false, no param is borrowed-by-default. `rc_wrapped`
     /// starts empty (set later for TCO pass-through, which the
     /// covered subset doesn't graduate).
@@ -1565,7 +1565,7 @@ pub fn parity_counters() -> (usize, usize) {
 /// `resolved` supplies the per-fn borrow policy (param types /
 /// borrow-by-default), recomputed exactly as
 /// `build_fn_ectx_from_resolved` does for the HIR walker.
-/// `borrow_by_default` is `false` only on the TCO/memo no-borrow
+/// `borrow_by_default` is `false` only on the TCO no-borrow
 /// path (which never graduates — those bodies aren't single-expr
 /// plans the MIR walker renders identically — but the flag keeps
 /// the policy honest).
