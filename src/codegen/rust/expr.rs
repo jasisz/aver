@@ -1071,6 +1071,17 @@ fn attr_result_is_copy(
     let Some(named_ty) = obj_type.filter(|t| matches!(t, Type::Named { .. })) else {
         return false;
     };
+    record_field_is_copy(named_ty, field, ctx)
+}
+
+/// Core of [`attr_result_is_copy`], shared with the MIR walker: given
+/// the record's `Type::Named` and a `field` name, look the field's
+/// declared type up in the context's record definitions and report
+/// whether it is a Copy type. Returns `false` when the record / field
+/// can't be resolved (the conservative "needs a clone" answer). The
+/// MIR walker calls this directly with the base local's stamped type,
+/// so the elision decision matches HIR byte-for-byte.
+pub(super) fn record_field_is_copy(named_ty: &Type, field: &str, ctx: &CodegenContext) -> bool {
     let Some(record_key) = crate::codegen::common::backend_named_type_key(ctx, named_ty) else {
         return false;
     };

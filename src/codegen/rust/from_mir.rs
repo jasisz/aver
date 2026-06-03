@@ -497,7 +497,33 @@ fn label_for(expr: &MirExpr) -> &'static str {
 /// byte-equal to the HIR rendering.
 pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     match &expr.node {
-        MirExpr::Literal(lit) => Some(emit_literal(&lit.node)),
+        MirExpr::Literal(lit) => {
+            // The MIR const-fold pass collapses `Neg(Literal(273.15))`
+            // → `Literal(-273.15)`. HIR never folds — it keeps the
+            // `Neg` node and emits `(-273.15f64)` (the `Neg` arm's
+            // `(-{inner})` wrapper). Re-introduce that wrapper for a
+            // negative numeric literal at expression position so the
+            // folded form matches HIR byte-for-byte. (Literal *patterns*
+            // don't reach here — they translate to `ResolvedPattern` and
+            // emit through the shared `emit_pattern` / dispatch path.)
+            match &lit.node {
+                // `checked_neg` guards `i64::MIN` — that value can't have
+                // come from a `Neg` fold (the fold itself uses
+                // `checked_neg`), so leave it bare rather than panic.
+                crate::ast::Literal::Int(i) if *i < 0 => match i.checked_neg() {
+                    Some(pos) => Some(format!(
+                        "(-{})",
+                        emit_literal(&crate::ast::Literal::Int(pos))
+                    )),
+                    None => Some(emit_literal(&lit.node)),
+                },
+                crate::ast::Literal::Float(f) if f.is_sign_negative() => Some(format!(
+                    "(-{})",
+                    emit_literal(&crate::ast::Literal::Float(-f))
+                )),
+                _ => Some(emit_literal(&lit.node)),
+            }
+        }
         MirExpr::Local(spanned_local) => {
             let name = &spanned_local.node.name;
             if name.is_empty() {
@@ -535,6 +561,24 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // `maybe_clone` (it's consumed by `Add`, the RHS is
             // borrowed via `&` for `Add<&AverStr>`). Mirror that
             // exactly so Str + Str matches byte-for-byte.
+            //
+            // GENUINE DIVERGENCE (Wave 4 boundary — left on HIR
+            // fallback by design): the MIR walker reads the operand's
+            // *type stamp* (correct for let-bound locals + match
+            // bindings + user-fn-call returns), while HIR's
+            // `expr_is_numeric` reads `ectx.local_types`, which only
+            // carries *params*. So for `left + right` where `left` /
+            // `right` are `Int`s bound by `let left = leftRes?` (not
+            // params), HIR misclassifies them as non-numeric and emits
+            // the concat-shaped `(left + &right)`; MIR correctly emits
+            // `(left + right)`. Both COMPILE and produce identical
+            // results (`i64: Add<&i64>` exists in std), so neither is
+            // unsound — MIR is just cleaner. Matching HIR here would
+            // mean deliberately ignoring MIR's correct stamps, so these
+            // fns (`applyEvalOp`, `validateAndCombine[NoOp]`, `size`,
+            // `sumDirect`, `countS`'s `&str` deref, …) stay on HIR
+            // fallback. The eventual HIR retirement fixes HIR (give it
+            // let-local types), not MIR.
             if matches!(bop.op, BinOp::Add)
                 && !ty_is_numeric(bop.lhs.ty())
                 && !ty_is_numeric(bop.rhs.ty())
@@ -847,23 +891,89 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                 }
             }
         }
-        MirExpr::IfThenElse(spanned_ite) => {
-            // Direct conditional. Emits as a
-            // Rust `if … { … } else { … }` expression. Each
-            // subtree must emit cleanly or the whole node
-            // falls back to HIR.
-            let ite = &spanned_ite.node;
-            let cond = emit_mir_expr(&ite.cond, emit_ctx)?;
-            let then_branch = emit_mir_expr(&ite.then_branch, emit_ctx)?;
-            let else_branch = emit_mir_expr(&ite.else_branch, emit_ctx)?;
-            Some(format!(
-                "if {} {{ {} }} else {{ {} }}",
-                cond, then_branch, else_branch
-            ))
-        }
+        MirExpr::IfThenElse(spanned_ite) => emit_mir_if_then_else(&spanned_ite.node, emit_ctx),
         MirExpr::Match(spanned_match) => emit_mir_match(&spanned_match.node, emit_ctx),
         _ => None,
     }
+}
+
+/// Emit `MirExpr::IfThenElse` byte-identical to HIR's
+/// `try_emit_bool_if_else` (the only producer of `IfThenElse` is the
+/// MIR `bool_match_to_if` pass, which rewrites the exact two-arm bool
+/// matches HIR routes through `try_emit_bool_if_else`).
+///
+/// Two HIR behaviors are mirrored here that the naive `if cond { then }
+/// else { else }` emit misses:
+///
+/// 1. **Condition canonicalization.** HIR's
+///    `classify_bool_subject_plan_resolved` never emits `>=` / `<=` /
+///    `!=` in the condition: it rewrites `>=`→`<`, `<=`→`>`, `!=`→`==`
+///    and *swaps* the then/else branches (`invert`). The MIR pass keeps
+///    the source operator + branch order, so a `code >= 48` subject
+///    renders as `if (code >= 48) { then } else { else }` where HIR
+///    renders `if (code < 48) { else } else { then }`. Re-apply HIR's
+///    rewrite so the two match.
+/// 2. **Branch clone.** HIR runs each branch through `maybe_clone`
+///    (owning position). Mirror with `mir_maybe_clone` (a no-op for the
+///    already-graduated cases, exact for the rest).
+fn emit_mir_if_then_else(
+    ite: &crate::ir::mir::MirIfThenElse,
+    emit_ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    // HIR's `classify_bool_subject_plan_resolved` maps a comparison
+    // subject to a canonical operator + an `invert` flag:
+    //   ==  →  "==", keep ;  !=  →  "==", invert
+    //   <   →  "<",  keep ;  >=  →  "<",  invert
+    //   >   →  ">",  keep ;  <=  →  ">",  invert
+    // `invert == true` swaps the then/else branches. Crucially, HIR's
+    // `try_emit_bool_if_else` renders the condition operands with a
+    // *plain* `emit_expr` — it does NOT apply the `BinOp` arm's
+    // string-literal `&*x == "lit"` deref. So a `match name == "_"`
+    // subject emits `name == AverStr::from("_")` in the condition, not
+    // `&*name == "_"`. Mirror that by emitting the comparison cond
+    // directly here from the raw operand renders, bypassing the
+    // deref-applying `BinOp` arm.
+    let canonical_compare = |op: BinOp| -> Option<(&'static str, bool)> {
+        match op {
+            BinOp::Eq => Some(("==", false)),
+            BinOp::Neq => Some(("==", true)),
+            BinOp::Lt => Some(("<", false)),
+            BinOp::Gte => Some(("<", true)),
+            BinOp::Gt => Some((">", false)),
+            BinOp::Lte => Some((">", true)),
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => None,
+        }
+    };
+
+    let (cond, then_src, else_src) = match &ite.cond.node {
+        MirExpr::BinOp(spanned_binop) if canonical_compare(spanned_binop.node.op).is_some() => {
+            let bop = &spanned_binop.node;
+            let (op_str, invert) = canonical_compare(bop.op).expect("checked by guard");
+            // Raw operand renders — HIR's bool-if-else uses `emit_expr`
+            // directly (no `&*`/literal-deref, no `maybe_clone`).
+            let l = emit_mir_expr(&bop.lhs, emit_ctx)?;
+            let r = emit_mir_expr(&bop.rhs, emit_ctx)?;
+            let cond = format!("({} {} {})", l, op_str, r);
+            if invert {
+                (cond, &ite.else_branch, &ite.then_branch)
+            } else {
+                (cond, &ite.then_branch, &ite.else_branch)
+            }
+        }
+        _ => {
+            // Non-comparison subject (`ResolvedBoolSubjectPlan::Expr`):
+            // HIR emits the subject as-is, branches in source order.
+            let cond = emit_mir_expr(&ite.cond, emit_ctx)?;
+            (cond, &ite.then_branch, &ite.else_branch)
+        }
+    };
+
+    let then_branch = mir_maybe_clone(emit_mir_expr(then_src, emit_ctx)?, &then_src.node, emit_ctx);
+    let else_branch = mir_maybe_clone(emit_mir_expr(else_src, emit_ctx)?, &else_src.node, emit_ctx);
+    Some(format!(
+        "if {} {{ {} }} else {{ {} }}",
+        cond, then_branch, else_branch
+    ))
 }
 
 // ── Match (Wave 2) ──────────────────────────────────────────────────────
@@ -1151,14 +1261,31 @@ fn mir_subject_is_borrowed_param(subject: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -
 /// `emit_body_expr_plan_with_options`: a field access (`Project`) on
 /// a borrowed param in tail/return position needs `.clone()` to
 /// produce an owned value (`emit_mir_expr` emits `obj.field`
-/// without it). Multi-statement bodies (a top-level `Let` chain)
-/// emit as a Rust block-expr `{ let … ; … }`, which never matches
-/// HIR's flat `let …;`-line block format — so they fall back via
-/// the byte comparison. That's the intended Wave-1 boundary.
+/// without it).
+///
+/// Wave 4 closes the multi-statement boundary: a top-level `Let`
+/// chain (the MIR shape a `Block` body with `let` bindings lowers
+/// to) is emitted as flat statement lines —
+/// `    let a = …;\n    let b = …;\n    <final-expr>` — exactly the
+/// format [`super::toplevel::emit_fn_body`]'s `Block` arm produces,
+/// instead of the nested block-expr `{ let a = …; { let b = …; … } }`
+/// `emit_mir_expr` renders for an inline `Let`. See
+/// [`emit_mir_let_chain_flat`].
 pub(super) fn emit_mir_fn_body(
     body: &Spanned<MirExpr>,
     emit_ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
+    // A top-level `Let` is a multi-statement body. HIR emits it as
+    // flat `let …;`-lines (one per binding) then the final
+    // expression on its own line — never a nested block-expr. Mirror
+    // that line shape so multi-statement bodies graduate.
+    if let MirExpr::Let(spanned_let) = &body.node
+        && !spanned_let.node.binding_name.is_empty()
+        && let Some(lines) = emit_mir_let_chain_flat(&spanned_let.node, emit_ctx)
+    {
+        return Some(format!("    crate::cancel_checkpoint();\n    {}", lines));
+    }
+
     let mut code = emit_mir_expr(body, emit_ctx)?;
     // Return-position field access on a borrowed param → clone for
     // an owned result. Mirror of HIR's
@@ -1170,6 +1297,54 @@ pub(super) fn emit_mir_fn_body(
         code = format!("{}.clone()", code);
     }
     Some(format!("    crate::cancel_checkpoint();\n    {}", code))
+}
+
+/// Emit a top-level `Let` chain as flat Rust statement lines, mirroring
+/// [`super::toplevel::emit_fn_body`]'s `Block` arm byte-for-byte: each
+/// binding becomes `let {name} = {value};` (value rendered raw, no
+/// clone wrapper — exactly as HIR's `emit_stmt` does), one per line,
+/// 4-space indented and `\n`-joined, terminated by the chain's final
+/// expression rendered raw on its own line.
+///
+/// The chain is the run of directly-nested `Let` nodes: a `Let` whose
+/// body is itself a (named) `Let` continues the chain; the first body
+/// that isn't a named `Let` is the final expression. Returns `None`
+/// when any binding value or the final expression can't render, or
+/// when a binding carries no source name (synthetic intermediate —
+/// HIR can't emit it as a `let` either, so it stays on fallback).
+fn emit_mir_let_chain_flat(
+    let_node: &crate::ir::mir::MirLet,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = let_node;
+    loop {
+        if current.binding_name.is_empty() {
+            // Synthetic intermediate binding — no source ident to
+            // bind. HIR doesn't reach the flat-let path for these
+            // either; fall back.
+            return None;
+        }
+        let value = emit_mir_expr(&current.value, ctx)?;
+        let name = aver_name_to_rust(&current.binding_name);
+        lines.push(format!("let {} = {};", name, value));
+
+        // Continue the chain only when the body is another *named*
+        // `Let`. A synthetic-named `Let` body would force the nested
+        // block shape on HIR's side too, so stop and render it as the
+        // final expression (which then bails via `emit_mir_expr`).
+        match &current.body.node {
+            MirExpr::Let(next) if !next.node.binding_name.is_empty() => {
+                current = &next.node;
+            }
+            _ => {
+                let final_expr = emit_mir_expr(&current.body, ctx)?;
+                lines.push(final_expr);
+                break;
+            }
+        }
+    }
+    Some(lines.join("\n    "))
 }
 
 // ── Production parity gate + graduated-fn counter ───────────────────────
@@ -1339,15 +1514,48 @@ fn mir_maybe_clone(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String
     code
 }
 
-/// Mirror of HIR's `clone_arg`: emit an expression as an owning
-/// argument. The Project field-Copy elision the HIR walker does
-/// requires record-field-type introspection (`attr_result_is_copy`)
-/// that the MIR walker can't reproduce identically, so a `Project`
-/// on a Copy-typed field would diverge from HIR — the parity gate
-/// catches that as a mismatch and falls back. For the common case
-/// (non-Project args) this matches HIR exactly.
+/// Mirror of HIR's `clone_arg` (`clone_arg_with_options`): emit an
+/// expression as an owning argument. HIR elides the `.clone()` on a
+/// record field access whose field type is Copy
+/// (`attr_result_is_copy`); Wave 4 ports that elision here via
+/// [`mir_attr_result_is_copy`], reading the base local's stamped type.
+/// For the common case (non-`Project` args) this delegates to
+/// `mir_maybe_clone`, matching HIR exactly.
 fn mir_clone_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String {
+    if let MirExpr::Project(p) = expr
+        && mir_attr_result_is_copy(&p.node, ctx)
+    {
+        // Copy-typed record field: HIR returns the bare field access
+        // (no `.clone()`). Mirror that.
+        return code;
+    }
     mir_maybe_clone(code, expr, ctx)
+}
+
+/// Mirror of HIR's `attr_result_is_copy` over a `MirProject`: the
+/// field access result is Copy iff the projection base is a
+/// `Type::Named` local and the projected field's declared type is a
+/// Copy type. Reads the base's type from `local_types` (params + let
+/// bindings — the MIR walker has richer coverage than HIR here, but the
+/// guard `obj is a Named local` is the same), then defers to the shared
+/// `record_field_is_copy` for the field-type lookup. Returns `false`
+/// (HIR's conservative "needs a clone") when there's no `CodegenContext`
+/// (coverage path) or the base isn't a Named local.
+fn mir_attr_result_is_copy(proj: &crate::ir::mir::MirProject, ctx: &MirEmitCtx<'_>) -> bool {
+    let Some(cg) = ctx.codegen else {
+        return false;
+    };
+    let Some(local) = local_of(&proj.base.node) else {
+        return false;
+    };
+    let Some(named_ty) = ctx
+        .local_types
+        .get(&local.name)
+        .filter(|t| matches!(t, Type::Named { .. }))
+    else {
+        return false;
+    };
+    super::expr::record_field_is_copy(named_ty, &proj.field, cg)
 }
 
 /// Emit a named user-function call (`Call(Fn)` /
@@ -2476,5 +2684,179 @@ mod tests {
         assert_eq!(report.mir_covered, 1);
         assert_eq!(report.hir_fallback, 1);
         assert_eq!(blockers.get("Match"), Some(&1));
+    }
+
+    // ── Wave 4 ──────────────────────────────────────────────────────
+
+    /// Build `let a = <a_val>; let b = <b_val>; <body>` as a nested
+    /// MIR `Let` chain.
+    fn let_chain(
+        a: (&str, Spanned<MirExpr>),
+        b: (&str, Spanned<MirExpr>),
+        body: Spanned<MirExpr>,
+    ) -> Spanned<MirExpr> {
+        let inner = MirExpr::Let(span(crate::ir::mir::MirLet {
+            binding: LocalId(1),
+            binding_name: b.0.to_string(),
+            value: Box::new(b.1),
+            body: Box::new(body),
+        }));
+        span(MirExpr::Let(span(crate::ir::mir::MirLet {
+            binding: LocalId(0),
+            binding_name: a.0.to_string(),
+            value: Box::new(a.1),
+            body: Box::new(span(inner)),
+        })))
+    }
+
+    #[test]
+    fn fn_body_emits_let_chain_as_flat_statement_lines() {
+        // A top-level `Let` chain must render as flat `let …;`-lines —
+        // the format HIR's `Block` body arm produces — NOT the nested
+        // block-expr `{ let a = …; { let b = …; … } }` that an inline
+        // `Let` renders. This is the Wave-4 multi-statement boundary.
+        let a_local = MirLocal {
+            slot: LocalId(0),
+            last_use: true,
+            name: "a".to_string(),
+        };
+        let body = let_chain(
+            ("a", int_lit(1)),
+            ("b", int_lit(2)),
+            span(MirExpr::Local(span(a_local))),
+        );
+        let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("let chain emits");
+        assert_eq!(
+            emit,
+            "    crate::cancel_checkpoint();\n    let a = 1i64;\n    let b = 2i64;\n    a"
+        );
+    }
+
+    #[test]
+    fn inline_let_still_renders_as_block_expr() {
+        // An inline `Let` (NOT at top-level body position) still renders
+        // as a nested block-expr — only the fn-body path flattens.
+        let value = int_lit(7);
+        let body_local = MirLocal {
+            slot: LocalId(0),
+            last_use: true,
+            name: "x".to_string(),
+        };
+        let let_node = crate::ir::mir::MirLet {
+            binding: LocalId(0),
+            binding_name: "x".to_string(),
+            value: Box::new(value),
+            body: Box::new(span(MirExpr::Local(span(body_local)))),
+        };
+        let expr = span(MirExpr::Let(span(let_node)));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("inline let emits");
+        assert_eq!(emit, "{ let x = 7i64; x }");
+    }
+
+    #[test]
+    fn neg_folded_int_literal_re_wraps_like_hir_neg() {
+        // `const_fold` collapses `Neg(Int(5))` → `Literal(-5)`; the
+        // walker re-wraps it as `(-5i64)` to match HIR's `Neg` arm
+        // (which never folds).
+        let expr = span(MirExpr::Literal(span(crate::ast::Literal::Int(-5))));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("neg int literal emits");
+        assert_eq!(emit, "(-5i64)");
+    }
+
+    #[test]
+    fn neg_folded_float_literal_re_wraps_like_hir_neg() {
+        // `Neg(Float(273.15))` folds to `Literal(-273.15)`; re-wrap to
+        // `(-273.15f64)` to match HIR's `(-273.15f64)`.
+        let expr = span(MirExpr::Literal(span(crate::ast::Literal::Float(-273.15))));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("neg float literal emits");
+        assert_eq!(emit, "(-273.15f64)");
+    }
+
+    #[test]
+    fn positive_literals_unchanged_by_neg_rewrap() {
+        // Positive literals are never wrapped.
+        let i = span(MirExpr::Literal(span(crate::ast::Literal::Int(5))));
+        assert_eq!(emit_mir_expr(&i, &empty_ctx()).as_deref(), Some("5i64"));
+        let f = span(MirExpr::Literal(span(crate::ast::Literal::Float(1.5))));
+        assert_eq!(emit_mir_expr(&f, &empty_ctx()).as_deref(), Some("1.5f64"));
+    }
+
+    /// Build an `IfThenElse` with a comparison `cond` of the given op
+    /// over two named Int locals, and `Int` literal branches.
+    fn if_compare(op: BinOp) -> Spanned<MirExpr> {
+        let lhs = MirLocal {
+            slot: LocalId(0),
+            last_use: false,
+            name: "code".to_string(),
+        };
+        let cond = MirExpr::BinOp(span(crate::ir::mir::MirBinOp {
+            op,
+            lhs: Box::new(span_ty(MirExpr::Local(span(lhs)), Type::Int)),
+            rhs: Box::new(int_lit(48)),
+        }));
+        span(MirExpr::IfThenElse(span(crate::ir::mir::MirIfThenElse {
+            cond: Box::new(span(cond)),
+            then_branch: Box::new(int_lit(1)),
+            else_branch: Box::new(int_lit(0)),
+        })))
+    }
+
+    #[test]
+    fn if_then_else_keeps_lt_canonical_no_swap() {
+        // `<` is canonical (invert=false): keep operator, branches in
+        // source order.
+        let emit = emit_mir_expr(&if_compare(BinOp::Lt), &empty_ctx()).expect("if emits");
+        assert_eq!(emit, "if (code < 48i64) { 1i64 } else { 0i64 }");
+    }
+
+    #[test]
+    fn if_then_else_inverts_gte_to_lt_and_swaps_branches() {
+        // `>=` → HIR canonicalizes to `<` + invert (swap branches):
+        // `if (code < 48) { else_branch } else { then_branch }`.
+        let emit = emit_mir_expr(&if_compare(BinOp::Gte), &empty_ctx()).expect("if emits");
+        assert_eq!(emit, "if (code < 48i64) { 0i64 } else { 1i64 }");
+    }
+
+    #[test]
+    fn if_then_else_inverts_lte_to_gt_and_swaps_branches() {
+        let emit = emit_mir_expr(&if_compare(BinOp::Lte), &empty_ctx()).expect("if emits");
+        assert_eq!(emit, "if (code > 48i64) { 0i64 } else { 1i64 }");
+    }
+
+    #[test]
+    fn if_then_else_inverts_neq_to_eq_and_swaps_branches() {
+        let emit = emit_mir_expr(&if_compare(BinOp::Neq), &empty_ctx()).expect("if emits");
+        assert_eq!(emit, "if (code == 48i64) { 0i64 } else { 1i64 }");
+    }
+
+    #[test]
+    fn if_then_else_cond_does_not_deref_string_literal() {
+        // HIR's bool-if-else condition uses a plain `emit_expr` — it
+        // does NOT apply the `BinOp` arm's `&*name == "lit"` deref. So
+        // `match name == "_"` emits `name == AverStr::from("_")` in the
+        // cond, matching HIR byte-for-byte.
+        let name = MirLocal {
+            slot: LocalId(0),
+            last_use: false,
+            name: "name".to_string(),
+        };
+        let cond = MirExpr::BinOp(span(crate::ir::mir::MirBinOp {
+            op: BinOp::Eq,
+            lhs: Box::new(span_ty(MirExpr::Local(span(name)), Type::Str)),
+            rhs: Box::new(span_ty(
+                MirExpr::Literal(span(crate::ast::Literal::Str("_".to_string()))),
+                Type::Str,
+            )),
+        }));
+        let expr = span(MirExpr::IfThenElse(span(crate::ir::mir::MirIfThenElse {
+            cond: Box::new(span(cond)),
+            then_branch: Box::new(int_lit(1)),
+            else_branch: Box::new(int_lit(0)),
+        })));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("if emits");
+        assert_eq!(
+            emit,
+            "if (name == AverStr::from(\"_\")) { 1i64 } else { 0i64 }"
+        );
     }
 }
