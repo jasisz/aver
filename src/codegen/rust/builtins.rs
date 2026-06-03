@@ -8,7 +8,7 @@ use crate::ir::hir::ResolvedExpr;
 /// Try to emit a builtin call as Rust code.
 /// Returns `None` if the name is not a builtin (i.e. it's a user function).
 /// Builtins whose return type includes String and needs .into_aver() conversion.
-fn builtin_needs_str_conversion(name: &str) -> bool {
+pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
     matches!(
         name,
         "Console.readLine"
@@ -68,7 +68,7 @@ fn builtin_effect_name(name: &str) -> &str {
     }
 }
 
-fn builtin_is_effectful(name: &str) -> bool {
+pub(super) fn builtin_is_effectful(name: &str) -> bool {
     matches!(
         builtin_effect_name(name).split('.').next(),
         Some(

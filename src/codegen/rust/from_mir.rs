@@ -52,7 +52,7 @@ use crate::ast::{BinOp, Spanned, Type};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::module_prefix_to_rust_path;
 use crate::ir::hir::{
-    BuiltinCtor, ResolvedCtor, ResolvedMatchArm, ResolvedPattern,
+    BuiltinCtor, BuiltinIntrinsic, ResolvedCtor, ResolvedMatchArm, ResolvedPattern,
     classify_match_dispatch_plan_resolved,
 };
 use crate::ir::mir::{MirCallee, MirCtor, MirExpr, MirLocal, MirMatch, MirPattern, MirProgram};
@@ -107,6 +107,13 @@ pub struct MirEmitCtx<'a> {
     pub borrowed_params: &'a HashSet<String>,
     /// Owning module prefix for the fn whose body this ctx emits.
     pub current_module_scope: Option<&'a str>,
+    /// Interned built-in fn names, indexed by `BuiltinId`
+    /// (`MirProgram.builtins`). The `Call(Builtin(id))` arm resolves
+    /// `id` → dotted name through this slice, mirroring wasm-gc's
+    /// `ctx.mir_builtins`. Empty on the coverage / test path — a
+    /// `BuiltinId` then resolves to nothing (`None` → HIR fallback),
+    /// which is fine because that path only inspects `Some` vs `None`.
+    pub mir_builtins: &'a [String],
 }
 
 impl<'a> MirEmitCtx<'a> {
@@ -129,6 +136,10 @@ impl<'a> MirEmitCtx<'a> {
             rc_wrapped: EMPTY_SET.get_or_init(HashSet::new),
             borrowed_params: EMPTY_SET.get_or_init(HashSet::new),
             current_module_scope: None,
+            // No builtin table on the coverage path: `Call(Builtin)`
+            // resolves to `None` and the fn reports as HIR-fallback,
+            // matching the pre-Wave-3a coverage walk's reach.
+            mir_builtins: &[],
         }
     }
 
@@ -146,6 +157,16 @@ impl<'a> MirEmitCtx<'a> {
             rc_wrapped: &policy.rc_wrapped,
             borrowed_params: &policy.borrowed_params,
             current_module_scope: policy.current_module_scope.as_deref(),
+            // The builtin table the parity gate already built into the
+            // `CodegenContext`. `Call(Builtin(id))` resolves `id`
+            // through it; if the ctx carries no MIR program (it always
+            // does on the gate path, but be defensive) builtins just
+            // won't resolve → HIR fallback.
+            mir_builtins: ctx
+                .mir_program
+                .as_ref()
+                .map(|p| p.builtins.as_slice())
+                .unwrap_or(&[]),
         }
     }
 
@@ -328,21 +349,28 @@ fn first_blocker(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<&
             .or_else(|| first_blocker(&b.node.rhs, emit_ctx))
             .or(Some("BinOp")),
         MirExpr::Call(c) => {
-            // A `Builtin` / `Intrinsic` / `LocalSlot` callee is itself
-            // the blocker — report the callee kind so the histogram
-            // distinguishes "builtin call" from "closure call".
-            match &c.node.callee {
-                MirCallee::Builtin(_) => return Some("Call(Builtin)"),
-                MirCallee::Intrinsic(_) => return Some("Call(Intrinsic)"),
-                MirCallee::LocalSlot { .. } => return Some("Call(LocalSlot)"),
-                MirCallee::Fn(_) => {}
+            // A `LocalSlot` callee (first-class fn value) is itself the
+            // blocker — the walker never recurses into it. `Fn`,
+            // `Builtin` and `Intrinsic` callees can all emit cleanly
+            // (Wave 3a graduated the pure builtins + intrinsics), so
+            // recurse into the args first and only report the callee
+            // kind when every arg emits but the call as a whole still
+            // returned `None` (an effectful / unresolved builtin, or an
+            // intrinsic / Fn shape the walker can't render).
+            if let MirCallee::LocalSlot { .. } = &c.node.callee {
+                return Some("Call(LocalSlot)");
             }
             for a in &c.node.args {
                 if let Some(b) = first_blocker(a, emit_ctx) {
                     return Some(b);
                 }
             }
-            Some("Call(Fn)")
+            match &c.node.callee {
+                MirCallee::Builtin(_) => Some("Call(Builtin)"),
+                MirCallee::Intrinsic(_) => Some("Call(Intrinsic)"),
+                MirCallee::Fn(_) => Some("Call(Fn)"),
+                MirCallee::LocalSlot { .. } => Some("Call(LocalSlot)"),
+            }
         }
         MirExpr::TailCall(tc) => {
             for a in &tc.node.args {
@@ -548,14 +576,32 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
                     let name = emit_ctx.symbol_table.fn_entry(*fn_id).key.canonical();
                     emit_named_call(&name, &call.args, emit_ctx)
                 }
-                // Builtin / closure / unresolved callees ride the
-                // HIR walker's classification (`CallPlan`) — too
-                // many shapes to mirror here. Buffer intrinsics
-                // likewise fall back (the Rust backend deforests
-                // differently).
-                MirCallee::Builtin(_) | MirCallee::Intrinsic(_) | MirCallee::LocalSlot { .. } => {
-                    None
+                // Wave 3a: resolve the interned dotted name and
+                // dispatch the PURE builtins through
+                // `emit_mir_builtin_call`. EFFECTFUL builtins (and any
+                // out-of-range id, a lowering-invariant violation we
+                // tolerate defensively) return `None` → HIR fallback;
+                // they stay on the HIR walker (Wave 3b).
+                MirCallee::Builtin(id) => {
+                    let name = emit_ctx.mir_builtins.get(id.0 as usize)?.as_str();
+                    if super::builtins::builtin_is_effectful(name) {
+                        return None;
+                    }
+                    emit_mir_builtin_call(name, &call.args, emit_ctx)
                 }
+                // Wave 3a: the 5 deforestation intrinsics (buffer build
+                // + `__to_str`). Args are by-value (no clone / borrow),
+                // mirroring `emit_builtin_call_inner`'s intrinsic arms.
+                // The Rust backend deforests differently, so a buffered
+                // fn's MIR shape may not byte-match HIR — the parity
+                // gate then falls back safely.
+                MirCallee::Intrinsic(intrinsic) => {
+                    emit_mir_intrinsic_call(*intrinsic, &call.args, emit_ctx)
+                }
+                // First-class fn value held in a slot — too many
+                // dynamic-dispatch shapes to mirror here; ride the HIR
+                // walker.
+                MirCallee::LocalSlot { .. } => None,
             }
         }
         MirExpr::Return(inner) => Some(format!("return {}", emit_mir_expr(inner, emit_ctx)?)),
@@ -1379,6 +1425,356 @@ fn mir_borrow_arg(code: String, expr: &MirExpr, ctx: &MirEmitCtx<'_>) -> String 
     }
 }
 
+// ── Wave 3a: PURE builtin calls + deforestation intrinsics ──────────────
+//
+// Mirror of the HIR oracle `emit_builtin_call` / `emit_builtin_call_inner`
+// (`builtins.rs`) for the ~88 PURE builtins (Result / Option / Int /
+// Float / String / List / Map / Vector / Bool / Char / Byte). The
+// EFFECTFUL families (Args / Console / Http / HttpServer / Disk / Env /
+// Random / SelfHostRuntime / Tcp / Terminal / Time) are gated out at the
+// `Call(Builtin)` arm (`builtin_is_effectful` → `None` → HIR fallback) —
+// Wave 3b, deliberately left on the HIR walker and never reached here.
+//
+// Each arm copies its HIR sibling's shape verbatim, substituting:
+//   `emit_arg(i)`                  → `emit_mir_expr(&args[i], ctx)?`
+//   `clone_arg(&args[i].node, …)`  → `mir_clone_arg(emit_mir_expr(…)?, …)`
+//   `emit_str_arg_or_deref(…)`     → `mir_str_arg_or_deref(&args[i], ctx)?`
+// then runs the `builtin_needs_str_conversion` `.into_aver()` post-step
+// that `emit_builtin_call` applies (Int.mod, Int/Float.fromString,
+// String.* returning String, Char.fromCode, Byte.*). The byte-parity
+// gate is the safety net: any arm whose output diverges from HIR blocks
+// graduation and the fn falls back to HIR.
+
+/// Mirror of HIR's `emit_str_arg_or_deref`: emit a string-accepting
+/// argument (`String.contains` / `startsWith` / `endsWith`) as a bare
+/// `"foo"` literal (no allocation) or, for any other expression, the
+/// deref form `&*code`. Returns `None` when the inner expr can't emit.
+fn mir_str_arg_or_deref(expr: &Spanned<MirExpr>, ctx: &MirEmitCtx<'_>) -> Option<String> {
+    if let MirExpr::Literal(lit) = &expr.node
+        && let crate::ast::Literal::Str(s) = &lit.node
+    {
+        return Some(format!("{:?}", s));
+    }
+    let code = emit_mir_expr(expr, ctx)?;
+    Some(format!("&*{}", code))
+}
+
+/// Emit a PURE builtin call from MIR, byte-identical to the HIR
+/// oracle's `emit_builtin_call` (minus the effectful / replay / policy
+/// branches, which never reach here). Returns `None` for any builtin
+/// the oracle doesn't cover here (→ HIR fallback). `name` is already
+/// known non-effectful (the `Call(Builtin)` arm gated it).
+fn emit_mir_builtin_call(
+    name: &str,
+    args: &[Spanned<MirExpr>],
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    // `emit_arg(i)`: raw emit (HIR's `emit_expr(&args[i].node, …)`).
+    macro_rules! arg {
+        ($i:expr) => {
+            emit_mir_expr(&args[$i], ctx)?
+        };
+    }
+    // `clone_arg(&args[i].node, …)`: owning clone.
+    macro_rules! clone {
+        ($i:expr) => {
+            mir_clone_arg(emit_mir_expr(&args[$i], ctx)?, &args[$i].node, ctx)
+        };
+    }
+
+    let result = match name {
+        // ---- Result ----
+        "Result.Ok" => format!("Ok({})", clone!(0)),
+        "Result.Err" => format!("Err({})", clone!(0)),
+        "Result.withDefault" => format!("{}.unwrap_or({})", clone!(0), clone!(1)),
+
+        // ---- Option ----
+        "Option.Some" => format!("Some({})", clone!(0)),
+        "Option.withDefault" => format!("{}.unwrap_or({})", clone!(0), clone!(1)),
+        "Option.toResult" => format!("{}.ok_or({})", clone!(0), clone!(1)),
+
+        // ---- Int ----
+        "Int.abs" => format!("{}.abs()", arg!(0)),
+        "Int.fromFloat" => format!("({} as i64)", arg!(0)),
+        "Int.fromString" => format!("{}.parse::<i64>().map_err(|e| e.to_string())", arg!(0)),
+        "Int.min" => format!("{}.min({})", arg!(0), arg!(1)),
+        "Int.max" => format!("{}.max({})", arg!(0), arg!(1)),
+        "Int.mod" => {
+            let a = arg!(0);
+            let b = arg!(1);
+            format!(
+                "if ({b}) == 0i64 {{ Err(\"Int.mod: divisor must not be zero\".to_string()) }} else {{ Ok(({a}).rem_euclid({b})) }}"
+            )
+        }
+
+        // ---- Float ----
+        "Float.abs" => format!("{}.abs()", arg!(0)),
+        "Float.round" => format!("{}.round() as i64", arg!(0)),
+        "Float.floor" => format!("{}.floor() as i64", arg!(0)),
+        "Float.ceil" => format!("{}.ceil() as i64", arg!(0)),
+        "Float.fromString" => format!("{}.parse::<f64>().map_err(|e| e.to_string())", arg!(0)),
+        "Float.sqrt" => format!("{}.sqrt()", arg!(0)),
+        "Float.pow" => format!("{}.powf({})", arg!(0), arg!(1)),
+        "Float.min" => format!("{}.min({})", arg!(0), arg!(1)),
+        "Float.max" => format!("{}.max({})", arg!(0), arg!(1)),
+        "Float.sin" => format!("{}.sin()", arg!(0)),
+        "Float.cos" => format!("{}.cos()", arg!(0)),
+        "Float.atan2" => format!("{}.atan2({})", arg!(0), arg!(1)),
+        "Float.pi" => "std::f64::consts::PI".to_string(),
+        "Float.fromInt" => format!("{} as f64", arg!(0)),
+
+        // ---- String ----
+        "String.fromInt" => format!("{}.to_string()", arg!(0)),
+        "String.fromFloat" => format!("{}.to_string()", arg!(0)),
+        "String.fromBool" => format!("{}.to_string()", arg!(0)),
+        "String.charAt" => {
+            let s = arg!(0);
+            let idx = arg!(1);
+            format!("{}.chars().nth({} as usize).map(|c| c.to_string())", s, idx)
+        }
+        "String.len" => format!("({}.chars().count() as i64)", arg!(0)),
+        "String.slice" => {
+            let s = arg!(0);
+            let from = arg!(1);
+            let to = arg!(2);
+            format!("aver_rt::string_slice(&{}, {}, {})", s, from, to)
+        }
+        "String.contains" => {
+            let s = arg!(0);
+            let sub = mir_str_arg_or_deref(&args[1], ctx)?;
+            format!("{}.contains({})", s, sub)
+        }
+        "String.startsWith" => {
+            let s = arg!(0);
+            let prefix = mir_str_arg_or_deref(&args[1], ctx)?;
+            format!("{}.starts_with({})", s, prefix)
+        }
+        "String.endsWith" => {
+            let s = arg!(0);
+            let suffix = mir_str_arg_or_deref(&args[1], ctx)?;
+            format!("{}.ends_with({})", s, suffix)
+        }
+        "String.trim" => format!("{}.trim().to_string()", arg!(0)),
+        "String.toUpper" => format!("{}.to_uppercase()", arg!(0)),
+        "String.toLower" => format!("{}.to_lowercase()", arg!(0)),
+        "String.split" => {
+            let s = arg!(0);
+            let delim = arg!(1);
+            format!(
+                "aver_rt::AverList::from_vec({}.split(&*{}).map(|s| s.to_string()).collect::<Vec<_>>())",
+                s, delim
+            )
+        }
+        "String.join" => {
+            let parts = arg!(0);
+            let delim = arg!(1);
+            format!("aver_rt::string_join(&{}, &{})", parts, delim)
+        }
+        "String.replace" => {
+            let s = arg!(0);
+            let from = arg!(1);
+            let to = arg!(2);
+            format!("{}.replace(&*{}, &*{})", s, from, to)
+        }
+        "String.chars" => format!(
+            "aver_rt::AverList::from_vec({}.chars().map(|c| c.to_string()).collect::<Vec<_>>())",
+            arg!(0)
+        ),
+        "String.repeat" => {
+            let s = arg!(0);
+            let n = arg!(1);
+            format!("{}.repeat({} as usize)", s, n)
+        }
+        "String.indexOf" => {
+            let s = arg!(0);
+            let sub = arg!(1);
+            format!("{}.find(&*{}).map(|i| i as i64).unwrap_or(-1i64)", s, sub)
+        }
+        "String.byteLength" => format!("({}.len() as i64)", arg!(0)),
+
+        // ---- List ----
+        "List.len" => {
+            if let MirExpr::List(items) = &args[0].node
+                && items.is_empty()
+            {
+                "0i64".to_string()
+            } else {
+                format!("({}.len() as i64)", arg!(0))
+            }
+        }
+        "List.prepend" => format!("aver_rt::AverList::prepend({}, &{})", clone!(0), clone!(1)),
+        "List.take" => {
+            let list = arg!(0);
+            let count = arg!(1);
+            format!(
+                "{{ let __n = if ({count}) <= 0 {{ 0usize }} else {{ usize::try_from({count}).unwrap_or(usize::MAX) }}; aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
+            )
+        }
+        "List.drop" => {
+            let list = arg!(0);
+            let count = arg!(1);
+            format!(
+                "{{ let __n = if ({count}) <= 0 {{ 0usize }} else {{ usize::try_from({count}).unwrap_or(usize::MAX) }}; aver_rt::AverList::from_vec(({list}).iter().skip(__n).cloned().collect::<Vec<_>>()) }}"
+            )
+        }
+        "List.concat" => format!("aver_rt::AverList::concat(&{}, &{})", clone!(0), clone!(1)),
+        "List.reverse" => format!("{}.reverse()", arg!(0)),
+        "List.contains" => {
+            let list = arg!(0);
+            let item = arg!(1);
+            format!("{}.contains(&{})", list, item)
+        }
+        "List.zip" => {
+            let a = arg!(0);
+            let b = arg!(1);
+            format!(
+                "aver_rt::AverList::from_vec({}.iter().zip({}.iter()).map(|(a, b)| (a.clone(), b.clone())).collect::<Vec<_>>())",
+                a, b
+            )
+        }
+        "List.fromVector" => format!("{}.to_list()", arg!(0)),
+
+        // ---- Map ----
+        "Map.fromList" => format!(
+            "{{ let mut m = HashMap::new(); for (k, v) in {}.iter().cloned() {{ m = m.insert_owned(k, v); }} m }}",
+            clone!(0)
+        ),
+        "Map.entries" => format!(
+            "{{ let mut es: Vec<_> = {}.iter().map(|(k, v)| (k.clone(), v.clone())).collect(); es.sort_by(|a, b| a.0.cmp(&b.0)); aver_rt::AverList::from_vec(es) }}",
+            arg!(0)
+        ),
+        "Map.get" => {
+            let map = arg!(0);
+            let key = arg!(1);
+            format!("{}.get(&{}).cloned()", map, key)
+        }
+        "Map.set" => format!("{}.insert_owned({}, {})", clone!(0), clone!(1), clone!(2)),
+        "Map.has" => {
+            let map = arg!(0);
+            let key = arg!(1);
+            format!("{}.contains_key(&{})", map, key)
+        }
+        "Map.remove" => {
+            let map = clone!(0);
+            let key = arg!(1);
+            format!("{}.remove_owned(&{})", map, key)
+        }
+        "Map.keys" => format!(
+            "{{ let mut ks: Vec<_> = {}.keys().cloned().collect(); ks.sort(); aver_rt::AverList::from_vec(ks) }}",
+            arg!(0)
+        ),
+        "Map.values" => format!(
+            "aver_rt::AverList::from_vec({}.values().cloned().collect::<Vec<_>>())",
+            arg!(0)
+        ),
+        "Map.len" => format!("({}.len() as i64)", arg!(0)),
+
+        // ---- Bool ----
+        "Bool.or" => format!("({} || {})", arg!(0), arg!(1)),
+        "Bool.and" => format!("({} && {})", arg!(0), arg!(1)),
+        "Bool.not" => format!("(!{})", arg!(0)),
+
+        // ---- Char ----
+        "Char.toCode" => format!(
+            "({}.chars().next().map(|c| c as i64).unwrap_or(0i64))",
+            arg!(0)
+        ),
+        "Char.fromCode" => format!("char::from_u32({} as u32).map(|c| c.to_string())", arg!(0)),
+
+        // ---- Byte ----
+        "Byte.toHex" => format!(
+            "{{ let __n = {}; if (0i64..=255i64).contains(&__n) {{ Ok(format!(\"{{:02x}}\", __n as u8)) }} else {{ Err(format!(\"Byte.toHex: {{}} is out of range 0–255\", __n)) }} }}",
+            arg!(0)
+        ),
+        "Byte.fromHex" => format!(
+            "{{ let __s = {}; if __s.len() != 2 {{ Err(format!(\"Byte.fromHex: expected exactly 2 hex chars, got '{{}}'\", __s)) }} else {{ u8::from_str_radix(&__s, 16).map(|n| n as i64).map_err(|_| format!(\"Byte.fromHex: invalid hex '{{}}'\", __s)) }} }}",
+            arg!(0)
+        ),
+
+        // ---- Vector ----
+        "Vector.new" => {
+            let size = arg!(0);
+            let default = clone!(1);
+            format!("aver_rt::AverVector::new({} as usize, {})", size, default)
+        }
+        "Vector.get" => {
+            let vec = arg!(0);
+            let idx = arg!(1);
+            format!("{}.get({} as usize).cloned()", vec, idx)
+        }
+        "Vector.set" => {
+            let vec = clone!(0);
+            let idx = arg!(1);
+            let val = clone!(2);
+            format!("{}.set_owned({} as usize, {})", vec, idx, val)
+        }
+        "Vector.len" => format!("({}.len() as i64)", arg!(0)),
+        "Vector.fromList" => format!("aver_rt::AverVector::from_vec({}.to_vec())", arg!(0)),
+
+        // Not a covered pure builtin (effectful builtins never reach
+        // here — gated at the call arm). HIR fallback.
+        _ => return None,
+    };
+
+    // Mirror of `emit_builtin_call`'s `.into_aver()` post-step for
+    // String-returning pure builtins (and Int.mod / Int.fromString /
+    // Float.fromString / Char.fromCode / Byte.*).
+    if super::builtins::builtin_needs_str_conversion(name) {
+        Some(format!("({}).into_aver()", result))
+    } else {
+        Some(result)
+    }
+}
+
+/// Emit one of the 5 deforestation intrinsics from MIR, byte-identical
+/// to the HIR oracle's `emit_builtin_call_inner` intrinsic arms. Args
+/// are by-value (raw `emit_mir_expr`, no clone / borrow), matching the
+/// loop-rebind shape the deforestation synthesizer emits. The Rust
+/// backend deforests differently, so a buffered fn's MIR shape may not
+/// byte-match HIR — the parity gate then falls back safely.
+fn emit_mir_intrinsic_call(
+    intrinsic: BuiltinIntrinsic,
+    args: &[Spanned<MirExpr>],
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    match intrinsic {
+        BuiltinIntrinsic::BufNew => {
+            let cap = emit_mir_expr(&args[0], ctx)?;
+            Some(format!(
+                "aver_rt::Buffer::with_capacity(({}) as usize)",
+                cap
+            ))
+        }
+        BuiltinIntrinsic::BufAppend => {
+            let buf = emit_mir_expr(&args[0], ctx)?;
+            let s = emit_mir_expr(&args[1], ctx)?;
+            Some(format!(
+                "{{ let mut __b = {}; __b.push_str(&{}); __b }}",
+                buf, s
+            ))
+        }
+        BuiltinIntrinsic::BufAppendSepUnlessFirst => {
+            let buf = emit_mir_expr(&args[0], ctx)?;
+            let sep = emit_mir_expr(&args[1], ctx)?;
+            Some(format!(
+                "{{ let mut __b = {}; if !__b.is_empty() {{ __b.push_str(&{}); }} __b }}",
+                buf, sep
+            ))
+        }
+        BuiltinIntrinsic::BufFinalize => {
+            let buf = emit_mir_expr(&args[0], ctx)?;
+            Some(format!("aver_rt::AverStr::from({})", buf))
+        }
+        BuiltinIntrinsic::ToStr => {
+            let arg = emit_mir_expr(&args[0], ctx)?;
+            Some(format!(
+                "aver_rt::AverStr::from(aver_rt::aver_display(&({})))",
+                arg
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1504,9 +1900,9 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_for_builtin_call() {
-        // Builtin calls ride the HIR walker (call-plan
-        // classification). MIR walker returns None.
+    fn returns_none_for_builtin_call_without_table() {
+        // On the coverage / test path the `mir_builtins` table is
+        // empty, so a `BuiltinId` resolves to nothing → HIR fallback.
         let call = MirCall {
             callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
             args: vec![span(MirExpr::Literal(span(crate::ast::Literal::Str(
@@ -1515,6 +1911,99 @@ mod tests {
         };
         let expr = span(MirExpr::Call(span(call)));
         assert!(emit_mir_expr(&expr, &empty_ctx()).is_none());
+    }
+
+    /// `MirEmitCtx` carrying a one-entry builtin table so `Call(Builtin)`
+    /// resolves `BuiltinId(0)` → `name`. Leaks the backing `Vec` to give
+    /// it a `'static` lifetime (test-only).
+    fn ctx_with_builtin(name: &str) -> MirEmitCtx<'static> {
+        use std::sync::OnceLock;
+        static SYMBOLS: OnceLock<SymbolTable> = OnceLock::new();
+        static PREFIXES: OnceLock<HashSet<String>> = OnceLock::new();
+        let builtins: &'static [String] = Box::leak(vec![name.to_string()].into_boxed_slice());
+        let mut ctx = MirEmitCtx::for_test(
+            SYMBOLS.get_or_init(SymbolTable::default),
+            PREFIXES.get_or_init(HashSet::new),
+        );
+        ctx.mir_builtins = builtins;
+        ctx
+    }
+
+    fn int_lit(n: i64) -> Spanned<MirExpr> {
+        span_ty(
+            MirExpr::Literal(span(crate::ast::Literal::Int(n))),
+            Type::Int,
+        )
+    }
+
+    #[test]
+    fn emits_pure_builtin_int_mod_with_into_aver() {
+        // `Int.mod` is a covered PURE builtin; it carries the
+        // `.into_aver()` post-step (`builtin_needs_str_conversion`).
+        let call = MirCall {
+            callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
+            args: vec![int_lit(7), int_lit(3)],
+        };
+        let expr = span(MirExpr::Call(span(call)));
+        let emit = emit_mir_expr(&expr, &ctx_with_builtin("Int.mod")).expect("Int.mod emits");
+        assert_eq!(
+            emit,
+            "(if (3i64) == 0i64 { Err(\"Int.mod: divisor must not be zero\".to_string()) } else { Ok((7i64).rem_euclid(3i64)) }).into_aver()"
+        );
+    }
+
+    #[test]
+    fn emits_pure_builtin_bool_or() {
+        let call = MirCall {
+            callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
+            args: vec![
+                span_ty(
+                    MirExpr::Literal(span(crate::ast::Literal::Bool(true))),
+                    Type::Bool,
+                ),
+                span_ty(
+                    MirExpr::Literal(span(crate::ast::Literal::Bool(false))),
+                    Type::Bool,
+                ),
+            ],
+        };
+        let expr = span(MirExpr::Call(span(call)));
+        let emit = emit_mir_expr(&expr, &ctx_with_builtin("Bool.or")).expect("Bool.or emits");
+        assert_eq!(emit, "(true || false)");
+    }
+
+    #[test]
+    fn effectful_builtin_returns_none() {
+        // EFFECTFUL builtins are gated out at the call arm — they stay
+        // on the HIR walker (Wave 3b). `Console.print` must NOT emit.
+        let call = MirCall {
+            callee: MirCallee::Builtin(crate::ir::BuiltinId(0)),
+            args: vec![span(MirExpr::Literal(span(crate::ast::Literal::Str(
+                "hi".to_string(),
+            ))))],
+        };
+        let expr = span(MirExpr::Call(span(call)));
+        assert!(
+            emit_mir_expr(&expr, &ctx_with_builtin("Console.print")).is_none(),
+            "effectful Console.print must fall back to HIR"
+        );
+    }
+
+    #[test]
+    fn emits_buf_finalize_intrinsic() {
+        // `__buf_finalize(buf)` → `aver_rt::AverStr::from(buf)`.
+        let buf = MirLocal {
+            slot: LocalId(0),
+            last_use: true,
+            name: "b".to_string(),
+        };
+        let call = MirCall {
+            callee: MirCallee::Intrinsic(BuiltinIntrinsic::BufFinalize),
+            args: vec![span(MirExpr::Local(span(buf)))],
+        };
+        let expr = span(MirExpr::Call(span(call)));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("__buf_finalize emits");
+        assert_eq!(emit, "aver_rt::AverStr::from(b)");
     }
 
     #[test]
