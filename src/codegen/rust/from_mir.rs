@@ -61,7 +61,8 @@ use crate::ir::{MatchDispatchPlan, SymbolTable};
 use super::emit_ctx::{is_copy_type, should_borrow_param};
 use super::expr::{
     callee_borrow_mask, constructor_boxed_positions, emit_dispatch_table_match, emit_list_match,
-    emit_literal, emit_pattern_rebindings, emit_ref_match_rebindings, has_list_patterns,
+    emit_literal, emit_parallel_result_tuple_unwrap, emit_pattern_rebindings,
+    emit_ref_match_rebindings, emit_result_tuple_unwrap, emit_tuple_from_vars, has_list_patterns,
     has_string_literal_patterns,
 };
 use super::pattern::emit_pattern;
@@ -896,8 +897,160 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         }
         MirExpr::IfThenElse(spanned_ite) => emit_mir_if_then_else(&spanned_ite.node, emit_ctx),
         MirExpr::Match(spanned_match) => emit_mir_match(&spanned_match.node, emit_ctx),
+        MirExpr::IndependentProduct(spanned_ip) => {
+            emit_mir_independent_product(&spanned_ip.node, emit_ctx)
+        }
         _ => None,
     }
+}
+
+/// Emit `MirExpr::IndependentProduct` (`(a, b, c)!` / `(a, b, c)?!`)
+/// byte-identical to HIR's `ResolvedExpr::IndependentProduct` arm
+/// (`super::expr`). The Rust backend is the one target that truly
+/// PARALLELIZES the product (the VM and wasm-gc lower it sequentially):
+/// each element runs on its own `std::thread::scope` thread.
+///
+/// Mirror notes (the three behaviors this arm must preserve to stay
+/// byte-equal under the parity gate):
+///
+/// 1. **`?!` (`unwrap_results == true`).** A shared `__cancel_flag`
+///    (`Arc<AtomicBool>`) is threaded into every branch via
+///    `run_cancelable_branch`; a branch that produces `Err` sets the
+///    flag so siblings can short-circuit (the *cancel* independence
+///    mode — `complete` ignores the flag, but the emitted shape is the
+///    same; the runtime decides). Joined branches are folded by
+///    `emit_parallel_result_tuple_unwrap` (which unwraps the
+///    `ParallelBranch::Completed` wrapper, then propagates the first
+///    `Err` with `?`).
+/// 2. **`!` (`unwrap_results == false`).** Same `thread::scope`/`spawn`,
+///    but no cancel flag and no unwrap — joined branch values fold
+///    straight into a tuple via `emit_tuple_from_vars` (a bare product
+///    of `Result`s, preserved positionally).
+/// 3. **Replay sequential fallback.** When `emit_replay_runtime` is on,
+///    the parallel body is wrapped in
+///    `if is_effect_tracking_active() { <sequential replay groups> }
+///    else { <parallel> }`. The sequential arm uses
+///    `enter_effect_group` / `set_effect_branch(i)` / `exit_effect_group`
+///    so per-branch effects record/replay deterministically on one
+///    thread; the parallel arm additionally captures + re-installs the
+///    parallel scope context per spawned branch.
+///
+/// Each element is rendered through `mir_clone_arg` (the byte-identical
+/// mirror of HIR's `clone_arg`). The `run_cancelable_branch` /
+/// `ParallelBranch` / parallel-scope runtime is emitted UNCONDITIONALLY
+/// by `super::runtime`, so no new runtime is needed.
+fn emit_mir_independent_product(
+    ip: &crate::ir::mir::MirIndependentProduct,
+    emit_ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::with_capacity(ip.items.len());
+    for it in &ip.items {
+        parts.push(mir_clone_arg(
+            emit_mir_expr(it, emit_ctx)?,
+            &it.node,
+            emit_ctx,
+        ));
+    }
+
+    let n = parts.len();
+    // The replay flag lives on the full `CodegenContext`; the coverage /
+    // test path has none → treat as no replay (mirror of HIR's
+    // `ctx.emit_replay_runtime`, conservative on the coverage walk).
+    let has_replay = emit_ctx.codegen.is_some_and(|c| c.emit_replay_runtime);
+    let unwrap = ip.unwrap_results;
+
+    let mut code = String::new();
+    if has_replay {
+        // Runtime branch: if recording/replaying, execute sequentially
+        // with replay groups (thread_local state stays on one thread).
+        code.push_str("if crate::aver_replay::is_effect_tracking_active() { ");
+        code.push_str("crate::aver_replay::enter_effect_group(); ");
+        for (i, part) in parts.iter().enumerate() {
+            code.push_str(&format!(
+                "crate::aver_replay::set_effect_branch({i}); let _r{i} = {part}; "
+            ));
+        }
+        code.push_str("crate::aver_replay::exit_effect_group(); ");
+        if unwrap {
+            code.push_str(&emit_result_tuple_unwrap("_r", "__v", n));
+            code.push('?');
+        } else {
+            code.push_str(&emit_tuple_from_vars("_r", n));
+        }
+        code.push_str(" } else { ");
+    }
+
+    if unwrap {
+        code.push_str("{ ");
+        if has_replay {
+            code.push_str(
+                "let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); ",
+            );
+        }
+        code.push_str(
+            "let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); ",
+        );
+        code.push_str("std::thread::scope(|_s| { ");
+        for (i, part) in parts.iter().enumerate() {
+            if has_replay {
+                code.push_str(&format!(
+                    "let __parallel_scope{i} = __parallel_scope.clone(); "
+                ));
+            }
+            code.push_str(&format!("let __cancel_flag{i} = __cancel_flag.clone(); "));
+            code.push_str(&format!("let _h{i} = _s.spawn(move || "));
+            if has_replay {
+                code.push_str(&format!(
+                    "crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || "
+                ));
+            }
+            code.push_str("{ crate::run_cancelable_branch(__cancel_flag");
+            code.push_str(&i.to_string());
+            code.push_str(".clone(), move || { let __result = ");
+            code.push_str(part);
+            code.push_str("; if let Err(_) = &__result { __cancel_flag");
+            code.push_str(&i.to_string());
+            code.push_str(".store(true, std::sync::atomic::Ordering::Relaxed); } __result }) }");
+            if has_replay {
+                code.push(')');
+            }
+            code.push_str("); ");
+        }
+        for i in 0..n {
+            code.push_str(&format!("let _b{i} = _h{i}.join().unwrap(); "));
+        }
+        code.push_str(&emit_parallel_result_tuple_unwrap("_b", "_r", "__v", n));
+        code.push_str(" })? }");
+    } else {
+        if has_replay {
+            code.push_str(
+                "let __parallel_scope = crate::aver_replay::capture_parallel_scope_context(); ",
+            );
+        }
+        code.push_str("std::thread::scope(|_s| { ");
+        for (i, part) in parts.iter().enumerate() {
+            if has_replay {
+                code.push_str(&format!(
+                    "let __parallel_scope{i} = __parallel_scope.clone(); "
+                ));
+                code.push_str(&format!(
+                    "let _h{i} = _s.spawn(move || crate::aver_replay::with_parallel_scope_context(__parallel_scope{i}.clone(), move || {part})); "
+                ));
+            } else {
+                code.push_str(&format!("let _h{i} = _s.spawn(move || {part}); "));
+            }
+        }
+        for i in 0..n {
+            code.push_str(&format!("let _r{i} = _h{i}.join().unwrap(); "));
+        }
+        code.push_str(&emit_tuple_from_vars("_r", n));
+        code.push_str(" }) ");
+    }
+
+    if has_replay {
+        code.push('}');
+    }
+    Some(code)
 }
 
 /// Emit `MirExpr::IfThenElse` byte-identical to HIR's
@@ -3135,14 +3288,15 @@ mod tests {
 
     #[test]
     fn returns_none_for_unsupported_variant() {
-        // Pick a variant the walker doesn't cover — IndependentProduct.
-        let ip = span(MirExpr::IndependentProduct(span(
-            crate::ir::mir::MirIndependentProduct {
-                items: vec![],
-                unwrap_results: false,
-            },
-        )));
-        assert!(emit_mir_expr(&ip, &empty_ctx()).is_none());
+        // Pick a variant the walker doesn't cover — `InterpolatedStr`.
+        // (The pipeline contract guarantees `ir::interp_lower` rewrites it
+        // away before Rust codegen, so the walker deliberately leaves it in
+        // the `_ => None` catch-all; reaching it raw signals fall back to
+        // HIR.)
+        let interp = span(MirExpr::InterpolatedStr(vec![
+            crate::ir::mir::MirStrPart::Literal("x".to_string()),
+        ]));
+        assert!(emit_mir_expr(&interp, &empty_ctx()).is_none());
     }
 
     #[test]
@@ -3185,6 +3339,68 @@ mod tests {
         let expr = span(MirExpr::Tuple(vec![a, b]));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("tuple should emit");
         assert_eq!(emit, "(7i64, 9i64)");
+    }
+
+    #[test]
+    fn emits_bare_independent_product_as_parallel_tuple() {
+        // `(7, 9)!` — bare product (no unwrap). No replay (empty ctx),
+        // so the parallel `thread::scope` body folds straight into a
+        // tuple via `emit_tuple_from_vars`. Byte-identical to HIR's
+        // `ResolvedExpr::IndependentProduct` `!` arm.
+        let a = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(9))));
+        let expr = span(MirExpr::IndependentProduct(span(
+            crate::ir::mir::MirIndependentProduct {
+                items: vec![a, b],
+                unwrap_results: false,
+            },
+        )));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("bare product should emit");
+        assert_eq!(
+            emit,
+            "std::thread::scope(|_s| { let _h0 = _s.spawn(move || 7i64); \
+             let _h1 = _s.spawn(move || 9i64); let _r0 = _h0.join().unwrap(); \
+             let _r1 = _h1.join().unwrap(); (_r0, _r1) }) "
+        );
+    }
+
+    #[test]
+    fn emits_unwrap_independent_product_with_cancel_flag() {
+        // `(7, 9)?!` — unwrap product. No replay (empty ctx), so the
+        // `?!` path emits the shared `__cancel_flag`, one
+        // `run_cancelable_branch` spawn per element, joins, then the
+        // `emit_parallel_result_tuple_unwrap` fold + trailing `?`.
+        // Byte-identical to HIR's `ResolvedExpr::IndependentProduct`
+        // `?!` arm.
+        let a = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
+        let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(9))));
+        let expr = span(MirExpr::IndependentProduct(span(
+            crate::ir::mir::MirIndependentProduct {
+                items: vec![a, b],
+                unwrap_results: true,
+            },
+        )));
+        let emit = emit_mir_expr(&expr, &empty_ctx()).expect("unwrap product should emit");
+        assert!(
+            emit.starts_with(
+                "{ let __cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)); \
+                 std::thread::scope(|_s| { "
+            ),
+            "got: {emit}"
+        );
+        assert!(
+            emit.contains("crate::run_cancelable_branch(__cancel_flag0"),
+            "got: {emit}"
+        );
+        assert!(
+            emit.contains("crate::run_cancelable_branch(__cancel_flag1"),
+            "got: {emit}"
+        );
+        assert!(
+            emit.contains("crate::ParallelBranch::Completed"),
+            "got: {emit}"
+        );
+        assert!(emit.trim_end().ends_with("})? }"), "got: {emit}");
     }
 
     #[test]

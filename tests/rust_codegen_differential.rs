@@ -1112,3 +1112,98 @@ fn mir_tco_deep_self_and_mutual_recursion_behaves() {
     let _ = fs::remove_dir_all(&ws);
     result.unwrap_or_else(|e| panic!("{e}"));
 }
+
+// ─── Mode (f): MIR-emitted IndependentProduct (`?!` / `!`) ────────────────
+//
+// The MIR walker now emits `MirExpr::IndependentProduct` — the Rust
+// backend's truly-PARALLEL product (`std::thread::scope` + per-branch
+// `spawn`, the cancel-flag machinery for `?!`, the bare tuple fold for
+// `!`). The `?!` fns byte-graduate under the normal parity gate; the
+// bare `!` fns that carry a literal negation in an argument diverge only
+// on a pre-existing `Neg` fold (`(0i64 - 5i64)` vs `(-5i64)`, which is
+// semantically equal), orthogonal to the product shape. Under
+// `AVER_RUST_MIR_ONLY=1` ALL of them are forced onto the MIR path, so
+// this probe proves the MIR walker OWNS the parallel emission and the
+// built binary still produces VM-identical output.
+//
+// `independent_fanout.av` exercises `?!` (flatOk, processStep — recursive
+// fan-out), bare `!` (flatFail, bareProduct), and the `Err`-propagation
+// path, so a dropped cancel flag, a wrong tuple fold, or a dropped
+// unwrap would change stdout here.
+
+#[test]
+fn mir_forced_independent_product_builds_and_matches_vm() {
+    let relative = "examples/core/independent_fanout.av";
+    let file = repo_root().join(relative);
+    if !file.exists() {
+        panic!("{relative}: corpus file missing");
+    }
+
+    let vm_stdout = run_vm(&file, None).unwrap_or_else(|e| panic!("VM run failed: {e}"));
+
+    let ws = temp_dir("mir-ip");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "mir_ip_fanout";
+    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
+
+    let result = (|| -> Result<(), String> {
+        // (0) PROVE the MIR path is exercised: the IndependentProduct fns
+        // must graduate onto MIR under the hatch. Without this guard a
+        // silent HIR fallback would let the probe pass for the wrong
+        // reason.
+        let grad = graduated_count(&file, None, &[], &hatch)?;
+        if grad == 0 {
+            return Err(
+                "no fn graduated onto the MIR path under AVER_RUST_MIR_ONLY=1 — the \
+                 IndependentProduct emit is not being exercised by the MIR walker"
+                    .to_string(),
+            );
+        }
+
+        // Force the MIR body onto production for every renderable fn, so
+        // the parallel IndependentProduct shape is MIR-emitted (not the
+        // byte-equal HIR fallback), then build + run.
+        compile_rust_env(&file, &project, name, None, &[], &hatch)?;
+
+        // Structural tripwire: the emitted Rust must carry the MIR-
+        // emitted parallel product machinery (the cancel-flag branch
+        // runner for `?!` and the `thread::scope` fan-out).
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted module: {e}"))?;
+        if !emitted.contains("run_cancelable_branch") || !emitted.contains("std::thread::scope") {
+            return Err(format!(
+                "emitted Rust is missing the parallel IndependentProduct machinery \
+                 (run_cancelable_branch / thread::scope) — the MIR product emit was \
+                 dropped:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "MIR IndependentProduct binary exited non-zero:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "MIR IndependentProduct stdout mismatch\n--- VM ---\n{vm_stdout}\n--- Rust (MIR) ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
