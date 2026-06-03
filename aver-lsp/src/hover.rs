@@ -3,11 +3,8 @@ use tower_lsp_server::ls_types::{Hover, HoverContents, MarkupContent, MarkupKind
 use aver::ast::{
     DecisionBlock, DecisionImpact, Expr, FnBody, FnDef, Stmt, TopLevel, TypeDef, VerifyKind,
 };
-use aver::call_graph::{find_recursive_fns, recursive_callsite_counts};
 use aver::checker::{index_decisions, merge_verify_blocks};
 use aver::tco;
-use aver::types::Type;
-use aver::types::checker::run_type_check_full;
 
 use crate::completion;
 use crate::modules;
@@ -324,7 +321,7 @@ fn decision_summary(fd: &FnDef, items: &[TopLevel]) -> Option<String> {
     Some(format!("{} `{}`", label, names))
 }
 
-fn analysis_summary(fd: &FnDef, items: &[TopLevel], base_dir: Option<&str>) -> Option<String> {
+fn analysis_summary(fd: &FnDef, items: &[TopLevel], _base_dir: Option<&str>) -> Option<String> {
     let mut transformed = items.to_vec();
     tco::transform_program(&mut transformed);
 
@@ -333,29 +330,7 @@ fn analysis_summary(fd: &FnDef, items: &[TopLevel], base_dir: Option<&str>) -> O
         _ => false,
     });
 
-    let tc_result = run_type_check_full(&transformed, base_dir);
-    let auto_memo = if tc_result.errors.is_empty() {
-        let recursive = find_recursive_fns(&transformed);
-        let recursive_calls = recursive_callsite_counts(&transformed);
-        recursive.contains(&fd.name)
-            && tc_result
-                .fn_sigs
-                .get(&fd.name)
-                .is_some_and(|(params, _ret, effects)| {
-                    effects.is_empty()
-                        && recursive_calls.get(&fd.name).copied().unwrap_or(0) >= 2
-                        && params
-                            .iter()
-                            .all(|ty| is_memo_safe_type(ty, &tc_result.memo_safe_types))
-                })
-    } else {
-        false
-    };
-
     let mut labels = Vec::new();
-    if auto_memo {
-        labels.push("auto memo");
-    }
     if auto_tco {
         labels.push("tco");
     }
@@ -398,20 +373,6 @@ fn expr_has_tail_call(expr: &aver::ast::Spanned<Expr>) -> bool {
         Expr::RecordUpdate { base, updates, .. } => {
             expr_has_tail_call(base) || updates.iter().any(|(_, e)| expr_has_tail_call(e))
         }
-    }
-}
-
-fn is_memo_safe_type(ty: &Type, safe_named: &std::collections::HashSet<String>) -> bool {
-    match ty {
-        Type::Int | Type::Float | Type::Bool | Type::Unit => true,
-        Type::Str => false,
-        Type::Tuple(items) => items.iter().all(|item| is_memo_safe_type(item, safe_named)),
-        Type::List(_) | Type::Vector(_) | Type::Map(_, _) | Type::Fn(_, _, _) => false,
-        Type::Result(_, _) | Type::Option(_) => false,
-        Type::Named { name, .. } => safe_named.contains(name),
-        // Unresolved generics + recovery types — never memoise; treat
-        // as opaque conservatively.
-        Type::Var(_) | Type::Invalid => false,
     }
 }
 
@@ -569,20 +530,19 @@ verify inc law grows
     fn recursive_hover_includes_analysis_flags() {
         let source = r#"module Demo
 
-fn fib(n: Int) -> Int
+fn countdown(n: Int) -> Int
     match n
         0 -> 0
-        1 -> 1
-        _ -> fib(n - 1) + fib(n - 2)
+        _ -> countdown(n - 1)
 "#;
 
-        let hover = hover_for_word("fib", source, None).unwrap();
+        let hover = hover_for_word("countdown", source, None).unwrap();
         let text = match hover.contents {
             HoverContents::Markup(markup) => markup.value,
             _ => String::new(),
         };
 
-        assert!(text.contains("auto memo"));
+        assert!(text.contains("tco"));
     }
 
     #[test]

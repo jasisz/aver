@@ -38,7 +38,6 @@ Below: implementation details relevant to development only.
 - **`Type::Named(String)`** in the type system: capitalized identifiers (including dotted names like `Tcp.Connection`) in type annotations resolve to named types. Compatible only with the same name or internal `Unknown` fallback.
 - **`Tcp.Connection` record**: fields `id: String`, `host: String`, `port: Int`. No longer opaque — constructable via `Tcp.Connection(id = ..., host = ..., port = ...)`. Actual socket in thread-local `HashMap` keyed by `id`. `NEXT_ID: AtomicU64` generates "tcp-1", "tcp-2", etc.
 - **Static type checker** (`src/types/checker/`): internal `Type::Unknown` recovery after earlier errors so analysis can continue. Bare `Unknown` does **not** satisfy concrete types in constraints — only nested `Unknown` is tolerated (gradual typing). Match pattern bindings are typed: `Result.Ok(x)` on `Result<Int, String>` gives `x: Int`.
-- **Auto-memoization** (`src/call_graph.rs`, `src/types/checker/memo.rs`): call graph built from AST, Tarjan SCC detects recursion. Eligibility: pure + recursive + all params memo-safe (scalars, records/variants of scalars). VM caches per-function results (capped at 4096).
 - **TCO** (`src/tco.rs`): transform pass rewrites tail-position `FnCall` → `Expr::TailCall` in recursive SCCs. VM handles tail calls via frame reuse. Pipeline: `parse → tco_transform → typecheck → resolve → compile → execute`.
 - **Compile-time variable resolution** (`src/resolver.rs`): `Ident("x")` → `Resolved(slot)` inside FnDef bodies.
 - **Bytecode VM** (`src/vm/`): stack VM over `NanValue`, with language-shaped opcodes for lists, records, variants, wrappers, tuple literals/patterns, and tail calls. `src/vm/runtime.rs` is the host/effect bridge; `src/vm/execute.rs` is the core loop; `src/vm/compiler.rs` lowers resolved AST to bytecode.
@@ -92,7 +91,7 @@ src/
       flow.rs         — check_fn_body, check_stmts, effect propagation
       builtins.rs     — service_sigs, record_field_types registration
       modules.rs      — cross-module type checking, base signature merging
-      memo.rs         — is_memo_safe, memo_safe_types computation
+      check.rs        — check, check_body, check_with_loaded (driver)
       tests.rs        — unit tests for checker internals
 
   tco.rs              — Tail-call optimization transform pass.
@@ -128,7 +127,7 @@ src/
     context_cmd.rs    — cmd_context
     context_data.rs   — project context data collection
     context_format.rs — Markdown context formatting
-    shared.rs         — shared helpers (type checking, memo, runtime policy)
+    shared.rs         — shared helpers (type checking, runtime policy)
 
   services/           — Effectful namespace adapters over shared `aver-rt` runtime:
     console.rs        — Console.print/error/warn/readLine  ! [Console.print] / friends
