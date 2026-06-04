@@ -286,11 +286,11 @@ fn proof_export_builds_result_chain_when_lake_is_available() {
 
 #[test]
 fn proof_export_builds_rle_when_lake_is_available() {
-    // Two sampled-domain laws (encodeString / decodeString roundtrip
-    // shapes) hit the universal-not-auto-proved fallback. Same gate
-    // semantics as `json` below — drop the budget when a real
-    // strategy lands.
-    assert_proof_builds_with_sorry_budget("examples/data/rle.av", "aver-proof-rle", 2);
+    // The encode/decode roundtrip laws are list-given. #409's Lean
+    // list-induction (`induction xs with | nil | cons`) closes one; the other
+    // roundtrip is beyond a single `simp_all` and degrades to one `sorry` via
+    // the `all_goals sorry` tail (was 2 before #409).
+    assert_proof_builds_with_sorry_budget("examples/data/rle.av", "aver-proof-rle", 1);
 }
 
 #[test]
@@ -305,13 +305,12 @@ fn proof_dafny_verifies_rle_when_dafny_is_available() {
 
 #[test]
 fn proof_export_builds_quicksort_when_lake_is_available() {
-    // Three sampled-domain laws (`sort.resultOrdered` /
-    // `sort.lengthPreserved` / `sort.idempotent`) emit the sorry
-    // fallback — universal closure needs a real induction strategy
-    // on the pivot-partition shape. Per-sample `_sample_N` theorems
-    // still verify mechanically. (Budget grew from 2 → 3 when
-    // `sort.idempotent` landed in #220.)
-    assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 3);
+    // #409: the three list-given laws (`sort.resultOrdered` /
+    // `sort.lengthPreserved` / `sort.idempotent`) now close universally under
+    // the Lean list-induction strategy (`induction xs`; `simp_all` over the
+    // unfolded sort/partition defs discharges each), so the universal proofs
+    // are no longer sorries. (Was 3 before #409.)
+    assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 0);
 }
 
 #[test]
