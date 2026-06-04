@@ -129,10 +129,9 @@ fn compile_rust(
 }
 
 /// As [`compile_rust`], but sets extra env vars on the `aver compile`
-/// process. Used by the MIR-forced security test to set
-/// `AVER_RUST_MIR_ONLY=1` so the parity gate forces the MIR walker to
-/// OWN the effectful builtin emission (replay / policy / bare framing)
-/// instead of falling back to the byte-equal HIR body.
+/// process. The rust-on-MIR HIR walker was deleted in W6/Stage-3, so MIR
+/// is the unconditional codegen path and there are no MIR flags left to
+/// set — callers pass `&[]`. The env hook is retained for forward use.
 fn compile_rust_env(
     file: &Path,
     project_dir: &Path,
@@ -171,15 +170,16 @@ fn compile_rust_env(
 }
 
 /// `aver compile … --explain-mir-coverage --target rust --json` →
-/// parse the `graduated` count. Used by the MIR-forced security test to
-/// PROVE the parity gate actually graduated the effectful fn onto the
-/// MIR path (so the deny / replay assertions exercise MIR-emitted
-/// effects, not an accidental HIR fallback).
-fn graduated_count(
+/// parse the `mir_lowered` count (how many fns the MIR walker emits).
+/// Since the HIR walker was deleted (W6/Stage-3) MIR is the sole codegen
+/// path, so this is the "MIR is exercised" guard the probes assert up
+/// front — a zero would mean the construct under test never reached the
+/// walker (so the build / parity assertions would pass for the wrong
+/// reason).
+fn mir_lowered_count(
     file: &Path,
     module_root: Option<&Path>,
     extra: &[&str],
-    env: &[(&str, &str)],
 ) -> Result<u64, String> {
     let mut cmd = Command::new(aver_bin());
     cmd.current_dir(repo_root())
@@ -193,9 +193,6 @@ fn graduated_count(
         cmd.arg("--module-root").arg(root);
     }
     cmd.args(extra);
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
     let out = cmd
         .output()
         .expect("expected `aver compile --explain-mir-coverage` to spawn");
@@ -207,10 +204,10 @@ fn graduated_count(
     }
     let json = String::from_utf8_lossy(&out.stdout);
     // Tiny field extractor — avoids pulling serde into the test.
-    let needle = "\"graduated\":";
+    let needle = "\"mir_lowered\":";
     let start = json
         .find(needle)
-        .ok_or_else(|| format!("no `graduated` field in coverage JSON:\n{json}"))?
+        .ok_or_else(|| format!("no `mir_lowered` field in coverage JSON:\n{json}"))?
         + needle.len();
     let rest = &json[start..];
     let end = rest
@@ -218,7 +215,7 @@ fn graduated_count(
         .unwrap_or(rest.len());
     rest[..end]
         .parse::<u64>()
-        .map_err(|e| format!("bad graduated count {:?}: {e}", &rest[..end]))
+        .map_err(|e| format!("bad mir_lowered count {:?}: {e}", &rest[..end]))
 }
 
 /// `cargo build` the emitted project against the shared target dir.
@@ -568,30 +565,23 @@ fn record_replay_roundtrips_effects_through_invoke_wrapper() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
-// ─── Mode (d): MIR-FORCED effectful security probe (Wave 3b) ─────────────
+// ─── Mode (d): effectful security probe ──────────────────────────────────
 //
-// SECURITY-SENSITIVE. Wave 3b lets the MIR walker OWN effectful builtin
-// emission (replay / policy / bare framing). A dropped wrapper there
-// silently disables aver.toml DENY enforcement or record/replay capture
-// — and it's invisible to rustc, to coverage, and to happy-path stdout.
+// SECURITY-SENSITIVE. The MIR walker OWNS effectful builtin emission
+// (replay / policy / bare framing) — it is the sole codegen path now. A
+// dropped wrapper there silently disables aver.toml DENY enforcement or
+// record/replay capture — and it's invisible to rustc, to coverage, and
+// to happy-path stdout. These probes build + RUN the binary and assert
+// the policy is actually enforced / the effect is actually captured, so
+// a dropped MIR wrapper reaches the built binary and the probe catches it.
 //
-// The byte-parity gate would normally fall an effectful fn back to HIR
-// the instant the MIR body diverged, so a dropped MIR wrapper would
-// hide behind the HIR fallback. The `AVER_RUST_MIR_ONLY=1` escape hatch
-// disables the byte-exact fallback: for any fn the MIR walker renders,
-// the MIR body is forced onto production EVEN IF it diverges from HIR.
-// That makes the MIR walker provably OWN the effect emission, so a
-// dropped MIR wrapper actually reaches the built binary and these
-// probes catch it.
-//
-// `graduated_count(... AVER_RUST_MIR_ONLY=1)` asserts up front that the
-// effectful fn really graduated onto the MIR path — without that guard
-// a silent HIR fallback would let the probe pass for the wrong reason.
+// `mir_lowered_count(...)` asserts up front that the effectful fn really
+// lowered to MIR — without that guard an empty program would let the
+// probe pass for the wrong reason.
 
 /// Single-fn Disk-write program for the embedded-policy probe. The
-/// write rides a helper fn (`writeIt`) that is a single-expr body — the
-/// shape the parity gate graduates onto MIR — so the `aver_policy::
-/// check_disk` wrapper is emitted by the MIR walker under the hatch.
+/// write rides a helper fn (`writeIt`) that is a single-expr body, so the
+/// `aver_policy::check_disk` wrapper is emitted by the MIR walker.
 /// `__PATH__` is substituted at test time.
 const MIR_DISK_WRITE_PROBE: &str = r#"module MirDiskProbe
     intent =
@@ -641,26 +631,23 @@ fn mir_forced_embedded_policy_rejects_denied_disk_write() {
     )
     .expect("write probe source");
 
-    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
-
     let result = (|| -> Result<(), String> {
         // (0) PROVE the MIR path is actually exercised: the effectful
-        // `writeIt` must graduate onto MIR under the hatch. Without
-        // this, a silent HIR fallback would make the probe meaningless.
-        let grad = graduated_count(&src, Some(&proj_root), &["--policy", "embed"], &hatch)?;
-        if grad == 0 {
+        // `writeIt` must lower to MIR. Without this, an empty program
+        // would make the probe meaningless.
+        let lowered = mir_lowered_count(&src, Some(&proj_root), &["--policy", "embed"])?;
+        if lowered == 0 {
             return Err(
-                "no fn graduated onto the MIR path under AVER_RUST_MIR_ONLY=1 — the \
-                 effectful builtin emit is not being exercised by the MIR walker; \
-                 the probe would be testing the HIR fallback instead"
+                "no fn lowered to MIR — the effectful builtin emit is not being \
+                 exercised by the MIR walker; the probe would be testing nothing"
                     .to_string(),
             );
         }
 
         // (1) DENY: embed an aver.toml whose allow-list names a
         // DIFFERENT path → the write to out.txt is denied at compile-
-        // baked policy. Compile under the hatch so the MIR walker emits
-        // the `aver_policy::check_disk` wrapper, then build + run.
+        // baked policy. The MIR walker emits the `aver_policy::check_disk`
+        // wrapper, then build + run.
         write_embedded_disk_policy(&proj_root, "/aver/nonexistent/allowed/only");
         let project = ws.join("project-deny");
         fs::create_dir_all(&project).expect("create project dir");
@@ -671,7 +658,7 @@ fn mir_forced_embedded_policy_rejects_denied_disk_write() {
             name,
             Some(&proj_root),
             &["--policy", "embed"],
-            &hatch,
+            &[],
         )?;
         // Sanity: the emitted source must carry the MIR-emitted policy
         // wrapper. (If a future refactor drops it, the run-time assert
@@ -731,7 +718,7 @@ fn mir_forced_embedded_policy_rejects_denied_disk_write() {
             name_allow,
             Some(&proj_root),
             &["--policy", "embed"],
-            &hatch,
+            &[],
         )?;
         let bin_allow = cargo_build(&project_allow, name_allow)?;
         let allowed = Command::new(&bin_allow)
@@ -765,10 +752,9 @@ fn mir_forced_embedded_policy_rejects_denied_disk_write() {
 }
 
 /// Reads a file, then echoes its contents via Console.print — same
-/// shape as `READ_ECHO_PROBE`, but compiled under
-/// `AVER_RUST_MIR_ONLY=1` so the MIR walker emits the
-/// `aver_replay::invoke_effect` reroute for BOTH effects. `__PATH__` is
-/// substituted at test time.
+/// shape as `READ_ECHO_PROBE`. The MIR walker (the sole codegen path)
+/// emits the `aver_replay::invoke_effect` reroute for BOTH effects.
+/// `__PATH__` is substituted at test time.
 const MIR_READ_ECHO_PROBE: &str = r#"module MirRwProbe
     intent =
         "Reads a file and echoes its contents. The record captures the read"
@@ -808,21 +794,19 @@ fn mir_forced_record_replay_captures_effects_through_invoke_wrapper() {
     let project = ws.join("project");
     fs::create_dir_all(&project).expect("create project dir");
     let name = "mir_rw_probe";
-    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
 
     let result = (|| -> Result<(), String> {
         // (0) PROVE the MIR path is exercised: the effectful `readIt`
-        // must graduate onto MIR under the hatch.
-        let grad = graduated_count(&src, None, &["--with-replay"], &hatch)?;
-        if grad == 0 {
+        // must lower to MIR.
+        let lowered = mir_lowered_count(&src, None, &["--with-replay"])?;
+        if lowered == 0 {
             return Err(
-                "no fn graduated onto the MIR path under AVER_RUST_MIR_ONLY=1 — the \
-                 MIR replay reroute is not being exercised"
+                "no fn lowered to MIR — the MIR replay reroute is not being exercised"
                     .to_string(),
             );
         }
 
-        compile_rust_env(&src, &project, name, None, &["--with-replay"], &hatch)?;
+        compile_rust_env(&src, &project, name, None, &["--with-replay"], &[])?;
 
         // Structural tripwire: the emitted Rust must carry the MIR-
         // emitted `invoke_effect` reroute for the read.
@@ -982,11 +966,10 @@ fn full_plain_stdout_parity_with_vm() {
 
 // ─── Mode (e): MIR-synthesized TCO (Wave 5) ──────────────────────────────
 //
-// Wave 5 synthesizes the self-TCO loop and the mutual-recursion
-// trampoline from `MirExpr::TailCall` in the MIR walker, behind the
-// `AVER_RUST_MIR_TCO=1` flag. TCO never byte-graduates (the loop /
-// trampoline STRUCTURE has no HIR analogue to compare against), so it is
-// verified BEHAVIORALLY here: build + RUN the MIR-synthesized binary and
+// The MIR walker synthesizes the self-TCO loop and the mutual-recursion
+// trampoline from `MirExpr::TailCall` (the sole codegen path since the
+// HIR walker was deleted). TCO is verified BEHAVIORALLY here (there is no
+// byte-parity gate): build + RUN the MIR-synthesized binary and
 // assert (1) stdout parity with the VM AND (2) the deep self-recursion
 // case does NOT stack-overflow — which proves the emitted code is a
 // genuine loop, not a recursive call that merely happens to compute the
@@ -1085,17 +1068,10 @@ fn mir_tco_deep_self_and_mutual_recursion_behaves() {
     let name = "mir_tco_probe";
 
     let result = (|| -> Result<(), String> {
-        // Flag ON: force the Wave-5 MIR TCO synthesis onto the loop +
-        // trampoline. (Production default leaves this OFF and uses the
-        // proven HIR emitter; this test specifically exercises MIR.)
-        compile_rust_env(
-            &src,
-            &project,
-            name,
-            None,
-            &[],
-            &[("AVER_RUST_MIR_TCO", "1")],
-        )?;
+        // MIR is the sole codegen path: the self-TCO loop + mutual-rec
+        // trampoline are synthesized from `MirExpr::TailCall` by the MIR
+        // walker (`emit_mir_tco_fn` / `emit_mir_mutual_tco_block`).
+        compile_rust(&src, &project, name, None, &[])?;
         let bin = cargo_build(&project, name)?;
         let out = Command::new(&bin)
             .output()
@@ -1124,16 +1100,12 @@ fn mir_tco_deep_self_and_mutual_recursion_behaves() {
 
 // ─── Mode (f): MIR-emitted IndependentProduct (`?!` / `!`) ────────────────
 //
-// The MIR walker now emits `MirExpr::IndependentProduct` — the Rust
+// The MIR walker emits `MirExpr::IndependentProduct` — the Rust
 // backend's truly-PARALLEL product (`std::thread::scope` + per-branch
 // `spawn`, the cancel-flag machinery for `?!`, the bare tuple fold for
-// `!`). The `?!` fns byte-graduate under the normal parity gate; the
-// bare `!` fns that carry a literal negation in an argument diverge only
-// on a pre-existing `Neg` fold (`(0i64 - 5i64)` vs `(-5i64)`, which is
-// semantically equal), orthogonal to the product shape. Under
-// `AVER_RUST_MIR_ONLY=1` ALL of them are forced onto the MIR path, so
-// this probe proves the MIR walker OWNS the parallel emission and the
-// built binary still produces VM-identical output.
+// `!`) — as the sole codegen path. This probe proves the MIR walker
+// OWNS the parallel emission and the built binary still produces
+// VM-identical output.
 //
 // `independent_fanout.av` exercises `?!` (flatOk, processStep — recursive
 // fan-out), bare `!` (flatFail, bareProduct), and the `Err`-propagation
@@ -1154,26 +1126,23 @@ fn mir_forced_independent_product_builds_and_matches_vm() {
     let project = ws.join("project");
     fs::create_dir_all(&project).expect("create project dir");
     let name = "mir_ip_fanout";
-    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
 
     let result = (|| -> Result<(), String> {
         // (0) PROVE the MIR path is exercised: the IndependentProduct fns
-        // must graduate onto MIR under the hatch. Without this guard a
-        // silent HIR fallback would let the probe pass for the wrong
-        // reason.
-        let grad = graduated_count(&file, None, &[], &hatch)?;
-        if grad == 0 {
+        // must lower to MIR. Without this guard an empty program would
+        // let the probe pass for the wrong reason.
+        let lowered = mir_lowered_count(&file, None, &[])?;
+        if lowered == 0 {
             return Err(
-                "no fn graduated onto the MIR path under AVER_RUST_MIR_ONLY=1 — the \
-                 IndependentProduct emit is not being exercised by the MIR walker"
+                "no fn lowered to MIR — the IndependentProduct emit is not being \
+                 exercised by the MIR walker"
                     .to_string(),
             );
         }
 
-        // Force the MIR body onto production for every renderable fn, so
-        // the parallel IndependentProduct shape is MIR-emitted (not the
-        // byte-equal HIR fallback), then build + run.
-        compile_rust_env(&file, &project, name, None, &[], &hatch)?;
+        // The parallel IndependentProduct shape is MIR-emitted (the sole
+        // codegen path), then build + run.
+        compile_rust(&file, &project, name, None, &[])?;
 
         // Structural tripwire: the emitted Rust must carry the MIR-
         // emitted parallel product machinery (the cancel-flag branch
@@ -1232,10 +1201,10 @@ fn mir_forced_independent_product_builds_and_matches_vm() {
 // `examples/formal/oracle_independent_products.av`, verify-only), so this
 // is an inline RUNTIME probe: `dbl` / `inc` are passed into `applyIt`
 // (FnValue in arg position), `applyIt` calls them through its slot
-// (LocalSlot). Under `AVER_RUST_MIR_ONLY=1` the FnValue / LocalSlot fns
-// are FORCED onto the MIR path, so the built binary's `a=42 b=42` proves
-// the MIR walker OWNS the first-class-fn emission (a dropped FnValue arg
-// or a mis-emitted slot call would change stdout or fail to build).
+// (LocalSlot). The MIR walker (the sole codegen path) emits the
+// FnValue / LocalSlot fns, so the built binary's `a=42 b=42` proves the
+// MIR walker OWNS the first-class-fn emission (a dropped FnValue arg or a
+// mis-emitted slot call would change stdout or fail to build).
 const MIR_HIGHER_ORDER_PROBE: &str = r#"module HigherOrderProbe
     intent =
         "Probes first-class fn values: a fn passed as a Fn(..) param value"
@@ -1280,29 +1249,26 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
     let project = ws.join("project");
     fs::create_dir_all(&project).expect("create project dir");
     let name = "mir_ho_probe";
-    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
 
     let result = (|| -> Result<(), String> {
         // (0) PROVE the MIR path is exercised: the FnValue / LocalSlot fns
-        // (`applyIt`, `runDouble`, `runInc`) must graduate onto MIR under
-        // the hatch. Without this guard a silent HIR fallback would let
-        // the probe pass for the wrong reason (the FnValue / LocalSlot
-        // emit would never run). `dbl` / `inc` / the three higher-order
-        // fns graduate; only `main` (a `Console.print` interpolation,
-        // `Call(Builtin)`) stays on HIR — so ≥ 5 must graduate.
-        let grad = graduated_count(&src, None, &[], &hatch)?;
-        if grad < 5 {
+        // (`applyIt`, `runDouble`, `runInc`) must lower to MIR. Without
+        // this guard an empty program would let the probe pass for the
+        // wrong reason (the FnValue / LocalSlot emit would never run).
+        // `dbl` / `inc` / the three higher-order fns + `main` all lower —
+        // so ≥ 5 must lower.
+        let lowered = mir_lowered_count(&src, None, &[])?;
+        if lowered < 5 {
             return Err(format!(
-                "expected ≥ 5 fns to graduate onto MIR under AVER_RUST_MIR_ONLY=1 \
-                 (dbl, inc, applyIt, runDouble, runInc) — got {grad}. The FnValue / \
-                 LocalSlot emit is not being exercised by the MIR walker."
+                "expected ≥ 5 fns to lower to MIR (dbl, inc, applyIt, runDouble, \
+                 runInc) — got {lowered}. The FnValue / LocalSlot emit is not being \
+                 exercised by the MIR walker."
             ));
         }
 
-        // Force the MIR body onto production for every renderable fn, so
-        // the FnValue arg + LocalSlot call are MIR-emitted (not the
-        // byte-equal HIR fallback), then build + run.
-        compile_rust_env(&src, &project, name, None, &[], &hatch)?;
+        // The FnValue arg + LocalSlot call are MIR-emitted (the sole
+        // codegen path), then build + run.
+        compile_rust(&src, &project, name, None, &[])?;
 
         // Structural tripwire: the emitted Rust must carry the fn-pointer
         // param (`f: fn(i64) -> i64`), the FnValue passed by bare name
@@ -1359,50 +1325,25 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// W6 / Stage-1: the FORCED-MIR behavioral net
+// The MIR behavioral net (MIR is the sole Rust codegen path)
 // ═══════════════════════════════════════════════════════════════════════
 //
-// Stage 0 gave every reachable MIR construct a Rust walker arm behind
-// per-construct flags + a per-fn byte-parity gate, so production codegen
-// is UNCHANGED (flags default-off). Stage 1 (this section) turns the W6
-// audit's ad-hoc "forced-MIR builds + runs the corpus + self-host
-// correctly" into a STANDING, REPEATABLE gate: with ALL FOUR MIR flags
-// set, the MIR walker OWNS ~everything, and we assert the built binaries
-// still match the VM.
-//
-// All four flags are set INTERNALLY by these tests (never in production):
-//
-//   AVER_RUST_MIR_ONLY=1    — force the MIR body onto production even when
-//                             it diverges from HIR (disables the byte-exact
-//                             fallback, so the MIR walker provably owns the
-//                             emit instead of hiding behind HIR parity).
-//   AVER_RUST_MIR_TCO=1     — synthesize the self-TCO loop + mutual-rec
-//                             trampoline from MirExpr::TailCall.
-//   AVER_RUST_MIR_VERIFY=1  — lower verify-case exprs through MIR.
-//   AVER_RUST_MIR_MAIN=1    — render main + top-level-statement values
-//                             through MIR.
+// The HIR `ResolvedExpr` walker was deleted in W6/Stage-3, so the MIR
+// walker OWNS all runtime codegen unconditionally — there are no flags
+// to set anymore. This section is the STANDING, REPEATABLE gate: build +
+// run the corpus and assert the built binaries match the VM. Since every
+// compile already takes the MIR path, "forced-MIR" is just "the corpus".
 //
 // Two discipline guards make this a real net, not theater:
 //
-//  - **graduated > 0** (the W3b discipline): every forced-MIR parity
-//    assert first checks `graduated_count(... all-four-flags) > 0`, so a
-//    test cannot pass via a silent HIR fallback (which would mean the MIR
-//    path was never exercised). Pure / Console-only corpus fns graduate;
-//    only the `Call(Builtin)` interpolation in `main` stays on HIR.
+//  - **mir_lowered > 0**: every parity assert first checks
+//    `mir_lowered_count(...) > 0`, so a test cannot pass while the
+//    construct under test never reached the walker (which would mean the
+//    build / parity assertion validated nothing relevant).
 //  - **per-test isolated target dir** (the W6 audit flakiness fix): the
 //    generated-project `cargo build` runs against a UNIQUE target dir per
 //    example, so concurrent `--offline` builds never corrupt each other's
 //    `.rmeta` / proc-macro outputs.
-
-/// All four MIR flags — set by the forced-MIR net so the MIR walker owns
-/// the entire emit (body, TCO, verify, main + top-stmt) for every
-/// renderable fn.
-const FORCED_MIR: &[(&str, &str)] = &[
-    ("AVER_RUST_MIR_ONLY", "1"),
-    ("AVER_RUST_MIR_TCO", "1"),
-    ("AVER_RUST_MIR_VERIFY", "1"),
-    ("AVER_RUST_MIR_MAIN", "1"),
-];
 
 /// Per-example isolated `cargo build` target dir. The forced-MIR tier
 /// uses one of these per example so concurrent `--offline` builds never
@@ -1413,10 +1354,10 @@ fn isolated_target_dir(ws: &Path) -> PathBuf {
     ws.join("cargo-target")
 }
 
-/// Compile + build + RUN an example under ALL FOUR MIR flags, asserting
-/// stdout parity with the VM. Applies the graduated > 0 guard (the fn
-/// must actually take the MIR path under the flags) + a per-example
-/// isolated target dir.
+/// Compile + build + RUN an example through the (sole) MIR codegen path,
+/// asserting stdout parity with the VM. Applies the mir_lowered > 0 guard
+/// (the program must actually reach the walker) + a per-example isolated
+/// target dir.
 fn assert_forced_mir_parity(relative: &str, module_root: Option<&str>) -> Result<(), String> {
     let file = repo_root().join(relative);
     if !file.exists() {
@@ -1431,21 +1372,17 @@ fn assert_forced_mir_parity(relative: &str, module_root: Option<&str>) -> Result
     let name = format!("fm_{}", sanitise(relative));
 
     let result = (|| -> Result<(), String> {
-        // Guard: SOMETHING must graduate onto MIR under the four flags,
-        // else the parity assert below would be validating the HIR
-        // fallback, not the MIR walker. (`main`'s Console.print
-        // interpolation stays on HIR, so any corpus example with a
-        // helper fn or a pure body graduates >= 1.)
-        let grad = graduated_count(&file, root.as_deref(), &[], FORCED_MIR)?;
-        if grad == 0 {
+        // Guard: SOMETHING must lower to MIR (so the parity assert below
+        // is validating the MIR walker's output, not an empty program).
+        let lowered = mir_lowered_count(&file, root.as_deref(), &[])?;
+        if lowered == 0 {
             return Err(format!(
-                "{relative}: no fn graduated onto the MIR path under the four MIR \
-                 flags — forced-MIR parity here would only be exercising the HIR \
-                 fallback, not the MIR walker"
+                "{relative}: no fn lowered to MIR — the parity assert here would \
+                 be validating an empty program"
             ));
         }
 
-        compile_rust_env(&file, &project, &name, root.as_deref(), &[], FORCED_MIR)?;
+        compile_rust_env(&file, &project, &name, root.as_deref(), &[], &[])?;
         let bin = cargo_build_in(&project, &name, &isolated_target_dir(&ws))?;
         let out = Command::new(&bin)
             .output()
@@ -1511,13 +1448,13 @@ const BRANCH_PATH_EXCLUSIONS: &[(&str, Option<&str>)] = &[
     ("examples/services/redis.av", Some("examples")),
 ];
 
-/// `cargo build` an example on a given walker, returning Ok(()) on a
-/// clean build or Err(stderr) on failure. Used by the exclusion proof to
-/// compare the HIR vs forced-MIR failure shapes.
+/// `cargo build` an example through the (sole) MIR codegen path,
+/// returning Ok(()) on a clean build or Err(stderr) on failure. Used by
+/// the exclusion proof to confirm the residual examples still don't
+/// build on Rust.
 fn try_build_walker(
     relative: &str,
     module_root: Option<&str>,
-    env: &[(&str, &str)],
     ws: &Path,
     tag: &str,
 ) -> Result<Result<(), String>, String> {
@@ -1530,9 +1467,9 @@ fn try_build_walker(
     fs::create_dir_all(&project).expect("create project dir");
     let name = format!("bp_{}_{tag}", sanitise(relative));
 
-    // The compile (Rust source emit) may itself fail under the flags; if
-    // so that's the failure to compare. Capture it as an Err.
-    if let Err(e) = compile_rust_env(&file, &project, &name, root.as_deref(), &[], env) {
+    // The compile (Rust source emit) may itself fail; if so that's the
+    // failure to inspect. Capture it as an Err.
+    if let Err(e) = compile_rust(&file, &project, &name, root.as_deref(), &[]) {
         return Ok(Err(format!("compile: {e}")));
     }
     match cargo_build_in(&project, &name, &ws.join(format!("target-{tag}"))) {
@@ -1543,11 +1480,11 @@ fn try_build_walker(
 
 #[test]
 #[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
-fn branch_path_examples_fail_identically_on_both_walkers() {
+fn branch_path_examples_still_fail_to_build_on_rust() {
     if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
         eprintln!(
             "skipping BranchPath-exclusion proof — set AVER_RUST_DIFF_FULL=1 \
-             (proves the excluded examples fail identically HIR vs forced-MIR)"
+             (proves the excluded Oracle/BranchPath examples still don't build on Rust)"
         );
         return;
     }
@@ -1557,48 +1494,41 @@ fn branch_path_examples_fail_identically_on_both_walkers() {
 
     for (relative, root) in BRANCH_PATH_EXCLUSIONS {
         let ws = temp_dir(&format!("bp-{}", sanitise(relative)));
-        let hir = try_build_walker(relative, *root, &[], &ws, "hir");
-        let mir = try_build_walker(relative, *root, FORCED_MIR, &ws, "mir");
+        let built = try_build_walker(relative, *root, &ws, "mir");
         let _ = fs::remove_dir_all(&ws);
 
-        match (hir, mir) {
-            (Ok(Err(hir_err)), Ok(Err(mir_err))) => {
-                // Both walkers must fail. The exact rustc message text can
-                // differ slightly between walkers (e.g. the first undef
-                // name), but the FAILURE CLASS — an undefined-symbol
-                // E0425 from the BranchPath / Terminal.Size emit gap —
-                // must be present on both. That's what proves it's a
-                // pre-existing backend gap, not a MIR regression.
-                let hir_e0425 = hir_err.contains("E0425") || hir_err.contains("cannot find");
-                let mir_e0425 = mir_err.contains("E0425") || mir_err.contains("cannot find");
-                if hir_e0425 && mir_e0425 {
+        match built {
+            // The MIR walker is the sole codegen path now. These examples
+            // never built on Rust on EITHER walker (the `BranchPath` /
+            // `Terminal.Size` type is never emitted → undefined-symbol
+            // E0425). Confirm the gap is still an undefined-symbol failure,
+            // not a new MIR crash.
+            Ok(Err(err)) => {
+                if err.contains("E0425") || err.contains("cannot find") {
                     confirmed += 1;
                 } else {
                     failures.push(format!(
-                        "{relative}: both walkers failed but NOT both with the expected \
-                         undefined-symbol (BranchPath / Terminal.Size) gap.\n  HIR err:\n{hir_err}\n  MIR err:\n{mir_err}"
+                        "{relative}: failed to build, but NOT with the expected \
+                         undefined-symbol (BranchPath / Terminal.Size) gap.\n  err:\n{err}"
                     ));
                 }
             }
-            (Ok(Ok(())), Ok(Ok(()))) => failures.push(format!(
-                "{relative}: BUILT on both walkers — it is no longer a BranchPath \
-                 exclusion; move it into the forced-MIR run-parity corpus"
+            Ok(Ok(())) => failures.push(format!(
+                "{relative}: BUILT on Rust — it is no longer a BranchPath \
+                 exclusion; move it into the MIR run-parity corpus"
             )),
-            (hir_res, mir_res) => failures.push(format!(
-                "{relative}: HIR and forced-MIR DISAGREE on buildability — this would \
-                 be a MIR regression (or a fix), not a stable pre-existing gap.\n  HIR: {hir_res:?}\n  MIR: {mir_res:?}"
-            )),
+            Err(e) => failures.push(format!("{relative}: harness error: {e}")),
         }
     }
 
     eprintln!(
-        "branch_path_examples_fail_identically_on_both_walkers: {confirmed}/{} confirmed \
-         identical-failure (BranchPath / Terminal.Size gap)",
+        "branch_path_examples_still_fail_to_build_on_rust: {confirmed}/{} confirmed \
+         undefined-symbol (BranchPath / Terminal.Size) gap",
         BRANCH_PATH_EXCLUSIONS.len()
     );
     assert!(
         failures.is_empty(),
-        "{} of {} BranchPath exclusions did not fail identically on both walkers:\n  - {}",
+        "{} of {} BranchPath exclusions did not fail as expected:\n  - {}",
         failures.len(),
         BRANCH_PATH_EXCLUSIONS.len(),
         failures.join("\n  - ")
@@ -1648,11 +1578,11 @@ const FORCED_MIR_SINGLE_FILE: &[&str] = &[
 
 /// Multi-module (`depends`) examples — (entry file, module root). These
 /// exercise the cross-module path-mangling the Rust backend emits, with
-/// `main` + top-level-statement values routed through MIR
-/// (AVER_RUST_MIR_MAIN). The games are excluded: every one is an
-/// interactive Terminal loop (Terminal is host territory + no
-/// deterministic batch stdout), so they are neither buildable in Rust nor
-/// run-parity candidates.
+/// `main` + top-level-statement values routed through MIR (the sole
+/// codegen path). The games are excluded: every one is an interactive
+/// Terminal loop (Terminal is host territory + no deterministic batch
+/// stdout), so they are neither buildable in Rust nor run-parity
+/// candidates.
 const FORCED_MIR_MULTI_MODULE: &[(&str, &str)] = &[
     ("examples/modules/app.av", "examples"),
     ("examples/modules/app_dot.av", "examples"),
@@ -1754,21 +1684,20 @@ fn mir_forced_time_random_record_replay_roundtrips() {
     let project = ws.join("project");
     fs::create_dir_all(&project).expect("create project dir");
     let name = "mir_time_random_probe";
-    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
 
     let result = (|| -> Result<(), String> {
         // (0) PROVE the MIR path is exercised: rollDie + stamp must
-        // graduate onto MIR under the hatch.
-        let grad = graduated_count(&src, None, &["--with-replay"], &hatch)?;
-        if grad == 0 {
+        // lower to MIR.
+        let lowered = mir_lowered_count(&src, None, &["--with-replay"])?;
+        if lowered == 0 {
             return Err(
-                "no fn graduated onto the MIR path under AVER_RUST_MIR_ONLY=1 — the \
-                 Time / Random replay reroute is not being exercised"
+                "no fn lowered to MIR — the Time / Random replay reroute is not \
+                 being exercised"
                     .to_string(),
             );
         }
 
-        compile_rust_env(&src, &project, name, None, &["--with-replay"], &hatch)?;
+        compile_rust_env(&src, &project, name, None, &["--with-replay"], &[])?;
 
         // Structural tripwire: the emitted Rust must carry the MIR-emitted
         // invoke_effect reroute for the effectful helpers.
@@ -1948,20 +1877,18 @@ fn mir_forced_tcp_send_record_replay_roundtrips() {
     let project = ws.join("project");
     fs::create_dir_all(&project).expect("create project dir");
     let name = "mir_tcp_probe";
-    let hatch = [("AVER_RUST_MIR_ONLY", "1")];
 
     let result = (|| -> Result<(), String> {
-        // (0) PROVE the MIR path is exercised: `ask` must graduate.
-        let grad = graduated_count(&src, None, &["--with-replay"], &hatch)?;
-        if grad == 0 {
+        // (0) PROVE the MIR path is exercised: `ask` must lower to MIR.
+        let lowered = mir_lowered_count(&src, None, &["--with-replay"])?;
+        if lowered == 0 {
             return Err(
-                "no fn graduated onto the MIR path under AVER_RUST_MIR_ONLY=1 — the \
-                 Tcp replay reroute is not being exercised"
+                "no fn lowered to MIR — the Tcp replay reroute is not being exercised"
                     .to_string(),
             );
         }
 
-        compile_rust_env(&src, &project, name, None, &["--with-replay"], &hatch)?;
+        compile_rust_env(&src, &project, name, None, &["--with-replay"], &[])?;
 
         let emitted = fs::read_to_string(
             project

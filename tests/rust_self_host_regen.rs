@@ -85,41 +85,20 @@ fn self_host_regenerates_and_compiles_and_runs() {
         );
         return;
     }
-    // Production path: no MIR flags. The emitted self-host is byte-
-    // identical to what `release.py` ships into `src/self_host`.
-    run_self_host_regen(&[], "production");
+    // The MIR walker is the sole Rust codegen path (the HIR walker was
+    // deleted in W6/Stage-3). The emitted self-host is byte-identical to
+    // what `release.py` ships into `src/self_host`. This is the densest
+    // real-world MIR exercise in the net: a Rust-codegen regression on ANY
+    // construct across the ~26k-line self-host compiler surfaces as the
+    // regenerated self-host failing to build or miscompiling the corpus.
+    run_self_host_regen(&[], "production (MIR-only)");
 }
 
-/// All four MIR flags — Stage-1 forces the MIR walker to OWN the entire
-/// emit (body, TCO, verify, main + top-stmt) across the ~26k-line
-/// self-host compiler. This is the densest real-world MIR exercise in the
-/// net: a Rust-codegen regression on ANY construct surfaces as the
-/// regenerated self-host failing to build or miscompiling the corpus.
-const FORCED_MIR: &[(&str, &str)] = &[
-    ("AVER_RUST_MIR_ONLY", "1"),
-    ("AVER_RUST_MIR_TCO", "1"),
-    ("AVER_RUST_MIR_VERIFY", "1"),
-    ("AVER_RUST_MIR_MAIN", "1"),
-];
-
-#[test]
-#[ignore = "self-host regen + build is minutes of wall-time; set AVER_SELF_HOST_REGEN=1 and run with --ignored"]
-fn forced_mir_self_host_regenerates_and_compiles_and_runs() {
-    if std::env::var("AVER_SELF_HOST_REGEN").is_err() {
-        eprintln!(
-            "skipping forced-MIR self-host regen gate — set AVER_SELF_HOST_REGEN=1 to \
-             run (regenerates the self-host under ALL FOUR MIR flags, cargo-builds it, \
-             runs corpus parity — the densest MIR exercise in the Stage-1 net)"
-        );
-        return;
-    }
-    run_self_host_regen(FORCED_MIR, "forced-MIR (all four flags)");
-}
-
-/// Regenerate the self-host compiler to a temp dir under the given MIR
-/// env (empty = production HIR path), cargo-build it, and run the corpus
-/// asserting stdout parity with the host VM. `label` tags the eprintln /
-/// panic messages so the production vs forced-MIR runs are distinguishable.
+/// Regenerate the self-host compiler to a temp dir, cargo-build it, and
+/// run the corpus asserting stdout parity with the host VM. The MIR
+/// walker is the sole Rust codegen path; `mir_env` is retained as a
+/// generic env hook (callers pass `&[]`). `label` tags the eprintln /
+/// panic messages.
 fn run_self_host_regen(mir_env: &[(&str, &str)], label: &str) {
     let repo = repo_root();
     let ws = temp_dir("ws");
@@ -129,8 +108,8 @@ fn run_self_host_regen(mir_env: &[(&str, &str)], label: &str) {
     // ── (1) Regenerate the self-host compiler to a temp dir ──────────
     // Exactly the `release.py::regenerate_self_host` invocation. We
     // emit OUTSIDE the repo (temp dir) so the gate never mutates the
-    // checked-in `src/self_host` — it's a read-only canary. The MIR env
-    // (if any) forces the MIR walker to own the emit.
+    // checked-in `src/self_host` — it's a read-only canary. Codegen goes
+    // through the sole MIR walker path.
     let mut regen_cmd = Command::new(aver_bin());
     regen_cmd
         .current_dir(&repo)

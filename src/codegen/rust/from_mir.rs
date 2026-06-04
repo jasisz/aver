@@ -1,23 +1,20 @@
 //! Rust backend: emit expressions from Core MIR.
 //!
-//! Mirror of [`super::expr::emit_expr`] that walks
-//! [`crate::ir::mir::MirExpr`] instead of `ResolvedExpr` and emits the
-//! same Rust source string — the same deduplication MIR brought to the
-//! VM: one semantic walker per construct lives in MIR, and every backend
-//! reads from it instead of forking `ResolvedExpr`.
+//! This is the SOLE Rust runtime codegen path. The HIR `ResolvedExpr`
+//! walker was deleted in rust-on-MIR W6/Stage-3; the MIR walker here
+//! owns all runtime codegen, the same deduplication MIR brought to the
+//! VM (#339) and wasm-gc (#384): one semantic walker per construct lives
+//! in MIR, and every backend reads from it instead of forking
+//! `ResolvedExpr`.
 //!
 //! [`emit_mir_expr`] is the dispatcher; [`coverage_report`] measures how
 //! much of a program it can render standalone. [`emit_mir_fn_body`] wraps
-//! it into the full single-expr-plan body format the HIR walker emits,
-//! and [`parity_gated_body`] is the Wave-1 production wire-up: for each
-//! fn it compares the MIR-walker body against the HIR-walker body and
-//! emits the MIR one **only when byte-identical** (counting it
-//! "graduated"), else falls back to HIR. The byte-exact gate makes the
-//! production output identical to HIR by construction — it cannot
-//! regress — while the MIR path is exercised + verified for the
-//! graduated subset on every compile. A construct the walker returns
-//! `None` for (or any borrow decision that doesn't match HIR) blocks
-//! graduation and the fn falls back to the HIR walker.
+//! it into the full single-expr-plan body format, and
+//! [`emit_mir_fn_body_routed`] is the production wire-up: it builds the
+//! per-fn borrow policy and renders the body. A construct the walker
+//! returns `None` for surfaces as a hard codegen diagnostic at the call
+//! site (the only residual is the verify-only Oracle/trace shapes that
+//! never built on the Rust backend).
 //!
 //! ## Covered constructs
 //!
@@ -46,10 +43,10 @@
 //! pass already rewrote them to `IfThenElse` (handled above).
 //!
 //! `InterpolatedStr` never reaches the walker — `interp_lower` lowers it
-//! away before codegen runs. With `FnValue` + `LocalSlot` graduated
-//! (W6/Stage-0), every reachable MIR construct now has a walker arm; the
-//! remaining HIR fallbacks are per-fn byte-parity misses (e.g. the
-//! TCO-loop `continue` rewrite), not construct gaps.
+//! away before codegen runs. Every reachable MIR construct has a walker
+//! arm; the only `None` cases are the verify-only Oracle/trace shapes
+//! that never built on the Rust backend (they hard-error at the call
+//! site).
 
 use std::collections::{HashMap, HashSet};
 
@@ -539,17 +536,14 @@ fn label_for(expr: &MirExpr) -> &'static str {
 }
 
 /// Try to emit Rust source for `expr` directly from MIR.
-/// Returns `None` for any variant outside the covered subset —
-/// the signal to fall back to the HIR walker.
+/// Returns `None` for any variant outside the renderable subset — the
+/// signal for the caller to emit a hard codegen diagnostic (the
+/// verify-only Oracle/trace residual).
 ///
-/// Mirror of [`super::expr::emit_expr`] for the covered subset;
-/// output strings are character-for-character identical to the HIR
-/// walker's output on the same input when the per-fn borrow policy
-/// (`local_types` / `rc_wrapped` / `borrowed_params`) is threaded
-/// through the [`MirEmitCtx`] (the production parity-gate path).
-/// The parity gate ([`parity_gated_body`]) is the safety net: a body
-/// only graduates onto the production path when its MIR rendering is
-/// byte-equal to the HIR rendering.
+/// The per-fn borrow policy (`local_types` / `rc_wrapped` /
+/// `borrowed_params`) is threaded through the [`MirEmitCtx`] so the
+/// clone / borrow / `Arc::new` decisions are correct for the fn whose
+/// body this renders. This is the sole Rust runtime codegen walker.
 pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) -> Option<String> {
     match &expr.node {
         MirExpr::Literal(lit) => {
@@ -1032,20 +1026,21 @@ fn emit_mir_static_ref(name: &str, ctx: &MirEmitCtx<'_>) -> String {
     }
 }
 
-/// rust-on-MIR W6/Stage-0: render one free-standing `verify`-case
-/// expression through the MIR walker. `resolved` is the already-lifted
-/// `ResolvedExpr` (the caller does the on-demand `ctx.resolve_expr` the
-/// HIR `emit_expr_legacy` does). Lowers it via `lower_top_level_value`
-/// against a clone of the entry `MirProgram` (the same isolation the VM
-/// uses for top-level statements: builtin / instantiation table growth
-/// stays local to the clone), then emits it with a **program-level**
-/// [`MirEmitCtx`] (no params / locals — verify exprs have no fn anchor).
+/// Render one free-standing `verify`-case expression through the MIR
+/// walker. `resolved` is the already-lifted `ResolvedExpr` (the caller
+/// does the on-demand `ctx.resolve_expr`). Lowers it via
+/// `lower_top_level_value` against a clone of the entry `MirProgram` (the
+/// same isolation the VM uses for top-level statements: builtin /
+/// instantiation table growth stays local to the clone), then emits it
+/// with a **program-level** [`MirEmitCtx`] (no params / locals — verify
+/// exprs have no fn anchor).
 ///
 /// Returns `None` when the expr is outside the lowerable subset OR the
-/// walker can't render it — the per-expr signal for the caller to fall
-/// back to `emit_expr_legacy` for that one expression. The `#[test]` /
-/// `assert_eq!` / Result-`?` scaffolding is unaffected; only the
-/// expression string changes.
+/// walker can't render it — the per-expr signal for the caller to emit a
+/// hard codegen diagnostic (the verify-only Oracle/trace residual that
+/// never built on the Rust backend). The `#[test]` / `assert_eq!` /
+/// Result-`?` scaffolding is unaffected; only the expression string
+/// changes.
 pub(super) fn emit_mir_verify_expr(
     resolved: &Spanned<crate::ir::hir::ResolvedExpr>,
     ctx: &CodegenContext,
@@ -1063,59 +1058,50 @@ pub(super) fn emit_mir_verify_expr(
     emit_mir_expr(&lowered, &emit_ctx)
 }
 
-/// rust-on-MIR W6/Stage-0: render the **`main` fn body** through the MIR
-/// walker. `main` is the one entry-point that DOES carry a
-/// `ResolvedFnDef` (reachable via `fn_id_for_decl` →
-/// `resolved_program.fn_by_id` → `mir_program.fn_by_id`), so — unlike the
-/// free-standing verify / top-stmt exprs — its body has a real fn anchor:
-/// we build the borrow policy from the resolved main (`from_resolved`,
-/// borrow-by-default like the non-TCO HIR path) and emit via the same
-/// `for_fn` ctx + `emit_mir_fn_body` the production parity gate uses for
-/// every other fn.
+/// Render the **`main` fn body** through the MIR walker. `main` is the
+/// one entry-point that DOES carry a `ResolvedFnDef` (reachable via
+/// `fn_id_for_decl` → `resolved_program.fn_by_id` → `mir_program.fn_by_id`),
+/// so — unlike the free-standing verify / top-stmt exprs — its body has a
+/// real fn anchor: we build the borrow policy from the resolved main
+/// (`from_resolved`, borrow-by-default, the non-TCO shape) and emit via
+/// the same `for_fn` ctx + `emit_mir_fn_body` every other fn uses.
 ///
 /// `fn_id` is the resolved-main FnId the caller already computed
 /// (`entry_module_sections` runs `fn_id_for_decl` for every fn). Returns
 /// `None` when there's no MIR program, the main FnId has no lowered
-/// `MirFn` (body outside the lowerable subset — e.g. multi-statement
-/// bodies whose intermediate `Stmt::Expr` lower to synthetic-named lets),
-/// or the walker can't render the body — the signal for the caller to
-/// fall back to the HIR per-statement main-body emit. The `fn main()` /
+/// `MirFn`, or the walker can't render the body — the signal for the
+/// caller to emit a hard codegen diagnostic. The `fn main()` /
 /// `-> Result<…>` signature and the guest/replay wrappers are unaffected;
 /// only the body string moves onto MIR.
 pub(super) fn emit_mir_main_body(fn_id: crate::ir::FnId, ctx: &CodegenContext) -> Option<String> {
     let mir_fn = ctx.mir_program.as_ref()?.fn_by_id(fn_id)?;
     let resolved = ctx.resolved_program.fn_by_id(fn_id)?;
     // Main lives in the entry module → no module scope. Borrow-by-default
-    // matches the non-TCO HIR path the main body uses (`build_fn_ectx`).
+    // matches the non-TCO shape the main body uses.
     let policy = MirFnEmitPolicy::from_resolved(resolved, None, /* borrow_by_default */ true);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
     emit_mir_fn_body(&mir_fn.body, &emit_ctx)
 }
 
-/// rust-on-MIR W6/Stage-2 (guest-entry): render a **guest-entry fn's
-/// inner body** through the MIR walker. The guest-entry fn (the
-/// self-host's `runGuestCliProgram`) is the last construct still pinned
-/// to the HIR expr walker: its body is wrapped in the
-/// `aver_replay::with_guest_scope[_args][_result]` (replay scope) and
-/// `crate::self_host_support::with_program_fn_store` (self-host state)
-/// templates — pure string wrappers the caller keeps unchanged — but the
-/// INNER body string was still produced by `emit_fn_body` (HIR).
+/// Render a **guest-entry fn's inner body** through the MIR walker. The
+/// guest-entry fn (the self-host's `runGuestCliProgram`) has its body
+/// wrapped in the `aver_replay::with_guest_scope[_args][_result]` (replay
+/// scope) and `crate::self_host_support::with_program_fn_store` (self-host
+/// state) templates — pure string wrappers the caller keeps unchanged —
+/// while the INNER body string is rendered here.
 ///
 /// Unlike `main`, the caller already holds the `&ResolvedFnDef` (and its
 /// `fn_id`), so this takes the resolved fn directly rather than looking it
-/// up by `FnId`. The borrow policy is rebuilt exactly as the guest-entry
-/// HIR path's `ectx` is (`build_fn_ectx_from_resolved` — borrow-by-default,
-/// the non-TCO shape; guest-entry returns before the `has_tco` branch).
-/// `scope` is the owning module prefix (`None` for the entry-module
-/// guest-entry).
+/// up by `FnId`. The borrow policy is rebuilt with
+/// `build_fn_ectx_from_resolved`'s rules (borrow-by-default, the non-TCO
+/// shape; guest-entry returns before the `has_tco` branch). `scope` is the
+/// owning module prefix (`None` for the entry-module guest-entry).
 ///
-/// Returns `None` (→ HIR `emit_fn_body` fallback, so this stays
-/// non-regressing while HIR is still compiled) when there's no MIR
-/// program, the guest-entry FnId has no lowered `MirFn`, or the walker
-/// can't render the body. The covered subset (a `Match` over a user-fn
-/// call + `Str`-concat) renders cleanly, so under forced-MIR this is the
-/// MIR path; only the body string moves onto MIR, the replay /
-/// self-host-state wrappers stay template text.
+/// Returns `None` when there's no MIR program, the guest-entry FnId has
+/// no lowered `MirFn`, or the walker can't render the body — the signal
+/// for the caller to emit a hard codegen diagnostic. Only the body
+/// string moves onto MIR; the replay / self-host-state wrappers stay
+/// template text.
 pub(super) fn emit_mir_guest_entry_body(
     resolved_fd: &crate::ir::hir::ResolvedFnDef,
     scope: Option<&str>,
@@ -1128,24 +1114,24 @@ pub(super) fn emit_mir_guest_entry_body(
     emit_mir_fn_body(&mir_fn.body, &emit_ctx)
 }
 
-/// rust-on-MIR W6/Stage-0: render every **top-level statement value**
-/// through the MIR walker, all-or-nothing. Free-standing module-scope
-/// statements (`x = expr` / a bare `expr`) belong to no `ResolvedFnDef`,
-/// so this mirrors the VM top-level path (#338): clone the entry
-/// `MirProgram` ONCE (so the lowerer's builtin / instantiation table
-/// growth stays consistent across all the statements that share it),
-/// lower each statement's already-resolved value via
-/// `lower_top_level_value`, and **pre-check** that every value both
-/// lowers AND the walker renders it — deciding before emitting anything
-/// so a mid-walk reject never leaves a half-written main body (exactly
-/// what the VM `compile_top_level` does with `mir_expr_compilable`).
+/// Render every **top-level statement value** through the MIR walker,
+/// all-or-nothing. Free-standing module-scope statements (`x = expr` / a
+/// bare `expr`) belong to no `ResolvedFnDef`, so this mirrors the VM
+/// top-level path (#338): clone the entry `MirProgram` ONCE (so the
+/// lowerer's builtin / instantiation table growth stays consistent
+/// across all the statements that share it), lower each statement's
+/// already-resolved value via `lower_top_level_value`, and **pre-check**
+/// that every value both lowers AND the walker renders it — deciding
+/// before emitting anything so a mid-walk reject never leaves a
+/// half-written main body (exactly what the VM `compile_top_level` does
+/// with `mir_expr_compilable`).
 ///
 /// Returns the rendered value strings in statement order on full success
 /// (the caller wraps each in the `let {name} = …;` / bare-expr-discard
-/// `…;` templating, identical to the HIR `emit_stmt` shapes), or `None`
-/// if there's no MIR program or ANY statement falls outside the lowerable
-/// / renderable subset — the signal for the caller to fall back to the
-/// HIR per-statement `emit_stmt_legacy` path for the whole block.
+/// `…;` templating), or `None` if there's no MIR program or ANY
+/// statement falls outside the lowerable / renderable subset — the
+/// signal for the caller to emit a hard codegen diagnostic for the block
+/// (the verify-only Oracle/trace residual).
 pub(super) fn emit_mir_top_stmt_values(
     resolved_values: &[&Spanned<crate::ir::hir::ResolvedExpr>],
     ctx: &CodegenContext,
@@ -1653,44 +1639,32 @@ fn mir_subject_is_borrowed_param(subject: &MirExpr, emit_ctx: &MirEmitCtx<'_>) -
     local_of(subject).is_some_and(|local| emit_ctx.is_borrowed_param(&local.name))
 }
 
-/// Emit the FULL function body the MIR walker would produce for a
-/// single-expression body, in the exact format
-/// [`super::toplevel::emit_fn_body`]'s single-expr-plan path emits
-/// — the leading `    crate::cancel_checkpoint();\n    ` then the
-/// body expression. Returns `None` when the walker can't render the
-/// body (any uncovered construct anywhere in the tree).
+/// Emit the FULL function body the MIR walker produces, in the
+/// `emit_fn_body` format — the leading
+/// `    crate::cancel_checkpoint();\n    ` then the body expression.
+/// Returns `None` when the walker can't render the body (any uncovered
+/// construct anywhere in the tree), the signal for the caller to emit a
+/// hard codegen diagnostic.
 ///
-/// This is the unit the production parity gate compares against the
-/// HIR walker's `emit_fn_body` output: byte-equal → emit MIR
-/// (graduated), else fall back to HIR. Because the comparison is
-/// exact, the production output can only ever be the HIR output OR a
-/// byte-identical MIR rendering — it cannot regress.
+/// One return-position detail: a field access (`Project`) on a borrowed
+/// param in tail/return position needs `.clone()` to produce an owned
+/// value (`emit_mir_expr` emits `obj.field` without it).
 ///
-/// One return-position detail mirrored from
-/// `emit_body_expr_plan_with_options`: a field access (`Project`) on
-/// a borrowed param in tail/return position needs `.clone()` to
-/// produce an owned value (`emit_mir_expr` emits `obj.field`
-/// without it).
-///
-/// Wave 4 closes the multi-statement boundary: a top-level `Let`
-/// chain (the MIR shape a `Block` body with `let` bindings lowers
-/// to) is emitted as flat statement lines —
-/// `    let a = …;\n    let b = …;\n    <final-expr>` — exactly the
-/// format [`super::toplevel::emit_fn_body`]'s `Block` arm produces,
-/// instead of the nested block-expr `{ let a = …; { let b = …; … } }`
-/// `emit_mir_expr` renders for an inline `Let`. See
-/// [`emit_mir_let_chain_flat`].
+/// A top-level `Let` chain (the MIR shape a `Block` body with `let`
+/// bindings lowers to) is emitted as flat statement lines —
+/// `    let a = …;\n    let b = …;\n    <final-expr>` — instead of the
+/// nested block-expr `{ let a = …; { let b = …; … } }` `emit_mir_expr`
+/// renders for an inline `Let`. See [`emit_mir_let_chain_flat`].
 pub(super) fn emit_mir_fn_body(
     body: &Spanned<MirExpr>,
     emit_ctx: &MirEmitCtx<'_>,
 ) -> Option<String> {
-    // A top-level `Let` is a multi-statement body. HIR emits it as
-    // flat statement lines (named binding → `let …;`, discarded
-    // intermediate `Stmt::Expr` → bare `…;`) then the final expression
-    // on its own line — never a nested block-expr. Mirror that line
-    // shape so multi-statement bodies graduate. The chain handles both
-    // named and empty-`binding_name` (discarded) bindings, so no
-    // first-binding guard is needed.
+    // A top-level `Let` is a multi-statement body, emitted as flat
+    // statement lines (named binding → `let …;`, discarded intermediate
+    // `Stmt::Expr` → bare `…;`) then the final expression on its own
+    // line — never a nested block-expr. The chain handles both named and
+    // empty-`binding_name` (discarded) bindings, so no first-binding
+    // guard is needed.
     if let MirExpr::Let(spanned_let) = &body.node
         && let Some(lines) = emit_mir_let_chain_flat(&spanned_let.node, emit_ctx)
     {
@@ -1710,12 +1684,10 @@ pub(super) fn emit_mir_fn_body(
     Some(format!("    crate::cancel_checkpoint();\n    {}", code))
 }
 
-/// Emit a top-level `Let` chain as flat Rust statement lines, mirroring
-/// [`super::toplevel::emit_fn_body`]'s `Block` arm byte-for-byte: each
-/// binding becomes `let {name} = {value};` (value rendered raw, no
-/// clone wrapper — exactly as HIR's `emit_stmt` does), one per line,
-/// 4-space indented and `\n`-joined, terminated by the chain's final
-/// expression rendered raw on its own line.
+/// Emit a top-level `Let` chain as flat Rust statement lines: each
+/// binding becomes `let {name} = {value};` (value rendered raw, no clone
+/// wrapper), one per line, 4-space indented and `\n`-joined, terminated
+/// by the chain's final expression rendered raw on its own line.
 ///
 /// The chain is the run of directly-nested `Let` nodes: each one emits
 /// its statement line and continues into its body until a body that
@@ -1723,9 +1695,8 @@ pub(super) fn emit_mir_fn_body(
 /// `let {name} = {value};`; an empty-`binding_name` binding (a
 /// discarded intermediate `Stmt::Expr` or a `_ = effect()` discard)
 /// emits a bare `{value};` statement (the value evaluated for its
-/// effects, result dropped) — the exact mirror of HIR's `emit_fn_body`
-/// non-last `ResolvedStmt::Expr` arm (`{expr};`). Returns `None` only
-/// when a binding value or the final expression can't render.
+/// effects, result dropped). Returns `None` only when a binding value or
+/// the final expression can't render.
 fn emit_mir_let_chain_flat(
     let_node: &crate::ir::mir::MirLet,
     ctx: &MirEmitCtx<'_>,
@@ -1765,186 +1736,32 @@ fn emit_mir_let_chain_flat(
     Some(lines.join("\n    "))
 }
 
-// ── Production parity gate + graduated-fn counter ───────────────────────
+// ── Production body emit (MIR is the sole codegen path) ─────────────────
 //
-// The parity gate is the safety net that lets the MIR walker into
-// the production Rust emit path with ZERO regression risk: for a fn,
-// compute the MIR-walker body and the HIR-walker body; if they're
-// byte-identical, emit the MIR one (and count it "graduated");
-// otherwise emit the HIR one (fallback). Production output is
-// therefore always either the unchanged HIR output or a string
-// equal to it, so it cannot change — yet the MIR path is exercised
-// + verified for the graduated subset on every compile.
+// The HIR walker was deleted in rust-on-MIR W6/Stage-3, so there is no
+// byte-parity gate left: the MIR walker OWNS all runtime codegen. This
+// helper builds the per-fn `MirFnEmitPolicy` (param types /
+// borrow-by-default) exactly as the HIR `build_fn_ectx_from_resolved`
+// did, wraps it in a `MirEmitCtx`, and renders the body. A `None`
+// propagates to the caller, which emits a hard codegen diagnostic — the
+// only constructs that hit it are the verify-only Oracle/trace residual
+// that never built on the Rust backend.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-/// How many fns the parity gate has graduated (MIR body byte-equal
-/// to HIR) since process start, and how many it has considered.
-/// Process-global counters so `aver compile --explain-mir-coverage
-/// --target rust` and the differential harness can report the
-/// graduated fraction after a transpile run without threading a
-/// counter through the whole emit pipeline.
-static GRADUATED: AtomicUsize = AtomicUsize::new(0);
-static CONSIDERED: AtomicUsize = AtomicUsize::new(0);
-
-/// Reset the parity-gate counters. Called at the start of a
-/// transpile so a fresh compile reports its own numbers.
-pub(super) fn reset_parity_counters() {
-    GRADUATED.store(0, Ordering::Relaxed);
-    CONSIDERED.store(0, Ordering::Relaxed);
-}
-
-/// Is the `AVER_RUST_MIR_ONLY=1` escape hatch active? When set, the
-/// parity gate forces the MIR walker's body onto the production path
-/// (even when it diverges from HIR) for any fn the walker can render,
-/// so the security differential test can make the MIR path own effect
-/// emission. Read from the env each call (cheap; only on the codegen
-/// path) so a test can toggle it per-process without a rebuild.
-fn mir_only_hatch_enabled() -> bool {
-    // W6/Stage-2: default ON; set `AVER_RUST_MIR_ONLY=0` to restore the byte-exact HIR fallback.
-    std::env::var_os("AVER_RUST_MIR_ONLY").is_none_or(|v| v != "0")
-}
-
-/// Is the rust-on-MIR Wave-5 TCO path active (`AVER_RUST_MIR_TCO=1`)?
-///
-/// When set, the self-TCO loop and the mutual-recursion trampoline are
-/// synthesized from `MirExpr::TailCall` by the MIR walker
-/// ([`emit_mir_tco_fn`] / [`emit_mir_mutual_tco_block`]) instead of from
-/// the source-AST HIR emitter (`emit_tco_fn` / `emit_mutual_tco_block`).
-/// Deliberately a SEPARATE flag from `AVER_RUST_MIR_ONLY` (the security
-/// hatch the differential tests depend on): toggling TCO onto MIR must
-/// not change effect-emission ownership, and vice versa.
-///
-/// Read from the env each call (cheap; only on the codegen path) so a
-/// test can toggle it per-process without a rebuild. W6/Stage-2: default
-/// ON; set `AVER_RUST_MIR_TCO=0` to restore the HIR TCO emitter (rollback).
-pub(super) fn mir_tco_enabled() -> bool {
-    std::env::var_os("AVER_RUST_MIR_TCO").is_none_or(|v| v != "0")
-}
-
-/// Is the rust-on-MIR W6/Stage-0 verify path active
-/// (`AVER_RUST_MIR_VERIFY=1`)?
-///
-/// When set, each `verify` case's left/right expression is lowered to
-/// MIR (via `lower_top_level_value`) and rendered by the MIR walker
-/// (with a program-level [`MirEmitCtx`]) instead of the source-AST HIR
-/// emitter (`emit_expr_legacy`). The `#[test]` / `assert_eq!` / Result
-/// `?` scaffolding is unchanged template text; only the two per-case
-/// expression strings move onto MIR. Per-expr fallback to the HIR
-/// emitter when the expr doesn't lower / the walker returns `None`.
-///
-/// A SEPARATE flag from `AVER_RUST_MIR_TCO` / `AVER_RUST_MIR_ONLY`:
-/// routing verify emission through MIR is independent of TCO synthesis
-/// and of effect-emission ownership.
-///
-/// Read from the env each call (cheap; only on the codegen path) so a
-/// test can toggle it per-process without a rebuild. W6/Stage-2: default
-/// ON; set `AVER_RUST_MIR_VERIFY=0` to restore the HIR verify emitter.
-pub(super) fn mir_verify_enabled() -> bool {
-    std::env::var_os("AVER_RUST_MIR_VERIFY").is_none_or(|v| v != "0")
-}
-
-/// Is the rust-on-MIR W6/Stage-0 main / top-level-statement path active
-/// (`AVER_RUST_MIR_MAIN=1`)?
-///
-/// When set, the `main` fn BODY is rendered by the MIR walker (via
-/// [`emit_mir_main_body`] — main carries a real `ResolvedFnDef`, so it
-/// uses the same `for_fn` borrow policy as the production parity gate)
-/// and the TOP-LEVEL STATEMENT values are rendered all-or-nothing through
-/// [`emit_mir_top_stmt_values`] (the VM #338 isolation: one cloned
-/// program, pre-check every value renders before emitting any), instead
-/// of the source-AST HIR emitters (`emit_stmt_legacy` / `emit_expr_legacy`).
-/// The `fn main()` / `-> Result<…>` signature and the
-/// `aver_replay::with_guest_scope[_result]` guest wrapper stay unchanged
-/// template text; only the body / statement-value strings move onto MIR.
-/// Per-surface fallback to the HIR emit when the MIR body / any top-stmt
-/// value doesn't lower / the walker returns `None`.
-///
-/// A SEPARATE flag from `AVER_RUST_MIR_VERIFY` / `AVER_RUST_MIR_TCO` /
-/// `AVER_RUST_MIR_ONLY`: routing main / top-stmt emission through MIR is
-/// independent of verify routing, TCO synthesis, and effect-emission
-/// ownership.
-///
-/// Read from the env each call (cheap; only on the codegen path) so a
-/// test can toggle it per-process without a rebuild. W6/Stage-2: default
-/// ON; set `AVER_RUST_MIR_MAIN=0` to restore the HIR main emitter.
-pub(super) fn mir_main_enabled() -> bool {
-    std::env::var_os("AVER_RUST_MIR_MAIN").is_none_or(|v| v != "0")
-}
-
-/// `(graduated, considered)` since the last [`reset_parity_counters`].
-pub fn parity_counters() -> (usize, usize) {
-    (
-        GRADUATED.load(Ordering::Relaxed),
-        CONSIDERED.load(Ordering::Relaxed),
-    )
-}
-
-/// Production parity gate for one fn body. `hir_body` is the body
-/// the HIR walker already produced (the format `emit_fn_body`
-/// returns). When a `MirFn` is available, render its body via the
-/// MIR walker and compare: byte-equal → return the MIR string and
-/// bump the graduated counter; otherwise → return `hir_body`
-/// unchanged (fallback). Either way `considered` bumps so the
-/// reported fraction is graduated / considered.
-///
-/// `resolved` supplies the per-fn borrow policy (param types /
-/// borrow-by-default), recomputed exactly as
-/// `build_fn_ectx_from_resolved` does for the HIR walker.
-/// `borrow_by_default` is `false` only on the TCO no-borrow
-/// path (which never graduates — those bodies aren't single-expr
-/// plans the MIR walker renders identically — but the flag keeps
-/// the policy honest).
-pub(super) fn parity_gated_body(
-    hir_body: String,
-    mir_fn: Option<&crate::ir::mir::MirFn>,
+/// Render a non-TCO fn body via the MIR walker. `resolved` supplies the
+/// borrow policy (param types / borrow-by-default), recomputed exactly
+/// as `build_fn_ectx_from_resolved` does. Returns the body string in the
+/// `emit_fn_body` format (`    crate::cancel_checkpoint();\n    …`), or
+/// `None` when the walker can't render the body.
+pub(super) fn emit_mir_fn_body_routed(
+    mir_fn: &crate::ir::mir::MirFn,
     resolved: &crate::ir::hir::ResolvedFnDef,
     scope: Option<&str>,
     borrow_by_default: bool,
     ctx: &CodegenContext,
-) -> String {
-    CONSIDERED.fetch_add(1, Ordering::Relaxed);
-    let Some(mir_fn) = mir_fn else {
-        return hir_body;
-    };
+) -> Option<String> {
     let policy = MirFnEmitPolicy::from_resolved(resolved, scope, borrow_by_default);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
-    // SECURITY-TEST ESCAPE HATCH (`AVER_RUST_MIR_ONLY=1`): when set,
-    // force the MIR body onto the production path for any fn whose MIR
-    // walker renders successfully, even if it is NOT byte-identical to
-    // HIR — disabling the byte-exact fallback. Production default (env
-    // UNSET) is unchanged: the parity gate still governs, so normal
-    // compiles never see this branch and cannot regress. The hatch
-    // exists solely so the differential security test can force the MIR
-    // walker to OWN effect emission (replay / policy / bare framing) —
-    // otherwise an effectful fn always falls back to HIR and the test
-    // would silently exercise the HIR path instead.
-    if mir_only_hatch_enabled()
-        && let Some(mir_body) = emit_mir_fn_body(&mir_fn.body, &emit_ctx)
-    {
-        GRADUATED.fetch_add(1, Ordering::Relaxed);
-        return mir_body;
-    }
-    match emit_mir_fn_body(&mir_fn.body, &emit_ctx) {
-        Some(mir_body) if mir_body == hir_body => {
-            GRADUATED.fetch_add(1, Ordering::Relaxed);
-            mir_body
-        }
-        other => {
-            // `AVER_RUST_MIR_DIFF=1` dumps every covered-but-not-
-            // graduated fn (MIR walker emitted `Some`, but it didn't
-            // byte-match HIR) — the Wave-1 long-pole worklist.
-            if std::env::var_os("AVER_RUST_MIR_DIFF").is_some()
-                && let Some(mir_body) = other
-            {
-                eprintln!(
-                    "[mir-diff] {}\n  HIR: {:?}\n  MIR: {:?}",
-                    resolved.name, hir_body, mir_body
-                );
-            }
-            hir_body
-        }
-    }
+    emit_mir_fn_body(&mir_fn.body, &emit_ctx)
 }
 
 /// Is the type stamp a primitive numeric?
@@ -1955,36 +1772,31 @@ fn ty_is_numeric(ty: Option<&Type>) -> bool {
     matches!(ty, Some(Type::Int | Type::Float))
 }
 
-// ── Wave 5: TCO loop / trampoline synthesis from MIR ────────────────────
+// ── TCO loop / trampoline synthesis from MIR ────────────────────────────
 //
 // Rust has no TCO primitive — the VM emits a `TAIL_CALL` opcode and
 // wasm-gc a `return_call`, both flat instructions. In generated Rust the
 // loop (self-recursive) and the trampoline (mutual-recursive) STRUCTURE
-// is synthesized in source. Waves 1-4 put every NON-TCO construct on
-// MIR behind a byte-parity gate; TCO is the last holdout because the
-// rewrite is structural (a self-`TailCall` arm becomes `continue` after
-// rebinding the loop's mutable params; a value arm becomes `return`).
+// is synthesized in source from `MirExpr::TailCall` (a self-`TailCall`
+// arm becomes `continue` after rebinding the loop's mutable params; a
+// value arm becomes `return`).
 //
-// Approach B (full-lift): the MIR walker emits its OWN correct loop /
-// trampoline, verified BEHAVIORALLY (build + run vs VM + self-host
-// regen), not by byte-parity (TCO never byte-graduates). Two
-// simplifications the behavioral net unlocks vs the HIR emitter:
+// The MIR walker emits its OWN correct loop / trampoline, verified
+// BEHAVIORALLY (build + run vs VM + self-host regen):
 //
 //   * **Always-snapshot param rebind.** For every rebound param, emit
 //     `let __tcoN = <arg>;` for ALL of them first, then
 //     `param = __tcoN;` in order, then `continue;`. Strictly correct
 //     (no read-after-write clobber), no substring heuristic. Identity
 //     rebinds (`arg == param`) and pass-through (rc) params are skipped.
-//   * **No loop-invariant hoisting.** That was a byte-parity
-//     optimization, not correctness — deferred.
+//   * **No loop-invariant hoisting** (correctness needs none).
 //
 // The ownership / borrow facts (rc pass-through params Arc-wrapped on
 // the self-loop / `&T` extra trampoline args; non-rc owned params `mut`
-// with NO borrow-by-default) are re-derived from the AST `FnDef` via the
-// same `compute_rc_params` / `compute_self_passthrough_params` the HIR
-// emitter uses — those are name/structure based and SCC discovery reuses
-// the existing `find_mutual_tco_groups`. Get the ownership wrong → rustc
-// rejects, which the build gate catches.
+// with NO borrow-by-default) are re-derived from the AST `FnDef` via
+// `compute_rc_params` / `compute_self_passthrough_params`; those are
+// name/structure based and SCC discovery reuses `find_mutual_tco_groups`.
+// Get the ownership wrong → rustc rejects, which the build gate catches.
 
 /// Emit a self-TCO fn entirely from MIR: the public signature
 /// (`mut`-owned params, rc params Arc-wrapped before the loop) + the
@@ -2279,20 +2091,19 @@ fn mir_if_cond_and_branches<'a>(
     }
 }
 
-// ── Wave 5: mutual-recursion trampoline from MIR ────────────────────────
+// ── mutual-recursion trampoline from MIR ────────────────────────────────
 
 /// Emit a mutual-TCO block from MIR: a state enum (one variant per
 /// member, payload = non-rc param values), a trampoline dispatch loop
 /// (member-`TailCall` bounces to a new enum variant, a value `return`s),
-/// and thin wrapper fns. Mirror of
-/// [`super::toplevel::emit_mutual_tco_block`], but the member bodies are
-/// walked from MIR (`MirFn.body`) instead of the source AST.
+/// and thin wrapper fns. The member bodies are walked from MIR
+/// (`MirFn.body`).
 ///
-/// `group_fns` is the SCC (from the existing AST-based
-/// `find_mutual_tco_groups`); `mir_fns` are the matching `MirFn`s in the
-/// same order. Returns `None` (→ HIR fallback for the whole block) when
-/// any member body can't render — the block is all-or-nothing because
-/// the members share one trampoline.
+/// `group_fns` is the SCC (from the AST-based `find_mutual_tco_groups`);
+/// `mir_fns` are the matching `MirFn`s in the same order. Returns `None`
+/// (→ the caller emits a hard codegen diagnostic for the whole block)
+/// when any member body can't render — the block is all-or-nothing
+/// because the members share one trampoline.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn emit_mir_mutual_tco_block(
     group_id: usize,

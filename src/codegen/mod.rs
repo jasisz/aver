@@ -270,12 +270,11 @@ pub struct CodegenContext {
     /// Optimized Core MIR for the whole codegen input (entry + dep
     /// module fns), `FnId`-keyed. Built once at `build_context` from
     /// the resolved program — the same lowering + optimizer pass the
-    /// VM / wasm-gc / wasip2 backends run. The Rust backend's
-    /// rust-on-MIR port reads `fn_by_id(fn_id)` here to drive its
-    /// per-fn parity gate (`from_mir::parity_gated_body`): a fn body
-    /// graduates onto the MIR emit path only when the MIR walker
-    /// renders it byte-identical to the HIR walker. `None` for
-    /// hand-assembled test contexts that skip `build_context`.
+    /// VM / wasm-gc / wasip2 backends run. The Rust backend reads
+    /// `fn_by_id(fn_id)` here to drive its sole codegen path
+    /// (`from_mir::emit_mir_fn_body_routed`): the MIR walker owns all
+    /// runtime codegen after the HIR walker's deletion (W6/Stage-3).
+    /// `None` for hand-assembled test contexts that skip `build_context`.
     pub mir_program: Option<crate::ir::mir::MirProgram>,
 }
 
@@ -510,11 +509,10 @@ pub fn build_context(
 
     // Lower the whole resolved program (entry + dep-module fns) to
     // optimized Core MIR, once, and key it by `FnId`. The Rust
-    // backend's rust-on-MIR port reads `fn_by_id` here for its
-    // per-fn parity gate; building it here (rather than per-fn)
-    // keeps the lowering cost O(program) instead of O(program²).
-    // Same `lower_program` → `optimize` pass the other MIR backends
-    // run, so the body the gate compares is the optimized shape.
+    // backend reads `fn_by_id` here to render every fn body (its sole
+    // codegen path); building it here (rather than per-fn) keeps the
+    // lowering cost O(program) instead of O(program²). Same
+    // `lower_program` → `optimize` pass the other MIR backends run.
     let mir_program = {
         let mut mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_program
             .entry_fns()

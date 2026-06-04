@@ -3554,14 +3554,7 @@ pub(super) fn cmd_explain_mir_coverage(
         return;
     }
     if matches!(target, super::cli::CompileTarget::Rust) {
-        explain_rust_mir_coverage(
-            file,
-            module_root_override,
-            &mir,
-            &result.symbol_table,
-            &dep_modules,
-            json,
-        );
+        explain_rust_mir_coverage(&mir, &result.symbol_table, &dep_modules, json);
         return;
     }
 
@@ -3573,42 +3566,37 @@ pub(super) fn cmd_explain_mir_coverage(
 }
 
 /// Rust backend coverage over a lowered MIR program — the body-emit
-/// level reach of the `from_mir` walker that the rust-on-MIR port
-/// will eventually swap into the production emit path. Reports total
-/// fns, MIR-emitted vs HIR-fallback counts, and a first-blocker
-/// histogram (which `MirExpr` variant / `MirCallee` kind caused the
-/// first `None` in each fallback fn) so each porting wave's reach is
-/// measurable. The walker resolves `FnId`/`TypeId`/`CtorId` through
-/// the pipeline `SymbolTable` and module-scoped names through the dep
-/// module prefixes — the same inputs the production rust transpile
-/// path builds via `build_context`.
+/// level reach of the `from_mir` walker, which is the SOLE Rust
+/// runtime codegen path (the HIR walker was deleted in rust-on-MIR
+/// W6/Stage-3). Reports total fns, MIR-emitted vs hard-error counts,
+/// and a first-blocker histogram (which `MirExpr` variant / `MirCallee`
+/// kind caused the first `None` in each fn that can't render) so the
+/// residual (verify-only Oracle/trace shapes) is measurable. The walker
+/// resolves `FnId`/`TypeId`/`CtorId` through the pipeline `SymbolTable`
+/// and module-scoped names through the dep module prefixes — the same
+/// inputs the production rust transpile path builds via `build_context`.
 fn explain_rust_mir_coverage(
-    file: &str,
-    module_root_override: Option<&str>,
     mir: &aver::ir::mir::MirProgram,
     symbol_table: &aver::ir::SymbolTable,
     dep_modules: &[ModuleInfo],
     json: bool,
 ) {
-    // Measure structural reach over the OPTIMIZED MIR — the same
-    // form the production parity gate sees (`build_context` stores
-    // `optimize(lower_program(...))` on the ctx). The shared `mir`
-    // the caller passed is the un-optimized lowering (the VM /
-    // wasm-gc coverage paths want that), so optimize a copy here.
+    // Measure structural reach over the OPTIMIZED MIR — the same form
+    // the production path emits (`build_context` stores
+    // `optimize(lower_program(...))` on the ctx). The shared `mir` the
+    // caller passed is the un-optimized lowering (the VM / wasm-gc
+    // coverage paths want that), so optimize a copy here.
     let opt_mir = aver::ir::mir::optimize(mir.clone());
     let module_prefixes: HashSet<String> = dep_modules.iter().map(|m| m.prefix.clone()).collect();
     let emit_ctx = rust_codegen::MirEmitCtx::for_test(symbol_table, &module_prefixes);
     let (report, blockers) = rust_codegen::coverage_report_with_blockers(&opt_mir, &emit_ctx);
 
-    // The "graduated" count is the *production* signal: how many fns
-    // the per-fn parity gate actually emits from MIR (MIR body
-    // byte-identical to HIR) on a real transpile. It's a subset of
-    // `mir_covered` — a fn can be structurally coverable yet still
-    // differ from HIR on a borrow decision the MIR walker doesn't
-    // match, in which case it falls back. Run a real transpile (in a
-    // throwaway dir; no files written) purely to drive the gate and
-    // read its counters.
-    let (graduated, considered) = run_rust_transpile_for_parity(file, module_root_override);
+    // rust-on-MIR W6/Stage-3: the HIR walker is gone, so MIR is the
+    // unconditional production path. The structural `coverage_report`
+    // is the whole story now — every covered fn is emitted from MIR;
+    // the residual `hir_fallback` count is the verify-only Oracle/trace
+    // shapes that hard-error (they never built on the Rust backend).
+    // There is no graduated/considered parity metric to report anymore.
 
     // Sort blockers by count descending (dominant first), then by label
     // for stable ties — so the report reads as a porting worklist.
@@ -3626,7 +3614,7 @@ fn explain_rust_mir_coverage(
             })
             .collect();
         println!(
-            "{{\"schema_version\":1,\"backend\":\"rust\",\"total\":{total},\"mir_lowered\":{covered},\"hir_fallback\":{fallback},\"coverage_ratio\":{ratio:.4},\"graduated\":{graduated},\"graduated_considered\":{considered},\"blocked_by_shape\":[{blockers}]}}",
+            "{{\"schema_version\":1,\"backend\":\"rust\",\"total\":{total},\"mir_lowered\":{covered},\"hir_fallback\":{fallback},\"coverage_ratio\":{ratio:.4},\"always_mir\":true,\"blocked_by_shape\":[{blockers}]}}",
             total = report.total,
             covered = report.mir_covered,
             fallback = report.hir_fallback,
@@ -3644,18 +3632,11 @@ fn explain_rust_mir_coverage(
             report.ratio() * 100.0
         ));
         out.push_str(&format!("HIR fallback:  {}\n", report.hir_fallback));
-        // Graduated: fns the production parity gate emits from MIR
-        // (byte-identical to HIR). A subset of MIR-emitted — the
-        // gap is fns the MIR walker can render but not byte-match
-        // HIR (a borrow decision the walker doesn't reproduce yet).
-        let grad_pct = if considered == 0 {
-            0.0
-        } else {
-            graduated as f64 / considered as f64 * 100.0
-        };
-        out.push_str(&format!(
-            "graduated:     {graduated}  ({grad_pct:.1}% of {considered} considered)\n"
-        ));
+        // rust-on-MIR W6/Stage-3: MIR is the sole codegen path. Every
+        // MIR-emitted fn is emitted from MIR unconditionally (no
+        // byte-parity gate); the `HIR fallback` count is the verify-only
+        // Oracle/trace residual that hard-errors at the call site.
+        out.push_str("codegen path:  MIR (sole path; HIR walker deleted)\n");
         if !sorted.is_empty() {
             out.push_str("\nfirst blocker per fallback fn (dominant first):\n");
             for (label, count) in sorted {
@@ -3664,34 +3645,6 @@ fn explain_rust_mir_coverage(
         }
         print!("{out}");
     }
-}
-
-/// Run a real Rust transpile purely to drive the per-fn parity gate
-/// and read its `(graduated, considered)` counters. No output files
-/// are written — `rust_codegen::transpile` returns the rendered
-/// `ProjectOutput` in memory and we discard it. This is the only way
-/// to report the *production* graduated count, since the gate runs
-/// inside `emit_fn_def` with the real per-fn borrow context. Mirrors
-/// the flag set the `aver compile --target rust` path uses.
-fn run_rust_transpile_for_parity(file: &str, module_root_override: Option<&str>) -> (usize, usize) {
-    let (mut ctx, _root) = build_codegen_context(
-        file,
-        None,
-        module_root_override,
-        false,
-        // `Embed` is inert here: no aver.toml is loaded for the
-        // probe, so `ctx.policy` stays `None` and nothing is baked
-        // in. We only need the gate to run during transpile.
-        &super::cli::CompilePolicyMode::Embed,
-        None,
-        false,
-        true,  // apply_traversal_lowering — Rust target wants the optimized form
-        false, // run_refinement_lower
-        false, // run_contract_lower
-        false, // run_law_lower
-    );
-    let _ = with_local_runtime_override(|| rust_codegen::transpile(&mut ctx));
-    rust_codegen::parity_counters()
 }
 
 /// wasm-gc backend coverage over a lowered MIR program. Gated on
