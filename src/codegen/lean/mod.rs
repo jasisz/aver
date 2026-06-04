@@ -107,6 +107,17 @@ example : AverFloat.round 2.5 = 3                                := by native_de
 example : AverFloat.round (-2.5) = -3                            := by native_decide
 end AverFloat"#;
 
+// `DecidableEq Float` via an `unsafeCast`-fabricated proof delegating to
+// runtime IEEE `==` (BEq). This is INTENTIONAL, not a soundness hole:
+// Aver's Float IS the machine f64, and `aver verify` checks the VM's
+// IEEE-754 runtime semantics — so Float equality in a proof means IEEE
+// `==`, exactly what the shim reflects. Consequence to keep in mind: it
+// follows IEEE, so `0.0 = -0.0` holds and `NaN = NaN` does not — proofs
+// are about float behavior, NOT real-number / propositional equality.
+// The shim faithfully mirrors `==` (it does not fabricate arbitrary
+// truths: an IEEE-false goal like `0.1 + 0.2 = 0.3` still fails
+// `native_decide`). Lean ships no `DecidableEq Float`, hence the
+// `@[implemented_by]` bridge.
 const LEAN_PRELUDE_FLOAT_DEC_EQ: &str = r#"private unsafe def Float.unsafeDecEq (a b : Float) : Decidable (a = b) :=
   if a == b then isTrue (unsafeCast ()) else isFalse (unsafeCast ())
 @[implemented_by Float.unsafeDecEq]
