@@ -996,3 +996,56 @@ fn main() -> Int
         4
     );
 }
+
+#[test]
+fn higher_order_fn_param_via_call_indirect() {
+    // First-class `Fn`-param: `inc` is passed as a value (FnValue → i32
+    // funcref-table index) and applied twice through the `f` param
+    // (LocalSlot → call_indirect). Previously the wasm-gc backend
+    // compiled this to an `unreachable` trap stub; it must now return
+    // inc(inc(5)) = 7, matching the VM.
+    assert_eq!(
+        run_int(
+            r#"
+module ApplyTwice
+
+fn inc(n: Int) -> Int
+    n + 1
+
+fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int
+    f(f(x))
+
+fn main() -> Int
+    applyTwice(inc, 5)
+"#
+        ),
+        7
+    );
+}
+
+#[test]
+fn higher_order_two_distinct_fn_values() {
+    // Two distinct address-taken fns → two funcref-table entries; both
+    // share one `call_indirect` functype (same `Fn(Int) -> Int` sig).
+    // inc(10) + dbl(10) = 11 + 20 = 31.
+    assert_eq!(
+        run_int(
+            r#"
+module Combine
+
+fn inc(n: Int) -> Int
+    n + 1
+
+fn dbl(n: Int) -> Int
+    n + n
+
+fn applyBoth(f: Fn(Int) -> Int, g: Fn(Int) -> Int, x: Int) -> Int
+    f(x) + g(x)
+
+fn main() -> Int
+    applyBoth(inc, dbl, 10)
+"#
+        ),
+        31
+    );
+}

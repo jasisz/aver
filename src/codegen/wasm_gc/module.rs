@@ -14,7 +14,15 @@
 //! 4. **Code section** — `_start` calls `main` and drops any return
 //!    value; user fns get their bodies from the MIR body emitter
 //!    (`body::emit_fn_body_via_mir`), with an `unreachable` trap stub
-//!    for the rare shape it doesn't cover (higher-order dispatch).
+//!    for the rare shape it doesn't cover (a first-class fn value with
+//!    no funcref-table slot — a builtin/variant `FnValue` or a
+//!    let-bound fn-value call).
+//!
+//! First-class `Fn` values lower to an `i32` dense index into a single
+//! funcref table (table 0); `Fn`-param calls dispatch via
+//! `call_indirect`. The Table section (after Function) sizes the table,
+//! the Element section (after Export) initialises it, and the per-sig
+//! `call_indirect` functypes are pre-registered in the Type section.
 //!
 //! Validation runs `wasmparser` with GC + tail-call features before
 //! returning bytes.
@@ -22,8 +30,9 @@
 use std::collections::HashMap;
 
 use wasm_encoder::{
-    CodeSection, DataCountSection, DataSection, EntityType, ExportKind, ExportSection, Function,
-    FunctionSection, ImportSection, Instruction, Module, TypeSection, ValType,
+    CodeSection, ConstExpr, DataCountSection, DataSection, ElementSection, Elements, EntityType,
+    ExportKind, ExportSection, Function, FunctionSection, ImportSection, Instruction, Module,
+    RefType, TableSection, TableType, TypeSection, ValType,
 };
 
 use super::WasmGcError;
@@ -100,13 +109,14 @@ use crate::ast::{FnDef, TopLevel, TypeDef};
 
 /// Emit a trap-stub body into `func`: just `unreachable; end`.
 ///
-/// Used for the (sole) fn shape the MIR body emitter doesn't cover —
-/// higher-order dynamic dispatch (`MirCallee::LocalSlot`, e.g. the
-/// verify-only `pairSpec`). `unreachable` is a polymorphic stack-type
+/// Used for the residual fn shapes the MIR body emitter doesn't cover.
+/// First-class `Fn`-param dispatch now lowers to `call_indirect` on the
+/// funcref table, so the only fns that still trap are those reaching a
+/// first-class fn value with no table slot — a `FnValue` of a builtin /
+/// variant, or a `LocalSlot` whose name is a let-bound fn value rather
+/// than a `Fn` param. `unreachable` is a polymorphic stack-type
 /// instruction, so it validates for ANY fn signature with zero extra
-/// locals. This is observably equivalent to the retired `ResolvedExpr`
-/// walker, whose output for those shapes also trapped at runtime —
-/// wasm-gc cannot execute first-class callable values.
+/// locals.
 fn emit_trap_stub_body(func: &mut Function) {
     func.instruction(&Instruction::Unreachable);
     func.instruction(&Instruction::End);
@@ -131,6 +141,28 @@ pub(super) fn emit_module_with(
 
     let registry =
         TypeRegistry::build_with_handler(items, &resolved_fn_defs, handler_name.is_some());
+
+    // Lower the post-link resolved fns to MIR and run the shared
+    // `optimize` pipeline — the SAME six passes the VM consumes
+    // (`ir::mir::optimize`). MIR is the only codegen path. Hoisted to
+    // before the type section so the address-taken-fn scan + the
+    // `call_indirect` functype pre-registration (first-class `Fn`
+    // support) can run while `next_type_idx` is still being assembled;
+    // the body-emit loop below reads it back.
+    //
+    // The body walk emits the optimized form for the variants it
+    // covers; the shape it does NOT cover is a let-bound first-class fn
+    // value or a builtin/variant `FnValue` (no funcref-table slot),
+    // for which it returns `None`. Such fns get a `unreachable`
+    // trap-stub body (`emit_trap_stub_body`).
+    let mir_program: crate::ir::mir::MirProgram = {
+        let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_fn_defs
+            .iter()
+            .cloned()
+            .map(crate::ir::hir::ResolvedTopLevel::FnDef)
+            .collect();
+        crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items))
+    };
 
     // Lazy caller_fn name registry — populated during user-fn body
     // emit by `emit_caller_fn_idx` call sites. Threaded into every
@@ -738,6 +770,29 @@ pub(super) fn emit_module_with(
         next_type_idx += 1;
     }
 
+    // 4b) `call_indirect` functypes for first-class `Fn`-param calls.
+    //     One unique functype per distinct `Fn(..)` param signature
+    //     reached by a `MirCallee::LocalSlot` call site. Emitted right
+    //     after the user-fn types so `next_type_idx` stays monotonic;
+    //     the body emitter looks each one up by the SAME `fn_sig_key`
+    //     the registration computed (`call_indirect_types`). Each
+    //     functype is byte-identical to the target fn's own functype
+    //     (built from the same lowering), so a `Fn`-value index from
+    //     the funcref table dispatches correctly through it.
+    let fn_params_by_id: HashMap<crate::ir::FnId, &[(String, crate::types::Type)]> =
+        resolved_fn_defs
+            .iter()
+            .map(|rfd| (rfd.fn_id, rfd.params.as_slice()))
+            .collect();
+    let mut call_indirect_types: HashMap<String, u32> = HashMap::new();
+    for (key, (params, results)) in
+        collect_call_indirect_sigs(&mir_program, &fn_params_by_id, &registry)?
+    {
+        types.ty().function(params, results);
+        call_indirect_types.insert(key, next_type_idx);
+        next_type_idx += 1;
+    }
+
     // 5) One fn type per registered builtin.
     //
     //    `import_count` is the wasm-fn-idx offset every other
@@ -747,6 +802,27 @@ pub(super) fn emit_module_with(
         super::TargetMode::AverBridge => effect_registry.import_count(),
         super::TargetMode::Wasip2 => wasip2_imports.import_count(),
     };
+
+    // ── Funcref table for first-class `Fn` values ──────────────────
+    //
+    // Every address-taken fn (referenced via `MirExpr::FnValue`) that
+    // resolves to a USER fn gets a dense table index `0..N`. A `Fn`
+    // value lowers to that i32 index (`from_mir`'s `FnValue` arm); a
+    // `Fn`-param call dispatches via `call_indirect` against this
+    // table (table 0). Names that don't match a user fn (builtins /
+    // variants) are excluded — those `FnValue` sites fall back to the
+    // trap stub. The i-th user fn lives at wasm fn idx
+    // `import_count + 1 + i` (`_start` is at `import_count`).
+    let mut funcref_table: HashMap<String, u32> = HashMap::new();
+    let mut funcref_wasm_idxs: Vec<u32> = Vec::new();
+    for name in collect_address_taken(&mir_program) {
+        if let Some(i) = fn_defs.iter().position(|fd| fd.name == name) {
+            let table_idx = funcref_wasm_idxs.len() as u32;
+            funcref_table.insert(name, table_idx);
+            funcref_wasm_idxs.push(import_count + 1 + (i as u32));
+        }
+    }
+
     let mut next_builtin_fn_idx = import_count + 1 + (fn_defs.len() as u32);
     builtin_registry.assign_slots(&mut next_builtin_fn_idx, &mut next_type_idx);
     for name in builtin_registry.iter() {
@@ -1785,6 +1861,27 @@ pub(super) fn emit_module_with(
     });
     module.section(&funcs);
 
+    // ── Table section (funcref table for first-class `Fn` values) ──
+    //
+    // One funcref table (table 0) sized to the number of address-taken
+    // user fns. Each `Fn` value is a dense index into it; `Fn`-param
+    // calls dispatch via `call_indirect 0`. Emitted only when at least
+    // one fn is address-taken — empty programs skip the section. Binary
+    // section order: Table (id 4) follows Function (id 3) and precedes
+    // Memory (id 5).
+    if !funcref_wasm_idxs.is_empty() {
+        let n = funcref_wasm_idxs.len() as u64;
+        let mut tables = TableSection::new();
+        tables.table(TableType {
+            element_type: RefType::FUNCREF,
+            table64: false,
+            minimum: n,
+            maximum: Some(n),
+            shared: false,
+        });
+        module.section(&tables);
+    }
+
     // ── Memory section ─────────────────────────────────────────────
     //
     // 1 page initial, 2048 max (128 MiB ceiling — matches Cloudflare
@@ -2187,6 +2284,8 @@ pub(super) fn emit_module_with(
         zip_ops: zip_ops_lookup,
         string_split_ops,
         eq_helpers: eq_helpers_lookup,
+        funcref_table,
+        call_indirect_types,
     };
 
     // ── Export section ─────────────────────────────────────────────
@@ -2268,6 +2367,24 @@ pub(super) fn emit_module_with(
     }
     module.section(&exports);
 
+    // ── Element section (active funcref-table init) ────────────────
+    //
+    // Active segment at table 0, offset 0, initialising every slot with
+    // the wasm fn idx of the i-th address-taken user fn (so table[i]
+    // points at the fn whose `Fn` value carries index `i`). Emitted
+    // only when the funcref table exists. Binary section order: Element
+    // (id 9) follows Export (id 7) and precedes the DataCount / Code
+    // sections below.
+    if !funcref_wasm_idxs.is_empty() {
+        let mut elements = ElementSection::new();
+        elements.active(
+            None,
+            &ConstExpr::i32_const(0),
+            Elements::Functions((&funcref_wasm_idxs[..]).into()),
+        );
+        module.section(&elements);
+    }
+
     // (No StartSection — 0.16.2's caller_fn globals init is gone;
     // host reads the caller_fn name table via `__caller_fn_count`
     // + `__caller_fn_name(i)` exports at instantiation instead.)
@@ -2285,28 +2402,11 @@ pub(super) fn emit_module_with(
             .register("aver_http_handle")
     });
 
-    // Lower the post-link resolved fns to MIR and run the shared
-    // `optimize` pipeline — the SAME six passes the VM consumes
-    // (`ir::mir::optimize`). This is the realization of "one optimizer
-    // pass benefits every backend": wasm-gc and wasip2 (which reuses
-    // this seam) emit from optimized MIR, not the raw 1:1-HIR shape.
+    // `mir_program` was lowered + optimized up front (before the type
+    // section), so the address-taken-fn scan + `call_indirect` functype
+    // pre-registration could run during type-section assembly. It is
+    // the SAME `optimize`d program the VM consumes.
     //
-    // MIR is the only codegen path. The body walk emits the optimized
-    // form for the variants it covers; the single shape it does NOT
-    // cover is higher-order dynamic dispatch (`MirCallee::LocalSlot`,
-    // e.g. the verify-only `pairSpec`), for which it returns `None`. Such
-    // fns get a `unreachable` trap-stub body (`emit_trap_stub_body`) —
-    // observably equivalent to the retired `ResolvedExpr` walker, which
-    // also trapped at runtime on those shapes since wasm-gc cannot
-    // execute first-class callable values.
-    let mir_program: crate::ir::mir::MirProgram = {
-        let mir_items: Vec<crate::ir::hir::ResolvedTopLevel> = resolved_fn_defs
-            .iter()
-            .cloned()
-            .map(crate::ir::hir::ResolvedTopLevel::FnDef)
-            .collect();
-        crate::ir::mir::optimize(crate::ir::mir::lower_program(&mir_items))
-    };
     // `mir_fn_for[i]` is `Some(&MirFn)` when the i-th fn lowered to
     // MIR (always true on valid input — every resolved fn lowers).
     // `mir_dispatch[i]` is the final per-fn decision: `true` when the
@@ -5033,6 +5133,250 @@ fn discover_builtins_in_expr(
         }
         _ => {}
     }
+}
+
+/// Every fn name referenced as a value (`MirExpr::FnValue(name)`)
+/// anywhere in the program, insertion-order deduped. These are the
+/// "address-taken" fns — each needs a slot in the module's funcref
+/// table so a `Fn`-param can carry its dense index. Mirror of the
+/// full-tree walk shape `own_param.rs::visit_children` uses; built
+/// here standalone so module assembly doesn't depend on optimizer
+/// internals.
+fn collect_address_taken(mir_program: &crate::ir::mir::MirProgram) -> Vec<String> {
+    use crate::ir::mir::{MirExpr, MirStrPart};
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut order: Vec<String> = Vec::new();
+    fn walk(
+        e: &crate::ir::mir::MirExpr,
+        seen: &mut std::collections::HashSet<String>,
+        order: &mut Vec<String>,
+    ) {
+        match e {
+            MirExpr::Literal(_) | MirExpr::Local(_) => {}
+            MirExpr::FnValue(name) => {
+                if seen.insert(name.clone()) {
+                    order.push(name.clone());
+                }
+            }
+            MirExpr::Let(l) => {
+                walk(&l.node.value.node, seen, order);
+                walk(&l.node.body.node, seen, order);
+            }
+            MirExpr::Call(c) => {
+                for a in &c.node.args {
+                    walk(&a.node, seen, order);
+                }
+            }
+            MirExpr::TailCall(tc) => {
+                for a in &tc.node.args {
+                    walk(&a.node, seen, order);
+                }
+            }
+            MirExpr::BinOp(b) => {
+                walk(&b.node.lhs.node, seen, order);
+                walk(&b.node.rhs.node, seen, order);
+            }
+            MirExpr::Neg(inner) | MirExpr::Try(inner) | MirExpr::Return(inner) => {
+                walk(&inner.node, seen, order);
+            }
+            MirExpr::Match(m) => {
+                walk(&m.node.subject.node, seen, order);
+                for arm in &m.node.arms {
+                    walk(&arm.body.node, seen, order);
+                }
+            }
+            MirExpr::Construct(c) => {
+                for a in &c.node.args {
+                    walk(&a.node, seen, order);
+                }
+            }
+            MirExpr::RecordCreate(r) => {
+                for field in &r.node.fields {
+                    walk(&field.value.node, seen, order);
+                }
+            }
+            MirExpr::RecordUpdate(u) => {
+                walk(&u.node.base.node, seen, order);
+                for field in &u.node.updates {
+                    walk(&field.value.node, seen, order);
+                }
+            }
+            MirExpr::Project(p) => walk(&p.node.base.node, seen, order),
+            MirExpr::IfThenElse(ite) => {
+                walk(&ite.node.cond.node, seen, order);
+                walk(&ite.node.then_branch.node, seen, order);
+                walk(&ite.node.else_branch.node, seen, order);
+            }
+            MirExpr::List(items) | MirExpr::Tuple(items) => {
+                for i in items {
+                    walk(&i.node, seen, order);
+                }
+            }
+            MirExpr::MapLiteral(pairs) => {
+                for (k, v) in pairs {
+                    walk(&k.node, seen, order);
+                    walk(&v.node, seen, order);
+                }
+            }
+            MirExpr::InterpolatedStr(parts) => {
+                for p in parts {
+                    if let MirStrPart::Expr(e) = p {
+                        walk(&e.node, seen, order);
+                    }
+                }
+            }
+            MirExpr::IndependentProduct(ip) => {
+                for i in &ip.node.items {
+                    walk(&i.node, seen, order);
+                }
+            }
+        }
+    }
+    // Deterministic fn order — sort by FnId so the table index assigned
+    // to each name is stable across runs (HashMap iteration is not).
+    let mut fns: Vec<(&crate::ir::FnId, &crate::ir::mir::MirFn)> = mir_program.iter().collect();
+    fns.sort_by_key(|(id, _)| **id);
+    for (_, mir_fn) in fns {
+        walk(&mir_fn.body.node, &mut seen, &mut order);
+    }
+    order
+}
+
+/// Collect the unique `call_indirect` functypes the program needs: for
+/// every `MirCallee::LocalSlot { name, .. }` call site, find the
+/// enclosing fn's `Fn(..)` param whose name matches and lower its sig
+/// to `(params, results)` + a dedupe key. Returns
+/// `(key, (params, results))` per unique functype, in first-seen order.
+/// LocalSlot names that are NOT a `Fn`-typed param (let-bound fn
+/// values) are skipped — those call sites fall back to the trap stub.
+///
+/// `fn_params_by_id` resolves a `FnId` to the enclosing fn's params as
+/// real `Type`s — the SAME `(String, Type)` slice `EmitCtx::params`
+/// (the call-site key source) holds, so the key the body emitter
+/// recomputes hits the entry registered here. (The `MirParam::ty`
+/// string is a `{:?}` debug form, not parseable, so it can't be used.)
+#[allow(clippy::type_complexity)]
+fn collect_call_indirect_sigs(
+    mir_program: &crate::ir::mir::MirProgram,
+    fn_params_by_id: &HashMap<crate::ir::FnId, &[(String, crate::types::Type)]>,
+    registry: &super::types::TypeRegistry,
+) -> Result<Vec<(String, (Vec<ValType>, Vec<ValType>))>, WasmGcError> {
+    use crate::ir::mir::{MirCallee, MirExpr, MirStrPart};
+    use crate::types::Type;
+
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<(String, (Vec<ValType>, Vec<ValType>))> = Vec::new();
+
+    // Walk `e`, calling `note(name)` for every `LocalSlot` callee name.
+    fn walk(e: &crate::ir::mir::MirExpr, note: &mut dyn FnMut(&str)) {
+        match e {
+            MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => {}
+            MirExpr::Let(l) => {
+                walk(&l.node.value.node, note);
+                walk(&l.node.body.node, note);
+            }
+            MirExpr::Call(c) => {
+                if let MirCallee::LocalSlot { name, .. } = &c.node.callee {
+                    note(name);
+                }
+                for a in &c.node.args {
+                    walk(&a.node, note);
+                }
+            }
+            MirExpr::TailCall(tc) => {
+                for a in &tc.node.args {
+                    walk(&a.node, note);
+                }
+            }
+            MirExpr::BinOp(b) => {
+                walk(&b.node.lhs.node, note);
+                walk(&b.node.rhs.node, note);
+            }
+            MirExpr::Neg(inner) | MirExpr::Try(inner) | MirExpr::Return(inner) => {
+                walk(&inner.node, note)
+            }
+            MirExpr::Match(m) => {
+                walk(&m.node.subject.node, note);
+                for arm in &m.node.arms {
+                    walk(&arm.body.node, note);
+                }
+            }
+            MirExpr::Construct(c) => {
+                for a in &c.node.args {
+                    walk(&a.node, note);
+                }
+            }
+            MirExpr::RecordCreate(r) => {
+                for field in &r.node.fields {
+                    walk(&field.value.node, note);
+                }
+            }
+            MirExpr::RecordUpdate(u) => {
+                walk(&u.node.base.node, note);
+                for field in &u.node.updates {
+                    walk(&field.value.node, note);
+                }
+            }
+            MirExpr::Project(p) => walk(&p.node.base.node, note),
+            MirExpr::IfThenElse(ite) => {
+                walk(&ite.node.cond.node, note);
+                walk(&ite.node.then_branch.node, note);
+                walk(&ite.node.else_branch.node, note);
+            }
+            MirExpr::List(items) | MirExpr::Tuple(items) => {
+                for i in items {
+                    walk(&i.node, note);
+                }
+            }
+            MirExpr::MapLiteral(pairs) => {
+                for (k, v) in pairs {
+                    walk(&k.node, note);
+                    walk(&v.node, note);
+                }
+            }
+            MirExpr::InterpolatedStr(parts) => {
+                for p in parts {
+                    if let MirStrPart::Expr(e) = p {
+                        walk(&e.node, note);
+                    }
+                }
+            }
+            MirExpr::IndependentProduct(ip) => {
+                for i in &ip.node.items {
+                    walk(&i.node, note);
+                }
+            }
+        }
+    }
+
+    let mut fns: Vec<(&crate::ir::FnId, &crate::ir::mir::MirFn)> = mir_program.iter().collect();
+    fns.sort_by_key(|(id, _)| **id);
+    for (fn_id, mir_fn) in fns {
+        let Some(params_real) = fn_params_by_id.get(fn_id) else {
+            continue;
+        };
+        // Per enclosing fn: collect every `LocalSlot` callee name.
+        let mut pending: Vec<String> = Vec::new();
+        walk(&mir_fn.body.node, &mut |name| {
+            pending.push(name.to_string())
+        });
+        for name in pending {
+            let Some((_, ty)) = params_real.iter().find(|(n, _)| *n == name) else {
+                // LocalSlot name isn't a param (let-bound fn value) →
+                // skip; that call site falls back to the trap stub.
+                continue;
+            };
+            let Type::Fn(args, ret, _) = ty else {
+                continue;
+            };
+            let (params, results) = super::types::fn_sig_wasm(args, ret, Some(registry))?;
+            let key = super::types::fn_sig_key(&params, &results);
+            if seen.insert(key.clone()) {
+                out.push((key, (params, results)));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// True iff any reachable fn body calls `String.split` or `String.join`.
