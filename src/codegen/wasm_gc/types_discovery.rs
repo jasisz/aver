@@ -253,15 +253,26 @@ pub(super) fn collect_tuples_from_str(
             }
             if depth == 0 && top_commas >= 1 {
                 let inner = &trimmed[i + 1..j - 1];
+                // A `(` immediately preceded by `Fn` is a function-type
+                // parameter list (`Fn(BranchPath, Int, Int) -> Int`), NOT
+                // a tuple. Recurse into the inner so any genuinely-nested
+                // tuple param (`Fn((Int, Int), Int) -> Int`) is still
+                // discovered, but never intern the param list itself —
+                // doing so registered a phantom `Tuple<…>` whose eq/hash
+                // helpers later tried to dispatch on opaque param types
+                // (e.g. `BranchPath`) that have no structural eq.
+                let preceded_by_fn = trimmed[..i].trim_end().ends_with("Fn");
                 collect_tuples_from_str(inner, out, order, next_idx);
-                // Build canonical `Tuple<A,B,...>` form
-                let canonical_inner: String =
-                    inner.chars().filter(|c| !c.is_whitespace()).collect();
-                let canonical = format!("Tuple<{canonical_inner}>");
-                if !out.contains_key(&canonical) {
-                    out.insert(canonical.clone(), *next_idx);
-                    order.push(canonical);
-                    *next_idx += 1;
+                if !preceded_by_fn {
+                    // Build canonical `Tuple<A,B,...>` form
+                    let canonical_inner: String =
+                        inner.chars().filter(|c| !c.is_whitespace()).collect();
+                    let canonical = format!("Tuple<{canonical_inner}>");
+                    if !out.contains_key(&canonical) {
+                        out.insert(canonical.clone(), *next_idx);
+                        order.push(canonical);
+                        *next_idx += 1;
+                    }
                 }
                 i = j;
                 continue;
@@ -893,5 +904,54 @@ pub(super) fn collect_maps_from_expr(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tuple_discovery_tests {
+    use super::collect_tuples_from_str;
+    use std::collections::HashMap;
+
+    fn collect(type_str: &str) -> Vec<String> {
+        let mut out: HashMap<String, u32> = HashMap::new();
+        let mut order: Vec<String> = Vec::new();
+        let mut next = 0u32;
+        collect_tuples_from_str(type_str, &mut out, &mut order, &mut next);
+        order
+    }
+
+    #[test]
+    fn fn_param_list_is_not_a_tuple() {
+        // The param list of a `Fn(...)` type is a function-type
+        // parameter list, NOT a tuple. Registering it as
+        // `Tuple<BranchPath,Int,Int,Int>` produced a phantom carrier
+        // whose eq helper dispatched on the opaque `BranchPath`
+        // param and failed wasm-gc validation.
+        let order = collect("Fn(BranchPath, Int, Int, Int) -> Int");
+        assert!(
+            order.is_empty(),
+            "a Fn(..) param list must not register any tuple, got {order:?}"
+        );
+    }
+
+    #[test]
+    fn genuine_surface_tuple_still_registers() {
+        let order = collect("(Int, String)");
+        assert_eq!(order, vec!["Tuple<Int,String>".to_string()]);
+    }
+
+    #[test]
+    fn nested_tuple_inside_fn_param_still_registers() {
+        // A real tuple nested inside a Fn param list is still a tuple
+        // and must be discovered — only the param-list parens are not.
+        let order = collect("Fn((Int, Int), String) -> Bool");
+        assert_eq!(order, vec!["Tuple<Int,Int>".to_string()]);
+    }
+
+    #[test]
+    fn tuple_return_of_fn_still_registers() {
+        // `Fn(Int) -> (Int, Int)` — the return tuple is genuine.
+        let order = collect("Fn(Int) -> (Int, Int)");
+        assert_eq!(order, vec!["Tuple<Int,Int>".to_string()]);
     }
 }

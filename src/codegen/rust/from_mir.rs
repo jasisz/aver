@@ -1111,6 +1111,12 @@ fn emit_mir_static_ref(name: &str, ctx: &MirEmitCtx<'_>) -> String {
     if name == "Option.None" || name == "None" {
         return "None".to_string();
     }
+    // `BranchPath.Root` is the canonical-root nullary value (Oracle
+    // structural addressing). It lowers to a `FnValue` rather than a
+    // call, so it surfaces here — emit the `aver_rt` root constructor.
+    if name == "BranchPath.Root" {
+        return "aver_rt::BranchPath::root()".to_string();
+    }
     if let Some((type_name, variant_name)) = name.rsplit_once('.')
         && let Some(cg) = ctx.codegen
     {
@@ -3155,6 +3161,30 @@ fn emit_mir_builtin_call(
         }
         "Vector.len" => format!("({}.len() as i64)", arg!(0)),
         "Vector.fromList" => format!("aver_rt::AverVector::from_vec({}.to_vec())", arg!(0)),
+
+        // ---- BranchPath ----
+        // Oracle structural-addressing constructors. The `aver_rt`
+        // `BranchPath` struct (+ `root`/`child`/`parse` impls) is
+        // re-exported into the generated crate. `BranchPath.Root` is a
+        // nullary value, not a call — it lowers to a `FnValue` and is
+        // handled in `emit_mir_static_ref`. `.child` / `.parse` are
+        // builtin method calls and land here.
+        //
+        // `child(path: &BranchPath, idx: i64)`: the path arg goes
+        // through `mir_borrow_arg` so a borrowed-param `&BranchPath` is
+        // passed directly while a fresh owned value (e.g. a nested
+        // `BranchPath.child(...)` or `BranchPath.Root`) gets a `&`.
+        "BranchPath.child" => {
+            let path = mir_borrow_arg(emit_mir_expr(&args[0], ctx)?, &args[0].node, ctx);
+            let idx = arg!(1);
+            format!("aver_rt::BranchPath::child({}, {})", path, idx)
+        }
+        // `parse(raw: &str)`: `mir_str_arg_or_deref` yields a bare
+        // string literal or the `&*` deref form, both `&str`.
+        "BranchPath.parse" => {
+            let raw = mir_str_arg_or_deref(&args[0], ctx)?;
+            format!("aver_rt::BranchPath::parse({})", raw)
+        }
 
         // Not a covered pure builtin (effectful builtins never reach
         // here — gated at the call arm). HIR fallback.
