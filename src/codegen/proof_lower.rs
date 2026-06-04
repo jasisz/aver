@@ -2975,9 +2975,26 @@ fn detect_induction_target(
                 return Some(given.name.clone());
             }
         }
+        // Builtin `List<T>` given — structural induction via nil/cons (#409).
+        // Reached only AFTER the other strategy detectors in
+        // `populate_law_theorems` have declined this law, so a law with a
+        // working bespoke strategy (e.g. quicksort's ordering/idempotent) keeps
+        // it; only laws nobody else classified fall through to list induction.
+        if let Some(given) = list_induction_given(law) {
+            return Some(given);
+        }
         return None;
     }
     detect_induction_target_legacy(law, inputs)
+}
+
+/// A `given` whose declared type is a builtin `List<T>` — the structural
+/// induction target name, if any.
+fn list_induction_given(law: &crate::ast::VerifyLaw) -> Option<String> {
+    law.givens
+        .iter()
+        .find(|g| g.type_name.trim().starts_with("List<"))
+        .map(|g| g.name.clone())
 }
 
 fn detect_induction_target_legacy(
@@ -3012,7 +3029,7 @@ fn detect_induction_target_legacy(
         }
         return Some(given.name.clone());
     }
-    None
+    list_induction_given(law)
 }
 
 /// Mirror of `lean::law_auto::induction::has_indirect_variants` —

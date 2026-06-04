@@ -126,13 +126,72 @@ pub(super) fn emit_structural_induction_law(
         return None;
     }
 
-    let (target_idx, _target_name, type_name) = find_induction_target(law, ctx)?;
-    let (_, variants) = find_sum_type(ctx, type_name)?;
-    if has_indirect_variants(variants, type_name) {
-        return None;
+    // (a) A `given` is a user-defined recursive sum type: structural induction
+    //     over its variants.
+    if let Some((target_idx, _target_name, type_name)) = find_induction_target(law, ctx) {
+        let (_, variants) = find_sum_type(ctx, type_name)?;
+        if has_indirect_variants(variants, type_name) {
+            return None;
+        }
+        return emit_simple_induction(vb, law, ctx, intro_names, target_idx, type_name, variants);
     }
 
-    emit_simple_induction(vb, law, ctx, intro_names, target_idx, type_name, variants)
+    // (b) A `given` is a builtin `List<T>`: structural induction via Lean's
+    //     nil/cons. The Lean-side counterpart to Dafny's already-shipped
+    //     `|xs| == 0 / xs[1..]` list-given idiom (#409 Gap A) — closes
+    //     universal laws over user list-recursive fns that previously fell
+    //     through to `sorry`.
+    if let Some(target_idx) = find_list_induction_target(law) {
+        return emit_list_induction(vb, law, ctx, intro_names, target_idx);
+    }
+
+    None
+}
+
+/// First `given` whose declared type is a builtin `List<T>` — Lean's
+/// nil/cons induction target.
+fn find_list_induction_target(law: &VerifyLaw) -> Option<usize> {
+    law.givens
+        .iter()
+        .position(|given| given.type_name.trim().starts_with("List<"))
+}
+
+/// Lean structural induction over a builtin `List<T>` given:
+/// `induction xs with | nil => simp [defs] | cons head tail ih => simp_all [defs]`.
+/// `List.length_cons` is a default simp lemma, so a length-relating law over a
+/// cons-recursive builder (`List.len(map(xs)) == List.len(xs)`) closes once the
+/// builder's def is unfolded and the cons-case induction hypothesis is in scope.
+fn emit_list_induction(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+    target_idx: usize,
+) -> Option<AutoProof> {
+    let simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
+    let target_lean = &intro_names[target_idx];
+
+    // `try simp[_all]` has the same closing power as bare `simp[_all]` (it IS
+    // simp when simp succeeds) but never throws, so any goal it can't discharge
+    // survives the induction and is admitted by the trailing `all_goals sorry`.
+    // Net: a law simp can prove closes (no sorry); anything else (rle/json
+    // roundtrips) degrades to the same `sorry` it emitted before — never a
+    // hard lake-build error. Closed arms leave 0 goals, so `all_goals sorry`
+    // is a no-op there (no spurious sorry).
+    let proof_lines = vec![
+        format!("  intro {}", intro_names.join(" ")),
+        format!("  induction {} with", target_lean),
+        format!("  | nil => try simp [{}]", simp_list),
+        format!("  | cons head tail ih => try simp_all [{}]", simp_list),
+        "  all_goals sorry".to_string(),
+    ];
+
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines,
+        replaces_theorem: false,
+    })
 }
 
 fn emit_simple_induction(
