@@ -316,6 +316,18 @@ where
     }
 }
 
+impl<K, V> FromIterator<(K, V)> for AverMap<K, V>
+where
+    K: Eq + Hash + Clone,
+    V: Clone,
+{
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        Self {
+            inner: Rc::new(iter.into_iter().collect()),
+        }
+    }
+}
+
 // ── AverVector: COW indexed sequence ─────────────────────────────────────────
 
 pub struct AverVector<T> {

@@ -746,10 +746,20 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             emit_named_call(&name, &tc.args, emit_ctx)
         }
         MirExpr::Try(inner) => {
-            // `value?` propagation. Mirror of
-            // HIR's `ResolvedExpr::ErrorProp` emit — append `?`
-            // to the inner expression's Rust form.
-            Some(format!("{}?", emit_mir_expr(inner, emit_ctx)?))
+            // `value?` propagation. `?` (the `Try` trait) is implemented
+            // for an owned `Result<T, E>`, not a borrowed `&Result`. When
+            // the inner is a borrowed-by-default `Result`-typed param
+            // (`fn foldNote(acc: &Result<…>, …)` then `acc?`), append `?`
+            // to a *cloned* owned value rather than the `&Result` read —
+            // otherwise rustc rejects `&Result` as not implementing
+            // `Try`. `mir_clone_arg` produces the right owning shape
+            // (`.clone()` for a borrowed param, `(*x).clone()` for an
+            // rc-wrapped pass-through), and leaves an owned last-use local
+            // a bare move — exactly what `?` consumes. Mirror of HIR's
+            // `ErrorProp` once the inner is in an owning position.
+            let inner_code = emit_mir_expr(inner, emit_ctx)?;
+            let owned = mir_clone_arg(inner_code, &inner.node, emit_ctx);
+            Some(format!("{}?", owned))
         }
         MirExpr::Tuple(items) => {
             // `(a, b, c)` tuple literal. Mirror
@@ -833,6 +843,25 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // No clone insertion here; the HIR walker handles
             // that via `maybe_clone` at outer call sites.
             let proj = &spanned_proj.node;
+            // A cross-module first-class fn reference used as a value
+            // (`HttpServer.listen(port, Apps.Notepad.Routes.handleRequest)`)
+            // lowers to a `Project` chain over a `FnValue` head
+            // (`Project(Project(FnValue("Apps"), "Notepad"), "Routes"), "handleRequest")`)
+            // because the resolver leaves the leading segment an `Ident`
+            // and the rest dotted `Attr`. Collapse such a chain back to
+            // the canonical dotted name and, when it names a registered
+            // module-qualified symbol, emit the path-mangled static ref
+            // (`crate::aver_generated::apps::notepad::routes::handleRequest`)
+            // exactly as the `MirCallee::Fn` call path does — instead of
+            // the verbatim `Apps.Notepad.Routes.handleRequest` field
+            // access, which is not a valid Rust path. The HIR walker saw
+            // this as a single `StaticRef(full_name)`; on MIR the chain is
+            // re-flattened here.
+            if let Some(dotted) = collapse_fnvalue_projection(&expr.node)
+                && resolve_module_call(&dotted, emit_ctx.module_prefixes).is_some()
+            {
+                return Some(emit_mir_static_ref(&dotted, emit_ctx));
+            }
             let base = emit_mir_expr(&proj.base, emit_ctx)?;
             Some(format!("{}.{}", base, aver_name_to_rust(&proj.field)))
         }
@@ -980,6 +1009,23 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
         // refinement + module-path mangling) so the emit is byte-identical.
         // The VM does the same (`compile_ident` → `symbol_ref`).
         MirExpr::FnValue(name) => Some(emit_mir_static_ref(name, emit_ctx)),
+        _ => None,
+    }
+}
+
+/// Reconstruct the dotted source name of a `Project` chain whose head
+/// is a `FnValue` — e.g. `Project(Project(FnValue("Apps"), "Notepad"),
+/// "Routes")` → `"Apps.Notepad.Routes"`. Returns `None` for any chain
+/// whose head is not a `FnValue` (a genuine record-field access). Used
+/// to recover a cross-module first-class fn reference that the resolver
+/// split into an `Ident` head plus dotted `Attr` tail.
+fn collapse_fnvalue_projection(expr: &MirExpr) -> Option<String> {
+    match expr {
+        MirExpr::FnValue(name) => Some(name.clone()),
+        MirExpr::Project(p) => {
+            let base = collapse_fnvalue_projection(&p.node.base.node)?;
+            Some(format!("{}.{}", base, p.node.field))
+        }
         _ => None,
     }
 }
