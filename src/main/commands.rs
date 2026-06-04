@@ -5177,9 +5177,18 @@ fn count_dafny_axioms(dir: &str) -> usize {
 /// Count Lean's `declaration uses 'sorry'` warnings in build output.
 /// Lake emits one such warning per `sorry` in the residual program;
 /// counting them matches the budget the proof_spec gating tests use.
+///
+/// The quote glyph around `sorry` is toolchain-dependent: Lean ≤4.15
+/// (the pinned toolchain) prints straight quotes `'sorry'`, but ≥4.17
+/// switched to backticks `` `sorry` ``. A `sorry` is only a non-fatal
+/// warning, so `lake` exits 0 and the exit-status gate does NOT catch
+/// it — the count is the sole signal. Matching the literal `'sorry'`
+/// alone would silently return 0 on a backtick-era toolchain, turning
+/// a proof full of `sorry`s into a false-green. So match `declaration
+/// uses` + `sorry` regardless of the surrounding glyph.
 fn count_lean_sorries(s: &str) -> usize {
     s.lines()
-        .filter(|l| l.contains("declaration uses 'sorry'"))
+        .filter(|l| l.contains("declaration uses") && l.contains("sorry"))
         .count()
 }
 
@@ -5479,6 +5488,24 @@ mod tests {
             .map(|d| d.as_nanos())
             .unwrap_or(0);
         std::env::temp_dir().join(format!("aver_commands_{tag}_{nanos}"))
+    }
+
+    #[test]
+    fn count_lean_sorries_matches_both_quote_glyphs() {
+        // Lean ≤4.15 prints straight quotes, ≥4.17 prints backticks.
+        // `sorry` is a non-fatal warning (lake exits 0), so the count is
+        // the only signal — it must survive the glyph switch or every
+        // `sorry` silently passes as a false-green.
+        let straight = "warning: Foo.lean:1:8: declaration uses 'sorry'";
+        let backtick = "warning: Foo.lean:1:8: declaration uses `sorry`";
+        assert_eq!(super::count_lean_sorries(straight), 1, "straight quotes");
+        assert_eq!(super::count_lean_sorries(backtick), 1, "backticks");
+        assert_eq!(
+            super::count_lean_sorries(&format!("{straight}\n{backtick}\nunrelated line")),
+            2,
+            "both glyphs counted, unrelated lines ignored"
+        );
+        assert_eq!(super::count_lean_sorries("Build completed successfully"), 0);
     }
 
     fn empty_codegen_ctx() -> CodegenContext {
