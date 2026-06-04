@@ -83,6 +83,18 @@ pub(super) struct FnMap {
     /// Per-(record/sum) `__eq_<TypeName>` helpers used by `BinOp::Eq`
     /// / `BinOp::Neq` over nominal types. Key = bare type name.
     pub(super) eq_helpers: std::collections::HashMap<String, u32>,
+    /// Address-taken user fn name → dense funcref-table index (table 0).
+    /// A `MirExpr::FnValue(name)` lowers to `i32.const <idx>`; a
+    /// `Fn`-param call dispatches that index via `call_indirect`. Names
+    /// absent here (builtins / variants / let-bound fn values with no
+    /// table slot) fall back to the trap stub.
+    pub(super) funcref_table: std::collections::HashMap<String, u32>,
+    /// `fn_sig_key(params, results)` → pre-registered `call_indirect`
+    /// functype index, one per distinct `Fn(..)` param signature. The
+    /// body emitter recomputes the key via `EmitCtx::fn_param_fn_sig`
+    /// and must hit the SAME entry the module-assembly registration
+    /// recorded (both derive the key from `fn_sig_wasm` + `fn_sig_key`).
+    pub(super) call_indirect_types: std::collections::HashMap<String, u32>,
 }
 
 impl FnMap {
@@ -489,6 +501,22 @@ impl<'a> EmitCtx<'a> {
             .get(slot as usize)
             .copied()
             .unwrap_or(false)
+    }
+
+    /// `fn_sig_key` for the `Fn(..)` param named `name`, used to look up
+    /// the pre-registered `call_indirect` functype at a `LocalSlot`
+    /// call site. Returns `None` when `name` is not a param or not a
+    /// `Fn` type. Derives the key via the SAME `fn_sig_wasm` +
+    /// `fn_sig_key` the module-assembly registration used, so the two
+    /// keys agree exactly. `EmitCtx::params` carries each param's
+    /// resolved `Type`; `registry` drives the type lowering.
+    pub(super) fn fn_param_fn_sig(&self, name: &str) -> Option<String> {
+        let (_, ty) = self.params.iter().find(|(n, _)| n == name)?;
+        let Type::Fn(args, ret, _) = ty else {
+            return None;
+        };
+        let (params, results) = super::types::fn_sig_wasm(args, ret, Some(self.registry)).ok()?;
+        Some(super::types::fn_sig_key(&params, &results))
     }
 }
 

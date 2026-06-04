@@ -1676,23 +1676,19 @@ pub(super) fn aver_to_wasm(
         })));
     }
 
-    // First-class Fn types reach the wasm-gc backend only through
-    // verify / oracle givens (`fn pairSpec(rnd: Fn(BranchPath, Int,
-    // Int, Int) -> Int) -> ...`). The body is dead from `_start` —
-    // verify blocks never execute in runtime — so the param slot just
-    // needs *some* representable carrier. `(ref null eq)` works the
-    // same way it does for `BranchPath`. Higher-order calls in real
-    // runtime code aren't supported on wasm-gc yet; if they reach
-    // here through `_start`, the validator will reject them at the
-    // call site and the user gets a clear error.
+    // First-class Fn values lower to an `i32` — a dense index into the
+    // module's single funcref table (table 0). Calling through a
+    // `Fn(..)` param emits `call_indirect` on that table (see
+    // `module.rs` table/element sections + `from_mir`'s `FnValue` /
+    // `LocalSlot` arms), mirroring the VM's symbol-id-value + dynamic
+    // dispatch. The index identifies the target fn; the `call_indirect`
+    // functype is pre-registered from the param's `Fn(..)` sig so it
+    // matches the target fn's own functype exactly. Verify / oracle
+    // givens (`fn pairSpec(rnd: Fn(BranchPath, Int, Int, Int) -> Int)`)
+    // whose bodies are dead from `_start` carry the same i32 slot
+    // harmlessly.
     if trimmed.starts_with("Fn(") {
-        return Ok(Some(ValType::Ref(RefType {
-            nullable: true,
-            heap_type: HeapType::Abstract {
-                shared: false,
-                ty: AbstractHeapType::Eq,
-            },
-        })));
+        return Ok(Some(ValType::I32));
     }
 
     // Compound types not yet lowered.
@@ -1742,6 +1738,37 @@ pub(super) fn param_types(
         }
     }
     Ok(out)
+}
+
+/// Lower a `Fn(args) -> ret` signature to the wasm `(params, results)`
+/// the matching direct call uses, so a `call_indirect` through a
+/// `Fn`-param resolves to a functype byte-identical to the target fn's
+/// own functype. Each arg lowers via `aver_to_wasm` (skipping `None` —
+/// `Unit` params contribute no wasm value), the result via
+/// `return_results`. SAME lowering the direct-call path
+/// (`param_types` / `return_results` in `module.rs`) uses.
+pub(super) fn fn_sig_wasm(
+    args: &[crate::ast::Type],
+    ret: &crate::ast::Type,
+    registry: Option<&TypeRegistry>,
+) -> Result<(Vec<ValType>, Vec<ValType>), WasmGcError> {
+    let mut params = Vec::with_capacity(args.len());
+    for a in args {
+        if let Some(v) = aver_to_wasm(&a.display(), registry)? {
+            params.push(v);
+        }
+    }
+    let results = return_results(&ret.display(), registry)?;
+    Ok((params, results))
+}
+
+/// Dedupe / lookup key for a `call_indirect` functype, derived from the
+/// LOWERED `ValType`s so the register-site (`module.rs`) and the
+/// call-site (`from_mir`) agree exactly. Both paths MUST build it via
+/// `fn_sig_wasm` + this helper from a `Type::Fn(args, ret, _)` — never
+/// hand-roll a second derivation.
+pub(super) fn fn_sig_key(params: &[ValType], results: &[ValType]) -> String {
+    format!("{params:?}=>{results:?}")
 }
 
 /// Build the `StructType` body for a record: one `FieldType` per

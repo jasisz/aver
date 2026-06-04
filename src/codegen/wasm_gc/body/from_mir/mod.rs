@@ -21,8 +21,14 @@
 //! synthetic lets — `_ = expr` discards and non-tail `Stmt::Expr`, which
 //! emit the value, `drop` it if it produced one, then the body),
 //! `Call(Fn)` / `TailCall`, `Project` (mirroring `emit_attr_get`), and
-//! the `Tuple` / `MapLiteral` literals. Higher-order callees (`FnValue`,
-//! `LocalSlot`) fall back. Registered-helper builtins and effect imports (`Console.*` /
+//! the `Tuple` / `MapLiteral` literals. First-class fn values are
+//! supported: `FnValue(name)` lowers to an `i32.const` of the fn's
+//! dense funcref-table index, and a `Fn`-param call (`LocalSlot`)
+//! dispatches that index via `call_indirect` on table 0 (the funcref
+//! table + functypes are set up in `module.rs`). Only the residual
+//! cases with no table slot (a `FnValue` of a builtin / variant, or a
+//! `LocalSlot` whose name is a let-bound fn value rather than a `Fn`
+//! param) fall back to the trap stub. Registered-helper builtins and effect imports (`Console.*` /
 //! `Disk.*` / `Tcp.*` / `Http.*` / `Random.*` / `Time.*`, each carrying
 //! the host's `caller_fn` stamp) go through the `fn_map.builtins` /
 //! `fn_map.effects` lookups here.
@@ -572,9 +578,36 @@ pub(crate) fn emit_mir_expr(
                         None => Ok(None),
                     }
                 }
-                // First-class local-slot calls are higher-order (wasm-gc
-                // has no first-class fn lowering) → fall back.
-                MirCallee::LocalSlot { .. } => Ok(None),
+                // First-class local-slot call: dispatch the `Fn`-param
+                // through `call_indirect` on the funcref table (table 0).
+                // The slot holds an i32 = the target fn's dense table
+                // index (placed there by the `FnValue` arm at the
+                // pass-the-fn call site). Recover the param's `Fn(..)`
+                // sig key, look up the pre-registered functype; either
+                // missing (e.g. a let-bound fn value with no table slot)
+                // → fall back to the trap stub.
+                MirCallee::LocalSlot { slot, ref name, .. } => {
+                    let Some(key) = ctx.fn_param_fn_sig(name) else {
+                        return Ok(None);
+                    };
+                    let Some(&type_index) = ctx.fn_map.call_indirect_types.get(&key) else {
+                        return Ok(None);
+                    };
+                    // STACK ORDER: args first, then the i32 table index
+                    // on top, then `call_indirect` (which pops index +
+                    // args, pushes results).
+                    for arg in &call.args {
+                        if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
+                            return Ok(None);
+                        }
+                    }
+                    func.instruction(&Instruction::LocalGet(slot as u32));
+                    func.instruction(&Instruction::CallIndirect {
+                        type_index,
+                        table_index: 0,
+                    });
+                    Ok(Some(aver_type_str_of(expr).trim() != "Unit"))
+                }
             }
         }
         MirExpr::TailCall(spanned_tc) => {
@@ -793,10 +826,18 @@ pub(crate) fn emit_mir_expr(
             func.instruction(&Instruction::End);
             Ok(Some(produces))
         }
-        // Catch-all fallback to the `ResolvedExpr` emitter. Reaches here:
-        // `FnValue` (a fn referenced as a value — wasm-gc has no
-        // first-class fn representation).
-        _ => Ok(None),
+        // A fn referenced as a value (`callWith(inc)`): push its dense
+        // funcref-table index as an `i32`. A `Fn`-param call later reads
+        // this i32 from its slot and dispatches via `call_indirect`.
+        // Names absent from the funcref table (builtins / variants) have
+        // no table slot — fall back to the trap stub.
+        MirExpr::FnValue(name) => match ctx.fn_map.funcref_table.get(name) {
+            Some(&idx) => {
+                func.instruction(&Instruction::I32Const(idx as i32));
+                Ok(Some(true))
+            }
+            None => Ok(None),
+        },
     }
 }
 

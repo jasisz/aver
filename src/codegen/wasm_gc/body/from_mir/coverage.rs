@@ -17,8 +17,9 @@ pub struct CoverageReport {
     pub total: usize,
     /// Fns whose entire body the walker emits standalone.
     pub mir_covered: usize,
-    /// Fns that hit at least one unsupported variant (HIR fallback).
-    pub hir_fallback: usize,
+    /// Fns that hit at least one unsupported variant and so get a
+    /// `unreachable` trap-stub body instead of MIR emission.
+    pub trap_stub: usize,
 }
 
 impl CoverageReport {
@@ -46,7 +47,7 @@ pub fn coverage_report(program: &MirProgram) -> CoverageReport {
         if mir_expr_coverable(&mir_fn.body) {
             report.mir_covered += 1;
         } else {
-            report.hir_fallback += 1;
+            report.trap_stub += 1;
         }
     }
     report
@@ -56,7 +57,11 @@ pub fn coverage_report(program: &MirProgram) -> CoverageReport {
 /// `None`). Structural mirror of the emitter's match arms.
 pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
     match &expr.node {
-        MirExpr::Literal(_) | MirExpr::Local(_) => true,
+        // `FnValue` lowers to an `i32.const` of the fn's funcref-table
+        // index (when address-taken to a user fn). The ctx-free
+        // predicate can't see the table, so it over-counts the
+        // builtin/variant case that falls back — tolerable here.
+        MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => true,
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
             // Numeric ops or the `String` concat / eq / compare ops.
@@ -83,8 +88,16 @@ pub(crate) fn mir_expr_coverable(expr: &Spanned<MirExpr>) -> bool {
             mir_expr_coverable(&l.value) && mir_expr_coverable(&l.body)
         }
         MirExpr::Call(spanned_call) => {
-            matches!(spanned_call.node.callee, MirCallee::Fn(_))
-                && spanned_call.node.args.iter().all(mir_expr_coverable)
+            // `Fn` (direct) and `LocalSlot` (first-class `Fn`-param via
+            // `call_indirect`) callees are both emitted standalone. The
+            // ctx-free predicate can't see whether a `LocalSlot` resolves
+            // to a registered functype, so it over-counts those that fall
+            // back — tolerable for `--explain-mir-coverage`; the byte-
+            // differential test is the real gate.
+            matches!(
+                spanned_call.node.callee,
+                MirCallee::Fn(_) | MirCallee::LocalSlot { .. }
+            ) && spanned_call.node.args.iter().all(mir_expr_coverable)
         }
         MirExpr::TailCall(spanned_tc) => spanned_tc.node.args.iter().all(mir_expr_coverable),
         MirExpr::Construct(spanned_ctor) => spanned_ctor.node.args.iter().all(mir_expr_coverable),

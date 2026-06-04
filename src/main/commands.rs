@@ -3655,10 +3655,10 @@ fn explain_wasm_gc_mir_coverage(mir: &aver::ir::mir::MirProgram, json: bool) {
     let report = aver::codegen::wasm_gc::coverage_report(mir);
     if json {
         println!(
-            "{{\"schema_version\":1,\"backend\":\"wasm-gc\",\"total\":{total},\"mir_covered\":{covered},\"hir_fallback\":{fallback},\"coverage_ratio\":{ratio:.4}}}",
+            "{{\"schema_version\":1,\"backend\":\"wasm-gc\",\"total\":{total},\"mir_covered\":{covered},\"trap_stub\":{fallback},\"coverage_ratio\":{ratio:.4}}}",
             total = report.total,
             covered = report.mir_covered,
-            fallback = report.hir_fallback,
+            fallback = report.trap_stub,
             ratio = report.ratio(),
         );
     } else {
@@ -3671,7 +3671,7 @@ fn explain_wasm_gc_mir_coverage(mir: &aver::ir::mir::MirProgram, json: bool) {
             report.mir_covered,
             report.ratio() * 100.0
         ));
-        out.push_str(&format!("HIR fallback:  {}\n", report.hir_fallback));
+        out.push_str(&format!("trap stub:     {}\n", report.trap_stub));
         print!("{out}");
     }
 }
