@@ -591,11 +591,15 @@ pub(super) enum Commands {
         check: bool,
         /// `--check` only: tolerate up to N Dafny verification
         /// errors. Gates regressions upward for examples whose laws
-        /// don't yet have a closing strategy.
+        /// don't yet have a closing strategy. N is a WHOLE-FILE total,
+        /// not per-law: `--error-budget 2` passes a file with two
+        /// independently-failing laws. Defaults to 0 (strict).
         #[arg(long, requires = "check")]
         error_budget: Option<usize>,
-        /// `--check` only: tolerate up to N residual Lean `sorry`s.
-        /// Symmetric to `--error-budget` on Dafny.
+        /// `--check` only: tolerate up to N residual Lean `sorry`s (and,
+        /// on Dafny, `assume {:axiom}` trust-escapes). Symmetric to
+        /// `--error-budget`. Like it, N is a WHOLE-FILE total, not
+        /// per-law. Defaults to 0 (strict).
         #[arg(long, requires = "check")]
         sorry_budget: Option<usize>,
         /// `--check` only: emit a structured JSON summary
