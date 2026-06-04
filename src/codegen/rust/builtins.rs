@@ -464,4 +464,3 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
         _ => None,
     }
 }
-

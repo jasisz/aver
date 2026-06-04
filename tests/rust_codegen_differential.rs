@@ -801,8 +801,7 @@ fn mir_forced_record_replay_captures_effects_through_invoke_wrapper() {
         let lowered = mir_lowered_count(&src, None, &["--with-replay"])?;
         if lowered == 0 {
             return Err(
-                "no fn lowered to MIR — the MIR replay reroute is not being exercised"
-                    .to_string(),
+                "no fn lowered to MIR — the MIR replay reroute is not being exercised".to_string(),
             );
         }
 
@@ -1883,8 +1882,7 @@ fn mir_forced_tcp_send_record_replay_roundtrips() {
         let lowered = mir_lowered_count(&src, None, &["--with-replay"])?;
         if lowered == 0 {
             return Err(
-                "no fn lowered to MIR — the Tcp replay reroute is not being exercised"
-                    .to_string(),
+                "no fn lowered to MIR — the Tcp replay reroute is not being exercised".to_string(),
             );
         }
 

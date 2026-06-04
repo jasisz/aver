@@ -4,16 +4,14 @@ use crate::ast::{Literal, TypeDef};
 use crate::codegen::CodegenContext;
 use crate::codegen::common::resolve_module_call;
 use crate::ir::hir::{
-    ResolvedFnDef, ResolvedMatchArm,
-    ResolvedPattern, ResolvedThinBodyPlan,
-    classify_list_match_shape_resolved,
-    classify_thin_fn_def_resolved, semantic_constructor_from_resolved_ctor,
+    ResolvedFnDef, ResolvedMatchArm, ResolvedPattern, ResolvedThinBodyPlan,
+    classify_list_match_shape_resolved, classify_thin_fn_def_resolved,
+    semantic_constructor_from_resolved_ctor,
 };
 use crate::ir::vars::resolved_pattern_bindings;
 use crate::ir::{
-    DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan,
-    DispatchLiteral, DispatchTableShape, ListMatchShape, SemanticConstructor,
-    SemanticDispatchPattern, WrapperKind,
+    DispatchArmPlan, DispatchBindingPlan, DispatchDefaultPlan, DispatchLiteral, DispatchTableShape,
+    ListMatchShape, SemanticConstructor, SemanticDispatchPattern, WrapperKind,
 };
 use crate::types::{self, Type};
 /// Aver expressions → Rust expression strings.
@@ -136,7 +134,6 @@ pub(super) fn emit_literal(lit: &Literal) -> String {
     }
 }
 
-
 /// Compute borrow mask from a FnDef, checking for TCO.
 /// Must mirror actual emitted signature:
 /// - Mutual-TCO SCC members → wrapper with borrow-by-default (`&T`)
@@ -239,7 +236,6 @@ fn find_fn_def_by_name<'a>(name: &str, ctx: &'a CodegenContext) -> Option<&'a cr
 
     None
 }
-
 
 /// Given the record's `Type::Named` and a `field` name, look the field's
 /// declared type up in the context's record definitions and report
@@ -809,4 +805,3 @@ pub(super) fn emit_pattern_rebindings(pattern: &ResolvedPattern, ctx: &CodegenCo
         format!("{}\n            ", lines.join("\n            "))
     }
 }
-
