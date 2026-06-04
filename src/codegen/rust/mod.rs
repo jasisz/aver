@@ -83,6 +83,10 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
         needs_named_type(ctx, "HttpResponse") || needs_named_type(ctx, "HttpRequest");
     let needs_tcp_types = needs_named_type(ctx, "Tcp.Connection");
     let needs_terminal_types = needs_named_type(ctx, "Terminal.Size");
+    // Oracle-proof stub fns take a leading `BranchPath` param. They are
+    // emitted as dead-at-runtime fns (module-level fns emit regardless of
+    // reachability), so the type must be in scope to compile.
+    let needs_branch_path = needs_named_type(ctx, "BranchPath");
 
     let has_tcp_runtime = used_services.contains("Tcp");
     let has_http_runtime = used_services.contains("Http");
@@ -160,6 +164,8 @@ pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
                 has_tcp_types,
                 has_http_types,
                 has_http_server_types,
+                has_terminal_types,
+                needs_branch_path,
                 ctx.emit_replay_runtime,
                 embedded_independence_cancel,
             ),
@@ -378,6 +384,8 @@ fn render_runtime_support(
     has_tcp_types: bool,
     has_http_types: bool,
     has_http_server_types: bool,
+    has_terminal_types: bool,
+    needs_branch_path: bool,
     has_replay: bool,
     embedded_independence_cancel: bool,
 ) -> String {
@@ -394,6 +402,12 @@ fn render_runtime_support(
     }
     if has_http_server_types {
         sections.push(runtime::generate_http_server_types());
+    }
+    if has_terminal_types {
+        sections.push(runtime::generate_terminal_types());
+    }
+    if needs_branch_path {
+        sections.push(runtime::generate_branch_path_types());
     }
     format!("{}\n", sections.join("\n\n"))
 }

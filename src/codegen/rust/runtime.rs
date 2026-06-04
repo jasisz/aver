@@ -216,6 +216,14 @@ pub fn generate_tcp_types() -> String {
     "pub use aver_rt::TcpConnection as Tcp_Connection;".to_string()
 }
 
+/// Bring the shared `BranchPath` type into the generated program. Oracle-proof
+/// stub fns (`fn lowDie(path: BranchPath, ...)`) are emitted as ordinary
+/// (dead-at-runtime) functions because module-level fns are emitted
+/// regardless of reachability, so the type must be in scope to compile.
+pub fn generate_branch_path_types() -> String {
+    "pub use aver_rt::BranchPath;".to_string()
+}
+
 /// Bring shared HTTP record types into the generated program.
 pub fn generate_http_types() -> String {
     "pub use aver_rt::HttpResponse;".to_string()
@@ -224,4 +232,10 @@ pub fn generate_http_types() -> String {
 /// Bring shared HTTP server request type into the generated program.
 pub fn generate_http_server_types() -> String {
     "pub use aver_rt::HttpRequest;".to_string()
+}
+
+/// Bring the shared terminal size type into the generated program under the
+/// legacy codegen name used for dotted `Terminal.Size`.
+pub fn generate_terminal_types() -> String {
+    "pub use aver_rt::TerminalSize as Terminal_Size;".to_string()
 }

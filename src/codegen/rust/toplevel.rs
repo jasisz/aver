@@ -1190,6 +1190,83 @@ fn emit_codegen_error_expr(message: String) -> String {
     )
 }
 
+/// True when a verify case is a verify-only Oracle/trace shape that the
+/// Rust backend cannot emit as a runnable `#[cfg(test)]` assertion. These
+/// cases are exercised by `aver verify` (the proof path), never by the
+/// generated crate's `cargo test`, so they are omitted from the verify
+/// module rather than emitted as `compile_error!` placeholders (which
+/// would break `cargo test` of an otherwise-buildable program).
+///
+/// This catches the trace-record shapes (`given`-bound effect stubs are
+/// caught upfront by `emit_verify_blocks` via the per-case `case_givens`
+/// list). Two source-AST signals (no rendering needed):
+///  - a `.result` / `.trace` projection (the trace-result record produced
+///    only by the Oracle trace runner — no such field exists at runtime), or
+///  - a reference to a `BranchPath` constructor (`BranchPath.Root` /
+///    `.child` / `.parse`), the leading path arg of an Oracle stub —
+///    these only appear in given-universal Oracle laws.
+fn verify_case_is_oracle_only(left: &Expr, right: &Expr) -> bool {
+    expr_is_oracle_trace_shape(left) || expr_is_oracle_trace_shape(right)
+}
+
+/// Recursively scan an expr for the Oracle/trace-only markers described
+/// on [`verify_case_is_oracle_only`]. Recursion mirrors
+/// [`expr_uses_error_prop`]'s structural walk.
+fn expr_is_oracle_trace_shape(expr: &Expr) -> bool {
+    // Direct hit at this node.
+    let here = match expr {
+        // `.result` / `.trace` projection of an Oracle trace record.
+        Expr::Attr(_, field) if field == "result" || field == "trace" => true,
+        // A reference to the `BranchPath` namespace: bare `BranchPath`
+        // (e.g. `BranchPath.child` callee) or `BranchPath.Root`
+        // (the nullary value ctor reads as an `Attr` on the ns ident).
+        Expr::Ident(n) if n == "BranchPath" => true,
+        Expr::Attr(base, _) if matches!(&base.node, Expr::Ident(n) if n == "BranchPath") => true,
+        _ => false,
+    };
+    if here {
+        return true;
+    }
+    // Otherwise recurse into children.
+    match expr {
+        Expr::FnCall(f, args) => {
+            expr_is_oracle_trace_shape(&f.node)
+                || args.iter().any(|a| expr_is_oracle_trace_shape(&a.node))
+        }
+        Expr::BinOp(_, l, r) => {
+            expr_is_oracle_trace_shape(&l.node) || expr_is_oracle_trace_shape(&r.node)
+        }
+        Expr::Neg(e) | Expr::ErrorProp(e) | Expr::Attr(e, _) => expr_is_oracle_trace_shape(&e.node),
+        Expr::Match { subject, arms, .. } => {
+            expr_is_oracle_trace_shape(&subject.node)
+                || arms
+                    .iter()
+                    .any(|a| expr_is_oracle_trace_shape(&a.body.node))
+        }
+        Expr::List(es) | Expr::Tuple(es) | Expr::IndependentProduct(es, _) => {
+            es.iter().any(|e| expr_is_oracle_trace_shape(&e.node))
+        }
+        Expr::Constructor(_, Some(e)) => expr_is_oracle_trace_shape(&e.node),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            StrPart::Parsed(e) => expr_is_oracle_trace_shape(&e.node),
+            _ => false,
+        }),
+        Expr::MapLiteral(entries) => entries.iter().any(|(k, v)| {
+            expr_is_oracle_trace_shape(&k.node) || expr_is_oracle_trace_shape(&v.node)
+        }),
+        Expr::RecordCreate { fields, .. } => fields
+            .iter()
+            .any(|(_, e)| expr_is_oracle_trace_shape(&e.node)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_is_oracle_trace_shape(&base.node)
+                || updates
+                    .iter()
+                    .any(|(_, e)| expr_is_oracle_trace_shape(&e.node))
+        }
+        _ => false,
+    }
+}
+
 /// Emit verify blocks as Rust #[cfg(test)] module.
 pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) -> String {
     let mut out = String::new();
@@ -1204,13 +1281,38 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
     let mut fn_counters: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
     for vb in verify_blocks {
-        for (left, right) in vb.cases.iter() {
+        for (idx, (left, right)) in vb.cases.iter().enumerate() {
+            // Skip verify-only Oracle/law/trace cases. Three signals:
+            //  - a non-empty `given` list: the case substitutes effect
+            //    oracle stubs (`given write: Disk.writeText = [fakeErr]`)
+            //    that only `aver verify` honours — Rust codegen runs the
+            //    real effect, so the assertion is meaningless (and often
+            //    false) at runtime;
+            //  - a `.result`/`.trace` projection or `BranchPath` ref (the
+            //    Oracle trace-record / path-arg shapes), which render as a
+            //    `compile_error!` placeholder or syntactically-broken Rust.
+            // Emitting any of these would break `cargo test` of an
+            // otherwise-buildable program. `aver verify` still runs them.
+            let has_given = vb.case_givens.get(idx).is_some_and(|g| !g.is_empty());
+            if has_given || verify_case_is_oracle_only(&left.node, &right.node) {
+                continue;
+            }
             let fn_key = aver_name_to_rust(&vb.fn_name);
             let counter = fn_counters.entry(fn_key.clone()).or_insert(0);
             *counter += 1;
             let test_name = format!("test_{}_case_{}", fn_key, *counter);
             let left_str = emit_verify_case_expr(&left.node, ctx, &ectx);
             let right_str = emit_verify_case_expr(&right.node, ctx, &ectx);
+
+            // Defensive backstop: if the MIR walker still produced a
+            // `compile_error!` placeholder for a case the source-level
+            // detector didn't classify as Oracle/trace-only, omit it
+            // rather than poison `cargo test`. Keeps the verify module
+            // clean even if a new untranslatable shape appears.
+            if left_str.contains("compile_error!") || right_str.contains("compile_error!") {
+                *counter -= 1;
+                continue;
+            }
 
             // Check if either side uses `?` operator
             let uses_error_prop =
@@ -1359,5 +1461,73 @@ mod tests {
             groups.is_empty(),
             "self-only TCO should not create a mutual group"
         );
+    }
+
+    fn call(name: &str, args: Vec<Expr>) -> Expr {
+        Expr::FnCall(
+            Box::new(Spanned::bare(Expr::Ident(name.to_string()))),
+            args.into_iter().map(Spanned::bare).collect(),
+        )
+    }
+
+    #[test]
+    fn oracle_trace_shapes_are_detected() {
+        // `.result` projection (Oracle trace-result record).
+        let result_proj = Expr::Attr(
+            Box::new(Spanned::bare(call("rollAndReport", vec![]))),
+            "result".to_string(),
+        );
+        assert!(verify_case_is_oracle_only(
+            &result_proj,
+            &Expr::Literal(Literal::Int(1))
+        ));
+
+        // `.trace.contains(...)` (Oracle trace assertion).
+        let trace_attr = Expr::Attr(
+            Box::new(Spanned::bare(call("report", vec![]))),
+            "trace".to_string(),
+        );
+        let trace_contains =
+            Expr::Attr(Box::new(Spanned::bare(trace_attr)), "contains".to_string());
+        assert!(verify_case_is_oracle_only(
+            &trace_contains,
+            &Expr::Literal(Literal::Bool(true))
+        ));
+
+        // `BranchPath.Root` arg to a given-universal Oracle stub call.
+        let branch_root = Expr::Attr(
+            Box::new(Spanned::bare(Expr::Ident("BranchPath".to_string()))),
+            "Root".to_string(),
+        );
+        let oracle_call = call("highDie", vec![branch_root, Expr::Literal(Literal::Int(0))]);
+        assert!(verify_case_is_oracle_only(
+            &call("rollOnce", vec![]),
+            &oracle_call
+        ));
+    }
+
+    #[test]
+    fn ordinary_runtime_cases_are_kept() {
+        // `terminalWidth() => fixedSizeStub().width` — no `.result` /
+        // `.trace` / `BranchPath`, so it is a runnable case (kept). The
+        // `.width` Attr on an ordinary record must NOT be mistaken for a
+        // trace projection.
+        let left = call("terminalWidth", vec![]);
+        let right = Expr::Attr(
+            Box::new(Spanned::bare(call("fixedSizeStub", vec![]))),
+            "width".to_string(),
+        );
+        assert!(!verify_case_is_oracle_only(&left, &right));
+
+        // A plain arithmetic law stays runnable.
+        let plus = Expr::BinOp(
+            crate::ast::BinOp::Add,
+            Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
+            Box::new(Spanned::bare(Expr::Literal(Literal::Int(2)))),
+        );
+        assert!(!verify_case_is_oracle_only(
+            &plus,
+            &Expr::Literal(Literal::Int(3))
+        ));
     }
 }

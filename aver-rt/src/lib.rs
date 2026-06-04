@@ -18,7 +18,9 @@ pub use runtime::{
     env_get, env_set, list_dir, make_dir, path_exists, read_line, read_text, string_slice,
     time_now, time_sleep, time_unix_ms, write_text,
 };
-pub use service_types::{HttpHeaders, HttpRequest, HttpResponse, TcpConnection, TerminalSize};
+pub use service_types::{
+    BranchPath, HttpHeaders, HttpRequest, HttpResponse, TcpConnection, TerminalSize,
+};
 
 #[cfg(feature = "terminal")]
 pub use terminal::{

@@ -1405,47 +1405,32 @@ fn assert_forced_mir_parity(relative: &str, module_root: Option<&str>) -> Result
     result
 }
 
-// ─── BranchPath exclusion (honest corpus denominator) ────────────────────
+// ─── Residual Oracle-shape exclusion (honest corpus denominator) ─────────
 //
-// Some examples do NOT build in Rust on EITHER walker — a pre-existing
-// backend gap, NOT a MIR regression: the Oracle-only `BranchPath` type
-// (and the Terminal-only `Terminal.Size` type) are referenced by the
-// emitted Rust but never emitted as a Rust type, so rustc rejects with
-// E0425 ("cannot find type"). Every `examples/formal/*` program reaches
-// the Oracle / trace API, and `services/redis.av` reaches it transitively
-// via the Tcp shell, so the whole set is excluded from the run-parity
-// corpus. `branch_path_examples_fail_identically_on_both_walkers` proves
-// the failure is identical HIR vs forced-MIR (so the exclusion measures a
-// real buildable denominator, not a broken baseline). Fixing BranchPath
-// is explicitly OUT OF SCOPE for Stage 1.
+// The Oracle-only `BranchPath` type and the Terminal-only `Terminal.Size`
+// type are now emitted by the Rust backend (a `pub use aver_rt::BranchPath`
+// / `Terminal_Size` alias, mirroring `Tcp.Connection`), and the verify
+// module skips the verify-only Oracle / trace / given-universal cases, so
+// the previously-excluded Oracle programs (`oracle_trace`,
+// `hostile_order_axis`, `clock_as_data`, `randomness_paradox`,
+// `terminal_size_snapshot`, `file_store_shell`, `services/redis`) now
+// `cargo build` + `cargo test` cleanly on Rust and run with VM parity.
+//
+// The lone residual is `oracle_independent_products.av`: its `pairSpec`
+// uses a higher-order `?!` independent-product shape the MIR walker can't
+// render yet (`compile_error!("MIR walker could not render fn pairSpec")`)
+// — a separate higher-order MIR-walker gap, NOT a BranchPath /
+// Terminal.Size emit gap. It stays excluded until that gap is closed.
 
-/// (relative path, optional module root) of the examples that fail the
-/// Rust `cargo build` on BOTH walkers because of the BranchPath /
-/// Terminal.Size emit gap. Documented + excluded from the run-parity
-/// corpus; verified to fail identically by the test below.
-// NOTE: only the examples EMPIRICALLY CONFIRMED to fail the `cargo build`
-// on BOTH walkers belong here. Several other `formal/*` programs
-// (file_store_pure_core, spec_laws, law_auto, trust_check) build cleanly
-// in Rust — they are PURE / proof-shaped and never reach the Oracle /
-// trace runtime API, so they are NOT exclusions and stay buildable. The
-// test below would flag a stale entry that started building on both
-// walkers ("move it into the run-parity corpus").
-const BRANCH_PATH_EXCLUSIONS: &[(&str, Option<&str>)] = &[
-    ("examples/formal/oracle_trace.av", Some("examples")),
-    (
-        "examples/formal/oracle_independent_products.av",
-        Some("examples"),
-    ),
-    ("examples/formal/hostile_order_axis.av", Some("examples")),
-    ("examples/formal/clock_as_data.av", Some("examples")),
-    ("examples/formal/randomness_paradox.av", Some("examples")),
-    (
-        "examples/formal/terminal_size_snapshot.av",
-        Some("examples"),
-    ),
-    ("examples/formal/file_store_shell.av", Some("examples")),
-    ("examples/services/redis.av", Some("examples")),
-];
+/// (relative path, optional module root) of the examples that still fail
+/// the Rust `cargo build` on the MIR walker. The BranchPath / Terminal.Size
+/// emit gap is fixed; the residual is the higher-order MIR-walker gap in
+/// `oracle_independent_products`'s `pairSpec`. The test below flags a stale
+/// entry that started building ("move it into the run-parity corpus").
+const BRANCH_PATH_EXCLUSIONS: &[(&str, Option<&str>)] = &[(
+    "examples/formal/oracle_independent_products.av",
+    Some("examples"),
+)];
 
 /// `cargo build` an example through the (sole) MIR codegen path,
 /// returning Ok(()) on a clean build or Err(stderr) on failure. Used by
@@ -1479,11 +1464,11 @@ fn try_build_walker(
 
 #[test]
 #[ignore = "full tier: cargo build wall-time; set AVER_RUST_DIFF_FULL=1 and run with --ignored"]
-fn branch_path_examples_still_fail_to_build_on_rust() {
+fn oracle_shape_exclusions_still_fail_to_build_on_rust() {
     if std::env::var("AVER_RUST_DIFF_FULL").is_err() {
         eprintln!(
-            "skipping BranchPath-exclusion proof — set AVER_RUST_DIFF_FULL=1 \
-             (proves the excluded Oracle/BranchPath examples still don't build on Rust)"
+            "skipping Oracle-shape-exclusion proof — set AVER_RUST_DIFF_FULL=1 \
+             (proves the residual higher-order Oracle example still doesn't build on Rust)"
         );
         return;
     }
@@ -1497,23 +1482,23 @@ fn branch_path_examples_still_fail_to_build_on_rust() {
         let _ = fs::remove_dir_all(&ws);
 
         match built {
-            // The MIR walker is the sole codegen path now. These examples
-            // never built on Rust on EITHER walker (the `BranchPath` /
-            // `Terminal.Size` type is never emitted → undefined-symbol
-            // E0425). Confirm the gap is still an undefined-symbol failure,
-            // not a new MIR crash.
+            // The residual exclusion is the higher-order MIR-walker gap
+            // (`pairSpec`'s `?!` independent-product shape): the walker
+            // emits a `compile_error!("MIR walker could not render fn …")`.
+            // Confirm the gap is still that MIR-walker render failure, not a
+            // regressed BranchPath / Terminal.Size undefined-symbol error.
             Ok(Err(err)) => {
-                if err.contains("E0425") || err.contains("cannot find") {
+                if err.contains("MIR walker could not render") || err.contains("compile_error") {
                     confirmed += 1;
                 } else {
                     failures.push(format!(
                         "{relative}: failed to build, but NOT with the expected \
-                         undefined-symbol (BranchPath / Terminal.Size) gap.\n  err:\n{err}"
+                         higher-order MIR-walker render gap.\n  err:\n{err}"
                     ));
                 }
             }
             Ok(Ok(())) => failures.push(format!(
-                "{relative}: BUILT on Rust — it is no longer a BranchPath \
+                "{relative}: BUILT on Rust — it is no longer an Oracle-shape \
                  exclusion; move it into the MIR run-parity corpus"
             )),
             Err(e) => failures.push(format!("{relative}: harness error: {e}")),
@@ -1521,13 +1506,13 @@ fn branch_path_examples_still_fail_to_build_on_rust() {
     }
 
     eprintln!(
-        "branch_path_examples_still_fail_to_build_on_rust: {confirmed}/{} confirmed \
-         undefined-symbol (BranchPath / Terminal.Size) gap",
+        "oracle_shape_exclusions_still_fail_to_build_on_rust: {confirmed}/{} confirmed \
+         higher-order MIR-walker render gap",
         BRANCH_PATH_EXCLUSIONS.len()
     );
     assert!(
         failures.is_empty(),
-        "{} of {} BranchPath exclusions did not fail as expected:\n  - {}",
+        "{} of {} Oracle-shape exclusions did not fail as expected:\n  - {}",
         failures.len(),
         BRANCH_PATH_EXCLUSIONS.len(),
         failures.join("\n  - ")
