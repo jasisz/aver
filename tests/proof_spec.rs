@@ -481,6 +481,50 @@ fn proof_dafny_check_verifies_entry_module_not_arbitrary_dependency() {
 }
 
 #[test]
+fn proof_warns_when_dependency_module_has_verify_blocks() {
+    // A `verify ... law` in a dependency module is silently dropped
+    // (module-scoped verify is unsupported), so it would never fail — a
+    // vacuous pass. The compiler must warn loudly. Pure codegen, no
+    // verifier binary needed.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-dep-verify-warn-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("dep.av"),
+        "module Dep\n    depends []\n\nfn ident(n: Int) -> Int\n    ? \"id\"\n    n\n\n\
+         verify ident law refl\n    given n: Int = -1..1\n    ident(n) => n\n",
+    )
+    .expect("write dep.av");
+    std::fs::write(
+        src.join("app.av"),
+        "module App\n    depends [Dep]\n    effects [Console.print]\n\n\
+         fn wrap(n: Int) -> Int\n    ? \"w\"\n    Dep.ident(n)\n\n\
+         fn main() -> Unit\n    ! [Console.print]\n    Console.print(\"x\")\n",
+    )
+    .expect("write app.av");
+    let out = temp_output_dir("aver-dep-verify-warn-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("app.av"))
+        .arg("--backend")
+        .arg("dafny")
+        .arg("--module-root")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("verify block") && stderr.contains("Dep") && stderr.contains("NOT checked"),
+        "expected a warning that dependency module `Dep`'s verify blocks are unchecked, got:\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_export_builds_grok_s_language_when_lake_is_available() {
     assert_proof_builds("examples/core/grok_s_language.av", "aver-proof-grok");
 }
