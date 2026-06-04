@@ -108,6 +108,15 @@ pub struct MirEmitCtx<'a> {
     /// Params emitted as `&T` (borrow-by-default for non-Copy,
     /// non-Str params).
     pub borrowed_params: &'a HashSet<String>,
+    /// Collection (`Vector`/`Map`) params that the `own_param` MIR pass
+    /// PROVED uniquely owned (cleared their `aliased_slots` bit). These
+    /// are emitted owned-by-value (`mut p: T`, NOT `&T`) and, at a
+    /// last-use read, skip the `.clone()` so an in-place `Rc::make_mut`
+    /// runs on a refcount-1 backing (native O(n) mutate instead of the
+    /// O(n²) borrow+clone COW). SOUNDNESS: a name is in this set only
+    /// when `own_param` cleared its bit — never broadened past what the
+    /// pass proved. Disjoint from `borrowed_params` by construction.
+    pub owned_params: &'a HashSet<String>,
     /// Owning module prefix for the fn whose body this ctx emits.
     pub current_module_scope: Option<&'a str>,
     /// Interned built-in fn names, indexed by `BuiltinId`
@@ -138,6 +147,7 @@ impl<'a> MirEmitCtx<'a> {
             local_types: EMPTY_TYPES.get_or_init(HashMap::new),
             rc_wrapped: EMPTY_SET.get_or_init(HashSet::new),
             borrowed_params: EMPTY_SET.get_or_init(HashSet::new),
+            owned_params: EMPTY_SET.get_or_init(HashSet::new),
             current_module_scope: None,
             // No builtin table on the coverage path: `Call(Builtin)`
             // resolves to `None` and the fn reports as HIR-fallback,
@@ -181,6 +191,7 @@ impl<'a> MirEmitCtx<'a> {
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
             borrowed_params: &policy.borrowed_params,
+            owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins,
         }
@@ -199,6 +210,7 @@ impl<'a> MirEmitCtx<'a> {
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
             borrowed_params: &policy.borrowed_params,
+            owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             // The builtin table the parity gate already built into the
             // `CodegenContext`. `Call(Builtin(id))` resolves `id`
@@ -236,6 +248,10 @@ pub(super) struct MirFnEmitPolicy {
     pub local_types: HashMap<String, Type>,
     pub rc_wrapped: HashSet<String>,
     pub borrowed_params: HashSet<String>,
+    /// Collection params `own_param` proved uniquely owned — see the
+    /// `MirEmitCtx::owned_params` doc. Default empty (no own_param facts
+    /// applied); populated by [`Self::apply_own_param`].
+    pub owned_params: HashSet<String>,
     pub current_module_scope: Option<String>,
 }
 
@@ -249,6 +265,7 @@ impl MirFnEmitPolicy {
             local_types: HashMap::new(),
             rc_wrapped: HashSet::new(),
             borrowed_params: HashSet::new(),
+            owned_params: HashSet::new(),
             current_module_scope: None,
         }
     }
@@ -282,9 +299,101 @@ impl MirFnEmitPolicy {
             local_types,
             rc_wrapped: HashSet::new(),
             borrowed_params,
+            owned_params: HashSet::new(),
             current_module_scope: scope.map(String::from),
         }
     }
+
+    /// Apply the `own_param` MIR pass's ownership facts to this policy:
+    /// every `Vector`/`Map` param whose `MirFn.aliased_slots` bit was
+    /// CLEARED (proven uniquely owned) graduates from borrow-by-default
+    /// to **owned-by-value** — moved OUT of `borrowed_params` and INTO
+    /// `owned_params` so the signature emits `mut p: T` and the body
+    /// skips the `.clone()` at a last-use mutation site (native in-place
+    /// `Rc::make_mut`, refcount-1).
+    ///
+    /// SOUNDNESS (the #383 corruption class): a collection param is
+    /// graduated ONLY when `own_param` cleared its bit. `own_param`'s
+    /// RULE 1 flags EVERY `Vector`/`Map` param `true` up front and only
+    /// clears the bit on a whole-program proof of unique ownership
+    /// (every visible call site passes a fresh / linearly-threaded
+    /// value, captured-into-aggregate slots stay flagged, multi-module
+    /// returns early leaving every bit set). So a cleared bit on a
+    /// collection param is exactly the pass's proof — never a heuristic.
+    /// A missing bit defaults to flagged (`true`) → not graduated
+    /// (conservative). Params still flagged keep borrow-by-default.
+    pub(super) fn apply_own_param(&mut self, mir_fn: &crate::ir::mir::MirFn) {
+        for (i, param) in mir_fn.params.iter().enumerate() {
+            // Only collection params are candidates (the only thing
+            // `own_param`'s RULE 1 ever flags). A non-collection param is
+            // never owned-graduated by this pass, so leave it untouched.
+            // Check the REAL `Type` (from the policy's `local_types`,
+            // sourced from `ResolvedFnDef`) — the `MirParam.ty` is a
+            // `format!("{ty:?}")` Debug string (`Vector(Int)`), fragile to
+            // parse.
+            let rust_name = aver_name_to_rust(&param.name);
+            let Some(ty) = self.local_types.get(&rust_name) else {
+                continue;
+            };
+            if !is_owned_collection_candidate(ty) {
+                continue;
+            }
+            // `own_param`'s `prone`/clearing both index `aliased_slots`
+            // by PARAM POSITION `i` (its `(0..nparams).filter(|&i| …)`),
+            // matching `MirParam.local = LocalId(i)`; match that exactly.
+            //
+            // Cleared bit ⟺ own_param proved unique ownership. Missing →
+            // treat as flagged (conservative). Still-flagged → keep the
+            // existing borrow-by-default decision (do not graduate).
+            let flagged = mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
+            if flagged {
+                continue;
+            }
+            // Graduate: owned-by-value. On the borrow-by-default path the
+            // param was in `borrowed_params`; remove it. On the TCO
+            // no-borrow path it was never borrowed (already `mut`-owned),
+            // but it still needs to land in `owned_params` so the body's
+            // clone-skip fires.
+            self.borrowed_params.remove(&rust_name);
+            self.owned_params.insert(rust_name);
+        }
+    }
+}
+
+/// Is this the type of a param `own_param` can prove owned — a `Vector`
+/// or `Map`? These are the only param shapes `alias.rs` RULE 1 flags and
+/// thus the only ones `own_param` ever clears; nothing else is a sound
+/// clone-skip candidate. (`List` is an `Rc`-COW persistent list whose
+/// clone is cheap and is NOT flagged by RULE 1, so it stays borrowed.)
+fn is_owned_collection_candidate(ty: &Type) -> bool {
+    matches!(ty, Type::Vector(_) | Type::Map(_, _))
+}
+
+/// The Rust-mangled names of a fn's `Vector`/`Map` params that
+/// `own_param` PROVED uniquely owned (cleared `aliased_slots` bit) — the
+/// set the non-TCO SIGNATURE emits owned-by-value (`mut p: T`). The
+/// `param_types` are the `ResolvedFnDef` param `(name, Type)` pairs (real
+/// `Type`, not the `MirParam.ty` Debug string); the `mir_fn` supplies the
+/// optimized `aliased_slots`. Computed exactly as
+/// [`MirFnEmitPolicy::apply_own_param`] (same param-position indexing,
+/// same RULE-1 candidate filter, same missing-bit-is-flagged default) so
+/// signature and body never disagree.
+pub(super) fn owned_collection_param_names(
+    mir_fn: &crate::ir::mir::MirFn,
+    param_types: &[(String, Type)],
+) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for (i, (name, ty)) in param_types.iter().enumerate() {
+        if !is_owned_collection_candidate(ty) {
+            continue;
+        }
+        let flagged = mir_fn.aliased_slots.get(i).copied().unwrap_or(true);
+        if flagged {
+            continue;
+        }
+        out.insert(aver_name_to_rust(name));
+    }
+    out
 }
 
 /// Dotted built-in record/service types whose source `type_name`
@@ -1885,7 +1994,13 @@ pub(super) fn emit_mir_fn_body_routed(
     borrow_by_default: bool,
     ctx: &CodegenContext,
 ) -> Option<String> {
-    let policy = MirFnEmitPolicy::from_resolved(resolved, scope, borrow_by_default);
+    let mut policy = MirFnEmitPolicy::from_resolved(resolved, scope, borrow_by_default);
+    // Graduate own_param-proven collection params to owned-by-value so
+    // the body skips the `.clone()` at last-use mutation sites. The
+    // SIGNATURE (`emit_fn_def_with_visibility`) computes the SAME owned
+    // set from the same `mir_fn.aliased_slots` and emits `mut p: T`, so
+    // body and signature agree on which params are owned.
+    policy.apply_own_param(mir_fn);
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
     emit_mir_fn_body(&mir_fn.body, &emit_ctx)
 }
@@ -1957,6 +2072,17 @@ pub(super) fn emit_mir_tco_fn(
     // `with_rc_wrapped`.
     let mut policy = MirFnEmitPolicy::from_resolved(resolved_fd, scope, /* borrow */ false);
     policy.rc_wrapped = rc_names.clone();
+    // own_param-proven collection params are already `mut`-owned in the
+    // TCO signature (`emit_tco_params_mir`); graduating them only flips
+    // the body's clone-skip on. A pass-through param Arc-wrapped via
+    // `rc_wrapped` keeps its `&T` / `(*x).clone()` shape — rc-wrapping is
+    // a structural TCO decision that takes precedence, so drop any
+    // rc-wrapped name back out of `owned_params` to keep signature and
+    // body consistent.
+    policy.apply_own_param(mir_fn);
+    for n in &rc_names {
+        policy.owned_params.remove(n);
+    }
     let emit_ctx = MirEmitCtx::for_fn(ctx, &policy);
 
     // Render the body in tail position FIRST — bail before emitting any
@@ -2262,6 +2388,14 @@ pub(super) fn emit_mir_mutual_tco_block(
     let mut arm_bodies: Vec<String> = Vec::with_capacity(group_fns.len());
     for (i, mir_fn) in mir_fns.iter().enumerate() {
         // Trampoline arm policy: no borrow-by-default, rc params wrapped.
+        // NB: own_param graduation is deliberately NOT applied to the
+        // mutual-TCO path — graduating a collection param to owned here
+        // would require coordinating the trampoline enum payload type, the
+        // wrapper signatures, and the arg passing across every member, a
+        // far larger and riskier change for no measured win (the perf
+        // flagship `vector_ops` is self-TCO, handled in `emit_mir_tco_fn`).
+        // Keeping borrow-by-default is always sound — not graduating never
+        // skips a clone.
         let mut policy = MirFnEmitPolicy::from_resolved(resolved_fns[i], scope, false);
         policy.rc_wrapped = rc_names.clone();
         let arm_ctx = MirEmitCtx::for_fn(ctx, &policy);
@@ -2807,12 +2941,43 @@ fn try_emit_mir_fusion(
             if !mir_same_local(&args[1].node, &inner_args[0].node) {
                 return None;
             }
-            // HIR: vector + value via `clone_arg`, index via raw emit.
-            let vector = mir_clone_arg(
-                emit_mir_expr(&inner_args[0], ctx)?,
-                &inner_args[0].node,
-                ctx,
-            );
+            // own_param self-keep collapse (the perf flagship): when the
+            // set-target is an OWNED collection param (its `aliased_slots`
+            // bit was cleared by `own_param` → in `ctx.owned_params`) and
+            // the slot is dead after this fusion, MOVE it into `__vec`
+            // instead of cloning. The fusion consumes the slot exactly
+            // once (it returns either the mutated handle or the same
+            // handle), so liveness is the OR of the two `v` occurrences'
+            // `last_use` bits — the inner `Vector.set` read carries
+            // `last_use=false` (the textually-last read is the default
+            // arm), so without the OR we would wrongly clone and the
+            // refcount-2 `Rc::make_mut` would deep-copy every iteration
+            // (the O(n²) the VM/own_param fix already eliminated). This is
+            // the exact mirror of own_param's `Option.withDefault` self-
+            // keep shape + the VM fusion-collapse in `vm/compiler/mir.rs`.
+            let set_local = local_of(&inner_args[0].node);
+            let default_local = local_of(&args[1].node);
+            let move_vec = match (set_local, default_local) {
+                (Some(sv), Some(dv)) => {
+                    ctx.owned_params.contains(sv.name.as_str())
+                        && !ctx.is_borrowed_param(&sv.name)
+                        && !ctx.is_rc_wrapped(&sv.name)
+                        && (sv.last_use || dv.last_use)
+                }
+                _ => false,
+            };
+            let vector = if move_vec {
+                // Owned + dead-after: move (no `.clone()`) → in-place
+                // `set_unchecked` on a refcount-1 `Rc`.
+                emit_mir_expr(&inner_args[0], ctx)?
+            } else {
+                // HIR: vector via `clone_arg` (borrowed / not-proven-owned).
+                mir_clone_arg(
+                    emit_mir_expr(&inner_args[0], ctx)?,
+                    &inner_args[0].node,
+                    ctx,
+                )
+            };
             let index = emit_mir_expr(&inner_args[1], ctx)?;
             let value = mir_clone_arg(
                 emit_mir_expr(&inner_args[2], ctx)?,
@@ -3443,6 +3608,7 @@ mod tests {
             local_types: &policy.local_types,
             rc_wrapped: &policy.rc_wrapped,
             borrowed_params: &policy.borrowed_params,
+            owned_params: &policy.owned_params,
             current_module_scope: policy.current_module_scope.as_deref(),
             mir_builtins: BUILTINS.get_or_init(Vec::new),
         };

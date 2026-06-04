@@ -8,35 +8,72 @@
 //! tail recursion (`fn fill(v, ..) -> .. = fill(set(v, ..), ..)`), which
 //! clones the backing array on every call: O(n²).
 //!
-//! This pass refines that decision interprocedurally: a Vector/Map param
-//! `p` of fn `f` is un-flagged (cleared from `aliased_slots`) only when
-//! **every** call site of `f` passes `p` a *uniquely-owned* argument,
-//! computed as a monotone-descending fixpoint (recursion couples a
-//! param's ownership to its own call sites). Default is to keep the
-//! conservative flag — un-flagging is the exception, gated on proof.
+//! This pass refines that decision interprocedurally and clears a
+//! Vector/Map param's `aliased_slots` bit — graduating it to the
+//! owned/in-place fast path — only when the clear is **sound by
+//! construction**.
 //!
-//! ## Soundness
+//! ## Sound-by-construction: default-flag, clear-on-proof
 //!
-//! A false negative (un-flag a param that *is* aliased) lets a backend
-//! mutate shared data in place → silent corruption. Every uncertain
-//! point therefore resolves to **not-owned** (keep flagged):
+//! Two adversarial audits found five distinct corruption classes by
+//! enumerating escape/capture *sites*; each audit found a site the
+//! enumeration missed (direct capture, alias-rename chains, cross-fn
+//! capture, live-alias, a param fed as the VALUE/ELEMENT/DEFAULT arg of
+//! `Vector.set`/`Map.set`/`Vector.new`/a map literal). A blacklist of
+//! escape sites is unsound by omission: any unforeseen site is a silent
+//! corruption (a backend mutates shared data in place).
+//!
+//! So the polarity is flipped. The default for every collection param is
+//! **flagged** (kept aliased — never mutated in place). The bit is
+//! cleared only when a *positive proof* succeeds, i.e. when **every**
+//! occurrence of the param `P` — and of every let-local that may share
+//! `P`'s backing (its alias closure) — is one of these RECOGNIZED
+//! non-retaining-linear uses:
+//!
+//! - `P` (or an alias) as the TARGET/receiver arg (arg 0) of a
+//!   mutating/reading collection builtin (`Vector.set`/`get`/`len`,
+//!   `Map.set`/`get`/`has`/`remove`/`keys`/`values`/`len`/`entries`) —
+//!   these consume/read the target, they do not retain it beyond the
+//!   result that replaces it;
+//! - the self-keep fusion `Option.withDefault(Vector.set(P,..), P)` /
+//!   `Map.set` — the fused `VECTOR_SET_OR_KEEP` consumes `P` once and
+//!   returns one of its two handles;
+//! - `P` (or an alias) in the fn's tail/return position — `P` moves out
+//!   as the result (linear);
+//! - `P` (or an alias) threaded to a callee at a param index that an
+//!   interprocedural summary PROVES the callee never retains.
+//!
+//! ANY other occurrence is a POTENTIAL ESCAPE → `P` stays flagged:
+//! `P` (or an alias) as a NON-target argument (value/element/default/key
+//! arg) of ANY builtin, a field/element of ANY aggregate
+//! (record / record-update / variant / tuple / list / map literal /
+//! independent product), an argument to ANY user fn that the summary
+//! does not clear, or an alias that is read while `P` is still live. The
+//! scan defaults every *unrecognized* position to retaining, so it
+//! cannot miss an escape — the audits converge.
+//!
+//! The body-local proof above is one half; the other is the
+//! interprocedural call-site proof: even a body-locally-linear param
+//! graduates only when **every** visible call site of its fn passes it a
+//! uniquely-owned argument (a fresh constructor, an owned set-chain, a
+//! `last_use` non-aliased local with no live caller-side alias),
+//! computed as a monotone-descending fixpoint. Default is keep-flagged;
+//! un-flagging is the gated exception.
+//!
+//! ## Soundness gates
 //!
 //! - Runs only on a whole-program `MirProgram` (`modules` empty / one):
-//!   a multi-module or per-module-VM fragment can have callers we can't
-//!   see, and a missed aliased caller is unsound. Multi-module is skipped
-//!   wholesale.
+//!   a multi-module fragment can have callers we can't see, and a missed
+//!   aliased caller is unsound. Multi-module is skipped wholesale.
 //! - `main`/entry and any address-taken fn (its name appears in a
 //!   `MirExpr::FnValue`) keep all params flagged — their callers are not
 //!   all visible `Call`/`TailCall` edges.
 //! - A call site reached through `MirCallee::LocalSlot` (a fn value) has
 //!   no statically-known target, so it never counts as a visible caller;
 //!   such fns are already pinned via the address-taken set.
-//! - An argument is uniquely-owned only when proven so: a fresh
-//!   scalar-defaulted constructor, an owned `Vector.set`/`Map.set` chain,
-//!   `Option.withDefault` of owned branches, or a `last_use`,
-//!   non-aliased local whose binding provenance is itself owned (never a
-//!   user-fn-call result — that may alias an argument, the gap `alias.rs`
-//!   RULE 2 cannot see). Anything unrecognized is not-owned.
+//! - An argument is uniquely-owned only when proven so (never a user-fn
+//!   result — that may alias an arg, the gap `alias.rs` RULE 2 cannot
+//!   see — and never a local that still has a live alias in the caller).
 //! - Two alias-prone params receiving the same slot at one call site are
 //!   both rejected (the value is shared between them inside the callee).
 //!
@@ -54,9 +91,38 @@ use crate::ir::FnId;
 use super::super::expr::{MirCallee, MirExpr};
 use super::super::program::MirProgram;
 
-/// Recursion cap for `uniquely_owned` — defends against a pathological
-/// let-provenance chain; exceeding it resolves to not-owned.
+/// Recursion cap for the alias / ownership walks — defends against a
+/// pathological let-provenance chain; exceeding it resolves to the
+/// conservative answer (not-owned / leaking).
 const MAX_DEPTH: u32 = 64;
+
+/// Collection builtins whose arg 0 is the TARGET/receiver: a
+/// non-retaining read/consume of the collection. `P` appearing there
+/// does not escape — the builtin reads or replaces the target and its
+/// result (which may itself alias the target) is checked separately
+/// wherever it lands. Args at index >= 1 are value/element/key/default
+/// positions and ARE retaining.
+///
+/// `Vector.new` / `Map.new` / `Vector.fromList` / `Map.fromList` are
+/// deliberately absent: they CONSTRUCT a collection, so they have no
+/// target arg — their collection-valued args (the `Vector.new` default
+/// cell, the `fromList` list elements) are retaining and must flag.
+fn is_target_consuming_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "Vector.set"
+            | "Vector.get"
+            | "Vector.len"
+            | "Map.set"
+            | "Map.get"
+            | "Map.has"
+            | "Map.remove"
+            | "Map.keys"
+            | "Map.values"
+            | "Map.len"
+            | "Map.entries"
+    )
+}
 
 /// A single visible call edge: `target(args…)` made from `caller`.
 struct CallSite {
@@ -92,33 +158,90 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
         return program;
     }
 
-    // Aggregate-capture aliasing. A slot whose value is stored DIRECTLY
-    // into an aggregate (record / record-update / variant / tuple / list /
-    // map literal / independent product) is shared with that aggregate —
-    // an in-place mutation of the slot would corrupt the aggregate's copy.
-    // `last_use` marks the slot dead (the aggregate field, not the slot,
-    // is read later) and alias.rs RULE 2 does not model the capture, so
-    // without this the analysis would treat such a slot as uniquely owned
-    // and un-flag a param fed by it — a silent corruption (a vector
-    // aliased into a record field, then own-mutated through that param).
-    // Flag every captured slot up front so it is never un-flagged and
-    // never owned-mutated. (Only DIRECT `Local` field/element values
-    // alias; a `Local` nested inside a sub-computation is consumed by it,
-    // not stored into the aggregate.)
-    for (_, f) in program.fns.iter_mut() {
-        let mut captured: HashSet<u32> = HashSet::new();
-        collect_captured_slots(&f.body.node, &mut captured);
-        if captured.is_empty() {
+    // Per-fn slot → binding-RHS provenance (from the body's `Let`s). The
+    // alias walks (`alias_roots` / `rename_roots`) resolve a value back
+    // through its alias chain (a `let w = v` rename, a `match`-bound
+    // rename, a passthrough-fn result) to the originating slot.
+    let mut provenance: HashMap<FnId, HashMap<u32, Spanned<MirExpr>>> = HashMap::new();
+    for (id, f) in program.iter() {
+        let mut m = HashMap::new();
+        collect_let_bindings(&f.body.node, &mut m);
+        provenance.insert(*id, m);
+    }
+
+    // Interprocedural capture summary: `captures_param[f] = { i | param
+    // i of f is NOT proven non-retaining in f's body — i.e. some
+    // occurrence of param i is not a recognized linear use, OR it is
+    // threaded to a callee that itself captures }`. This is the dual of
+    // the body-local proof: a param the proof clears does NOT retain its
+    // arg, so a caller passing a value at that index does not escape
+    // through it. Monotone-growing fixpoint over the call graph; a
+    // captured param can never be safely fed an owned value, so this
+    // drives the cross-fn escape detection (a caller slot flowing into a
+    // capturing callee param escapes in the caller too).
+    let builtins = program.builtins.clone();
+    let captures_param = compute_capture_summary(&program, &provenance, &builtins);
+
+    // --- BODY-LOCAL PROOF -------------------------------------------------
+    //
+    // For each fn, compute the set of slots that LEAK in its body: slots
+    // that appear (directly or through an alias chain) in any position
+    // the whitelist does NOT recognize as non-retaining-linear. The scan
+    // is positive — it walks every operand position, marks the
+    // recognized-safe ones, and treats every other (and every position
+    // it does not explicitly recognize) as retaining. A bare `Local` in
+    // a retaining position contributes its alias roots to the leak set.
+    //
+    // A param slot in the leak set MUST stay flagged: some occurrence of
+    // it (or of a value sharing its backing) is retained beyond a linear
+    // consume, so an in-place mutation would corrupt the retained handle.
+    // This single scan subsumes the old `collect_escaping_slots`
+    // blacklist (aggregate capture, value-into-collection,
+    // cross-fn capture) by construction — default is leak.
+    //
+    // The live-alias class (`snap = v; … set(v,…); read snap`) is a
+    // distinct shape: the param appears only in recognized-safe
+    // positions, yet a still-live RENAME alias observes the pre-mutation
+    // backing. `collect_live_aliased_params` pins those separately.
+    let mut leaking: HashMap<FnId, HashSet<u32>> = HashMap::new();
+    for (id, f) in program.iter() {
+        let prov = provenance.get(id).cloned().unwrap_or_default();
+        let mut leak: HashSet<u32> = HashSet::new();
+        scan_leaks(&f.body.node, &prov, &captures_param, &builtins, &mut leak);
+        let nparams = f.params.len();
+        collect_live_aliased_params(&f.body.node, &prov, &builtins, nparams, &mut leak);
+        if !leak.is_empty() {
+            leaking.insert(*id, leak);
+        }
+    }
+
+    // Apply the body-local leaks to `aliased_slots` (so a leaked PARAM
+    // slot stays flagged) and record which PARAM slots leaked, so the
+    // call-site fixpoint can never un-flag them.
+    let mut leaked_param_slots: HashMap<FnId, HashSet<usize>> = HashMap::new();
+    for (id, f) in program.fns.iter_mut() {
+        let Some(leak) = leaking.get(id) else {
+            continue;
+        };
+        if leak.is_empty() {
             continue;
         }
+        let nparams = f.params.len();
         let mut slots = f.aliased_slots.as_ref().clone();
-        if let Some(&max) = captured.iter().max()
+        if let Some(&max) = leak.iter().max()
             && (max as usize) >= slots.len()
         {
             slots.resize(max as usize + 1, false);
         }
-        for s in captured {
+        let mut leaked_params: HashSet<usize> = HashSet::new();
+        for &s in leak {
             slots[s as usize] = true;
+            if (s as usize) < nparams {
+                leaked_params.insert(s as usize);
+            }
+        }
+        if !leaked_params.is_empty() {
+            leaked_param_slots.insert(*id, leaked_params);
         }
         f.aliased_slots = Arc::new(slots);
     }
@@ -137,14 +260,6 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
         .map(|(id, _)| *id)
         .collect();
 
-    // Per-fn slot → binding-RHS provenance (from the body's `Let`s).
-    let mut provenance: HashMap<FnId, HashMap<u32, Spanned<MirExpr>>> = HashMap::new();
-    for (id, f) in program.iter() {
-        let mut m = HashMap::new();
-        collect_let_bindings(&f.body.node, &mut m);
-        provenance.insert(*id, m);
-    }
-
     // Visible call edges (Call(Fn) + TailCall). LocalSlot/Builtin/
     // Intrinsic callees are not attributed to any fn's params.
     let mut call_sites: Vec<CallSite> = Vec::new();
@@ -152,17 +267,37 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
         collect_call_sites(*caller, &f.body.node, &mut call_sites);
     }
 
-    // Fixpoint lattice: owned[(fn, param_idx)] for alias-prone params.
-    // Init optimistic true; pinned fns start (and stay) false.
-    let mut owned: HashMap<(FnId, usize), bool> = HashMap::new();
-    for (id, idxs) in &prone {
-        let pin = pinned.contains(id);
-        for &i in idxs {
-            owned.insert((*id, i), !pin);
+    // Per-fn set of let-bound slots that have a still-live RENAME alias
+    // of another slot — used by `uniquely_owned` to reject a call-site
+    // arg whose slot the CALLER still observes through a live alias (the
+    // live-alias-at-callsite class). Computed once: a slot `s` is in
+    // `live_aliased[caller]` when some read let-binding renames `s`.
+    let mut live_aliased: HashMap<FnId, HashSet<u32>> = HashMap::new();
+    for (id, f) in program.iter() {
+        let prov = provenance.get(id).cloned().unwrap_or_default();
+        let mut set: HashSet<u32> = HashSet::new();
+        collect_live_aliased_slots(&f.body.node, &prov, &builtins, &mut set);
+        if !set.is_empty() {
+            live_aliased.insert(*id, set);
         }
     }
 
-    let builtins = program.builtins.clone();
+    // Fixpoint lattice: owned[(fn, param_idx)] for alias-prone params.
+    // Init optimistic true; pinned fns start (and stay) false. A param
+    // slot that LEAKED in its body (leaked_param_slots) also starts
+    // false — its backing is retained somewhere, so it must never be
+    // owned-mutated in place. The lattice is monotone-descending, so a
+    // `false` seed stays `false`.
+    let mut owned: HashMap<(FnId, usize), bool> = HashMap::new();
+    for (id, idxs) in &prone {
+        let pin = pinned.contains(id);
+        let leaked = leaked_param_slots.get(id);
+        for &i in idxs {
+            let body_leak = leaked.is_some_and(|c| c.contains(&i));
+            owned.insert((*id, i), !pin && !body_leak);
+        }
+    }
+
     loop {
         let mut changed = false;
         for cs in &call_sites {
@@ -182,6 +317,7 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
                     *slot_counts.entry(l.node.slot.0).or_insert(0) += 1;
                 }
             }
+            let caller_live_aliased = live_aliased.get(&cs.caller);
             for &i in idxs {
                 let key = (cs.target, i);
                 if !owned.get(&key).copied().unwrap_or(false) {
@@ -199,7 +335,15 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
                     }
                 };
                 let dup = matches!(&arg.node, MirExpr::Local(l) if slot_counts.get(&l.node.slot.0).copied().unwrap_or(0) > 1);
+                // Live-alias-at-callsite: an owned local passed here is
+                // NOT uniquely owned if the CALLER still observes its
+                // slot through a live rename alias (`alias = base;
+                // mutate(base); read alias`). The callee graduates and
+                // mutates in place, corrupting the caller's alias.
+                let caller_aliased = matches!(&arg.node, MirExpr::Local(l)
+                    if caller_live_aliased.is_some_and(|s| s.contains(&l.node.slot.0)));
                 let ok = !dup
+                    && !caller_aliased
                     && uniquely_owned(
                         &arg.node,
                         cs.caller,
@@ -443,54 +587,618 @@ fn collect_let_bindings(e: &MirExpr, out: &mut HashMap<u32, Spanned<MirExpr>>) {
     visit_children(e, &mut |c| collect_let_bindings(c, out));
 }
 
-/// Collect slots whose value is captured DIRECTLY as a field/element of
-/// an aggregate constructor — the aggregate then shares the slot's
-/// backing, so mutating the slot in place would corrupt the aggregate.
-/// Only direct `Local` operands alias; a `Local` nested inside a
-/// sub-computation is consumed by it (its result, not the slot, lands in
-/// the aggregate), so the recursive `visit_children` walk picks up
-/// deeper aggregates without over-flagging those consumed operands.
-fn collect_captured_slots(e: &MirExpr, out: &mut HashSet<u32>) {
-    fn flag(item: &Spanned<MirExpr>, out: &mut HashSet<u32>) {
-        if let MirExpr::Local(l) = &item.node {
-            out.insert(l.node.slot.0);
-        }
+/// The set of source slots whose backing the value of `e` may share —
+/// the "alias roots" of `e`. Storing `e` into an aggregate, or passing
+/// it where it can be retained, shares the backing of every slot in
+/// this set, so none of them may be mutated in place afterwards.
+///
+/// - `Local(s)` aliases `s` AND (if `s` is a let-bound local) every
+///   root of its binding RHS — so a `let w = v` / `match`-bound rename
+///   resolves back to the param `v`.
+/// - a user-fn call (`f(a, b, …)`) result may alias ANY of its args
+///   (the RULE-2 passthrough gap — `idv(v)` returns `v`), so its roots
+///   are the union of the args' roots.
+/// - `Vector.set` / `Map.set` return a value sharing their target's
+///   backing (COW may keep it); `Option.withDefault(a, b)` returns one
+///   of its two handles; `Vector.get` / `Map.get` may return an alias
+///   into the source (nested collections) — all propagate roots.
+///
+/// A value built fresh (literal, constructor, `Vector.new` / `Map.new`,
+/// arithmetic) has no roots: storing it shares nothing. The recursion
+/// is depth-capped like `uniquely_owned`.
+fn alias_roots(
+    e: &MirExpr,
+    prov: &HashMap<u32, Spanned<MirExpr>>,
+    builtins: &[String],
+    depth: u32,
+    out: &mut HashSet<u32>,
+) {
+    if depth > MAX_DEPTH {
+        return;
     }
     match e {
+        MirExpr::Local(l) => {
+            let slot = l.node.slot.0;
+            out.insert(slot);
+            // A let-bound local also carries its binding's roots (a
+            // rename / fused chain). Params have no provenance entry,
+            // so the recursion stops at the param slot itself.
+            if let Some(rhs) = prov.get(&slot) {
+                alias_roots(&rhs.node, prov, builtins, depth + 1, out);
+            }
+        }
+        MirExpr::Match(m) => {
+            for arm in &m.node.arms {
+                alias_roots(&arm.body.node, prov, builtins, depth + 1, out);
+            }
+        }
+        MirExpr::IfThenElse(ite) => {
+            alias_roots(&ite.node.then_branch.node, prov, builtins, depth + 1, out);
+            alias_roots(&ite.node.else_branch.node, prov, builtins, depth + 1, out);
+        }
+        MirExpr::Call(c) => match &c.node.callee {
+            // A user fn / fn-value / intrinsic result may alias any of
+            // its args (the RULE-2 passthrough gap).
+            MirCallee::Fn(_) | MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => {
+                for a in &c.node.args {
+                    alias_roots(&a.node, prov, builtins, depth + 1, out);
+                }
+            }
+            MirCallee::Builtin(id) => {
+                let name = builtins
+                    .get(id.0 as usize)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                match name {
+                    // Fresh collections share nothing.
+                    "Vector.new" | "Map.new" => {}
+                    // set / get return a value sharing the target's
+                    // backing; withDefault returns one of its handles.
+                    "Vector.set" | "Map.set" | "Vector.get" | "Map.get" => {
+                        if let Some(t) = c.node.args.first() {
+                            alias_roots(&t.node, prov, builtins, depth + 1, out);
+                        }
+                    }
+                    "Option.withDefault" => {
+                        for a in &c.node.args {
+                            alias_roots(&a.node, prov, builtins, depth + 1, out);
+                        }
+                    }
+                    // Any other builtin result is not provably fresh;
+                    // be conservative and propagate every arg's roots.
+                    _ => {
+                        for a in &c.node.args {
+                            alias_roots(&a.node, prov, builtins, depth + 1, out);
+                        }
+                    }
+                }
+            }
+        },
+        MirExpr::Return(inner) | MirExpr::Try(inner) => {
+            alias_roots(&inner.node, prov, builtins, depth + 1, out)
+        }
+        // Literals, fresh constructors, record/tuple/list/map literals,
+        // projections, arithmetic, interpolation, tail calls: building
+        // them shares no caller-visible backing slot.
+        _ => {}
+    }
+}
+
+/// Positive (whitelist) leak scan. Walks every operand position of the
+/// fn body and adds to `out` the alias roots of every value that lands
+/// in a RETAINING position — i.e. any position not recognized as a
+/// non-retaining-linear use. This is the sound-by-construction core: the
+/// default for an unrecognized position is "retaining" (leak), so no
+/// escape site can be silently missed.
+///
+/// Recognized-safe (non-retaining) positions:
+/// - the tail/return position (a bare `Local` moves out as the result —
+///   handled implicitly: a `Local` reached as a whole sub-expression of
+///   a safe-scanned position is a no-op leaf, so a move-out never leaks);
+/// - arg 0 of a target-consuming collection builtin
+///   (`is_target_consuming_builtin`);
+/// - both operands of `Option.withDefault` (it SELECTS and returns one
+///   handle, retaining nothing — TRANSPARENT), which subsumes the
+///   self-keep fusion `withDefault(set(P,..), P)`;
+/// - an arg threaded to a user fn at a param index the interprocedural
+///   capture summary PROVES the callee does not retain (not in
+///   `captures_param`).
+///
+/// Everything else — aggregate fields/elements, non-target builtin args,
+/// constructor args, the default cell of `Vector.new`, args to an
+/// unproven callee, interpolation operands — is retaining.
+fn scan_leaks(
+    e: &MirExpr,
+    prov: &HashMap<u32, Spanned<MirExpr>>,
+    captures_param: &HashMap<FnId, HashSet<usize>>,
+    builtins: &[String],
+    out: &mut HashSet<u32>,
+) {
+    // A child in a RETAINING position: record the alias roots of any
+    // value that flows there, then keep scanning it for nested leaks.
+    let mut retain = |child: &Spanned<MirExpr>, out: &mut HashSet<u32>| {
+        alias_roots(&child.node, prov, builtins, 0, out);
+        scan_leaks(&child.node, prov, captures_param, builtins, out);
+    };
+
+    match e {
+        // --- Control flow: tail-transparent. A bare `Local` value
+        //     produced by any of these positions moves out as the
+        //     fn/branch result (linear), so it is NOT retained — scanning
+        //     it as a non-retaining read is correct (a Local leaf is a
+        //     no-op). Only the SUBJECT / bound-VALUE positions consume a
+        //     value to drive the control flow; they are likewise reads. ---
+        MirExpr::Let(l) => {
+            scan_leaks(&l.node.value.node, prov, captures_param, builtins, out);
+            scan_leaks(&l.node.body.node, prov, captures_param, builtins, out);
+        }
+        MirExpr::Match(m) => {
+            scan_leaks(&m.node.subject.node, prov, captures_param, builtins, out);
+            for arm in &m.node.arms {
+                scan_leaks(&arm.body.node, prov, captures_param, builtins, out);
+            }
+        }
+        MirExpr::IfThenElse(ite) => {
+            scan_leaks(&ite.node.cond.node, prov, captures_param, builtins, out);
+            scan_leaks(
+                &ite.node.then_branch.node,
+                prov,
+                captures_param,
+                builtins,
+                out,
+            );
+            scan_leaks(
+                &ite.node.else_branch.node,
+                prov,
+                captures_param,
+                builtins,
+                out,
+            );
+        }
+        MirExpr::Return(inner) | MirExpr::Try(inner) => {
+            scan_leaks(&inner.node, prov, captures_param, builtins, out);
+        }
+
+        // --- Calls: classify each arg position. ---
+        MirExpr::Call(c) => match &c.node.callee {
+            MirCallee::Builtin(bid) => {
+                let name = builtins
+                    .get(bid.0 as usize)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                if name == "Option.withDefault" {
+                    // `withDefault(a, b)` SELECTS and returns one of its
+                    // two handles — it retains NOTHING beyond the value it
+                    // surfaces. So it is TRANSPARENT: scan both operands as
+                    // non-retaining reads. Whether the selected value
+                    // escapes is decided at the withDefault RESULT's
+                    // position (the parent), and a still-live aliased
+                    // branch is caught by the live-alias pin (which
+                    // propagates through `withDefault` in `rename_roots`).
+                    // This subsumes the self-keep fusion
+                    // `withDefault(set(P,..), P)`: the inner `set` flags
+                    // its own value/index args, `P` at the set's arg 0 and
+                    // as the default are both safe reads, so the linear
+                    // param does not leak.
+                    for a in &c.node.args {
+                        scan_leaks(&a.node, prov, captures_param, builtins, out);
+                    }
+                    return;
+                }
+                // Target-consuming builtins read/replace arg 0 (the
+                // receiver) without retaining it; args >= 1 are
+                // value/element/key positions and DO retain. A
+                // constructor (`Vector.new` / `Map.new` / `*.fromList`)
+                // has no target arg — every collection-valued arg
+                // retains, so `target_safe = false`.
+                let target_safe = is_target_consuming_builtin(name);
+                scan_builtin_args(
+                    c,
+                    target_safe,
+                    prov,
+                    captures_param,
+                    builtins,
+                    &mut retain,
+                    out,
+                );
+            }
+            MirCallee::Fn(target) => {
+                let captured = captures_param.get(target);
+                for (i, a) in c.node.args.iter().enumerate() {
+                    // An arg at an index the callee does NOT retain is
+                    // safe (the callee threads it linearly); otherwise it
+                    // escapes into the callee. The summary is a
+                    // least-fixpoint (starts empty = nothing captured,
+                    // grows monotonically), so a param ABSENT from the
+                    // summary is treated as non-retaining — sound once the
+                    // fixpoint reaches it, and it is the only direction
+                    // that lets a linear self-recursive param converge.
+                    if captured.is_some_and(|c| c.contains(&i)) {
+                        retain(a, out);
+                    } else {
+                        // Provably non-retaining param: safe, scan deeper.
+                        scan_leaks(&a.node, prov, captures_param, builtins, out);
+                    }
+                }
+            }
+            MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => {
+                // No statically-known target / summary — every arg may
+                // be retained. Default to retaining.
+                for a in &c.node.args {
+                    retain(a, out);
+                }
+            }
+        },
+
+        // --- Tail calls: same-SCC threading. An arg at a param index
+        //     the callee does NOT retain threads linearly (the fast
+        //     path); otherwise it escapes into the callee. ---
+        MirExpr::TailCall(tc) => {
+            let captured = captures_param.get(&tc.node.target);
+            for (i, a) in tc.node.args.iter().enumerate() {
+                // Same least-fixpoint semantics as `Call(Fn)`: an arg at
+                // a param index NOT in the (monotone-growing) capture
+                // summary threads linearly (the fast path); one at a
+                // captured index escapes into the callee.
+                if captured.is_some_and(|c| c.contains(&i)) {
+                    retain(a, out);
+                } else {
+                    scan_leaks(&a.node, prov, captures_param, builtins, out);
+                }
+            }
+        }
+
+        // --- Aggregates: every field / element / value is retaining. ---
         MirExpr::RecordCreate(r) => {
             for f in &r.node.fields {
-                flag(&f.value, out);
+                retain(&f.value, out);
             }
         }
         MirExpr::RecordUpdate(u) => {
+            retain(&u.node.base, out);
             for f in &u.node.updates {
-                flag(&f.value, out);
+                retain(&f.value, out);
             }
         }
         MirExpr::Construct(c) => {
             for a in &c.node.args {
-                flag(a, out);
+                retain(a, out);
             }
         }
         MirExpr::Tuple(items) | MirExpr::List(items) => {
             for i in items {
-                flag(i, out);
+                retain(i, out);
             }
         }
         MirExpr::MapLiteral(pairs) => {
             for (k, v) in pairs {
-                flag(k, out);
-                flag(v, out);
+                retain(k, out);
+                retain(v, out);
             }
         }
         MirExpr::IndependentProduct(ip) => {
             for i in &ip.node.items {
-                flag(i, out);
+                retain(i, out);
             }
+        }
+
+        // --- Scalar / structural operands: a collection value flowing
+        //     into these is consumed for a scalar result, never retained;
+        //     recurse to find nested leaks. ---
+        MirExpr::BinOp(b) => {
+            scan_leaks(&b.node.lhs.node, prov, captures_param, builtins, out);
+            scan_leaks(&b.node.rhs.node, prov, captures_param, builtins, out);
+        }
+        MirExpr::Neg(inner) => scan_leaks(&inner.node, prov, captures_param, builtins, out),
+        MirExpr::Project(p) => {
+            // `base.field` reads a field; the projected value may itself
+            // alias `base`'s backing, but `base` is not retained by the
+            // projection — recurse to scan `base`.
+            scan_leaks(&p.node.base.node, prov, captures_param, builtins, out)
+        }
+        MirExpr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let super::super::expr::MirStrPart::Expr(e) = p {
+                    // Stringification reads the value (non-retaining).
+                    scan_leaks(&e.node, prov, captures_param, builtins, out);
+                }
+            }
+        }
+
+        // --- Leaves. A bare `Local` reaches here only when its parent
+        //     scanned it as a non-retaining position (a safe builtin
+        //     receiver / `withDefault` operand / control-flow result / a
+        //     scalar operand) — a retaining parent records its roots via
+        //     `retain` BEFORE recursing. So a `Local` reaching this arm is
+        //     a move-out / read that retains nothing: nothing to add. ---
+        MirExpr::Local(_) | MirExpr::Literal(_) | MirExpr::FnValue(_) => {}
+    }
+}
+
+/// Scan the args of a builtin call where `target_safe` says arg 0 is the
+/// non-retaining receiver. Arg 0 (if `target_safe`) is scanned for
+/// nested leaks only; every other arg is retaining.
+#[allow(clippy::too_many_arguments)]
+fn scan_builtin_args(
+    c: &Spanned<super::super::expr::MirCall>,
+    target_safe: bool,
+    prov: &HashMap<u32, Spanned<MirExpr>>,
+    captures_param: &HashMap<FnId, HashSet<usize>>,
+    builtins: &[String],
+    retain: &mut dyn FnMut(&Spanned<MirExpr>, &mut HashSet<u32>),
+    out: &mut HashSet<u32>,
+) {
+    for (i, a) in c.node.args.iter().enumerate() {
+        if i == 0 && target_safe {
+            // Receiver: consumed/read, not retained. Scan for nested
+            // leaks (e.g. a `set(set(P,..),..)` chain) but do not record
+            // P here.
+            scan_leaks(&a.node, prov, captures_param, builtins, out);
+        } else {
+            retain(a, out);
+        }
+    }
+}
+
+/// Pin every PARAM that has a still-live alias: a let-bound slot whose
+/// binding RHS aliases the param (its `rename_roots` contains the param
+/// slot) and whose own slot is read somewhere in the body. Such a param
+/// is not uniquely owned — a second binding observes the same backing —
+/// so an in-place mutation would corrupt the alias (the `snap = v; …
+/// set(v,…); read snap` class). A genuinely linear param threads through
+/// builtins / the tail call without any alias binding, so this never
+/// pins the fast path.
+fn collect_live_aliased_params(
+    body: &MirExpr,
+    prov: &HashMap<u32, Spanned<MirExpr>>,
+    builtins: &[String],
+    nparams: usize,
+    out: &mut HashSet<u32>,
+) {
+    // Every slot read by a bare `Local` anywhere in the body.
+    let mut read: HashSet<u32> = HashSet::new();
+    collect_local_reads(body, &mut read);
+    for (&binding, rhs) in prov {
+        // The binding slot must itself be live (read), else no alias is
+        // observed.
+        if !read.contains(&binding) {
+            continue;
+        }
+        // Use `rename_roots`, NOT `alias_roots`: only a *pure value-copy*
+        // alias (a `let w = v` rename, match/if of a param read, a
+        // passthrough-fn result) keeps the param co-live for a
+        // read-after-mutation. A `Vector.set` / `Map.set` / self-keep
+        // `withDefault(set(p,…), p)` is the param's mutated SUCCESSOR
+        // (it consumes `p`), so binding the result does NOT keep `p`
+        // problematically live — that is the linear fast path.
+        let mut roots: HashSet<u32> = HashSet::new();
+        rename_roots(&rhs.node, prov, builtins, 0, &mut roots);
+        for &r in &roots {
+            // `r` is an aliased param distinct from this binding slot.
+            if r != binding && (r as usize) < nparams {
+                out.insert(r);
+            }
+        }
+    }
+}
+
+/// Every slot that has a still-live RENAME alias in the body: a let-bound
+/// slot whose binding RHS renames it AND that is read. Used at the
+/// CALL-SITE to reject an owned arg whose slot the caller still observes
+/// through an alias (the live-alias-at-callsite class). Unlike
+/// `collect_live_aliased_params` (which records the PARAM that is
+/// aliased), this records the ROOT slot that an alias still observes —
+/// any slot, param or let-local — so a call-site arg reading that slot
+/// can be rejected.
+fn collect_live_aliased_slots(
+    body: &MirExpr,
+    prov: &HashMap<u32, Spanned<MirExpr>>,
+    builtins: &[String],
+    out: &mut HashSet<u32>,
+) {
+    let mut read: HashSet<u32> = HashSet::new();
+    collect_local_reads(body, &mut read);
+    for (&binding, rhs) in prov {
+        if !read.contains(&binding) {
+            continue;
+        }
+        let mut roots: HashSet<u32> = HashSet::new();
+        rename_roots(&rhs.node, prov, builtins, 0, &mut roots);
+        for &r in &roots {
+            // The binding `r != binding` so the source slot is co-live
+            // with a distinct alias binding that is still read.
+            if r != binding {
+                out.insert(r);
+            }
+        }
+    }
+}
+
+/// Param slots that `e` is a *pure value-copy alias* of — the subset of
+/// `alias_roots` that keeps the source slot CO-LIVE rather than
+/// consuming it. Used only by the live-alias-across-mutation pins; the
+/// capture / cross-fn escape paths use the full `alias_roots` semantics.
+///
+/// The key difference from `alias_roots`: a `Vector.set` / `Map.set`
+/// result, and the self-keep `withDefault(set(p,…), p)` fusion shape,
+/// are the param's MUTATED SUCCESSOR — they consume `p` and the result
+/// IS the new value, so binding them does not create a problematic
+/// co-live alias (this is the `fillVector` fast path). They therefore
+/// contribute NO rename roots. Everything that genuinely keeps the
+/// source live — a bare `Local`, a match/if of one, a passthrough-fn
+/// result, a `withDefault`/`get` that selects/projects a still-live
+/// source — propagates, so the read-after-mutation classes stay caught.
+fn rename_roots(
+    e: &MirExpr,
+    prov: &HashMap<u32, Spanned<MirExpr>>,
+    builtins: &[String],
+    depth: u32,
+    out: &mut HashSet<u32>,
+) {
+    if depth > MAX_DEPTH {
+        return;
+    }
+    match e {
+        MirExpr::Local(l) => {
+            let slot = l.node.slot.0;
+            out.insert(slot);
+            if let Some(rhs) = prov.get(&slot) {
+                rename_roots(&rhs.node, prov, builtins, depth + 1, out);
+            }
+        }
+        MirExpr::Match(m) => {
+            for arm in &m.node.arms {
+                rename_roots(&arm.body.node, prov, builtins, depth + 1, out);
+            }
+        }
+        MirExpr::IfThenElse(ite) => {
+            rename_roots(&ite.node.then_branch.node, prov, builtins, depth + 1, out);
+            rename_roots(&ite.node.else_branch.node, prov, builtins, depth + 1, out);
+        }
+        MirExpr::Call(c) => match &c.node.callee {
+            // A user-fn / fn-value / intrinsic result may alias an arg
+            // while leaving it live (the RULE-2 passthrough gap).
+            MirCallee::Fn(_) | MirCallee::LocalSlot { .. } | MirCallee::Intrinsic(_) => {
+                for a in &c.node.args {
+                    rename_roots(&a.node, prov, builtins, depth + 1, out);
+                }
+            }
+            MirCallee::Builtin(id) => {
+                let name = builtins
+                    .get(id.0 as usize)
+                    .map(String::as_str)
+                    .unwrap_or("");
+                match name {
+                    // Mutated successor / fresh value — consumes the
+                    // target, so it is NOT a co-live alias.
+                    "Vector.set" | "Map.set" | "Vector.new" | "Map.new" => {}
+                    // `withDefault` surfaces one of its handles; the
+                    // self-keep `withDefault(set(p,…), p)` fusion is the
+                    // linear successor (consumes `p`) — contribute
+                    // nothing for it; any other `withDefault` may select
+                    // a still-live aliased branch, so propagate.
+                    "Option.withDefault"
+                        if c.node.args.len() == 2
+                            && is_self_keep_set(
+                                &c.node.args[0].node,
+                                &c.node.args[1].node,
+                                builtins,
+                            ) => {}
+                    "Option.withDefault" => {
+                        for a in &c.node.args {
+                            rename_roots(&a.node, prov, builtins, depth + 1, out);
+                        }
+                    }
+                    // `get` may project a still-live inner collection
+                    // (nested case); any other builtin is conservative.
+                    _ => {
+                        for a in &c.node.args {
+                            rename_roots(&a.node, prov, builtins, depth + 1, out);
+                        }
+                    }
+                }
+            }
+        },
+        MirExpr::Return(inner) | MirExpr::Try(inner) => {
+            rename_roots(&inner.node, prov, builtins, depth + 1, out)
         }
         _ => {}
     }
-    visit_children(e, &mut |c| collect_captured_slots(c, out));
+}
+
+/// Recognize the self-keep fusion shape `withDefault(Vector.set|Map.set(
+/// Local(s), …), Local(s))` — the linear in-place mutation idiom whose
+/// two operands both reference the same slot `s`. Mirrors the
+/// recognition in `uniquely_owned`; used by `scan_leaks` / `rename_roots`
+/// to treat the successor as consuming (not aliasing) `s`.
+fn is_self_keep_set(set_arg: &MirExpr, default_arg: &MirExpr, builtins: &[String]) -> bool {
+    if let MirExpr::Call(inner) = set_arg
+        && let MirCallee::Builtin(iid) = inner.node.callee
+        && matches!(
+            builtins.get(iid.0 as usize).map(String::as_str),
+            Some("Vector.set") | Some("Map.set")
+        )
+        && let Some(set_vec) = inner.node.args.first()
+        && let MirExpr::Local(v) = &set_vec.node
+        && let MirExpr::Local(d) = default_arg
+    {
+        return v.node.slot == d.node.slot;
+    }
+    false
+}
+
+/// Collect every slot referenced by a bare `MirExpr::Local` read.
+fn collect_local_reads(e: &MirExpr, out: &mut HashSet<u32>) {
+    if let MirExpr::Local(l) = e {
+        out.insert(l.node.slot.0);
+    }
+    visit_children(e, &mut |c| collect_local_reads(c, out));
+}
+
+/// Interprocedural "fn captures param i" summary. `captures_param[f]`
+/// holds the indices of `f`'s params that are NOT proven
+/// non-retaining-linear in `f`'s body — i.e. some occurrence escapes
+/// (the body-local leak scan flags the param slot), directly or
+/// transitively by being passed to a callee that captures the
+/// corresponding param. Monotone-growing fixpoint over the visible
+/// `Call(Fn)` / `TailCall` edges; recursion / cycles are safe because
+/// the set only grows.
+///
+/// This is exactly the dual the `scan_leaks` whitelist consumes: a param
+/// NOT in `captures_param[f]` is proven not to retain its arg, so a
+/// caller passing a value at that index does not escape through `f`. A
+/// param not yet in the summary during the fixpoint is treated as
+/// capturing (the seed is empty and grows), which is the conservative
+/// direction. The whole pass already runs only on whole, single-module
+/// programs (every caller visible), and any genuinely
+/// externally-reachable fn (`main` / address-taken) keeps all params
+/// flagged regardless.
+fn compute_capture_summary(
+    program: &MirProgram,
+    provenance: &HashMap<FnId, HashMap<u32, Spanned<MirExpr>>>,
+    builtins: &[String],
+) -> HashMap<FnId, HashSet<usize>> {
+    // Param-slot → param-index per fn (params occupy the leading slots,
+    // but resolve by the declared `local` to be safe).
+    let mut param_slot_to_idx: HashMap<FnId, HashMap<u32, usize>> = HashMap::new();
+    for (id, f) in program.iter() {
+        let m: HashMap<u32, usize> = f
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.local.0, i))
+            .collect();
+        param_slot_to_idx.insert(*id, m);
+    }
+
+    let mut captures: HashMap<FnId, HashSet<usize>> = HashMap::new();
+    loop {
+        let mut changed = false;
+        for (id, f) in program.iter() {
+            let prov = provenance.get(id).cloned().unwrap_or_default();
+            let nparams = f.params.len();
+            // Slots that leak (escape a recognized linear use) in this fn
+            // body given the current (monotone-growing) summary, plus
+            // live-alias pins. A param leaking ⇒ it captures its arg.
+            let mut leak: HashSet<u32> = HashSet::new();
+            scan_leaks(&f.body.node, &prov, &captures, builtins, &mut leak);
+            collect_live_aliased_params(&f.body.node, &prov, builtins, nparams, &mut leak);
+            let idx_map = &param_slot_to_idx[id];
+            let entry = captures.entry(*id).or_default();
+            for &s in &leak {
+                if (s as usize) < nparams
+                    && let Some(&i) = idx_map.get(&s)
+                    && entry.insert(i)
+                {
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    captures
 }
 
 /// Collect visible `Call(Fn)` / `TailCall` edges made from `caller`.
