@@ -287,6 +287,20 @@ impl MirFnEmitPolicy {
     }
 }
 
+/// Dotted built-in record/service types whose source `type_name`
+/// (e.g. `Tcp.Connection`, `Terminal.Size`) maps to a re-exported
+/// flat-named Rust struct (`Tcp_Connection`, `Terminal_Size`) brought
+/// in by the matching `generate_*_types()` `pub use` alias. Returns the
+/// Rust name on a hit, `None` for ordinary user records (which keep
+/// their verbatim `type_name`).
+fn builtin_dotted_record_rename(type_name: &str) -> Option<&'static str> {
+    match type_name {
+        "Tcp.Connection" => Some("Tcp_Connection"),
+        "Terminal.Size" => Some("Terminal_Size"),
+        _ => None,
+    }
+}
+
 /// Mirror of `RustSourceCallCtx::resolve_module_call` in
 /// `toplevel.rs`: find the longest registered module prefix
 /// inside a dotted name. Returns `(prefix, suffix)` on hit,
@@ -831,11 +845,8 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // re-exported `Tcp_Connection` struct. Fields route
             // through `clone_arg`.
             let rec = &spanned_rec.node;
-            let rust_type = if rec.type_name == "Tcp.Connection" {
-                "Tcp_Connection"
-            } else {
-                rec.type_name.as_str()
-            };
+            let rust_type =
+                builtin_dotted_record_rename(&rec.type_name).unwrap_or(rec.type_name.as_str());
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
                 let val =
@@ -851,11 +862,8 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // RecordCreate; base + updates route through
             // `clone_arg`.
             let upd = &spanned_upd.node;
-            let rust_type = if upd.type_name == "Tcp.Connection" {
-                "Tcp_Connection"
-            } else {
-                upd.type_name.as_str()
-            };
+            let rust_type =
+                builtin_dotted_record_rename(&upd.type_name).unwrap_or(upd.type_name.as_str());
             let base = mir_clone_arg(
                 emit_mir_expr(&upd.base, emit_ctx)?,
                 &upd.base.node,
@@ -3545,6 +3553,34 @@ mod tests {
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("tcp connection record should emit");
         assert_eq!(emit, "Tcp_Connection {  }");
+    }
+
+    #[test]
+    fn emits_terminal_size_record_with_rename() {
+        // `Terminal.Size` is renamed to the re-exported `Terminal_Size`
+        // struct (alias `pub use aver_rt::TerminalSize as Terminal_Size`),
+        // mirroring the `Tcp.Connection` special-case — so the dotted
+        // ctor `Terminal.Size(width = .., height = ..)` emits a valid Rust
+        // struct literal instead of the malformed `Terminal.Size { .. }`.
+        let field_w = crate::ir::mir::MirRecordField {
+            name: "width".to_string(),
+            value: span(MirExpr::Literal(span(crate::ast::Literal::Int(80)))),
+        };
+        let field_h = crate::ir::mir::MirRecordField {
+            name: "height".to_string(),
+            value: span(MirExpr::Literal(span(crate::ast::Literal::Int(24)))),
+        };
+        let rec = crate::ir::mir::MirRecordCreate {
+            type_id: Some(crate::ir::TypeId(0)),
+            type_name: "Terminal.Size".to_string(),
+            fields: vec![field_w, field_h],
+        };
+        let expr = span(MirExpr::RecordCreate(span(rec)));
+        let st = symbols_with_one_type("Size", true);
+        let prefixes = HashSet::new();
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        let emit = emit_mir_expr(&expr, &ctx).expect("terminal size record should emit");
+        assert_eq!(emit, "Terminal_Size { width: 80i64, height: 24i64 }");
     }
 
     #[test]
