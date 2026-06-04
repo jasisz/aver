@@ -42,6 +42,16 @@ pub struct MirProgram {
     /// instead of carrying the string inline on every
     /// `MirCallee::Builtin`.
     pub builtins: Vec<String>,
+    /// `true` when this program is a *fragment* of a larger build whose
+    /// other parts are compiled separately — specifically a dependency
+    /// module under the VM's per-module compile (the VM lowers each
+    /// `depends [...]` module to its own `MirProgram`). Such a fragment
+    /// does NOT see the entry/sibling call sites, so whole-program
+    /// analyses that rely on "every caller is visible" (notably
+    /// `own_param_refine`) must bail. `false` for a whole-program compile
+    /// (single entry, or the flattened wasm-gc / Rust builds), where all
+    /// callers are present and graduation is sound.
+    pub external_callers_possible: bool,
 }
 
 impl MirProgram {

@@ -137,8 +137,16 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
     if std::env::var("AVER_NO_OWN_PARAM").is_ok() {
         return program;
     }
-    // Whole-program gate: only sound when every caller is visible here.
-    if program.modules.len() > 1 {
+    // Whole-program gate: graduating a param to owned is only sound when
+    // EVERY caller is visible in this program. A dependency-module
+    // fragment (the VM compiles each `depends [...]` module separately)
+    // is missing the entry/sibling call sites, so a param could be marked
+    // owned here while an unseen caller passes an aliased value — an
+    // in-place mutation would then corrupt the caller's value. Bail.
+    // (`program.modules` was the intended signal but is not yet populated
+    // by lowering; `external_callers_possible` is set explicitly by the
+    // VM's per-dep-module build.)
+    if program.external_callers_possible || program.modules.len() > 1 {
         return program;
     }
 
@@ -1300,5 +1308,78 @@ fn visit_children(e: &MirExpr, f: &mut dyn FnMut(&MirExpr)) {
                 f(&i.node);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::own_param_refine;
+    use crate::ast::{Literal, Spanned};
+    use crate::ir::FnId;
+    use crate::ir::mir::expr::MirExpr;
+    use crate::ir::mir::program::{LocalId, MirFn, MirParam, MirProgram};
+    use std::sync::Arc;
+
+    fn span<T>(node: T) -> Spanned<T> {
+        Spanned {
+            node,
+            line: 0,
+            ty: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// A one-fn program: `f(v: Vector<Int>)` with `v` flagged
+    /// alias-prone, a body that does not retain `v`, and NO callers.
+    /// With every caller visible (a whole-program compile) own_param
+    /// graduates `v` to owned and clears the flag. As a dependency-module
+    /// fragment (`external_callers_possible`) an unseen cross-module
+    /// caller could pass an aliased value, so the guard must bail and
+    /// keep `v` flagged.
+    fn one_flagged_param_program(external_callers_possible: bool) -> (MirProgram, FnId) {
+        let id = FnId(0);
+        let mut p = MirProgram {
+            external_callers_possible,
+            ..MirProgram::default()
+        };
+        p.fns.insert(
+            id,
+            MirFn {
+                fn_id: id,
+                name: "f".to_string(),
+                params: vec![MirParam {
+                    local: LocalId(0),
+                    name: "v".to_string(),
+                    ty: "Vector<Int>".to_string(),
+                }],
+                return_type: "Int".to_string(),
+                effects: vec![],
+                body: span(MirExpr::Literal(span(Literal::Int(0)))),
+                local_count: 1,
+                aliased_slots: Arc::new(vec![true]),
+            },
+        );
+        (p, id)
+    }
+
+    #[test]
+    fn whole_program_graduates_unaliased_param() {
+        // Guards against a vacuous dependency-fragment test: confirm the
+        // param really WOULD graduate when all callers are visible.
+        let (prog, id) = one_flagged_param_program(false);
+        let out = own_param_refine(prog);
+        assert!(
+            !out.fns[&id].aliased_slots[0],
+            "whole-program: a non-retaining, uncalled collection param must graduate to owned"
+        );
+    }
+
+    #[test]
+    fn dependency_fragment_keeps_param_flagged() {
+        let (prog, id) = one_flagged_param_program(true);
+        let out = own_param_refine(prog);
+        assert!(
+            out.fns[&id].aliased_slots[0],
+            "dependency fragment: own_param must bail — an unseen cross-module caller may alias the param"
+        );
     }
 }
