@@ -224,6 +224,22 @@ fn visit_locals(node: &MirExpr, visit: &mut impl FnMut(LocalId)) {
     }
 }
 
+/// Whether a division divisor is provably non-zero, so the division
+/// cannot trap and the enclosing `BinOp::Div` may count as pure. Only a
+/// literal we can inspect qualifies: a non-zero integer, or any float
+/// (Float `/` is total). A variable or computed divisor could be zero,
+/// so it is conservatively treated as possibly-trapping.
+fn divisor_proven_nonzero(rhs: &Spanned<MirExpr>) -> bool {
+    match &rhs.node {
+        MirExpr::Literal(spanned) => match spanned.node {
+            Literal::Int(n) => n != 0,
+            Literal::Float(_) => true,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// Conservative purity classification — `true` means the
 /// expression has no observable side effect AND cannot diverge
 /// or raise. Exported `pub(super)` so the algebraic pass can
@@ -234,7 +250,19 @@ pub(super) fn is_pure(expr: &Spanned<MirExpr>) -> bool {
         MirExpr::Literal(_) | MirExpr::Local(_) | MirExpr::FnValue(_) => true,
         MirExpr::Neg(inner) => is_pure(inner),
         MirExpr::BinOp(spanned_bop) => {
-            is_pure(&spanned_bop.node.lhs) && is_pure(&spanned_bop.node.rhs)
+            let bop = &spanned_bop.node;
+            // Integer `/` by a possibly-zero divisor traps at runtime
+            // ("division by zero"). Classifying it pure would let DCE drop
+            // a dead `5 / 0`, or the `x * 0` collapse fold `(5 / 0) * 0`
+            // to `0` — silently turning a trapping program into a
+            // non-trapping one. Only a divisor we can prove non-zero is
+            // safe to elide. (Float `/` is total — `x / 0.0` is Infinity,
+            // never traps — and `%`/modulo is a Result-returning builtin,
+            // not a `BinOp`, so neither applies here.)
+            if matches!(bop.op, crate::ast::BinOp::Div) && !divisor_proven_nonzero(&bop.rhs) {
+                return false;
+            }
+            is_pure(&bop.lhs) && is_pure(&bop.rhs)
         }
         MirExpr::Tuple(items) | MirExpr::List(items) => items.iter().all(is_pure),
         MirExpr::MapLiteral(entries) => entries.iter().all(|(k, v)| is_pure(k) && is_pure(v)),
@@ -327,6 +355,58 @@ mod tests {
         assert!(
             matches!(body_of(&eliminated), MirExpr::Let(_)),
             "unused Let with impure (Call) value must stay — could be an effect"
+        );
+    }
+
+    #[test]
+    fn div_purity_classification_respects_trapping_divisor() {
+        use super::super::super::expr::MirLocal;
+        let div = |l: MirExpr, r: MirExpr| {
+            span(MirExpr::BinOp(span(MirBinOp {
+                op: BinOp::Div,
+                lhs: Box::new(span(l)),
+                rhs: Box::new(span(r)),
+            })))
+        };
+        let int = |n| MirExpr::Literal(span(Literal::Int(n)));
+        let flt = |f| MirExpr::Literal(span(Literal::Float(f)));
+
+        // Integer `/` by a zero literal traps at runtime → must be impure.
+        assert!(!is_pure(&div(int(5), int(0))), "5 / 0 traps → impure");
+        // Integer `/` by a proven non-zero literal cannot trap → pure.
+        assert!(is_pure(&div(int(10), int(2))), "10 / 2 cannot trap → pure");
+        // Float `/` is total (`x / 0.0` is Infinity) → pure.
+        assert!(
+            is_pure(&div(flt(1.0), flt(0.0))),
+            "float div is total → pure"
+        );
+        // A variable divisor could be zero at runtime → conservatively impure.
+        assert!(
+            !is_pure(&div(int(5), MirExpr::Local(span(MirLocal::at(LocalId(0)))))),
+            "variable divisor could be zero → impure"
+        );
+    }
+
+    #[test]
+    fn dce_keeps_unused_integer_div_by_zero() {
+        // Regression: a dead `5 / 0` binding must NOT be eliminated — the
+        // division traps, and dropping it would silently turn a trapping
+        // program into a non-trapping one.
+        let value = MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Div,
+            lhs: Box::new(span(MirExpr::Literal(span(Literal::Int(5))))),
+            rhs: Box::new(span(MirExpr::Literal(span(Literal::Int(0))))),
+        }));
+        let body = MirExpr::Let(span(MirLet {
+            binding: LocalId(0),
+            binding_name: String::new(),
+            value: Box::new(span(value)),
+            body: Box::new(span(MirExpr::Literal(span(Literal::Int(42))))),
+        }));
+        let eliminated = dead_code(one_fn_program(body));
+        assert!(
+            matches!(body_of(&eliminated), MirExpr::Let(_)),
+            "unused `5 / 0` Let must stay — eliding it would drop a runtime trap"
         );
     }
 
