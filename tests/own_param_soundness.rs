@@ -700,3 +700,193 @@ fn main() -> Unit
 "#;
     assert_sound("class3_transitive", src, "7");
 }
+
+// ---------------------------------------------------------------------
+// Round-3 regression net (the third adversarial audit's two new
+// classes). These CORRUPT on parent `own-param-escape-soundness` (the
+// blacklist enumeration missed the escape site) and are FIXED here by
+// the sound-by-construction redesign (default-flag, clear-on-whitelist).
+// Each is a revert-discipline candidate: it fails on parent, passes here.
+// ---------------------------------------------------------------------
+
+/// Round 3, class (a) — value-into-collection via `Vector.set`. The
+/// param `p` is stored as the VALUE/ELEMENT arg (index 2) of a
+/// `Vector.set` building a vector-of-vectors, then own-mutated in place.
+/// The old `alias_roots` followed only `args.first()` (the target) of a
+/// set, so the element `p` was not seen to escape; the old
+/// `collect_escaping_slots` only handled `MirCallee::Fn` args, not
+/// builtin value args. The new whitelist scan treats every builtin arg
+/// at index >= 1 as retaining. Correct = `7` (the stored copy keeps the
+/// original); corruption surfaces as `999`.
+#[test]
+fn round3_value_into_vector_set_is_not_mutated_in_place() {
+    let src = r#"module ValIntoVecSet
+    intent = "param P stored as the value/element arg of Vector.set, then mutated"
+    depends []
+    effects [Console.print]
+
+fn cap(p: Vector<Int>) -> Int
+    ? "store p as the element of an outer vector-of-vectors; own-mutate p; read the stored copy"
+    outer = Vector.new(1, p)
+    mutated = Option.withDefault(Vector.set(p, 0, 999), p)
+    inner = Option.withDefault(Vector.get(outer, 0), Vector.new(3, 0 - 1))
+    Option.withDefault(Vector.get(inner, 0), 0 - 1)
+
+fn run() -> Int
+    base = Option.withDefault(Vector.set(Vector.new(3, 0), 0, 7), Vector.new(3, 0))
+    cap(base)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("round3_value_into_vector_set", src, "7");
+}
+
+/// Round 3, class (a) — value-into-collection via `Map.set`. The param
+/// `p` is stored as the VALUE arg (index 2) of a `Map.set`, then
+/// own-mutated. Same missed escape site as the `Vector.set` case, on the
+/// `Map.set` value position. Correct = `7`; corruption surfaces as `999`.
+#[test]
+fn round3_value_into_map_set_is_not_mutated_in_place() {
+    let src = r#"module ValIntoMapSet
+    intent = "param P stored as the value arg of Map.set, then mutated"
+    depends []
+    effects [Console.print]
+
+fn cap(p: Vector<Int>) -> Int
+    ? "store p as a map value; own-mutate p; read the stored copy back"
+    holder = Map.set({}, "key", p)
+    mutated = Option.withDefault(Vector.set(p, 0, 999), p)
+    inner = Option.withDefault(Map.get(holder, "key"), Vector.new(3, 0 - 1))
+    Option.withDefault(Vector.get(inner, 0), 0 - 1)
+
+fn run() -> Int
+    base = Option.withDefault(Vector.set(Vector.new(3, 0), 0, 7), Vector.new(3, 0))
+    cap(base)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("round3_value_into_map_set", src, "7");
+}
+
+/// Round 3, class (a) — value-into-collection via a MAP LITERAL. The
+/// param `p` is stored as the VALUE of a `{"k" => p}` literal entry,
+/// then own-mutated. Correct = `7`; corruption surfaces as `999`.
+#[test]
+fn round3_value_into_map_literal_is_not_mutated_in_place() {
+    let src = r#"module ValIntoMapLit
+    intent = "param P stored as a value in a map literal, then mutated"
+    depends []
+    effects [Console.print]
+
+fn cap(p: Vector<Int>) -> Int
+    ? "store p as a map-literal value; own-mutate p; read the stored copy"
+    holder = {"key" => p}
+    mutated = Option.withDefault(Vector.set(p, 0, 999), p)
+    inner = Option.withDefault(Map.get(holder, "key"), Vector.new(3, 0 - 1))
+    Option.withDefault(Vector.get(inner, 0), 0 - 1)
+
+fn run() -> Int
+    base = Option.withDefault(Vector.set(Vector.new(3, 0), 0, 7), Vector.new(3, 0))
+    cap(base)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("round3_value_into_map_literal", src, "7");
+}
+
+/// Round 3, class (a) — value-into-collection via the DEFAULT arg of
+/// `Vector.new`. `Vector.new(2, p)` fills both cells with `p` (every
+/// cell shares its backing), then `p` is own-mutated. The old
+/// `uniquely_owned` treated `Vector.new` with a non-literal default as
+/// not-owned but `alias_roots`/the escape scan never flagged `p`'s
+/// occurrence as the default cell. Correct = `7`; corruption = `999`.
+#[test]
+fn round3_value_into_vector_new_default_is_not_mutated_in_place() {
+    let src = r#"module ValIntoVecNew
+    intent = "param P used as the default element of Vector.new, then mutated"
+    depends []
+    effects [Console.print]
+
+fn cap(p: Vector<Int>) -> Int
+    ? "Vector.new(2, p) fills both cells with p; own-mutate p; read a cell"
+    outer = Vector.new(2, p)
+    mutated = Option.withDefault(Vector.set(p, 0, 999), p)
+    inner = Option.withDefault(Vector.get(outer, 1), Vector.new(3, 0 - 1))
+    Option.withDefault(Vector.get(inner, 0), 0 - 1)
+
+fn run() -> Int
+    base = Option.withDefault(Vector.set(Vector.new(3, 0), 0, 7), Vector.new(3, 0))
+    cap(base)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("round3_value_into_vector_new", src, "7");
+}
+
+/// Round 3, class (b) — live-alias-at-callsite. An owned let-local
+/// (`base`) is passed to a graduated linear mutator (`mutate`) while a
+/// live alias (`alias = base`) remains in the caller. The old
+/// `uniquely_owned` proved the arg owned by its `last_use` flag but
+/// never checked whether the CALLER still observes the slot through a
+/// live rename alias. `mutate` graduates and mutates `base` in place,
+/// corrupting `alias`. The redesign rejects a call-site arg whose slot
+/// the caller still aliases (`live_aliased`). Correct = `7` (the alias
+/// keeps the original); corruption surfaces as `999`.
+#[test]
+fn round3_live_alias_at_callsite_is_not_mutated_in_place() {
+    let src = r#"module LiveAliasCallsite
+    intent = "owned local passed to a graduated callee while a live alias remains in the caller"
+    depends []
+    effects [Console.print]
+
+fn mutate(w: Vector<Int>) -> Vector<Int>
+    ? "graduated linear mutator: own-mutate w in place and return it"
+    Option.withDefault(Vector.set(w, 0, 999), w)
+
+fn run() -> Int
+    ? "base is owned; alias aliases base; pass base to mutate, then read alias"
+    base = Option.withDefault(Vector.set(Vector.new(3, 0), 0, 7), Vector.new(3, 0))
+    alias = base
+    m = mutate(base)
+    Option.withDefault(Vector.get(alias, 0), 0 - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("round3_live_alias_at_callsite", src, "7");
+}
+
+/// Round 3, class (b) — Map analogue of live-alias-at-callsite. Correct
+/// = `7`; corruption surfaces as `999`.
+#[test]
+fn round3_live_alias_at_callsite_map_is_not_mutated_in_place() {
+    let src = r#"module LiveAliasCallsiteMap
+    intent = "owned map passed to a graduated callee while a live alias remains"
+    depends []
+    effects [Console.print]
+
+fn mutate(w: Map<String, Int>) -> Map<String, Int>
+    ? "graduated linear mutator: Map.set w in place and return it"
+    Map.set(w, "k", 999)
+
+fn run() -> Int
+    base = Map.set({}, "k", 7)
+    alias = base
+    m = mutate(base)
+    Option.withDefault(Map.get(alias, "k"), 0 - 1)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("round3_live_alias_at_callsite_map", src, "7");
+}

@@ -207,3 +207,34 @@ fn main() -> Int
         "linearly-threaded param `b` must still graduate (per-slot precision)"
     );
 }
+
+/// Round-3 precision dual: a param stored as the VALUE/ELEMENT arg of a
+/// collection builtin (not the target arg 0) must STAY flagged. The
+/// sound-by-construction scan treats every builtin arg at index >= 1 as
+/// retaining, so `cap`'s `p` — used as the element of `Vector.new(1, p)`
+/// — never graduates. (Observable correctness in
+/// `own_param_soundness::round3_value_into_vector_set_*`.)
+#[test]
+fn value_into_collection_param_stays_flagged() {
+    let src = r#"module ValIntoVecSet
+    intent = "param stored as the element arg of a collection builtin"
+    depends []
+    effects []
+
+fn cap(p: Vector<Int>) -> Int
+    ? "store p as the element of a vector-of-vectors, then own-mutate p"
+    outer = Vector.new(1, p)
+    mutated = Option.withDefault(Vector.set(p, 0, 999), p)
+    inner = Option.withDefault(Vector.get(outer, 0), Vector.new(3, 0 - 1))
+    Option.withDefault(Vector.get(inner, 0), 0 - 1)
+
+fn main() -> Int
+    base = Option.withDefault(Vector.set(Vector.new(3, 0), 0, 7), Vector.new(3, 0))
+    cap(base)
+"#;
+    let program = refine(src);
+    assert!(
+        param_flagged(&program, "cap", 0),
+        "param stored as a collection element/value arg must stay flagged"
+    );
+}
