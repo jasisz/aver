@@ -663,19 +663,19 @@ pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> H
     // `ast.Expr` the field annotation in the .av source is `Expr`, not
     // `ast.Expr`, so the id-less fallback must compare against the
     // bare suffix as well.
-    let owning_bare = decl
-        .owning_type_name
-        .as_deref()
-        .map(|n| n.rsplit_once('.').map(|(_, b)| b).unwrap_or(n));
-    for (idx, field_ty) in decl.field_types.iter().enumerate() {
-        let matches = match (decl.owning_type_id, field_ty.named_id()) {
-            (Some(r), Some(p)) => r == p,
-            _ => {
-                field_ty.named_name() == decl.owning_type_name.as_deref()
-                    || field_ty.named_name() == owning_bare
-            }
-        };
-        if matches {
+    let owning_full = decl.owning_type_name.as_deref();
+    let owning_bare = owning_full.map(|n| n.rsplit_once('.').map(|(_, b)| b).unwrap_or(n));
+    for (idx, field_str) in decl.field_type_strs.iter().enumerate() {
+        // A field is a recursive (boxed) position iff its declared type is
+        // EXACTLY the owning type — a bare nominal reference, not a generic
+        // wrapping it (`left: Tree` is boxed, `kids: List<Tree>` is not).
+        // Comparing the annotation string directly against the owning type's
+        // full + bare names is equivalent to the old parse-then-`named_name`
+        // round-trip (a bare nominal annotation IS its name), and
+        // `parse_type_str` never resolved a `TypeId` here, so the parse was
+        // pure name-extraction.
+        let f = field_str.trim();
+        if Some(f) == owning_full || Some(f) == owning_bare {
             out.insert(idx);
         }
     }
@@ -686,46 +686,25 @@ pub(super) fn constructor_boxed_positions(name: &str, ctx: &CodegenContext) -> H
 /// the canonical identity of the type the constructor belongs to.
 /// Built by walking `TypeDef`s in `ctx.items` and dep modules.
 struct CtorDecl {
-    /// Parsed field types in declaration order. Carry stamped
-    /// `Type::Named.id` when the field references a known nominal
-    /// type post-resolver — `parse_type_str` reads them off the
-    /// source annotation, and `Type::named_id()` reflects whatever
-    /// the type-string resolver populated.
-    field_types: Vec<crate::types::Type>,
-    /// Owning type's `TypeId` (when registered in the symbol
-    /// table) — preferred identity primitive for recursive-field
-    /// detection.
-    owning_type_id: Option<crate::ir::TypeId>,
-    /// Owning type's canonical name — fallback identity when
-    /// `owning_type_id` isn't stamped (synthetic typedefs, refs not
-    /// indexed by the table).
+    /// Raw field type annotation strings in declaration order, straight
+    /// from the source `TypeDef`. Recursive-field detection (the only
+    /// consumer) compares these by name against the owning type, so no
+    /// `parse_type_str` round-trip is needed.
+    field_type_strs: Vec<String>,
+    /// Owning type's canonical name — the identity used for
+    /// recursive-field detection (full + bare-suffix forms).
     owning_type_name: Option<String>,
 }
 
 fn find_ctor_owning_type(name: &str, ctx: &CodegenContext) -> Option<CtorDecl> {
     use crate::ast::{TopLevel, TypeDef};
 
-    let consider =
-        |type_name: &str, ctor_name: &str, fields: Vec<crate::types::Type>| -> CtorDecl {
-            let owning_type_id = ctx
-                .symbol_table
-                .type_id_of(&crate::ir::TypeKey::entry(type_name))
-                .or_else(|| {
-                    // The bare lookup didn't hit — try as `Module.Name`
-                    // for module-scoped types whose key carries an
-                    // explicit prefix.
-                    type_name.rsplit_once('.').and_then(|(prefix, bare)| {
-                        ctx.symbol_table
-                            .type_id_of(&crate::ir::TypeKey::in_module(prefix.to_string(), bare))
-                    })
-                });
-            let _ = ctor_name;
-            CtorDecl {
-                field_types: fields,
-                owning_type_id,
-                owning_type_name: Some(type_name.to_string()),
-            }
-        };
+    let consider = |type_name: &str, fields: Vec<String>| -> CtorDecl {
+        CtorDecl {
+            field_type_strs: fields,
+            owning_type_name: Some(type_name.to_string()),
+        }
+    };
 
     // Constructor name shapes the source may produce:
     //   - `Shape.Circle` (entry sum type)
@@ -750,12 +729,7 @@ fn find_ctor_owning_type(name: &str, ctx: &CodegenContext) -> Option<CtorDecl> {
                     let bare_form = format!("{parent}.{}", v.name);
                     let full_form = format!("{parent_full}.{}", v.name);
                     if name == bare_form || name == full_form {
-                        let fields = v
-                            .fields
-                            .iter()
-                            .map(|t| crate::types::parse_type_str(t))
-                            .collect();
-                        return Some(consider(&parent_full, &v.name, fields));
+                        return Some(consider(&parent_full, v.fields.clone()));
                     }
                 }
                 None
@@ -770,11 +744,8 @@ fn find_ctor_owning_type(name: &str, ctx: &CodegenContext) -> Option<CtorDecl> {
                     None => parent.clone(),
                 };
                 if name == parent || name == parent_full {
-                    let fts = fields
-                        .iter()
-                        .map(|(_, t)| crate::types::parse_type_str(t))
-                        .collect();
-                    return Some(consider(&parent_full, parent, fts));
+                    let fts = fields.iter().map(|(_, t)| t.clone()).collect();
+                    return Some(consider(&parent_full, fts));
                 }
                 None
             }
