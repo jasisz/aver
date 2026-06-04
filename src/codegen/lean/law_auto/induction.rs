@@ -172,19 +172,25 @@ fn emit_list_induction(
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
 
-    // `try simp[_all]` has the same closing power as bare `simp[_all]` (it IS
-    // simp when simp succeeds) but never throws, so any goal it can't discharge
-    // survives the induction and is admitted by the trailing `all_goals sorry`.
-    // Net: a law simp can prove closes (no sorry); anything else (rle/json
-    // roundtrips) degrades to the same `sorry` it emitted before — never a
-    // hard lake-build error. Closed arms leave 0 goals, so `all_goals sorry`
-    // is a no-op there (no spurious sorry).
+    // Each arm closes fully or admits `sorry` — and crucially BUILDS either
+    // way. `induction .. with | arm => tac` requires each arm's `tac` to close
+    // its goal; a leftover goal is an `unsolved goals` ERROR at the arm (a hard
+    // lake-build failure), NOT something a trailing `all_goals sorry` can mop
+    // up (that tactic is unreachable past a failing arm). So gate each arm on
+    // `first | (simp[_all] [defs]; done) | sorry`: the `; done` turns a
+    // didn't-close (or no-progress) `simp` into a throw that `first` catches
+    // and admits via `sorry`. A law simp can prove closes (no sorry); anything
+    // else (rle/json roundtrips, the fuel-wrapped quicksort SCC) degrades to an
+    // honest `sorry` that lake still builds — never a silent unsolved-goals
+    // error.
     let proof_lines = vec![
         format!("  intro {}", intro_names.join(" ")),
         format!("  induction {} with", target_lean),
-        format!("  | nil => try simp [{}]", simp_list),
-        format!("  | cons head tail ih => try simp_all [{}]", simp_list),
-        "  all_goals sorry".to_string(),
+        format!("  | nil => first | (simp [{}]; done) | sorry", simp_list),
+        format!(
+            "  | cons head tail ih => first | (simp_all [{}]; done) | sorry",
+            simp_list
+        ),
     ];
 
     Some(AutoProof {

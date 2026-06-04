@@ -63,6 +63,14 @@ fn assert_proof_builds_with_sorry_budget(
         .arg(&output_dir)
         .arg("--check")
         .arg("--check-json")
+        // Budget = the expected count, so `passed` means "lake build SUCCEEDED
+        // and stayed within this count". Asserting `passed` below (with the
+        // count asserted equal) certifies the build actually succeeded — not
+        // just that the sorry-warning count matched. Guards the false-green
+        // where a tactic leaves unsolved goals (lake exit 1, zero sorry
+        // warnings) yet a count-only check would pass.
+        .arg("--sorry-budget")
+        .arg(expected_sorries.to_string())
         .output()
         .expect("expected `aver proof --check --check-json` to run");
 
@@ -98,6 +106,23 @@ fn assert_proof_builds_with_sorry_budget(
         example_path,
         expected_sorries,
         actual,
+        format_output(&run)
+    );
+
+    // Build-success guard (the false-green fix): with --sorry-budget set to the
+    // expected count and the count asserted equal above, `passed:false` here
+    // means `lake build` itself FAILED (e.g. a tactic left unsolved goals —
+    // lake exit 1 with zero `sorry` warnings, which the count-only check is
+    // blind to). The generated proof must actually build, not merely match a
+    // sorry count.
+    let passed = summary["passed"].as_bool().unwrap_or(false);
+    assert!(
+        passed,
+        "{}: generated Lean proof does NOT build (lake reported failure within \
+         the sorry budget {}). A count match alone is not enough — the build \
+         must succeed.\n{}",
+        example_path,
+        expected_sorries,
         format_output(&run)
     );
 
@@ -286,11 +311,14 @@ fn proof_export_builds_result_chain_when_lake_is_available() {
 
 #[test]
 fn proof_export_builds_rle_when_lake_is_available() {
-    // The encode/decode roundtrip laws are list-given. #409's Lean
-    // list-induction (`induction xs with | nil | cons`) closes one; the other
-    // roundtrip is beyond a single `simp_all` and degrades to one `sorry` via
-    // the `all_goals sorry` tail (was 2 before #409).
-    assert_proof_builds_with_sorry_budget("examples/data/rle.av", "aver-proof-rle", 1);
+    // The encode/decode roundtrip laws are list-given, so #409 attempts Lean
+    // list-induction — but `encode` threads an accumulator (`encodeLoop`) so a
+    // plain `induction xs` IH does not align; both roundtrips fall to an honest
+    // `sorry` (per-arm `first | (simp_all; done) | sorry`, which BUILDS). The
+    // earlier #409 revision claimed 1 here, a false green — the tactic left
+    // unsolved goals that `lake build` rejects but the sorry-count metric was
+    // blind to (fixed in commands.rs to gate on lake's exit status).
+    assert_proof_builds_with_sorry_budget("examples/data/rle.av", "aver-proof-rle", 2);
 }
 
 #[test]
@@ -305,12 +333,17 @@ fn proof_dafny_verifies_rle_when_dafny_is_available() {
 
 #[test]
 fn proof_export_builds_quicksort_when_lake_is_available() {
-    // #409: the three list-given laws (`sort.resultOrdered` /
-    // `sort.lengthPreserved` / `sort.idempotent`) now close universally under
-    // the Lean list-induction strategy (`induction xs`; `simp_all` over the
-    // unfolded sort/partition defs discharges each), so the universal proofs
-    // are no longer sorries. (Was 3 before #409.)
-    assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 0);
+    // The three list-given laws (`sort.resultOrdered` / `sort.lengthPreserved`
+    // / `sort.idempotent`) are attempted via #409 Lean list-induction, but
+    // `sort` is a fuel-wrapped partition recursion that `simp_all` cannot
+    // reduce, so each falls to an honest `sorry` that BUILDS (per-arm
+    // `first | (simp_all; done) | sorry`). An earlier #409 revision reported 0
+    // here — a FALSE GREEN: the tactic left unsolved goals that `lake build`
+    // rejects (exit 1), which the `declaration uses 'sorry'` count metric was
+    // blind to. Fixed: commands.rs gates pass on lake's exit status, so this
+    // budget is now the build-verified count. (Native universal closure for the
+    // partition SCC is the #125 native-decreases epic, not reachable here.)
+    assert_proof_builds_with_sorry_budget("examples/data/quicksort.av", "aver-proof-quicksort", 3);
 }
 
 #[test]
