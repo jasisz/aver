@@ -552,6 +552,63 @@ fn proof_dafny_warns_example_cases_not_checked() {
 }
 
 #[test]
+fn proof_lean_vacuous_when_premise_law_builds_and_passes() {
+    // A `when` premise that is unsatisfiable (here a nested Bool `match`
+    // requiring `n > 0` AND `n < 0`) makes the law vacuously true, so a
+    // sound prover must ACCEPT it. The premise lowers to a multi-line
+    // `if/then/else`; previously the emit was unparseable Lean (the
+    // unparenthesized `if` swallowed the trailing `= true`, and the
+    // `-- when` comment leaked its continuation lines), and even parsed
+    // `simp only` left the Bool premise opaque so `omega` failed — a
+    // valid law wrongly REJECTED (false-RED). Pins parens + single-line
+    // comment + `simp_all` so it builds and passes.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean vacuous-when test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-lean-vacuous-when-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    let av = src.join("vac.av");
+    std::fs::write(
+        &av,
+        "module VacuousLaw\n\nfn dbl(n: Int) -> Int\n    ? \"double\"\n    n + n\n\n\
+         verify dbl law vac\n    given n: Int = -2..2\n    when match n > 0\n\
+         \x20       true -> match n < 0\n            true -> true\n            false -> false\n\
+         \x20       false -> false\n    dbl(n) => n + 999\n",
+    )
+    .expect("write vac.av");
+    let out = temp_output_dir("aver-lean-vacuous-when-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(&av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "vacuously-true `when`-premised law must build and pass on Lean\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_export_builds_grok_s_language_when_lake_is_available() {
     assert_proof_builds("examples/core/grok_s_language.av", "aver-proof-grok");
 }

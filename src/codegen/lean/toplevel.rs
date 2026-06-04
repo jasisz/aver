@@ -1962,10 +1962,13 @@ fn emit_verify_law_block(
         ));
     }
     if let Some(when_expr) = &law.when {
-        lines.push(format!(
-            "-- when {}",
-            emit_expr_legacy(when_expr, ctx, None)
-        ));
+        // Flatten to one physical line: a `--` line comment only covers
+        // the first line, so a multi-line premise (e.g. a nested Bool
+        // match lowering to a multi-line `if/then/else`) would leak its
+        // continuation lines out as stray Lean commands ("unexpected
+        // token 'else'").
+        let when_comment = emit_expr_legacy(when_expr, ctx, None).replace('\n', " ");
+        lines.push(format!("-- when {when_comment}"));
     }
     // Issue #128: singleton-domain givens + RHS that references no
     // given + IR didn't pin a strategy that closes the constant-RHS
