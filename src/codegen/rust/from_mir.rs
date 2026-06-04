@@ -322,6 +322,74 @@ fn resolve_module_call<'a>(
     best
 }
 
+/// Resolve a bare record `type_name` (`"Note"`) to the Rust path that
+/// names its struct. For a type defined in a `depends`-ed module the
+/// symbol table carries a scoped [`TypeKey`] (`scope = "Apps.Notepad.
+/// Store"`), so the canonical name is dotted and routes through
+/// [`resolve_module_call`] to the module-mangled path
+/// (`crate::aver_generated::apps::notepad::store::Note`). For an
+/// entry-scope type (`scope = None`) the canonical name is bare and
+/// no qualification is needed, so this returns `None` and the caller
+/// keeps the verbatim name (resolved in scope by the entry module's
+/// own `use`).
+///
+/// This is the verify-test-path sibling of the `Construct(User)`
+/// emit's module-path mangling: a `RecordCreate`/`RecordUpdate` of a
+/// cross-module type inside a `#[cfg(test)]` verify module has no
+/// glob `use` bringing the dep type into scope, so the reference must
+/// be fully qualified. Reuses [`resolve_module_call`] +
+/// [`module_prefix_to_rust_path`], the same helpers the runtime
+/// cross-module ctor / fn-ref emit uses.
+///
+/// Identity comes from the `MirRecordCreate.type_id` when present (the
+/// resolver's precise handle — robust against two dep modules sharing a
+/// bare type name); a `None` `type_id` falls back to the first
+/// symbol-table entry whose bare name matches.
+fn qualify_record_type(
+    type_id: Option<crate::ir::TypeId>,
+    type_name: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> Option<String> {
+    let entry = match type_id {
+        Some(id) => ctx.symbol_table.type_entry(id),
+        None => ctx
+            .symbol_table
+            .types
+            .iter()
+            .find(|e| e.key.name == type_name)?,
+    };
+    let canonical = entry.key.canonical();
+    let (prefix, suffix) = resolve_module_call(&canonical, ctx.module_prefixes)?;
+    Some(format!(
+        "{}::{}",
+        module_prefix_to_rust_path(prefix),
+        suffix
+    ))
+}
+
+/// Pick the Rust type name for a `RecordCreate` / `RecordUpdate`.
+/// Precedence, mirroring HIR's verbatim-type-name shape plus the
+/// new cross-module qualification:
+///  1. built-in dotted record rename (`Tcp.Connection` →
+///     `Tcp_Connection`),
+///  2. module-qualified path for a `depends`-ed user record (so a
+///     verify-test reference compiles without a glob `use`),
+///  3. the verbatim source `type_name` (entry-scope records, in
+///     scope via the entry module's own `use`).
+fn mir_record_rust_type(
+    type_id: Option<crate::ir::TypeId>,
+    type_name: &str,
+    ctx: &MirEmitCtx<'_>,
+) -> String {
+    if let Some(renamed) = builtin_dotted_record_rename(type_name) {
+        return renamed.to_string();
+    }
+    if let Some(qualified) = qualify_record_type(type_id, type_name, ctx) {
+        return qualified;
+    }
+    type_name.to_string()
+}
+
 /// How many fns the MIR walker can emit
 /// standalone vs how many need HIR fallback. Pre-wire-up signal
 /// so callers can track walker reach across the shipped corpus
@@ -874,8 +942,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // re-exported `Tcp_Connection` struct. Fields route
             // through `clone_arg`.
             let rec = &spanned_rec.node;
-            let rust_type =
-                builtin_dotted_record_rename(&rec.type_name).unwrap_or(rec.type_name.as_str());
+            let rust_type = mir_record_rust_type(rec.type_id, &rec.type_name, emit_ctx);
             let mut parts = Vec::with_capacity(rec.fields.len());
             for f in &rec.fields {
                 let val =
@@ -891,8 +958,7 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // RecordCreate; base + updates route through
             // `clone_arg`.
             let upd = &spanned_upd.node;
-            let rust_type =
-                builtin_dotted_record_rename(&upd.type_name).unwrap_or(upd.type_name.as_str());
+            let rust_type = mir_record_rust_type(upd.type_id, &upd.type_name, emit_ctx);
             let base = mir_clone_arg(
                 emit_mir_expr(&upd.base, emit_ctx)?,
                 &upd.base.node,
@@ -2853,7 +2919,21 @@ fn emit_mir_builtin_call(
         // ---- Int ----
         "Int.abs" => format!("{}.abs()", arg!(0)),
         "Int.fromFloat" => format!("({} as i64)", arg!(0)),
-        "Int.fromString" => format!("{}.parse::<i64>().map_err(|e| e.to_string())", arg!(0)),
+        "Int.fromString" => {
+            // Match the VM's Err message BYTE-FOR-BYTE: `Int.fromString`
+            // in `src/types/int.rs` returns `Cannot parse '{input}' as
+            // Int`, not rustc's native `parse` error ("invalid digit
+            // found in string"). A program that reads the `Result.Err`
+            // string (and verify cases asserting it) must see identical
+            // bytes on rust and the VM. Bind a *reference* to the input
+            // (parse + the message both borrow), so a non-trivial arg
+            // expr is evaluated once and the original owned value stays
+            // available to surrounding code (the HIR emit borrowed too).
+            let s = arg!(0);
+            format!(
+                "{{ let __s = &({s}); __s.parse::<i64>().map_err(|_| format!(\"Cannot parse '{{}}' as Int\", __s)) }}"
+            )
+        }
         "Int.min" => format!("{}.min({})", arg!(0), arg!(1)),
         "Int.max" => format!("{}.max({})", arg!(0), arg!(1)),
         "Int.mod" => {
@@ -2869,7 +2949,15 @@ fn emit_mir_builtin_call(
         "Float.round" => format!("{}.round() as i64", arg!(0)),
         "Float.floor" => format!("{}.floor() as i64", arg!(0)),
         "Float.ceil" => format!("{}.ceil() as i64", arg!(0)),
-        "Float.fromString" => format!("{}.parse::<f64>().map_err(|e| e.to_string())", arg!(0)),
+        "Float.fromString" => {
+            // Match the VM's Err message BYTE-FOR-BYTE: `Float.fromString`
+            // in `src/types/float.rs` returns `Cannot parse '{input}' as
+            // Float`, not rustc's native `parse` error.
+            let s = arg!(0);
+            format!(
+                "{{ let __s = &({s}); __s.parse::<f64>().map_err(|_| format!(\"Cannot parse '{{}}' as Float\", __s)) }}"
+            )
+        }
         "Float.sqrt" => format!("{}.sqrt()", arg!(0)),
         "Float.pow" => format!("{}.powf({})", arg!(0), arg!(1)),
         "Float.min" => format!("{}.min({})", arg!(0), arg!(1)),
@@ -3662,6 +3750,46 @@ mod tests {
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("dep-module record should emit");
         assert_eq!(emit, "Expr { tag: 1i64 }");
+    }
+
+    #[test]
+    fn emits_record_create_dep_module_qualified_when_prefix_registered() {
+        // Residual-2 fix: when the owning module's prefix IS registered
+        // in `module_prefixes` (the verify-test codegen path, where the
+        // `#[cfg(test)]` module has no glob `use` bringing the dep type
+        // into scope), a cross-module `RecordCreate` must emit the
+        // module-mangled Rust path — not the bare name. This is the
+        // sibling of the `Construct(User)` ctor mangling.
+        let field = crate::ir::mir::MirRecordField {
+            name: "id".to_string(),
+            value: span(MirExpr::Literal(span(crate::ast::Literal::Int(1)))),
+        };
+        let rec = crate::ir::mir::MirRecordCreate {
+            type_id: Some(crate::ir::TypeId(0)),
+            type_name: "Note".to_string(),
+            fields: vec![field],
+        };
+        let expr = span(MirExpr::RecordCreate(span(rec)));
+        use crate::ir::ModuleId;
+        use crate::ir::identity::TypeKey;
+        use crate::ir::symbol_table::{ModuleEntry, TypeEntry};
+        let mut st = SymbolTable::default();
+        st.modules.push(ModuleEntry { prefix: None });
+        st.types.push(TypeEntry {
+            key: TypeKey::in_module("Apps.Notepad.Store", "Note"),
+            module: ModuleId(0),
+            index_in_module: 0,
+            variants: vec![],
+            is_product: true,
+        });
+        let mut prefixes = HashSet::new();
+        prefixes.insert("Apps.Notepad.Store".to_string());
+        let ctx = MirEmitCtx::for_test(&st, &prefixes);
+        let emit = emit_mir_expr(&expr, &ctx).expect("qualified dep-module record should emit");
+        assert_eq!(
+            emit,
+            "crate::aver_generated::apps::notepad::store::Note { id: 1i64 }"
+        );
     }
 
     #[test]
