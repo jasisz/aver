@@ -267,10 +267,15 @@ def verify(dry_run: bool) -> None:
     # Skip generated self-host code in clippy (same as CI)
     print("  verify: cargo clippy --workspace (no aver-lang)", flush=True)
     run(["cargo", "clippy", "--workspace", "--all-targets", "--exclude", "aver-lang", "--", "-D", "warnings"])
-    print("  verify: cargo clippy -p aver-lang --features wasm", flush=True)
-    run(["cargo", "clippy", "-p", "aver-lang", "--lib", "--bin", "aver", "--features", "wasm", "--", "-D", "warnings"])
-    print("  verify: cargo test --features wasm", flush=True)
-    run(["cargo", "test", "--features", "wasm"])
+    print("  verify: cargo clippy -p aver-lang --features wasm,wasip2", flush=True)
+    run(["cargo", "clippy", "-p", "aver-lang", "--lib", "--bin", "aver", "--features", "wasm,wasip2", "--", "-D", "warnings"])
+    # `wasip2` is a separate feature; with `wasm` alone every
+    # `#![cfg(feature = "wasip2")]` test file reports 0 tests, so the
+    # wasip2 codegen / component-model surface was never gated by the
+    # release check. Enable both (they share `wasm-compile`) so the
+    # wasip2_* suites actually run.
+    print("  verify: cargo test --features wasm,wasip2", flush=True)
+    run(["cargo", "test", "--features", "wasm,wasip2"])
 
     # Bench smoke. Runs every scenario in `bench/scenarios/` end-to-end on
     # the VM target — catches pipeline / VM regressions that the unit tests

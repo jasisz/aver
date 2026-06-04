@@ -69,16 +69,18 @@ jobs:
           test -x "$PWD/binaryen-${BINARYEN_VERSION}/bin/wasm-opt"
           test -x "$PWD/binaryen-${BINARYEN_VERSION}/bin/wasm-metadce"
 
-      - name: Clippy (wasm)
-        run: cargo clippy -p aver-lang --lib --bin aver --features wasm -- -D warnings
+      - name: Clippy (wasm + wasip2)
+        run: cargo clippy -p aver-lang --lib --bin aver --features wasm,wasip2 -- -D warnings
 
-      - name: Test (wasm)
-        # Same proptest budget as the Check & Test job — applies to
-        # any wasm-feature-gated proptest fixtures the feature flag
-        # pulls in. No-op for non-proptest tests.
+      - name: Test (wasm + wasip2)
+        # `wasip2` is a separate feature; `wasm` alone leaves every
+        # `#![cfg(feature = "wasip2")]` test file at 0 tests, so the
+        # wasip2 codegen / component-model surface went unchecked by the
+        # gate. Enable both (they share `wasm-compile`) so the wasip2_*
+        # suites run. Same proptest budget as the Check & Test job.
         env:
           PROPTEST_CASES: '2000'
-        run: cargo test -p aver-lang --features wasm
+        run: cargo test -p aver-lang --features wasm,wasip2
 
   wasm_release_build:
     # Post-merge release-build verification under `--features wasm`.
