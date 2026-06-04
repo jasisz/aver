@@ -480,6 +480,7 @@ pub fn emit_verify_law_forall_auto_proof(
                         smart_guard.as_ref(),
                         lifted,
                         chosen_intro,
+                        law.when.is_some(),
                         ctx,
                     ),
                     replaces_theorem: false,
@@ -511,6 +512,7 @@ fn emit_simp_omega_from_ir(
     smart_guard: Option<&crate::ir::SmartGuard>,
     lifted: bool,
     intro_names: &[String],
+    has_when: bool,
     ctx: &CodegenContext,
 ) -> Vec<String> {
     let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
@@ -561,10 +563,20 @@ fn emit_simp_omega_from_ir(
             ],
         )
     } else {
-        intro_then(
-            intro_names,
-            vec![format!("simp only [{}] <;> omega", lean_names.join(", "))],
-        )
+        // A `when` premise is introduced as a hypothesis (`h_when`).
+        // `simp_all` simplifies it — e.g. a nested Bool `match` lowered to
+        // an `if/then/else` — so `omega` can use the premise; for an
+        // unsatisfiable premise it derives the contradiction and closes
+        // the (vacuously-true) law. Plain `simp only` leaves the Bool
+        // premise opaque and `omega` fails ("no usable constraints"),
+        // wrongly rejecting a valid law. Without a `when`, keep the
+        // conservative `simp only` — there is no premise to simplify.
+        let tac = if has_when {
+            format!("simp_all [{}] <;> omega", lean_names.join(", "))
+        } else {
+            format!("simp only [{}] <;> omega", lean_names.join(", "))
+        };
+        intro_then(intro_names, vec![tac])
     }
 }
 

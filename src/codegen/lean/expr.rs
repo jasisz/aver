@@ -448,11 +448,18 @@ fn emit_match(
         // their `by omega` proof obligation. Plain `if` everywhere
         // else keeps spec-equivalence and other auto-provers (which
         // pattern-match on the plain `if`-shape) working.
+        // Parenthesize: an `if/then/else` is greedy, so an unwrapped
+        // emission breaks in two places the Bool-match path actually
+        // hits — a NESTED match (`if c1 then (if c2 …) else …`, where the
+        // inner `else` would otherwise be swallowed) and an appended
+        // operator (a `when` premise gets `= true` appended, and
+        // `else f = true` would parse as `else (f = true)`). Wrapping is
+        // transparent to Lean's elaborator and tactics (same `ite`).
         if true_body_uses_refinement_subtype(true_body, ctx) {
             let hyp = format!("h_{line}");
-            return format!("if {hyp} : {cond} then {t}\n  else {f}");
+            return format!("(if {hyp} : {cond} then {t}\n  else {f})");
         }
-        return format!("if {cond} then {t}\n  else {f}");
+        return format!("(if {cond} then {t}\n  else {f})");
     }
     let subj = emit_expr(subject, ctx);
     let mut arm_strs = Vec::new();
