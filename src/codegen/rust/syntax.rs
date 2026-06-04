@@ -1,9 +1,5 @@
 use crate::ast::Literal;
-use crate::codegen::CodegenContext;
-use crate::ir::hir::{ResolvedMatchArm, ResolvedPattern, ResolvedStmt};
-
-use super::emit_ctx::EmitCtx;
-use super::expr::emit_expr;
+use crate::ir::hir::{ResolvedMatchArm, ResolvedPattern};
 
 pub(super) fn has_string_literal_patterns(arms: &[ResolvedMatchArm]) -> bool {
     arms.iter()
@@ -17,20 +13,6 @@ pub(super) fn has_list_patterns(arms: &[ResolvedMatchArm]) -> bool {
             ResolvedPattern::EmptyList | ResolvedPattern::Cons(_, _)
         )
     })
-}
-
-/// Emit a resolved statement as Rust code.
-pub fn emit_stmt(stmt: &ResolvedStmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    match stmt {
-        ResolvedStmt::Binding { name, value, .. } => {
-            let val = emit_expr(&value.node, ctx, ectx);
-            format!("let {} = {};", aver_name_to_rust(name), val)
-        }
-        ResolvedStmt::Expr(expr) => {
-            let val = emit_expr(&expr.node, ctx, ectx);
-            format!("{};", val)
-        }
-    }
 }
 
 /// Rust reserved words that need raw identifier escaping.

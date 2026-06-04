@@ -1,228 +1,22 @@
-use super::emit_ctx::{EmitCtx, is_copy_type, should_borrow_param};
-use super::expr::{
-    aver_name_to_rust, classify_body_plan_for_rust, classify_dispatch_plan_for_rust,
-    classify_thin_fn_def_for_rust, clone_arg, emit_body_plan_for_rust, emit_expr, emit_stmt,
-};
+use super::emit_ctx::{EmitCtx, should_borrow_param};
+use super::expr::{aver_name_to_rust, classify_thin_fn_def_for_rust};
 use super::types::type_annotation_to_rust;
 use crate::ast::*;
 use crate::codegen::CodegenContext;
-use crate::ir::hir::{ResolvedFnBody, ResolvedMatchArm, ResolvedStmt};
-use crate::ir::{BodyExprPlan, CallPlan, LeafOp, thin_kind_is_parent_thin_candidate};
+use crate::ir::thin_kind_is_parent_thin_candidate;
 use crate::types::{Type, parse_type_str};
 /// Top-level Aver items → Rust items (structs, enums, functions, tests).
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-// Resolved-form lookup helpers live as methods on [`CodegenContext`]
-// since Phase E PR 9: `ctx.resolve_fn_def(fd, scope)`,
-// `ctx.resolve_expr(spanned, scope)`, `ctx.resolve_stmt(stmt, scope)`,
-// `ctx.resolve_pattern(pat, scope)` — shared with wasm-gc / Lean /
-// Dafny / self-host backends as they migrate. The `scope` parameter
-// (Phase E PR 9.3a / 9.4) carries the owning module prefix when the
-// caller knows which dep module the source-shape AST lives in, so
-// cross-module ctor / fn classification uses the right resolver
-// `current_module` instead of the entry's. The local `emit_*_legacy`
-// helpers below read `scope` off `EmitCtx::current_module_scope`
-// (stamped via `EmitCtx::with_scope` at fn-emit time) so the
-// threading stays implicit through 20+ on-demand call sites.
-// See `src/codegen/mod.rs`.
-
-/// Source-shape variant of [`emit_expr`] for emitters that still hold
-/// a pre-resolve [`Expr`] borrow (TCO hoisting / loop, mutual-TCO
-/// trampoline, verify cases, main body). Lifts the expression on
-/// demand through the entry's resolver and dispatches through the
-/// migrated emitter. The cost is one resolver lift per call — cheap
-/// for the small subtrees these helpers walk.
-fn emit_expr_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    let spanned = Spanned::bare(expr.clone());
-    let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
-    emit_expr(&resolved.node, ctx, ectx)
-}
-
-/// `clone_arg`/`borrow_arg` analogue that takes a source-shape `&Expr`.
-fn clone_arg_legacy(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    let spanned = Spanned::bare(expr.clone());
-    let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
-    clone_arg(&resolved.node, ctx, ectx)
-}
-
-/// Source-shape [`CallLowerCtx`] adapter for the TCO hoisting helpers
-/// that still walk pre-resolve [`Expr`]. The adapter is intentionally
-/// minimal — these helpers only inspect shape (is-leaf, is-effect-
-/// free, is-forward-call); identity classification flows through the
-/// IR's `classify_*` family unchanged. See
-/// [`crate::ir::CallLowerCtx`].
-struct RustSourceCallCtx<'a, 'b> {
-    ctx: &'a CodegenContext,
-    ectx: &'b EmitCtx,
-}
-
-impl crate::ir::CallLowerCtx for RustSourceCallCtx<'_, '_> {
-    fn is_local_value(&self, name: &str) -> bool {
-        self.ectx.local_types.contains_key(name)
-    }
-    fn is_user_type(&self, name: &str) -> bool {
-        crate::codegen::common::is_user_type(name, self.ctx)
-    }
-    fn resolve_module_call<'a>(&self, dotted: &'a str) -> Option<(&'a str, &'a str)> {
-        let mut best = None;
-        for (dot_idx, _) in dotted.match_indices('.') {
-            let prefix = &dotted[..dot_idx];
-            let suffix = &dotted[dot_idx + 1..];
-            if self.ctx.module_prefixes.contains(prefix)
-                && best.is_none_or(|existing: (&str, &str)| prefix.len() > existing.0.len())
-            {
-                best = Some((prefix, suffix));
-            }
-        }
-        best
-    }
-}
-
-fn classify_body_expr_plan_source<'a>(
-    expr: &'a Expr,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> BodyExprPlan<'a> {
-    let lower_ctx = RustSourceCallCtx { ctx, ectx };
-    crate::ir::classify_body_expr_plan(expr, &lower_ctx)
-}
-
-/// Source-shape variant of [`super::expr::emit_stmt`] for sites that
-/// still walk pre-resolve [`Stmt`] (TCO loop emit, trampoline arms,
-/// verify cases, main fn body). Lifts on-demand through
-/// [`CodegenContext::resolve_stmt`] and calls the migrated emit.
-fn emit_stmt_legacy(stmt: &Stmt, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    let resolved = ctx.resolve_stmt(stmt, ectx.current_module_scope.as_deref());
-    emit_stmt(&resolved, ctx, ectx)
-}
-
-/// Source-shape variant of [`super::pattern::emit_pattern`].
-fn emit_pattern_legacy(
-    pat: &Pattern,
-    string_context: bool,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> String {
-    let resolved = ctx.resolve_pattern(pat, ectx.current_module_scope.as_deref());
-    super::pattern::emit_pattern(&resolved, string_context, ctx)
-}
-
-/// Legacy [`has_string_literal_patterns`] for source-shape MatchArm.
-fn has_string_literal_patterns_legacy(arms: &[MatchArm]) -> bool {
-    arms.iter()
-        .any(|arm| matches!(&arm.pattern, Pattern::Literal(Literal::Str(_))))
-}
-
-/// Legacy [`has_list_patterns`] for source-shape MatchArm.
-fn has_list_patterns_legacy(arms: &[MatchArm]) -> bool {
-    arms.iter()
-        .any(|arm| matches!(&arm.pattern, Pattern::EmptyList | Pattern::Cons(_, _)))
-}
-
-/// Lift a source-shape `MatchArm` slice into resolved form via the
-/// on-demand resolver. Used at the call sites that haven't migrated
-/// past `Expr` shape (TCO loop emit, mutual-TCO trampoline arms) but
-/// need to feed `&[ResolvedMatchArm]` to the migrated dispatch /
-/// list-match / pattern emit helpers.
-fn resolve_match_arms_on_demand(
-    arms: &[MatchArm],
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> Vec<ResolvedMatchArm> {
-    let scope = ectx.current_module_scope.as_deref();
-    arms.iter()
-        .map(|arm| {
-            let pattern = ctx.resolve_pattern(&arm.pattern, scope);
-            let body = Box::new(ctx.resolve_expr(&arm.body, scope));
-            let binding_slots = std::sync::OnceLock::new();
-            if let Some(slots) = arm.binding_slots.get() {
-                let _ = binding_slots.set(slots.clone());
-            }
-            ResolvedMatchArm {
-                pattern,
-                body,
-                binding_slots,
-            }
-        })
-        .collect()
-}
-
-/// Source-shape variant of [`classify_dispatch_plan_for_rust`] for
-/// emitters that still hold source `MatchArm` slices.
-fn classify_dispatch_plan_for_rust_legacy(
-    arms: &[MatchArm],
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> Option<crate::ir::MatchDispatchPlan> {
-    let resolved = resolve_match_arms_on_demand(arms, ctx, ectx);
-    classify_dispatch_plan_for_rust(&resolved, ctx, ectx)
-}
-
-/// Source-shape variant of [`super::expr::emit_list_match`].
-fn emit_list_match_legacy<F>(
-    subject: String,
-    arms: &[MatchArm],
-    list_shape: Option<crate::ir::ListMatchShape>,
-    allow_fast_macro: bool,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    body_for_arm: F,
-) -> String
-where
-    F: Fn(&MatchArm) -> String,
-{
-    let resolved = resolve_match_arms_on_demand(arms, ctx, ectx);
-    super::expr::emit_list_match(
-        subject,
-        &resolved,
-        list_shape,
-        allow_fast_macro,
-        ctx,
-        |rarm| {
-            // Lookup the original arm by pattern equality (positional — same length, same order).
-            let idx = resolved
-                .iter()
-                .position(|r| std::ptr::eq(r, rarm))
-                .unwrap_or_else(|| {
-                    // Fallback to structural equality on pattern, since the closure invokes us with
-                    // a borrow into the same `resolved` vec.
-                    resolved
-                        .iter()
-                        .position(|r| r.pattern == rarm.pattern)
-                        .unwrap_or(0)
-                });
-            body_for_arm(&arms[idx])
-        },
-    )
-}
-
-/// Source-shape variant of [`super::expr::emit_dispatch_table_match`].
-fn emit_dispatch_table_match_legacy<F>(
-    subject: String,
-    arms: &[MatchArm],
-    shape: &crate::ir::DispatchTableShape,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    body_for_arm: F,
-) -> String
-where
-    F: Fn(&MatchArm) -> String,
-{
-    let resolved = resolve_match_arms_on_demand(arms, ctx, ectx);
-    super::expr::emit_dispatch_table_match(subject, &resolved, shape, |rarm| {
-        let idx = resolved
-            .iter()
-            .position(|r| std::ptr::eq(r, rarm))
-            .unwrap_or_else(|| {
-                resolved
-                    .iter()
-                    .position(|r| r.pattern == rarm.pattern)
-                    .unwrap_or(0)
-            });
-        body_for_arm(&arms[idx])
-    })
-}
+// rust-on-MIR W6/Stage-3: the HIR `ResolvedExpr` walker is gone. Every
+// fn / main / verify-case body is rendered by the MIR walker
+// (`from_mir`); this module keeps the structural emitters (type defs,
+// fn signatures, mutual-TCO discovery, verify scaffolding) plus the
+// borrow/rc helpers the MIR TCO synthesis reuses. The resolved-form
+// lookup helpers still live as methods on [`CodegenContext`]
+// (`ctx.resolve_fn_def` / `resolve_expr`) for the on-demand verify-case
+// + main lift.
 
 fn visibility_prefix(public: bool) -> &'static str {
     if public { "pub " } else { "" }
@@ -539,24 +333,6 @@ fn emit_product_type(
     out.trim_end().to_string()
 }
 
-/// Collect local_types from function signature.
-///
-/// #180 Phase 7: routes through the `ResolvedProgramView` (already-
-/// parsed typed params) when the fn resolves through the symbol
-/// table. Synthetic / mid-rewrite fns the resolved-view path doesn't
-/// index fall back to `parse_type_str` on the AST annotations.
-fn collect_fn_local_types(fd: &FnDef, ctx: &CodegenContext) -> HashMap<String, Type> {
-    let resolved = crate::codegen::common::fn_id_for_decl(ctx, fd)
-        .and_then(|id| ctx.resolved_program.fn_by_id(id));
-    if let Some(rfd) = resolved {
-        return collect_fn_local_types_from_resolved(rfd);
-    }
-    fd.params
-        .iter()
-        .map(|(name, type_ann)| (name.clone(), crate::types::parse_type_str(type_ann)))
-        .collect()
-}
-
 /// Collect local_types directly from a `ResolvedFnDef`'s already-
 /// parsed `params: Vec<(String, Type)>`. **Epic #180 Phase 3**: this
 /// is the typed-HIR path — no `ctx.fn_sigs.get(...)` side-channel,
@@ -572,14 +348,8 @@ fn collect_fn_local_types_from_resolved(
         .collect()
 }
 
-/// Build an EmitCtx for a function from its parameter types in fn_sigs.
+/// Build an EmitCtx for a function from its `ResolvedFnDef` param types.
 /// Uses borrow-by-default: non-Copy, non-Str params are tracked as borrowed.
-fn build_fn_ectx(fd: &FnDef, ctx: &CodegenContext, scope: Option<&str>) -> EmitCtx {
-    EmitCtx::for_fn(collect_fn_local_types(fd, ctx)).with_scope(scope)
-}
-
-/// Typed-HIR variant of [`build_fn_ectx`]. Reads param types from the
-/// `ResolvedFnDef` directly — epic #180 Phase 3 migration path.
 fn build_fn_ectx_from_resolved(
     resolved: &crate::ir::hir::ResolvedFnDef,
     scope: Option<&str>,
@@ -587,13 +357,9 @@ fn build_fn_ectx_from_resolved(
     EmitCtx::for_fn(collect_fn_local_types_from_resolved(resolved)).with_scope(scope)
 }
 
-/// Build an EmitCtx for a function WITHOUT borrow-by-default.
-/// Used for TCO functions where params need to be owned/mutable.
-fn build_fn_ectx_no_borrow(fd: &FnDef, ctx: &CodegenContext, scope: Option<&str>) -> EmitCtx {
-    EmitCtx::for_fn_no_borrow(collect_fn_local_types(fd, ctx)).with_scope(scope)
-}
-
-/// Typed-HIR variant of [`build_fn_ectx_no_borrow`].
+/// Build an EmitCtx for a TCO function WITHOUT borrow-by-default
+/// (params need to be owned/mutable). Reads param types from the
+/// `ResolvedFnDef`.
 fn build_fn_ectx_no_borrow_from_resolved(
     resolved: &crate::ir::hir::ResolvedFnDef,
     scope: Option<&str>,
@@ -706,23 +472,21 @@ fn emit_fn_def_with_visibility(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        // rust-on-MIR W6/Stage-2 (guest-entry): render the INNER body
-        // through the MIR walker behind the same `AVER_RUST_MIR_MAIN`
-        // gate the main wave (#395) uses — guest-entry is the last
-        // construct still pinned to the HIR expr walker. The
+        // The HIR walker is gone (rust-on-MIR W6/Stage-3): render the
+        // INNER body through the MIR walker. The
         // `with_guest_scope[_args][_result]` / `with_program_fn_store`
         // wrappers below stay UNCHANGED template text around the body.
-        // Falls back to the HIR `emit_fn_body` when there's no MIR program
-        // / the guest-entry FnId has no lowered `MirFn` / the walker
-        // returns `None`, so it stays non-regressing while HIR is still
-        // compiled.
-        let mir_body = if super::from_mir::mir_main_enabled() {
-            super::from_mir::emit_mir_guest_entry_body(resolved_fd, scope, ctx)
-        } else {
-            None
-        };
-        let mut wrapped_body =
-            mir_body.unwrap_or_else(|| emit_fn_body(&resolved_fd.body, ctx, &ectx));
+        // A `None` from the walker is a hard codegen error.
+        let mut wrapped_body = super::from_mir::emit_mir_guest_entry_body(resolved_fd, scope, ctx)
+            .unwrap_or_else(|| {
+                format!(
+                    "    {}",
+                    emit_codegen_error_expr(format!(
+                        "MIR walker could not render guest-entry fn `{}`",
+                        fd.name
+                    ))
+                )
+            });
         if let Some((prog_name, module_fns_name)) = &self_host_state {
             wrapped_body = format!(
                 "crate::self_host_support::with_program_fn_store({}.fns.clone(), {}.clone(), || {{\n{}\n}})",
@@ -800,61 +564,70 @@ fn emit_fn_def_with_visibility(
         return lines.join("\n");
     }
 
+    // The HIR walker is gone (rust-on-MIR W6/Stage-3): every fn body is
+    // synthesized by the MIR walker. Self-TCO fns route through
+    // `emit_mir_tco_fn` (loop synthesis), every other fn through
+    // `emit_mir_fn_body`. A `None` from the walker (or a missing
+    // `MirFn`) is a hard codegen error — never a panic and never a
+    // silent drop. The only constructs that hard-error here are the
+    // verify-only Oracle/trace residual, which never built on the Rust
+    // backend on either walker.
+    let mir_fn = ctx
+        .mir_program
+        .as_ref()
+        .and_then(|p| p.fn_by_id(resolved_fd.fn_id));
     if has_tco {
-        // rust-on-MIR Wave 5: synthesize the self-TCO loop from MIR
-        // behind `AVER_RUST_MIR_TCO=1`. Behavioral (build + run vs VM +
-        // self-host regen), not byte-parity — TCO never byte-graduates.
-        // Production default (flag unset) keeps the proven HIR emitter.
-        let mir_tco = if super::from_mir::mir_tco_enabled() {
-            ctx.mir_program
-                .as_ref()
-                .and_then(|p| p.fn_by_id(resolved_fd.fn_id))
-                .and_then(|mir_fn| {
-                    super::from_mir::emit_mir_tco_fn(
-                        fd,
-                        resolved_fd,
-                        mir_fn,
-                        &fn_name,
-                        &ret_type,
-                        visibility,
-                        scope,
-                        ctx,
-                    )
-                })
-        } else {
-            None
-        };
-        match mir_tco {
-            Some(code) => lines.push(code),
-            None => lines.push(emit_tco_fn(fd, &fn_name, &ret_type, ctx, &ectx, visibility)),
-        }
+        let code = mir_fn
+            .and_then(|mir_fn| {
+                super::from_mir::emit_mir_tco_fn(
+                    fd,
+                    resolved_fd,
+                    mir_fn,
+                    &fn_name,
+                    &ret_type,
+                    visibility,
+                    scope,
+                    ctx,
+                )
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "{}fn {}({}) -> {} {{\n    {}\n}}",
+                    visibility,
+                    fn_name,
+                    params,
+                    ret_type,
+                    emit_codegen_error_expr(format!(
+                        "MIR walker could not render self-TCO fn `{}`",
+                        fd.name
+                    ))
+                )
+            });
+        lines.push(code);
     } else {
         lines.push(format!(
             "{}fn {}({}) -> {} {{",
             visibility, fn_name, params, ret_type
         ));
-        // rust-on-MIR Wave 1 parity gate. Compute the HIR-walker
-        // body, then let `parity_gated_body` swap in the MIR-walker
-        // body iff it renders byte-identical (counting the fn
-        // "graduated"); otherwise it returns the HIR body unchanged.
-        // The byte-exact check makes the emitted source identical to
-        // the pre-port output by construction — it cannot regress —
-        // while exercising + verifying the MIR path for the covered
-        // subset. Borrow-by-default matches `ectx` here (this branch
-        // is the non-TCO path, so `for_fn` borrow rules).
-        let hir_body = emit_fn_body(&resolved_fd.body, ctx, &ectx);
-        let mir_fn = ctx
-            .mir_program
-            .as_ref()
-            .and_then(|p| p.fn_by_id(resolved_fd.fn_id));
-        let body = super::from_mir::parity_gated_body(
-            hir_body,
-            mir_fn,
-            resolved_fd,
-            scope,
-            /* borrow_by_default */ true,
-            ctx,
-        );
+        let body = mir_fn
+            .and_then(|mir_fn| {
+                super::from_mir::emit_mir_fn_body_routed(
+                    mir_fn,
+                    resolved_fd,
+                    scope,
+                    /* borrow_by_default */ true,
+                    ctx,
+                )
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "    {}",
+                    emit_codegen_error_expr(format!(
+                        "MIR walker could not render fn `{}`",
+                        fd.name
+                    ))
+                )
+            });
         lines.push(body);
         lines.push("}".to_string());
     }
@@ -870,26 +643,6 @@ fn emit_fn_params(params: &[(String, String)], mutable: bool) -> String {
 /// same borrow-by-default param signature as the HIR emitter's wrappers.
 pub(super) fn emit_fn_params_pub(params: &[(String, String)], mutable: bool) -> String {
     emit_fn_params(params, mutable)
-}
-
-/// Emit function params for self-TCO: non-Rc params are `mut`, Rc params are not
-/// (they'll be shadowed by `let x = Rc::new(x)` before the loop).
-fn emit_fn_params_tco(params: &[(String, String)], rc_indices: &HashSet<usize>) -> String {
-    params
-        .iter()
-        .enumerate()
-        .map(|(i, (name, type_ann))| {
-            let rust_type = type_annotation_to_rust(type_ann);
-            let rust_name = aver_name_to_rust(name);
-            if rc_indices.contains(&i) {
-                // Rc-wrapped: no `mut` needed (will be shadowed by Rc::new)
-                format!("{}: {}", rust_name, rust_type)
-            } else {
-                format!("mut {}: {}", rust_name, rust_type)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 fn emit_fn_params_with_rc(
@@ -920,36 +673,6 @@ fn emit_fn_params_with_rc(
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn emit_fn_body(body: &ResolvedFnBody, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    if let Some(plan) = classify_body_plan_for_rust(body, ctx, ectx) {
-        return format!(
-            "    crate::cancel_checkpoint();\n    {}",
-            emit_body_plan_for_rust(&plan, ctx, ectx)
-        );
-    }
-
-    let stmts = body.stmts();
-    let mut lines = Vec::new();
-    lines.push("    crate::cancel_checkpoint();".to_string());
-    for (i, stmt) in stmts.iter().enumerate() {
-        let is_last = i == stmts.len() - 1;
-        match stmt {
-            ResolvedStmt::Binding { name, ty_ann, .. } => {
-                lines.push(format!("    {}", emit_stmt(stmt, ctx, ectx)));
-                let _ = (name, ty_ann);
-            }
-            ResolvedStmt::Expr(expr) => {
-                if is_last {
-                    lines.push(format!("    {}", emit_expr(&expr.node, ctx, ectx)));
-                } else {
-                    lines.push(format!("    {};", emit_expr(&expr.node, ctx, ectx)));
-                }
-            }
-        }
-    }
-    lines.join("\n")
 }
 
 /// Recursively check if an expression contains the `?` (ErrorProp) operator.
@@ -1245,1183 +968,6 @@ pub(super) fn rc_param_names(
         .collect()
 }
 
-#[derive(Debug)]
-struct TcoInvariantHoist<'a> {
-    ptr: usize,
-    temp_name: String,
-    expr: &'a Expr,
-}
-
-fn expr_ptr(expr: &Expr) -> usize {
-    expr as *const Expr as usize
-}
-
-fn passthrough_param_names(
-    params: &[(String, String)],
-    passthrough_indices: &HashSet<usize>,
-) -> HashSet<String> {
-    passthrough_indices
-        .iter()
-        .filter_map(|&i| params.get(i).map(|(name, _)| name.clone()))
-        .collect()
-}
-
-/// Resolve the declared effect list of a callee by source-level
-/// name. #180 Phase 7: routes through the `ResolvedProgramView` —
-/// `fn_id_for_dotted_name` handles the bare/dotted split, then the
-/// fn's resolved effects are read off `ResolvedFnDef.effects`. The
-/// suffix fallback survives for callsites that haven't been threaded
-/// through a `FnKey` yet (entry-scope synthesised wrappers calling
-/// dep fns by bare name).
-///
-/// Returns `Some([])` for known pure fns, `Some([Console.print, …])`
-/// for declared effects, or `None` when the name doesn't resolve.
-fn lookup_call_effects(name: &str, ctx: &CodegenContext) -> Option<Vec<String>> {
-    if let Some(fn_id) = crate::codegen::common::fn_id_for_dotted_name(ctx, name)
-        && let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id)
-    {
-        return Some(rfd.effects.iter().map(|e| e.node.clone()).collect());
-    }
-    // Suffix fallback: a bare name (or one without an exact key)
-    // matches against module-scoped fns sharing the bare suffix.
-    // Returns a unique match only — ambiguity (two modules with the
-    // same bare fn) keeps the legacy behaviour of returning `None`.
-    let bare = name.rsplit('.').next().unwrap_or(name);
-    let mut matches: Vec<Vec<String>> = Vec::new();
-    for m in &ctx.resolved_program.modules {
-        for rfd in &m.fn_defs {
-            if rfd.name == bare {
-                matches.push(rfd.effects.iter().map(|e| e.node.clone()).collect());
-            }
-        }
-    }
-    if matches.len() == 1 {
-        matches.pop()
-    } else {
-        None
-    }
-}
-
-fn call_plan_is_effect_free(plan: &CallPlan, ctx: &CodegenContext) -> bool {
-    match plan {
-        CallPlan::Dynamic => false,
-        CallPlan::Function(name) | CallPlan::Builtin(name) => {
-            lookup_call_effects(name, ctx).is_some_and(|effects| effects.is_empty())
-        }
-        CallPlan::Wrapper(_) | CallPlan::NoneValue | CallPlan::TypeConstructor { .. } => true,
-    }
-}
-
-fn expr_is_loop_invariant(
-    expr: &Expr,
-    stable_names: &HashSet<String>,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> bool {
-    match expr {
-        Expr::Literal(_) => true,
-        Expr::Ident(name) => stable_names.contains(name),
-        Expr::Resolved { .. } | Expr::ErrorProp(_) | Expr::TailCall(_) => false,
-        Expr::Attr(obj, _) => {
-            crate::ir::expr_to_dotted_name(expr)
-                .is_some_and(|dotted| dotted.chars().next().is_some_and(|c| c.is_uppercase()))
-                || expr_is_loop_invariant(&obj.node, stable_names, ctx, ectx)
-        }
-        Expr::FnCall(_, args) => match classify_body_expr_plan_source(expr, ctx, ectx) {
-            BodyExprPlan::Leaf(_) => args
-                .iter()
-                .all(|arg| expr_is_loop_invariant(&arg.node, stable_names, ctx, ectx)),
-            BodyExprPlan::Call { target, args } => {
-                call_plan_is_effect_free(&target, ctx)
-                    && args
-                        .iter()
-                        .all(|arg| expr_is_loop_invariant(&arg.node, stable_names, ctx, ectx))
-            }
-            BodyExprPlan::ForwardCall(plan) => {
-                call_plan_is_effect_free(&plan.target, ctx)
-                    && args
-                        .iter()
-                        .all(|arg| expr_is_loop_invariant(&arg.node, stable_names, ctx, ectx))
-            }
-            BodyExprPlan::Expr(_) => false,
-        },
-        Expr::BinOp(_, left, right) => {
-            expr_is_loop_invariant(&left.node, stable_names, ctx, ectx)
-                && expr_is_loop_invariant(&right.node, stable_names, ctx, ectx)
-        }
-        Expr::Neg(inner) => expr_is_loop_invariant(&inner.node, stable_names, ctx, ectx),
-        Expr::Match { subject, arms, .. } => {
-            expr_is_loop_invariant(&subject.node, stable_names, ctx, ectx)
-                && arms
-                    .iter()
-                    .all(|arm| expr_is_loop_invariant(&arm.body.node, stable_names, ctx, ectx))
-        }
-        Expr::Constructor(_, Some(inner)) => {
-            expr_is_loop_invariant(&inner.node, stable_names, ctx, ectx)
-        }
-        Expr::Constructor(_, None) => true,
-        Expr::InterpolatedStr(parts) => parts.iter().all(|part| match part {
-            StrPart::Literal(_) => true,
-            StrPart::Parsed(expr) => expr_is_loop_invariant(&expr.node, stable_names, ctx, ectx),
-        }),
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
-            .iter()
-            .all(|item| expr_is_loop_invariant(&item.node, stable_names, ctx, ectx)),
-        Expr::MapLiteral(entries) => entries.iter().all(|(key, value)| {
-            expr_is_loop_invariant(&key.node, stable_names, ctx, ectx)
-                && expr_is_loop_invariant(&value.node, stable_names, ctx, ectx)
-        }),
-        Expr::RecordCreate { fields, .. } => fields
-            .iter()
-            .all(|(_, value)| expr_is_loop_invariant(&value.node, stable_names, ctx, ectx)),
-        Expr::RecordUpdate { base, updates, .. } => {
-            expr_is_loop_invariant(&base.node, stable_names, ctx, ectx)
-                && updates
-                    .iter()
-                    .all(|(_, value)| expr_is_loop_invariant(&value.node, stable_names, ctx, ectx))
-        }
-    }
-}
-
-fn expr_is_hoistable_invariant(
-    expr: &Spanned<Expr>,
-    stable_names: &HashSet<String>,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> bool {
-    if !expr_is_loop_invariant(&expr.node, stable_names, ctx, ectx) {
-        return false;
-    }
-
-    // Hoisting only works for `Copy` types. Anything that produces a
-    // non-`Copy` owned value (a freshly-constructed variant payload
-    // like `Val::ValList(AverList::empty())`, a buffer-build sink's
-    // `aver_rt::Buffer`, a freshly-allocated `AverList` / `AverMap` /
-    // `AverVector`) gets *moved* into the tail-call body on every
-    // iteration. Hoist + first-iter move = second iter dereferences a
-    // moved value and rustc rejects it; per-iter `.clone()` would
-    // defeat the hoist anyway.
-    //
-    // The check is type-driven (TypeChecker stamps every `Spanned<Expr>`
-    // with its inferred `Type`). Any expression whose result type is
-    // not `Copy` falls under the rule by virtue of its return type, no
-    // ad-hoc allowlist required.
-    if let Some(ty) = expr.ty()
-        && !is_copy_type(ty)
-    {
-        return false;
-    }
-
-    match classify_body_expr_plan_source(&expr.node, ctx, ectx) {
-        BodyExprPlan::Leaf(
-            LeafOp::StaticRef(_) | LeafOp::NoneValue | LeafOp::VariantConstructor { .. },
-        ) => false,
-        BodyExprPlan::Leaf(_) => true,
-        BodyExprPlan::Call { target, .. } => call_plan_is_effect_free(&target, ctx),
-        BodyExprPlan::ForwardCall(plan) => call_plan_is_effect_free(&plan.target, ctx),
-        BodyExprPlan::Expr(_) => false,
-    }
-}
-
-fn collect_hoistable_invariant_subexprs<'a>(
-    expr: &'a Spanned<Expr>,
-    stable_names: &HashSet<String>,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    hoists: &mut Vec<TcoInvariantHoist<'a>>,
-    seen: &mut HashSet<usize>,
-    next_idx: &mut usize,
-) {
-    if expr_is_hoistable_invariant(expr, stable_names, ctx, ectx) {
-        let ptr = expr_ptr(&expr.node);
-        if seen.insert(ptr) {
-            hoists.push(TcoInvariantHoist {
-                ptr,
-                temp_name: format!("__aver_inv{}", *next_idx),
-                expr: &expr.node,
-            });
-            *next_idx += 1;
-        }
-        return;
-    }
-
-    match &expr.node {
-        Expr::Attr(obj, _) => collect_hoistable_invariant_subexprs(
-            obj,
-            stable_names,
-            ctx,
-            ectx,
-            hoists,
-            seen,
-            next_idx,
-        ),
-        Expr::FnCall(fn_expr, args) => {
-            collect_hoistable_invariant_subexprs(
-                fn_expr,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-            for arg in args {
-                collect_hoistable_invariant_subexprs(
-                    arg,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::BinOp(_, left, right) => {
-            collect_hoistable_invariant_subexprs(
-                left,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-            collect_hoistable_invariant_subexprs(
-                right,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-        }
-        Expr::Neg(inner) => collect_hoistable_invariant_subexprs(
-            inner,
-            stable_names,
-            ctx,
-            ectx,
-            hoists,
-            seen,
-            next_idx,
-        ),
-        Expr::Match { subject, arms, .. } => {
-            collect_hoistable_invariant_subexprs(
-                subject,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-            for arm in arms {
-                collect_hoistable_invariant_subexprs(
-                    &arm.body,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
-            collect_hoistable_invariant_subexprs(
-                inner,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            )
-        }
-        Expr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let StrPart::Parsed(inner) = part {
-                    collect_hoistable_invariant_subexprs(
-                        inner,
-                        stable_names,
-                        ctx,
-                        ectx,
-                        hoists,
-                        seen,
-                        next_idx,
-                    );
-                }
-            }
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for item in items {
-                collect_hoistable_invariant_subexprs(
-                    item,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (key, value) in entries {
-                collect_hoistable_invariant_subexprs(
-                    key,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-                collect_hoistable_invariant_subexprs(
-                    value,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, value) in fields {
-                collect_hoistable_invariant_subexprs(
-                    value,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_hoistable_invariant_subexprs(
-                base,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-            for (_, value) in updates {
-                collect_hoistable_invariant_subexprs(
-                    value,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::Literal(_)
-        | Expr::Ident(_)
-        | Expr::Resolved { .. }
-        | Expr::Constructor(_, None)
-        | Expr::TailCall(_) => {}
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_self_tailcall_hoists_in_expr<'a>(
-    expr: &'a Spanned<Expr>,
-    self_name: &str,
-    stable_names: &HashSet<String>,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    hoists: &mut Vec<TcoInvariantHoist<'a>>,
-    seen: &mut HashSet<usize>,
-    next_idx: &mut usize,
-) {
-    match &expr.node {
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            if target == self_name {
-                for arg in args {
-                    collect_hoistable_invariant_subexprs(
-                        arg,
-                        stable_names,
-                        ctx,
-                        ectx,
-                        hoists,
-                        seen,
-                        next_idx,
-                    );
-                }
-            } else {
-                for arg in args {
-                    collect_self_tailcall_hoists_in_expr(
-                        arg,
-                        self_name,
-                        stable_names,
-                        ctx,
-                        ectx,
-                        hoists,
-                        seen,
-                        next_idx,
-                    );
-                }
-            }
-        }
-        Expr::Match { subject, arms, .. } => {
-            collect_self_tailcall_hoists_in_expr(
-                subject,
-                self_name,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-            for arm in arms {
-                collect_self_tailcall_hoists_in_expr(
-                    &arm.body,
-                    self_name,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::Attr(obj, _) => collect_self_tailcall_hoists_in_expr(
-            obj,
-            self_name,
-            stable_names,
-            ctx,
-            ectx,
-            hoists,
-            seen,
-            next_idx,
-        ),
-        Expr::FnCall(fn_expr, args) => {
-            collect_self_tailcall_hoists_in_expr(
-                fn_expr,
-                self_name,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-            for arg in args {
-                collect_self_tailcall_hoists_in_expr(
-                    arg,
-                    self_name,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::BinOp(_, left, right) => {
-            collect_self_tailcall_hoists_in_expr(
-                left,
-                self_name,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-            collect_self_tailcall_hoists_in_expr(
-                right,
-                self_name,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-        }
-        Expr::Neg(inner) => collect_self_tailcall_hoists_in_expr(
-            inner,
-            self_name,
-            stable_names,
-            ctx,
-            ectx,
-            hoists,
-            seen,
-            next_idx,
-        ),
-        Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
-            collect_self_tailcall_hoists_in_expr(
-                inner,
-                self_name,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            )
-        }
-        Expr::InterpolatedStr(parts) => {
-            for part in parts {
-                if let StrPart::Parsed(inner) = part {
-                    collect_self_tailcall_hoists_in_expr(
-                        inner,
-                        self_name,
-                        stable_names,
-                        ctx,
-                        ectx,
-                        hoists,
-                        seen,
-                        next_idx,
-                    );
-                }
-            }
-        }
-        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
-            for item in items {
-                collect_self_tailcall_hoists_in_expr(
-                    item,
-                    self_name,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::MapLiteral(entries) => {
-            for (key, value) in entries {
-                collect_self_tailcall_hoists_in_expr(
-                    key,
-                    self_name,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-                collect_self_tailcall_hoists_in_expr(
-                    value,
-                    self_name,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::RecordCreate { fields, .. } => {
-            for (_, value) in fields {
-                collect_self_tailcall_hoists_in_expr(
-                    value,
-                    self_name,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::RecordUpdate { base, updates, .. } => {
-            collect_self_tailcall_hoists_in_expr(
-                base,
-                self_name,
-                stable_names,
-                ctx,
-                ectx,
-                hoists,
-                seen,
-                next_idx,
-            );
-            for (_, value) in updates {
-                collect_self_tailcall_hoists_in_expr(
-                    value,
-                    self_name,
-                    stable_names,
-                    ctx,
-                    ectx,
-                    hoists,
-                    seen,
-                    next_idx,
-                );
-            }
-        }
-        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {}
-    }
-}
-
-fn collect_self_tailcall_invariant_hoists<'a>(
-    body: &'a FnBody,
-    self_name: &str,
-    params: &[(String, String)],
-    passthrough_indices: &HashSet<usize>,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-) -> Vec<TcoInvariantHoist<'a>> {
-    let stable_names = passthrough_param_names(params, passthrough_indices);
-    let mut hoists = Vec::new();
-    let mut seen = HashSet::new();
-    let mut next_idx = 0usize;
-
-    for stmt in body.stmts() {
-        match stmt {
-            Stmt::Expr(expr) | Stmt::Binding(_, _, expr) => collect_self_tailcall_hoists_in_expr(
-                expr,
-                self_name,
-                &stable_names,
-                ctx,
-                ectx,
-                &mut hoists,
-                &mut seen,
-                &mut next_idx,
-            ),
-        }
-    }
-
-    hoists
-}
-
-fn rewrite_expr_with_hoists(expr: &Expr, hoisted_exprs: &HashMap<usize, String>) -> Expr {
-    if let Some(name) = hoisted_exprs.get(&expr_ptr(expr)) {
-        return Expr::Ident(name.clone());
-    }
-
-    fn rewrite_spanned(
-        spanned: &Spanned<Expr>,
-        hoisted_exprs: &HashMap<usize, String>,
-    ) -> Spanned<Expr> {
-        Spanned::new(
-            rewrite_expr_with_hoists(&spanned.node, hoisted_exprs),
-            spanned.line,
-        )
-    }
-
-    match expr {
-        Expr::Literal(lit) => Expr::Literal(lit.clone()),
-        Expr::Ident(name) => Expr::Ident(name.clone()),
-        Expr::Resolved {
-            slot,
-            name,
-            last_use,
-        } => Expr::Resolved {
-            slot: *slot,
-            name: name.clone(),
-            last_use: *last_use,
-        },
-        Expr::Attr(obj, field) => {
-            Expr::Attr(Box::new(rewrite_spanned(obj, hoisted_exprs)), field.clone())
-        }
-        Expr::FnCall(fn_expr, args) => Expr::FnCall(
-            Box::new(rewrite_spanned(fn_expr, hoisted_exprs)),
-            args.iter()
-                .map(|arg| rewrite_spanned(arg, hoisted_exprs))
-                .collect(),
-        ),
-        Expr::BinOp(op, left, right) => Expr::BinOp(
-            *op,
-            Box::new(rewrite_spanned(left, hoisted_exprs)),
-            Box::new(rewrite_spanned(right, hoisted_exprs)),
-        ),
-        Expr::Neg(inner) => Expr::Neg(Box::new(rewrite_spanned(inner, hoisted_exprs))),
-        Expr::Match { subject, arms } => Expr::Match {
-            subject: Box::new(rewrite_spanned(subject, hoisted_exprs)),
-            arms: arms
-                .iter()
-                .map(|arm| {
-                    MatchArm::new(
-                        arm.pattern.clone(),
-                        rewrite_spanned(&arm.body, hoisted_exprs),
-                    )
-                })
-                .collect(),
-        },
-        Expr::Constructor(name, inner) => Expr::Constructor(
-            name.clone(),
-            inner
-                .as_ref()
-                .map(|expr| Box::new(rewrite_spanned(expr, hoisted_exprs))),
-        ),
-        Expr::ErrorProp(inner) => Expr::ErrorProp(Box::new(rewrite_spanned(inner, hoisted_exprs))),
-        Expr::InterpolatedStr(parts) => Expr::InterpolatedStr(
-            parts
-                .iter()
-                .map(|part| match part {
-                    StrPart::Literal(text) => StrPart::Literal(text.clone()),
-                    StrPart::Parsed(expr) => {
-                        StrPart::Parsed(Box::new(rewrite_spanned(expr, hoisted_exprs)))
-                    }
-                })
-                .collect(),
-        ),
-        Expr::List(items) => Expr::List(
-            items
-                .iter()
-                .map(|item| rewrite_spanned(item, hoisted_exprs))
-                .collect(),
-        ),
-        Expr::Tuple(items) => Expr::Tuple(
-            items
-                .iter()
-                .map(|item| rewrite_spanned(item, hoisted_exprs))
-                .collect(),
-        ),
-        Expr::IndependentProduct(items, flag) => Expr::IndependentProduct(
-            items
-                .iter()
-                .map(|item| rewrite_spanned(item, hoisted_exprs))
-                .collect(),
-            *flag,
-        ),
-        Expr::MapLiteral(entries) => Expr::MapLiteral(
-            entries
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        rewrite_spanned(key, hoisted_exprs),
-                        rewrite_spanned(value, hoisted_exprs),
-                    )
-                })
-                .collect(),
-        ),
-        Expr::RecordCreate { type_name, fields } => Expr::RecordCreate {
-            type_name: type_name.clone(),
-            fields: fields
-                .iter()
-                .map(|(name, value)| (name.clone(), rewrite_spanned(value, hoisted_exprs)))
-                .collect(),
-        },
-        Expr::RecordUpdate {
-            type_name,
-            base,
-            updates,
-        } => Expr::RecordUpdate {
-            type_name: type_name.clone(),
-            base: Box::new(rewrite_spanned(base, hoisted_exprs)),
-            updates: updates
-                .iter()
-                .map(|(name, value)| (name.clone(), rewrite_spanned(value, hoisted_exprs)))
-                .collect(),
-        },
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            Expr::TailCall(Box::new(TailCallData::new(
-                target.clone(),
-                args.iter()
-                    .map(|arg| rewrite_spanned(arg, hoisted_exprs))
-                    .collect(),
-            )))
-        }
-    }
-}
-
-/// Emit a function with TCO → loop rewrite.
-fn emit_tco_fn(
-    fd: &FnDef,
-    fn_name: &str,
-    ret_type: &str,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    visibility: &str,
-) -> String {
-    let passthrough_indices = compute_self_passthrough_params(fd);
-    // Compute pass-through Rc params for self-TCO
-    let rc_indices = compute_rc_params(&[fd], ctx);
-    let rc_names = rc_param_names(&fd.params, &rc_indices);
-    let ectx = if rc_names.is_empty() {
-        ectx.clone()
-    } else {
-        ectx.with_rc_wrapped(rc_names)
-    };
-    let invariant_hoists = collect_self_tailcall_invariant_hoists(
-        &fd.body,
-        &fd.name,
-        &fd.params,
-        &passthrough_indices,
-        ctx,
-        &ectx,
-    );
-    let hoisted_exprs: HashMap<usize, String> = invariant_hoists
-        .iter()
-        .map(|hoist| (hoist.ptr, hoist.temp_name.clone()))
-        .collect();
-
-    // All params keep their original types in the public signature.
-    // Non-Rc params are mutable (for rebinding in tail calls); Rc params don't need mut
-    // since they'll be shadowed by Rc-wrapped `let` bindings before the loop.
-    let params = emit_fn_params_tco(&fd.params, &rc_indices);
-    let mut lines = Vec::new();
-    lines.push(format!(
-        "{}fn {}({}) -> {} {{",
-        visibility, fn_name, params, ret_type
-    ));
-
-    // Wrap pass-through params in Rc before the loop (shadowing the original binding)
-    for &i in &rc_indices {
-        let (name, _) = &fd.params[i];
-        let rust_name = aver_name_to_rust(name);
-        lines.push(format!(
-            "    let {} = std::sync::Arc::new({});",
-            rust_name, rust_name
-        ));
-    }
-
-    for hoist in &invariant_hoists {
-        lines.push(format!(
-            "    let {} = {};",
-            hoist.temp_name,
-            emit_expr_legacy(hoist.expr, ctx, &ectx)
-        ));
-    }
-
-    lines.push("    loop {".to_string());
-
-    // Emit body with TailCall → { reassign; continue }
-    let body_code = emit_tco_body(
-        &fd.body,
-        &fd.name,
-        &fd.params,
-        ctx,
-        &ectx,
-        &rc_indices,
-        &passthrough_indices,
-        &hoisted_exprs,
-    );
-    lines.push(body_code);
-
-    lines.push("    }".to_string());
-    lines.push("}".to_string());
-    lines.join("\n")
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_tco_body(
-    body: &FnBody,
-    self_name: &str,
-    params: &[(String, String)],
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    rc_indices: &HashSet<usize>,
-    passthrough_indices: &HashSet<usize>,
-    hoisted_exprs: &HashMap<usize, String>,
-) -> String {
-    let stmts = body.stmts();
-    let mut lines = Vec::new();
-    lines.push("        crate::cancel_checkpoint();".to_string());
-    for (i, stmt) in stmts.iter().enumerate() {
-        let is_last = i == stmts.len() - 1;
-        match stmt {
-            Stmt::Binding(name, _, expr) => {
-                lines.push(format!(
-                    "        let {} = {};",
-                    aver_name_to_rust(name),
-                    emit_expr_legacy(&expr.node, ctx, ectx)
-                ));
-            }
-            Stmt::Expr(expr) => {
-                if is_last {
-                    lines.push(format!(
-                        "        return {};",
-                        emit_tco_expr(
-                            &expr.node,
-                            self_name,
-                            params,
-                            ctx,
-                            ectx,
-                            rc_indices,
-                            passthrough_indices,
-                            hoisted_exprs,
-                        )
-                    ));
-                } else {
-                    lines.push(format!(
-                        "        {};",
-                        emit_expr_legacy(&expr.node, ctx, ectx)
-                    ));
-                }
-            }
-        }
-    }
-    lines.join("\n")
-}
-
-#[allow(clippy::too_many_arguments)]
-fn try_emit_tco_bool_if_else(
-    subj: &str,
-    arms: &[MatchArm],
-    self_name: &str,
-    params: &[(String, String)],
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    rc_indices: &HashSet<usize>,
-    passthrough_indices: &HashSet<usize>,
-    hoisted_exprs: &HashMap<usize, String>,
-) -> Option<String> {
-    if arms.len() != 2 {
-        return None;
-    }
-    let (true_body, false_body) = match (&arms[0].pattern, &arms[1].pattern) {
-        (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
-            (&arms[0].body, &arms[1].body)
-        }
-        (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
-            (&arms[1].body, &arms[0].body)
-        }
-        _ => return None,
-    };
-    let t = emit_tco_expr(
-        &true_body.node,
-        self_name,
-        params,
-        ctx,
-        ectx,
-        rc_indices,
-        passthrough_indices,
-        hoisted_exprs,
-    );
-    let f = emit_tco_expr(
-        &false_body.node,
-        self_name,
-        params,
-        ctx,
-        ectx,
-        rc_indices,
-        passthrough_indices,
-        hoisted_exprs,
-    );
-    Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_tco_expr(
-    expr: &Expr,
-    self_name: &str,
-    params: &[(String, String)],
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    rc_indices: &HashSet<usize>,
-    passthrough_indices: &HashSet<usize>,
-    hoisted_exprs: &HashMap<usize, String>,
-) -> String {
-    match expr {
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            if target != self_name || args.len() != params.len() {
-                return emit_expr_legacy(expr, ctx, ectx);
-            }
-
-            // Self TCO — create temp vars, then reassign.
-            // Skip Rc-wrapped params (they're pass-through, never rebound).
-            let rewritten_args = args
-                .iter()
-                .map(|arg| rewrite_expr_with_hoists(&arg.node, hoisted_exprs))
-                .collect::<Vec<_>>();
-
-            // Clone/move decisions now come from last_use on Resolved nodes.
-            // Just use the parent ectx directly.
-            let arg_strs: Vec<String> = rewritten_args
-                .iter()
-                .map(|a| clone_arg_legacy(a, ctx, ectx))
-                .collect();
-
-            // Collect which params are being rebound (non-passthrough, non-identity).
-            let rebound_param_names: HashSet<String> = params
-                .iter()
-                .enumerate()
-                .filter(|(i, (name, _))| {
-                    !passthrough_indices.contains(i)
-                        && arg_strs
-                            .get(*i)
-                            .is_none_or(|a| *a != aver_name_to_rust(name))
-                })
-                .map(|(_, (name, _))| aver_name_to_rust(name))
-                .collect();
-
-            // Check if each arg references a rebound param (needs tmp to avoid
-            // read-after-write). Simple heuristic: check if arg_str contains
-            // any rebound param name as a substring.
-            let needs_tmp: Vec<bool> = arg_strs
-                .iter()
-                .enumerate()
-                .map(|(i, arg_str)| {
-                    if passthrough_indices.contains(&i) {
-                        return false;
-                    }
-                    let param_name = aver_name_to_rust(&params[i].0);
-                    // Identity rebinding (x = x) → skip entirely
-                    if *arg_str == param_name {
-                        return false;
-                    }
-                    // If arg mentions any rebound param, must use tmp
-                    rebound_param_names
-                        .iter()
-                        .any(|p| arg_str.contains(p.as_str()))
-                })
-                .collect();
-
-            let any_tmp = needs_tmp.iter().any(|&t| t);
-            let mut lines = Vec::new();
-            lines.push("{".to_string());
-            // Phase 1: tmp bindings for args that reference rebound params
-            if any_tmp {
-                for (i, arg_str) in arg_strs.iter().enumerate() {
-                    if passthrough_indices.contains(&i) || !needs_tmp[i] {
-                        continue;
-                    }
-                    lines.push(format!("            let __tmp{} = {};", i, arg_str));
-                }
-            }
-            // Phase 2: assignments
-            for (i, (name, _)) in params.iter().enumerate() {
-                if passthrough_indices.contains(&i) {
-                    continue;
-                }
-                let param_name = aver_name_to_rust(name);
-                let arg_str = &arg_strs[i];
-                if *arg_str == param_name {
-                    continue; // identity rebinding — no-op
-                }
-                if needs_tmp[i] {
-                    lines.push(format!("            {} = __tmp{};", param_name, i));
-                } else {
-                    lines.push(format!("            {} = {};", param_name, arg_str));
-                }
-            }
-            lines.push("            continue;".to_string());
-            lines.push("        }".to_string());
-            lines.join("\n")
-        }
-        Expr::Match { subject, arms, .. } => {
-            let subj = clone_arg_legacy(&subject.node, ctx, ectx);
-            let dispatch_plan = classify_dispatch_plan_for_rust_legacy(arms, ctx, ectx);
-
-            // Bool match → if/else in TCO context
-            if let Some(code) = try_emit_tco_bool_if_else(
-                &subj,
-                arms,
-                self_name,
-                params,
-                ctx,
-                ectx,
-                rc_indices,
-                passthrough_indices,
-                hoisted_exprs,
-            ) {
-                return code;
-            }
-
-            let needs_as_str = has_string_literal_patterns_legacy(arms);
-            if has_list_patterns_legacy(arms) {
-                return emit_list_match_legacy(subj, arms, None, true, ctx, ectx, |arm| {
-                    emit_tco_expr(
-                        &arm.body.node,
-                        self_name,
-                        params,
-                        ctx,
-                        ectx,
-                        rc_indices,
-                        passthrough_indices,
-                        hoisted_exprs,
-                    )
-                });
-            }
-
-            if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-                return emit_dispatch_table_match_legacy(subj, arms, shape, ctx, ectx, |arm| {
-                    emit_tco_expr(
-                        &arm.body.node,
-                        self_name,
-                        params,
-                        ctx,
-                        ectx,
-                        rc_indices,
-                        passthrough_indices,
-                        hoisted_exprs,
-                    )
-                });
-            }
-
-            let match_expr = if needs_as_str {
-                format!("&*{}", subj)
-            } else {
-                subj
-            };
-
-            let mut arm_strs = Vec::new();
-            for arm in arms {
-                let pat = emit_pattern_legacy(&arm.pattern, needs_as_str, ctx, ectx);
-                let body = emit_tco_expr(
-                    &arm.body.node,
-                    self_name,
-                    params,
-                    ctx,
-                    ectx,
-                    rc_indices,
-                    passthrough_indices,
-                    hoisted_exprs,
-                );
-                let mut rebinding_lines: Vec<String> = Vec::new();
-                if let Pattern::Cons(head, tail) = &arm.pattern {
-                    if head != "_" {
-                        let h = aver_name_to_rust(head);
-                        rebinding_lines.push(format!("let {} = {}.clone();", h, h));
-                    }
-                    let _ = tail;
-                }
-                if let Pattern::Constructor(name, bindings) = &arm.pattern {
-                    // Ok/Err/Some bindings are moved, no clone. Only Box-wrapped fields need deref.
-                    for b in super::expr::constructor_boxed_bindings(name, bindings, ctx) {
-                        let b = aver_name_to_rust(&b);
-                        rebinding_lines.push(format!("let {} = (*{}).clone();", b, b));
-                    }
-                }
-                let rebindings = if rebinding_lines.is_empty() {
-                    body
-                } else {
-                    format!("{{ {} {} }}", rebinding_lines.join(" "), body)
-                };
-                arm_strs.push(format!("            {} => {}", pat, rebindings));
-            }
-
-            format!(
-                "match {} {{\n{}\n        }}",
-                match_expr,
-                arm_strs.join(",\n")
-            )
-        }
-        _ => {
-            // If this is a bare Rc-wrapped ident being returned, deref+clone to get T
-            if let Expr::Ident(name) = expr
-                && ectx.is_rc_wrapped(name)
-            {
-                let code = emit_expr_legacy(expr, ctx, ectx);
-                return format!("(*{}).clone()", code);
-            }
-            emit_expr_legacy(expr, ctx, ectx)
-        }
-    }
-}
-
 pub(super) fn compute_self_passthrough_params(fd: &FnDef) -> HashSet<usize> {
     let mut candidates: HashSet<usize> = (0..fd.params.len()).collect();
     let member_names = HashSet::from([fd.name.as_str()]);
@@ -2463,420 +1009,6 @@ pub(super) fn fn_name_to_variant(name: &str) -> String {
         }
         None => rust_name,
     }
-}
-
-/// Emit a mutual TCO block: enum + trampoline dispatch loop + thin wrapper functions.
-pub fn emit_mutual_tco_block(
-    group_id: usize,
-    group_fns: &[&FnDef],
-    ctx: &CodegenContext,
-    scope: Option<&str>,
-    visibility: &str,
-) -> String {
-    let enum_name = format!("__MutualTco{}", group_id);
-    let trampoline_name = format!("__mutual_tco_trampoline_{}", group_id);
-    let ret_type = if group_fns[0].return_type.is_empty() {
-        "()".to_string()
-    } else {
-        type_annotation_to_rust(&group_fns[0].return_type)
-    };
-
-    let member_names: HashSet<String> = group_fns.iter().map(|fd| fd.name.clone()).collect();
-    let rc_indices = compute_rc_params(group_fns, ctx);
-    let rc_names = if !group_fns.is_empty() {
-        rc_param_names(&group_fns[0].params, &rc_indices)
-    } else {
-        HashSet::new()
-    };
-
-    let mut sections = Vec::new();
-
-    // 1. Enum definition — exclude borrowed params (they're shared across iterations)
-    let mut enum_lines = Vec::new();
-    enum_lines.push("#[allow(non_camel_case_types)]".to_string());
-    enum_lines.push(format!("enum {} {{", enum_name));
-    for fd in group_fns {
-        let variant = fn_name_to_variant(&fd.name);
-        let param_types: Vec<String> = fd
-            .params
-            .iter()
-            .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(_, ty)| type_annotation_to_rust(ty))
-            .collect();
-        if param_types.is_empty() {
-            enum_lines.push(format!("    {},", variant));
-        } else {
-            enum_lines.push(format!("    {}({}),", variant, param_types.join(", ")));
-        }
-    }
-    enum_lines.push("}".to_string());
-    sections.push(enum_lines.join("\n"));
-
-    // 2. Trampoline function — borrowed params are extra `&T` parameters
-    let mut tramp_lines = Vec::new();
-
-    // Build the borrowed extra params for the trampoline signature (&T)
-    // Use first fn that has them (all fns have same name+type for borrowed params)
-    let rc_extra_params: String = if !rc_names.is_empty() && !group_fns.is_empty() {
-        let parts: Vec<String> = group_fns[0]
-            .params
-            .iter()
-            .filter(|(name, _)| rc_names.contains(name))
-            .map(|(name, ty)| {
-                format!(
-                    "{}: &{}",
-                    aver_name_to_rust(name),
-                    type_annotation_to_rust(ty)
-                )
-            })
-            .collect();
-        if parts.is_empty() {
-            String::new()
-        } else {
-            format!(", {}", parts.join(", "))
-        }
-    } else {
-        String::new()
-    };
-
-    tramp_lines.push(format!(
-        "fn {}(mut __state: {}{}) -> {} {{",
-        trampoline_name, enum_name, rc_extra_params, ret_type
-    ));
-    tramp_lines.push("    loop {".to_string());
-    tramp_lines.push("        __state = match __state {".to_string());
-
-    for fd in group_fns {
-        let variant = fn_name_to_variant(&fd.name);
-        let param_bindings: Vec<String> = fd
-            .params
-            .iter()
-            .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(name, _)| format!("mut {}", aver_name_to_rust(name)))
-            .collect();
-        let binding = if param_bindings.is_empty() {
-            format!("{}::{}", enum_name, variant)
-        } else {
-            format!("{}::{}({})", enum_name, variant, param_bindings.join(", "))
-        };
-        tramp_lines.push(format!("            {} => {{", binding));
-
-        // Trampoline params are `mut T`, no borrow-by-default
-        let ectx = build_fn_ectx_no_borrow(fd, ctx, scope);
-        let ectx = if rc_names.is_empty() {
-            ectx
-        } else {
-            ectx.with_rc_wrapped(rc_names.clone())
-        };
-        let body_code =
-            emit_trampoline_arm_body(fd, &enum_name, &member_names, ctx, &ectx, &rc_indices);
-        tramp_lines.push(body_code);
-
-        tramp_lines.push("            }".to_string());
-    }
-
-    tramp_lines.push("        };".to_string());
-    tramp_lines.push("    }".to_string());
-    tramp_lines.push("}".to_string());
-    sections.push(tramp_lines.join("\n"));
-
-    // 3. Wrapper functions — accept `&T` (borrow-by-default), clone into enum variant
-    for fd in group_fns {
-        let fn_name = aver_name_to_rust(&fd.name);
-        let variant = fn_name_to_variant(&fd.name);
-        let params = emit_fn_params(&fd.params, false);
-        // Enum variant args: only non-rc-wrapped params.
-        // Borrowed params (`&T` from borrow-by-default) need `.clone()` to produce owned T for enum.
-        let variant_arg_names: Vec<String> = fd
-            .params
-            .iter()
-            .filter(|(name, _)| !rc_names.contains(name))
-            .map(|(name, type_ann)| {
-                let rust_name = aver_name_to_rust(name);
-                let ty = parse_type_str(type_ann);
-                if should_borrow_param(&ty) {
-                    // Borrowed param: clone to get owned value for enum variant
-                    format!("{}.clone()", rust_name)
-                } else {
-                    rust_name
-                }
-            })
-            .collect();
-        let variant_call = if variant_arg_names.is_empty() {
-            format!("{}::{}", enum_name, variant)
-        } else {
-            format!(
-                "{}::{}({})",
-                enum_name,
-                variant,
-                variant_arg_names.join(", ")
-            )
-        };
-
-        // Build the borrowed extra args for the trampoline call (owned → &T)
-        let rc_extra_args: String = if !rc_names.is_empty() {
-            let parts: Vec<String> = fd
-                .params
-                .iter()
-                .filter(|(name, _)| rc_names.contains(name))
-                .map(|(name, _)| format!("&{}", aver_name_to_rust(name)))
-                .collect();
-            if parts.is_empty() {
-                String::new()
-            } else {
-                format!(", {}", parts.join(", "))
-            }
-        } else {
-            String::new()
-        };
-
-        let mut wrapper = Vec::new();
-        if let Some(desc) = &fd.desc {
-            wrapper.push(format!("/// {}", desc));
-        }
-        wrapper.push(format!(
-            "{}fn {}({}) -> {} {{",
-            visibility, fn_name, params, ret_type
-        ));
-        wrapper.push(format!(
-            "    {}({}{})",
-            trampoline_name, variant_call, rc_extra_args
-        ));
-        wrapper.push("}".to_string());
-        sections.push(wrapper.join("\n"));
-    }
-
-    sections.join("\n\n")
-}
-
-fn emit_trampoline_arm_body(
-    fd: &FnDef,
-    enum_name: &str,
-    member_names: &HashSet<String>,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    rc_indices: &HashSet<usize>,
-) -> String {
-    let stmts = fd.body.stmts();
-    let mut lines = Vec::new();
-    lines.push("                crate::cancel_checkpoint();".to_string());
-    for (i, stmt) in stmts.iter().enumerate() {
-        let is_last = i == stmts.len() - 1;
-        match stmt {
-            Stmt::Binding(name, _, expr) => {
-                lines.push(format!(
-                    "                let {} = {};",
-                    aver_name_to_rust(name),
-                    emit_expr_legacy(&expr.node, ctx, ectx)
-                ));
-            }
-            Stmt::Expr(expr) => {
-                if is_last {
-                    lines.push(format!(
-                        "                {}",
-                        emit_trampoline_expr(
-                            &expr.node,
-                            enum_name,
-                            member_names,
-                            ctx,
-                            ectx,
-                            rc_indices,
-                        )
-                    ));
-                } else {
-                    lines.push(format!(
-                        "                {};",
-                        emit_expr_legacy(&expr.node, ctx, ectx)
-                    ));
-                }
-            }
-        }
-    }
-    lines.join("\n")
-}
-
-/// Emit an expression in the trampoline context.
-///
-/// Tail calls to group members produce enum variants (bounce).
-/// Non-tail expressions use `return` to exit the trampoline.
-#[allow(clippy::too_many_arguments)]
-fn emit_trampoline_expr(
-    expr: &Expr,
-    enum_name: &str,
-    member_names: &HashSet<String>,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    rc_indices: &HashSet<usize>,
-) -> String {
-    match expr {
-        Expr::TailCall(boxed) => {
-            let TailCallData { target, args, .. } = boxed.as_ref();
-            if member_names.contains(target) {
-                // Bounce → produce enum variant (excluding Rc-wrapped args)
-                let variant = fn_name_to_variant(target);
-                let bare_args: Vec<Expr> = args.iter().map(|a| a.node.clone()).collect();
-                let arg_strs: Vec<String> = bare_args
-                    .iter()
-                    .filter(|a| {
-                        // Skip args that are pass-through Rc params (Ident matching an rc_wrapped name)
-                        !matches!(a, Expr::Ident(name) if ectx.is_rc_wrapped(name))
-                    })
-                    .map(|a| clone_arg_legacy(a, ctx, ectx))
-                    .collect();
-                if arg_strs.is_empty() {
-                    format!("{}::{}", enum_name, variant)
-                } else {
-                    format!("{}::{}({})", enum_name, variant, arg_strs.join(", "))
-                }
-            } else {
-                // External tail call → regular call + return
-                format!("return {}", emit_expr_legacy(expr, ctx, ectx))
-            }
-        }
-        Expr::Match { subject, arms, .. } => {
-            let subj = clone_arg_legacy(&subject.node, ctx, ectx);
-            let dispatch_plan = classify_dispatch_plan_for_rust_legacy(arms, ctx, ectx);
-
-            // Bool match → if/else
-            if let Some(code) = try_emit_trampoline_bool_if_else(
-                &subj,
-                arms,
-                enum_name,
-                member_names,
-                ctx,
-                ectx,
-                rc_indices,
-            ) {
-                return code;
-            }
-
-            // List match
-            if has_list_patterns_legacy(arms) {
-                return emit_list_match_legacy(subj, arms, None, true, ctx, ectx, |arm| {
-                    emit_trampoline_expr(
-                        &arm.body.node,
-                        enum_name,
-                        member_names,
-                        ctx,
-                        ectx,
-                        rc_indices,
-                    )
-                });
-            }
-
-            if let Some(crate::ir::MatchDispatchPlan::Table(shape)) = dispatch_plan.as_ref() {
-                return emit_dispatch_table_match_legacy(subj, arms, shape, ctx, ectx, |arm| {
-                    emit_trampoline_expr(
-                        &arm.body.node,
-                        enum_name,
-                        member_names,
-                        ctx,
-                        ectx,
-                        rc_indices,
-                    )
-                });
-            }
-
-            let needs_as_str = has_string_literal_patterns_legacy(arms);
-            let match_expr = if needs_as_str {
-                format!("&*{}", subj)
-            } else {
-                subj
-            };
-
-            let mut arm_strs = Vec::new();
-            for arm in arms {
-                let pat = emit_pattern_legacy(&arm.pattern, needs_as_str, ctx, ectx);
-                let body = emit_trampoline_expr(
-                    &arm.body.node,
-                    enum_name,
-                    member_names,
-                    ctx,
-                    ectx,
-                    rc_indices,
-                );
-
-                let mut rebinding_lines: Vec<String> = Vec::new();
-                if let Pattern::Cons(head, _) = &arm.pattern
-                    && head != "_"
-                {
-                    let h = aver_name_to_rust(head);
-                    rebinding_lines.push(format!("let {} = {}.clone();", h, h));
-                }
-                if let Pattern::Constructor(name, bindings) = &arm.pattern {
-                    for b in super::expr::constructor_boxed_bindings(name, bindings, ctx) {
-                        let b = aver_name_to_rust(&b);
-                        rebinding_lines.push(format!("let {} = (*{}).clone();", b, b));
-                    }
-                }
-
-                let rebindings = if rebinding_lines.is_empty() {
-                    body
-                } else {
-                    format!("{{ {} {} }}", rebinding_lines.join(" "), body)
-                };
-                arm_strs.push(format!("                {} => {}", pat, rebindings));
-            }
-
-            format!(
-                "match {} {{\n{}\n                }}",
-                match_expr,
-                arm_strs.join(",\n")
-            )
-        }
-        _ => {
-            // Non-tail expression → return to exit trampoline.
-            // If this is a bare pass-through ident (&T), deref+clone to get owned T.
-            if let Expr::Ident(name) = expr
-                && ectx.is_rc_wrapped(name)
-            {
-                let code = emit_expr_legacy(expr, ctx, ectx);
-                return format!("return (*{}).clone()", code);
-            }
-            format!("return {}", emit_expr_legacy(expr, ctx, ectx))
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn try_emit_trampoline_bool_if_else(
-    subj: &str,
-    arms: &[MatchArm],
-    enum_name: &str,
-    member_names: &HashSet<String>,
-    ctx: &CodegenContext,
-    ectx: &EmitCtx,
-    rc_indices: &HashSet<usize>,
-) -> Option<String> {
-    if arms.len() != 2 {
-        return None;
-    }
-    let (true_body, false_body) = match (&arms[0].pattern, &arms[1].pattern) {
-        (Pattern::Literal(Literal::Bool(true)), Pattern::Literal(Literal::Bool(false))) => {
-            (&arms[0].body, &arms[1].body)
-        }
-        (Pattern::Literal(Literal::Bool(false)), Pattern::Literal(Literal::Bool(true))) => {
-            (&arms[1].body, &arms[0].body)
-        }
-        _ => return None,
-    };
-    let t = emit_trampoline_expr(
-        &true_body.node,
-        enum_name,
-        member_names,
-        ctx,
-        ectx,
-        rc_indices,
-    );
-    let f = emit_trampoline_expr(
-        &false_body.node,
-        enum_name,
-        member_names,
-        ctx,
-        ectx,
-        rc_indices,
-    );
-    Some(format!("if {} {{ {} }} else {{ {} }}", subj, t, f))
 }
 
 /// Emit the main function, incorporating top-level statements.
@@ -2944,15 +1076,14 @@ fn emit_main_with_visibility(
 
     let indent = if guest_wrap_main { "        " } else { "    " };
 
-    // Top-level statements first. rust-on-MIR W6/Stage-0: behind
-    // `AVER_RUST_MIR_MAIN`, render every statement VALUE through the MIR
-    // walker all-or-nothing (the VM #338 isolation), then re-apply the
-    // `let {name} = …;` / bare-expr `…;` templating per statement so the
-    // emitted shape matches `emit_stmt` exactly. If any statement value
-    // falls outside the lowerable / renderable subset, the helper returns
-    // `None` and the whole block falls back to the HIR `emit_stmt_legacy`
-    // path (so we never leave a half-MIR / half-HIR set of statements).
-    let mir_top_stmts = if super::from_mir::mir_main_enabled() && !top_stmts.is_empty() {
+    // Top-level statements first. The HIR walker is gone (rust-on-MIR
+    // W6/Stage-3): render every statement VALUE through the MIR walker
+    // all-or-nothing (the VM #338 isolation: one cloned program,
+    // pre-check every value renders before emitting any), then re-apply
+    // the `let {name} = …;` / bare-expr `…;` templating per statement.
+    // A `None` is a hard codegen error (the MIR walker could not render
+    // a top-level statement) — never a silent drop.
+    if !top_stmts.is_empty() {
         let resolved: Vec<Spanned<crate::ir::hir::ResolvedExpr>> = top_stmts
             .iter()
             .map(|stmt| {
@@ -2964,91 +1095,57 @@ fn emit_main_with_visibility(
             })
             .collect();
         let refs: Vec<&Spanned<crate::ir::hir::ResolvedExpr>> = resolved.iter().collect();
-        super::from_mir::emit_mir_top_stmt_values(&refs, ctx)
-    } else {
-        None
-    };
-    match mir_top_stmts {
-        Some(values) => {
-            for (stmt, value) in top_stmts.iter().zip(values.iter()) {
-                // Same templating as `emit_stmt`: `Binding` → a named
-                // `let`, `Expr` → a discarded statement.
-                let rendered = match stmt {
-                    Stmt::Binding(name, _, _) => {
-                        format!("let {} = {};", aver_name_to_rust(name), value)
-                    }
-                    Stmt::Expr(_) => format!("{};", value),
-                };
-                writeln!(out, "{}{}", indent, rendered).unwrap();
-            }
-        }
-        None => {
-            for stmt in top_stmts {
-                writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &ectx)).unwrap();
-            }
+        let values = super::from_mir::emit_mir_top_stmt_values(&refs, ctx).unwrap_or_else(|| {
+            top_stmts
+                .iter()
+                .map(|_| {
+                    emit_codegen_error_expr(
+                        "MIR walker could not render a top-level statement".to_string(),
+                    )
+                })
+                .collect()
+        });
+        for (stmt, value) in top_stmts.iter().zip(values.iter()) {
+            // Same templating as the MIR fn-body let-chain: `Binding` → a
+            // named `let`, `Expr` → a discarded statement.
+            let rendered = match stmt {
+                Stmt::Binding(name, _, _) => {
+                    format!("let {} = {};", aver_name_to_rust(name), value)
+                }
+                Stmt::Expr(_) => format!("{};", value),
+            };
+            writeln!(out, "{}{}", indent, rendered).unwrap();
         }
     }
 
-    // Main function body. rust-on-MIR W6/Stage-0: behind
-    // `AVER_RUST_MIR_MAIN`, main carries a `ResolvedFnDef` (and a lowered
+    // Main function body. The HIR walker is gone (rust-on-MIR
+    // W6/Stage-3): main carries a `ResolvedFnDef` (and a lowered
     // `MirFn`), so render its whole body via the MIR walker
-    // (`emit_mir_main_body` — `for_fn` borrow policy, same as the
-    // production parity gate) and splice it in (re-indented one level
-    // deeper under the guest-scope wrapper). Falls back to the HIR
-    // per-statement emit when there's no MIR program / the main FnId has
-    // no lowered body / the walker can't render it.
-    if let Some(fd) = main_fn {
-        let mir_body = if super::from_mir::mir_main_enabled() {
-            main_fn_id.and_then(|fn_id| super::from_mir::emit_mir_main_body(fn_id, ctx))
+    // (`emit_mir_main_body` — `for_fn` borrow policy, same as every
+    // other fn) and splice it in (re-indented one level deeper under the
+    // guest-scope wrapper). A `None` from the walker is a hard codegen
+    // error, never a silent drop.
+    if main_fn.is_some() {
+        let body = main_fn_id
+            .and_then(|fn_id| super::from_mir::emit_mir_main_body(fn_id, ctx))
+            .unwrap_or_else(|| {
+                format!(
+                    "    {}",
+                    emit_codegen_error_expr(
+                        "MIR walker could not render the `main` fn body".to_string()
+                    )
+                )
+            });
+        // `emit_mir_main_body` returns a 4-space-indented body
+        // (`    crate::cancel_checkpoint();\n    …`); bump it one more
+        // level when wrapped in the guest scope so it lines up under the
+        // closure.
+        let body = if guest_wrap_main {
+            indent_block(&body, 1)
         } else {
-            None
+            body
         };
-        match mir_body {
-            Some(body) => {
-                // `emit_mir_main_body` returns a 4-space-indented body
-                // (`    crate::cancel_checkpoint();\n    …`); bump it one
-                // more level when wrapped in the guest scope so it lines
-                // up under the closure.
-                let body = if guest_wrap_main {
-                    indent_block(&body, 1)
-                } else {
-                    body
-                };
-                writeln!(out, "{}", body).unwrap();
-            }
-            None => {
-                let main_ectx = build_fn_ectx(fd, ctx, None);
-                let stmts = fd.body.stmts();
-                for (i, stmt) in stmts.iter().enumerate() {
-                    let is_last = i == stmts.len() - 1;
-                    if is_last && returns_result {
-                        match stmt {
-                            Stmt::Binding(_, _, _) => {
-                                writeln!(
-                                    out,
-                                    "{}{}",
-                                    indent,
-                                    emit_stmt_legacy(stmt, ctx, &main_ectx)
-                                )
-                                .unwrap();
-                            }
-                            Stmt::Expr(expr) => {
-                                writeln!(
-                                    out,
-                                    "{}{}",
-                                    indent,
-                                    emit_expr_legacy(&expr.node, ctx, &main_ectx)
-                                )
-                                .unwrap();
-                            }
-                        }
-                    } else {
-                        writeln!(out, "{}{}", indent, emit_stmt_legacy(stmt, ctx, &main_ectx))
-                            .unwrap();
-                    }
-                }
-            }
-        }
+        writeln!(out, "{}", body).unwrap();
     }
 
     if guest_wrap_main {
@@ -3060,23 +1157,37 @@ fn emit_main_with_visibility(
 }
 
 /// Render one `verify`-case expression (the `left` / `right` of an
-/// `assert_eq!`). rust-on-MIR W6/Stage-0: behind `AVER_RUST_MIR_VERIFY=1`,
-/// resolve the free-standing AST expr on demand (the same
-/// `ctx.resolve_expr` `emit_expr_legacy` does) and render it through the
-/// MIR walker with a program-level `MirEmitCtx`; if it doesn't lower or
-/// the walker returns `None`, fall back to `emit_expr_legacy` for that
-/// one expression. With the flag OFF (production default) this is exactly
-/// `emit_expr_legacy` — the emitted test module is byte-identical to the
-/// pre-port output.
+/// `assert_eq!`). The HIR walker is gone (rust-on-MIR W6/Stage-3): the
+/// expression is resolved on demand, lowered to MIR, and rendered by the
+/// MIR walker. When the walker can't render it (the verify-only Oracle /
+/// trace shapes that never built on Rust on either walker), emit a hard
+/// `compile_error!` diagnostic — those examples are non-buildable on Rust
+/// and trapping here is the documented W6/Stage-3 behaviour.
 fn emit_verify_case_expr(expr: &Expr, ctx: &CodegenContext, ectx: &EmitCtx) -> String {
-    if super::from_mir::mir_verify_enabled() {
-        let spanned = Spanned::bare(expr.clone());
-        let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
-        if let Some(code) = super::from_mir::emit_mir_verify_expr(&resolved, ctx) {
-            return code;
-        }
+    let spanned = Spanned::bare(expr.clone());
+    let resolved = ctx.resolve_expr(&spanned, ectx.current_module_scope.as_deref());
+    match super::from_mir::emit_mir_verify_expr(&resolved, ctx) {
+        Some(code) => code,
+        None => emit_codegen_error_expr(
+            "MIR walker could not render a verify-case expression (verify-only \
+             Oracle/trace shape — not buildable on the Rust backend)"
+                .to_string(),
+        ),
     }
-    emit_expr_legacy(expr, ctx, ectx)
+}
+
+/// Emit a hard `compile_error!` diagnostic in expression position — used
+/// when the MIR walker returns `None` for a construct that the Rust
+/// backend cannot render (the verify-only Oracle/trace residual). Never a
+/// panic and never a silent drop: the generated crate fails to compile
+/// with the message, which is the intended W6/Stage-3 behaviour for the
+/// non-buildable Oracle examples.
+fn emit_codegen_error_expr(message: String) -> String {
+    let message_lit = format!("{:?}", message);
+    format!(
+        "{{ compile_error!({}); unreachable!(\"unreachable after compile_error\") }}",
+        message_lit
+    )
 }
 
 /// Emit verify blocks as Rust #[cfg(test)] module.
@@ -3126,12 +1237,8 @@ pub fn emit_verify_blocks(verify_blocks: &[&VerifyBlock], ctx: &CodegenContext) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{
-        BinOp, Expr, FnBody, FnDef, Literal, MatchArm, Pattern, Spanned, TopLevel, TypeDef,
-        TypeVariant,
-    };
+    use crate::ast::{Expr, FnBody, FnDef, Literal, Spanned, TypeDef, TypeVariant};
     use crate::codegen::CodegenContext;
-    use std::collections::HashSet;
     use std::sync::Arc as Rc;
 
     fn empty_ctx() -> CodegenContext {
@@ -3164,309 +1271,6 @@ mod tests {
         }
     }
 
-    fn list_param_fn(name: &str, params: Vec<(&str, &str)>) -> FnDef {
-        FnDef {
-            name: name.to_string(),
-            line: 1,
-            params: params
-                .into_iter()
-                .map(|(n, ty)| (n.to_string(), ty.to_string()))
-                .collect(),
-            return_type: "Int".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Literal(
-                crate::ast::Literal::Int(0),
-            )))),
-            resolution: None,
-        }
-    }
-
-    #[test]
-    fn self_tco_clones_param_reused_in_later_arg() {
-        let ctx = empty_ctx();
-        let fd = list_param_fn(
-            "repeatSum",
-            vec![("xs", "List<Int>"), ("remaining", "Int"), ("sink", "Int")],
-        );
-        let ectx = build_fn_ectx(&fd, &ctx, None);
-        let expr = Expr::TailCall(Box::new(TailCallData::new(
-            "repeatSum".to_string(),
-            vec![
-                Spanned::bare(Expr::Ident("xs".to_string())),
-                Spanned::bare(Expr::BinOp(
-                    BinOp::Sub,
-                    Box::new(Spanned::bare(Expr::Ident("remaining".to_string()))),
-                    Box::new(Spanned::bare(Expr::Literal(crate::ast::Literal::Int(1)))),
-                )),
-                Spanned::bare(Expr::BinOp(
-                    BinOp::Add,
-                    Box::new(Spanned::bare(Expr::Ident("sink".to_string()))),
-                    Box::new(Spanned::bare(Expr::FnCall(
-                        Box::new(Spanned::bare(Expr::Ident("sumList".to_string()))),
-                        vec![
-                            Spanned::bare(Expr::Ident("xs".to_string())),
-                            Spanned::bare(Expr::Literal(crate::ast::Literal::Int(0))),
-                        ],
-                    ))),
-                )),
-            ],
-        )));
-
-        let passthrough = HashSet::from([0usize]);
-        let code = emit_tco_expr(
-            &expr,
-            &fd.name,
-            &fd.params,
-            &ctx,
-            &ectx,
-            &HashSet::new(),
-            &passthrough,
-            &HashMap::new(),
-        );
-        assert!(!code.contains("let __tmp0 = xs.clone();"));
-        assert!(code.contains("let __tmp1 = (remaining - 1i64);"));
-        // Numeric add no longer uses &rhs; list param gets .clone() when reused
-        assert!(code.contains("let __tmp2 = (sink + sumList(xs.clone(), 0i64));"));
-    }
-
-    #[test]
-    fn self_tco_clones_multiple_list_params_reused_in_later_arg() {
-        let ctx = empty_ctx();
-        let fd = list_param_fn(
-            "repeatAppend",
-            vec![
-                ("a", "List<Int>"),
-                ("b", "List<Int>"),
-                ("remaining", "Int"),
-                ("sink", "Int"),
-            ],
-        );
-        let ectx = build_fn_ectx(&fd, &ctx, None);
-        let expr = Expr::TailCall(Box::new(TailCallData::new(
-            "repeatAppend".to_string(),
-            vec![
-                Spanned::bare(Expr::Ident("a".to_string())),
-                Spanned::bare(Expr::Ident("b".to_string())),
-                Spanned::bare(Expr::BinOp(
-                    BinOp::Sub,
-                    Box::new(Spanned::bare(Expr::Ident("remaining".to_string()))),
-                    Box::new(Spanned::bare(Expr::Literal(crate::ast::Literal::Int(1)))),
-                )),
-                Spanned::bare(Expr::BinOp(
-                    BinOp::Add,
-                    Box::new(Spanned::bare(Expr::Ident("sink".to_string()))),
-                    Box::new(Spanned::bare(Expr::FnCall(
-                        Box::new(Spanned::bare(Expr::Ident("List.len".to_string()))),
-                        vec![Spanned::bare(Expr::FnCall(
-                            Box::new(Spanned::bare(Expr::Ident("appendLists".to_string()))),
-                            vec![
-                                Spanned::bare(Expr::Ident("a".to_string())),
-                                Spanned::bare(Expr::Ident("b".to_string())),
-                            ],
-                        ))],
-                    ))),
-                )),
-            ],
-        )));
-
-        let passthrough = HashSet::from([0usize, 1usize]);
-        let code = emit_tco_expr(
-            &expr,
-            &fd.name,
-            &fd.params,
-            &ctx,
-            &ectx,
-            &HashSet::new(),
-            &passthrough,
-            &HashMap::new(),
-        );
-        assert!(!code.contains("let __tmp0 = a.clone();"));
-        assert!(!code.contains("let __tmp1 = b.clone();"));
-        // Numeric add no longer uses &rhs; list params get .clone() when reused
-        assert!(
-            code.contains(
-                "let __tmp3 = (sink + (appendLists(a.clone(), b.clone()).len() as i64));"
-            )
-        );
-    }
-
-    #[test]
-    fn self_tco_does_not_rewrite_same_arity_mutual_tailcall() {
-        let ctx = empty_ctx();
-        let fd = list_param_fn("validSymbolNames", vec![("e", "Sexpr")]);
-        let ectx = build_fn_ectx(&fd, &ctx, None);
-        let expr = Expr::TailCall(Box::new(TailCallData::new(
-            "validSymbolList".to_string(),
-            vec![Spanned::bare(Expr::Ident("e".to_string()))],
-        )));
-
-        let passthrough = HashSet::new();
-        let code = emit_tco_expr(
-            &expr,
-            &fd.name,
-            &fd.params,
-            &ctx,
-            &ectx,
-            &HashSet::new(),
-            &passthrough,
-            &HashMap::new(),
-        );
-        // Borrowed param gets .clone() when passed to another function
-        assert_eq!(code, "validSymbolList(e.clone())");
-        assert!(!code.contains("continue"));
-    }
-
-    #[test]
-    fn self_tco_skips_rebinding_copy_passthrough_params() {
-        let ctx = empty_ctx();
-        let fd = list_param_fn(
-            "sumAreas",
-            vec![("n", "Int"), ("acc", "Int"), ("pick", "Int")],
-        );
-        let ectx = build_fn_ectx(&fd, &ctx, None);
-        let expr = Expr::TailCall(Box::new(TailCallData::new(
-            "sumAreas".to_string(),
-            vec![
-                Spanned::bare(Expr::BinOp(
-                    BinOp::Sub,
-                    Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
-                    Box::new(Spanned::bare(Expr::Literal(crate::ast::Literal::Int(1)))),
-                )),
-                Spanned::bare(Expr::BinOp(
-                    BinOp::Add,
-                    Box::new(Spanned::bare(Expr::Ident("acc".to_string()))),
-                    Box::new(Spanned::bare(Expr::Literal(crate::ast::Literal::Int(1)))),
-                )),
-                Spanned::bare(Expr::Ident("pick".to_string())),
-            ],
-        )));
-
-        let passthrough = HashSet::from([2usize]);
-        let code = emit_tco_expr(
-            &expr,
-            &fd.name,
-            &fd.params,
-            &ctx,
-            &ectx,
-            &HashSet::new(),
-            &passthrough,
-            &HashMap::new(),
-        );
-        assert!(!code.contains("let __tmp2 = pick;"));
-        assert!(!code.contains("pick = __tmp2;"));
-        assert!(code.contains("continue;"));
-    }
-
-    #[test]
-    fn optimized_tco_hoists_invariant_pure_call_chain_over_passthrough_param() {
-        let helper_tag = FnDef {
-            name: "tag".to_string(),
-            line: 1,
-            params: vec![("pick".to_string(), "Int".to_string())],
-            return_type: "Int".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
-                subject: Box::new(Spanned::bare(Expr::Ident("pick".to_string()))),
-                arms: vec![
-                    MatchArm {
-                        pattern: Pattern::Literal(Literal::Int(1)),
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(10)))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                    MatchArm {
-                        pattern: Pattern::Wildcard,
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Int(20)))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                ],
-            }))),
-            resolution: None,
-        };
-        let helper_score = FnDef {
-            name: "score".to_string(),
-            line: 1,
-            params: vec![("x".to_string(), "Int".to_string())],
-            return_type: "Int".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::BinOp(
-                BinOp::Add,
-                Box::new(Spanned::bare(Expr::Ident("x".to_string()))),
-                Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
-            )))),
-            resolution: None,
-        };
-        let fd = FnDef {
-            name: "sumAreas".to_string(),
-            line: 1,
-            params: vec![
-                ("n".to_string(), "Int".to_string()),
-                ("acc".to_string(), "Int".to_string()),
-                ("pick".to_string(), "Int".to_string()),
-            ],
-            return_type: "Int".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
-                subject: Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
-                arms: vec![
-                    MatchArm {
-                        pattern: Pattern::Literal(Literal::Int(0)),
-                        body: Box::new(Spanned::bare(Expr::Ident("acc".to_string()))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                    MatchArm {
-                        pattern: Pattern::Wildcard,
-                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
-                            "sumAreas".to_string(),
-                            vec![
-                                Spanned::bare(Expr::BinOp(
-                                    BinOp::Sub,
-                                    Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
-                                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
-                                )),
-                                Spanned::bare(Expr::BinOp(
-                                    BinOp::Add,
-                                    Box::new(Spanned::bare(Expr::Ident("acc".to_string()))),
-                                    Box::new(Spanned::bare(Expr::FnCall(
-                                        Box::new(Spanned::bare(Expr::Ident("score".to_string()))),
-                                        vec![Spanned::bare(Expr::FnCall(
-                                            Box::new(Spanned::bare(Expr::Ident("tag".to_string()))),
-                                            vec![Spanned::bare(Expr::Ident("pick".to_string()))],
-                                        ))],
-                                    ))),
-                                )),
-                                Spanned::bare(Expr::Ident("pick".to_string())),
-                            ],
-                        ))))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                ],
-            }))),
-            resolution: None,
-        };
-
-        let mut ctx = empty_ctx();
-        ctx.fn_defs = vec![helper_tag.clone(), helper_score.clone(), fd.clone()];
-        ctx.items = vec![
-            TopLevel::FnDef(helper_tag.clone()),
-            TopLevel::FnDef(helper_score.clone()),
-            TopLevel::FnDef(fd.clone()),
-        ];
-        ctx.refresh_facts();
-
-        let emitted = {
-            let r = ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), &ctx, None)
-        };
-        assert!(emitted.contains("let __aver_inv0 = score(tag(pick));"));
-        // Numeric add no longer uses &rhs
-        assert!(emitted.contains("let __tmp1 = (acc + __aver_inv0);"));
-        assert!(!emitted.contains("pick = __tmp2;"));
-    }
-
     #[test]
     fn recursive_sum_type_can_derive_eq_hash() {
         let td = TypeDef::Sum {
@@ -3488,147 +1292,6 @@ mod tests {
 
         let emitted = emit_public_type_def(&td, &ctx);
         assert!(emitted.contains("#[derive(Clone, Debug, PartialEq, Eq, Hash)]"));
-    }
-
-    #[test]
-    fn mutual_tco_generates_trampoline_for_two_functions() {
-        let is_even = FnDef {
-            name: "isEven".to_string(),
-            line: 1,
-            params: vec![("n".to_string(), "Int".to_string())],
-            return_type: "Bool".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
-                subject: Box::new(Spanned::bare(Expr::BinOp(
-                    BinOp::Eq,
-                    Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
-                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
-                ))),
-                arms: vec![
-                    MatchArm {
-                        pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(true)))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                    MatchArm {
-                        pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
-                            "isOdd".to_string(),
-                            vec![Spanned::bare(Expr::BinOp(
-                                BinOp::Sub,
-                                Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
-                                Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
-                            ))],
-                        ))))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                ],
-            }))),
-            resolution: None,
-        };
-
-        let is_odd = FnDef {
-            name: "isOdd".to_string(),
-            line: 5,
-            params: vec![("n".to_string(), "Int".to_string())],
-            return_type: "Bool".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Match {
-                subject: Box::new(Spanned::bare(Expr::BinOp(
-                    BinOp::Eq,
-                    Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
-                    Box::new(Spanned::bare(Expr::Literal(Literal::Int(0)))),
-                ))),
-                arms: vec![
-                    MatchArm {
-                        pattern: Pattern::Literal(Literal::Bool(true)),
-                        body: Box::new(Spanned::bare(Expr::Literal(Literal::Bool(false)))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                    MatchArm {
-                        pattern: Pattern::Literal(Literal::Bool(false)),
-                        body: Box::new(Spanned::bare(Expr::TailCall(Box::new(TailCallData::new(
-                            "isEven".to_string(),
-                            vec![Spanned::bare(Expr::BinOp(
-                                BinOp::Sub,
-                                Box::new(Spanned::bare(Expr::Ident("n".to_string()))),
-                                Box::new(Spanned::bare(Expr::Literal(Literal::Int(1)))),
-                            ))],
-                        ))))),
-                        binding_slots: std::sync::OnceLock::new(),
-                    },
-                ],
-            }))),
-            resolution: None,
-        };
-
-        let fn_defs: Vec<&FnDef> = vec![&is_even, &is_odd];
-        let groups = find_mutual_tco_groups(&fn_defs);
-        assert_eq!(groups.len(), 1, "should find one mutual TCO group");
-        assert_eq!(groups[0], vec![0, 1]);
-
-        let ctx = empty_ctx();
-        let block = emit_mutual_tco_block(1, &fn_defs, &ctx, None, "pub ");
-
-        // Enum with variants for both functions
-        assert!(block.contains("enum __MutualTco1"));
-        assert!(block.contains("IsEven(i64)"));
-        assert!(block.contains("IsOdd(i64)"));
-
-        // Trampoline dispatch loop
-        assert!(block.contains("fn __mutual_tco_trampoline_1"));
-        assert!(block.contains("loop {"));
-        assert!(block.contains("__state = match __state"));
-
-        // Bounce: TailCall becomes enum variant (not a regular call)
-        assert!(block.contains("__MutualTco1::IsOdd("));
-        assert!(block.contains("__MutualTco1::IsEven("));
-
-        // Non-tail returns exit the trampoline
-        assert!(block.contains("return true"));
-        assert!(block.contains("return false"));
-
-        // Thin wrappers
-        assert!(block.contains("pub fn isEven(n: i64) -> bool"));
-        assert!(block.contains("pub fn isOdd(n: i64) -> bool"));
-        assert!(block.contains("__mutual_tco_trampoline_1(__MutualTco1::IsEven(n))"));
-        assert!(block.contains("__mutual_tco_trampoline_1(__MutualTco1::IsOdd(n))"));
-    }
-
-    #[test]
-    fn mutual_tco_three_functions_single_group() {
-        let make_fn = |name: &str, target: &str| FnDef {
-            name: name.to_string(),
-            line: 1,
-            params: vec![("n".to_string(), "Int".to_string())],
-            return_type: "String".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::TailCall(Box::new(
-                TailCallData::new(
-                    target.to_string(),
-                    vec![Spanned::bare(Expr::Ident("n".to_string()))],
-                ),
-            ))))),
-            resolution: None,
-        };
-
-        let a = make_fn("stateA", "stateB");
-        let b = make_fn("stateB", "stateC");
-        let c = make_fn("stateC", "stateA");
-
-        let fn_defs: Vec<&FnDef> = vec![&a, &b, &c];
-        let groups = find_mutual_tco_groups(&fn_defs);
-        assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0], vec![0, 1, 2]);
-
-        let ctx = empty_ctx();
-        let block = emit_mutual_tco_block(1, &fn_defs, &ctx, None, "pub ");
-        assert!(block.contains("StateA(i64)"));
-        assert!(block.contains("StateB(i64)"));
-        assert!(block.contains("StateC(i64)"));
     }
 
     #[test]
@@ -3696,171 +1359,5 @@ mod tests {
             groups.is_empty(),
             "self-only TCO should not create a mutual group"
         );
-    }
-
-    #[test]
-    fn optimized_forward_wrapper_gets_inline_always() {
-        let fd = FnDef {
-            name: "swap".to_string(),
-            line: 1,
-            params: vec![
-                ("a".to_string(), "Int".to_string()),
-                ("b".to_string(), "Int".to_string()),
-            ],
-            return_type: "Int".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Ident("first".to_string()))),
-                vec![
-                    Spanned::bare(Expr::Ident("b".to_string())),
-                    Spanned::bare(Expr::Ident("a".to_string())),
-                ],
-            )))),
-            resolution: None,
-        };
-
-        let first = FnDef {
-            name: "first".to_string(),
-            line: 1,
-            params: vec![
-                ("a".to_string(), "Int".to_string()),
-                ("b".to_string(), "Int".to_string()),
-            ],
-            return_type: "Int".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::Ident(
-                "a".to_string(),
-            )))),
-            resolution: None,
-        };
-        let mut semantic_ctx = empty_ctx();
-        semantic_ctx.items = vec![TopLevel::FnDef(first.clone()), TopLevel::FnDef(fd.clone())];
-        semantic_ctx.fn_defs = vec![first, fd.clone()];
-        semantic_ctx.refresh_facts();
-        let semantic = {
-            let r = semantic_ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), &semantic_ctx, None)
-        };
-        // Both modes now emit #[inline(always)] for thin wrappers
-        assert!(semantic.contains("#[inline(always)]"));
-        assert!(semantic.contains("pub fn swap(a: i64, b: i64) -> i64"));
-        assert!(semantic.contains("first(b, a)"));
-    }
-
-    #[test]
-    fn optimized_leaf_wrapper_uses_body_plan_and_gets_inline_always() {
-        let fd = FnDef {
-            name: "cellAt".to_string(),
-            line: 1,
-            params: vec![
-                ("grid".to_string(), "Vector<Int>".to_string()),
-                ("idx".to_string(), "Int".to_string()),
-            ],
-            return_type: "Int".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::from_expr(Spanned::bare(Expr::FnCall(
-                Box::new(Spanned::bare(Expr::Attr(
-                    Box::new(Spanned::bare(Expr::Ident("Option".to_string()))),
-                    "withDefault".to_string(),
-                ))),
-                vec![
-                    Spanned::bare(Expr::FnCall(
-                        Box::new(Spanned::bare(Expr::Attr(
-                            Box::new(Spanned::bare(Expr::Ident("Vector".to_string()))),
-                            "get".to_string(),
-                        ))),
-                        vec![
-                            Spanned::bare(Expr::Ident("grid".to_string())),
-                            Spanned::bare(Expr::Ident("idx".to_string())),
-                        ],
-                    )),
-                    Spanned::bare(Expr::Literal(Literal::Int(0))),
-                ],
-            )))),
-            resolution: None,
-        };
-
-        let mut semantic_ctx = empty_ctx();
-        semantic_ctx.items = vec![TopLevel::FnDef(fd.clone())];
-        semantic_ctx.fn_defs = vec![fd.clone()];
-        semantic_ctx.refresh_facts();
-        let semantic = {
-            let r = semantic_ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), &semantic_ctx, None)
-        };
-        // Both modes now emit #[inline(always)] for leaf wrappers
-        assert!(semantic.contains("#[inline(always)]"));
-        // Vector param is now borrowed
-        assert!(
-            semantic.contains("pub fn cellAt(grid: &aver_rt::AverVector<i64>, idx: i64) -> i64")
-        );
-        assert!(semantic.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
-    }
-
-    #[test]
-    fn optimized_binding_block_uses_body_plan_and_gets_inline_always() {
-        let fd = FnDef {
-            name: "cellAtPlusOne".to_string(),
-            line: 1,
-            params: vec![
-                ("grid".to_string(), "Vector<Int>".to_string()),
-                ("idx".to_string(), "Int".to_string()),
-            ],
-            return_type: "Int".to_string(),
-            effects: vec![],
-            desc: None,
-            body: Rc::new(FnBody::Block(vec![
-                Stmt::Binding(
-                    "cell".to_string(),
-                    None,
-                    Spanned::bare(Expr::FnCall(
-                        Box::new(Spanned::bare(Expr::Attr(
-                            Box::new(Spanned::bare(Expr::Ident("Option".to_string()))),
-                            "withDefault".to_string(),
-                        ))),
-                        vec![
-                            Spanned::bare(Expr::FnCall(
-                                Box::new(Spanned::bare(Expr::Attr(
-                                    Box::new(Spanned::bare(Expr::Ident("Vector".to_string()))),
-                                    "get".to_string(),
-                                ))),
-                                vec![
-                                    Spanned::bare(Expr::Ident("grid".to_string())),
-                                    Spanned::bare(Expr::Ident("idx".to_string())),
-                                ],
-                            )),
-                            Spanned::bare(Expr::Literal(Literal::Int(0))),
-                        ],
-                    )),
-                ),
-                Stmt::Expr(Spanned::bare(Expr::FnCall(
-                    Box::new(Spanned::bare(Expr::Attr(
-                        Box::new(Spanned::bare(Expr::Ident("Int".to_string()))),
-                        "max".to_string(),
-                    ))),
-                    vec![
-                        Spanned::bare(Expr::Ident("cell".to_string())),
-                        Spanned::bare(Expr::Literal(Literal::Int(1))),
-                    ],
-                ))),
-            ])),
-            resolution: None,
-        };
-
-        let mut semantic_ctx = empty_ctx();
-        semantic_ctx.items = vec![TopLevel::FnDef(fd.clone())];
-        semantic_ctx.fn_defs = vec![fd.clone()];
-        semantic_ctx.refresh_facts();
-        let semantic = {
-            let r = semantic_ctx.resolve_fn_def(&fd, None);
-            emit_public_fn_def(&fd, r.as_ref(), &semantic_ctx, None)
-        };
-        // Both modes now emit #[inline(always)] for binding-block wrappers
-        assert!(semantic.contains("#[inline(always)]"));
-        assert!(semantic.contains("let cell = grid.get(idx as usize).cloned().unwrap_or(0i64);"));
-        assert!(semantic.contains("cell.max(1i64)"));
     }
 }

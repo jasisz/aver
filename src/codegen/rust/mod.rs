@@ -5,9 +5,7 @@ mod builtins;
 pub mod emit_ctx;
 mod expr;
 mod from_mir;
-pub use from_mir::{
-    CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers, parity_counters,
-};
+pub use from_mir::{CoverageReport, MirEmitCtx, coverage_report, coverage_report_with_blockers};
 mod pattern;
 mod policy;
 mod project;
@@ -74,10 +72,6 @@ fn synthesize_rust_module_cascade(
 
 /// Transpile an Aver program to a Rust project.
 pub fn transpile(ctx: &mut CodegenContext) -> ProjectOutput {
-    // Fresh rust-on-MIR parity-gate counters for this transpile so
-    // `parity_counters()` reports the graduated / considered fraction
-    // for exactly this program.
-    from_mir::reset_parity_counters();
     let has_embedded_policy = ctx.policy.is_some();
     let has_runtime_policy = ctx.runtime_policy_from_env;
     let embedded_independence_cancel = ctx
@@ -440,11 +434,14 @@ fn render_generated_module(depends: Vec<String>, sections: Vec<String>) -> Strin
     }
 }
 
-/// Emit one mutual-TCO block, routing through the MIR walker when
-/// `AVER_RUST_MIR_TCO=1` and every member resolves to a `MirFn` +
-/// `ResolvedFnDef`; otherwise the proven HIR emitter
-/// ([`toplevel::emit_mutual_tco_block`]). Behavioral net only — TCO
-/// never byte-graduates, so there's no parity gate here.
+/// Emit one mutual-TCO block (enum + trampoline + wrappers) via the MIR
+/// walker. The HIR emitter is gone (rust-on-MIR W6/Stage-3): every
+/// member resolves to a `(MirFn, ResolvedFnDef)` pair and the trampoline
+/// is synthesized all-or-nothing from MIR. A member missing a `MirFn` /
+/// `ResolvedFnDef`, or a `None` from the walker, is a hard codegen error
+/// (`compile_error!` in the wrapper) — never a panic and never a silent
+/// drop. TCO is verified behaviorally (build + run vs VM + self-host
+/// regen), not by byte-parity.
 fn emit_mutual_tco_block_routed(
     group_id: usize,
     group_fns: &[&FnDef],
@@ -452,40 +449,44 @@ fn emit_mutual_tco_block_routed(
     scope: Option<&str>,
     visibility: &str,
 ) -> String {
-    if from_mir::mir_tco_enabled() {
-        // Resolve every member to its (MirFn, ResolvedFnDef) pair. The
-        // whole block falls back to HIR if any member is missing one
-        // (synthetic / un-lowered) — the trampoline is all-or-nothing.
-        let resolved: Option<Vec<(&crate::ir::mir::MirFn, &crate::ir::hir::ResolvedFnDef)>> =
-            ctx.mir_program.as_ref().and_then(|prog| {
-                group_fns
-                    .iter()
-                    .map(|fd| {
-                        let fn_id = crate::codegen::common::fn_id_for_decl(ctx, fd)?;
-                        let mir_fn = prog.fn_by_id(fn_id)?;
-                        let resolved_fd = ctx.resolved_program.fn_by_id(fn_id)?;
-                        Some((mir_fn, resolved_fd))
-                    })
-                    .collect()
-            });
-        if let Some(pairs) = resolved {
-            let mir_fns: Vec<&crate::ir::mir::MirFn> = pairs.iter().map(|(m, _)| *m).collect();
-            let resolved_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
-                pairs.iter().map(|(_, r)| *r).collect();
-            if let Some(code) = from_mir::emit_mir_mutual_tco_block(
-                group_id,
-                group_fns,
-                &mir_fns,
-                &resolved_fns,
-                ctx,
-                scope,
-                visibility,
-            ) {
-                return code;
-            }
-        }
-    }
-    toplevel::emit_mutual_tco_block(group_id, group_fns, ctx, scope, visibility)
+    // Resolve every member to its (MirFn, ResolvedFnDef) pair.
+    let resolved: Option<Vec<(&crate::ir::mir::MirFn, &crate::ir::hir::ResolvedFnDef)>> =
+        ctx.mir_program.as_ref().and_then(|prog| {
+            group_fns
+                .iter()
+                .map(|fd| {
+                    let fn_id = crate::codegen::common::fn_id_for_decl(ctx, fd)?;
+                    let mir_fn = prog.fn_by_id(fn_id)?;
+                    let resolved_fd = ctx.resolved_program.fn_by_id(fn_id)?;
+                    Some((mir_fn, resolved_fd))
+                })
+                .collect()
+        });
+    let code = resolved.and_then(|pairs| {
+        let mir_fns: Vec<&crate::ir::mir::MirFn> = pairs.iter().map(|(m, _)| *m).collect();
+        let resolved_fns: Vec<&crate::ir::hir::ResolvedFnDef> =
+            pairs.iter().map(|(_, r)| *r).collect();
+        from_mir::emit_mir_mutual_tco_block(
+            group_id,
+            group_fns,
+            &mir_fns,
+            &resolved_fns,
+            ctx,
+            scope,
+            visibility,
+        )
+    });
+    code.unwrap_or_else(|| {
+        let names = group_fns
+            .iter()
+            .map(|fd| fd.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{}fn __mutual_tco_block_{}_render_error() {{ compile_error!(\"MIR walker could not render mutual-TCO block [{}]\"); }}",
+            visibility, group_id, names
+        )
+    })
 }
 
 fn entry_module_sections(
