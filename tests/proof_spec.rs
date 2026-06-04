@@ -525,6 +525,33 @@ fn proof_warns_when_dependency_module_has_verify_blocks() {
 }
 
 #[test]
+fn proof_dafny_warns_example_cases_not_checked() {
+    // Dafny proves LAWS, not concrete example-cases — it cannot evaluate
+    // a `f(x) => y` case the way Lean's `native_decide` does. It must say
+    // so rather than silently pass case-form verify. Pure codegen, no
+    // verifier binary needed. `sum_acc.av` carries case-form verify blocks.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-dafny-case-warn");
+    let run = Command::new(aver_bin)
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .arg("proof")
+        .arg("examples/data/sum_acc.av")
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("example-based") && stderr.contains("NOT") && stderr.contains("Dafny"),
+        "expected a warning that example-based verify is not Dafny-checked, got:\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_export_builds_grok_s_language_when_lake_is_available() {
     assert_proof_builds("examples/core/grok_s_language.av", "aver-proof-grok");
 }
