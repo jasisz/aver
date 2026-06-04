@@ -170,36 +170,97 @@ fn borrow_mask_from_fn_def(
 pub(super) fn callee_borrow_mask(name: &str, arg_count: usize, ctx: &CodegenContext) -> Vec<bool> {
     // First, try to find the FnDef to check for TCO (which overrides everything)
     let fd = find_fn_def_by_name(name, ctx);
-    if let Some(fd) = fd {
-        return borrow_mask_from_fn_def(fd, arg_count, ctx);
-    }
+    let mut mask = if let Some(fd) = fd {
+        borrow_mask_from_fn_def(fd, arg_count, ctx)
+    } else {
+        // No FnDef found — read param types from the resolved-program
+        // view. The qualified lookup hits cross-module callsites that
+        // arrive as bare dotted names; the bare-name fallback covers
+        // entry-scope synthesised wrappers.
+        let lookup_name = if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
+            crate::visibility::qualified_name(prefix, bare)
+        } else {
+            name.to_string()
+        };
+        let resolved = crate::codegen::common::fn_id_for_dotted_name(ctx, &lookup_name)
+            .or_else(|| crate::codegen::common::fn_id_for_dotted_name(ctx, name))
+            .and_then(|id| ctx.resolved_program.fn_by_id(id));
+        match resolved {
+            // Self-TCO functions always resolve via `find_fn_def_by_name`
+            // above, so this path is safe for borrow-by-default on all
+            // non-scalar types including Named.
+            Some(rfd) => rfd
+                .params
+                .iter()
+                .take(arg_count)
+                .map(|(_, ty)| should_borrow_param(ty))
+                .collect(),
+            // Unknown function -- don't borrow (conservative)
+            None => vec![false; arg_count],
+        }
+    };
 
-    // No FnDef found — read param types from the resolved-program
-    // view. The qualified lookup hits cross-module callsites that
-    // arrive as bare dotted names; the bare-name fallback covers
-    // entry-scope synthesised wrappers.
+    // own_param graduation: a NON-TCO collection param the `own_param`
+    // pass PROVED uniquely owned is emitted owned-by-value (`mut p: T`,
+    // see `MirFnEmitPolicy::apply_own_param` / `emit_fn_params_with_owned`),
+    // so the CALLER must pass it BY VALUE, not `&T`. Clear the borrow bit
+    // at every graduated param position so the call site matches the
+    // graduated signature. (Self-/mutual-TCO callees already return an
+    // all-`false` / borrow-by-default mask above; the graduation only
+    // applies on the non-TCO emit, so overriding here is the single place
+    // that keeps call sites and signatures in lockstep.) A missing MIR fn
+    // / aliased_slots leaves the mask unchanged (conservative borrow).
+    clear_owned_param_borrows(name, &mut mask, ctx);
+    mask
+}
+
+/// Clear the borrow bit for every own_param-graduated collection param of
+/// callee `name`, so the call site passes those args by value (matching
+/// the graduated `mut p: T` signature). Resolves the callee's `MirFn` +
+/// `ResolvedFnDef` by the SAME identity-keyed lookup the signature emit
+/// uses, then applies `from_mir::owned_collection_param_names` (the single
+/// source of the owned-param set). Graduation only happens on non-TCO
+/// emits; a self-/mutual-TCO callee carries no graduated params here
+/// because `apply_own_param` on those paths never populates the non-TCO
+/// signature's owned set, so this is a no-op for them.
+fn clear_owned_param_borrows(name: &str, mask: &mut [bool], ctx: &CodegenContext) {
     let lookup_name = if let Some((prefix, bare)) = resolve_module_call(name, ctx) {
         crate::visibility::qualified_name(prefix, bare)
     } else {
         name.to_string()
     };
-    let resolved = crate::codegen::common::fn_id_for_dotted_name(ctx, &lookup_name)
-        .or_else(|| crate::codegen::common::fn_id_for_dotted_name(ctx, name))
-        .and_then(|id| ctx.resolved_program.fn_by_id(id));
-    if let Some(rfd) = resolved {
-        // Self-TCO functions always resolve via `find_fn_def_by_name`
-        // above, so this path is safe for borrow-by-default on all
-        // non-scalar types including Named.
-        return rfd
-            .params
-            .iter()
-            .take(arg_count)
-            .map(|(_, ty)| should_borrow_param(ty))
-            .collect();
+    let fn_id = crate::codegen::common::fn_id_for_dotted_name(ctx, &lookup_name)
+        .or_else(|| crate::codegen::common::fn_id_for_dotted_name(ctx, name));
+    let Some(fn_id) = fn_id else { return };
+    // A self-/mutual-TCO callee never graduates a param on the path that
+    // governs its call-site ABI, so skip it (its signature ABI is fixed
+    // by the TCO wrapper, not by own_param). This mirrors the `has_tco`
+    // guard in `emit_fn_def_with_visibility`.
+    if let Some(fd) = find_fn_def_by_name(name, ctx) {
+        let is_mutual_tco = crate::codegen::common::fn_id_for_decl(ctx, fd)
+            .is_some_and(|id| ctx.mutual_tco_members.contains(&id));
+        if is_mutual_tco || super::toplevel::body_has_self_tailcall(&fd.body, &fd.name) {
+            return;
+        }
     }
-
-    // Unknown function -- don't borrow (conservative)
-    vec![false; arg_count]
+    let Some(mir_fn) = ctx.mir_program.as_ref().and_then(|p| p.fn_by_id(fn_id)) else {
+        return;
+    };
+    let Some(rfd) = ctx.resolved_program.fn_by_id(fn_id) else {
+        return;
+    };
+    let owned = super::from_mir::owned_collection_param_names(mir_fn, &rfd.params);
+    if owned.is_empty() {
+        return;
+    }
+    for (i, (pname, _)) in rfd.params.iter().enumerate() {
+        if i >= mask.len() {
+            break;
+        }
+        if owned.contains(&aver_name_to_rust(pname)) {
+            mask[i] = false;
+        }
+    }
 }
 
 /// Find a FnDef by name, checking top-level, modules (qualified), and all modules (unqualified).

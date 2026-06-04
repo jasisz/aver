@@ -328,6 +328,145 @@ fn fast_plain_stdout_parity_with_vm() {
     );
 }
 
+// ─── own_param ownership: build+run rust vs VM + emitted-shape guard ─────
+
+/// Build+run an inline Aver program through the Rust backend and return
+/// trimmed stdout. Shares the fast-tier compile + cargo-build path.
+fn build_run_rust_inline(name: &str, source: &str) -> Result<String, String> {
+    let ws = temp_dir(name);
+    let src = ws.join(format!("{name}.av"));
+    fs::write(&src, source).expect("write source");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let result = (|| {
+        compile_rust(&src, &project, name, None, &[])?;
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("binary exited non-zero:\n{}", format_output(&out)));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    })();
+    let _ = fs::remove_dir_all(&ws);
+    result
+}
+
+/// Run an inline Aver program on the VM and return trimmed stdout.
+fn run_vm_inline(name: &str, source: &str) -> Result<String, String> {
+    let ws = temp_dir(&format!("{name}_vm"));
+    let src = ws.join(format!("{name}.av"));
+    fs::write(&src, source).expect("write source");
+    let out = run_vm(&src, None);
+    let _ = fs::remove_dir_all(&ws);
+    out
+}
+
+/// The #383 corruption class on the RUST backend: a Vector PARAM captured
+/// into a record field AND own-mutated, both in the SAME fn on the SAME
+/// param. `own_param`'s capture guard must keep the slot flagged so the
+/// Rust emit keeps the `.clone()` at the mutation site (refcount-2
+/// `Rc::make_mut` deep-copies → the record's snapshot is protected).
+/// Build+run the emitted Rust and assert it equals the VM — a wrongly
+/// skipped clone would diverge (1998 vs the correct 1006).
+#[test]
+fn rust_param_captured_and_mutated_in_same_fn_matches_vm() {
+    let src = r#"module SameFnCapture
+    intent = "Vector param captured into a record AND mutated in the same fn (#383 class)"
+    depends []
+    effects [Console.print]
+
+record Holder
+    snapshot: Vector<Int>
+
+fn captureAndMutate(v: Vector<Int>) -> Int
+    ? "store v in a record, then set position 0 to 999 on v; snapshot must read the original"
+    h = Holder(snapshot = v)
+    mutated = Option.withDefault(Vector.set(v, 0, 999), v)
+    snap0 = Option.withDefault(Vector.get(h.snapshot, 0), 0 - 1)
+    mut0 = Option.withDefault(Vector.get(mutated, 0), 0 - 1)
+    snap0 + mut0
+
+fn run() -> Int
+    base = Option.withDefault(Vector.set(Vector.new(3, 0), 0, 7), Vector.new(3, 0))
+    captureAndMutate(base)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    let vm = run_vm_inline("samecap", src).expect("vm run");
+    let rust = build_run_rust_inline("samecap", src).expect("rust build+run");
+    assert_eq!(vm, "1006", "VM must compute the immutable-model value");
+    assert_eq!(
+        rust, vm,
+        "Rust diverged from VM — a captured param's clone was wrongly skipped"
+    );
+}
+
+/// The own_param perf win on the RUST backend, verified end-to-end: a
+/// linearly-threaded Vector param the pass proves uniquely owned must (a)
+/// build+run to the same result as the VM, and (b) emit the OWNED-by-value
+/// in-place shape — `let __vec = v;` (a MOVE) NOT `let __vec = v.clone();`
+/// — so the `Rc::make_mut` runs on a refcount-1 backing (native O(n)),
+/// the whole point of wiring own_param into rust. A regression that drops
+/// the graduation would re-introduce the `.clone()` (O(n²) COW) and trip
+/// the emitted-shape assert even if the result stays correct.
+#[test]
+fn rust_owned_vector_param_emits_in_place_move_and_matches_vm() {
+    let src = r#"module Fill
+    intent = "linearly-threaded vector fill+sum — the own_param rust target"
+    depends []
+    effects [Console.print]
+
+fn fillVector(v: Vector<Int>, n: Int, i: Int) -> Vector<Int>
+    ? "tail-recursive fill: write i*i at position i"
+    match i == n
+        true -> v
+        false -> fillVector(Option.withDefault(Vector.set(v, i, i * i), v), n, i + 1)
+
+fn sumVector(v: Vector<Int>, n: Int, i: Int, acc: Int) -> Int
+    ? "tail-recursive sum across positions 0..n"
+    match i == n
+        true -> acc
+        false -> sumVector(v, n, i + 1, acc + Option.withDefault(Vector.get(v, i), 0))
+
+fn run() -> Int
+    v = fillVector(Vector.new(5, 0), 5, 0)
+    sumVector(v, 5, 0, 0)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    // (a) build+run vs VM
+    let vm = run_vm_inline("fillmove", src).expect("vm run");
+    let rust = build_run_rust_inline("fillmove", src).expect("rust build+run");
+    assert_eq!(vm, "30", "VM fill+sum value");
+    assert_eq!(rust, vm, "Rust fill+sum diverged from VM");
+
+    // (b) emitted-shape guard: the fusion in `fillVector` must MOVE the
+    // owned param (no `.clone()`).
+    let ws = temp_dir("fillmove_emit");
+    let f = ws.join("fillmove.av");
+    fs::write(&f, src).expect("write");
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("project dir");
+    compile_rust(&f, &project, "fillmove", None, &[]).expect("compile rust");
+    let emitted = fs::read_to_string(project.join("src/aver_generated/entry/mod.rs"))
+        .expect("read generated entry module");
+    let _ = fs::remove_dir_all(&ws);
+    assert!(
+        emitted.contains("let __vec = v;"),
+        "expected owned-by-value MOVE (`let __vec = v;`) in fillVector, got:\n{emitted}"
+    );
+    assert!(
+        !emitted.contains("let __vec = v.clone();"),
+        "fillVector still clones the owned vector param (O(n²) COW regressed):\n{emitted}"
+    );
+}
+
 // ─── Mode (b): deny-policy ──────────────────────────────────────────────
 
 /// A Disk-write program. `__PATH__` is substituted with the real

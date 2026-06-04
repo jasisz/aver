@@ -422,8 +422,28 @@ fn emit_fn_def_with_visibility(
     // Check if function uses self-TCO (has TailCall to itself in body)
     let has_tco = body_has_self_tailcall(&fd.body, &fd.name);
 
+    // own_param-proven owned collection params (cleared `aliased_slots`
+    // bit) graduate from `&T` borrow-by-default to `mut p: T`
+    // owned-by-value, so the body's clone-skip yields a refcount-1
+    // in-place `Rc::make_mut`. Read off the same optimized `MirFn` the
+    // body emit (`emit_mir_fn_body_routed` → `apply_own_param`) reads, so
+    // signature and body agree. Only the NON-TCO signature consumes this
+    // here — the self-/mutual-TCO signatures are emitted inside the MIR
+    // TCO helpers (`emit_tco_params_mir` is already `mut`-owned).
+    let owned_collection_params: HashSet<String> = if has_tco {
+        HashSet::new()
+    } else {
+        ctx.mir_program
+            .as_ref()
+            .and_then(|p| p.fn_by_id(resolved_fd.fn_id))
+            .map(|mir_fn| {
+                super::from_mir::owned_collection_param_names(mir_fn, &resolved_fd.params)
+            })
+            .unwrap_or_default()
+    };
+
     // Function signature
-    let params = emit_fn_params(&fd.params, has_tco);
+    let params = emit_fn_params_with_owned(&fd.params, has_tco, &owned_collection_params);
     let ret_type = if fd.return_type.is_empty() {
         "()".to_string()
     } else {
@@ -650,6 +670,29 @@ fn emit_fn_params_with_rc(
     mutable: bool,
     rc_indices: &HashSet<usize>,
 ) -> String {
+    emit_fn_params_inner(params, mutable, rc_indices, &HashSet::new())
+}
+
+/// Emit the non-TCO param signature, graduating `own_param`-proven
+/// collection params (Rust-mangled names in `owned_params`) from `&T`
+/// borrow-by-default to `mut p: T` owned-by-value. The body's
+/// clone-skip (`MirEmitCtx::owned_params`) is derived from the same
+/// `MirFn`, so the two stay in lockstep. Used only on the non-TCO path
+/// (`mutable == false`); the TCO signatures are emitted elsewhere.
+fn emit_fn_params_with_owned(
+    params: &[(String, String)],
+    mutable: bool,
+    owned_params: &HashSet<String>,
+) -> String {
+    emit_fn_params_inner(params, mutable, &HashSet::new(), owned_params)
+}
+
+fn emit_fn_params_inner(
+    params: &[(String, String)],
+    mutable: bool,
+    rc_indices: &HashSet<usize>,
+    owned_params: &HashSet<String>,
+) -> String {
     params
         .iter()
         .enumerate()
@@ -660,6 +703,13 @@ fn emit_fn_params_with_rc(
                 // Borrowed pass-through param: &T instead of owned T
                 format!("{}: &{}", rust_name, rust_type)
             } else if mutable {
+                format!("mut {}: {}", rust_name, rust_type)
+            } else if owned_params.contains(&rust_name) {
+                // own_param proved this collection param uniquely owned:
+                // take it by value (`mut p: T`) so the body's in-place
+                // mutate runs on a refcount-1 backing. `mut` because the
+                // owned-mutate builtins (`Vector.set` → `set_owned`,
+                // `Map.set` → `insert_owned`) consume `self` by value.
                 format!("mut {}: {}", rust_name, rust_type)
             } else {
                 // Borrow-by-default: non-Copy, non-Str params are `&T`
@@ -1050,6 +1100,22 @@ fn emit_main_with_visibility(
     // Check if main returns a Result (needed for ? operator support)
     let returns_result = main_fn.is_some_and(|fd| fd.return_type.starts_with("Result<"));
 
+    // A `main` whose declared return type is neither Unit nor `Result<…>`
+    // (e.g. the bench `fn main() -> Int … fib(15)`) lowers to a Rust `fn
+    // main()` body whose tail is a non-`()` value. Rust's `main` returns
+    // `()` (or a `Termination`), so the tail value must be DISCARDED or
+    // rustc rejects it (`expected (), found i64`). The MIR main port (#395)
+    // dropped the tail-value discard the deleted HIR walker did; restore it
+    // here by suffixing the rendered body with `;`, which turns the tail
+    // expression into a value-dropping statement. Unit mains already end in
+    // `()` / a statement (no-op), and `Result<…>` mains keep their tail (it
+    // flows into the `-> Result<…>` return), so neither needs the discard.
+    let discard_main_tail = main_fn.is_some_and(|fd| {
+        !fd.return_type.is_empty()
+            && fd.return_type != "Unit"
+            && !fd.return_type.starts_with("Result<")
+    });
+
     if returns_result {
         let ret_type = type_annotation_to_rust(&main_fn.unwrap().return_type);
         writeln!(out, "{}fn main() -> {} {{", visibility, ret_type).unwrap();
@@ -1136,6 +1202,17 @@ fn emit_main_with_visibility(
                     )
                 )
             });
+        // Non-Unit, non-Result main: discard the tail value so the body
+        // type-checks against Rust's `()` main return (see
+        // `discard_main_tail` above). Suffixing the whole body string with
+        // `;` drops the final tail expression — correct whether the body is
+        // a single expression or a flat `let`-chain whose last line is the
+        // tail expression.
+        let body = if discard_main_tail {
+            format!("{};", body)
+        } else {
+            body
+        };
         // `emit_mir_main_body` returns a 4-space-indented body
         // (`    crate::cancel_checkpoint();\n    …`); bump it one more
         // level when wrapped in the guest scope so it lines up under the

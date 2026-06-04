@@ -19,7 +19,6 @@
 //!   sum, so the optimization can't pass by being a no-op.
 
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 /// Run an Aver program via the built `aver` binary, returning trimmed
@@ -216,6 +215,83 @@ fn main() -> Unit
     Console.print(String.fromInt(run()))
 "#;
     assert_sound("record_capture", src, "7");
+}
+
+/// Same-fn capture-then-mutate: a Vector PARAM captured into a record
+/// field AND own-mutated, BOTH inside the SAME fn, on the SAME param. The
+/// capture guard flags the slot, but the fixpoint (which seeds every
+/// RULE-1 Vector/Map param optimistic-`true` and only descends on a
+/// not-owned call-site arg) would re-`true` it — every caller passes a
+/// fresh vector, so nothing pulls it back down — and the apply step would
+/// then CLEAR the captured-slot bit, re-opening the corruption. This is
+/// the gap the earlier `vector_aliased_into_record_field` test missed: it
+/// split the capture and the mutation across two fns, so the mutated
+/// param wasn't itself the captured slot. Correct = `1006`
+/// (snapshot[0]=7, mutated[0]=999); corruption surfaces as `1998`
+/// (the in-place set overwrote the record's snapshot too). The fix seeds
+/// captured PARAM slots `false` in the ownership lattice so the proof can
+/// never un-flag them.
+#[test]
+fn param_captured_and_mutated_in_same_fn_is_not_mutated_in_place() {
+    let src = r#"module SameFnCapture
+    intent = "a Vector param captured into a record AND mutated in the same fn"
+    depends []
+    effects [Console.print]
+
+record Holder
+    snapshot: Vector<Int>
+
+fn captureAndMutate(v: Vector<Int>) -> Int
+    ? "store v in a record, then set position 0 to 999 on v; the snapshot must read the original"
+    h = Holder(snapshot = v)
+    mutated = Option.withDefault(Vector.set(v, 0, 999), v)
+    snap0 = Option.withDefault(Vector.get(h.snapshot, 0), 0 - 1)
+    mut0 = Option.withDefault(Vector.get(mutated, 0), 0 - 1)
+    snap0 + mut0
+
+fn run() -> Int
+    base = Option.withDefault(Vector.set(Vector.new(3, 0), 0, 7), Vector.new(3, 0))
+    captureAndMutate(base)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("same_fn_capture", src, "1006");
+}
+
+/// The Map analogue of the same-fn capture-then-mutate: a Map param
+/// captured into a record field AND `Map.set`-mutated in the same fn. The
+/// captured slot must stay flagged so the insert does not corrupt the
+/// record's snapshot. Correct = `107` (snapshot["k"]=7, mutated["k"]=100);
+/// corruption surfaces as `200`.
+#[test]
+fn map_param_captured_and_mutated_in_same_fn_is_not_mutated_in_place() {
+    let src = r#"module SameFnMapCapture
+    intent = "a Map param captured into a record AND mutated in the same fn"
+    depends []
+    effects [Console.print]
+
+record MapHolder
+    snapshot: Map<String, Int>
+
+fn captureAndSet(m: Map<String, Int>) -> Int
+    ? "store m in a record, then Map.set k=100 on m; the snapshot must read the original 7"
+    h = MapHolder(snapshot = m)
+    updated = Map.set(m, "k", 100)
+    snap0 = Option.withDefault(Map.get(h.snapshot, "k"), 0 - 1)
+    new0 = Option.withDefault(Map.get(updated, "k"), 0 - 1)
+    snap0 + new0
+
+fn run() -> Int
+    base = Map.set({}, "k", 7)
+    captureAndSet(base)
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(run()))
+"#;
+    assert_sound("same_fn_map_capture", src, "107");
 }
 
 /// The headline win: a linearly-threaded vector param the refinement

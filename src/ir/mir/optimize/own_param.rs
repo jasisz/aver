@@ -105,20 +105,41 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
     // never owned-mutated. (Only DIRECT `Local` field/element values
     // alias; a `Local` nested inside a sub-computation is consumed by it,
     // not stored into the aggregate.)
-    for (_, f) in program.fns.iter_mut() {
+    //
+    // SOUNDNESS (the #383 corruption class): flagging `aliased_slots`
+    // here is NOT enough for a PARAM slot. `prone` (computed above) keys
+    // off RULE 1, so every Vector/Map param — captured or not — is
+    // already in the owned-lattice; the fixpoint then seeds it optimistic
+    // `true` and the apply step (`to_clear`) would CLEAR the very bit we
+    // set here whenever the fn's callers all pass a fresh value (e.g. a
+    // single `main` caller passing `Vector.new(..)`). That silently
+    // un-flags a captured param and re-opens the corruption. So record
+    // each fn's captured PARAM slots and force their owned-lattice entry
+    // to `false` (and keep it pinned there) below, so the proof can never
+    // un-flag a slot whose value escaped into an aggregate.
+    let mut captured_param_slots: HashMap<FnId, HashSet<usize>> = HashMap::new();
+    for (id, f) in program.fns.iter_mut() {
         let mut captured: HashSet<u32> = HashSet::new();
         collect_captured_slots(&f.body.node, &mut captured);
         if captured.is_empty() {
             continue;
         }
+        let nparams = f.params.len();
         let mut slots = f.aliased_slots.as_ref().clone();
         if let Some(&max) = captured.iter().max()
             && (max as usize) >= slots.len()
         {
             slots.resize(max as usize + 1, false);
         }
+        let mut cap_params: HashSet<usize> = HashSet::new();
         for s in captured {
             slots[s as usize] = true;
+            if (s as usize) < nparams {
+                cap_params.insert(s as usize);
+            }
+        }
+        if !cap_params.is_empty() {
+            captured_param_slots.insert(*id, cap_params);
         }
         f.aliased_slots = Arc::new(slots);
     }
@@ -153,12 +174,18 @@ pub fn own_param_refine(mut program: MirProgram) -> MirProgram {
     }
 
     // Fixpoint lattice: owned[(fn, param_idx)] for alias-prone params.
-    // Init optimistic true; pinned fns start (and stay) false.
+    // Init optimistic true; pinned fns start (and stay) false. A param
+    // slot whose value escaped into an aggregate (captured_param_slots)
+    // also starts false — its backing is shared with the aggregate's copy,
+    // so it must never be owned-mutated in place (the #383 class). The
+    // lattice is monotone-descending, so a `false` seed stays `false`.
     let mut owned: HashMap<(FnId, usize), bool> = HashMap::new();
     for (id, idxs) in &prone {
         let pin = pinned.contains(id);
+        let captured = captured_param_slots.get(id);
         for &i in idxs {
-            owned.insert((*id, i), !pin);
+            let escaped = captured.is_some_and(|c| c.contains(&i));
+            owned.insert((*id, i), !pin && !escaped);
         }
     }
 
