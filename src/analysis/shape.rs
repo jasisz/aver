@@ -410,77 +410,12 @@ pub fn compute_sccs(fns: &[&ResolvedFnDef], facts_by_id: &HashMap<FnId, &Facts>)
             graph.insert(fd.fn_id, edges);
         }
     }
-    let mut index = 0u32;
-    let mut stack: Vec<FnId> = Vec::new();
-    let mut on_stack: HashSet<FnId> = HashSet::new();
-    let mut indices: HashMap<FnId, u32> = HashMap::new();
-    let mut lowlinks: HashMap<FnId, u32> = HashMap::new();
-    let mut multi_scc: HashSet<FnId> = HashSet::new();
-
-    #[allow(clippy::too_many_arguments)]
-    fn strongconnect(
-        v: FnId,
-        graph: &HashMap<FnId, Vec<FnId>>,
-        index: &mut u32,
-        stack: &mut Vec<FnId>,
-        on_stack: &mut HashSet<FnId>,
-        indices: &mut HashMap<FnId, u32>,
-        lowlinks: &mut HashMap<FnId, u32>,
-        multi_scc: &mut HashSet<FnId>,
-    ) {
-        indices.insert(v, *index);
-        lowlinks.insert(v, *index);
-        *index += 1;
-        stack.push(v);
-        on_stack.insert(v);
-        if let Some(neighbors) = graph.get(&v).cloned() {
-            for w in neighbors {
-                if !indices.contains_key(&w) {
-                    strongconnect(
-                        w, graph, index, stack, on_stack, indices, lowlinks, multi_scc,
-                    );
-                    let lv = *lowlinks.get(&v).unwrap();
-                    let lw = *lowlinks.get(&w).unwrap();
-                    lowlinks.insert(v, lv.min(lw));
-                } else if on_stack.contains(&w) {
-                    let lv = *lowlinks.get(&v).unwrap();
-                    let iw = *indices.get(&w).unwrap();
-                    lowlinks.insert(v, lv.min(iw));
-                }
-            }
-        }
-        if lowlinks.get(&v) == indices.get(&v) {
-            let mut scc: Vec<FnId> = Vec::new();
-            loop {
-                let w = stack.pop().unwrap();
-                on_stack.remove(&w);
-                scc.push(w);
-                if w == v {
-                    break;
-                }
-            }
-            if scc.len() > 1 {
-                multi_scc.extend(scc);
-            }
-        }
-    }
-
+    // Mutual-recursion set: members of a multi-element SCC. Self-edges were
+    // excluded when building `graph` above, so a self-recursive fn is a
+    // 1-element component and is intentionally NOT reported here. The Tarjan
+    // core is shared with `call_graph` via `crate::scc`.
     let nodes: Vec<FnId> = graph.keys().copied().collect();
-    for v in nodes {
-        if !indices.contains_key(&v) {
-            strongconnect(
-                v,
-                &graph,
-                &mut index,
-                &mut stack,
-                &mut on_stack,
-                &mut indices,
-                &mut lowlinks,
-                &mut multi_scc,
-            );
-        }
-    }
-    multi_scc
+    crate::scc::mutually_recursive(&nodes, &graph)
 }
 
 // ─── Program-level shape (stage 4 of #232) ───────────────────────────────────
