@@ -5392,6 +5392,30 @@ fn load_module_recursive(
         process::exit(1);
     }
 
+    // Module-scoped `verify` blocks are not checked: only the ENTRY
+    // module's verify blocks become theorems / lemmas / samples. A
+    // `verify ... law` in a dependency module is silently dropped here
+    // (ModuleInfo carries no verify field), so it would never fail —
+    // a vacuous pass on every backend and the runtime sampler. Warn
+    // loudly so an unchecked dependency law isn't mistaken for a proven
+    // one. (Actually checking module-scoped verify is a separate, larger
+    // feature.)
+    let dep_verify_count = items
+        .iter()
+        .filter(|i| matches!(i, TopLevel::Verify(_)))
+        .count();
+    if dep_verify_count > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "warning: {dep_verify_count} verify block(s) in dependency module \
+                 '{name}' are NOT checked (module-scoped verify is not yet supported) — \
+                 move them to the entry module to prove or sample them"
+            )
+            .yellow()
+        );
+    }
+
     // Dep modules go through the same pipeline shape as the entry, AND
     // they typecheck against the same on-disk module tree. Typecheck
     // here populates `Spanned::ty()` on this module's expressions so
