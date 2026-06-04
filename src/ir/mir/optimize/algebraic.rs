@@ -282,6 +282,29 @@ mod tests {
     }
 
     #[test]
+    fn algebraic_mul_zero_keeps_trapping_div_operand() {
+        // Regression: `(5 / 0) * 0` must NOT collapse to `0`. The
+        // `x * 0 → 0` rewrite only fires when the dropped operand is pure,
+        // and `5 / 0` traps at runtime — folding it away would silently
+        // turn a trapping program into a non-trapping one.
+        let div = MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Div,
+            lhs: Box::new(span(MirExpr::Literal(span(Literal::Int(5))))),
+            rhs: Box::new(span(MirExpr::Literal(span(Literal::Int(0))))),
+        }));
+        let body = MirExpr::BinOp(span(MirBinOp {
+            op: BinOp::Mul,
+            lhs: Box::new(span(div)),
+            rhs: Box::new(span(MirExpr::Literal(span(Literal::Int(0))))),
+        }));
+        let simplified = algebraic_simplify(one_fn_program(body));
+        assert!(
+            matches!(body_of(&simplified), MirExpr::BinOp(b) if matches!(b.node.op, BinOp::Mul)),
+            "(5 / 0) * 0 must stay a Mul — collapsing to 0 would drop a trap"
+        );
+    }
+
+    #[test]
     fn algebraic_x_times_one_drops_to_x() {
         let body = MirExpr::BinOp(span(MirBinOp {
             op: BinOp::Mul,
