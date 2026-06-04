@@ -415,6 +415,72 @@ fn proof_dafny_verifies_json_when_dafny_is_available() {
 }
 
 #[test]
+fn proof_dafny_check_verifies_entry_module_not_arbitrary_dependency() {
+    // Regression: `--check` must verify the ENTRY module (which carries the
+    // verify-law lemmas), not whatever `.dfy` a directory scan yields first.
+    // The dependency module here (`Aaa`) sorts before the entry (`Zzz`) and
+    // does NOT include it, so a naive `read_dir().find()` verifies `Aaa.dfy`
+    // and never checks `Zzz`'s deliberately-false law → false-green.
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny entry-selection test: `dafny` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-mm-entry-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("aaa.av"),
+        "module Aaa\n    depends []\n\nfn ident(n: Int) -> Int\n    ? \"id\"\n    n\n\n\
+         verify ident law refl\n    given n: Int = -1..1\n    ident(n) => n\n",
+    )
+    .expect("write aaa.av");
+    std::fs::write(
+        src.join("zzz.av"),
+        "module Zzz\n    depends [Aaa]\n    effects [Console.print]\n\n\
+         fn wrong(n: Int) -> Int\n    ? \"doubles; the law lies\"\n    Aaa.ident(n) + n\n\n\
+         verify wrong law falseRefl\n    given n: Int = -1..1\n    wrong(n) => n\n\n\
+         fn main() -> Unit\n    ! [Console.print]\n    Console.print(\"mm\")\n",
+    )
+    .expect("write zzz.av");
+    let out = temp_output_dir("aver-mm-entry-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("zzz.av"))
+        .arg("--backend")
+        .arg("dafny")
+        .arg("--module-root")
+        .arg(&src)
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(false),
+        "entry `Zzz`'s false law `wrong(n) => n` must be caught — `--check` must \
+         verify the ENTRY module, not an arbitrary dependency.\n{}",
+        format_output(&run)
+    );
+    assert!(
+        summary["errors"].as_u64().unwrap_or(0) >= 1,
+        "expected >=1 Dafny error from the false entry law\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_export_builds_grok_s_language_when_lake_is_available() {
     assert_proof_builds("examples/core/grok_s_language.av", "aver-proof-grok");
 }

@@ -4933,7 +4933,24 @@ pub(super) fn cmd_proof(
     }
 
     if check {
-        run_proof_check(output_dir, backend, error_budget, sorry_budget, check_json);
+        // For Dafny, hand the harness the real entry module filename so it
+        // verifies the file that carries the verify-law lemmas (not an
+        // arbitrary dependency module).
+        let dafny_entry = match backend {
+            super::cli::ProofBackend::Dafny => Some(format!(
+                "{}.dfy",
+                aver::codegen::common::entry_basename(&ctx)
+            )),
+            super::cli::ProofBackend::Lean => None,
+        };
+        run_proof_check(
+            output_dir,
+            backend,
+            error_budget,
+            sorry_budget,
+            check_json,
+            dafny_entry,
+        );
     }
 }
 
@@ -4955,6 +4972,7 @@ fn run_proof_check(
     error_budget: Option<usize>,
     sorry_budget: Option<usize>,
     check_json: bool,
+    dafny_entry: Option<String>,
 ) {
     use std::process::Command;
 
@@ -4963,19 +4981,29 @@ fn run_proof_check(
             ("lake", vec!["build".to_string()], "Lean / lake", "lean")
         }
         super::cli::ProofBackend::Dafny => {
-            let entry = match std::fs::read_dir(output_dir) {
-                Ok(rd) => rd
-                    .filter_map(|e| e.ok())
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .find(|n| n.ends_with(".dfy") && n != "common.dfy"),
-                Err(e) => {
-                    eprintln!(
-                        "{}",
-                        format!("--check: read_dir({}) failed: {}", output_dir, e).red()
-                    );
-                    std::process::exit(2);
-                }
-            };
+            // Verify the ACTUAL entry module, not whatever `read_dir`
+            // happens to yield first. The entry file holds the verify-law
+            // lemmas; in a multi-module project a dependency module picked
+            // by chance does NOT include the entry, so the entry's laws
+            // would go unverified and the check would false-green.
+            // `dafny_entry` is the entry basename derived from the codegen
+            // context (the same source the build hint prints); fall back to
+            // a directory scan only if that file is somehow absent.
+            let entry = dafny_entry
+                .filter(|e| std::path::Path::new(output_dir).join(e).is_file())
+                .or_else(|| match std::fs::read_dir(output_dir) {
+                    Ok(rd) => rd
+                        .filter_map(|e| e.ok())
+                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                        .find(|n| n.ends_with(".dfy") && n != "common.dfy"),
+                    Err(e) => {
+                        eprintln!(
+                            "{}",
+                            format!("--check: read_dir({}) failed: {}", output_dir, e).red()
+                        );
+                        std::process::exit(2);
+                    }
+                });
             let Some(entry) = entry else {
                 eprintln!(
                     "{}",
