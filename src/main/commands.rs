@@ -5017,7 +5017,18 @@ fn run_proof_check(
             };
             (
                 "dafny",
-                vec!["verify".to_string(), entry],
+                // `--verify-included-files`: by default `dafny verify` trusts
+                // every `include`d file, so a dependency module's termination
+                // obligations (native `decreases` / fuel lemmas) would go
+                // unchecked — a non-decreasing measure there would be silently
+                // accepted. Verifying includes closes that trust gap; the
+                // runtime prelude (`common.dfy`) verifies clean, so this adds
+                // coverage without introducing spurious errors.
+                vec![
+                    "verify".to_string(),
+                    "--verify-included-files".to_string(),
+                    entry,
+                ],
                 "Dafny / Z3",
                 "dafny",
             )
