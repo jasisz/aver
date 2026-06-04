@@ -226,13 +226,26 @@ fn emit_simple_induction(
             .map(|index| format!("f{}", index))
             .collect();
 
+        // Each arm closes fully or degrades to an honest `sorry` — and
+        // BUILDS either way. `induction .. with | arm => tac` requires the
+        // arm tactic to close its goal; a leftover goal is an
+        // `unsolved goals` ERROR (a hard lake-build failure), not a
+        // countable `sorry`. Gate on `first | (simp[_all] [defs]; done) |
+        // sorry` (matching the List-induction path): `; done` turns a
+        // non-closing `simp` into a throw that `first` catches and admits
+        // via `sorry`. A law simp proves closes (no sorry); anything else
+        // (e.g. an arm needing `omega`) becomes an honest building sorry
+        // rather than a false-RED hard error.
         match classify_variant(variant, type_name) {
             VariantKind::Leaf => {
                 if field_binders.is_empty() {
-                    proof_lines.push(format!("  | {} => simp [{}]", lean_variant, simp_list));
+                    proof_lines.push(format!(
+                        "  | {} => first | (simp [{}]; done) | sorry",
+                        lean_variant, simp_list
+                    ));
                 } else {
                     proof_lines.push(format!(
-                        "  | {} {} => simp [{}]",
+                        "  | {} {} => first | (simp [{}]; done) | sorry",
                         lean_variant,
                         field_binders.join(" "),
                         simp_list
@@ -249,7 +262,7 @@ fn emit_simple_induction(
                     .collect();
 
                 proof_lines.push(format!(
-                    "  | {} {} {} => simp_all [{}]",
+                    "  | {} {} {} => first | (simp_all [{}]; done) | sorry",
                     lean_variant,
                     field_binders.join(" "),
                     ih_names.join(" "),
