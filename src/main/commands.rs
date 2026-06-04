@@ -5285,6 +5285,32 @@ fn cmd_proof_lean(
 fn cmd_proof_dafny(file: &str, output_dir: &str, ctx: &codegen::CodegenContext) {
     use aver::codegen::dafny as dafny_codegen;
 
+    // Example-based `verify f` (concrete `f(x) => y` cases) are an
+    // EVALUATION check: Lean verifies them with `native_decide` (which
+    // runs the function) and `aver verify` samples them at runtime. The
+    // Dafny backend is a PROVER, not an evaluator — it cannot reduce a
+    // concrete recursive / List / String case (attempting it floods
+    // spurious errors and can hang the verifier), so it does not check
+    // case-form verify and only proves law-form `verify`. Warn so the
+    // silence isn't mistaken for a Dafny-verified pass (law blocks ARE
+    // proven; the Lean backend and `aver verify` cover the examples).
+    let unchecked_case_blocks = ctx
+        .items
+        .iter()
+        .filter(|i| matches!(i, TopLevel::Verify(vb) if matches!(vb.kind, VerifyKind::Cases)))
+        .count();
+    if unchecked_case_blocks > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "warning: {unchecked_case_blocks} example-based `verify` block(s) are NOT \
+                 checked by the Dafny backend (Dafny proves laws, not concrete examples) — \
+                 they are verified by `aver proof --backend lean` and `aver verify`"
+            )
+            .yellow()
+        );
+    }
+
     let output = dafny_codegen::transpile(ctx);
     let build_hint = format!(
         "cd {} && dafny verify {}.dfy",
