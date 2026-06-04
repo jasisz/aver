@@ -5044,7 +5044,19 @@ fn run_proof_check(
         }
     };
 
-    let passed = count <= budget;
+    // Lean: the build itself must SUCCEED, not just stay within the sorry
+    // budget. `count_lean_sorries` only sees `declaration uses 'sorry'`
+    // warnings (which are non-fatal — lake exits 0); it is blind to hard
+    // errors like `unsolved goals`, which fail the build (lake exit 1) while
+    // emitting zero sorry-warnings. Gating on lake's exit status closes that
+    // false-green (a law whose tactic leaves an open goal is a build failure,
+    // not a 0-sorry pass). Dafny is unchanged: `dafny verify` exits non-zero
+    // on ANY verification error, so its pass/fail is driven by the parsed
+    // error count against the error budget, not the exit status.
+    let passed = match backend {
+        super::cli::ProofBackend::Dafny => count <= budget,
+        super::cli::ProofBackend::Lean => output.status.success() && count <= budget,
+    };
 
     if check_json {
         let mut obj = serde_json::Map::new();
