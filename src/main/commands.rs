@@ -4938,8 +4938,9 @@ pub(super) fn cmd_proof(
 }
 
 /// `aver proof --check` harness: invoke the backend's verifier inside
-/// `output_dir`, count errors (Dafny) or residual `sorry`s (Lean),
-/// compare against the optional budget, and exit accordingly:
+/// `output_dir`, require the verifier to exit cleanly, count errors +
+/// `assume {:axiom}` trust-escapes (Dafny) or residual `sorry`s (Lean),
+/// compare against the optional budget(s), and exit accordingly:
 /// - exit 0: count ≤ budget (budget defaults to 0 when unset)
 /// - exit 1: count > budget
 /// - exit 2: harness failure (verifier not on PATH, missing .dfy entry,
@@ -5020,7 +5021,29 @@ fn run_proof_check(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    let (errors, sorries, budget, count) = match backend {
+    // Per-backend metric + pass decision.
+    //
+    // Lean: the build itself must SUCCEED (lake exit 0), not merely stay
+    // within the sorry budget. `count_lean_sorries` only sees the
+    // non-fatal `declaration uses 'sorry'` warning and is blind to hard
+    // errors like `unsolved goals` (lake exit 1, zero sorry-warnings).
+    // Gating on exit status closes that false-green.
+    //
+    // Dafny is the SYMMETRIC case and needs the same discipline on two
+    // fronts. (1) `dafny verify` exits non-zero not only on verification
+    // errors but on out-of-resource / timeout / inconclusive (exit 4) —
+    // none of which the parsed "M errors" field reflects — so we gate on
+    // exit status too. (2) The emitter discharges laws it cannot prove
+    // with `assume {:axiom} lhs == rhs;` (its own "sorry-style fallback",
+    // toplevel.rs:1167/1826), which Dafny TRUSTS: 0 errors, exit 0. Those
+    // axioms are the Dafny analog of Lean's `sorry`; count them and charge
+    // against the sorry budget so a trusted-but-unproven law cannot pass.
+    // (Opaque `function {:axiom}` declarations are NOT counted — like
+    // Lean's `partial def` they trust a fn's definition, not a specific
+    // law, and neither backend charges that fn-level trust to the budget.)
+    let error_budget_v = error_budget.unwrap_or(0);
+    let sorry_budget_v = sorry_budget.unwrap_or(0);
+    let (errors, sorries, axioms, budget, passed) = match backend {
         super::cli::ProofBackend::Dafny => {
             let errors = match parse_dafny_error_count(&stdout) {
                 Some(n) => n,
@@ -5036,26 +5059,16 @@ fn run_proof_check(
                     std::process::exit(2);
                 }
             };
-            (Some(errors), None, error_budget.unwrap_or(0), errors)
+            let axioms = count_dafny_axioms(output_dir);
+            let passed =
+                output.status.success() && errors <= error_budget_v && axioms <= sorry_budget_v;
+            (Some(errors), None, Some(axioms), error_budget_v, passed)
         }
         super::cli::ProofBackend::Lean => {
             let sorries = count_lean_sorries(&stderr) + count_lean_sorries(&stdout);
-            (None, Some(sorries), sorry_budget.unwrap_or(0), sorries)
+            let passed = output.status.success() && sorries <= sorry_budget_v;
+            (None, Some(sorries), None, sorry_budget_v, passed)
         }
-    };
-
-    // Lean: the build itself must SUCCEED, not just stay within the sorry
-    // budget. `count_lean_sorries` only sees `declaration uses 'sorry'`
-    // warnings (which are non-fatal — lake exits 0); it is blind to hard
-    // errors like `unsolved goals`, which fail the build (lake exit 1) while
-    // emitting zero sorry-warnings. Gating on lake's exit status closes that
-    // false-green (a law whose tactic leaves an open goal is a build failure,
-    // not a 0-sorry pass). Dafny is unchanged: `dafny verify` exits non-zero
-    // on ANY verification error, so its pass/fail is driven by the parsed
-    // error count against the error budget, not the exit status.
-    let passed = match backend {
-        super::cli::ProofBackend::Dafny => count <= budget,
-        super::cli::ProofBackend::Lean => output.status.success() && count <= budget,
     };
 
     if check_json {
@@ -5066,6 +5079,10 @@ fn run_proof_check(
         }
         if let Some(s) = sorries {
             obj.insert("sorries".into(), s.into());
+        }
+        if let Some(a) = axioms {
+            obj.insert("axioms".into(), a.into());
+            obj.insert("axiom_budget".into(), sorry_budget_v.into());
         }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
@@ -5079,13 +5096,23 @@ fn run_proof_check(
         // diagnostics; we already parsed counts above.
         print!("{}", stdout);
         eprint!("{}", stderr);
-        let metric = match backend {
-            super::cli::ProofBackend::Dafny => format!("{count} errors"),
-            super::cli::ProofBackend::Lean => format!("{count} sorries"),
+        let (metric, budget_desc) = match backend {
+            super::cli::ProofBackend::Dafny => (
+                format!(
+                    "{} errors, {} axioms",
+                    errors.unwrap_or(0),
+                    axioms.unwrap_or(0)
+                ),
+                format!("errors ≤ {error_budget_v}, axioms ≤ {sorry_budget_v}"),
+            ),
+            super::cli::ProofBackend::Lean => (
+                format!("{} sorries", sorries.unwrap_or(0)),
+                format!("sorries ≤ {sorry_budget_v}"),
+            ),
         };
         if passed {
-            let suffix = if budget > 0 {
-                format!(" (within budget {budget})")
+            let suffix = if error_budget_v > 0 || sorry_budget_v > 0 {
+                format!(" (within budget: {budget_desc})")
             } else {
                 String::new()
             };
@@ -5093,7 +5120,7 @@ fn run_proof_check(
         } else {
             eprintln!(
                 "{}",
-                format!("--check: {label} — {metric} over budget {budget}").red()
+                format!("--check: {label} — {metric} (budget: {budget_desc})").red()
             );
         }
     }
@@ -5120,6 +5147,31 @@ fn parse_dafny_error_count(stdout: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Count `assume {:axiom}` obligation trust-escapes across all emitted
+/// `.dfy` files in `dir`. These are the Dafny analog of Lean's `sorry`:
+/// when the emitter cannot prove a law (open-domain opaque recursion,
+/// past the fuel cliff) it discharges the obligation with
+/// `assume {:axiom} lhs == rhs;`, which Dafny TRUSTS — the proof verifies
+/// with 0 errors and exit 0. Counting them (and charging against the
+/// sorry budget) keeps `--check` honest and symmetric with
+/// `count_lean_sorries`. Scans every `.dfy` so axioms in dependency
+/// modules count too. (Opaque `function {:axiom}` declarations are not
+/// counted; see the note at the pass-decision site.)
+fn count_dafny_axioms(dir: &str) -> usize {
+    let mut total = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().ends_with(".dfy")
+                && let Ok(contents) = std::fs::read_to_string(entry.path())
+            {
+                total += contents.matches("assume {:axiom}").count();
+            }
+        }
+    }
+    total
 }
 
 /// Count Lean's `declaration uses 'sorry'` warnings in build output.

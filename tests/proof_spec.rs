@@ -137,21 +137,22 @@ fn assert_proof_builds_with_sorry_budget(
 /// the proof-IR migration); the remaining flagship examples
 /// (`fibonacci`, `rle`, `quicksort`, `date`, `json`) carry
 /// pre-IR-migration Dafny gaps tracked in issue #114 and are gated
-/// via [`assert_dafny_verifies_with_error_budget`].
+/// via [`assert_dafny_verifies_with_budgets`].
 fn assert_dafny_verifies(example_path: &str, prefix: &str) {
-    assert_dafny_verifies_with_error_budget(example_path, prefix, 0);
+    assert_dafny_verifies_with_budgets(example_path, prefix, 0, 0);
 }
 
 /// `assert_dafny_verifies`, but tolerate `expected_errors` Dafny
-/// verification errors. Mirror of the Lean-side
-/// `assert_proof_builds_with_sorry_budget`: a drop below the budget
-/// fails (cue to tighten), a climb above it fails (regression — a
-/// new shape lost its strategy). Parses Dafny's "Dafny program
-/// verifier finished with X verified, Y errors" tail line.
-fn assert_dafny_verifies_with_error_budget(
+/// verification errors AND `expected_axioms` `assume {:axiom}` trust
+/// escapes. Mirror of the Lean-side `assert_proof_builds_with_sorry_budget`:
+/// a drop below either budget fails (cue to tighten), a climb above fails
+/// (regression — a law lost its strategy or degraded to a trusted axiom).
+/// Parses both counts from the `--check-json` summary.
+fn assert_dafny_verifies_with_budgets(
     example_path: &str,
     prefix: &str,
     expected_errors: usize,
+    expected_axioms: usize,
 ) {
     if Command::new("dafny").arg("--version").output().is_err() {
         eprintln!("skipping dafny verify smoke test: `dafny` not available");
@@ -213,6 +214,31 @@ fn assert_dafny_verifies_with_error_budget(
         example_path,
         expected_errors,
         actual,
+        format_output(&run)
+    );
+
+    // Pin the `assume {:axiom}` count too — the Dafny analog of the Lean
+    // sorry budget. An axiom is a TRUSTED (unproven) obligation: a law that
+    // silently degrades from a real proof to `assume {:axiom}` keeps
+    // `errors == 0` and would slip past an errors-only check (the symmetric
+    // twin of the Lean unsolved-goals false-green). Exact-match in both
+    // directions: a drop means the proof got stronger (lower the count), a
+    // rise means a law regressed to trust (investigate before raising).
+    let actual_axioms = summary["axioms"].as_u64().unwrap_or_else(|| {
+        panic!(
+            "`axioms` field missing from --check-json summary:\n{}",
+            json_line
+        )
+    }) as usize;
+    assert_eq!(
+        actual_axioms,
+        expected_axioms,
+        "{}: dafny axiom (assume {{:axiom}}) count drift (expected {}, got {}). \
+         These are trusted, NOT proven. A rise means a law regressed to an axiom — \
+         investigate before raising the count.\n{}",
+        example_path,
+        expected_axioms,
+        actual_axioms,
         format_output(&run)
     );
 
@@ -328,7 +354,7 @@ fn proof_dafny_verifies_rle_when_dafny_is_available() {
     // `decodeString` universal). Z3 can't auto-discharge them
     // without a richer list-induction tactic the lowerer doesn't
     // emit yet. Tracked in issue #114.
-    assert_dafny_verifies_with_error_budget("examples/data/rle.av", "aver-dafny-rle", 3);
+    assert_dafny_verifies_with_budgets("examples/data/rle.av", "aver-dafny-rle", 3, 0);
 }
 
 #[test]
@@ -356,11 +382,7 @@ fn proof_dafny_verifies_quicksort_when_dafny_is_available() {
     // budget without explicit `reveal`. Budget grew from 5 → 8 when
     // `sort.idempotent` landed in #220 (three sample inputs ×
     // one postcondition each). Tracked in issue #114 / #76.
-    assert_dafny_verifies_with_error_budget(
-        "examples/data/quicksort.av",
-        "aver-dafny-quicksort",
-        8,
-    );
+    assert_dafny_verifies_with_budgets("examples/data/quicksort.av", "aver-dafny-quicksort", 8, 3);
 }
 
 #[test]
@@ -389,7 +411,7 @@ fn proof_dafny_verifies_json_when_dafny_is_available() {
     // closing this cleanly is probably out of scope for a single
     // fix per issue #114, and would need a different proof
     // strategy entirely.
-    assert_dafny_verifies_with_error_budget("examples/data/json.av", "aver-dafny-json", 89);
+    assert_dafny_verifies_with_budgets("examples/data/json.av", "aver-dafny-json", 89, 16);
 }
 
 #[test]
