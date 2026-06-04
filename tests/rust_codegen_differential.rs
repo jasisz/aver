@@ -1323,6 +1323,114 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
     result.unwrap_or_else(|e| panic!("{e}"));
 }
 
+// ─── Mode (h): Int.fromString / Float.fromString Err-message bytes ────────
+//
+// `Int.fromString` / `Float.fromString` return a `Result<_, String>`.
+// On a failed parse the VM (`src/types/int.rs` / `float.rs`) formats the
+// Err string as `Cannot parse '{input}' as Int` / `… as Float`. The Rust
+// emit used to delegate to rustc's NATIVE `parse` error ("invalid digit
+// found in string"), a real cross-backend SEMANTIC divergence: a program
+// that reads the `Result.Err(String)` got different bytes on Rust vs the
+// VM, and verify cases asserting the message failed under `cargo test`.
+//
+// This probe reads BOTH parse Results back as strings and prints them, so
+// the built binary's stdout carries the exact Err bytes. A regression to
+// the native rustc message would change the bytes here and fail parity.
+const MIR_FROMSTRING_ERR_PROBE: &str = r#"module FromStringErrProbe
+    intent =
+        "Probes Int.fromString / Float.fromString Err-message bytes."
+        "The Err string must match the VM byte-for-byte, not rustc's native parse error."
+    effects [Console]
+
+fn showInt(s: String) -> String
+    ? "Render the Int.fromString Result as a string."
+    match Int.fromString(s)
+        Result.Ok(n) -> "ok:{n}"
+        Result.Err(e) -> "err:{e}"
+
+fn showFloat(s: String) -> String
+    ? "Render the Float.fromString Result as a string."
+    match Float.fromString(s)
+        Result.Ok(f) -> "ok:{f}"
+        Result.Err(e) -> "err:{e}"
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(showInt("bad"))
+    Console.print(showInt("12x"))
+    Console.print(showInt(""))
+    Console.print(showInt("42"))
+    Console.print(showFloat("nope"))
+    Console.print(showFloat("3.14"))
+"#;
+
+#[test]
+fn mir_fromstring_err_message_matches_vm() {
+    let ws = temp_dir("mir_fromstring");
+    let src = ws.join("fromstring_err_probe.av");
+    fs::write(&src, MIR_FROMSTRING_ERR_PROBE).expect("write fromString probe source");
+
+    let vm_stdout = run_vm(&src, None).unwrap_or_else(|e| panic!("VM run failed: {e}"));
+
+    let project = ws.join("project");
+    fs::create_dir_all(&project).expect("create project dir");
+    let name = "mir_fromstring_probe";
+
+    let result = (|| -> Result<(), String> {
+        // NOTE: no `mir_lowered_count` guard here — every fn in this probe
+        // calls a builtin (`Int.fromString` / `Console.print`), and the
+        // coverage walk's `--explain-mir-coverage` reports `Call(Builtin)`
+        // as a fallback (its `for_test` ctx carries an empty builtin
+        // table), so it would report `mir_lowered = 0` even though the
+        // production path emits these fns fine. The structural tripwire
+        // below (the VM-format message must appear in the emitted Rust)
+        // is the real "fromString emit is exercised" guard.
+        compile_rust(&src, &project, name, None, &[])?;
+
+        // Structural tripwire: the emitted Rust must format the Aver Err
+        // message, NOT delegate to rustc's native parse error.
+        let emitted = fs::read_to_string(
+            project
+                .join("src")
+                .join("aver_generated")
+                .join("entry")
+                .join("mod.rs"),
+        )
+        .map_err(|e| format!("read emitted module: {e}"))?;
+        if !emitted.contains("Cannot parse '{}' as Int")
+            || !emitted.contains("Cannot parse '{}' as Float")
+        {
+            return Err(format!(
+                "emitted Rust is missing the VM-format fromString Err message \
+                 (`Cannot parse '{{}}' as Int/Float`) — it likely regressed to \
+                 rustc's native parse error:\n{emitted}"
+            ));
+        }
+
+        let bin = cargo_build(&project, name)?;
+        let out = Command::new(&bin)
+            .output()
+            .map_err(|e| format!("failed to run compiled binary: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "MIR fromString binary exited non-zero:\n{}",
+                format_output(&out)
+            ));
+        }
+        let rust_stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if rust_stdout != vm_stdout {
+            return Err(format!(
+                "MIR fromString Err-bytes mismatch (Rust must match VM byte-for-byte)\n\
+                 --- VM ---\n{vm_stdout}\n--- Rust (MIR) ---\n{rust_stdout}"
+            ));
+        }
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&ws);
+    result.unwrap_or_else(|e| panic!("{e}"));
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // The MIR behavioral net (MIR is the sole Rust codegen path)
 // ═══════════════════════════════════════════════════════════════════════
