@@ -34,8 +34,8 @@ fn examples_dir() -> PathBuf {
 }
 
 /// Paths skipped from the regression walk:
-///   * `examples/diagnostics/` + `oracle_independent_products.av`
-///     — same exclusions as `tests/wasm_gc_codegen_regression.rs`.
+///   * `examples/diagnostics/` — same exclusions as
+///     `tests/wasm_gc_codegen_regression.rs`.
 ///   * Three `Terminal.*` users — `status_board.av`,
 ///     `oracle_trace.av`, `terminal_size_snapshot.av`. The wasip2
 ///     backend lowered 10 effects in 0.18 "Span" (all of `Disk`,
@@ -44,10 +44,15 @@ fn examples_dir() -> PathBuf {
 ///     codegen errors with "no helper registered, no effect
 ///     import, no inline lowering". Tracked as a follow-up; this
 ///     suite is the regression net, the wiring is its own ticket.
+///
+/// `oracle_independent_products.av` used to be skipped (its
+/// higher-order `Fn(BranchPath, …)` spec param was mis-discovered as a
+/// phantom `Tuple<BranchPath, …>` carrier that the eq helper couldn't
+/// dispatch). That discovery bug is fixed, so it rides the walk like
+/// every other single-file example.
 fn is_skipped(path: &Path) -> bool {
     let s = path.to_string_lossy();
     s.contains("/examples/diagnostics/")
-        || s.ends_with("/examples/formal/oracle_independent_products.av")
         || s.ends_with("/examples/apps/status_board.av")
         || s.ends_with("/examples/formal/oracle_trace.av")
         || s.ends_with("/examples/formal/terminal_size_snapshot.av")

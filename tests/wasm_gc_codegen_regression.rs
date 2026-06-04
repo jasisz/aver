@@ -43,13 +43,18 @@ fn single_file_examples() -> Vec<PathBuf> {
 /// Paths skipped from the regression walk:
 ///   * `examples/diagnostics/` — intentionally type-broken examples used
 ///     to demo error messages; they must not typecheck cleanly.
-///   * `examples/formal/oracle_independent_products.av` — uses a
-///     `BranchPath` carrier the wasm-gc backend doesn't yet dispatch.
-///     Tracked under the wasm-gc verify limitations doc.
+///
+/// `examples/formal/oracle_independent_products.av` used to be skipped
+/// because its `pairSpec` higher-order spec fn carries a
+/// `Fn(BranchPath, …)` param whose param list was mis-discovered as a
+/// phantom `Tuple<BranchPath, …>`, whose eq helper then tried to
+/// dispatch on the opaque `BranchPath` carrier. That discovery bug is
+/// fixed (a `Fn(`-preceded paren group is a function-type parameter
+/// list, not a tuple), so the file now compiles + validates and rides
+/// the walk like every other single-file example.
 fn is_skipped(path: &Path) -> bool {
     let s = path.to_string_lossy();
     s.contains("/examples/diagnostics/")
-        || s.ends_with("/examples/formal/oracle_independent_products.av")
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
