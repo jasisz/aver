@@ -435,7 +435,12 @@ pub fn emit_recursive_measure(td: &TypeDef, recursive_types: &HashSet<String>) -
 }
 
 /// Emit unsafe DecidableEq instance for a recursive type (#18).
-/// Same pattern as Float DecidableEq in prelude.
+/// Same `unsafeCast`-via-`@[implemented_by]` pattern as the Float
+/// `DecidableEq` in the prelude (see `LEAN_PRELUDE_FLOAT_DEC_EQ`). Sound
+/// here for a different reason than Float: a recursive user type's `BEq`
+/// is derived structurally, so `a == b` ⟺ `a = b` propositionally — the
+/// fabricated proof matches. (Float's `==` is IEEE, so its shim reflects
+/// IEEE semantics instead; same mechanism, both deliberate.)
 pub fn emit_recursive_decidable_eq(name: &str) -> String {
     let mut lines = Vec::new();
     lines.push(format!(
