@@ -36,6 +36,7 @@ pub mod resolver;
 pub mod runtime;
 #[cfg(feature = "runtime")]
 pub mod runtime_bench_cases;
+pub mod scc;
 #[cfg(feature = "runtime")]
 pub mod services;
 pub mod source;
