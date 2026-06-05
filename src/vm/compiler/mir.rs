@@ -611,6 +611,20 @@ pub(super) fn compile_mir_expr(
         }
         MirExpr::Match(spanned_match) => {
             let m = &spanned_match.node;
+            // A match with no arms can't produce a value — type-check
+            // rejects it as non-exhaustive, so reaching codegen with zero
+            // arms is an invariant violation, not user-reachable on valid
+            // input. Bail with a compile error rather than underflowing
+            // `arms.len() - 1` below (the `last_idx` computation). Found by
+            // the verify-runner fuzzer on a mutated program that slips a
+            // zero-arm match past the front-end.
+            if m.arms.is_empty() {
+                return Err(CompileError {
+                    msg: "match expression has no arms (non-exhaustive match reached codegen)"
+                        .to_string(),
+                }
+                .into());
+            }
             // Phase 6 wave 2 — try the MATCH_DISPATCH_CONST table
             // fast-path before falling back to the linear arm-by-
             // arm emit. When every non-last arm has a literal

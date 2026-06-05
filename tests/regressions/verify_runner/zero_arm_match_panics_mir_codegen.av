@@ -1,0 +1,18 @@
+module ResultUnit
+    intent =
+        "Minimal-ish repro for fuzz_verify_runner crashes id:000000-000007 (sig:06), an AFL byte-havoc mutation of a Result<Unit,_> verify seed. The mutated `main` body below parses to a `match` whose arms were dropped; the verify runner then walked it into the VM MIR compiler, which computed `arms.len() - 1` (the last-arm index) and panicked with usize subtract-with-overflow at vm/compiler/mir.rs. The MIR Match handler now bails with a CompileError on zero arms instead of underflowing, so the verify runner returns Err rather than aborting. Raw crash bytes kept verbatim so the exact parse/coverage path stays pinned."
+    effects []
+
+fn ensurePositive(n: Int) -> Result<Unit, String>
+    ? "Returns Ok(Unit) when n > 0, Err with reason otherwise."
+    match (n > 0)
+        true -> (Result).Ok(Unit)
+        false -> (Result).Err("non-positive")
+
+verify ensurePositive
+    ensurePositive(1) => (Result).Ok(Unit)
+    ensurePositive(0) => (Result).Err("non-positive")
+    ensurePositive((-5)) => (Result).Err("non-positive")
+
+fn main() -> Int
+ 4  match ensurePositive// ins      Resujn,Pw)e&	.?	1								Xcziho-Kapywq-FyuPn'c%	,=	Vector.getResult.Ok(d) -> 0*        Result.Err(_) -> 1
