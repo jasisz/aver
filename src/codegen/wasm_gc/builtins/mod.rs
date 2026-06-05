@@ -128,6 +128,12 @@ pub(super) enum BuiltinName {
     /// Caller is responsible for the b == 0 check; the helper assumes
     /// b != 0 and would `i64.rem_s`-trap otherwise.
     IntModEuclid,
+    /// Internal `__int_div_euclid(a: i64, b: i64) -> i64` — Euclidean
+    /// (flooring) division, the exact partner of `IntModEuclid` so that
+    /// `div(a,b)*b + mod(a,b) == a` for every sign. Powers `Int.div`.
+    /// Caller guards `b == 0`; the helper assumes `b != 0` (and would
+    /// `i64.div_s`-trap on that or the `i64::MIN / -1` overflow).
+    IntDivEuclid,
 }
 
 impl BuiltinName {
@@ -181,6 +187,7 @@ impl BuiltinName {
             Self::ByteToHex => "Byte.toHex",
             Self::StringReplace => "String.replace",
             Self::IntModEuclid => "__int_mod_euclid",
+            Self::IntDivEuclid => "__int_div_euclid",
         }
     }
 
@@ -213,7 +220,7 @@ impl BuiltinName {
                 string_ref_ty(registry)?,
                 string_ref_ty(registry)?,
             ]),
-            Self::IntModEuclid => Ok(vec![ValType::I64, ValType::I64]),
+            Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64, ValType::I64]),
         }
     }
 
@@ -241,7 +248,7 @@ impl BuiltinName {
             Self::ByteFromHex => Ok(vec![result_ref_ty(registry, "Result<Int,String>")?]),
             Self::ByteToHex => Ok(vec![result_ref_ty(registry, "Result<String,String>")?]),
             Self::StringReplace => Ok(vec![string_ref_ty(registry)?]),
-            Self::IntModEuclid => Ok(vec![ValType::I64]),
+            Self::IntModEuclid | Self::IntDivEuclid => Ok(vec![ValType::I64]),
         }
     }
 
@@ -273,6 +280,7 @@ impl BuiltinName {
             Self::ByteToHex => emit_byte_to_hex(registry),
             Self::StringReplace => emit_string_replace(registry),
             Self::IntModEuclid => emit_int_mod_euclid(),
+            Self::IntDivEuclid => emit_int_div_euclid(),
         }
     }
 }
@@ -2824,6 +2832,33 @@ fn emit_int_mod_euclid() -> Result<Function, WasmGcError> {
                   (if (result i64) (i64.lt_s (local.get $b) (i64.const 0))
                     (then (i64.sub (i64.const 0) (local.get $b)))
                     (else (local.get $b)))))
+              (else (local.get $q))))
+        )
+    "#;
+    wat_helper::compile_wat_helper(wat)
+}
+
+/// `__int_div_euclid(a, b) -> i64` — Euclidean (flooring) division, the
+/// exact partner of `emit_int_mod_euclid` so `div(a,b)*b + mod(a,b) == a`
+/// for every sign. Mirrors Rust's `i64::div_euclid`: take the truncating
+/// quotient `q = a/b` and remainder `r = a%b`; when `r < 0`, step `q`
+/// toward `-inf` by one (down if `b > 0`, up if `b < 0`).
+///
+/// Caller must ensure `b != 0`; the helper would `i64.div_s`-trap on
+/// b == 0 (and on the `i64::MIN / -1` overflow — the documented edge).
+fn emit_int_div_euclid() -> Result<Function, WasmGcError> {
+    let wat = r#"
+        (module
+          (func (export "helper") (param $a i64) (param $b i64) (result i64)
+            (local $q i64)
+            (local $r i64)
+            (local.set $q (i64.div_s (local.get $a) (local.get $b)))
+            (local.set $r (i64.rem_s (local.get $a) (local.get $b)))
+            (if (result i64) (i64.lt_s (local.get $r) (i64.const 0))
+              (then
+                (if (result i64) (i64.gt_s (local.get $b) (i64.const 0))
+                  (then (i64.sub (local.get $q) (i64.const 1)))
+                  (else (i64.add (local.get $q) (i64.const 1)))))
               (else (local.get $q))))
         )
     "#;

@@ -3015,14 +3015,15 @@ fn try_emit_mir_fusion(
             let a_str = emit_mir_expr(a, ctx)?;
             let default = emit_literal(&default_lit.node);
             match op {
-                // `checked_div` yields the default on BOTH a zero divisor and
-                // the `i64::MIN / -1` overflow (a bare `/` panics/wraps on the
-                // latter). LLVM folds it to a plain division for ordinary
-                // constant divisors, so the hot path stays branch-free.
+                // Euclidean division (partner of Euclidean `Int.mod`).
+                // `checked_div_euclid` yields the default on BOTH a zero
+                // divisor and the `i64::MIN / -1` overflow (a bare `/`
+                // panics/wraps on the latter). LLVM folds it to a plain
+                // division for ordinary constant divisors.
                 "div" => {
                     let b_str = emit_mir_expr(b, ctx)?;
                     Some(format!(
-                        "({}).checked_div({}).unwrap_or({})",
+                        "({}).checked_div_euclid({}).unwrap_or({})",
                         a_str, b_str, default
                     ))
                 }
@@ -3140,11 +3141,12 @@ fn emit_mir_builtin_call(
         "Int.div" => {
             let a = arg!(0);
             let b = arg!(1);
-            // `checked_div` is `None` on BOTH a zero divisor and the
+            // Euclidean division (partner of Euclidean `Int.mod`).
+            // `checked_div_euclid` is `None` on BOTH a zero divisor and the
             // `i64::MIN / -1` signed-overflow edge; a bare `/` would panic
             // (debug) or silently wrap (release) on the latter.
             format!(
-                "match ({a}).checked_div({b}) {{ Some(__q) => Ok(__q), None => Err(\"Int.div: divisor zero or overflow\".to_string()) }}"
+                "match ({a}).checked_div_euclid({b}) {{ Some(__q) => Ok(__q), None => Err(\"Int.div: divisor zero or overflow\".to_string()) }}"
             )
         }
 

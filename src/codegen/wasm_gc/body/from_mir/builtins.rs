@@ -591,8 +591,9 @@ pub(crate) fn emit_mir_result_with_default(
     }
 
     // Fused `Result.withDefault(Int.mod(a, b), default)` and the parallel
-    // `Result.withDefault(Int.div(a, b), default)`. `Int.mod` folds through
-    // the Euclidean-modulo helper; `Int.div` is truncating `i64.div_s`.
+    // `Result.withDefault(Int.div(a, b), default)`. Both fold through their
+    // Euclidean helper (`__int_mod_euclid` / `__int_div_euclid`) so `div` and
+    // `mod` stay consistent: `div(a,b)*b + mod(a,b) == a` for every sign.
     if let MirExpr::Call(inner) = &res_arg.node {
         let inner = &inner.node;
         if let MirCallee::Builtin(inner_id) = inner.callee
@@ -603,17 +604,29 @@ pub(crate) fn emit_mir_result_with_default(
             let is_mod = inner_dotted == "Int.mod";
             let a = &inner.args[0];
             let b = &inner.args[1];
-            let mod_idx = if is_mod {
-                Some(ctx.fn_map.builtins.get("__int_mod_euclid").copied().ok_or(
-                    WasmGcError::Validation(
-                        "Int.mod requires __int_mod_euclid helper to be registered".into(),
-                    ),
-                )?)
+            // Both fold through a Euclidean helper so the result matches the
+            // VM/Rust `checked_{rem,div}_euclid`: `mod` lands in `[0,|b|)`,
+            // `div` floors. The `b == 0` guard below routes divide-by-zero to
+            // the default; the lone uncovered edge is `i64::MIN / -1`, where
+            // the helper's `i64.{rem,div}_s` traps (a contained wasm trap, not
+            // a host crash) — parity with VM/Rust returning `Result.Err` there.
+            let helper_name = if is_mod {
+                "__int_mod_euclid"
             } else {
-                None
+                "__int_div_euclid"
             };
+            let helper_idx =
+                ctx.fn_map
+                    .builtins
+                    .get(helper_name)
+                    .copied()
+                    .ok_or(WasmGcError::Validation(format!(
+                        "Int.{} requires {} helper to be registered",
+                        if is_mod { "mod" } else { "div" },
+                        helper_name
+                    )))?;
             let block_ty = wasm_encoder::BlockType::Result(ValType::I64);
-            // if b == 0 -> default, else __int_mod_euclid(a, b) | a / b
+            // if b == 0 -> default, else helper(a, b)
             e!(b);
             func.instruction(&Instruction::I64Const(0));
             func.instruction(&Instruction::I64Eq);
@@ -622,23 +635,7 @@ pub(crate) fn emit_mir_result_with_default(
             func.instruction(&Instruction::Else);
             e!(a);
             e!(b);
-            match mod_idx {
-                Some(idx) => {
-                    func.instruction(&Instruction::Call(idx));
-                }
-                None => {
-                    // Truncating integer division — matches the VM/Rust
-                    // `i64 / i64` (rounds toward zero). The `b == 0` guard
-                    // above already routes divide-by-zero to the default;
-                    // the lone uncovered edge is `i64::MIN / -1`, where
-                    // `i64.div_s` traps (a contained wasm trap, not a host
-                    // crash). Guarding it would need a/b spilled to locals to
-                    // avoid re-evaluating effectful operands, so it stays a
-                    // known edge — parity with the VM/Rust which return
-                    // `Result.Err("...overflow")` there.
-                    func.instruction(&Instruction::I64DivS);
-                }
-            }
+            func.instruction(&Instruction::Call(helper_idx));
             func.instruction(&Instruction::End);
             return Ok(MirBuiltinEmit::Produced(true));
         }

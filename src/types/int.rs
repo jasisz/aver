@@ -141,11 +141,12 @@ fn divide(args: &[Value]) -> Result<Value, RuntimeError> {
             "Int.div: both arguments must be Int".to_string(),
         ));
     };
-    // `checked_div` is None on BOTH divisor-zero and the `i64::MIN / -1`
-    // signed-overflow edge — `x / y` would panic on the latter. Both are
-    // the partiality `Int.div` exists to make explicit, so both become a
-    // `Result.Err` (still `String`, matching `Int.mod`).
-    match x.checked_div(*y) {
+    // Euclidean (flooring) division, so `Int.div` is the exact partner of
+    // `Int.mod` (Euclidean): `div(a,b)*b + mod(a,b) == a` for all signs.
+    // `checked_div_euclid` is None on BOTH divisor-zero and the `i64::MIN
+    // / -1` overflow — both the partiality `Int.div` makes explicit, so
+    // both become a `Result.Err` (still `String`, matching `Int.mod`).
+    match x.checked_div_euclid(*y) {
         Some(q) => Ok(Value::Ok(Box::new(Value::Int(q)))),
         None => {
             let msg = if *y == 0 {
@@ -331,9 +332,9 @@ fn divide_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
     }
     let x = a.as_int(arena);
     let y = b.as_int(arena);
-    // `checked_div` covers divisor-zero AND the `i64::MIN / -1` overflow
-    // (a bare `x / y` panics on the latter) — both become `Result.Err`.
-    match x.checked_div(y) {
+    // Euclidean division (partner of Euclidean `Int.mod`). `checked_div_euclid`
+    // covers divisor-zero AND the `i64::MIN / -1` overflow — both `Result.Err`.
+    match x.checked_div_euclid(y) {
         None => {
             let msg = if y == 0 {
                 "division by zero"

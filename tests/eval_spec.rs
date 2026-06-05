@@ -385,12 +385,15 @@ fn int_div_zero() {
 }
 
 #[test]
-fn int_div_truncates_toward_zero() {
-    // Truncating division (matches the old `/` operator / Rust `i64 / i64`),
-    // NOT Euclidean — `-7 / 2 == -3`, not `-4`.
-    assert_eq!(eval("Int.div(-7, 2)"), Value::Ok(Box::new(Value::Int(-3))));
+fn int_div_is_euclidean_floor() {
+    // Euclidean (flooring) division — the exact partner of Euclidean
+    // `Int.mod`, so `Int.div(a,b)*b + Int.mod(a,b) == a` for every sign.
+    // `-7 / 2 == -4` (floors toward -inf), NOT -3 (truncate toward zero).
+    assert_eq!(eval("Int.div(-7, 2)"), Value::Ok(Box::new(Value::Int(-4))));
     assert_eq!(eval("Int.div(7, -2)"), Value::Ok(Box::new(Value::Int(-3))));
-    assert_eq!(eval("Int.div(-7, -2)"), Value::Ok(Box::new(Value::Int(3))));
+    assert_eq!(eval("Int.div(-7, -2)"), Value::Ok(Box::new(Value::Int(4))));
+    // The division identity holds: -7 == (-4)*2 + 1, with Int.mod(-7,2) == 1.
+    assert_eq!(eval("Int.mod(-7, 2)"), Value::Ok(Box::new(Value::Int(1))));
 }
 
 #[test]

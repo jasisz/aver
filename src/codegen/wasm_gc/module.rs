@@ -4839,6 +4839,13 @@ fn discover_builtins_in_expr(
                 if dotted == "Int.mod" {
                     builtins.register(BuiltinName::IntModEuclid);
                 }
+                // `Int.div` is Euclidean (flooring) division — the partner of
+                // `Int.mod` — and folds through its own `__int_div_euclid`
+                // helper the same way. Register it whenever discovery hits an
+                // `Int.div` call (fused-withDefault or unfused).
+                if dotted == "Int.div" {
+                    builtins.register(BuiltinName::IntDivEuclid);
+                }
             }
             for arg in args {
                 discover_builtins_in_expr(
