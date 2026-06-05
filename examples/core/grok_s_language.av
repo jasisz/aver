@@ -242,10 +242,10 @@ verify applyEvalOp
     applyEvalOp("pow", Result.Ok(2), Result.Ok(3)) => Result.Err("Unknown operator: pow")
 
 fn evalDiv(left: Int, right: Int) -> Result<Int, String>
-    ? "Safe integer division — Int.div reports a zero divisor as Err."
-    match Int.div(left, right)
-        Result.Ok(q)  -> Result.Ok(q)
-        Result.Err(_) -> Result.Err("Division by zero")
+    ? "Safe integer division with explicit zero check."
+    match right == 0
+        true -> Result.Err("Division by zero")
+        false -> Result.Ok(Result.withDefault(Int.div(left, right), 0))
 
 verify evalDiv
     evalDiv(10, 0) => Result.Err("Division by zero")
