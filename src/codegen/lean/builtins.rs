@@ -46,8 +46,22 @@ pub fn emit_builtin_call(
         IntFromFloat => format!("AverFloat.toInt {}", p(&a[0])),
         IntMin => format!("min {} {}", p(&a[0]), p(&a[1])),
         IntMax => format!("max {} {}", p(&a[0]), p(&a[1])),
-        IntMod => format!("(Except.ok ({} % {}) : Except String Int)", a[0], a[1]),
-        IntDiv => format!("(Except.ok ({} / {}) : Except String Int)", a[0], a[1]),
+        // `Int.mod` / `Int.div` are partial: a zero divisor yields `Result.Err`.
+        // Lean's `Int.%` / `Int./` are total (`a % 0 = a`, `a / 0 = 0` in v4.x),
+        // so an unconditional `Except.ok` made `match Int.mod(a, 0) { Err -> }`
+        // unreachable — a faithfulness bug that fails `native_decide` on any
+        // verify case hitting the error path. Guard the divisor so the `.error`
+        // arm is reachable; error string matches the runtime (`types/int.rs`).
+        IntMod => format!(
+            "(if {b} == 0 then Except.error \"division by zero\" else Except.ok ({a} % {b}) : Except String Int)",
+            a = p(&a[0]),
+            b = p(&a[1])
+        ),
+        IntDiv => format!(
+            "(if {b} == 0 then Except.error \"division by zero\" else Except.ok ({a} / {b}) : Except String Int)",
+            a = p(&a[0]),
+            b = p(&a[1])
+        ),
         IntFromString => format!("Int.fromString {}", p(&a[0])),
 
         // ---- Float ----

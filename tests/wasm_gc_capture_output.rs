@@ -78,3 +78,79 @@ fn wasm_gc_console_print_writes_to_capture_buffer() {
         String::from_utf8_lossy(&stderr)
     );
 }
+
+// Boxed `match Int.div`/`match Int.mod` Err arms carry the VM's exact message
+// strings (`src/types/int.rs`): `"division by zero"` for both, `"division
+// overflow"` for `Int.div`'s `i64::MIN / -1` edge. Pin the wasm-gc captured
+// stdout to those byte-for-byte so the boxed Result construction can't drift
+// from the VM (the only path that produces these literals on wasm-gc).
+const DIV_MOD_ERR_SRC: &str = r#"module M
+    intent =
+        "boxed Int.div/mod Err messages"
+    effects [Console]
+
+fn de(a: Int, b: Int) -> String
+    match Int.div(a, b)
+        Result.Ok(_)  -> "ok"
+        Result.Err(e) -> e
+
+fn me(a: Int, b: Int) -> String
+    match Int.mod(a, b)
+        Result.Ok(_)  -> "ok"
+        Result.Err(e) -> e
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print("{de(5, 0)}|{me(5, 0)}|{de(0 - 9223372036854775807 - 1, 0 - 1)}")
+"#;
+
+#[test]
+fn wasm_gc_boxed_int_div_mod_err_messages_match_vm() {
+    let mut lexer = aver::lexer::Lexer::new(DIV_MOD_ERR_SRC);
+    let tokens = lexer.tokenize().expect("lex");
+    let mut parser = aver::parser::Parser::new(tokens);
+    let mut items = parser.parse().expect("parse");
+    // Match the `aver run --wasm-gc` pipeline shape: interp_lower /
+    // buffer_build are OFF (those fuse string interpolation into buffer
+    // intrinsics the wasm-gc backend doesn't lower, which would trap),
+    // neutral alloc policy, full typecheck.
+    let neutral_policy = aver::ir::NeutralAllocPolicy;
+    let result = aver::ir::pipeline::run(
+        &mut items,
+        PipelineConfig {
+            typecheck: Some(TypecheckMode::Full { base_dir: None }),
+            alloc_policy: Some(&neutral_policy),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            ..Default::default()
+        },
+    );
+
+    let (run_res, stdout, stderr) = aver::services::console::capture_output(|| {
+        aver::runtime::wasm_gc::run_in_process(
+            &items,
+            result.analysis.as_ref(),
+            aver::runtime::wasm_gc::RunConfig {
+                program_args: Vec::new(),
+                entry_info: None,
+                mode: aver::runtime::wasm_gc::EffectMode::Normal,
+            },
+        )
+    });
+
+    if let Err(e) = &run_res {
+        panic!("wasm-gc run_in_process should succeed on boxed Int.div/mod, got: {e}");
+    }
+    // Byte-for-byte identical to the VM's `src/types/int.rs` messages.
+    assert_eq!(
+        stdout,
+        b"division by zero|division by zero|division overflow\n",
+        "wasm-gc boxed Int.div/mod Err messages must match the VM verbatim; got {:?}",
+        String::from_utf8_lossy(&stdout)
+    );
+    assert!(
+        stderr.is_empty(),
+        "stderr should be empty; got {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
+}

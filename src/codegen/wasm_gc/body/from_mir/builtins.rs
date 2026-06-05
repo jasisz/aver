@@ -560,6 +560,133 @@ fn emit_mir_vector_set_or_default(
     Ok(MirBuiltinEmit::Produced(true))
 }
 
+/// Boxed `Int.div(a, b)` / `Int.mod(a, b)` — a builtin call whose
+/// `Result<Int, String>` is consumed directly (e.g.
+/// `match Int.div(a, b) { Result.Ok(q) -> …; Result.Err(_) -> … }`),
+/// *not* the fused `Result.withDefault(Int.{div,mod}(a, b), default)`
+/// (which `emit_mir_result_with_default` collapses before any struct is
+/// built). This materialises the concrete `Result<Int, String>` value
+/// the VM produces (`src/types/int.rs`), so the natural unwrap idiom
+/// runs on wasm-gc identically:
+///
+/// - `Int.mod`: `b == 0` → `Err("division by zero")`, else
+///   `Ok(__int_mod_euclid(a, b))`.
+/// - `Int.div`: `b == 0` → `Err("division by zero")`, else
+///   `a == i64::MIN && b == -1` → `Err("division overflow")` (the
+///   `i64.div_s` in `__int_div_euclid` would trap on that edge, so it's
+///   guarded out before the helper runs), else
+///   `Ok(__int_div_euclid(a, b))`.
+///
+/// The `Result<Int, String>` struct shape is the shared
+/// `(mut i32 tag) (mut i64 ok) (mut (ref null $string) err)` — tag 1 =
+/// Ok / 0 = Err — exactly as `emit_int_from_string` (`builtins/mod.rs`)
+/// and `emit_mir_result_constructor` build it. `a` / `b` are pure
+/// builtin args, so re-emitting them per branch matches the fused
+/// path's accepted pattern (no double-evaluation hazard).
+pub(crate) fn emit_mir_int_div_mod_boxed(
+    func: &mut Function,
+    dotted: &str,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+) -> Result<MirBuiltinEmit, WasmGcError> {
+    let is_div = match dotted {
+        "Int.div" => true,
+        "Int.mod" => false,
+        _ => return Ok(MirBuiltinEmit::NotHandled),
+    };
+    if args.len() != 2 {
+        return Ok(MirBuiltinEmit::NotHandled);
+    }
+    let a = &args[0];
+    let b = &args[1];
+
+    macro_rules! e {
+        ($x:expr) => {
+            if emit_mir_expr(func, $x, slots, ctx)?.is_none() {
+                return Ok(MirBuiltinEmit::Fallback);
+            }
+        };
+    }
+
+    // The carrier `Result<Int, String>` struct slot — discovery
+    // (`types_discovery.rs`) registers it for every `Int.div` / `Int.mod`.
+    let res_idx =
+        ctx.registry
+            .result_type_idx("Result<Int,String>")
+            .ok_or(WasmGcError::Validation(
+                "boxed Int.div/mod requires the `Result<Int,String>` slot to be registered".into(),
+            ))?;
+    let helper_name = if is_div {
+        "__int_div_euclid"
+    } else {
+        "__int_mod_euclid"
+    };
+    let helper_idx =
+        ctx.fn_map
+            .builtins
+            .get(helper_name)
+            .copied()
+            .ok_or(WasmGcError::Validation(format!(
+                "boxed Int.{} requires the {helper_name} helper to be registered",
+                if is_div { "div" } else { "mod" }
+            )))?;
+
+    // Each branch leaves a `(ref null $result)` on the stack.
+    let res_block = wasm_encoder::BlockType::Result(ValType::Ref(wasm_encoder::RefType {
+        nullable: true,
+        heap_type: wasm_encoder::HeapType::Concrete(res_idx),
+    }));
+
+    // `Result.Err(<msg>)` — tag 0, i64 ok placeholder, the message string.
+    macro_rules! emit_err {
+        ($msg:expr) => {{
+            func.instruction(&Instruction::I32Const(0));
+            func.instruction(&Instruction::I64Const(0));
+            emit_string_literal_bytes(func, $msg, ctx)?;
+            func.instruction(&Instruction::StructNew(res_idx));
+        }};
+    }
+    // `Result.Ok(helper(a, b))` — tag 1, the quotient/modulo, null err.
+    macro_rules! emit_ok {
+        () => {{
+            func.instruction(&Instruction::I32Const(1));
+            e!(a);
+            e!(b);
+            func.instruction(&Instruction::Call(helper_idx));
+            emit_default_value(func, "String", ctx.registry)?;
+            func.instruction(&Instruction::StructNew(res_idx));
+        }};
+    }
+
+    // if b == 0 -> Err("division by zero")
+    e!(b);
+    func.instruction(&Instruction::I64Const(0));
+    func.instruction(&Instruction::I64Eq);
+    func.instruction(&Instruction::If(res_block));
+    emit_err!(b"division by zero");
+    func.instruction(&Instruction::Else);
+    if is_div {
+        // else if a == i64::MIN && b == -1 -> Err("division overflow")
+        e!(a);
+        func.instruction(&Instruction::I64Const(i64::MIN));
+        func.instruction(&Instruction::I64Eq);
+        e!(b);
+        func.instruction(&Instruction::I64Const(-1));
+        func.instruction(&Instruction::I64Eq);
+        func.instruction(&Instruction::I32And);
+        func.instruction(&Instruction::If(res_block));
+        emit_err!(b"division overflow");
+        func.instruction(&Instruction::Else);
+        emit_ok!();
+        func.instruction(&Instruction::End);
+    } else {
+        emit_ok!();
+    }
+    func.instruction(&Instruction::End);
+    Ok(MirBuiltinEmit::Produced(true))
+}
+
 /// Full mirror of `emit_result_with_default`. Two shapes:
 ///
 /// 1. **Fused** `Result.withDefault(Int.mod(a, b), default)` — `Int.mod`
