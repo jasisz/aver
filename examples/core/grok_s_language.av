@@ -245,7 +245,7 @@ fn evalDiv(left: Int, right: Int) -> Result<Int, String>
     ? "Safe integer division with explicit zero check."
     match right == 0
         true -> Result.Err("Division by zero")
-        false -> Result.Ok(left / right)
+        false -> Result.Ok(Result.withDefault(Int.div(left, right), 0))
 
 verify evalDiv
     evalDiv(10, 0) => Result.Err("Division by zero")

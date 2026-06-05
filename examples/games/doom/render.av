@@ -310,7 +310,7 @@ fn renderWallCol(zbuf: Vector<RayHit>, col: Int, hit: RayHit) -> Unit
     ? "Render one wall column with ceiling, wall, floor colors"
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     wh = wallHeight(hit.dist)
-    wTop = (pixelH() - wh) / 2
+    wTop = Result.withDefault(Int.div(pixelH() - wh, 2), 0)
     wBot = wTop + wh
     wallColor = shadeColor(hit.dist, hit.side)
     renderWallRows(col, wTop, wBot, hit.wallType, hit.side, 0, wallColor)
@@ -411,8 +411,8 @@ fn drawEnemyChar(e: Enemy, screenCol: Int, eDist: Float, enemies: Vector<Enemy>,
     ! [Terminal.flush, Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     spriteH = Math.clampInt(Float.floor(2.5 / eDist * Float.fromInt(screenH())), 1, 10)
     spriteW = Math.clampInt(Float.floor(5.0 / eDist * Float.fromInt(screenW()) / 10.0), 3, 13)
-    topRow = screenH() / 2 - spriteH / 2
-    leftCol = screenCol - spriteW / 2
+    topRow = Result.withDefault(Int.div(screenH(), 2), 0) - Result.withDefault(Int.div(spriteH, 2), 0)
+    leftCol = screenCol - Result.withDefault(Int.div(spriteW, 2), 0)
     drawBlockGrid(e, leftCol, topRow, spriteH, spriteW, 0, 0)
     Terminal.resetColor()
     renderEnemiesVec(enemies, zbuf, px, py, pAngle, i + 1)
@@ -542,7 +542,7 @@ fn renderCrosshair() -> Unit
     ? "Draw a crosshair at screen center"
     ! [Terminal.moveTo, Terminal.print, Terminal.resetColor, Terminal.setColor]
     Terminal.setColor("white")
-    Terminal.moveTo(screenW() / 2, screenH() / 2)
+    Terminal.moveTo(Result.withDefault(Int.div(screenW(), 2), 0), Result.withDefault(Int.div(screenH(), 2), 0))
     Terminal.print("+")
     Terminal.resetColor()
 

@@ -98,8 +98,8 @@ verify fib law fibSpec
     fib(n) => fibSpec(n)
 
 fn isEven(n: Int) -> Bool
-    ? "Even check via integer division trick (no modulo in Aver)."
-    n / 2 * 2 == n
+    ? "Even check via integer division trick (Int.div: '/' is not allowed for Int)."
+    Result.withDefault(Int.div(n, 2), 0) * 2 == n
 
 verify isEven
     isEven(0)   => true

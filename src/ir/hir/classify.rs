@@ -73,6 +73,11 @@ pub enum ResolvedLeafOp<'a> {
         b: &'a crate::ast::Spanned<ResolvedExpr>,
         default_literal: &'a Literal,
     },
+    IntDivOrDefaultLiteral {
+        a: &'a crate::ast::Spanned<ResolvedExpr>,
+        b: &'a crate::ast::Spanned<ResolvedExpr>,
+        default_literal: &'a Literal,
+    },
     ListIndexGet {
         list: &'a crate::ast::Spanned<ResolvedExpr>,
         index: &'a crate::ast::Spanned<ResolvedExpr>,
@@ -208,7 +213,9 @@ fn classify_leaf_call<'a>(
         ("Vector.get", 2) => classify_list_index_get(&args[0], &args[1]),
         ("Option.withDefault", 2) => classify_vector_set_or_default(&args[0], &args[1])
             .or_else(|| classify_vector_get_or_default(&args[0], &args[1])),
-        ("Result.withDefault", 2) => classify_int_mod_or_default(&args[0], &args[1], is_user_type),
+        ("Result.withDefault", 2) => {
+            classify_int_mod_or_div_or_default(&args[0], &args[1], is_user_type)
+        }
         _ => None,
     }
 }
@@ -285,7 +292,7 @@ fn classify_list_index_get<'a>(
     })
 }
 
-fn classify_int_mod_or_default<'a>(
+fn classify_int_mod_or_div_or_default<'a>(
     result_expr: &'a crate::ast::Spanned<ResolvedExpr>,
     default_expr: &'a crate::ast::Spanned<ResolvedExpr>,
     _is_user_type: &impl Fn(&str) -> bool,
@@ -300,15 +307,22 @@ fn classify_int_mod_or_default<'a>(
     if inner_args.len() != 2 {
         return None;
     }
-    let is_int_mod = matches!(inner_callee, ResolvedCallee::Builtin(name) if name == "Int.mod");
-    if !is_int_mod {
+    let ResolvedCallee::Builtin(name) = inner_callee else {
         return None;
+    };
+    match name.as_str() {
+        "Int.mod" => Some(ResolvedLeafOp::IntModOrDefaultLiteral {
+            a: &inner_args[0],
+            b: &inner_args[1],
+            default_literal,
+        }),
+        "Int.div" => Some(ResolvedLeafOp::IntDivOrDefaultLiteral {
+            a: &inner_args[0],
+            b: &inner_args[1],
+            default_literal,
+        }),
+        _ => None,
     }
-    Some(ResolvedLeafOp::IntModOrDefaultLiteral {
-        a: &inner_args[0],
-        b: &inner_args[1],
-        default_literal,
-    })
 }
 
 /// Classify a [`ResolvedExpr`] as a bool subject for the

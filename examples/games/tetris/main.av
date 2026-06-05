@@ -182,7 +182,7 @@ fn lockBoard(state: GameState, newBoard: List<List<Option<PieceKind>>>) -> GameS
 fn lockFinish(state: GameState, cleared: Int, clearedBoard: List<List<Option<PieceKind>>>) -> GameState
     ? "Update score/level, spawn, check game over"
     ! [Random.int]
-    Logic.lockSpawn(spawnPiece(GameState.update(state, board = clearedBoard, score = state.score + Logic.computeScore(cleared, state.level), level = (state.lines + cleared) / 10, lines = state.lines + cleared, tickMs = Int.max(50, 500 - ((state.lines + cleared) / 10) * 50))))
+    Logic.lockSpawn(spawnPiece(GameState.update(state, board = clearedBoard, score = state.score + Logic.computeScore(cleared, state.level), level = Result.withDefault(Int.div(state.lines + cleared, 10), 0), lines = state.lines + cleared, tickMs = Int.max(50, 500 - (Result.withDefault(Int.div(state.lines + cleared, 10), 0)) * 50))))
 
 fn tickGravity(state: GameState) -> Result<String, String>
     ? "Apply gravity: move down or lock piece"

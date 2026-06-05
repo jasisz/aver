@@ -417,6 +417,7 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         IntMin => format!("(if {} <= {} then {} else {})", a[0], a[1], a[0], a[1]),
         IntMax => format!("(if {} >= {} then {} else {})", a[0], a[1], a[0], a[1]),
         IntMod => format!("Result<int, string>.Ok(({} % {}))", a[0], a[1]),
+        IntDiv => format!("Result<int, string>.Ok(({} / {}))", a[0], a[1]),
 
         // Float
         FloatAbs => format!("(if {} >= 0.0 then {} else -{})", a[0], a[0], a[0]),

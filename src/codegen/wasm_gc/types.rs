@@ -1268,12 +1268,13 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "Char.toCode"
                             | "Char.fromCode"
                             | "Byte.toHex"
-                            // `Int.mod`, `Int.fromString`, `Float.fromString`,
-                            // `Byte.fromHex` return Result<_, String> —
-                            // touching them forces the String slot for
-                            // the error payload even when the program
-                            // never reads the Err arm.
+                            // `Int.mod`, `Int.div`, `Int.fromString`,
+                            // `Float.fromString`, `Byte.fromHex` return
+                            // Result<_, String> — touching them forces the
+                            // String slot for the error payload even when
+                            // the program never reads the Err arm.
                             | "Int.mod"
+                            | "Int.div"
                             | "Int.fromString"
                             | "Float.fromString"
                             | "Byte.fromHex"

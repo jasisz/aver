@@ -59,6 +59,7 @@ pub(super) fn builtin_needs_str_conversion(name: &str) -> bool {
             | "Tcp.readLine"
             | "Tcp.close"
             | "Int.mod"
+            | "Int.div"
     )
 }
 

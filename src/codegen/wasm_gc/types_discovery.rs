@@ -110,7 +110,7 @@ pub(super) fn collect_results_from_builtin_uses(
                 if let crate::ir::hir::ResolvedCallee::Builtin(dotted) = callee {
                     match dotted.as_str() {
                         "Float.fromString" => intern("Result<Float,String>"),
-                        "Int.fromString" | "Int.mod" | "Byte.fromHex" => {
+                        "Int.fromString" | "Int.mod" | "Int.div" | "Byte.fromHex" => {
                             intern("Result<Int,String>")
                         }
                         "Byte.toHex" | "Console.readLine" | "Disk.readText" => {

@@ -18,6 +18,19 @@ impl TypeChecker {
                     ));
                 }
             }
+            BinOp::Div if matches!(lt, Type::Int) && matches!(rt, Type::Int) => {
+                // Integer `/` is the lone partial operator: it traps at
+                // runtime on division by zero. Aver makes partiality
+                // explicit — route integer division through the
+                // `Int.div : Result<Int, String>` builtin instead. Float
+                // `/` (and Int/Float mixed → Float) stays total below.
+                self.error_at_line(
+                    line,
+                    "integer division by '/' is not allowed (it can divide by zero); \
+                     use Int.div(a, b) : Result<Int, String>"
+                        .to_string(),
+                );
+            }
             BinOp::Sub | BinOp::Mul | BinOp::Div => {
                 let ok = (matches!(lt, Type::Int) && matches!(rt, Type::Int))
                     || (matches!(lt, Type::Float) && matches!(rt, Type::Float));

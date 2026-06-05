@@ -2989,12 +2989,20 @@ fn try_emit_mir_fusion(
                 vector, index, value
             ))
         }
-        // Fusion #2: `Result.withDefault(Int.mod(a, b), default)` → skip
-        // the `Result` allocation. HIR:
-        // `ResolvedLeafOp::IntModOrDefaultLiteral`.
+        // Fusion #2: `Result.withDefault(Int.mod(a, b), default)` and the
+        // parallel `Result.withDefault(Int.div(a, b), default)` → skip the
+        // `Result` allocation. HIR:
+        // `ResolvedLeafOp::IntModOrDefaultLiteral` /
+        // `ResolvedLeafOp::IntDivOrDefaultLiteral`.
         "Result.withDefault" if args.len() == 2 => {
             let (inner_name, inner_args) = mir_builtin_call_parts(&args[0].node, ctx)?;
-            if inner_name != "Int.mod" || inner_args.len() != 2 {
+            // `Int.mod` fuses to `rem_euclid`; `Int.div` to truncating `/`.
+            let op = match inner_name {
+                "Int.mod" => "rem_euclid",
+                "Int.div" => "div",
+                _ => return None,
+            };
+            if inner_args.len() != 2 {
                 return None;
             }
             // The default arm must be a literal (HIR's
@@ -3004,22 +3012,37 @@ fn try_emit_mir_fusion(
             };
             let a = &inner_args[0];
             let b = &inner_args[1];
-            // Non-zero literal divisor → skip the runtime zero check.
-            if let MirExpr::Literal(b_lit) = &b.node
-                && let crate::ast::Literal::Int(n) = &b_lit.node
-                && *n != 0
-            {
-                let a_str = emit_mir_expr(a, ctx)?;
-                let b_str = emit_literal(&crate::ast::Literal::Int(*n));
-                Some(format!("({}).rem_euclid({})", a_str, b_str))
-            } else {
-                let a_str = emit_mir_expr(a, ctx)?;
-                let b_str = emit_mir_expr(b, ctx)?;
-                let default = emit_literal(&default_lit.node);
-                Some(format!(
-                    "{{ let __b = {}; if __b == 0i64 {{ {} }} else {{ ({}).rem_euclid(__b) }} }}",
-                    b_str, default, a_str
-                ))
+            let a_str = emit_mir_expr(a, ctx)?;
+            let default = emit_literal(&default_lit.node);
+            match op {
+                // `checked_div` yields the default on BOTH a zero divisor and
+                // the `i64::MIN / -1` overflow (a bare `/` panics/wraps on the
+                // latter). LLVM folds it to a plain division for ordinary
+                // constant divisors, so the hot path stays branch-free.
+                "div" => {
+                    let b_str = emit_mir_expr(b, ctx)?;
+                    Some(format!(
+                        "({}).checked_div({}).unwrap_or({})",
+                        a_str, b_str, default
+                    ))
+                }
+                // `rem_euclid` never overflows, so a non-zero literal divisor
+                // can skip the runtime zero check entirely.
+                _ => {
+                    if let MirExpr::Literal(b_lit) = &b.node
+                        && let crate::ast::Literal::Int(n) = &b_lit.node
+                        && *n != 0
+                    {
+                        let b_str = emit_literal(&crate::ast::Literal::Int(*n));
+                        Some(format!("({}).rem_euclid({})", a_str, b_str))
+                    } else {
+                        let b_str = emit_mir_expr(b, ctx)?;
+                        Some(format!(
+                            "{{ let __b = {}; if __b == 0i64 {{ {} }} else {{ ({}).rem_euclid(__b) }} }}",
+                            b_str, default, a_str
+                        ))
+                    }
+                }
             }
         }
         // Fusion #3: `Vector.get(Vector.fromList(list), index)` → index
@@ -3112,6 +3135,16 @@ fn emit_mir_builtin_call(
             let b = arg!(1);
             format!(
                 "if ({b}) == 0i64 {{ Err(\"Int.mod: divisor must not be zero\".to_string()) }} else {{ Ok(({a}).rem_euclid({b})) }}"
+            )
+        }
+        "Int.div" => {
+            let a = arg!(0);
+            let b = arg!(1);
+            // `checked_div` is `None` on BOTH a zero divisor and the
+            // `i64::MIN / -1` signed-overflow edge; a bare `/` would panic
+            // (debug) or silently wrap (release) on the latter.
+            format!(
+                "match ({a}).checked_div({b}) {{ Some(__q) => Ok(__q), None => Err(\"Int.div: divisor zero or overflow\".to_string()) }}"
             )
         }
 

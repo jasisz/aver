@@ -267,14 +267,14 @@ verify advanceSeed
 
 fn roomCenterX(room: Room) -> Int
     ? "X coordinate of room center"
-    room.x + Result.withDefault(Int.mod(room.w, 100), 0) / 2
+    room.x + Result.withDefault(Int.div(Result.withDefault(Int.mod(room.w, 100), 0), 2), 0)
 
 verify roomCenterX
     roomCenterX(Room(x = 5, y = 3, w = 10, h = 6)) => 10
 
 fn roomCenterY(room: Room) -> Int
     ? "Y coordinate of room center"
-    room.y + Result.withDefault(Int.mod(room.h, 100), 0) / 2
+    room.y + Result.withDefault(Int.div(Result.withDefault(Int.mod(room.h, 100), 0), 2), 0)
 
 verify roomCenterY
     roomCenterY(Room(x = 5, y = 3, w = 10, h = 6)) => 6

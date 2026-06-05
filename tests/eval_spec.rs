@@ -372,6 +372,55 @@ fn int_mod_both_negative() {
 }
 
 #[test]
+fn int_div_builtin() {
+    assert_eq!(eval("Int.div(7, 2)"), Value::Ok(Box::new(Value::Int(3))));
+}
+
+#[test]
+fn int_div_zero() {
+    assert_eq!(
+        eval("Int.div(7, 0)"),
+        Value::Err(Box::new(Value::Str("division by zero".to_string())))
+    );
+}
+
+#[test]
+fn int_div_truncates_toward_zero() {
+    // Truncating division (matches the old `/` operator / Rust `i64 / i64`),
+    // NOT Euclidean — `-7 / 2 == -3`, not `-4`.
+    assert_eq!(eval("Int.div(-7, 2)"), Value::Ok(Box::new(Value::Int(-3))));
+    assert_eq!(eval("Int.div(7, -2)"), Value::Ok(Box::new(Value::Int(-3))));
+    assert_eq!(eval("Int.div(-7, -2)"), Value::Ok(Box::new(Value::Int(3))));
+}
+
+#[test]
+fn int_div_fused_withdefault() {
+    // Leaf-op fusion `Result.withDefault(Int.div(a, b), default)`.
+    assert_eq!(eval("Result.withDefault(Int.div(7, 2), -1)"), Value::Int(3));
+    assert_eq!(
+        eval("Result.withDefault(Int.div(7, 0), -1)"),
+        Value::Int(-1)
+    );
+}
+
+#[test]
+fn int_div_min_by_neg_one_is_err_not_panic() {
+    // `i64::MIN / -1` overflows i64; a bare `/` would panic the host. The
+    // builtin must report it as a `Result.Err`, mirroring divide-by-zero.
+    // `i64::MIN` is built by arithmetic (the literal `-9223372036854775808`
+    // doesn't parse — it's negate-of-`i64::MAX + 1`).
+    assert_eq!(
+        eval("Int.div((0 - 9223372036854775807) - 1, -1)"),
+        Value::Err(Box::new(Value::Str("division overflow".to_string())))
+    );
+    // The fused form falls back to the default on the same overflow edge.
+    assert_eq!(
+        eval("Result.withDefault(Int.div((0 - 9223372036854775807) - 1, -1), 99)"),
+        Value::Int(99)
+    );
+}
+
+#[test]
 fn int_to_float() {
     assert_eq!(eval("Float.fromInt(5)"), Value::Float(5.0));
 }

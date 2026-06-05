@@ -434,6 +434,7 @@ impl TypeChecker {
             ("Int.min", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Int.max", &[Type::Int, Type::Int], Type::Int, &[]),
             ("Int.mod", &[Type::Int, Type::Int], int_result(), &[]),
+            ("Int.div", &[Type::Int, Type::Int], int_result(), &[]),
         ];
         for (name, params, ret, effects) in int_sigs {
             self.insert_sig(name, params, ret.clone(), effects);

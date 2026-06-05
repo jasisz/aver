@@ -47,6 +47,7 @@ pub fn emit_builtin_call(
         IntMin => format!("min {} {}", p(&a[0]), p(&a[1])),
         IntMax => format!("max {} {}", p(&a[0]), p(&a[1])),
         IntMod => format!("(Except.ok ({} % {}) : Except String Int)", a[0], a[1]),
+        IntDiv => format!("(Except.ok ({} / {}) : Except String Int)", a[0], a[1]),
         IntFromString => format!("Int.fromString {}", p(&a[0])),
 
         // ---- Float ----

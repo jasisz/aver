@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## Unreleased
 
+### Breaking
+
+- **Integer division by the `/` operator is removed; use `Int.div(a, b) : Result<Int, String>`.** `/` was the last partial operation that could fault at runtime (divide-by-zero) while posing as total — every other partial op in Aver is already a `Result`/`Option`-returning function (`Int.mod`, `Int.fromString`, `Vector.get`). `a / b` on two `Int`s is now a type error at `aver check` pointing you at `Int.div`, which returns `Result.Err` on a zero divisor (and on the single `i64::MIN / -1` overflow that fixed-width division can hit). The `/` operator stays total and unchanged on `Float`. **Migration:** where the divisor is known non-zero, `Result.withDefault(Int.div(a, b), <fallback>)`; where the failure matters, `match Int.div(a, b)`.
+
 ### Added
 
 - **`aver compile FILE --emit-ir-after=mir`** dumps the textual `MirProgram` — every function's body after HIR → MIR lowering and the MIR optimize pipeline. The same diagnostic surface as the other `--emit-ir-after` stages, now reaching the executable middle-end the VM actually runs. `diff` two stages to see exactly what each rewrote.

@@ -79,7 +79,7 @@ verify inRadius
 
 fn cellStartSlope(col: Int, row: Int) -> Int
     ? "Start (left) slope of cell: col * 1000 / row"
-    col * 1000 / row
+    Result.withDefault(Int.div(col * 1000, row), 0)
 
 verify cellStartSlope
     cellStartSlope(0, 1) => 0
@@ -88,7 +88,7 @@ verify cellStartSlope
 
 fn cellEndSlope(col: Int, row: Int) -> Int
     ? "End (right) slope of cell: (col + 1) * 1000 / row"
-    (col + 1) * 1000 / row
+    Result.withDefault(Int.div((col + 1) * 1000, row), 0)
 
 verify cellEndSlope
     cellEndSlope(0, 1) => 1000
@@ -97,7 +97,7 @@ verify cellEndSlope
 
 fn minCol(startSlope: Int, row: Int) -> Int
     ? "Minimum column at this row for startSlope"
-    (startSlope * row + 500) / 1000
+    Result.withDefault(Int.div(startSlope * row + 500, 1000), 0)
 
 verify minCol
     minCol(0, 1) => 0
@@ -106,7 +106,7 @@ verify minCol
 
 fn maxCol(endSlope: Int, row: Int) -> Int
     ? "Maximum column at this row for endSlope"
-    (endSlope * row + 500) / 1000
+    Result.withDefault(Int.div(endSlope * row + 500, 1000), 0)
 
 verify maxCol
     maxCol(1000, 1) => 1
