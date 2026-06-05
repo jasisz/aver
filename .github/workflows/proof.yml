@@ -9,19 +9,24 @@ name: Proof
 # whether we install it here is the only thing standing between
 # "tested" and "silently skipped".
 #
-# Moved off the per-PR CI gate (was 1m6s Lean-only) to consolidate
-# heavy toolchain installs into one nightly run, matching the
-# fuzz workflow's "PR is fast, nightly catches regressions"
-# strategy. A proof codegen regression now surfaces on the next
-# morning's nightly artefacts; manual workflow_dispatch is one
-# click away if you want pre-merge confirmation on a specific
-# proof-touching PR.
+# Runs per-PR AND nightly. A proof-codegen / proof-metric drift —
+# e.g. the platform-sensitive quicksort Dafny error count (#342) —
+# is caught at PR time, not only on the next morning's nightly. The
+# per-PR run pays the Lean + Dafny toolchain install up front (the
+# reason this was nightly-only before); the nightly stays to verify
+# the tip of main against toolchain / Z3-image bumps no PR touches.
 
 on:
+  # Per-PR + main-push so a proof-codegen / proof-metric drift is
+  # caught at PR time, same convention as `ci.yml`.
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
-    # 03:00 UTC daily — runs against the tip of main, same as fuzz
-    # nightly. Both jobs read main, neither needs the other's
-    # artefacts.
+    # 03:00 UTC daily — still runs against the tip of main (catches
+    # toolchain / Z3-image bumps that no PR touches), same as fuzz
+    # nightly.
     - cron: '0 3 * * *'
   workflow_dispatch:
 
