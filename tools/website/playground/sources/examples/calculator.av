@@ -15,7 +15,7 @@ fn divide(a: Int, b: Int) -> Result<Int, String>
     ? "integer division; returns Err on divide-by-zero"
     match b
         0 -> Result.Err("Division by zero")
-        _ -> Result.Ok(a / b)
+        _ -> Result.Ok(Result.withDefault(Int.div(a, b), 0))
 
 verify divide
     divide(10, 2) => Result.Ok(5)
