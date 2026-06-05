@@ -1521,11 +1521,17 @@ fn valid_int_div() {
 
 #[test]
 fn integer_slash_operator_is_a_type_error() {
-    // The bare `/` operator on two Ints is partial (div-by-zero traps);
-    // it must be rejected in favour of `Int.div : Result<Int, String>`.
+    // The bare `/` operator on two Ints is partial — it can fail two ways
+    // (zero divisor, and `i64::MIN / -1` overflow) — so it must be rejected
+    // in favour of `Int.div : Result<Int, String>`.
     assert_error_containing(
         "fn f(a: Int, b: Int) -> Int\n    a / b\n",
-        "integer division by '/' is not allowed",
+        "the '/' operator is not defined for Int",
+    );
+    // The diagnostic names BOTH failure modes, not just divide-by-zero.
+    assert_error_containing(
+        "fn f(a: Int, b: Int) -> Int\n    a / b\n",
+        "i64::MIN / -1 overflow",
     );
 }
 

@@ -246,6 +246,18 @@ pub(crate) fn classify_type_error(msg: &str) -> TypeErrorClassification {
         );
     }
 
+    if msg.contains("'/' operator is not defined for Int") {
+        return (
+            "int-div",
+            None,
+            Vec::new(),
+            Some(
+                "Use Int.div(a, b) : Result<Int, String>; handle the failure with `match` or `Result.withDefault(Int.div(a, b), fallback)`"
+                    .to_string(),
+            ),
+        );
+    }
+
     ("type-error", None, Vec::new(), None)
 }
 

@@ -21,6 +21,7 @@ Source of truth: `src/diagnostics/classify.rs` (classifier) and `src/checker/*.r
 | `unknown-ident` | error | A referenced name has no binding in scope. | Check spelling or add the missing import. |
 | `arity-mismatch` | error | Function or constructor called with the wrong number of args. | Adjust the number of arguments. |
 | `effect-violation` | error | A function calls an effect it doesn't declare in `! [...]`. | Add the missing effect to the function's `! [...]`. |
+| `int-div` | error | The `/` operator was used on two `Int`s. Integer division is partial (zero divisor, or `i64::MIN / -1` overflow), so it is a function, not an operator. | Use `Int.div(a, b) : Result<Int, String>`; handle with `match` or `Result.withDefault`. |
 
 ## Intent / verify hygiene
 
