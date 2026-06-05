@@ -63,20 +63,22 @@
     </div>
     <div class="hero-code">
         <div class="hero-window">
-            <pre class="code-block hero-code-block"><span class="hl-keyword">fn</span> <span class="hl-fn">safeDivide</span>(a: <span class="hl-type">Int</span>, b: <span class="hl-type">Int</span>) <span class="hl-operator">-></span> <span class="hl-type">Result</span>&lt;<span class="hl-type">Int</span>, <span class="hl-type">String</span>&gt;
-    <span class="hl-effect">?</span> <span class="hl-desc">"Safe integer division. Returns Err on zero."</span>
-    <span class="hl-keyword">match</span> b
-        <span class="hl-number">0</span> <span class="hl-operator">-></span> Result.Err(<span class="hl-string">"Division by zero"</span>)
-        _ <span class="hl-operator">-></span> Result.Ok(a / b)
+            <pre class="code-block hero-code-block"><span class="hl-keyword">fn</span> <span class="hl-fn">cartTotal</span>(items: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt;) <span class="hl-operator">-></span> <span class="hl-type">Int</span>
+    <span class="hl-effect">?</span> <span class="hl-desc">"Sum the prices in a cart."</span>
+    <span class="hl-keyword">match</span> items
+        [] <span class="hl-operator">-></span> <span class="hl-number">0</span>
+        [price, ..rest] <span class="hl-operator">-></span> price + cartTotal(rest)
 
-<span class="hl-keyword">verify</span> <span class="hl-fn">safeDivide</span>
-    safeDivide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> Result.Ok(<span class="hl-number">5</span>)
-    safeDivide(<span class="hl-number">7</span>, <span class="hl-number">0</span>)  <span class="hl-operator">=></span> Result.Err(<span class="hl-string">"Division by zero"</span>)
+<span class="hl-keyword">fn</span> <span class="hl-fn">combine</span>(a: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt;, b: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt;) <span class="hl-operator">-></span> <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt;
+    <span class="hl-effect">?</span> <span class="hl-desc">"Put cart b's items after cart a."</span>
+    <span class="hl-keyword">match</span> a
+        [] <span class="hl-operator">-></span> b
+        [x, ..rest] <span class="hl-operator">-></span> List.prepend(x, combine(rest, b))
 
-<span class="hl-keyword">fn</span> <span class="hl-fn">reportDivide</span>(a: <span class="hl-type">Int</span>, b: <span class="hl-type">Int</span>) <span class="hl-operator">-></span> <span class="hl-type">Unit</span>
-    <span class="hl-effect">?</span> <span class="hl-desc">"Prints the result of safeDivide."</span>
-    <span class="hl-effect">!</span> <span class="hl-effect">[Console.print]</span>
-    Console.print(safeDivide(a, b))</pre>
+<span class="hl-keyword">verify</span> <span class="hl-fn">cartTotal</span> <span class="hl-keyword">law</span> combinePreservesTotal
+    <span class="hl-keyword">given</span> a: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt; <span class="hl-operator">=</span> [[], [<span class="hl-number">5</span>], [<span class="hl-number">3</span>, <span class="hl-number">4</span>]]
+    <span class="hl-keyword">given</span> b: <span class="hl-type">List</span>&lt;<span class="hl-type">Int</span>&gt; <span class="hl-operator">=</span> [[], [<span class="hl-number">10</span>], [<span class="hl-number">1</span>, <span class="hl-number">2</span>]]
+    cartTotal(combine(a, b)) <span class="hl-operator">=></span> cartTotal(a) + cartTotal(b)</pre>
         </div>
     </div>
 </section>

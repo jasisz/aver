@@ -274,7 +274,7 @@ Rules:
 
 ### Operators
 
-- Arithmetic: `+`, `-`, `*`, `/` (operands must match types)
+- Arithmetic: `+`, `-`, `*` (operands must match types). `/` is **Float-only** — integer division is the `Int.div(a, b) : Result<Int, String>` function, not an operator (see gotchas below)
 - Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`
 - Error propagation: `expr?` (unwraps `Result.Ok`, propagates `Result.Err`). **Result-only** — does not work on `Option`. For `Option`, use `Option.withDefault(opt, fallback)` or pattern-match.
 - Independence: `(a, b)!` (parallel), `(a, b)?!` (parallel + Result unwrap)
@@ -282,6 +282,7 @@ Rules:
 
 **These operators do NOT exist** — do not use them:
 
+- no integer `/` — integer division is partial (it can divide by zero, and overflow on `i64::MIN / -1`), so use `Int.div(a, b)` which returns `Result<Int, String>`. Euclidean (flooring), the exact partner of `Int.mod`: `Int.div(-7, 2) = Result.Ok(-4)` and `Int.div(a,b)*b + Int.mod(a,b) == a` for every sign. `b == 0` returns `Result.Err("division by zero")`. The `/` operator stays total and works on `Float`
 - no `%` (modulo) — use `Int.mod(a, b)` which returns `Result<Int, String>`. Euclidean modulo: result is always in `[0, |b|)`. `Int.mod(-7, 3) = Result.Ok(2)`, not `-1`. `b == 0` returns `Result.Err("division by zero")`
 - no `&&`, `||` (boolean and/or) — use `Bool.and(a, b)`, `Bool.or(a, b)`, or nested `match`
 - no `!` (boolean not) as prefix — use `Bool.not(x)`

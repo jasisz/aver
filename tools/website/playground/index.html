@@ -193,15 +193,13 @@
             </div>
         </div>
 
-        <pre class="about-example"><span class="hl-keyword">fn</span> <span class="hl-fn">divide</span>(a: <span class="hl-builtin">Int</span>, b: <span class="hl-builtin">Int</span>) <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>&lt;<span class="hl-builtin">Int</span>, <span class="hl-builtin">String</span>&gt;
-    <span class="hl-effect">?</span> <span class="hl-desc">"Safe division. Returns Err on zero."</span>
-    <span class="hl-keyword">match</span> b
-        <span class="hl-number">0</span> <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"Division by zero"</span>)
-        _ <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>.Ok(a / b)
+        <pre class="about-example"><span class="hl-keyword">fn</span> <span class="hl-fn">average</span>(total: <span class="hl-builtin">Int</span>, count: <span class="hl-builtin">Int</span>) <span class="hl-operator">-></span> <span class="hl-builtin">Result</span>&lt;<span class="hl-builtin">Int</span>, <span class="hl-builtin">String</span>&gt;
+    <span class="hl-effect">?</span> <span class="hl-desc">"Average price per item — Err when the cart is empty."</span>
+    <span class="hl-builtin">Int</span>.div(total, count)
 
-<span class="hl-keyword">verify</span> <span class="hl-fn">divide</span>
-    divide(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Ok(<span class="hl-number">5</span>)
-    divide(<span class="hl-number">10</span>, <span class="hl-number">0</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"Division by zero"</span>)</pre>
+<span class="hl-keyword">verify</span> <span class="hl-fn">average</span>
+    average(<span class="hl-number">10</span>, <span class="hl-number">2</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Ok(<span class="hl-number">5</span>)
+    average(<span class="hl-number">10</span>, <span class="hl-number">0</span>) <span class="hl-operator">=></span> <span class="hl-builtin">Result</span>.Err(<span class="hl-string">"division by zero"</span>)</pre>
 
         <div class="about-links">
             <a href="https://github.com/jasisz/aver" target="_blank">GitHub</a>
