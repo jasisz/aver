@@ -14,7 +14,7 @@ fn applyBinop(x: Int, y: Int, op: BinOp) -> Result<Val, String>
         BinOp.OpMul -> Result.Ok(Val.ValInt(x * y))
         BinOp.OpDiv -> match y == 0
             true -> Result.Err("division by zero")
-            false -> Result.Ok(Val.ValInt(x / y))
+            false -> Result.Ok(Val.ValInt(Result.withDefault(Int.div(x, y), 0)))
 
 verify applyBinop
     applyBinop(3, 4, BinOp.OpAdd) => Result.Ok(Val.ValInt(7))

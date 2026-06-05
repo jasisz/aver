@@ -18,6 +18,22 @@ impl TypeChecker {
                     ));
                 }
             }
+            BinOp::Div if matches!(lt, Type::Int) && matches!(rt, Type::Int) => {
+                // Integer `/` is the lone partial operator: it can fail at
+                // runtime in TWO ways — a zero divisor, and the `i64::MIN /
+                // -1` overflow. Aver makes partiality explicit, so integer
+                // division is the `Int.div : Result<Int, String>` builtin,
+                // not an operator. Float `/` (and Int/Float mixed → Float)
+                // stays total below. The `classify_type_error` mapping keys
+                // off this phrasing to attach the `int-div` slug + repair.
+                self.error_at_line(
+                    line,
+                    "the '/' operator is not defined for Int — integer division is partial \
+                     (divide-by-zero, or i64::MIN / -1 overflow), so it is the function \
+                     Int.div(a, b) : Result<Int, String>"
+                        .to_string(),
+                );
+            }
             BinOp::Sub | BinOp::Mul | BinOp::Div => {
                 let ok = (matches!(lt, Type::Int) && matches!(rt, Type::Int))
                     || (matches!(lt, Type::Float) && matches!(rt, Type::Float));

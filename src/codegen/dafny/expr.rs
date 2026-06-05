@@ -416,7 +416,22 @@ fn emit_dafny_builtin(b: crate::codegen::builtins::Builtin, a: &[String]) -> Str
         IntFromString => format!("IntFromString({})", a[0]),
         IntMin => format!("(if {} <= {} then {} else {})", a[0], a[1], a[0], a[1]),
         IntMax => format!("(if {} >= {} then {} else {})", a[0], a[1], a[0], a[1]),
-        IntMod => format!("Result<int, string>.Ok(({} % {}))", a[0], a[1]),
+        // `Int.mod` / `Int.div` are partial: a zero divisor is `Result.Err`.
+        // Dafny's `%` / `/` carry a `b != 0` precondition, so an unconditional
+        // `Ok((a % b))` raised "possible division by zero" whenever the divisor
+        // wasn't provably non-zero. Guarding the divisor both discharges that
+        // obligation and makes the error path reachable for `match` on the
+        // result (error string matches the runtime — see `types/int.rs`).
+        IntMod => format!(
+            "(if {b} == 0 then Result<int, string>.Err(\"division by zero\") else Result<int, string>.Ok(({a} % {b})))",
+            a = a[0],
+            b = a[1]
+        ),
+        IntDiv => format!(
+            "(if {b} == 0 then Result<int, string>.Err(\"division by zero\") else Result<int, string>.Ok(({a} / {b})))",
+            a = a[0],
+            b = a[1]
+        ),
 
         // Float
         FloatAbs => format!("(if {} >= 0.0 then {} else -{})", a[0], a[0], a[0]),

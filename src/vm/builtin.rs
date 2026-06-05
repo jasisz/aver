@@ -100,6 +100,7 @@ vm_builtins! {
     IntMin => "Int.min",
     IntMax => "Int.max",
     IntMod => "Int.mod",
+    IntDiv => "Int.div",
 
     FloatFromString => "Float.fromString",
     FloatFromInt => "Float.fromInt",
@@ -419,7 +420,8 @@ impl VmBuiltin {
             | Self::IntAbs
             | Self::IntMin
             | Self::IntMax
-            | Self::IntMod => int::call_nv(self.name(), args, arena),
+            | Self::IntMod
+            | Self::IntDiv => int::call_nv(self.name(), args, arena),
 
             Self::FloatFromString
             | Self::FloatFromInt

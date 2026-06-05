@@ -5,3 +5,5 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 743bbaa1beadd1800ad3ef40ccc0342a72cf12281ed9b91499e4af05ca82cd9a # shrinks to expr = "(((-853.6346) + (-827.3495)) * 924.8567)"
+cc 8fcbbee778c95ba222f5bf58c6aba455758005dccf3ffaf056c1b45acd2a7ab3 # shrinks to expr = "true"
+cc 2bf71a2de521be260c21bb68e163602e0a84ec91181ba2b1f6226d03c6751f24 # shrinks to expr = "(String.fromInt(37707) + \" d \")"

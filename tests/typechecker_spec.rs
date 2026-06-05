@@ -1515,6 +1515,34 @@ fn valid_int_mod() {
 }
 
 #[test]
+fn valid_int_div() {
+    assert_no_errors("fn f(a: Int, b: Int) -> Result<Int, String>\n    Int.div(a, b)\n");
+}
+
+#[test]
+fn integer_slash_operator_is_a_type_error() {
+    // The bare `/` operator on two Ints is partial — it can fail two ways
+    // (zero divisor, and `i64::MIN / -1` overflow) — so it must be rejected
+    // in favour of `Int.div : Result<Int, String>`.
+    assert_error_containing(
+        "fn f(a: Int, b: Int) -> Int\n    a / b\n",
+        "the '/' operator is not defined for Int",
+    );
+    // The diagnostic names BOTH failure modes, not just divide-by-zero.
+    assert_error_containing(
+        "fn f(a: Int, b: Int) -> Int\n    a / b\n",
+        "i64::MIN / -1 overflow",
+    );
+}
+
+#[test]
+fn float_slash_operator_stays_total() {
+    // Float `/` (and Int/Float mixed → Float) is total and unchanged.
+    assert_no_errors("fn f(a: Float, b: Float) -> Float\n    a / b\n");
+    assert_no_errors("fn f(a: Int, b: Float) -> Float\n    Float.fromInt(a) / b\n");
+}
+
+#[test]
 fn valid_int_to_float() {
     assert_no_errors("fn f(n: Int) -> Float\n    Float.fromInt(n)\n");
 }

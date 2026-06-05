@@ -177,19 +177,25 @@ fn emit_list_induction(
     // its goal; a leftover goal is an `unsolved goals` ERROR at the arm (a hard
     // lake-build failure), NOT something a trailing `all_goals sorry` can mop
     // up (that tactic is unreachable past a failing arm). So gate each arm on
-    // `first | (simp[_all] [defs]; done) | sorry`: the `; done` turns a
-    // didn't-close (or no-progress) `simp` into a throw that `first` catches
-    // and admits via `sorry`. A law simp can prove closes (no sorry); anything
-    // else (rle/json roundtrips, the fuel-wrapped quicksort SCC) degrades to an
-    // honest `sorry` that lake still builds — never a silent unsolved-goals
-    // error.
+    // `first | (simp[_all] [defs]; done) | (simp[_all] [defs]; omega) | sorry`:
+    // the `; done` turns a didn't-close (or no-progress) `simp` into a throw
+    // that `first` catches. The second arm retries with `omega` to discharge a
+    // linear-arithmetic residual the inductive hypothesis leaves behind (e.g.
+    // `count(append a b) = count a + count b` needs `1 + (m + n) = (1 + m) +
+    // n`) — `omega` is a sound decision procedure, so it only ever closes true
+    // goals; anything it can't (rle/json roundtrips, the fuel-wrapped quicksort
+    // SCC) still degrades to an honest `sorry` that lake builds — never a
+    // silent unsolved-goals error.
     let proof_lines = vec![
         format!("  intro {}", intro_names.join(" ")),
         format!("  induction {} with", target_lean),
-        format!("  | nil => first | (simp [{}]; done) | sorry", simp_list),
         format!(
-            "  | cons head tail ih => first | (simp_all [{}]; done) | sorry",
-            simp_list
+            "  | nil => first | (simp [{d}]; done) | (simp [{d}]; omega) | sorry",
+            d = simp_list
+        ),
+        format!(
+            "  | cons head tail ih => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega) | sorry",
+            d = simp_list
         ),
     ];
 
@@ -231,24 +237,25 @@ fn emit_simple_induction(
         // arm tactic to close its goal; a leftover goal is an
         // `unsolved goals` ERROR (a hard lake-build failure), not a
         // countable `sorry`. Gate on `first | (simp[_all] [defs]; done) |
-        // sorry` (matching the List-induction path): `; done` turns a
-        // non-closing `simp` into a throw that `first` catches and admits
-        // via `sorry`. A law simp proves closes (no sorry); anything else
-        // (e.g. an arm needing `omega`) becomes an honest building sorry
-        // rather than a false-RED hard error.
+        // (simp[_all] [defs]; omega) | sorry` (matching the List-induction
+        // path): `; done` turns a non-closing `simp` into a throw that `first`
+        // catches; the `omega` arm then discharges any linear-arithmetic
+        // residual (sound — closes only true goals); anything still unproved
+        // becomes an honest building sorry rather than a false-RED hard error.
         match classify_variant(variant, type_name) {
             VariantKind::Leaf => {
                 if field_binders.is_empty() {
                     proof_lines.push(format!(
-                        "  | {} => first | (simp [{}]; done) | sorry",
-                        lean_variant, simp_list
+                        "  | {v} => first | (simp [{d}]; done) | (simp [{d}]; omega) | sorry",
+                        v = lean_variant,
+                        d = simp_list
                     ));
                 } else {
                     proof_lines.push(format!(
-                        "  | {} {} => first | (simp [{}]; done) | sorry",
-                        lean_variant,
-                        field_binders.join(" "),
-                        simp_list
+                        "  | {v} {b} => first | (simp [{d}]; done) | (simp [{d}]; omega) | sorry",
+                        v = lean_variant,
+                        b = field_binders.join(" "),
+                        d = simp_list
                     ));
                 }
             }
@@ -262,11 +269,11 @@ fn emit_simple_induction(
                     .collect();
 
                 proof_lines.push(format!(
-                    "  | {} {} {} => first | (simp_all [{}]; done) | sorry",
-                    lean_variant,
-                    field_binders.join(" "),
-                    ih_names.join(" "),
-                    simp_list
+                    "  | {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega) | sorry",
+                    v = lean_variant,
+                    b = field_binders.join(" "),
+                    ih = ih_names.join(" "),
+                    d = simp_list
                 ));
             }
             VariantKind::IndirectRec => return None,

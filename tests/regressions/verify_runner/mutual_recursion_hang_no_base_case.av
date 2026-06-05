@@ -10,7 +10,7 @@ fn countDown(n: Int) -> Int
 verify countDown
     countDown(7) => 0
     countDown(1) => 0
-    countDown((1 / 0)) => 0
+    countDown(Result.withDefault(Int.div(1, 0), 0)) => 0
 
 fn main() -> Int
     countDown(5)

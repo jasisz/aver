@@ -17,9 +17,9 @@ decision NoExceptions
 
 fn safeDivide(a: Int, b: Int) -> Result<Int, String>
     ? "Safe integer division. Returns Err when divisor is zero."
-    match b
-        0 -> Result.Err("Division by zero")
-        _ -> Result.Ok(a / b)
+    match Int.div(a, b)
+        Result.Ok(q)  -> Result.Ok(q)
+        Result.Err(_) -> Result.Err("Division by zero")
 
 verify safeDivide
     safeDivide(10, 2) => Result.Ok(5)

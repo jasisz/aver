@@ -744,8 +744,18 @@ impl TypeChecker {
                         Type::Bool
                     }
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+                        // Integer `/` is banned (see `check_binop`): it is
+                        // partial. `check_binop` already emitted the error;
+                        // surface `Invalid` so the value doesn't pose as a
+                        // total `Int` downstream.
+                        if matches!(op, BinOp::Div)
+                            && matches!(lt, Type::Int)
+                            && matches!(rt, Type::Int)
+                        {
+                            Type::Invalid
+                        }
                         // Promote to Float if either side is Float
-                        if matches!(lt, Type::Float) || matches!(rt, Type::Float) {
+                        else if matches!(lt, Type::Float) || matches!(rt, Type::Float) {
                             Type::Float
                         } else if matches!(lt, Type::Int) && matches!(rt, Type::Int) {
                             Type::Int

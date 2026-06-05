@@ -41,6 +41,12 @@ pub enum LeafOp<'a> {
         b: &'a Spanned<Expr>,
         default_literal: &'a Literal,
     },
+    /// Fused `Result.withDefault(Int.div(a, b), literal)` → skip Result allocation.
+    IntDivOrDefaultLiteral {
+        a: &'a Spanned<Expr>,
+        b: &'a Spanned<Expr>,
+        default_literal: &'a Literal,
+    },
     /// Fused `Vector.get(Vector.fromList(list), index)` → skip AverVector allocation.
     ListIndexGet {
         list: &'a Spanned<Expr>,
@@ -122,7 +128,7 @@ fn classify_leaf_call<'a>(
                     .or_else(|| classify_vector_get_or_default(&args[0], &args[1], ctx))
             }
             "Result.withDefault" if args.len() == 2 => {
-                classify_int_mod_or_default(&args[0], &args[1], ctx)
+                classify_int_mod_or_div_or_default(&args[0], &args[1], ctx)
             }
             _ => None,
         },
@@ -204,7 +210,7 @@ fn classify_list_index_get<'a>(
     }
 }
 
-fn classify_int_mod_or_default<'a>(
+fn classify_int_mod_or_div_or_default<'a>(
     result_expr: &'a Spanned<Expr>,
     default_expr: &'a Spanned<Expr>,
     ctx: &impl CallLowerCtx,
@@ -223,6 +229,11 @@ fn classify_int_mod_or_default<'a>(
 
     match classify_call_plan(&inner_callee.node, ctx) {
         CallPlan::Builtin(name) if name == "Int.mod" => Some(LeafOp::IntModOrDefaultLiteral {
+            a: &inner_args[0],
+            b: &inner_args[1],
+            default_literal,
+        }),
+        CallPlan::Builtin(name) if name == "Int.div" => Some(LeafOp::IntDivOrDefaultLiteral {
             a: &inner_args[0],
             b: &inner_args[1],
             default_literal,

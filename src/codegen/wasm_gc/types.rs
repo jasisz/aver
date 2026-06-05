@@ -792,19 +792,30 @@ impl TypeRegistry {
         // the resulting names as fresh passive segments after the
         // pre-walked literal segments above. Single source of truth,
         // zero AST-walker false positives.
-        // `Int.mod` lowers to a boxed `Result<Int, String>` whose Err
-        // arm carries a fixed "Division by zero" message — register
-        // its bytes as a passive segment so the emitter has an idx
-        // to pull at struct.new time, regardless of whether user
-        // source ever spells the literal.
+        // Boxed `Int.mod` / `Int.div` build a `Result<Int, String>` whose
+        // `Err` arm carries a fixed message verbatim from the VM
+        // (`src/types/int.rs`): `"division by zero"` for both, plus
+        // `"division overflow"` for `Int.div`'s `i64::MIN / -1` edge.
+        // Register those bytes as passive segments so the boxed emitter
+        // (`from_mir::emit_mir_int_div_mod_boxed`) has a data-segment idx to
+        // pull at `struct.new` time, whether or not user source ever spells
+        // the literal. (The fused `Result.withDefault(Int.{mod,div}(...),
+        // default)` path never materialises a struct, so it doesn't need
+        // these.)
         let int_mod_used = resolved_fn_defs.iter().any(fn_body_calls_int_mod);
-        if int_mod_used {
-            let bytes = b"Division by zero".to_vec();
+        let int_div_used = resolved_fn_defs.iter().any(fn_body_calls_int_div);
+        let mut intern_synthetic = |bytes: Vec<u8>| {
             string_literal_idx.entry(bytes.clone()).or_insert_with(|| {
                 let idx = string_literals.len() as u32;
                 string_literals.push(bytes);
                 idx
             });
+        };
+        if int_mod_used || int_div_used {
+            intern_synthetic(b"division by zero".to_vec());
+        }
+        if int_div_used {
+            intern_synthetic(b"division overflow".to_vec());
         }
 
         // Phase 4.2.1 (0.20) — register the placeholder error
@@ -1268,12 +1279,13 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
                             | "Char.toCode"
                             | "Char.fromCode"
                             | "Byte.toHex"
-                            // `Int.mod`, `Int.fromString`, `Float.fromString`,
-                            // `Byte.fromHex` return Result<_, String> —
-                            // touching them forces the String slot for
-                            // the error payload even when the program
-                            // never reads the Err arm.
+                            // `Int.mod`, `Int.div`, `Int.fromString`,
+                            // `Float.fromString`, `Byte.fromHex` return
+                            // Result<_, String> — touching them forces the
+                            // String slot for the error payload even when
+                            // the program never reads the Err arm.
                             | "Int.mod"
+                            | "Int.div"
                             | "Int.fromString"
                             | "Float.fromString"
                             | "Byte.fromHex"
@@ -1339,37 +1351,47 @@ fn expr_uses_string(expr: &crate::ir::hir::ResolvedExpr) -> bool {
 /// table. Both `Literal::Str` and the `Literal` parts of an
 /// `InterpolatedStr` count — each unique byte sequence gets a passive
 /// data segment.
-fn fn_body_calls_int_mod(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+fn fn_body_calls_builtin(fd: &crate::ir::hir::ResolvedFnDef, dotted: &str) -> bool {
     use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedStmt};
-    fn walk(e: &ResolvedExpr) -> bool {
+    fn walk(e: &ResolvedExpr, dotted: &str) -> bool {
         match e {
             ResolvedExpr::Call(callee, args) => {
-                let hit = matches!(callee, ResolvedCallee::Builtin(name) if name == "Int.mod");
-                hit || args.iter().any(|a| walk(&a.node))
+                let hit = matches!(callee, ResolvedCallee::Builtin(name) if name == dotted);
+                hit || args.iter().any(|a| walk(&a.node, dotted))
             }
             ResolvedExpr::Match { subject, arms } => {
-                walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
+                walk(&subject.node, dotted) || arms.iter().any(|a| walk(&a.body.node, dotted))
             }
-            ResolvedExpr::BinOp(_, l, r) => walk(&l.node) || walk(&r.node),
-            ResolvedExpr::Neg(inner) => walk(&inner.node),
-            ResolvedExpr::Attr(o, _) => walk(&o.node),
-            ResolvedExpr::ErrorProp(i) => walk(&i.node),
-            ResolvedExpr::TailCall { args, .. } => args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::BinOp(_, l, r) => walk(&l.node, dotted) || walk(&r.node, dotted),
+            ResolvedExpr::Neg(inner) => walk(&inner.node, dotted),
+            ResolvedExpr::Attr(o, _) => walk(&o.node, dotted),
+            ResolvedExpr::ErrorProp(i) => walk(&i.node, dotted),
+            ResolvedExpr::TailCall { args, .. } => args.iter().any(|a| walk(&a.node, dotted)),
             ResolvedExpr::List(xs)
             | ResolvedExpr::Tuple(xs)
-            | ResolvedExpr::IndependentProduct(xs, _) => xs.iter().any(|x| walk(&x.node)),
-            ResolvedExpr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
-            ResolvedExpr::RecordUpdate { base, updates, .. } => {
-                walk(&base.node) || updates.iter().any(|(_, e)| walk(&e.node))
+            | ResolvedExpr::IndependentProduct(xs, _) => xs.iter().any(|x| walk(&x.node, dotted)),
+            ResolvedExpr::RecordCreate { fields, .. } => {
+                fields.iter().any(|(_, e)| walk(&e.node, dotted))
             }
-            ResolvedExpr::Ctor(_, args) => args.iter().any(|a| walk(&a.node)),
+            ResolvedExpr::RecordUpdate { base, updates, .. } => {
+                walk(&base.node, dotted) || updates.iter().any(|(_, e)| walk(&e.node, dotted))
+            }
+            ResolvedExpr::Ctor(_, args) => args.iter().any(|a| walk(&a.node, dotted)),
             _ => false,
         }
     }
     let ResolvedFnBody::Block(stmts) = fd.body.as_ref();
     stmts.iter().any(|stmt| match stmt {
-        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => walk(&e.node),
+        ResolvedStmt::Binding { value: e, .. } | ResolvedStmt::Expr(e) => walk(&e.node, dotted),
     })
+}
+
+fn fn_body_calls_int_mod(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    fn_body_calls_builtin(fd, "Int.mod")
+}
+
+fn fn_body_calls_int_div(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
+    fn_body_calls_builtin(fd, "Int.div")
 }
 
 fn collect_string_literals_in_fn(

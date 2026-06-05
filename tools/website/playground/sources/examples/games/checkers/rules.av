@@ -102,8 +102,8 @@ verify isLegalJumpInner
 
 fn isLegalJumpCapture(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int, color: Color) -> Bool
     ? "Check that middle cell has opponent (men can capture backwards)"
-    mx = (fx + tx) / 2
-    my = (fy + ty) / 2
+    mx = Result.withDefault(Int.div(fx + tx, 2), 0)
+    my = Result.withDefault(Int.div(fy + ty, 2), 0)
     Board.isOpponent(Board.getCell(board, mx, my), color)
 
 verify isLegalJumpCapture
@@ -150,8 +150,8 @@ verify tryJump
 
 fn applyJump(board: List<List<CellContent>>, fx: Int, fy: Int, tx: Int, ty: Int) -> List<List<CellContent>>
     ? "Execute one jump: move piece, remove captured, handle promotion"
-    mx = (fx + tx) / 2
-    my = (fy + ty) / 2
+    mx = Result.withDefault(Int.div(fx + tx, 2), 0)
+    my = Result.withDefault(Int.div(fy + ty, 2), 0)
     piece = Board.getCell(board, fx, fy)
     finalPiece = match Board.shouldPromote(piece, ty)
         true -> Board.promote(piece)

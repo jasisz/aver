@@ -1049,3 +1049,112 @@ fn main() -> Int
         31
     );
 }
+
+// Boxed `match Int.div(a, b) { Ok / Err }` — the `Result<Int, String>` is
+// consumed directly (not the fused `Result.withDefault` form), so the backend
+// must materialise the concrete Result struct. Euclidean (flooring) quotient.
+#[test]
+fn boxed_int_div_ok() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "boxed Int.div Ok"
+    depends []
+
+fn sd(a: Int, b: Int) -> Int
+    match Int.div(a, b)
+        Result.Ok(v)  -> v
+        Result.Err(_) -> 0 - 999
+
+fn main() -> Int
+    sd(0 - 7, 2)
+"#
+        ),
+        -4
+    );
+}
+
+// `b == 0` routes to `Result.Err("division by zero")` — the Err arm fires
+// (returns its sentinel) rather than trapping.
+#[test]
+fn boxed_int_div_err_div_by_zero() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "boxed Int.div Err (div by zero)"
+    depends []
+
+fn sd(a: Int, b: Int) -> Int
+    match Int.div(a, b)
+        Result.Ok(v)  -> v
+        Result.Err(_) -> 0 - 1
+
+fn main() -> Int
+    sd(7, 0)
+"#
+        ),
+        -1
+    );
+}
+
+// `i64::MIN / -1` is guarded out before `i64.div_s` traps, surfacing as Err.
+#[test]
+fn boxed_int_div_err_overflow() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "boxed Int.div Err (overflow)"
+    depends []
+
+fn sd(a: Int, b: Int) -> Int
+    match Int.div(a, b)
+        Result.Ok(v)  -> v
+        Result.Err(_) -> 0 - 1
+
+fn main() -> Int
+    sd(0 - 9223372036854775807 - 1, 0 - 1)
+"#
+        ),
+        -1
+    );
+}
+
+// Boxed `match Int.mod(a, b)` — Euclidean modulo on Ok (always `[0, |b|)`),
+// Err on `b == 0`.
+#[test]
+fn boxed_int_mod_ok_and_err() {
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "boxed Int.mod Ok"
+    depends []
+
+fn sm(a: Int, b: Int) -> Int
+    match Int.mod(a, b)
+        Result.Ok(v)  -> v
+        Result.Err(_) -> 0 - 999
+
+fn main() -> Int
+    sm(0 - 7, 2)
+"#
+        ),
+        1
+    );
+    assert_eq!(
+        run_int(
+            r#"module Tmp
+    intent = "boxed Int.mod Err"
+    depends []
+
+fn sm(a: Int, b: Int) -> Int
+    match Int.mod(a, b)
+        Result.Ok(v)  -> v
+        Result.Err(_) -> 0 - 1
+
+fn main() -> Int
+    sm(7, 0)
+"#
+        ),
+        -1
+    );
+}

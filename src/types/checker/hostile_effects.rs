@@ -126,7 +126,7 @@ pub fn hostile_profiles_for(method: &str) -> Vec<HostileProfile> {
                 name: "midrange",
                 stub_fn_name: stub_name("midrange"),
                 stub_body: format!(
-                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"honest: roll lands in the middle of the range\"\n    (min + max) / 2\n",
+                    "fn {}(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n    ? \"honest: roll lands in the middle of the range\"\n    Result.withDefault(Int.div(min + max, 2), min)\n",
                     stub_name("midrange")
                 ),
             },

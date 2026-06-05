@@ -548,6 +548,19 @@ pub(crate) fn emit_mir_expr(
                         MirBuiltinEmit::Fallback => return Ok(None),
                         MirBuiltinEmit::NotHandled => {}
                     }
+                    // Boxed `Int.div(a, b)` / `Int.mod(a, b)` — the
+                    // `Result<Int, String>` is consumed directly (e.g.
+                    // `match Int.div(a, b) { Ok / Err }`), not the fused
+                    // `Result.withDefault` form handled above. Build the
+                    // concrete Result struct so the unwrap idiom runs on
+                    // wasm-gc identically to the VM. (`Int.div` / `Int.mod`
+                    // themselves are not `fn_map.builtins` entries, so the
+                    // lookup below would miss and force a trapping fallback.)
+                    match emit_mir_int_div_mod_boxed(func, dotted, &call.args, slots, ctx)? {
+                        MirBuiltinEmit::Produced(produces) => return Ok(Some(produces)),
+                        MirBuiltinEmit::Fallback => return Ok(None),
+                        MirBuiltinEmit::NotHandled => {}
+                    }
                     match ctx.fn_map.builtins.get(dotted) {
                         Some(&wasm_idx) => {
                             if emit_mir_args_then_call(func, &call.args, slots, ctx, wasm_idx)?

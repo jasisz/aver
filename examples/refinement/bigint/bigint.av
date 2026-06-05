@@ -73,7 +73,7 @@ fn fromInt(n: Int) -> BigInt
 fn digitsOf(n: Int) -> List<Int>
     ? "Little-endian base-10⁹ digit decomposition. Stops at the first zero quotient."
     match n > 0
-        true  -> List.prepend(Result.withDefault(Int.mod(n, 1000000000), 0), digitsOf(n / 1000000000))
+        true  -> List.prepend(Result.withDefault(Int.mod(n, 1000000000), 0), digitsOf(Result.withDefault(Int.div(n, 1000000000), 0)))
         false -> []
 
 verify fromInt

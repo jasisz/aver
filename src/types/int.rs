@@ -10,6 +10,10 @@
 ///                                                  result has the sign of `b`
 ///                                                  (always >= 0 for b > 0).
 ///                                                  Errors on b == 0.
+///   Int.div(a, b)       → Result<Int, String>  — truncating integer division
+///                                                  (rounds toward zero, same as
+///                                                  the old `/` operator).
+///                                                  Errors on b == 0.
 ///
 /// Stringification goes through `String.fromInt` (or `"{n}"` interpolation);
 /// widening to Float goes through `Float.fromInt`.
@@ -23,7 +27,7 @@ use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
     let mut members = HashMap::new();
-    for method in &["fromString", "fromFloat", "abs", "min", "max", "mod"] {
+    for method in &["fromString", "fromFloat", "abs", "min", "max", "mod", "div"] {
         members.insert(
             method.to_string(),
             Value::Builtin(format!("Int.{}", method)),
@@ -51,6 +55,7 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
         "Int.min" => Some(min(args)),
         "Int.max" => Some(max(args)),
         "Int.mod" => Some(modulo(args)),
+        "Int.div" => Some(divide(args)),
         _ => None,
     }
 }
@@ -129,6 +134,31 @@ fn modulo(args: &[Value]) -> Result<Value, RuntimeError> {
     }
 }
 
+fn divide(args: &[Value]) -> Result<Value, RuntimeError> {
+    let [a, b] = two_args("Int.div", args)?;
+    let (Value::Int(x), Value::Int(y)) = (a, b) else {
+        return Err(RuntimeError::Error(
+            "Int.div: both arguments must be Int".to_string(),
+        ));
+    };
+    // Euclidean (flooring) division, so `Int.div` is the exact partner of
+    // `Int.mod` (Euclidean): `div(a,b)*b + mod(a,b) == a` for all signs.
+    // `checked_div_euclid` is None on BOTH divisor-zero and the `i64::MIN
+    // / -1` overflow — both the partiality `Int.div` makes explicit, so
+    // both become a `Result.Err` (still `String`, matching `Int.mod`).
+    match x.checked_div_euclid(*y) {
+        Some(q) => Ok(Value::Ok(Box::new(Value::Int(q)))),
+        None => {
+            let msg = if *y == 0 {
+                "division by zero"
+            } else {
+                "division overflow"
+            };
+            Ok(Value::Err(Box::new(Value::Str(msg.to_string()))))
+        }
+    }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 fn one_arg<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 1], RuntimeError> {
@@ -156,7 +186,7 @@ fn two_args<'a>(name: &str, args: &'a [Value]) -> Result<[&'a Value; 2], Runtime
 // ─── NanValue-native API ─────────────────────────────────────────────────────
 
 pub fn register_nv(global: &mut HashMap<String, NanValue>, arena: &mut Arena) {
-    let methods = &["fromString", "fromFloat", "abs", "min", "max", "mod"];
+    let methods = &["fromString", "fromFloat", "abs", "min", "max", "mod", "div"];
     let mut members: Vec<(Rc<str>, NanValue)> = Vec::with_capacity(methods.len());
     for method in methods {
         let idx = arena.push_builtin(&format!("Int.{}", method));
@@ -181,6 +211,7 @@ pub fn call_nv(
         "Int.min" => Some(min_nv(args, arena)),
         "Int.max" => Some(max_nv(args, arena)),
         "Int.mod" => Some(modulo_nv(args, arena)),
+        "Int.div" => Some(divide_nv(args, arena)),
         _ => None,
     }
 }
@@ -289,5 +320,33 @@ fn modulo_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
     } else {
         let inner = NanValue::new_int(x.rem_euclid(y), arena);
         Ok(NanValue::new_ok_value(inner, arena))
+    }
+}
+
+fn divide_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
+    let (a, b) = nv_check2("Int.div", args)?;
+    if !a.is_int() || !b.is_int() {
+        return Err(RuntimeError::Error(
+            "Int.div: both arguments must be Int".to_string(),
+        ));
+    }
+    let x = a.as_int(arena);
+    let y = b.as_int(arena);
+    // Euclidean division (partner of Euclidean `Int.mod`). `checked_div_euclid`
+    // covers divisor-zero AND the `i64::MIN / -1` overflow — both `Result.Err`.
+    match x.checked_div_euclid(y) {
+        None => {
+            let msg = if y == 0 {
+                "division by zero"
+            } else {
+                "division overflow"
+            };
+            let inner = NanValue::new_string_value(msg, arena);
+            Ok(NanValue::new_err_value(inner, arena))
+        }
+        Some(q) => {
+            let inner = NanValue::new_int(q, arena);
+            Ok(NanValue::new_ok_value(inner, arena))
+        }
     }
 }

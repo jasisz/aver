@@ -13,9 +13,9 @@ verify add
 
 fn divide(a: Int, b: Int) -> Result<Int, String>
     ? "integer division; returns Err on divide-by-zero"
-    match b
-        0 -> Result.Err("Division by zero")
-        _ -> Result.Ok(a / b)
+    match Int.div(a, b)
+        Result.Ok(q)  -> Result.Ok(q)
+        Result.Err(_) -> Result.Err("Division by zero")
 
 verify divide
     divide(10, 2) => Result.Ok(5)

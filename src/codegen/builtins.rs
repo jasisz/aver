@@ -22,6 +22,7 @@ pub(crate) enum Builtin {
     IntMin,
     IntMax,
     IntMod,
+    IntDiv,
 
     // --- Float ---
     FloatAbs,
@@ -130,6 +131,7 @@ pub(crate) fn recognize_builtin(name: &str) -> Option<Builtin> {
         "Int.min" => Builtin::IntMin,
         "Int.max" => Builtin::IntMax,
         "Int.mod" => Builtin::IntMod,
+        "Int.div" => Builtin::IntDiv,
 
         // Float
         "Float.abs" => Builtin::FloatAbs,

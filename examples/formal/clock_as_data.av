@@ -19,7 +19,7 @@ verify isExpired
 
 fn secondsUntil(nowMs: Int, deadlineMs: Int) -> Int
     ? "Pure: seconds remaining (negative if past)."
-    (deadlineMs - nowMs) / 1000
+    Result.withDefault(Int.div(deadlineMs - nowMs, 1000), 0)
 
 verify secondsUntil
     secondsUntil(0, 5000) => 5
