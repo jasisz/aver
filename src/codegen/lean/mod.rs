@@ -2890,10 +2890,12 @@ verify mirror law involutive
             )
         );
         assert!(lean.contains("  induction t with"));
-        assert!(lean.contains("  | leaf f0 => first | (simp [mirror]; done) | sorry"));
-        assert!(
-            lean.contains("  | node f0 f1 ih0 ih1 => first | (simp_all [mirror]; done) | sorry")
-        );
+        assert!(lean.contains(
+            "  | leaf f0 => first | (simp [mirror]; done) | (simp [mirror]; omega) | sorry"
+        ));
+        assert!(lean.contains(
+            "  | node f0 f1 ih0 ih1 => first | (simp_all [mirror]; done) | (simp_all [mirror]; omega) | sorry"
+        ));
         assert!(!lean.contains(
             "-- universal theorem mirror_law_involutive omitted: sampled law shape is not auto-proved yet"
         ));
