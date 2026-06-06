@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.24.1 (unreleased)
+## 0.24.1 — 2026-06-06
 
 Patch release on top of "Divide" — a correctness fix in the optimizer and broader `aver check` hints.
 
