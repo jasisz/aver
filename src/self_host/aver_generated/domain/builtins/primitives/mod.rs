@@ -26,26 +26,33 @@ pub fn callInt(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<Val, Aver
                         if &*__dispatch_subject == "Int.mod" {
                             crate::aver_generated::domain::builtins::primitives::builtinIntMod(args)
                         } else {
-                            if &*__dispatch_subject == "Int.max" {
-                                crate::aver_generated::domain::builtins::primitives::builtinIntMax(
+                            if &*__dispatch_subject == "Int.div" {
+                                crate::aver_generated::domain::builtins::primitives::builtinIntDiv(
                                     args,
                                 )
                             } else {
-                                if &*__dispatch_subject == "Int.min" {
-                                    crate::aver_generated::domain::builtins::primitives::builtinIntMin(args)
+                                if &*__dispatch_subject == "Int.max" {
+                                    crate::aver_generated::domain::builtins::primitives::builtinIntMax(args)
                                 } else {
-                                    Err(aver_rt::AverStr::from({
-                                        let mut __b = {
-                                            let mut __b =
-                                                aver_rt::Buffer::with_capacity((37i64) as usize);
-                                            __b.push_str(&AverStr::from("unknown int builtin: "));
+                                    if &*__dispatch_subject == "Int.min" {
+                                        crate::aver_generated::domain::builtins::primitives::builtinIntMin(args)
+                                    } else {
+                                        Err(aver_rt::AverStr::from({
+                                            let mut __b = {
+                                                let mut __b = aver_rt::Buffer::with_capacity(
+                                                    (37i64) as usize,
+                                                );
+                                                __b.push_str(&AverStr::from(
+                                                    "unknown int builtin: ",
+                                                ));
+                                                __b
+                                            };
+                                            __b.push_str(&aver_rt::AverStr::from(
+                                                aver_rt::aver_display(&(name)),
+                                            ));
                                             __b
-                                        };
-                                        __b.push_str(&aver_rt::AverStr::from(
-                                            aver_rt::aver_display(&(name)),
-                                        ));
-                                        __b
-                                    }))
+                                        }))
+                                    }
                                 }
                             }
                         }
@@ -277,6 +284,40 @@ pub fn builtinIntModInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
     }
 }
 
+/// Int.div(a, b) -> a div b as a Result value.
+pub fn builtinIntDiv(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
+    crate::cancel_checkpoint();
+    let pair = crate::aver_generated::domain::builtins::helpers::twoArgs(args)?;
+    {
+        let (aV, bV) = pair;
+        crate::aver_generated::domain::builtins::primitives::builtinIntDivInner(&aV, &bV)
+    }
+}
+
+/// Inner impl of Int.div — Euclidean, Err on zero divisor or overflow.
+pub fn builtinIntDivInner(aV: &Val, bV: &Val) -> Result<Val, AverStr> {
+    crate::cancel_checkpoint();
+    let a = crate::aver_generated::domain::builtins::helpers::expectInt(aV)?;
+    let b = crate::aver_generated::domain::builtins::helpers::expectInt(bV)?;
+    match (if (b) == 0i64 {
+        Err("division by zero".to_string())
+    } else {
+        match (a).checked_div_euclid(b) {
+            Some(__q) => Ok(__q),
+            None => Err("division overflow".to_string()),
+        }
+    })
+    .into_aver()
+    {
+        Ok(q) => Ok(crate::aver_generated::domain::value::Val::ValOk(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValInt(q)),
+        )),
+        Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
+        )),
+    }
+}
+
 /// String.len(s) -> length as Int.
 pub fn builtinStringLen(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
     crate::cancel_checkpoint();
@@ -306,7 +347,7 @@ pub fn builtinStringCharAtInner(sV: &Val, idxV: &Val) -> Result<Val, AverStr> {
         Some(c) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(c)),
         )),
-        None => Ok(Val::ValNone.clone()),
+        None => Ok(crate::aver_generated::domain::value::Val::ValNone),
     }
 }
 
@@ -342,15 +383,20 @@ pub fn extractStrings(
 ) -> Result<aver_rt::AverList<AverStr>, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(items, [] => Ok(acc.reverse()), [v, rest] => { match v {
-            crate::aver_generated::domain::value::Val::ValStr(s) => {
-            let __tmp1 = aver_rt::AverList::prepend(s, &acc);
-            items = rest;
-            acc = __tmp1;
+        aver_list_match!(items, [] => { return Ok(acc.reverse()); }, [v, rest] => { match v {
+        crate::aver_generated::domain::value::Val::ValStr(s) => {
+            {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(s, &acc);
+            items = __tco0;
+            acc = __tco1;
             continue;
+        }
         },
-            _ => Err(AverStr::from("String.join requires list of strings"))
-        } });
+        _ => {
+            return Err(AverStr::from("String.join requires list of strings"));
+        }
+    } })
     }
 }
 
@@ -492,7 +538,7 @@ pub fn builtinCharFromCode(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
         Some(c) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(c)),
         )),
-        None => Ok(Val::ValNone.clone()),
+        None => Ok(crate::aver_generated::domain::value::Val::ValNone),
     }
 }
 
@@ -511,7 +557,13 @@ pub fn builtinIntFromString(args: &aver_rt::AverList<Val>) -> Result<Val, AverSt
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
-    match (s.parse::<i64>().map_err(|e| e.to_string())).into_aver() {
+    match ({
+        let __s = &(s);
+        __s.parse::<i64>()
+            .map_err(|_| format!("Cannot parse '{}' as Int", __s))
+    })
+    .into_aver()
+    {
         Ok(n) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValInt(n)),
         )),
@@ -547,23 +599,25 @@ pub fn stringToCharList(
     loop {
         crate::cancel_checkpoint();
         let reversed = acc.reverse();
-        return if (pos >= total) {
-            reversed
-        } else {
+        if (pos < total) {
             match (s.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
-                    let __tmp1 = (pos + 1i64);
-                    let __tmp3 = aver_rt::AverList::prepend(
+                    let __tco1 = (pos + 1i64);
+                    let __tco3 = aver_rt::AverList::prepend(
                         crate::aver_generated::domain::value::Val::ValStr(c),
                         &acc,
                     );
-                    pos = __tmp1;
-                    acc = __tmp3;
+                    pos = __tco1;
+                    acc = __tco3;
                     continue;
                 }
-                None => reversed,
+                None => {
+                    return reversed;
+                }
             }
-        };
+        } else {
+            return reversed;
+        }
     }
 }
 
@@ -657,7 +711,13 @@ pub fn builtinFloatFromString(args: &aver_rt::AverList<Val>) -> Result<Val, Aver
     crate::cancel_checkpoint();
     let v = crate::aver_generated::domain::builtins::helpers::oneArg(args)?;
     let s = crate::aver_generated::domain::builtins::helpers::expectStr(&v)?;
-    match (s.parse::<f64>().map_err(|e| e.to_string())).into_aver() {
+    match ({
+        let __s = &(s);
+        __s.parse::<f64>()
+            .map_err(|_| format!("Cannot parse '{}' as Float", __s))
+    })
+    .into_aver()
+    {
         Ok(f) => Ok(crate::aver_generated::domain::value::Val::ValOk(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValFloat(f)),
         )),
@@ -922,12 +982,13 @@ pub fn strPartsToVals(
 ) -> aver_rt::AverList<Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(parts, [] => acc.reverse(), [s, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(s), &acc);
-            parts = rest;
-            acc = __tmp1;
+        aver_list_match!(parts, [] => { return acc.reverse(); }, [s, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(s), &acc);
+            parts = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -956,19 +1017,19 @@ pub fn builtinStringRepeatInner(sV: &Val, nV: &Val) -> Result<Val, AverStr> {
 pub fn repeatStr(mut s: AverStr, mut n: i64, mut acc: AverStr) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        return if (n <= 0i64) {
-            acc
-        } else {
+        if (n > 0i64) {
             {
-                let __tmp0 = s.clone();
-                let __tmp1 = (n - 1i64);
-                let __tmp2 = (acc + &s);
-                s = __tmp0;
-                n = __tmp1;
-                acc = __tmp2;
+                let __tco0 = s.clone();
+                let __tco1 = (n - 1i64);
+                let __tco2 = (acc + &s);
+                s = __tco0;
+                n = __tco1;
+                acc = __tco2;
                 continue;
             }
-        };
+        } else {
+            return acc;
+        }
     }
 }
 

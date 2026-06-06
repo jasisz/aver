@@ -516,12 +516,14 @@ pub fn zipBindingsAcc(
     loop {
         crate::cancel_checkpoint();
         let reversed = acc.reverse();
-        return aver_list_match!(names, [] => reversed, [n, ns] => { aver_list_match!(vals, [] => reversed, [v, vs] => { {
-            let __tmp2 = aver_rt::AverList::prepend((n, v), &acc);
-            names = ns;
-            vals = vs;
-            acc = __tmp2;
+        aver_list_match!(names, [] => { return reversed; }, [n, ns] => { aver_list_match!(vals, [] => { return reversed; }, [v, vs] => { {
+            let __tco0 = ns;
+            let __tco1 = vs;
+            let __tco2 = aver_rt::AverList::prepend((n, v), &acc);
+            names = __tco0;
+            vals = __tco1;
+            acc = __tco2;
             continue;
-        } }) });
+        } }) })
     }
 }

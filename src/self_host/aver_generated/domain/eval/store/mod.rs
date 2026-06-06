@@ -91,7 +91,7 @@ pub fn lookupVar(env: &aver_rt::AverMap<AverStr, Val>, name: AverStr) -> Result<
 /// Create an empty function store.
 pub fn emptyFnStore() -> FnStore {
     crate::cancel_checkpoint();
-    FnStore {
+    crate::aver_generated::domain::eval::store::FnStore {
         nameToId: HashMap::new(),
         byId: aver_rt::AverVector::from_vec(aver_rt::AverList::empty().to_vec()),
     }
@@ -156,13 +156,15 @@ pub fn zipArgs(
 ) -> aver_rt::AverMap<AverStr, Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(params, [] => acc, [p, ps] => { aver_list_match!(args, [] => acc, [a, as_] => { {
-            let __tmp2 = acc.insert_owned(p, a);
-            params = ps;
-            args = as_;
-            acc = __tmp2;
+        aver_list_match!(params, [] => { return acc; }, [p, ps] => { aver_list_match!(args, [] => { return acc; }, [a, as_] => { {
+            let __tco0 = ps;
+            let __tco1 = as_;
+            let __tco2 = acc.insert_owned(p, a);
+            params = __tco0;
+            args = __tco1;
+            acc = __tco2;
             continue;
-        } }) });
+        } }) })
     }
 }
 
@@ -174,14 +176,13 @@ pub fn mergeBindings(
 ) -> aver_rt::AverMap<AverStr, Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(bindings, [] => env, [pair, rest] => { match pair {
-            (k, v) => {
-            let __tmp1 = env.insert_owned(k, v);
-            bindings = rest;
-            env = __tmp1;
+        aver_list_match!(bindings, [] => { return env; }, [pair, rest] => { { let (k, v) = pair; {
+            let __tco0 = rest;
+            let __tco1 = env.insert_owned(k, v);
+            bindings = __tco0;
+            env = __tco1;
             continue;
-        }
-        } });
+        } } })
     }
 }
 
@@ -190,7 +191,7 @@ pub fn fnsToStore(fns: &aver_rt::AverList<FnDef>) -> FnStore {
     crate::cancel_checkpoint();
     let nameToId =
         crate::aver_generated::domain::eval::store::fnsToIdMap(fns.clone(), HashMap::new(), 0i64);
-    FnStore {
+    crate::aver_generated::domain::eval::store::FnStore {
         nameToId: nameToId,
         byId: aver_rt::AverVector::from_vec(fns.to_vec()),
     }
@@ -205,13 +206,14 @@ pub fn fnsToIdMap(
 ) -> aver_rt::AverMap<AverStr, i64> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fns, [] => acc, [f, rest] => { {
-            let __tmp1 = acc.insert_owned(f.name.clone(), idx);
-            let __tmp2 = (idx + 1i64);
-            fns = rest;
-            acc = __tmp1;
-            idx = __tmp2;
+        aver_list_match!(fns, [] => { return acc; }, [f, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = acc.insert_owned(f.name.clone(), idx);
+            let __tco2 = (idx + 1i64);
+            fns = __tco0;
+            acc = __tco1;
+            idx = __tco2;
             continue;
-        } });
+        } })
     }
 }

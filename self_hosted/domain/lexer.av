@@ -328,12 +328,43 @@ verify tokenizeInterpString
     tokenizeInterpString("hi\"}", 0, "") => [Token.TkStr("hi"), Token.TkInterpEnd, Token.TkStr(""), Token.TkEof]
 
 fn tokenizeInterpDigit(src: String, pos: Int) -> List<Token>
-    ? "Read number inside interpolation."
+    ? "Read number inside interpolation; may be an int or a float literal."
     match Domain.Lexer.Chars.readNumber(src, pos, 0)
-        (n, newPos) -> List.prepend(Token.TkInt(n), tokenizeInterpExpr(src, newPos))
+        (n, newPos) -> tokenizeInterpAfterInt(src, newPos, n)
 
 verify tokenizeInterpDigit
     tokenizeInterpDigit("42}", 0) => [Token.TkInt(42), Token.TkInterpEnd, Token.TkStr(""), Token.TkEof]
+    tokenizeInterpDigit("3.5}", 0) => [Token.TkFloat(3.5), Token.TkInterpEnd, Token.TkStr(""), Token.TkEof]
+
+fn tokenizeInterpAfterInt(src: String, pos: Int, n: Int) -> List<Token>
+    ? "After integer part inside interpolation, check for a decimal point."
+    match String.charAt(src, pos)
+        Option.Some(c) -> match c == "."
+            true -> tokenizeInterpAfterIntDot(src, pos, n)
+            false -> List.prepend(Token.TkInt(n), tokenizeInterpExpr(src, pos))
+        Option.None -> List.prepend(Token.TkInt(n), tokenizeInterpExpr(src, pos))
+
+fn tokenizeInterpAfterIntDot(src: String, pos: Int, n: Int) -> List<Token>
+    ? "After integer and dot inside interpolation: digit -> float, else int + dot."
+    nextPos = pos + 1
+    match String.charAt(src, nextPos)
+        Option.Some(d) -> match Domain.Lexer.Chars.isDigit(d)
+            true -> tokenizeInterpFloat(src, nextPos, n)
+            false -> List.prepend(Token.TkInt(n), tokenizeInterpExpr(src, pos))
+        Option.None -> List.prepend(Token.TkInt(n), tokenizeInterpExpr(src, pos))
+
+fn tokenizeInterpFloat(src: String, pos: Int, intPart: Int) -> List<Token>
+    ? "Read decimal digits and build a float token inside interpolation."
+    match Domain.Lexer.Chars.readNumber(src, pos, 0)
+        (decPart, newPos) -> tokenizeInterpBuildFloat(src, newPos, intPart, decPart, newPos - pos)
+
+fn tokenizeInterpBuildFloat(src: String, pos: Int, intPart: Int, decPart: Int, decDigits: Int) -> List<Token>
+    ? "Construct a float from integer and decimal parts inside interpolation."
+    f = Float.fromInt(intPart) + Float.fromInt(decPart) / pow10(decDigits)
+    List.prepend(Token.TkFloat(f), tokenizeInterpExpr(src, pos))
+
+verify tokenizeInterpBuildFloat
+    tokenizeInterpBuildFloat("", 0, 3, 14, 2) => [Token.TkFloat(3.14), Token.TkInterpEnd, Token.TkEof]
 
 fn tokenizeInterpAlpha(src: String, pos: Int) -> List<Token>
     ? "Read identifier inside interpolation."

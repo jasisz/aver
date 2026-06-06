@@ -22,7 +22,9 @@ pub fn applyBinop(x: i64, y: i64, op: &BinOp) -> Result<Val, AverStr> {
             if (y == 0i64) {
                 Err(AverStr::from("division by zero"))
             } else {
-                Ok(crate::aver_generated::domain::value::Val::ValInt((x / y)))
+                Ok(crate::aver_generated::domain::value::Val::ValInt(
+                    (x).checked_div_euclid(y).unwrap_or(0i64),
+                ))
             }
         }
     }
@@ -318,7 +320,7 @@ pub fn evalIntModOrIntVals(aV: &Val, bV: &Val, defaultValue: i64) -> Result<Val,
                 } else {
                     Ok(crate::aver_generated::domain::value::Val::ValInt(
                         (if (b) == 0i64 {
-                            Err("Int.mod: divisor must not be zero".to_string())
+                            Err("division by zero".to_string())
                         } else {
                             Ok((a).rem_euclid(b))
                         })

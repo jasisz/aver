@@ -2922,19 +2922,18 @@ pub fn ctorNameToTag(name: AverStr) -> i64 {
     {
         let __dispatch_subject = name.clone();
         if &*__dispatch_subject == "Result.Ok" {
-            crate::aver_generated::domain::ast::tagResultOk()
+            1i64
         } else {
             if &*__dispatch_subject == "Result.Err" {
-                crate::aver_generated::domain::ast::tagResultErr()
+                2i64
             } else {
                 if &*__dispatch_subject == "Option.Some" {
-                    crate::aver_generated::domain::ast::tagOptionSome()
+                    3i64
                 } else {
                     if &*__dispatch_subject == "Option.None" {
-                        crate::aver_generated::domain::ast::tagOptionNone()
+                        4i64
                     } else {
-                        (crate::aver_generated::domain::ast::tagUserBase()
-                            + &crate::aver_generated::domain::ast::userCtorTagOffset(name))
+                        (100i64 + crate::aver_generated::domain::ast::userCtorTagOffset(name))
                     }
                 }
             }
@@ -2955,23 +2954,25 @@ pub fn userCtorTagOffsetLoop(mut name: AverStr, mut pos: i64, mut acc: i64) -> i
     loop {
         crate::cancel_checkpoint();
         let accPlusOne = (acc + 1i64);
-        return if (pos >= (name.chars().count() as i64)) {
-            accPlusOne
-        } else {
+        if (pos < (name.chars().count() as i64)) {
             match (name.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(ch) => {
-                    let __tmp1 = (pos + 1i64);
-                    let __tmp2 = crate::aver_generated::domain::ast::userCtorTagStep(
+                    let __tco1 = (pos + 1i64);
+                    let __tco2 = crate::aver_generated::domain::ast::userCtorTagStep(
                         acc,
                         (ch.chars().next().map(|c| c as i64).unwrap_or(0i64)),
                     );
-                    pos = __tmp1;
-                    acc = __tmp2;
+                    pos = __tco1;
+                    acc = __tco2;
                     continue;
                 }
-                None => accPlusOne,
+                None => {
+                    return accPlusOne;
+                }
             }
-        };
+        } else {
+            return accPlusOne;
+        }
     }
 }
 
@@ -2979,14 +2980,7 @@ pub fn userCtorTagOffsetLoop(mut name: AverStr, mut pos: i64, mut acc: i64) -> i
 pub fn userCtorTagStep(acc: i64, code: i64) -> i64 {
     crate::cancel_checkpoint();
     let next = ((acc * 131i64) + code);
-    {
-        let __b = crate::aver_generated::domain::ast::userTagSpan();
-        if __b == 0i64 {
-            0i64
-        } else {
-            (next).rem_euclid(__b)
-        }
-    }
+    (next).rem_euclid(1000003i64)
 }
 
 /// Map builtin function names to integer IDs for fast dispatch.

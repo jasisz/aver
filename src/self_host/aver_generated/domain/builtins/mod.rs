@@ -31,8 +31,12 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverMap<Aver
             __MutualTco1::TuplesToMap(mut items, mut acc) => {
                 crate::cancel_checkpoint();
                 aver_list_match!(items, [] => { return acc }, [item, rest] => match item {
-                crate::aver_generated::domain::value::Val::ValTuple(parts) => __MutualTco1::TuplesToMapOne(parts, rest, acc),
-                _ => __MutualTco1::TuplesToMap(rest, acc)
+                    crate::aver_generated::domain::value::Val::ValTuple(parts) => {
+                        __MutualTco1::TuplesToMapOne(parts, rest, acc)
+                    },
+                    _ => {
+                        __MutualTco1::TuplesToMap(rest, acc)
+                    }
                 })
             }
             __MutualTco1::TuplesToMapOne(mut parts, mut rest, mut acc) => {
@@ -135,7 +139,7 @@ pub fn callBuiltinFast(
                                                         Some(crate::aver_generated::domain::builtins::vector::call(name, args))
                                                     } else {
                                                         if &*__dispatch_subject == "Option.None" {
-                                                            Some(Ok(Val::ValNone.clone()))
+                                                            Some(Ok(crate::aver_generated::domain::value::Val::ValNone))
                                                         } else {
                                                             if &*__dispatch_subject == "Option.Some"
                                                             {
@@ -235,7 +239,7 @@ pub fn callBuiltinByIdValues(id: i64, args: &aver_rt::AverList<Val>) -> Result<V
                                                         crate::aver_generated::domain::builtins::vector::call(AverStr::from("List.fromVector"), args)
                                                     } else {
                                                         if __dispatch_subject == 13i64 {
-                                                            Ok(Val::ValNone.clone())
+                                                            Ok(crate::aver_generated::domain::value::Val::ValNone)
                                                         } else {
                                                             if __dispatch_subject == 14i64 {
                                                                 crate::aver_generated::domain::builtins::wrappers::call(AverStr::from("Option.Some"), args)
@@ -371,7 +375,7 @@ pub fn callBuiltinOther(name: AverStr, args: &aver_rt::AverList<Val>) -> Result<
                                                                             {
                                                                                 crate::aver_generated::domain::builtins::wrappers::call(name, args)
                                                                             } else {
-                                                                                if &*__dispatch_subject == "Result.Err" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Result.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.Some" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.None" { Ok(Val::ValNone.clone()) } else { if &*__dispatch_subject == "Option.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.toResult" { crate::aver_generated::domain::builtins::wrappers::callOptionToResult(args) } else { if &*__dispatch_subject == "Bool.or" { crate::aver_generated::domain::builtins::builtinBoolOr(args) } else { if &*__dispatch_subject == "Bool.and" { crate::aver_generated::domain::builtins::builtinBoolAnd(args) } else { if &*__dispatch_subject == "Bool.not" { crate::aver_generated::domain::builtins::builtinBoolNot(args) } else { if &*__dispatch_subject == "Map.set" { crate::aver_generated::domain::builtins::builtinMapSet(args) } else { if &*__dispatch_subject == "Map.get" { crate::aver_generated::domain::builtins::builtinMapGet(args) } else { if &*__dispatch_subject == "Map.has" { crate::aver_generated::domain::builtins::builtinMapHas(args) } else { if &*__dispatch_subject == "Map.entries" { crate::aver_generated::domain::builtins::builtinMapEntries(args) } else { if &*__dispatch_subject == "Map.keys" { crate::aver_generated::domain::builtins::builtinMapKeys(args) } else { if &*__dispatch_subject == "Map.values" { crate::aver_generated::domain::builtins::builtinMapValues(args) } else { if &*__dispatch_subject == "Map.fromList" { crate::aver_generated::domain::builtins::builtinMapFromList(args) } else { if &*__dispatch_subject == "Map.size" { crate::aver_generated::domain::builtins::builtinMapSize(args) } else { if &*__dispatch_subject == "Map.len" { crate::aver_generated::domain::builtins::builtinMapSize(args) } else { if &*__dispatch_subject == "Map.remove" { crate::aver_generated::domain::builtins::builtinMapRemove(args) } else { crate::aver_generated::domain::builtins::callBuiltinServices(name, args) } } } } } } } } } } } } } } } } } } }
+                                                                                if &*__dispatch_subject == "Result.Err" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Result.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.Some" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.None" { Ok(crate::aver_generated::domain::value::Val::ValNone) } else { if &*__dispatch_subject == "Option.withDefault" { crate::aver_generated::domain::builtins::wrappers::call(name, args) } else { if &*__dispatch_subject == "Option.toResult" { crate::aver_generated::domain::builtins::wrappers::callOptionToResult(args) } else { if &*__dispatch_subject == "Bool.or" { crate::aver_generated::domain::builtins::builtinBoolOr(args) } else { if &*__dispatch_subject == "Bool.and" { crate::aver_generated::domain::builtins::builtinBoolAnd(args) } else { if &*__dispatch_subject == "Bool.not" { crate::aver_generated::domain::builtins::builtinBoolNot(args) } else { if &*__dispatch_subject == "Map.set" { crate::aver_generated::domain::builtins::builtinMapSet(args) } else { if &*__dispatch_subject == "Map.get" { crate::aver_generated::domain::builtins::builtinMapGet(args) } else { if &*__dispatch_subject == "Map.has" { crate::aver_generated::domain::builtins::builtinMapHas(args) } else { if &*__dispatch_subject == "Map.entries" { crate::aver_generated::domain::builtins::builtinMapEntries(args) } else { if &*__dispatch_subject == "Map.keys" { crate::aver_generated::domain::builtins::builtinMapKeys(args) } else { if &*__dispatch_subject == "Map.values" { crate::aver_generated::domain::builtins::builtinMapValues(args) } else { if &*__dispatch_subject == "Map.fromList" { crate::aver_generated::domain::builtins::builtinMapFromList(args) } else { if &*__dispatch_subject == "Map.size" { crate::aver_generated::domain::builtins::builtinMapSize(args) } else { if &*__dispatch_subject == "Map.len" { crate::aver_generated::domain::builtins::builtinMapSize(args) } else { if &*__dispatch_subject == "Map.remove" { crate::aver_generated::domain::builtins::builtinMapRemove(args) } else { crate::aver_generated::domain::builtins::callBuiltinServices(name, args) } } } } } } } } } } } } } } } } } } }
                                                                             }
                                                                         }
                                                                     }
@@ -406,7 +410,7 @@ pub fn builtinConsolePrint(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
             || aver_rt::console_print(&__effect_arg0),
         )
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Console.error(v) -> print to stderr.
@@ -422,7 +426,7 @@ pub fn builtinConsoleError(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr
             || aver_rt::console_error(&__effect_arg0),
         )
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Console.warn(v) -> print warning.
@@ -438,7 +442,7 @@ pub fn builtinConsoleWarn(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
             || aver_rt::console_warn(&__effect_arg0),
         )
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Console.readLine() -> Result<String, String>.
@@ -511,7 +515,7 @@ pub fn builtinEnvGet(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
         Some(value) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(value)),
         )),
-        None => Ok(Val::ValNone.clone()),
+        None => Ok(crate::aver_generated::domain::value::Val::ValNone),
     }
 }
 
@@ -543,7 +547,7 @@ pub fn builtinEnvSetInner(keyV: &Val, valueV: &Val) -> Result<Val, AverStr> {
             || aver_rt::env_set(&__effect_arg0, &__effect_arg1).expect("Env.set failed"),
         )
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Convert list of strings to list of ValStr.
@@ -554,12 +558,13 @@ pub fn stringsToVals(
 ) -> aver_rt::AverList<Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(strs, [] => acc.reverse(), [s, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(s), &acc);
-            strs = rest;
-            acc = __tmp1;
+        aver_list_match!(strs, [] => { return acc.reverse(); }, [s, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(s), &acc);
+            strs = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -593,14 +598,13 @@ pub fn mapEntriesToTuples(
 ) -> aver_rt::AverList<Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(entries, [] => acc.reverse(), [pair, rest] => { match pair {
-            (k, v) => {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(k), v])), &acc);
-            entries = rest;
-            acc = __tmp1;
+        aver_list_match!(entries, [] => { return acc.reverse(); }, [pair, rest] => { { let (k, v) = pair; {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValTuple(aver_rt::AverList::from_vec(vec![crate::aver_generated::domain::value::Val::ValStr(k), v])), &acc);
+            entries = __tco0;
+            acc = __tco1;
             continue;
-        }
-        } });
+        } } })
     }
 }
 
@@ -833,7 +837,7 @@ pub fn builtinHttpServerListenInner(portV: &Val, handlerV: &Val) -> Result<Val, 
             || crate::self_host_support::http_server_listen(__effect_arg0, __effect_arg1),
         )
     } {
-        Ok(_) => Ok(Val::ValUnit.clone()),
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValUnit),
         Err(e) => Err(e),
     }
 }
@@ -896,7 +900,7 @@ pub fn builtinHttpServerListenWithInner(
             },
         )
     } {
-        Ok(_) => Ok(Val::ValUnit.clone()),
+        Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValUnit),
         Err(e) => Err(e),
     }
 }
@@ -945,7 +949,7 @@ pub fn builtinTimeSleep(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
             || aver_rt::time_sleep(__effect_arg0),
         )
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Time.unixMs() -> Int.
@@ -1016,7 +1020,7 @@ pub fn termClear() -> Result<Val, AverStr> {
             aver_rt::terminal_clear().unwrap()
         })
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Flush terminal output.
@@ -1028,7 +1032,7 @@ pub fn termFlush() -> Result<Val, AverStr> {
             aver_rt::terminal_flush().unwrap()
         })
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Enable terminal raw mode.
@@ -1040,7 +1044,7 @@ pub fn termEnableRawMode() -> Result<Val, AverStr> {
             aver_rt::terminal_enable_raw_mode().unwrap()
         })
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Disable terminal raw mode.
@@ -1052,7 +1056,7 @@ pub fn termDisableRawMode() -> Result<Val, AverStr> {
             aver_rt::terminal_disable_raw_mode().unwrap()
         })
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Hide terminal cursor.
@@ -1064,7 +1068,7 @@ pub fn termHideCursor() -> Result<Val, AverStr> {
             aver_rt::terminal_hide_cursor().unwrap()
         })
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Show terminal cursor.
@@ -1076,7 +1080,7 @@ pub fn termShowCursor() -> Result<Val, AverStr> {
             aver_rt::terminal_show_cursor().unwrap()
         })
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Reset terminal color.
@@ -1088,7 +1092,7 @@ pub fn termResetColor() -> Result<Val, AverStr> {
             aver_rt::terminal_reset_color().unwrap()
         })
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Terminal.readKey() -> Option<String>.
@@ -1103,7 +1107,7 @@ pub fn builtinTerminalReadKey(args: &aver_rt::AverList<Val>) -> Result<Val, Aver
         Some(k) => Ok(crate::aver_generated::domain::value::Val::ValSome(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(k)),
         )),
-        None => Ok(Val::ValNone.clone()),
+        None => Ok(crate::aver_generated::domain::value::Val::ValNone),
     }
 }
 
@@ -1164,7 +1168,7 @@ pub fn termPrintStr(s: AverStr) -> Result<Val, AverStr> {
             },
         )
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Terminal.setColor(color) -> Unit.
@@ -1181,7 +1185,7 @@ pub fn builtinTerminalSetColor(args: &aver_rt::AverList<Val>) -> Result<Val, Ave
             || aver_rt::terminal_set_color(&__effect_arg0).unwrap(),
         )
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Terminal.moveTo(x, y) -> Unit.
@@ -1212,7 +1216,7 @@ pub fn builtinTerminalMoveToInner(xV: &Val, yV: &Val) -> Result<Val, AverStr> {
             || aver_rt::terminal_move_to(__effect_arg0, __effect_arg1).unwrap(),
         )
     };
-    Ok(Val::ValUnit.clone())
+    Ok(crate::aver_generated::domain::value::Val::ValUnit)
 }
 
 /// Disk.writeText(path, content) -> Result.
@@ -1244,7 +1248,7 @@ pub fn builtinDiskWriteTextInner(pathV: &Val, contentV: &Val) -> Result<Val, Ave
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(Val::ValUnit.clone()),
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
         )),
         Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
@@ -1281,7 +1285,7 @@ pub fn builtinDiskAppendTextInner(pathV: &Val, contentV: &Val) -> Result<Val, Av
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(Val::ValUnit.clone()),
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
         )),
         Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
@@ -1304,7 +1308,7 @@ pub fn builtinDiskDelete(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> 
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(Val::ValUnit.clone()),
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
         )),
         Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
@@ -1327,7 +1331,7 @@ pub fn builtinDiskDeleteDir(args: &aver_rt::AverList<Val>) -> Result<Val, AverSt
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(Val::ValUnit.clone()),
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
         )),
         Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
@@ -1350,7 +1354,7 @@ pub fn builtinDiskMakeDir(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr>
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(Val::ValUnit.clone()),
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
         )),
         Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
@@ -1444,27 +1448,29 @@ pub fn splitDottedLoop(
 ) -> Option<(AverStr, AverStr)> {
     loop {
         crate::cancel_checkpoint();
-        return if (pos >= total) {
-            None
-        } else {
+        if (pos < total) {
             match (name.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
-                    if (&*c == ".") {
-                        Some((
+                    if (c == AverStr::from(".")) {
+                        return Some((
                             (aver_rt::string_slice(&name, 0i64, pos)).into_aver(),
                             (aver_rt::string_slice(&name, (pos + 1i64), total)).into_aver(),
-                        ))
+                        ));
                     } else {
                         {
-                            let __tmp1 = (pos + 1i64);
-                            pos = __tmp1;
+                            let __tco1 = (pos + 1i64);
+                            pos = __tco1;
                             continue;
                         }
                     }
                 }
-                None => None,
+                None => {
+                    return None;
+                }
             }
-        };
+        } else {
+            return None;
+        }
     }
 }
 
@@ -1605,7 +1611,7 @@ pub fn builtinMapGetInner(mapV: &Val, keyV: &Val) -> Result<Val, AverStr> {
                 Some(v) => Ok(crate::aver_generated::domain::value::Val::ValSome(
                     std::sync::Arc::new(v),
                 )),
-                None => Ok(Val::ValNone.clone()),
+                None => Ok(crate::aver_generated::domain::value::Val::ValNone),
             }
         }
         _ => Err(AverStr::from("Map.get requires a Map")),
@@ -1890,17 +1896,19 @@ pub fn headersToValMap(
 ) -> aver_rt::AverMap<AverStr, Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(names, [] => acc, [name, rest] => { match headers.get(&name).cloned() { Some(values) => { {
-            let __tmp2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::builtins::stringsToValStrs(values, aver_rt::AverList::empty())));
-            names = rest;
-            acc = __tmp2;
+        aver_list_match!(names, [] => { return acc; }, [name, rest] => { match headers.get(&name).cloned() { Some(values) => { {
+            let __tco1 = rest;
+            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(crate::aver_generated::domain::builtins::stringsToValStrs(values, aver_rt::AverList::empty())));
+            names = __tco1;
+            acc = __tco2;
             continue;
         } }, None => { {
-            let __tmp2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(aver_rt::AverList::empty()));
-            names = rest;
-            acc = __tmp2;
+            let __tco1 = rest;
+            let __tco2 = acc.insert_owned(name, crate::aver_generated::domain::value::Val::ValList(aver_rt::AverList::empty()));
+            names = __tco1;
+            acc = __tco2;
             continue;
-        } } } });
+        } } } })
     }
 }
 
@@ -1912,12 +1920,13 @@ pub fn stringsToValStrs(
 ) -> aver_rt::AverList<Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(values, [] => acc.reverse(), [v, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(v), &acc);
-            values = rest;
-            acc = __tmp1;
+        aver_list_match!(values, [] => { return acc.reverse(); }, [v, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::value::Val::ValStr(v), &acc);
+            values = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -2009,7 +2018,7 @@ pub fn builtinTcpPingInner(hostV: &Val, portV: &Val) -> Result<Val, AverStr> {
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(Val::ValUnit.clone()),
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
         )),
         Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
@@ -2125,12 +2134,11 @@ pub fn valToTcpConnFields(
 pub fn lookupFieldVal(mut fields: aver_rt::AverList<(AverStr, Val)>, mut name: AverStr) -> Val {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fields, [] => Val::ValUnit, [pair, rest] => { match pair {
-            (k, v) => if (k == name) { v } else { {
-            fields = rest;
+        aver_list_match!(fields, [] => { return crate::aver_generated::domain::value::Val::ValUnit; }, [pair, rest] => { { let (k, v) = pair; if (k == name) { return v; } else { {
+            let __tco0 = rest;
+            fields = __tco0;
             continue;
-        } }
-        } });
+        } } } })
     }
 }
 
@@ -2163,7 +2171,7 @@ pub fn builtinTcpWriteLineInner(connV: &Val, lineV: &Val) -> Result<Val, AverStr
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(Val::ValUnit.clone()),
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
         )),
         Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),
@@ -2209,7 +2217,7 @@ pub fn builtinTcpClose(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
         )
     } {
         Ok(_) => Ok(crate::aver_generated::domain::value::Val::ValOk(
-            std::sync::Arc::new(Val::ValUnit.clone()),
+            std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValUnit),
         )),
         Err(e) => Ok(crate::aver_generated::domain::value::Val::ValErr(
             std::sync::Arc::new(crate::aver_generated::domain::value::Val::ValStr(e)),

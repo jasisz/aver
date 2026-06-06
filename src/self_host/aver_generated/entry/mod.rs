@@ -58,8 +58,9 @@ fn __mutual_tco_trampoline_1(
                 let moduleFns = resolveQualifiedModuleFns(&prog, dep.clone());
                 let loaded2 = loaded.insert_owned(dep, true);
                 let innerResult = loadModules(&prog.deps, moduleRoot.clone(), &acc, &loaded2)?;
-                match innerResult {
-                    (accWithInner, loaded3) => __MutualTco1::LoadModules(
+                {
+                    let (accWithInner, loaded3) = innerResult;
+                    __MutualTco1::LoadModules(
                         rest,
                         moduleRoot,
                         aver_rt::AverList::concat(
@@ -71,7 +72,7 @@ fn __mutual_tco_trampoline_1(
                             ),
                         ),
                         loaded3,
-                    ),
+                    )
                 }
             }
         };
@@ -130,7 +131,7 @@ fn __mutual_tco_trampoline_2(mut __state: __MutualTco2) -> aver_rt::AverList<FnD
             }
             __MutualTco2::QualifyFnsOne(mut f, mut rest, mut prefix, mut acc) => {
                 crate::cancel_checkpoint();
-                let qualified = FnDef {
+                let qualified = crate::aver_generated::domain::ast::FnDef {
                     name: ((prefix.clone() + &AverStr::from(".")) + &f.name),
                     params: f.params.clone(),
                     body: f.body.clone(),
@@ -263,7 +264,7 @@ pub fn findModulePath(mut dep: AverStr, mut root: AverStr, mut depth: i64) -> Av
     loop {
         crate::cancel_checkpoint();
         let path = modulePathFromName(dep.clone(), root.clone());
-        return if {
+        if {
             let __effect_arg0 = path.clone();
             crate::cancel_checkpoint();
             aver_replay::invoke_effect(
@@ -272,20 +273,20 @@ pub fn findModulePath(mut dep: AverStr, mut root: AverStr, mut depth: i64) -> Av
                 || aver_rt::path_exists(&__effect_arg0),
             )
         } {
-            path
+            return path;
         } else {
-            if (depth >= 3i64) {
-                path
-            } else {
+            if (depth < 3i64) {
                 {
-                    let __tmp1 = (root + &AverStr::from("/.."));
-                    let __tmp2 = (depth + 1i64);
-                    root = __tmp1;
-                    depth = __tmp2;
+                    let __tco1 = (root + &AverStr::from("/.."));
+                    let __tco2 = (depth + 1i64);
+                    root = __tco1;
+                    depth = __tco2;
                     continue;
                 }
+            } else {
+                return path;
             }
-        };
+        }
     }
 }
 
@@ -308,37 +309,41 @@ pub fn dotToSlash(mut name: AverStr, mut pos: i64, mut total: i64, mut acc: Aver
     loop {
         crate::cancel_checkpoint();
         let nextPos = (pos + 1i64);
-        return if (pos >= total) {
-            acc
-        } else {
+        if (pos < total) {
             match (name.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
-                    if (&*c == ".") {
+                    if (c == AverStr::from(".")) {
                         {
-                            let __tmp3 = (acc + &AverStr::from("/"));
-                            pos = nextPos;
-                            acc = __tmp3;
+                            let __tco1 = nextPos;
+                            let __tco3 = (acc + &AverStr::from("/"));
+                            pos = __tco1;
+                            acc = __tco3;
                             continue;
                         }
                     } else {
                         {
-                            let __tmp3 = (acc + &(c.to_lowercase()).into_aver());
-                            pos = nextPos;
-                            acc = __tmp3;
+                            let __tco1 = nextPos;
+                            let __tco3 = (acc + &(c.to_lowercase()).into_aver());
+                            pos = __tco1;
+                            acc = __tco3;
                             continue;
                         }
                     }
                 }
-                None => acc,
+                None => {
+                    return acc;
+                }
             }
-        };
+        } else {
+            return acc;
+        }
     }
 }
 
 /// Duplicate module function names first, then resolve locally so direct-call ids are consistent within that module.
 pub fn resolveQualifiedModuleFns(prog: &Program, dep: AverStr) -> aver_rt::AverList<FnDef> {
     crate::cancel_checkpoint();
-    let qualifiedProg = Program {
+    let qualifiedProg = crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
         fns: qualifyFns(&prog.fns, dep, &aver_rt::AverList::empty()),
         stmts: prog.stmts.clone(),
@@ -355,19 +360,20 @@ pub fn shiftFnIdsInFns(
 ) -> aver_rt::AverList<FnDef> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fns, [] => acc.reverse(), [fd, rest] => { {
-            let __tmp2 = aver_rt::AverList::prepend(shiftFnIdsInFn(&fd, offset), &acc);
-            fns = rest;
-            acc = __tmp2;
+        aver_list_match!(fns, [] => { return acc.reverse(); }, [fd, rest] => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInFn(&fd, offset), &acc);
+            fns = __tco0;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
 /// Shift entry-program direct-call ids before prepending loaded module functions.
 pub fn shiftFnIdsInProgram(prog: &Program, offset: i64) -> Program {
     crate::cancel_checkpoint();
-    Program {
+    crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
         fns: shiftFnIdsInFns(prog.fns.clone(), offset, aver_rt::AverList::empty()),
         stmts: shiftFnIdsInStmts(prog.stmts.clone(), offset, aver_rt::AverList::empty()),
@@ -377,7 +383,7 @@ pub fn shiftFnIdsInProgram(prog: &Program, offset: i64) -> Program {
 /// Shift all embedded direct-call ids in one function definition.
 pub fn shiftFnIdsInFn(fd: &FnDef, offset: i64) -> FnDef {
     crate::cancel_checkpoint();
-    FnDef {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: shiftFnIdsInStmts(fd.body.clone(), offset, aver_rt::AverList::empty()),
@@ -411,12 +417,13 @@ pub fn shiftFnIdsInStmts(
 ) -> aver_rt::AverList<Stmt> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(stmts, [] => acc.reverse(), [stmt, rest] => { {
-            let __tmp2 = aver_rt::AverList::prepend(shiftFnIdsInStmt(&stmt, offset), &acc);
-            stmts = rest;
-            acc = __tmp2;
+        aver_list_match!(stmts, [] => { return acc.reverse(); }, [stmt, rest] => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInStmt(&stmt, offset), &acc);
+            stmts = __tco0;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -664,12 +671,13 @@ pub fn shiftFnIdsInExprs(
 ) -> aver_rt::AverList<Expr> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(exprs, [] => acc.reverse(), [expr, rest] => { {
-            let __tmp2 = aver_rt::AverList::prepend(shiftFnIdsInExpr(&expr, offset), &acc);
-            exprs = rest;
-            acc = __tmp2;
+        aver_list_match!(exprs, [] => { return acc.reverse(); }, [expr, rest] => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend(shiftFnIdsInExpr(&expr, offset), &acc);
+            exprs = __tco0;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -682,14 +690,13 @@ pub fn shiftFnIdsInFields(
 ) -> aver_rt::AverList<(AverStr, Expr)> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fields, [] => acc.reverse(), [pair, rest] => { match pair {
-            (name, expr) => {
-            let __tmp2 = aver_rt::AverList::prepend((name, shiftFnIdsInExpr(&expr, offset)), &acc);
-            fields = rest;
-            acc = __tmp2;
+        aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend((name, shiftFnIdsInExpr(&expr, offset)), &acc);
+            fields = __tco0;
+            acc = __tco2;
             continue;
-        }
-        } });
+        } } })
     }
 }
 
@@ -702,12 +709,13 @@ pub fn shiftFnIdsInArms(
 ) -> aver_rt::AverList<MatchArm> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(arms, [] => acc.reverse(), [arm, rest] => { {
-            let __tmp2 = aver_rt::AverList::prepend(MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset), bindingSlots: arm.bindingSlots.clone() }, &acc);
-            arms = rest;
-            acc = __tmp2;
+        aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
+            let __tco0 = rest;
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: shiftFnIdsInExpr(&arm.body, offset), bindingSlots: arm.bindingSlots.clone() }, &acc);
+            arms = __tco0;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -822,10 +830,11 @@ pub fn finishCliMainResult(result: &Val) -> Result<Val, AverStr> {
 pub fn hasLocalMain(mut fns: aver_rt::AverList<FnDef>) -> bool {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fns, [] => false, [f, rest] => { if (&*f.name == "main") { true } else { {
-            fns = rest;
+        aver_list_match!(fns, [] => { return false; }, [f, rest] => { if (f.name == AverStr::from("main")) { return true; } else { {
+            let __tco0 = rest;
+            fns = __tco0;
             continue;
-        } } });
+        } } })
     }
 }
 
@@ -969,6 +978,7 @@ pub fn runDemo() -> Result<(), AverStr> {
 }
 
 pub fn main() -> Result<(), AverStr> {
+    crate::cancel_checkpoint();
     let args = {
         crate::cancel_checkpoint();
         aver_replay::invoke_effect("Args.get", vec![], || aver_replay::current_cli_args())

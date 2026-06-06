@@ -34,12 +34,13 @@ fn __mutual_tco_trampoline_1(
             __MutualTco1::ParseFnBodyOneStmtFlat(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
                 let r = crate::aver_generated::domain::parser::parseStmt(&tokens, pos)?;
-                match r {
-                    (stmt, pos2) => __MutualTco1::ParseFnBodyAfterStmtFlat(
+                {
+                    let (stmt, pos2) = r;
+                    __MutualTco1::ParseFnBodyAfterStmtFlat(
                         tokens,
                         pos2,
                         aver_rt::AverList::prepend(stmt, &acc),
-                    ),
+                    )
                 }
             }
             __MutualTco1::ParseFnBodyAfterStmtFlat(mut tokens, mut pos, mut acc) => {
@@ -120,12 +121,13 @@ fn __mutual_tco_trampoline_2(
             __MutualTco2::ParseFnBodyOneStmtIndented(mut tokens, mut pos, mut acc) => {
                 crate::cancel_checkpoint();
                 let r = crate::aver_generated::domain::parser::parseStmt(&tokens, pos)?;
-                match r {
-                    (stmt, pos2) => __MutualTco2::ParseFnBodyStmtsIndented(
+                {
+                    let (stmt, pos2) = r;
+                    __MutualTco2::ParseFnBodyStmtsIndented(
                         tokens,
                         pos2,
                         aver_rt::AverList::prepend(stmt, &acc),
-                    ),
+                    )
                 }
             }
         };
@@ -208,7 +210,7 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Program, AverS
                 );
                 match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos2.clone()) {
                     crate::aver_generated::domain::token::Token::TkEof => {
-                        return Ok(Program {
+                        return Ok(crate::aver_generated::domain::ast::Program {
                             deps: deps,
                             fns: fns.reverse(),
                             stmts: stmts.reverse(),
@@ -296,36 +298,37 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Program, AverS
                 crate::cancel_checkpoint();
                 let r =
                     crate::aver_generated::domain::parser_match::parseModuleHeader(&tokens, pos);
-                match r {
-                    (depList, endPos) => {
-                        __MutualTco3::ParseProgram(tokens, endPos, depList, fns, stmts)
-                    }
+                {
+                    let (depList, endPos) = r;
+                    __MutualTco3::ParseProgram(tokens, endPos, depList, fns, stmts)
                 }
             }
             __MutualTco3::ParseProgramFn(mut tokens, mut pos, mut deps, mut fns, mut stmts) => {
                 crate::cancel_checkpoint();
                 let r = crate::aver_generated::domain::parser::parseFnDef(&tokens, pos)?;
-                match r {
-                    (fd, pos2) => __MutualTco3::ParseProgram(
+                {
+                    let (fd, pos2) = r;
+                    __MutualTco3::ParseProgram(
                         tokens.clone(),
                         crate::aver_generated::domain::parser_match::skipNewlines(tokens, pos2),
                         deps,
                         aver_rt::AverList::prepend(fd, &fns),
                         stmts,
-                    ),
+                    )
                 }
             }
             __MutualTco3::ParseProgramStmt(mut tokens, mut pos, mut deps, mut fns, mut stmts) => {
                 crate::cancel_checkpoint();
                 let r = crate::aver_generated::domain::parser::parseStmt(&tokens, pos)?;
-                match r {
-                    (st, pos2) => __MutualTco3::ParseProgram(
+                {
+                    let (st, pos2) = r;
+                    __MutualTco3::ParseProgram(
                         tokens.clone(),
                         crate::aver_generated::domain::parser_match::skipNewlines(tokens, pos2),
                         deps,
                         fns,
                         aver_rt::AverList::prepend(st, &stmts),
-                    ),
+                    )
                 }
             }
         };
@@ -503,28 +506,31 @@ pub fn countIndentsInRange(
     loop {
         crate::cancel_checkpoint();
         let nextPos = (pos + 1i64);
-        return if (pos >= endPos) {
-            count
-        } else {
+        if (pos < endPos) {
             match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkIndent => {
-                    let __tmp3 = (count + 1i64);
-                    pos = nextPos;
-                    count = __tmp3;
+                    let __tco1 = nextPos;
+                    let __tco3 = (count + 1i64);
+                    pos = __tco1;
+                    count = __tco3;
                     continue;
                 }
                 crate::aver_generated::domain::token::Token::TkDedent => {
-                    let __tmp3 = (count - 1i64);
-                    pos = nextPos;
-                    count = __tmp3;
+                    let __tco1 = nextPos;
+                    let __tco3 = (count - 1i64);
+                    pos = __tco1;
+                    count = __tco3;
                     continue;
                 }
                 _ => {
-                    pos = nextPos;
+                    let __tco1 = nextPos;
+                    pos = __tco1;
                     continue;
                 }
             }
-        };
+        } else {
+            return count;
+        }
     }
 }
 
@@ -534,24 +540,27 @@ pub fn skipNDedents(mut tokens: aver_rt::AverList<Token>, mut pos: i64, mut n: i
     loop {
         crate::cancel_checkpoint();
         let nextPos = (pos + 1i64);
-        return if (n <= 0i64) {
-            pos
-        } else {
+        if (n > 0i64) {
             match crate::aver_generated::domain::parser_match::tokenAt(&tokens, pos) {
                 crate::aver_generated::domain::token::Token::TkNewline => {
-                    pos = nextPos;
+                    let __tco1 = nextPos;
+                    pos = __tco1;
                     continue;
                 }
                 crate::aver_generated::domain::token::Token::TkDedent => {
-                    let __tmp1 = nextPos;
-                    let __tmp2 = (n - 1i64);
-                    pos = __tmp1;
-                    n = __tmp2;
+                    let __tco1 = nextPos;
+                    let __tco2 = (n - 1i64);
+                    pos = __tco1;
+                    n = __tco2;
                     continue;
                 }
-                _ => pos,
+                _ => {
+                    return pos;
+                }
             }
-        };
+        } else {
+            return pos;
+        }
     }
 }
 
@@ -658,7 +667,11 @@ pub fn parseFnDefParams(
     name: AverStr,
 ) -> Result<(FnDef, i64), AverStr> {
     crate::cancel_checkpoint();
-    let pos2 = crate::aver_generated::domain::parser_match::expect(tokens, pos, &Token::TkLParen)?;
+    let pos2 = crate::aver_generated::domain::parser_match::expect(
+        tokens,
+        pos,
+        &crate::aver_generated::domain::token::Token::TkLParen,
+    )?;
     let pr = crate::aver_generated::domain::parser_match::parseParamList(
         tokens,
         pos2,
@@ -710,13 +723,13 @@ pub fn parseFnDefBodyIndented(
     {
         let (stmts, pos3) = sr;
         Ok((
-            FnDef {
+            crate::aver_generated::domain::ast::FnDef {
                 name: name,
                 params: params.clone(),
                 body: stmts.reverse(),
                 slotCount: 0i64,
                 slotMap: HashMap::new(),
-                fastPath: FnFastPath::FastNone.clone(),
+                fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
                 tailLoop: false,
             },
             pos3,
@@ -741,13 +754,13 @@ pub fn parseFnDefBodyFlat(
     {
         let (stmts, pos3) = sr;
         Ok((
-            FnDef {
+            crate::aver_generated::domain::ast::FnDef {
                 name: name,
                 params: params.clone(),
                 body: stmts.reverse(),
                 slotCount: 0i64,
                 slotMap: HashMap::new(),
-                fastPath: FnFastPath::FastNone.clone(),
+                fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
                 tailLoop: false,
             },
             pos3,

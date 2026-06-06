@@ -260,7 +260,7 @@ pub fn fastMapGetSlotInner(mapV: &Val, keyV: &Val) -> Result<Val, AverStr> {
                 Some(v) => Ok(crate::aver_generated::domain::value::Val::ValSome(
                     std::sync::Arc::new(v),
                 )),
-                None => Ok(Val::ValNone.clone()),
+                None => Ok(crate::aver_generated::domain::value::Val::ValNone),
             }
         }
         _ => Err(AverStr::from("Map.get requires a Map")),
