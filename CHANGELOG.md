@@ -22,6 +22,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Fixed
 
 - **wasm-gc: a tuple binding that follows `_` is no longer dropped.** `match pair { (_, value) -> value }` returned the field's zero default instead of the bound element; tuple fields are now paired with their binding by position regardless of where the wildcards sit.
+- **`aver run --self-host` keeps pace with the language.** The self-hosted interpreter now handles `Int.div`, float literals inside string interpolation, and Unit-returning `main` under record/replay — three places it had lagged the VM. (Higher-order functions and multi-module programs are still being brought across.)
 
 ### Compiler internals
 
