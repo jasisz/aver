@@ -517,6 +517,63 @@ fn check_loop_invariant(fd: &FnDef, warnings: &mut Vec<CheckFinding>) {
             });
         }
     }
+
+    // Also flag invariant non-trivial subexpressions built *inline* in the
+    // recursive call's arguments — e.g. `f(t, k, acc + h * (k * k))` rebuilds
+    // `k * k` every call. The binding scan above only catches whole-binding
+    // invariants; this catches the inline-in-tail-call case.
+    for args in &tailcall_args {
+        for arg in args.iter() {
+            flag_invariant_in(arg, &invariant, &mut already_warned, fd, warnings);
+        }
+    }
+}
+
+/// Flag every *maximal* non-trivial subexpression of `expr` that uses only
+/// invariant params + literals. "Maximal" = once a node qualifies it is
+/// reported and we stop descending, so `acc + h * (k * k)` reports `k * k`
+/// once rather than also its sub-pieces. Dedups via the shared `already` set.
+fn flag_invariant_in(
+    expr: &Spanned<Expr>,
+    invariant: &HashSet<String>,
+    already: &mut HashSet<String>,
+    fd: &FnDef,
+    warnings: &mut Vec<CheckFinding>,
+) {
+    if is_nontrivial_candidate(&expr.node) && expr_uses_only(&expr.node, invariant) {
+        let short = expr_to_short_str(&expr.node);
+        if already.insert(short.clone()) {
+            let used = first_ident_in(&expr.node, invariant)
+                .unwrap_or_else(|| invariant.iter().next().cloned().unwrap_or_default());
+            warnings.push(CheckFinding {
+                line: expr.line,
+                module: None,
+                file: None,
+                fn_name: Some(fd.name.clone()),
+                message: format!(
+                    "`{}` is recomputed every recursive call but `{}` doesn't change — extract to a binding before the recursion",
+                    short, used
+                ),
+                extra_spans: vec![],
+            });
+        }
+        return;
+    }
+    match &expr.node {
+        Expr::BinOp(_, l, r) => {
+            flag_invariant_in(l, invariant, already, fd, warnings);
+            flag_invariant_in(r, invariant, already, fd, warnings);
+        }
+        Expr::Neg(inner) => flag_invariant_in(inner, invariant, already, fd, warnings),
+        Expr::FnCall(callee, args) => {
+            flag_invariant_in(callee, invariant, already, fd, warnings);
+            for a in args {
+                flag_invariant_in(a, invariant, already, fd, warnings);
+            }
+        }
+        Expr::Attr(obj, _) => flag_invariant_in(obj, invariant, already, fd, warnings),
+        _ => {}
+    }
 }
 
 /// Find the first Ident in expr that is in `set`.

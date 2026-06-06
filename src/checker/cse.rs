@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::ast::{BinOp, Expr, FnDef, MatchArm, Spanned, Stmt, TailCallData, TopLevel};
 
 use super::CheckFinding;
@@ -12,9 +14,20 @@ const PURE_NAMESPACE_PREFIXES: &[&str] = &[
 /// up in different basic blocks separated by a branch.
 pub fn collect_cse_warnings(items: &[TopLevel]) -> Vec<CheckFinding> {
     let mut warnings = Vec::new();
+    // A user fn is pure iff it declares no effects — the type checker
+    // propagates effects, so an empty `! [...]` is sound proof of purity.
+    // Builtins are handled by the body-wide check below; user fns need this
+    // set because their purity is only knowable here.
+    let pure_fns: HashSet<String> = items
+        .iter()
+        .filter_map(|it| match it {
+            TopLevel::FnDef(fd) if fd.effects.is_empty() => Some(fd.name.clone()),
+            _ => None,
+        })
+        .collect();
     for item in items {
         if let TopLevel::FnDef(fd) = item {
-            collect_cse_warnings_in_fn(fd, &mut warnings);
+            collect_cse_warnings_in_fn(fd, &pure_fns, &mut warnings);
         }
     }
     warnings
@@ -30,7 +43,11 @@ pub fn collect_cse_warnings_in(items: &[TopLevel], file: Option<&str>) -> Vec<Ch
     warnings
 }
 
-fn collect_cse_warnings_in_fn(fd: &FnDef, warnings: &mut Vec<CheckFinding>) {
+fn collect_cse_warnings_in_fn(
+    fd: &FnDef,
+    pure_fns: &HashSet<String>,
+    warnings: &mut Vec<CheckFinding>,
+) {
     let before = warnings.len();
     for stmt in fd.body.stmts() {
         let spanned = match stmt {
@@ -40,11 +57,12 @@ fn collect_cse_warnings_in_fn(fd: &FnDef, warnings: &mut Vec<CheckFinding>) {
         collect_cse_warnings_in_spanned(spanned, warnings);
     }
     // Collect match-CSE warned subtree strings so we can skip them in body-wide check
-    let match_warned: std::collections::HashSet<String> = warnings[before..]
+    let match_warned: HashSet<String> = warnings[before..]
         .iter()
         .map(|w| w.message.clone())
         .collect();
     check_fn_body_duplicates(fd, &match_warned, warnings);
+    check_pure_user_call_dups(fd, pure_fns, warnings);
     // Stamp fn_name on all newly added warnings
     for w in &mut warnings[before..] {
         w.fn_name = Some(fd.name.clone());
@@ -162,6 +180,214 @@ fn check_fn_body_duplicates(
                 });
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pure user-function call duplicates (within one branch-free expression)
+// ---------------------------------------------------------------------------
+
+/// Flag a pure *user-function* call computed more than once within a single
+/// branch-free expression. Builtin pure calls are handled body-wide above;
+/// user fns are not, because (a) their purity is only knowable here and
+/// (b) unlike builtins they may not terminate — hoisting one across a branch
+/// could change termination. Restricting to a `match`/`?`-free expression
+/// keeps it sound: every subexpression there is always evaluated (Aver is
+/// eager, no short-circuit), so deduplicating a repeated pure call is
+/// semantically identical, divergence included.
+fn check_pure_user_call_dups(
+    fd: &FnDef,
+    pure_fns: &HashSet<String>,
+    warnings: &mut Vec<CheckFinding>,
+) {
+    for stmt in fd.body.stmts() {
+        let spanned = match stmt {
+            Stmt::Expr(e) => e,
+            Stmt::Binding(_, _, e) => e,
+        };
+        // Soundness gate: skip any expression containing a `match` or `?`,
+        // where an occurrence could sit on a conditional path.
+        if expr_has_branch(&spanned.node) {
+            continue;
+        }
+        let mut calls: Vec<&Spanned<Expr>> = Vec::new();
+        collect_pure_user_calls(spanned, pure_fns, &mut calls);
+
+        let mut counts: Vec<(&Spanned<Expr>, usize)> = Vec::new();
+        for c in &calls {
+            if let Some(entry) = counts.iter_mut().find(|(e, _)| e.node == c.node) {
+                entry.1 += 1;
+            } else {
+                counts.push((c, 1));
+            }
+        }
+        for (call, count) in &counts {
+            if *count >= 2 {
+                let s = expr_to_short_str(&call.node);
+                warnings.push(CheckFinding {
+                    line: call.line,
+                    module: None,
+                    file: None,
+                    fn_name: None,
+                    message: format!(
+                        "`{}` is computed {} times in this function — consider extracting to a binding",
+                        s, count
+                    ),
+                    extra_spans: vec![],
+                });
+            }
+        }
+    }
+}
+
+/// Does `expr` contain a `match` or error-propagation `?` anywhere? Those are
+/// the only constructs that put a subexpression on a conditional path.
+fn expr_has_branch(expr: &Expr) -> bool {
+    match expr {
+        Expr::Match { .. } | Expr::ErrorProp(_) => true,
+        Expr::BinOp(_, l, r) => expr_has_branch(&l.node) || expr_has_branch(&r.node),
+        Expr::Neg(i) => expr_has_branch(&i.node),
+        Expr::FnCall(callee, args) => {
+            expr_has_branch(&callee.node) || args.iter().any(|a| expr_has_branch(&a.node))
+        }
+        Expr::Attr(o, _) => expr_has_branch(&o.node),
+        Expr::Constructor(_, Some(i)) => expr_has_branch(&i.node),
+        Expr::List(it) | Expr::Tuple(it) | Expr::IndependentProduct(it, _) => {
+            it.iter().any(|e| expr_has_branch(&e.node))
+        }
+        Expr::MapLiteral(p) => p
+            .iter()
+            .any(|(k, v)| expr_has_branch(&k.node) || expr_has_branch(&v.node)),
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ast::StrPart::Parsed(e) => expr_has_branch(&e.node),
+            _ => false,
+        }),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_has_branch(&e.node)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_has_branch(&base.node) || updates.iter().any(|(_, e)| expr_has_branch(&e.node))
+        }
+        Expr::TailCall(boxed) => {
+            let TailCallData { args, .. } = boxed.as_ref();
+            args.iter().any(|a| expr_has_branch(&a.node))
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } | Expr::Constructor(_, None) => {
+            false
+        }
+    }
+}
+
+/// Collect *maximal* pure user-function calls (a counted call is not descended
+/// into — the repeat is on the whole call). The caller guarantees the tree is
+/// `match`/`?`-free, so every node here is on the always-evaluated path.
+fn collect_pure_user_calls<'a>(
+    spanned: &'a Spanned<Expr>,
+    pure_fns: &HashSet<String>,
+    out: &mut Vec<&'a Spanned<Expr>>,
+) {
+    if is_pure_user_call(&spanned.node, pure_fns) {
+        out.push(spanned);
+        return;
+    }
+    match &spanned.node {
+        Expr::BinOp(_, l, r) => {
+            collect_pure_user_calls(l, pure_fns, out);
+            collect_pure_user_calls(r, pure_fns, out);
+        }
+        Expr::Neg(i) => collect_pure_user_calls(i, pure_fns, out),
+        Expr::FnCall(callee, args) => {
+            collect_pure_user_calls(callee, pure_fns, out);
+            for a in args {
+                collect_pure_user_calls(a, pure_fns, out);
+            }
+        }
+        Expr::Attr(o, _) => collect_pure_user_calls(o, pure_fns, out),
+        Expr::Constructor(_, Some(i)) => collect_pure_user_calls(i, pure_fns, out),
+        Expr::List(it) | Expr::Tuple(it) | Expr::IndependentProduct(it, _) => {
+            for e in it {
+                collect_pure_user_calls(e, pure_fns, out);
+            }
+        }
+        Expr::MapLiteral(p) => {
+            for (k, v) in p {
+                collect_pure_user_calls(k, pure_fns, out);
+                collect_pure_user_calls(v, pure_fns, out);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let crate::ast::StrPart::Parsed(e) = p {
+                    collect_pure_user_calls(e, pure_fns, out);
+                }
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_pure_user_calls(e, pure_fns, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            collect_pure_user_calls(base, pure_fns, out);
+            for (_, e) in updates {
+                collect_pure_user_calls(e, pure_fns, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            let TailCallData { args, .. } = boxed.as_ref();
+            for a in args {
+                collect_pure_user_calls(a, pure_fns, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A pure user-function call: a bare-ident callee that declares no effects,
+/// every argument also side-effect-free (so the whole call is pure).
+fn is_pure_user_call(expr: &Expr, pure_fns: &HashSet<String>) -> bool {
+    if let Expr::FnCall(callee, args) = expr
+        && let Expr::Ident(name) = &callee.node
+    {
+        return pure_fns.contains(name)
+            && args.iter().all(|a| is_side_effect_free(&a.node, pure_fns));
+    }
+    false
+}
+
+/// Side-effect-free expression (no effectful call hiding in it).
+fn is_side_effect_free(expr: &Expr, pure_fns: &HashSet<String>) -> bool {
+    match expr {
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Constructor(_, None) => true,
+        Expr::BinOp(_, l, r) => {
+            is_side_effect_free(&l.node, pure_fns) && is_side_effect_free(&r.node, pure_fns)
+        }
+        Expr::Neg(i) => is_side_effect_free(&i.node, pure_fns),
+        Expr::FnCall(callee, args) => {
+            cse_callee_is_pure(&callee.node, pure_fns)
+                && args.iter().all(|a| is_side_effect_free(&a.node, pure_fns))
+        }
+        Expr::Attr(o, _) => is_side_effect_free(&o.node, pure_fns),
+        Expr::Constructor(_, Some(i)) => is_side_effect_free(&i.node, pure_fns),
+        Expr::Tuple(it) | Expr::List(it) => {
+            it.iter().all(|e| is_side_effect_free(&e.node, pure_fns))
+        }
+        _ => false,
+    }
+}
+
+/// Is `callee` a pure target — a pure builtin namespace or an effect-free user fn?
+fn cse_callee_is_pure(callee: &Expr, pure_fns: &HashSet<String>) -> bool {
+    match callee {
+        Expr::Attr(obj, _) => {
+            if let Expr::Ident(ns) = &obj.node {
+                PURE_NAMESPACE_PREFIXES
+                    .iter()
+                    .any(|p| *p == format!("{}.", ns))
+            } else {
+                false
+            }
+        }
+        Expr::Ident(name) => pure_fns.contains(name),
+        _ => false,
     }
 }
 
@@ -682,5 +908,121 @@ mod tests {
         assert!(!warnings.is_empty());
         // Should report line 10 (first occurrence), not fn line 1
         assert_eq!(warnings[0].line, 10);
+    }
+
+    // ---- pure user-function call duplicates ----
+
+    fn pure_int_fn(name: &str) -> FnDef {
+        FnDef {
+            name: name.to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![],
+            desc: None,
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(binop(
+                BinOp::Mul,
+                ident("x"),
+                ident("x"),
+            )))])),
+            resolution: None,
+        }
+    }
+
+    fn caller_fn(name: &str, effects: Vec<Spanned<String>>, body: Expr) -> FnDef {
+        FnDef {
+            name: name.to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects,
+            desc: None,
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(body))])),
+            resolution: None,
+        }
+    }
+
+    fn user_call(name: &str) -> Expr {
+        Expr::FnCall(Box::new(spanned(ident(name))), vec![spanned(ident("x"))])
+    }
+
+    #[test]
+    fn detects_repeated_pure_user_call() {
+        // `cost(x) + cost(x)` with `cost` a pure user fn -> warn.
+        let body = binop(BinOp::Add, user_call("cost"), user_call("cost"));
+        let items = vec![
+            TopLevel::FnDef(pure_int_fn("cost")),
+            TopLevel::FnDef(caller_fn("f", vec![], body)),
+        ];
+        let warnings = collect_cse_warnings(&items);
+        assert!(
+            warnings.iter().any(|w| w.message.contains("cost(x)")),
+            "expected warning for repeated pure user call, got {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn no_warning_pure_user_call_in_separate_match_arms() {
+        // Same call in two arms — only one runs, so hoisting would eager-eval
+        // it on the other path. Must NOT warn (branch gate).
+        let match_expr = Expr::Match {
+            subject: Box::new(spanned(binop(BinOp::Gt, ident("x"), int(0)))),
+            arms: vec![
+                MatchArm {
+                    pattern: crate::ast::Pattern::Literal(Literal::Bool(true)),
+                    body: Box::new(spanned(user_call("cost"))),
+                    binding_slots: std::sync::OnceLock::new(),
+                },
+                MatchArm {
+                    pattern: crate::ast::Pattern::Literal(Literal::Bool(false)),
+                    body: Box::new(spanned(user_call("cost"))),
+                    binding_slots: std::sync::OnceLock::new(),
+                },
+            ],
+        };
+        let items = vec![
+            TopLevel::FnDef(pure_int_fn("cost")),
+            TopLevel::FnDef(caller_fn("f", vec![], match_expr)),
+        ];
+        let warnings = collect_cse_warnings(&items);
+        assert!(
+            warnings.is_empty(),
+            "must NOT warn across match arms, got {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn no_warning_effectful_user_call() {
+        // `loud` declares an effect -> not pure -> calling it twice is
+        // intentional, never flagged.
+        let loud = FnDef {
+            name: "loud".to_string(),
+            line: 1,
+            params: vec![("x".to_string(), "Int".to_string())],
+            return_type: "Int".to_string(),
+            effects: vec![Spanned::new("Console.print".to_string(), 0)],
+            desc: None,
+            body: std::sync::Arc::new(crate::ast::FnBody::Block(vec![Stmt::Expr(spanned(ident(
+                "x",
+            )))])),
+            resolution: None,
+        };
+        let body = binop(BinOp::Add, user_call("loud"), user_call("loud"));
+        let items = vec![
+            TopLevel::FnDef(loud),
+            TopLevel::FnDef(caller_fn(
+                "f",
+                vec![Spanned::new("Console.print".to_string(), 0)],
+                body,
+            )),
+        ];
+        let warnings = collect_cse_warnings(&items);
+        assert!(
+            warnings.is_empty(),
+            "must NOT flag effectful user calls, got {:?}",
+            warnings
+        );
     }
 }
