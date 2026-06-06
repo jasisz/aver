@@ -393,7 +393,9 @@ fn __mutual_tco_trampoline_3(mut __state: __MutualTco3) -> Result<Val, AverStr> 
                         __MutualTco3::EvalBoolBranch(cond, thenExpr, elseExpr, env, fns)
                     }
                     crate::aver_generated::domain::ast::Expr::ExprVar(name) => {
-                        return crate::aver_generated::domain::eval::core::evalVar(name, &env, &fns);
+                        return crate::aver_generated::domain::eval::core::evalVar(
+                            name, &env, &fns,
+                        );
                     }
                     crate::aver_generated::domain::ast::Expr::ExprSlot(_) => {
                         return Err(AverStr::from("ExprSlot in map-based eval path"));
