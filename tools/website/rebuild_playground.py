@@ -255,8 +255,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--aver-bin",
-        default=os.environ.get("AVER_BIN", str(REPO_ROOT / "target" / "debug" / "aver")),
-        help="Path to the aver binary built with --features wasm",
+        default=os.environ.get("AVER_BIN", str(REPO_ROOT / "target" / "release" / "aver")),
+        help="Path to the aver binary built with --features wasm. Defaults to the "
+        "RELEASE build — the same binary the post-wasm-pack restore step "
+        "(in main()) rebuilds with --features wasm. The two MUST agree on "
+        "profile: the restore is hardcoded to --release, so a debug default here "
+        "made build_wasm run a stale, non-wasm binary and fail with "
+        "'WASM target requires --features wasm' (this bit the 0.24.1 release).",
     )
     parser.add_argument(
         "--skip-source-sync",
