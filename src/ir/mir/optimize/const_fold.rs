@@ -19,8 +19,8 @@
 //!   case for `Int.div` is deliberately left untouched — `i64::MIN /
 //!   -1` overflows, so it stays the runtime `Result`.
 //! - **Fold B** collapses a consumer (`Result.withDefault` /
-//!   `Option.withDefault`, or a `match`) applied to a statically-known
-//!   constructor, dropping the dead branch.
+//!   `Option.withDefault`, a `match`, or error-propagation `?`) applied to
+//!   a statically-known constructor, dropping the dead branch.
 //!
 //! Post-order traversal makes them cascade in one pass:
 //! `Result.withDefault(Int.div(a, 10), 0)` → A →
@@ -371,6 +371,61 @@ fn fold_b_consume_ctor(
     match &expr.node {
         MirExpr::Call(_) => fold_b_with_default(expr, builtins),
         MirExpr::Match(_) => fold_b_match_over_ctor(expr),
+        MirExpr::Try(_) => fold_b_try_over_ctor(expr),
+        _ => None,
+    }
+}
+
+/// `Result.Ok(x)?` / `Result.Err(e)?` over a statically-known constructor —
+/// the third Fold-B consumer, besides `withDefault` and `match`. It lets the
+/// const-divisor `Int.div(a, k)?` / `Int.mod(a, k)?` idiom fold all the way to
+/// a bare Euclidean division (or an unconditional error `Return`), the same
+/// zero-round-trip the other two consumers already get.
+///
+/// - `Result.Ok(x)?`  → `x`              (statically Ok — `?` is just an unwrap)
+/// - `Result.Err(e)?` → `Return(Err(e))` (statically Err — `?` always propagates)
+fn fold_b_try_over_ctor(expr: &mut Spanned<MirExpr>) -> Option<Spanned<MirExpr>> {
+    // The `Try` node's stamp is the unwrapped (Ok-payload) value type; carry
+    // it onto the synthesised `Return` so the wasm-gc backend stays happy.
+    let value_ty = expr.ty().cloned();
+
+    let MirExpr::Try(inner) = &expr.node else {
+        return None;
+    };
+    let MirExpr::Construct(ctor_node) = &inner.node else {
+        return None;
+    };
+    let MirCtor::Builtin(ctor) = ctor_node.node.ctor else {
+        return None;
+    };
+    // `?` is Result-only, so a well-typed subject is always a `Result` ctor;
+    // an `Option` ctor here would be ill-typed — leave it untouched.
+    match ctor {
+        BuiltinCtor::ResultOk => {
+            let MirExpr::Try(inner) = &mut expr.node else {
+                unreachable!("guarded above");
+            };
+            let MirExpr::Construct(ctor_node) = &mut inner.node else {
+                unreachable!("guarded above");
+            };
+            // `Ok(x)` → `x` (the payload already carries its own type stamp).
+            std::mem::take(&mut ctor_node.node.args).into_iter().next()
+        }
+        BuiltinCtor::ResultErr => {
+            let MirExpr::Try(inner) = &mut expr.node else {
+                unreachable!("guarded above");
+            };
+            // Move the `Result.Err(e)` ctor out and wrap it in an
+            // unconditional `Return` — the `?` propagates it every time.
+            let err_ctor = std::mem::replace(
+                inner.as_mut(),
+                Spanned::bare(MirExpr::Literal(Spanned::bare(Literal::Unit))),
+            );
+            Some(typed(
+                MirExpr::Return(Box::new(err_ctor)),
+                value_ty.as_ref(),
+            ))
+        }
         _ => None,
     }
 }
@@ -956,6 +1011,66 @@ mod tests {
         assert!(
             matches!(body_of(&folded), MirExpr::Literal(s) if matches!(s.node, Literal::Int(42)))
         );
+    }
+
+    // ---- Fold B: ?-propagation (error-prop operator) ----
+
+    #[test]
+    fn fold_b_try_over_ok_unwraps() {
+        // `Result.Ok(7)?` → `7` (statically Ok — the `?` is just an unwrap).
+        let body = MirExpr::Try(Box::new(ctor(BuiltinCtor::ResultOk, vec![int_lit(7)])));
+        let folded = const_fold(one_fn_program(body));
+        assert!(
+            matches!(body_of(&folded), MirExpr::Literal(s) if matches!(s.node, Literal::Int(7)))
+        );
+    }
+
+    #[test]
+    fn fold_b_try_over_err_returns() {
+        // `Result.Err("x")?` → `return Result.Err("x")` (statically Err — the
+        // `?` always propagates, so the enclosing fn returns the error here).
+        let err = ctor(
+            BuiltinCtor::ResultErr,
+            vec![span(MirExpr::Literal(span(Literal::Str("x".into()))))],
+        );
+        let folded = const_fold(one_fn_program(MirExpr::Try(Box::new(err))));
+        let MirExpr::Return(inner) = body_of(&folded) else {
+            panic!(
+                "expected `return Result.Err(...)`, got {:?}",
+                body_of(&folded)
+            );
+        };
+        let MirExpr::Construct(c) = &inner.node else {
+            panic!("expected Result.Err under the return");
+        };
+        assert!(matches!(
+            c.node.ctor,
+            MirCtor::Builtin(BuiltinCtor::ResultErr)
+        ));
+    }
+
+    #[test]
+    fn fold_a_then_b_try_div_const_to_bare_euclid() {
+        // `Int.div(a, 10)?` → A → `Result.Ok(IntDivEuclid(a, 10))?`
+        // → B → `IntDivEuclid(a, 10)` — bare division, no `Result`, no `?`.
+        let div = builtin_call(vec![
+            span(MirExpr::Local(span(MirLocal::at(LocalId(0))))),
+            int_lit(10),
+        ]);
+        let folded = const_fold(program_with_builtin(
+            "Int.div",
+            MirExpr::Try(Box::new(span(div))),
+        ));
+        let MirExpr::Call(c) = body_of(&folded) else {
+            panic!(
+                "expected bare IntDivEuclid call, got {:?}",
+                body_of(&folded)
+            );
+        };
+        assert!(matches!(
+            c.node.callee,
+            MirCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid)
+        ));
     }
 
     // ---- Fold B: match over a known ctor ----
