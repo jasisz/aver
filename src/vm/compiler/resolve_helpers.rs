@@ -9,7 +9,8 @@ use crate::ir::hir::BuiltinIntrinsic;
 use crate::ir::identity::{FnId, FnKey};
 use crate::nan_value::NanValue;
 use crate::vm::opcode::{
-    BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR, BUFFER_FINALIZE, BUFFER_NEW,
+    BUFFER_APPEND_SEP_UNLESS_FIRST, BUFFER_APPEND_STR, BUFFER_FINALIZE, BUFFER_NEW, INT_DIV_EUCLID,
+    INT_MOD_EUCLID,
 };
 
 use super::{CompileError, FnCompiler};
@@ -19,12 +20,18 @@ use super::{CompileError, FnCompiler};
 /// empty trick instead of a dedicated opcode. The arity is checked
 /// at the callsite so a future intrinsic with a different shape
 /// can't accidentally re-use the wrong opcode.
+///
+/// Covers the deforestation buffer ops *and* the const-fold Euclidean
+/// div/mod intrinsics (`__int_div_euclid` / `__int_mod_euclid`), both
+/// 2-arg → push the unchecked Euclidean result.
 pub(super) fn buffer_intrinsic_opcode(intrinsic: BuiltinIntrinsic) -> Option<(u8, usize)> {
     match intrinsic {
         BuiltinIntrinsic::BufNew => Some((BUFFER_NEW, 1)),
         BuiltinIntrinsic::BufAppend => Some((BUFFER_APPEND_STR, 2)),
         BuiltinIntrinsic::BufAppendSepUnlessFirst => Some((BUFFER_APPEND_SEP_UNLESS_FIRST, 2)),
         BuiltinIntrinsic::BufFinalize => Some((BUFFER_FINALIZE, 1)),
+        BuiltinIntrinsic::IntDivEuclid => Some((INT_DIV_EUCLID, 2)),
+        BuiltinIntrinsic::IntModEuclid => Some((INT_MOD_EUCLID, 2)),
         BuiltinIntrinsic::ToStr => None,
     }
 }

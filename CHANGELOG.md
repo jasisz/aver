@@ -2,7 +2,7 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.24.0 "Divide" — 2026-06-05
+## 0.24.0 "Divide" — 2026-06-06
 
 > _One middle-end under every backend; the last operator that could crash is now a function._
 
@@ -27,6 +27,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 - **MIR is now the only runtime middle-end.** The VM compiles exclusively through Core MIR (`src/ir/mir/`); the old ~2200-line HIR tree-walking compiler is gone — a function that can't lower to MIR is a hard error, not a silent second path. wasm-gc and wasip2 emit from MIR too (resolved-HIR fallback for shapes they don't yet cover) and run the shared `ir::mir::optimize()` passes, so one optimizer improves every backend at once.
 - **`match` on `Int.div`/`Int.mod`'s `Result` lowers on every backend.** The directly-consumed (boxed) form now builds the `Result<Int, String>` on wasm-gc and exports faithfully to Lean/Dafny (guarding the zero divisor so the `Err` arm is reachable), so the Ok/Err idiom is no longer VM-only.
+- **A constant divisor compiles `Int.div`/`Int.mod` down to bare division.** The MIR const-folder rewrites `Int.div(a, k)` for a literal `k ∉ {0, -1}` to `Result.Ok(a div_euclid k)`, then folds the consumer (`withDefault` / `match`) over the now-literal constructor — so `match Int.div(a, 10) { Ok / Err }` and `Result.withDefault(Int.div(a, 10), d)` lower to a plain Euclidean division on every backend. The explicit `Result`-returning function disappears when it provably can't fail.
 - **wasm-gc modules are byte-reproducible across builds.** Carrier type slots are now registered in sorted order instead of `HashMap`-iteration order.
 
 ## 0.23.0 "Shape" — 2026-05-30
