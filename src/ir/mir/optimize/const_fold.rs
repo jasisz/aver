@@ -36,6 +36,7 @@ use super::super::expr::{
     MirPattern,
 };
 use super::super::program::MirProgram;
+use super::dead_code::is_pure;
 
 /// Apply const-fold to every fn body in `program`. Returns the
 /// (transformed) program by value so the caller can chain
@@ -206,6 +207,14 @@ fn literal_of(node: &MirExpr) -> Option<&Literal> {
 /// must match `src/types/int.rs`.
 const DIV_BY_ZERO: &str = "division by zero";
 
+/// MIR `LocalId` sentinel for a `_` pattern binding — the resolver mints
+/// `u16::MAX` ("no slot, drop the value"). A Fold-B rewrite that would drop
+/// the strictly-evaluated arg bound here is sound only when that arg is
+/// pure: otherwise its effects / divergence vanish, and emitting a `Let` on
+/// the sentinel panics the VM (`STORE_LOCAL` reads a u8 slot) and drops the
+/// value on the wasm-gc / Rust backends. The folds decline rather than risk it.
+const WILDCARD_SLOT: u32 = u16::MAX as u32;
+
 /// Resolve the canonical name of a `MirCallee::Builtin` against the
 /// program's interned builtin table. Returns `None` for any other
 /// callee kind (or an out-of-range id).
@@ -315,6 +324,13 @@ fn fold_a_partial_int_builtin(
         return None;
     };
     let k = *k;
+    // `k == 0` makes the result an unconditional `Err`, discarding the
+    // dividend entirely. Folding would drop the dividend's strict
+    // evaluation — its effects and its divergence — so only fold when the
+    // dividend is pure; otherwise leave the runtime `Result` call.
+    if k == 0 && !is_pure(&call.args[0]) {
+        return None;
+    }
     // The wrapping `Result.Ok` / `Result.Err` keeps the original call's
     // `Result<Int,String>` type stamp.
     let result_ty = expr.ty().cloned();
@@ -465,6 +481,18 @@ fn fold_b_with_default(
         _ => return None,
     };
 
+    // The `Err(_)` / `None` branch drops the constructor's payload, which is
+    // evaluated strictly before `withDefault` runs — so dropping it loses
+    // its effects / divergence unless it is pure. Decline the fold then.
+    if !take_payload {
+        let MirExpr::Construct(inner) = &spanned_call.node.args[0].node else {
+            return None;
+        };
+        if !inner.node.args.iter().all(is_pure) {
+            return None;
+        }
+    }
+
     let MirExpr::Call(spanned_call) = &mut expr.node else {
         unreachable!("guarded above");
     };
@@ -479,9 +507,8 @@ fn fold_b_with_default(
         };
         inner.node.args.into_iter().next()
     } else {
-        // `Err(_)` / `None` → the default (already typed). The `Err`
-        // payload is dropped; it's pure (a literal / already-evaluated
-        // value), so no eval is lost.
+        // `Err(_)` / `None` → the default (already typed). The dropped
+        // payload was proven pure above, so no evaluation is lost.
         Some(default)
     }
 }
@@ -519,6 +546,24 @@ fn fold_b_match_over_ctor(expr: &mut Spanned<MirExpr>) -> Option<Spanned<MirExpr
         .arms
         .iter()
         .position(|arm| arm_matches_ctor(&arm.pattern, subj_ctor, subj_arity))?;
+
+    // A fold that drops a strictly-evaluated ctor arg — a `Wildcard` arm
+    // (drops every arg) or a `_`-bound field of a `Ctor` arm (drops that
+    // arg) — is sound only when the dropped arg is pure; otherwise its
+    // effects / divergence would silently vanish. Decline the fold (leave
+    // the `match`, which evaluates the subject strictly) when any dropped
+    // arg is impure.
+    let drops_impure = match &spanned_match.node.arms[arm_idx].pattern {
+        MirPattern::Wildcard => subj.node.args.iter().any(|a| !is_pure(a)),
+        MirPattern::Ctor { bindings, .. } => bindings
+            .iter()
+            .zip(&subj.node.args)
+            .any(|(slot, arg)| slot.0 == WILDCARD_SLOT && !is_pure(arg)),
+        _ => false,
+    };
+    if drops_impure {
+        return None;
+    }
 
     // The subject's `Result` / `Option` type — used to re-stamp the ctor
     // if the chosen arm binds the whole subject (`Bind`).
@@ -609,6 +654,15 @@ fn wrap_in_lets(
     // first field ends up as the outermost (first-evaluated) `Let`.
     let n = ctor_args.len();
     for (i, (slot, arg)) in bindings.iter().zip(ctor_args).enumerate().rev() {
+        // A `_` field has no slot (the wildcard sentinel). Its arg is
+        // guaranteed pure by the caller's gate, so drop it instead of
+        // binding it: a `Let` on the sentinel slot panics the VM
+        // (`STORE_LOCAL` reads a u8 slot) and drops the value on the
+        // wasm-gc / Rust backends.
+        if slot.0 == WILDCARD_SLOT {
+            let _ = arg;
+            continue;
+        }
         // `binding_names` is parallel to `bindings`; fall back to empty
         // (synthetic) only if it's somehow short — never for well-typed
         // input. `_ = n` keeps the index in range for the zip.
@@ -1197,6 +1251,156 @@ mod tests {
                 MirCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid)
             ),
             "withDefault(Int.div(a, 10), 0) must fold to a bare Euclidean intrinsic"
+        );
+    }
+
+    // ---- Fold drop-soundness (0.24.1): a fold must never silently drop a
+    // strictly-evaluated sub-expression. Each test FAILs without the
+    // purity gate — confirmed by running the matching .av repro on the
+    // pre-fix binary (it dropped the effect / panicked). ----
+
+    /// A side-effecting expression. `is_pure` classifies every `Call` as
+    /// impure, and an `Intrinsic` call is never re-folded by Fold A/B, so
+    /// it survives a fold pass unchanged and stands in for "has effects".
+    fn impure() -> Spanned<MirExpr> {
+        span(MirExpr::Call(span(MirCall {
+            callee: MirCallee::Intrinsic(BuiltinIntrinsic::IntDivEuclid),
+            args: vec![int_lit(1), int_lit(1)],
+        })))
+    }
+
+    #[test]
+    fn fold_a_div_by_zero_keeps_impure_dividend() {
+        // `Int.div(<impure>, 0)`: folding to `Result.Err` would drop the
+        // dividend's strict evaluation (its effects / divergence). The fold
+        // must decline — the node stays the runtime `Int.div` call.
+        let body = builtin_call(vec![impure(), int_lit(0)]);
+        let folded = const_fold(program_with_builtin("Int.div", body));
+        let MirExpr::Call(c) = body_of(&folded) else {
+            panic!(
+                "impure dividend must keep the runtime Int.div call, got {:?}",
+                body_of(&folded)
+            );
+        };
+        assert!(matches!(c.node.callee, MirCallee::Builtin(BuiltinId(0))));
+        assert_eq!(c.node.args.len(), 2, "both args restored intact");
+    }
+
+    #[test]
+    fn fold_a_div_by_zero_still_folds_pure_dividend() {
+        // The win must survive: a pure dividend over a zero divisor still
+        // folds to the `Result.Err` (no eval is lost when the arg is pure).
+        let body = builtin_call(vec![int_lit(99), int_lit(0)]);
+        let folded = const_fold(program_with_builtin("Int.div", body));
+        let MirExpr::Construct(c) = body_of(&folded) else {
+            panic!("pure dividend over /0 must still fold to Err");
+        };
+        assert!(matches!(
+            c.node.ctor,
+            MirCtor::Builtin(BuiltinCtor::ResultErr)
+        ));
+    }
+
+    #[test]
+    fn fold_b_withdefault_err_keeps_impure_payload() {
+        // `Result.withDefault(Result.Err(<impure>), 0)`: folding to the
+        // default would drop the Err payload's strict evaluation. Decline.
+        let body = builtin_call(vec![
+            ctor(BuiltinCtor::ResultErr, vec![impure()]),
+            int_lit(0),
+        ]);
+        let folded = const_fold(program_with_builtin("Result.withDefault", body));
+        assert!(
+            matches!(body_of(&folded), MirExpr::Call(_)),
+            "impure Err payload must keep the runtime withDefault call, got {:?}",
+            body_of(&folded)
+        );
+    }
+
+    #[test]
+    fn fold_b_match_wildcard_keeps_impure_subject_arg() {
+        // `match Result.Ok(<impure>) { _ -> 42 }`: a Wildcard arm drops the
+        // ctor arg; folding to the body would lose its strict evaluation.
+        let body = MirExpr::Match(span(MirMatch {
+            subject: Box::new(ctor(BuiltinCtor::ResultOk, vec![impure()])),
+            arms: vec![MirMatchArm {
+                pattern: MirPattern::Wildcard,
+                body: int_lit(42),
+            }],
+        }));
+        let folded = const_fold(one_fn_program(body));
+        assert!(
+            matches!(body_of(&folded), MirExpr::Match(_)),
+            "impure ctor arg under a Wildcard arm must keep the match, got {:?}",
+            body_of(&folded)
+        );
+    }
+
+    #[test]
+    fn fold_b_match_ctor_discard_field_keeps_impure_arg() {
+        // `match Result.Ok(<impure>) { Result.Ok(_) -> 42 ; Err(_) -> 0 }`:
+        // the `_` field's binding is the wildcard slot sentinel. Folding an
+        // impure arg here would either drop the effect or — emitting a Let
+        // on the sentinel slot — panic the VM. Decline.
+        let ok_arm = MirMatchArm {
+            pattern: MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::ResultOk),
+                bindings: vec![LocalId(WILDCARD_SLOT)],
+                binding_names: vec![String::new()],
+            },
+            body: int_lit(42),
+        };
+        let err_arm = MirMatchArm {
+            pattern: MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::ResultErr),
+                bindings: vec![LocalId(WILDCARD_SLOT)],
+                binding_names: vec![String::new()],
+            },
+            body: int_lit(0),
+        };
+        let body = MirExpr::Match(span(MirMatch {
+            subject: Box::new(ctor(BuiltinCtor::ResultOk, vec![impure()])),
+            arms: vec![ok_arm, err_arm],
+        }));
+        let folded = const_fold(one_fn_program(body));
+        assert!(
+            matches!(body_of(&folded), MirExpr::Match(_)),
+            "impure arg at a `_` field must keep the match, got {:?}",
+            body_of(&folded)
+        );
+    }
+
+    #[test]
+    fn fold_b_match_ctor_discard_field_pure_folds_without_sentinel_let() {
+        // `match Result.Ok(7) { Result.Ok(_) -> 42 ; Err(_) -> 0 }`: the arg
+        // is pure, so the fold proceeds — but it must drop the `_` field
+        // cleanly, NOT emit a `Let` bound to the wildcard sentinel (which
+        // would panic the VM's u8 `STORE_LOCAL`). Result: the bare body 42.
+        let ok_arm = MirMatchArm {
+            pattern: MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::ResultOk),
+                bindings: vec![LocalId(WILDCARD_SLOT)],
+                binding_names: vec![String::new()],
+            },
+            body: int_lit(42),
+        };
+        let err_arm = MirMatchArm {
+            pattern: MirPattern::Ctor {
+                ctor: MirCtor::Builtin(BuiltinCtor::ResultErr),
+                bindings: vec![LocalId(WILDCARD_SLOT)],
+                binding_names: vec![String::new()],
+            },
+            body: int_lit(0),
+        };
+        let body = MirExpr::Match(span(MirMatch {
+            subject: Box::new(ctor(BuiltinCtor::ResultOk, vec![int_lit(7)])),
+            arms: vec![ok_arm, err_arm],
+        }));
+        let folded = const_fold(one_fn_program(body));
+        assert!(
+            matches!(body_of(&folded), MirExpr::Literal(s) if matches!(s.node, Literal::Int(42))),
+            "pure `_`-field fold must collapse to the bare body with no sentinel Let, got {:?}",
+            body_of(&folded)
         );
     }
 }
