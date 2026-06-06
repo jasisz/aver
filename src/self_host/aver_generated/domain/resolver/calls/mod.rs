@@ -12,14 +12,15 @@ pub fn buildFnMap(
 ) -> aver_rt::AverMap<AverStr, i64> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fns, [] => acc, [f, rest] => { {
-            let __tmp1 = acc.insert_owned(f.name.clone(), idx);
-            let __tmp2 = (idx + 1i64);
-            fns = rest;
-            acc = __tmp1;
-            idx = __tmp2;
+        aver_list_match!(fns, [] => { return acc; }, [f, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = acc.insert_owned(f.name.clone(), idx);
+            let __tco2 = (idx + 1i64);
+            fns = __tco0;
+            acc = __tco1;
+            idx = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -32,21 +33,22 @@ pub fn resolveCallsInFns(
 ) -> aver_rt::AverList<FnDef> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fns, [] => acc.reverse(), [f, rest] => { {
-            let __tmp1 = fnMap.clone();
-            let __tmp2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInFn(&f, &fnMap), &acc);
-            fns = rest;
-            fnMap = __tmp1;
-            acc = __tmp2;
+        aver_list_match!(fns, [] => { return acc.reverse(); }, [f, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = fnMap.clone();
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInFn(&f, &fnMap), &acc);
+            fns = __tco0;
+            fnMap = __tco1;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
 /// Transform calls in one function body.
 pub fn resolveCallsInFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, i64>) -> FnDef {
     crate::cancel_checkpoint();
-    FnDef {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: crate::aver_generated::domain::resolver::calls::resolveCallsInStmts(
@@ -70,14 +72,15 @@ pub fn resolveCallsInStmts(
 ) -> aver_rt::AverList<Stmt> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(stmts, [] => acc.reverse(), [s, rest] => { {
-            let __tmp1 = fnMap.clone();
-            let __tmp2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(&s, &fnMap), &acc);
-            stmts = rest;
-            fnMap = __tmp1;
-            acc = __tmp2;
+        aver_list_match!(stmts, [] => { return acc.reverse(); }, [s, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = fnMap.clone();
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInStmt(&s, &fnMap), &acc);
+            stmts = __tco0;
+            fnMap = __tco1;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -519,6 +522,7 @@ pub fn isBuiltinCallName(name: AverStr) -> bool {
             AverStr::from("HttpServer.listen"),
             AverStr::from("HttpServer.listenWith"),
             AverStr::from("Int.abs"),
+            AverStr::from("Int.div"),
             AverStr::from("Int.fromString"),
             AverStr::from("Int.max"),
             AverStr::from("Int.min"),
@@ -610,10 +614,11 @@ pub fn isBuiltinCallNameFrom(
 ) -> bool {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(knownNames, [] => false, [knownName, rest] => { if (name == knownName) { true } else { {
-            knownNames = rest;
+        aver_list_match!(knownNames, [] => { return false; }, [knownName, rest] => { if (name == knownName) { return true; } else { {
+            let __tco1 = rest;
+            knownNames = __tco1;
             continue;
-        } } });
+        } } })
     }
 }
 
@@ -626,14 +631,15 @@ pub fn resolveCallsInExprs(
 ) -> aver_rt::AverList<Expr> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(exprs, [] => acc.reverse(), [e, rest] => { {
-            let __tmp1 = fnMap.clone();
-            let __tmp2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&e, &fnMap), &acc);
-            exprs = rest;
-            fnMap = __tmp1;
-            acc = __tmp2;
+        aver_list_match!(exprs, [] => { return acc.reverse(); }, [e, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = fnMap.clone();
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&e, &fnMap), &acc);
+            exprs = __tco0;
+            fnMap = __tco1;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -646,14 +652,15 @@ pub fn resolveCallsInArms(
 ) -> aver_rt::AverList<MatchArm> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(arms, [] => acc.reverse(), [arm, rest] => { {
-            let __tmp1 = fnMap.clone();
-            let __tmp2 = aver_rt::AverList::prepend(MatchArm { pattern: arm.pattern.clone(), body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&arm.body, &fnMap), bindingSlots: arm.bindingSlots.clone() }, &acc);
-            arms = rest;
-            fnMap = __tmp1;
-            acc = __tmp2;
+        aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = fnMap.clone();
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: arm.pattern.clone(), body: crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&arm.body, &fnMap), bindingSlots: arm.bindingSlots.clone() }, &acc);
+            arms = __tco0;
+            fnMap = __tco1;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -666,15 +673,14 @@ pub fn resolveCallsInFields(
 ) -> aver_rt::AverList<(AverStr, Expr)> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fields, [] => acc.reverse(), [pair, rest] => { match pair {
-            (name, expr) => {
-            let __tmp1 = fnMap.clone();
-            let __tmp2 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&expr, &fnMap)), &acc);
-            fields = rest;
-            fnMap = __tmp1;
-            acc = __tmp2;
+        aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco1 = fnMap.clone();
+            let __tco2 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::calls::resolveCallsInExpr(&expr, &fnMap)), &acc);
+            fields = __tco0;
+            fnMap = __tco1;
+            acc = __tco2;
             continue;
-        }
-        } });
+        } } })
     }
 }

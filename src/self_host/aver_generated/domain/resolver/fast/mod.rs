@@ -12,14 +12,15 @@ pub fn annotateFastFns(
 ) -> aver_rt::AverList<FnDef> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fns, [] => acc.reverse(), [f, rest] => { {
-            let __tmp1 = fnMap.clone();
-            let __tmp2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::fast::annotateFastFn(&f, &fnMap), &acc);
-            fns = rest;
-            fnMap = __tmp1;
-            acc = __tmp2;
+        aver_list_match!(fns, [] => { return acc.reverse(); }, [f, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = fnMap.clone();
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::fast::annotateFastFn(&f, &fnMap), &acc);
+            fns = __tco0;
+            fnMap = __tco1;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -27,7 +28,7 @@ pub fn annotateFastFns(
 pub fn annotateFastFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, i64>) -> FnDef {
     crate::cancel_checkpoint();
     let selfId = fnMap.get(&fd.name).cloned().unwrap_or((-1i64));
-    FnDef {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: fd.body.clone(),
@@ -46,10 +47,11 @@ pub fn annotateFastFn(fd: &FnDef, fnMap: &aver_rt::AverMap<AverStr, i64>) -> FnD
 pub fn classifyTailLoop(mut selfId: i64, mut body: aver_rt::AverList<Stmt>) -> bool {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(body, [] => false, [stmt, rest] => { { let __list_subject = rest.clone(); if __list_subject.is_empty() { crate::aver_generated::domain::resolver::fast::stmtNeedsTailLoop(selfId, &stmt) } else { {
-            body = rest;
+        aver_list_match!(body, [] => { return false; }, [stmt, rest] => { { let __list_subject = rest.clone(); if __list_subject.is_empty() { return crate::aver_generated::domain::resolver::fast::stmtNeedsTailLoop(selfId, &stmt); } else { {
+            let __tco1 = rest;
+            body = __tco1;
             continue;
-        } } } });
+        } } } })
     }
 }
 
@@ -68,27 +70,34 @@ pub fn stmtNeedsTailLoop(selfId: i64, stmt: &Stmt) -> bool {
 pub fn exprNeedsTailLoop(mut selfId: i64, mut expr: Expr) -> bool {
     loop {
         crate::cancel_checkpoint();
-        return match expr {
-            crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, _) => (fnId == selfId),
+        match expr {
+            crate::aver_generated::domain::ast::Expr::ExprCallDirect(fnId, _) => {
+                return (fnId == selfId);
+            }
             crate::aver_generated::domain::ast::Expr::ExprBoolBranch(_, thenExpr, elseExpr) => {
                 let thenExpr = (*thenExpr).clone();
                 let elseExpr = (*elseExpr).clone();
                 if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(
                     selfId, thenExpr,
                 ) {
-                    true
+                    return true;
                 } else {
                     {
-                        expr = elseExpr;
+                        let __tco1 = elseExpr;
+                        expr = __tco1;
                         continue;
                     }
                 }
             }
             crate::aver_generated::domain::ast::Expr::ExprMatch(_, arms) => {
-                crate::aver_generated::domain::resolver::fast::armsNeedTailLoop(selfId, arms)
+                return crate::aver_generated::domain::resolver::fast::armsNeedTailLoop(
+                    selfId, arms,
+                );
             }
-            _ => false,
-        };
+            _ => {
+                return false;
+            }
+        }
     }
 }
 
@@ -97,10 +106,11 @@ pub fn exprNeedsTailLoop(mut selfId: i64, mut expr: Expr) -> bool {
 pub fn armsNeedTailLoop(mut selfId: i64, mut arms: aver_rt::AverList<MatchArm>) -> bool {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(arms, [] => false, [arm, rest] => { if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(selfId, arm.body.clone()) { true } else { {
-            arms = rest;
+        aver_list_match!(arms, [] => { return false; }, [arm, rest] => { if crate::aver_generated::domain::resolver::fast::exprNeedsTailLoop(selfId, arm.body.clone()) { return true; } else { {
+            let __tco1 = rest;
+            arms = __tco1;
             continue;
-        } } });
+        } } })
     }
 }
 
@@ -113,10 +123,10 @@ pub fn classifyFastPath(body: &aver_rt::AverList<Stmt>) -> FnFastPath {
             if (rest == aver_rt::AverList::empty()) {
                 crate::aver_generated::domain::resolver::fast::classifyFastStmt(&stmt)
             } else {
-                FnFastPath::FastNone.clone()
+                crate::aver_generated::domain::ast::FnFastPath::FastNone
             }
         } else {
-            FnFastPath::FastNone.clone()
+            crate::aver_generated::domain::ast::FnFastPath::FastNone
         }
     }
 }
@@ -128,7 +138,7 @@ pub fn classifyFastStmt(stmt: &Stmt) -> FnFastPath {
         crate::aver_generated::domain::ast::Stmt::StmtExpr(expr) => {
             crate::aver_generated::domain::resolver::fast::classifyFastExpr(&expr)
         }
-        _ => FnFastPath::FastNone.clone(),
+        _ => crate::aver_generated::domain::ast::FnFastPath::FastNone,
     }
 }
 
@@ -146,7 +156,7 @@ pub fn classifyFastExpr(expr: &Expr) -> FnFastPath {
                 let scrutinee = (*scrutinee).clone();
                 crate::aver_generated::domain::resolver::fast::classifyFastMatch(&scrutinee, &arms)
             }
-            _ => FnFastPath::FastSingleExpr.clone(),
+            _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         },
     }
 }
@@ -181,7 +191,7 @@ pub fn classifyFastLeafExpr(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
-                &BinOp::OpAdd,
+                &crate::aver_generated::domain::ast::BinOp::OpAdd,
                 &a,
                 &b,
             )
@@ -190,7 +200,7 @@ pub fn classifyFastLeafExpr(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
-                &BinOp::OpSub,
+                &crate::aver_generated::domain::ast::BinOp::OpSub,
                 &a,
                 &b,
             )
@@ -207,7 +217,7 @@ pub fn classifyFastLeafExprTail(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
-                &BinOp::OpMul,
+                &crate::aver_generated::domain::ast::BinOp::OpMul,
                 &a,
                 &b,
             )
@@ -216,7 +226,7 @@ pub fn classifyFastLeafExprTail(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastBinopSlots(
-                &BinOp::OpDiv,
+                &crate::aver_generated::domain::ast::BinOp::OpDiv,
                 &a,
                 &b,
             )
@@ -225,7 +235,7 @@ pub fn classifyFastLeafExprTail(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                &CmpOp::CmpEq,
+                &crate::aver_generated::domain::ast::CmpOp::CmpEq,
                 &a,
                 &b,
             )
@@ -234,7 +244,7 @@ pub fn classifyFastLeafExprTail(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                &CmpOp::CmpNeq,
+                &crate::aver_generated::domain::ast::CmpOp::CmpNeq,
                 &a,
                 &b,
             )
@@ -243,7 +253,7 @@ pub fn classifyFastLeafExprTail(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                &CmpOp::CmpLt,
+                &crate::aver_generated::domain::ast::CmpOp::CmpLt,
                 &a,
                 &b,
             )
@@ -252,7 +262,7 @@ pub fn classifyFastLeafExprTail(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                &CmpOp::CmpGt,
+                &crate::aver_generated::domain::ast::CmpOp::CmpGt,
                 &a,
                 &b,
             )
@@ -261,7 +271,7 @@ pub fn classifyFastLeafExprTail(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                &CmpOp::CmpLte,
+                &crate::aver_generated::domain::ast::CmpOp::CmpLte,
                 &a,
                 &b,
             )
@@ -270,7 +280,7 @@ pub fn classifyFastLeafExprTail(expr: &Expr) -> Option<FastLeaf> {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::fast::classifyFastCmpSlots(
-                &CmpOp::CmpGte,
+                &crate::aver_generated::domain::ast::CmpOp::CmpGte,
                 &a,
                 &b,
             )
@@ -700,7 +710,7 @@ pub fn classifyFastListMatch(scrutinee: &Expr, arms: &aver_rt::AverList<MatchArm
         crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
             crate::aver_generated::domain::resolver::fast::classifyFastListArms(slot, arms)
         }
-        _ => FnFastPath::FastSingleExpr.clone(),
+        _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -718,14 +728,14 @@ pub fn classifyFastListArms(slot: i64, arms: &aver_rt::AverList<MatchArm>) -> Fn
                             slot, &arm1, &arm2,
                         )
                     } else {
-                        FnFastPath::FastSingleExpr.clone()
+                        crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr
                     }
                 } else {
-                    FnFastPath::FastSingleExpr.clone()
+                    crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr
                 }
             }
         } else {
-            FnFastPath::FastSingleExpr.clone()
+            crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr
         }
     }
 }
@@ -747,9 +757,9 @@ pub fn classifyFastListArmPair(slot: i64, arm1: &MatchArm, arm2: &MatchArm) -> F
                 &arm2.bindingSlots,
                 &v2,
             ),
-            None => FnFastPath::FastSingleExpr.clone(),
+            None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         },
-        None => FnFastPath::FastSingleExpr.clone(),
+        None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -785,7 +795,7 @@ pub fn classifyFastListPatterns(
                 leaf2,
             )
         }
-        _ => FnFastPath::FastSingleExpr.clone(),
+        _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -809,7 +819,7 @@ pub fn classifyFastListOther(
                 otherLeaf,
             )
         }
-        _ => FnFastPath::FastSingleExpr.clone(),
+        _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -835,7 +845,7 @@ pub fn classifyFastListConsFirst(
                 consLeaf,
             )
         }
-        _ => FnFastPath::FastSingleExpr.clone(),
+        _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -859,9 +869,9 @@ pub fn classifyFastListCons(
                 tailSlot,
                 consLeaf.clone(),
             ),
-            None => FnFastPath::FastSingleExpr.clone(),
+            None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         },
-        None => FnFastPath::FastSingleExpr.clone(),
+        None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -876,7 +886,7 @@ pub fn classifyFastForwardCall(fnId: i64, args: &aver_rt::AverList<Expr>) -> FnF
         Some(slotArgs) => {
             crate::aver_generated::domain::ast::FnFastPath::FastForwardCall(fnId, slotArgs)
         }
-        None => FnFastPath::FastSingleExpr.clone(),
+        None => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -888,15 +898,20 @@ pub fn classifyFastForwardSlots(
 ) -> Option<aver_rt::AverList<i64>> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(args, [] => Some(acc.reverse()), [arg, rest] => { match arg {
-            crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
-            let __tmp1 = aver_rt::AverList::prepend(slot, &acc);
-            args = rest;
-            acc = __tmp1;
+        aver_list_match!(args, [] => { return Some(acc.reverse()); }, [arg, rest] => { match arg {
+        crate::aver_generated::domain::ast::Expr::ExprSlot(slot) => {
+            {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(slot, &acc);
+            args = __tco0;
+            acc = __tco1;
             continue;
+        }
         },
-            _ => None
-        } });
+        _ => {
+            return None;
+        }
+    } })
     }
 }
 
@@ -1033,7 +1048,7 @@ pub fn classifyFastMatchScrutinee(
                 &b, &a, thenLeaf, elseLeaf,
             )
         }
-        _ => FnFastPath::FastSingleExpr.clone(),
+        _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -1057,7 +1072,7 @@ pub fn classifyFastEqScrutinee(
                     slot, a, thenLeaf, elseLeaf,
                 )
             }
-            _ => FnFastPath::FastSingleExpr.clone(),
+            _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         },
     }
 }
@@ -1087,7 +1102,7 @@ pub fn classifyFastEqOther(
                 elseLeaf.clone(),
             )
         }
-        _ => FnFastPath::FastSingleExpr.clone(),
+        _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }
 
@@ -1109,8 +1124,8 @@ pub fn classifyFastLtScrutinee(
                     elseLeaf.clone(),
                 )
             }
-            _ => FnFastPath::FastSingleExpr.clone(),
+            _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
         },
-        _ => FnFastPath::FastSingleExpr.clone(),
+        _ => crate::aver_generated::domain::ast::FnFastPath::FastSingleExpr,
     }
 }

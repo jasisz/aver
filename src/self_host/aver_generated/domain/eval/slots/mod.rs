@@ -9,7 +9,10 @@ pub fn buildSlotEnv(args: &aver_rt::AverList<Val>, slotCount: i64) -> aver_rt::A
     crate::cancel_checkpoint();
     crate::aver_generated::domain::eval::slots::buildSlotEnvLoop(
         args.clone(),
-        aver_rt::AverVector::new(slotCount as usize, Val::ValUnit.clone()),
+        aver_rt::AverVector::new(
+            slotCount as usize,
+            crate::aver_generated::domain::value::Val::ValUnit,
+        ),
         0i64,
     )
 }
@@ -23,14 +26,15 @@ pub fn buildSlotEnvLoop(
 ) -> aver_rt::AverVector<Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(args, [] => acc, [a, rest] => { {
-            let __tmp1 = { let __vec = acc.clone(); let __idx = idx as usize; if __idx < __vec.len() { __vec.set_unchecked(__idx, a) } else { __vec } };
-            let __tmp2 = (idx + 1i64);
-            args = rest;
-            acc = __tmp1;
-            idx = __tmp2;
+        aver_list_match!(args, [] => { return acc; }, [a, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = { let __vec = acc.clone(); let __idx = idx as usize; if __idx < __vec.len() { __vec.set_unchecked(__idx, a) } else { __vec } };
+            let __tco2 = (idx + 1i64);
+            args = __tco0;
+            acc = __tco1;
+            idx = __tco2;
             continue;
-        } });
+        } })
     }
 }
 

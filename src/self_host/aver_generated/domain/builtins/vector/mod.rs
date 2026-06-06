@@ -80,7 +80,7 @@ pub fn builtinVectorGet(args: &aver_rt::AverList<Val>) -> Result<Val, AverStr> {
             Some(v) => Ok(crate::aver_generated::domain::value::Val::ValSome(
                 std::sync::Arc::new(v),
             )),
-            None => Ok(Val::ValNone.clone()),
+            None => Ok(crate::aver_generated::domain::value::Val::ValNone),
         },
         _ => Err(AverStr::from("Vector.get: expected (Vector, Int)")),
     }
@@ -124,12 +124,12 @@ pub fn builtinVectorSetInner(vecV: &Val, idxV: &Val, valV: &Val) -> Result<Val, 
             match idxV.clone() {
                 crate::aver_generated::domain::value::Val::ValInt(idx) => {
                     if (idx < 0i64) {
-                        Ok(Val::ValNone.clone())
+                        Ok(crate::aver_generated::domain::value::Val::ValNone)
                     } else {
                         if (idx < (vec.len() as i64)) {
                             crate::aver_generated::domain::builtins::vector::builtinVectorSetInBounds(&vec, idx, valV)
                         } else {
-                            Ok(Val::ValNone.clone())
+                            Ok(crate::aver_generated::domain::value::Val::ValNone)
                         }
                     }
                 }

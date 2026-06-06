@@ -11,19 +11,20 @@ pub fn rewriteInternalFns(
 ) -> aver_rt::AverList<FnDef> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fns, [] => acc.reverse(), [f, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(&f), &acc);
-            fns = rest;
-            acc = __tmp1;
+        aver_list_match!(fns, [] => { return acc.reverse(); }, [f, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalFn(&f), &acc);
+            fns = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
 /// Rewrite the body of one resolved function into lighter internal expression shapes.
 pub fn rewriteInternalFn(fd: &FnDef) -> FnDef {
     crate::cancel_checkpoint();
-    FnDef {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmts(
@@ -45,12 +46,13 @@ pub fn rewriteInternalStmts(
 ) -> aver_rt::AverList<Stmt> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(stmts, [] => acc.reverse(), [stmt, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(&stmt), &acc);
-            stmts = rest;
-            acc = __tmp1;
+        aver_list_match!(stmts, [] => { return acc.reverse(); }, [stmt, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalStmt(&stmt), &acc);
+            stmts = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -148,7 +150,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
-                &BinOp::OpAdd,
+                &crate::aver_generated::domain::ast::BinOp::OpAdd,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -157,7 +159,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
-                &BinOp::OpSub,
+                &crate::aver_generated::domain::ast::BinOp::OpSub,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -166,7 +168,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
-                &BinOp::OpMul,
+                &crate::aver_generated::domain::ast::BinOp::OpMul,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -175,7 +177,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalBinop(
-                &BinOp::OpDiv,
+                &crate::aver_generated::domain::ast::BinOp::OpDiv,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -190,7 +192,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
-                &CmpOp::CmpEq,
+                &crate::aver_generated::domain::ast::CmpOp::CmpEq,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -199,7 +201,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
-                &CmpOp::CmpNeq,
+                &crate::aver_generated::domain::ast::CmpOp::CmpNeq,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -208,7 +210,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
-                &CmpOp::CmpLt,
+                &crate::aver_generated::domain::ast::CmpOp::CmpLt,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -217,7 +219,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
-                &CmpOp::CmpGt,
+                &crate::aver_generated::domain::ast::CmpOp::CmpGt,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -226,7 +228,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
-                &CmpOp::CmpLte,
+                &crate::aver_generated::domain::ast::CmpOp::CmpLte,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -235,7 +237,7 @@ pub fn rewriteInternalExprAfterLeaf(expr: &Expr) -> Expr {
             let a = (*a).clone();
             let b = (*b).clone();
             crate::aver_generated::domain::resolver::rewrite::rewriteInternalCmp(
-                &CmpOp::CmpGte,
+                &crate::aver_generated::domain::ast::CmpOp::CmpGte,
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&a),
                 &crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&b),
             )
@@ -363,12 +365,13 @@ pub fn rewriteInternalExprs(
 ) -> aver_rt::AverList<Expr> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(exprs, [] => acc.reverse(), [expr, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr), &acc);
-            exprs = rest;
-            acc = __tmp1;
+        aver_list_match!(exprs, [] => { return acc.reverse(); }, [expr, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr), &acc);
+            exprs = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -380,14 +383,13 @@ pub fn rewriteInternalFields(
 ) -> aver_rt::AverList<(AverStr, Expr)> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fields, [] => acc.reverse(), [pair, rest] => { match pair {
-            (name, expr) => {
-            let __tmp1 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr)), &acc);
-            fields = rest;
-            acc = __tmp1;
+        aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&expr)), &acc);
+            fields = __tco0;
+            acc = __tco1;
             continue;
-        }
-        } });
+        } } })
     }
 }
 
@@ -399,12 +401,13 @@ pub fn rewriteInternalArms(
 ) -> aver_rt::AverList<MatchArm> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(arms, [] => acc.reverse(), [arm, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(&arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&arm.body), bindingSlots: arm.bindingSlots.clone() }, &acc);
-            arms = rest;
-            acc = __tmp1;
+        aver_list_match!(arms, [] => { return acc.reverse(); }, [arm, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::ast::MatchArm { pattern: crate::aver_generated::domain::resolver::rewrite::rewritePattern(&arm.pattern), body: crate::aver_generated::domain::resolver::rewrite::rewriteInternalExpr(&arm.body), bindingSlots: arm.bindingSlots.clone() }, &acc);
+            arms = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -442,12 +445,13 @@ pub fn rewritePatterns(
 ) -> aver_rt::AverList<Pattern> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(pats, [] => acc.reverse(), [p, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewritePattern(&p), &acc);
-            pats = rest;
-            acc = __tmp1;
+        aver_list_match!(pats, [] => { return acc.reverse(); }, [p, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::rewrite::rewritePattern(&p), &acc);
+            pats = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -969,12 +973,24 @@ pub fn rebuildInternalCmp(op: &CmpOp, left: &Expr, right: &Expr) -> Expr {
 pub fn flipCmp(op: &CmpOp) -> CmpOp {
     crate::cancel_checkpoint();
     match op {
-        crate::aver_generated::domain::ast::CmpOp::CmpEq => CmpOp::CmpEq.clone(),
-        crate::aver_generated::domain::ast::CmpOp::CmpNeq => CmpOp::CmpNeq.clone(),
-        crate::aver_generated::domain::ast::CmpOp::CmpLt => CmpOp::CmpGt.clone(),
-        crate::aver_generated::domain::ast::CmpOp::CmpGt => CmpOp::CmpLt.clone(),
-        crate::aver_generated::domain::ast::CmpOp::CmpLte => CmpOp::CmpGte.clone(),
-        crate::aver_generated::domain::ast::CmpOp::CmpGte => CmpOp::CmpLte.clone(),
+        crate::aver_generated::domain::ast::CmpOp::CmpEq => {
+            crate::aver_generated::domain::ast::CmpOp::CmpEq
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpNeq => {
+            crate::aver_generated::domain::ast::CmpOp::CmpNeq
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpLt => {
+            crate::aver_generated::domain::ast::CmpOp::CmpGt
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpGt => {
+            crate::aver_generated::domain::ast::CmpOp::CmpLt
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpLte => {
+            crate::aver_generated::domain::ast::CmpOp::CmpGte
+        }
+        crate::aver_generated::domain::ast::CmpOp::CmpGte => {
+            crate::aver_generated::domain::ast::CmpOp::CmpLte
+        }
     }
 }
 

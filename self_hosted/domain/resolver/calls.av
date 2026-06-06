@@ -199,6 +199,7 @@ fn isBuiltinCallName(name: String) -> Bool
         "HttpServer.listen",
         "HttpServer.listenWith",
         "Int.abs",
+        "Int.div",
         "Int.fromString",
         "Int.max",
         "Int.min",

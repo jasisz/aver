@@ -12,6 +12,7 @@ fn callInt(name: String, args: List<Val>) -> Result<Val, String>
         "Int.fromString" -> builtinIntFromString(args)
         "Int.abs" -> builtinIntAbs(args)
         "Int.mod" -> builtinIntMod(args)
+        "Int.div" -> builtinIntDiv(args)
         "Int.max" -> builtinIntMax(args)
         "Int.min" -> builtinIntMin(args)
         _ -> Result.Err("unknown int builtin: {name}")
@@ -156,6 +157,29 @@ verify builtinIntModInner
     builtinIntModInner(Val.ValInt(7), Val.ValInt(3)) => Result.Ok(Val.ValOk(Val.ValInt(1)))
     builtinIntModInner(Val.ValInt(5), Val.ValInt(0)) => Result.Ok(Val.ValErr(Val.ValStr("modulo by zero")))
     builtinIntModInner(Val.ValStr("x"), Val.ValInt(3)) => Result.Err("expected int argument")
+
+fn builtinIntDiv(args: List<Val>) -> Result<Val, String>
+    ? "Int.div(a, b) -> a div b as a Result value."
+    pair = Domain.Builtins.Helpers.twoArgs(args)?
+    match pair
+        (aV, bV) -> builtinIntDivInner(aV, bV)
+
+verify builtinIntDiv
+    builtinIntDiv([Val.ValInt(7), Val.ValInt(2)]) => Result.Ok(Val.ValOk(Val.ValInt(3)))
+    builtinIntDiv([Val.ValInt(1)]) => Result.Err("expected 2 arguments")
+
+fn builtinIntDivInner(aV: Val, bV: Val) -> Result<Val, String>
+    ? "Inner impl of Int.div — Euclidean, Err on zero divisor or overflow."
+    a = Domain.Builtins.Helpers.expectInt(aV)?
+    b = Domain.Builtins.Helpers.expectInt(bV)?
+    match Int.div(a, b)
+        Result.Ok(q)  -> Result.Ok(Val.ValOk(Val.ValInt(q)))
+        Result.Err(e) -> Result.Ok(Val.ValErr(Val.ValStr(e)))
+
+verify builtinIntDivInner
+    builtinIntDivInner(Val.ValInt(7), Val.ValInt(2)) => Result.Ok(Val.ValOk(Val.ValInt(3)))
+    builtinIntDivInner(Val.ValInt(5), Val.ValInt(0)) => Result.Ok(Val.ValErr(Val.ValStr("division by zero")))
+    builtinIntDivInner(Val.ValStr("x"), Val.ValInt(3)) => Result.Err("expected int argument")
 
 fn builtinStringLen(args: List<Val>) -> Result<Val, String>
     ? "String.len(s) -> length as Int."

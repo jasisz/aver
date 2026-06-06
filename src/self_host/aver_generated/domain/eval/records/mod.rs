@@ -24,9 +24,7 @@ fn __mutual_tco_trampoline_1(mut __state: __MutualTco1) -> aver_rt::AverList<(Av
         __state = match __state {
             __MutualTco1::MergeRecordFieldsAcc(mut existing, mut overrides, mut acc) => {
                 crate::cancel_checkpoint();
-                aver_list_match!(existing, [] => { return aver_rt::AverList::concat(&acc.reverse(), &overrides) }, [pair, rest] => match pair {
-                (k, v) => __MutualTco1::MergeOneField(k, v, rest, overrides, acc)
-                })
+                aver_list_match!(existing, [] => { return aver_rt::AverList::concat(&acc.reverse(), &overrides) }, [pair, rest] => { { let (k, v) = pair; __MutualTco1::MergeOneField(k, v, rest, overrides, acc) } })
             }
             __MutualTco1::MergeOneField(mut k, mut v, mut rest, mut overrides, mut acc) => {
                 crate::cancel_checkpoint();
@@ -200,12 +198,11 @@ pub fn findOverride(
 ) -> Option<Val> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(overrides, [] => None, [pair, rest] => { match pair {
-            (ok, ov) => if (ok == k) { Some(ov) } else { {
-            overrides = rest;
+        aver_list_match!(overrides, [] => { return None; }, [pair, rest] => { { let (ok, ov) = pair; if (ok == k) { return Some(ov); } else { {
+            let __tco1 = rest;
+            overrides = __tco1;
             continue;
-        } }
-        } });
+        } } } })
     }
 }
 
@@ -233,13 +230,12 @@ pub fn removeOverrideAcc(
     loop {
         crate::cancel_checkpoint();
         let reversed = acc.reverse();
-        return aver_list_match!(overrides, [] => reversed, [pair, rest] => { match pair {
-            (ok, ov) => if (ok == k) { aver_rt::AverList::concat(&reversed, &rest) } else { {
-            let __tmp2 = aver_rt::AverList::prepend((ok, ov), &acc);
-            overrides = rest;
-            acc = __tmp2;
+        aver_list_match!(overrides, [] => { return reversed; }, [pair, rest] => { { let (ok, ov) = pair; if (ok == k) { return aver_rt::AverList::concat(&reversed, &rest); } else { {
+            let __tco1 = rest;
+            let __tco2 = aver_rt::AverList::prepend((ok, ov), &acc);
+            overrides = __tco1;
+            acc = __tco2;
             continue;
-        } }
-        } });
+        } } } })
     }
 }

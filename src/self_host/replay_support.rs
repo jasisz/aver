@@ -1048,6 +1048,23 @@ pub mod aver_replay {
         ScopeMode::Normal
     }
 
+    fn canonical_unit(value: ReplayJson) -> ReplayJson {
+        // A Unit return serializes as JSON null in the VM / wasm-gc
+        // replay format; the self-host interpreter's value type wraps
+        // it as a `ValUnit` variant object. Map that variant back to
+        // null so a recording made by any backend replays cleanly on
+        // the self-host (and vice versa). Every other value passes
+        // through untouched.
+        if let ReplayJson::Object(ref map) = value {
+            if let Some(ReplayJson::Object(variant)) = map.get("$variant") {
+                if variant.get("name").and_then(|n| n.as_str()) == Some("ValUnit") {
+                    return ReplayJson::Null;
+                }
+            }
+        }
+        value
+    }
+
     fn finish_scope_success<T: ReplayValue>(value: &T) {
         SCOPE_STATE.with(|cell| {
             let mut state = cell.borrow_mut();
@@ -1058,7 +1075,7 @@ pub mod aver_replay {
                 ScopeMode::Normal => {}
                 ScopeMode::Record { path, session } => {
                     session.output = RecordedOutcome::Value {
-                        value: value.to_replay_json(),
+                        value: canonical_unit(value.to_replay_json()),
                     };
                     write_recording(path, session);
                 }
@@ -1071,7 +1088,7 @@ pub mod aver_replay {
                             session.effects.len().saturating_sub(*position)
                         );
                     }
-                    let actual_json = value.to_replay_json();
+                    let actual_json = canonical_unit(value.to_replay_json());
                     // Surface the live return value to the parent
                     // process via a stdout marker so the host
                     // (`run_self_host_replay` in

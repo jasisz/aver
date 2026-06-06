@@ -154,25 +154,31 @@ pub(crate) fn should_skip_http_server() -> bool {
     crate::aver_replay::is_record_mode()
 }
 
-pub fn http_server_listen<F>(port: i64, handler: F) -> Result<(), AverStr>
+pub fn http_server_listen<F>(port: i64, mut handler: F) -> Result<(), AverStr>
 where
-    F: FnMut(aver_rt::HttpRequest) -> aver_rt::HttpResponse,
+    F: FnMut(&aver_rt::HttpRequest) -> aver_rt::HttpResponse,
 {
     if should_skip_http_server() {
         return Ok(());
     }
-    aver_rt::http_server::listen(port, handler).map_err(AverStr::from)
+    // User handlers are emitted borrow-by-default (`fn(&HttpRequest)`),
+    // so adapt the owned-value `aver_rt` callback to a by-reference call.
+    aver_rt::http_server::listen(port, move |req| handler(&req)).map_err(AverStr::from)
 }
 
-pub fn http_server_listen_with<C, F>(port: i64, context: C, handler: F) -> Result<(), AverStr>
+pub fn http_server_listen_with<C, F>(port: i64, context: C, mut handler: F) -> Result<(), AverStr>
 where
     C: Clone,
-    F: FnMut(C, aver_rt::HttpRequest) -> aver_rt::HttpResponse,
+    F: FnMut(&C, &aver_rt::HttpRequest) -> aver_rt::HttpResponse,
 {
     if should_skip_http_server() {
         return Ok(());
     }
-    aver_rt::http_server::listen_with(port, context, handler).map_err(AverStr::from)
+    // User handlers take both the context and the request by reference
+    // (`fn(&Ctx, &HttpRequest)`); adapt the owned-value `aver_rt`
+    // callback accordingly.
+    aver_rt::http_server::listen_with(port, context, move |ctx, req| handler(&ctx, &req))
+        .map_err(AverStr::from)
 }
 
 pub use aver_rt::TcpConnection as Tcp_Connection;
@@ -180,3 +186,5 @@ pub use aver_rt::TcpConnection as Tcp_Connection;
 pub use aver_rt::HttpResponse;
 
 pub use aver_rt::HttpRequest;
+
+pub use aver_rt::TerminalSize as Terminal_Size;

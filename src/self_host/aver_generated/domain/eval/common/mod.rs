@@ -45,14 +45,14 @@ pub fn propagationPrefix() -> AverStr {
 /// Mark a language-level Result.Err so function boundaries can convert it back into a value.
 pub fn wrapPropagatedError(msg: AverStr) -> AverStr {
     crate::cancel_checkpoint();
-    (crate::aver_generated::domain::eval::common::propagationPrefix() + &msg)
+    (AverStr::from("__aver_prop__:") + &msg)
 }
 
 /// Return the propagated payload when the evaluator error is an internal ? marker.
 #[inline(always)]
 pub fn unwrapPropagatedError(err: AverStr) -> Option<AverStr> {
     crate::cancel_checkpoint();
-    let prefix = crate::aver_generated::domain::eval::common::propagationPrefix();
+    let prefix = AverStr::from("__aver_prop__:");
     if err.starts_with(&*prefix) {
         Some(
             (aver_rt::string_slice(
@@ -92,11 +92,10 @@ pub fn lookupField(
 ) -> Result<Val, AverStr> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fields, [] => Err((AverStr::from("unknown field: ") + &name)), [pair, rest] => { match pair {
-            (k, v) => if (k == name) { Ok(v) } else { {
-            fields = rest;
+        aver_list_match!(fields, [] => { return Err((AverStr::from("unknown field: ") + &name)); }, [pair, rest] => { { let (k, v) = pair; if (k == name) { return Ok(v); } else { {
+            let __tco0 = rest;
+            fields = __tco0;
             continue;
-        } }
-        } });
+        } } } })
     }
 }

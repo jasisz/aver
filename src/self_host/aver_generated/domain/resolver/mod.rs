@@ -33,7 +33,7 @@ pub fn resolveProgram(prog: &Program) -> Program {
         fnMap,
         aver_rt::AverList::empty(),
     );
-    Program {
+    crate::aver_generated::domain::ast::Program {
         deps: prog.deps.clone(),
         fns: crate::aver_generated::domain::resolver::rewrite::rewriteInternalFns(
             annotatedFns,

@@ -266,12 +266,14 @@ fn __mutual_tco_trampoline_2(
             }
             __MutualTco2::ResolveOneArm(mut arm, mut rest, mut slots, mut acc) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::resolver::core::resolveArm(&arm, &slots) {
-                    (resolvedArm, mergedSlots) => __MutualTco2::ResolveArms(
+                {
+                    let (resolvedArm, mergedSlots) =
+                        crate::aver_generated::domain::resolver::core::resolveArm(&arm, &slots);
+                    __MutualTco2::ResolveArms(
                         rest,
                         mergedSlots,
                         aver_rt::AverList::prepend(resolvedArm, &acc),
-                    ),
+                    )
                 }
             }
         };
@@ -376,8 +378,10 @@ fn __mutual_tco_trampoline_3(
             }
             __MutualTco3::ResolveStmtExpr(mut expr, mut rest, mut slots, mut next, mut acc) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::resolver::core::resolveExpr(&expr, &slots) {
-                    (re, newSlots) => __MutualTco3::ResolveStmts(
+                {
+                    let (re, newSlots) =
+                        crate::aver_generated::domain::resolver::core::resolveExpr(&expr, &slots);
+                    __MutualTco3::ResolveStmts(
                         rest,
                         newSlots.clone(),
                         crate::aver_generated::domain::resolver::core::maxInt(
@@ -389,7 +393,7 @@ fn __mutual_tco_trampoline_3(
                             crate::aver_generated::domain::ast::Stmt::StmtExpr(re),
                             &acc,
                         ),
-                    ),
+                    )
                 }
             }
             __MutualTco3::ResolveStmtBind(
@@ -401,10 +405,10 @@ fn __mutual_tco_trampoline_3(
                 mut acc,
             ) => {
                 crate::cancel_checkpoint();
-                match crate::aver_generated::domain::resolver::core::resolveExpr(&expr, &slots) {
-                    (newExpr, exprSlots) => __MutualTco3::ResolveStmtBindFinish(
-                        name, newExpr, rest, exprSlots, next, acc,
-                    ),
+                {
+                    let (newExpr, exprSlots) =
+                        crate::aver_generated::domain::resolver::core::resolveExpr(&expr, &slots);
+                    __MutualTco3::ResolveStmtBindFinish(name, newExpr, rest, exprSlots, next, acc)
                 }
             }
             __MutualTco3::ResolveStmtBindFinish(
@@ -526,12 +530,13 @@ pub fn resolveFns(
 ) -> aver_rt::AverList<FnDef> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fns, [] => acc.reverse(), [f, rest] => { {
-            let __tmp1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::core::resolveFn(&f), &acc);
-            fns = rest;
-            acc = __tmp1;
+        aver_list_match!(fns, [] => { return acc.reverse(); }, [f, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::core::resolveFn(&f), &acc);
+            fns = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -558,14 +563,15 @@ pub fn buildParamSlots(
 ) -> (aver_rt::AverMap<AverStr, i64>, i64) {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(params, [] => (slots, next), [p, rest] => { {
-            let __tmp1 = slots.insert_owned(p, next);
-            let __tmp2 = (next + 1i64);
-            params = rest;
-            slots = __tmp1;
-            next = __tmp2;
+        aver_list_match!(params, [] => { return (slots, next); }, [p, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = slots.insert_owned(p, next);
+            let __tco2 = (next + 1i64);
+            params = __tco0;
+            slots = __tco1;
+            next = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -601,13 +607,13 @@ pub fn computeSlotCount(
         body.clone(),
         (baseSlot - 1i64),
     );
-    FnDef {
+    crate::aver_generated::domain::ast::FnDef {
         name: fd.name.clone(),
         params: fd.params.clone(),
         body: body.clone(),
         slotCount: (maxFromBody + 1i64),
         slotMap: slotMap.clone(),
-        fastPath: FnFastPath::FastNone.clone(),
+        fastPath: crate::aver_generated::domain::ast::FnFastPath::FastNone,
         tailLoop: false,
     }
 }
@@ -617,12 +623,13 @@ pub fn computeSlotCount(
 pub fn maxSlotInStmts(mut stmts: aver_rt::AverList<Stmt>, mut acc: i64) -> i64 {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(stmts, [] => acc, [s, rest] => { {
-            let __tmp1 = crate::aver_generated::domain::resolver::core::maxSlotInStmt(&s, acc);
-            stmts = rest;
-            acc = __tmp1;
+        aver_list_match!(stmts, [] => { return acc; }, [s, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInStmt(&s, acc);
+            stmts = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -650,12 +657,13 @@ pub fn maxSlotInStmt(s: &Stmt, acc: i64) -> i64 {
 pub fn maxSlotInExprs(mut exprs: aver_rt::AverList<Expr>, mut acc: i64) -> i64 {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(exprs, [] => acc, [e, rest] => { {
-            let __tmp1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&e, acc);
-            exprs = rest;
-            acc = __tmp1;
+        aver_list_match!(exprs, [] => { return acc; }, [e, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&e, acc);
+            exprs = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -664,14 +672,13 @@ pub fn maxSlotInExprs(mut exprs: aver_rt::AverList<Expr>, mut acc: i64) -> i64 {
 pub fn maxSlotInFields(mut fields: aver_rt::AverList<(AverStr, Expr)>, mut acc: i64) -> i64 {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fields, [] => acc, [pair, rest] => { match pair {
-            (_, expr) => {
-            let __tmp1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&expr, acc);
-            fields = rest;
-            acc = __tmp1;
+        aver_list_match!(fields, [] => { return acc; }, [pair, rest] => { { let (_, expr) = pair; {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&expr, acc);
+            fields = __tco0;
+            acc = __tco1;
             continue;
-        }
-        } });
+        } } })
     }
 }
 
@@ -680,12 +687,13 @@ pub fn maxSlotInFields(mut fields: aver_rt::AverList<(AverStr, Expr)>, mut acc: 
 pub fn maxSlotInArms(mut arms: aver_rt::AverList<MatchArm>, mut acc: i64) -> i64 {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(arms, [] => acc, [arm, rest] => { {
-            let __tmp1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&arm.body, acc);
-            arms = rest;
-            acc = __tmp1;
+        aver_list_match!(arms, [] => { return acc; }, [arm, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::resolver::core::maxSlotInExpr(&arm.body, acc);
+            arms = __tco0;
+            acc = __tco1;
             continue;
-        } });
+        } })
     }
 }
 
@@ -1310,14 +1318,15 @@ pub fn resolveExprs(
 ) -> aver_rt::AverList<Expr> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(exprs, [] => acc.reverse(), [e, rest] => { {
-            let __tmp1 = slots.clone();
-            let __tmp2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::core::resolveExprSimple(&e, &slots), &acc);
-            exprs = rest;
-            slots = __tmp1;
-            acc = __tmp2;
+        aver_list_match!(exprs, [] => { return acc.reverse(); }, [e, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = slots.clone();
+            let __tco2 = aver_rt::AverList::prepend(crate::aver_generated::domain::resolver::core::resolveExprSimple(&e, &slots), &acc);
+            exprs = __tco0;
+            slots = __tco1;
+            acc = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -1330,16 +1339,15 @@ pub fn resolveFields(
 ) -> aver_rt::AverList<(AverStr, Expr)> {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(fields, [] => acc.reverse(), [pair, rest] => { match pair {
-            (name, expr) => {
-            let __tmp1 = slots.clone();
-            let __tmp2 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(&expr, &slots)), &acc);
-            fields = rest;
-            slots = __tmp1;
-            acc = __tmp2;
+        aver_list_match!(fields, [] => { return acc.reverse(); }, [pair, rest] => { { let (name, expr) = pair; {
+            let __tco0 = rest;
+            let __tco1 = slots.clone();
+            let __tco2 = aver_rt::AverList::prepend((name, crate::aver_generated::domain::resolver::core::resolveExprSimple(&expr, &slots)), &acc);
+            fields = __tco0;
+            slots = __tco1;
+            acc = __tco2;
             continue;
-        }
-        } });
+        } } })
     }
 }
 
@@ -1375,7 +1383,7 @@ pub fn resolveArmBody(
         let (re, finalSlots) =
             crate::aver_generated::domain::resolver::core::resolveExpr(&arm.body, newSlots);
         (
-            MatchArm {
+            crate::aver_generated::domain::ast::MatchArm {
                 pattern: arm.pattern.clone(),
                 body: re,
                 bindingSlots: bindingSlots.clone(),
@@ -1468,14 +1476,15 @@ pub fn patternBindingSlotsConstructor(
 ) -> (aver_rt::AverMap<AverStr, i64>, i64) {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(bindings, [] => (bindingSlots, next), [name, rest] => { {
-            let __tmp1 = bindingSlots.insert_owned(name, next);
-            let __tmp2 = (next + 1i64);
-            bindings = rest;
-            bindingSlots = __tmp1;
-            next = __tmp2;
+        aver_list_match!(bindings, [] => { return (bindingSlots, next); }, [name, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = bindingSlots.insert_owned(name, next);
+            let __tco2 = (next + 1i64);
+            bindings = __tco0;
+            bindingSlots = __tco1;
+            next = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -1488,14 +1497,15 @@ pub fn patternBindingSlotsTuple(
 ) -> (aver_rt::AverMap<AverStr, i64>, i64) {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(pats, [] => (bindingSlots, next), [p, rest] => { match crate::aver_generated::domain::resolver::core::patternBindingSlotsInner(&p, &bindingSlots, next) {
-            (newBindingSlots, newNext) => {
-            pats = rest;
-            bindingSlots = newBindingSlots;
-            next = newNext;
+        aver_list_match!(pats, [] => { return (bindingSlots, next); }, [p, rest] => { { let (newBindingSlots, newNext) = crate::aver_generated::domain::resolver::core::patternBindingSlotsInner(&p, &bindingSlots, next); {
+            let __tco0 = rest;
+            let __tco1 = newBindingSlots;
+            let __tco2 = newNext;
+            pats = __tco0;
+            bindingSlots = __tco1;
+            next = __tco2;
             continue;
-        }
-        } });
+        } } })
     }
 }
 
@@ -1514,7 +1524,7 @@ pub fn addPatternSlots(
 pub fn mapMaxVal(m: &aver_rt::AverMap<AverStr, i64>) -> i64 {
     crate::cancel_checkpoint();
     let vals = aver_rt::AverList::from_vec(m.values().cloned().collect::<Vec<_>>());
-    crate::aver_generated::domain::resolver::core::maxInList(vals, (0i64 - 1i64))
+    crate::aver_generated::domain::resolver::core::maxInList(vals, (-1i64))
 }
 
 /// Find maximum value in a list.
@@ -1522,14 +1532,17 @@ pub fn mapMaxVal(m: &aver_rt::AverMap<AverStr, i64>) -> i64 {
 pub fn maxInList(mut vals: aver_rt::AverList<i64>, mut acc: i64) -> i64 {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(vals, [] => acc, [v, rest] => { if (v > acc) { {
-            vals = rest;
-            acc = v;
+        aver_list_match!(vals, [] => { return acc; }, [v, rest] => { if (v > acc) { {
+            let __tco0 = rest;
+            let __tco1 = v;
+            vals = __tco0;
+            acc = __tco1;
             continue;
         } } else { {
-            vals = rest;
+            let __tco0 = rest;
+            vals = __tco0;
             continue;
-        } } });
+        } } })
     }
 }
 
@@ -1593,14 +1606,15 @@ pub fn addConstructorSlots(
 ) -> (aver_rt::AverMap<AverStr, i64>, i64) {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(bindings, [] => (slots, next), [name, rest] => { {
-            let __tmp1 = slots.insert_owned(name, next);
-            let __tmp2 = (next + 1i64);
-            bindings = rest;
-            slots = __tmp1;
-            next = __tmp2;
+        aver_list_match!(bindings, [] => { return (slots, next); }, [name, rest] => { {
+            let __tco0 = rest;
+            let __tco1 = slots.insert_owned(name, next);
+            let __tco2 = (next + 1i64);
+            bindings = __tco0;
+            slots = __tco1;
+            next = __tco2;
             continue;
-        } });
+        } })
     }
 }
 
@@ -1613,13 +1627,14 @@ pub fn addTuplePatternSlots(
 ) -> (aver_rt::AverMap<AverStr, i64>, i64) {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(pats, [] => (slots, next), [p, rest] => { match crate::aver_generated::domain::resolver::core::addPatternSlotsInner(&p, &slots, next) {
-            (newSlots, newNext) => {
-            pats = rest;
-            slots = newSlots;
-            next = newNext;
+        aver_list_match!(pats, [] => { return (slots, next); }, [p, rest] => { { let (newSlots, newNext) = crate::aver_generated::domain::resolver::core::addPatternSlotsInner(&p, &slots, next); {
+            let __tco0 = rest;
+            let __tco1 = newSlots;
+            let __tco2 = newNext;
+            pats = __tco0;
+            slots = __tco1;
+            next = __tco2;
             continue;
-        }
-        } });
+        } } })
     }
 }

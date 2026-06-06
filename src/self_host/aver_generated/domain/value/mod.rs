@@ -396,18 +396,23 @@ pub fn valListRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(items, [] => { aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("[")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("]")); __b }) }, [v, rest] => { if first { {
-            items = rest;
-            acc = crate::aver_generated::domain::value::valReprInner(&v);
-            first = false;
+        aver_list_match!(items, [] => { return aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("[")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("]")); __b }); }, [v, rest] => { if first { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::value::valReprInner(&v);
+            let __tco2 = false;
+            items = __tco0;
+            acc = __tco1;
+            first = __tco2;
             continue;
         } } else { {
-            let __tmp1 = ((acc + &AverStr::from(", ")) + &crate::aver_generated::domain::value::valReprInner(&v));
-            items = rest;
-            acc = __tmp1;
-            first = false;
+            let __tco0 = rest;
+            let __tco1 = ((acc + &AverStr::from(", ")) + &crate::aver_generated::domain::value::valReprInner(&v));
+            let __tco2 = false;
+            items = __tco0;
+            acc = __tco1;
+            first = __tco2;
             continue;
-        } } });
+        } } })
     }
 }
 
@@ -607,20 +612,23 @@ pub fn valMapRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(entries, [] => { aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("{")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("}")); __b }) }, [pair, rest] => { match pair {
-            (k, v) => if first { {
-            entries = rest;
-            acc = ((crate::aver_generated::domain::value::quoteString(k) + &AverStr::from(": ")) + &crate::aver_generated::domain::value::valReprInner(&v));
-            first = false;
+        aver_list_match!(entries, [] => { return aver_rt::AverStr::from({ let mut __b = { let mut __b = { let mut __b = aver_rt::Buffer::with_capacity((18i64) as usize); __b.push_str(&AverStr::from("{")); __b }; __b.push_str(&aver_rt::AverStr::from(aver_rt::aver_display(&(acc)))); __b }; __b.push_str(&AverStr::from("}")); __b }); }, [pair, rest] => { { let (k, v) = pair; if first { {
+            let __tco0 = rest;
+            let __tco1 = ((crate::aver_generated::domain::value::quoteString(k) + &AverStr::from(": ")) + &crate::aver_generated::domain::value::valReprInner(&v));
+            let __tco2 = false;
+            entries = __tco0;
+            acc = __tco1;
+            first = __tco2;
             continue;
         } } else { {
-            let __tmp1 = ((((acc + &AverStr::from(", ")) + &crate::aver_generated::domain::value::quoteString(k)) + &AverStr::from(": ")) + &crate::aver_generated::domain::value::valReprInner(&v));
-            entries = rest;
-            acc = __tmp1;
-            first = false;
+            let __tco0 = rest;
+            let __tco1 = ((((acc + &AverStr::from(", ")) + &crate::aver_generated::domain::value::quoteString(k)) + &AverStr::from(": ")) + &crate::aver_generated::domain::value::valReprInner(&v));
+            let __tco2 = false;
+            entries = __tco0;
+            acc = __tco1;
+            first = __tco2;
             continue;
-        } }
-        } });
+        } } } })
     }
 }
 
@@ -682,17 +690,22 @@ pub fn valFieldsRepr(
 ) -> AverStr {
     loop {
         crate::cancel_checkpoint();
-        return aver_list_match!(items, [] => acc, [v, rest] => { if first { {
-            items = rest;
-            acc = crate::aver_generated::domain::value::valReprInner(&v);
-            first = false;
+        aver_list_match!(items, [] => { return acc; }, [v, rest] => { if first { {
+            let __tco0 = rest;
+            let __tco1 = crate::aver_generated::domain::value::valReprInner(&v);
+            let __tco2 = false;
+            items = __tco0;
+            acc = __tco1;
+            first = __tco2;
             continue;
         } } else { {
-            let __tmp1 = ((acc + &AverStr::from(", ")) + &crate::aver_generated::domain::value::valReprInner(&v));
-            items = rest;
-            acc = __tmp1;
-            first = false;
+            let __tco0 = rest;
+            let __tco1 = ((acc + &AverStr::from(", ")) + &crate::aver_generated::domain::value::valReprInner(&v));
+            let __tco2 = false;
+            items = __tco0;
+            acc = __tco1;
+            first = __tco2;
             continue;
-        } } });
+        } } })
     }
 }

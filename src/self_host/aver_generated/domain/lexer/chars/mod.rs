@@ -167,27 +167,29 @@ pub fn digitVal(c: AverStr) -> i64 {
 pub fn readNumberLoop(mut src: AverStr, mut pos: i64, mut acc: i64) -> (i64, i64) {
     loop {
         crate::cancel_checkpoint();
-        return if (pos < (src.chars().count() as i64)) {
+        if (pos < (src.chars().count() as i64)) {
             match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
                     if crate::aver_generated::domain::lexer::chars::isDigit(c.clone()) {
                         {
-                            let __tmp1 = (pos + 1i64);
-                            let __tmp2 = ((acc * 10i64)
+                            let __tco1 = (pos + 1i64);
+                            let __tco2 = ((acc * 10i64)
                                 + crate::aver_generated::domain::lexer::chars::digitVal(c));
-                            pos = __tmp1;
-                            acc = __tmp2;
+                            pos = __tco1;
+                            acc = __tco2;
                             continue;
                         }
                     } else {
-                        (acc, pos)
+                        return (acc, pos);
                     }
                 }
-                None => (acc, pos),
+                None => {
+                    return (acc, pos);
+                }
             }
         } else {
-            (acc, pos)
-        };
+            return (acc, pos);
+        }
     }
 }
 
@@ -221,26 +223,28 @@ pub fn isIdentCharPlain(c: AverStr) -> bool {
 pub fn readIdentLoopDotted(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> (AverStr, i64) {
     loop {
         crate::cancel_checkpoint();
-        return if (pos < (src.chars().count() as i64)) {
+        if (pos < (src.chars().count() as i64)) {
             match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
                     if crate::aver_generated::domain::lexer::chars::isIdentCharDotted(c.clone()) {
                         {
-                            let __tmp1 = (pos + 1i64);
-                            let __tmp2 = (acc + &c);
-                            pos = __tmp1;
-                            acc = __tmp2;
+                            let __tco1 = (pos + 1i64);
+                            let __tco2 = (acc + &c);
+                            pos = __tco1;
+                            acc = __tco2;
                             continue;
                         }
                     } else {
-                        (acc, pos)
+                        return (acc, pos);
                     }
                 }
-                None => (acc, pos),
+                None => {
+                    return (acc, pos);
+                }
             }
         } else {
-            (acc, pos)
-        };
+            return (acc, pos);
+        }
     }
 }
 
@@ -249,26 +253,28 @@ pub fn readIdentLoopDotted(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> 
 pub fn readIdentLoopPlain(mut src: AverStr, mut pos: i64, mut acc: AverStr) -> (AverStr, i64) {
     loop {
         crate::cancel_checkpoint();
-        return if (pos < (src.chars().count() as i64)) {
+        if (pos < (src.chars().count() as i64)) {
             match (src.chars().nth(pos as usize).map(|c| c.to_string())).into_aver() {
                 Some(c) => {
                     if crate::aver_generated::domain::lexer::chars::isIdentCharPlain(c.clone()) {
                         {
-                            let __tmp1 = (pos + 1i64);
-                            let __tmp2 = (acc + &c);
-                            pos = __tmp1;
-                            acc = __tmp2;
+                            let __tco1 = (pos + 1i64);
+                            let __tco2 = (acc + &c);
+                            pos = __tco1;
+                            acc = __tco2;
                             continue;
                         }
                     } else {
-                        (acc, pos)
+                        return (acc, pos);
                     }
                 }
-                None => (acc, pos),
+                None => {
+                    return (acc, pos);
+                }
             }
         } else {
-            (acc, pos)
-        };
+            return (acc, pos);
+        }
     }
 }
 
@@ -290,16 +296,16 @@ pub fn keywordOrIdent(s: AverStr) -> Token {
     {
         let __dispatch_subject = s.clone();
         if &*__dispatch_subject == "fn" {
-            Token::TkFn.clone()
+            crate::aver_generated::domain::token::Token::TkFn
         } else {
             if &*__dispatch_subject == "match" {
-                Token::TkMatch.clone()
+                crate::aver_generated::domain::token::Token::TkMatch
             } else {
                 if &*__dispatch_subject == "true" {
-                    Token::TkTrue.clone()
+                    crate::aver_generated::domain::token::Token::TkTrue
                 } else {
                     if &*__dispatch_subject == "false" {
-                        Token::TkFalse.clone()
+                        crate::aver_generated::domain::token::Token::TkFalse
                     } else {
                         if &*__dispatch_subject == "module" {
                             crate::aver_generated::domain::token::Token::TkIdent(AverStr::from(
