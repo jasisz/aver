@@ -315,16 +315,28 @@ fn emit_fn_call(
             }
         }
         ResolvedCallee::Intrinsic(intr) => {
-            // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
-            // don't reach the Lean backend in practice (Lean emit
-            // doesn't see post-interp-lower buffer shapes), but the
-            // resolver carries them through; render as bare-name
-            // call so the diagnostic stays traceable.
+            use crate::ir::hir::BuiltinIntrinsic;
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
-            if arg_strs.is_empty() {
-                intr.name().to_string()
-            } else {
-                format!("{} {}", intr.name(), arg_strs.join(" "))
+            // Const-fold Euclidean div/mod: for a non-zero constant divisor
+            // `Int.div` / `Int.mod` are total, and Lean's `/` / `%` are
+            // Euclidean on `Int`, so render the bare op. (These intrinsics
+            // are MIR-synthesis-only and the Lean backend reads HIR, so this
+            // is unreachable today — kept total + correct if a future path
+            // ever routes them through.)
+            match intr {
+                BuiltinIntrinsic::IntDivEuclid if arg_strs.len() == 2 => {
+                    format!("({} / {})", arg_strs[0], arg_strs[1])
+                }
+                BuiltinIntrinsic::IntModEuclid if arg_strs.len() == 2 => {
+                    format!("({} % {})", arg_strs[0], arg_strs[1])
+                }
+                // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
+                // don't reach the Lean backend in practice (Lean emit
+                // doesn't see post-interp-lower buffer shapes), but the
+                // resolver carries them through; render as bare-name
+                // call so the diagnostic stays traceable.
+                _ if arg_strs.is_empty() => intr.name().to_string(),
+                _ => format!("{} {}", intr.name(), arg_strs.join(" ")),
             }
         }
         ResolvedCallee::Fn(fn_id) => {

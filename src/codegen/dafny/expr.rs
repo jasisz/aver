@@ -350,12 +350,25 @@ fn emit_fn_call(
             format!("{}({})", aver_name_to_dafny(name), a.join(", "))
         }
         ResolvedCallee::Intrinsic(intr) => {
-            // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
-            // don't reach the Dafny backend in practice (Dafny emit
-            // doesn't see post-interp-lower buffer shapes), but the
-            // resolver carries them through; render as bare-name call.
+            use crate::ir::hir::BuiltinIntrinsic;
             let a: Vec<String> = args.iter().map(|e| emit_expr(e, ctx)).collect();
-            format!("{}({})", intr.name(), a.join(", "))
+            // Const-fold Euclidean div/mod: for a non-zero constant divisor
+            // these are total, and Dafny's `/` / `%` on `int` are Euclidean,
+            // so render the bare op. (MIR-synthesis-only; the Dafny backend
+            // reads HIR, so this is unreachable today — kept total + correct.)
+            match intr {
+                BuiltinIntrinsic::IntDivEuclid if a.len() == 2 => {
+                    format!("({} / {})", a[0], a[1])
+                }
+                BuiltinIntrinsic::IntModEuclid if a.len() == 2 => {
+                    format!("({} % {})", a[0], a[1])
+                }
+                // Compiler-synthesised `__buf_*` / `__to_str` intrinsics
+                // don't reach the Dafny backend in practice (Dafny emit
+                // doesn't see post-interp-lower buffer shapes), but the
+                // resolver carries them through; render as bare-name call.
+                _ => format!("{}({})", intr.name(), a.join(", ")),
+            }
         }
         ResolvedCallee::Fn(fn_id) => {
             let entry = ctx.symbol_table.fn_entry(*fn_id);

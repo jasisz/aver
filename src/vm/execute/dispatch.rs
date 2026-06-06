@@ -1766,6 +1766,25 @@ impl VM {
                     self.stack.push(str_value);
                 }
 
+                // Const-divisor Euclidean div/mod (0.24 "Divide"). The MIR
+                // const-fold pass only emits these when the divisor is a
+                // literal that rules out the partial / overflow cases, so
+                // `div_euclid` / `rem_euclid` are always defined here — no
+                // trap, mirroring `i64::div_euclid` / `i64::rem_euclid` in
+                // `src/types/int.rs`.
+                INT_DIV_EUCLID => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).div_euclid(b.as_int(&self.arena));
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+                INT_MOD_EUCLID => {
+                    let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
+                    let r = a.as_int(&self.arena).rem_euclid(b.as_int(&self.arena));
+                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                }
+
                 UNWRAP_RESULT_OR => {
                     let default = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let result = self.stack.pop().ok_or(VmError::StackUnderflow)?;

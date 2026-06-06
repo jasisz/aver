@@ -390,6 +390,22 @@ pub const BUFFER_APPEND_SEP_UNLESS_FIRST: u8 = 0x92;
 /// Frees the underlying `vm.buffer_pool` slot; the handle becomes invalid.
 pub const BUFFER_FINALIZE: u8 = 0x93;
 
+// -- Const-divisor Euclidean div/mod (0.24 "Divide") -------------------------
+//
+// Emitted by the MIR `const_fold` pass for `Int.div(a, k)` / `Int.mod(a, k)`
+// with a literal divisor `k` whose value rules out the partial cases
+// (`k == 0` for both, plus `k == -1` for div, which the fold leaves as the
+// runtime Result). Both pop two `Int`s and push the unchecked Euclidean
+// result, mirroring `i64::div_euclid` / `i64::rem_euclid` — the same routines
+// `Int.div` / `Int.mod` use in `src/types/int.rs`.
+
+/// Pop b, pop a, push `a.div_euclid(b)` (Int). Caller guarantees `b ∉ {0, -1}`
+/// (the const-fold divisor check), so no trap / overflow is possible.
+pub const INT_DIV_EUCLID: u8 = 0x94;
+
+/// Pop b, pop a, push `a.rem_euclid(b)` (Int). Caller guarantees `b != 0`.
+pub const INT_MOD_EUCLID: u8 = 0x95;
+
 /// Opcode name for debug/disassembly.
 pub fn opcode_name(op: u8) -> &'static str {
     match op {
@@ -479,6 +495,8 @@ pub fn opcode_name(op: u8) -> &'static str {
         BUFFER_APPEND_STR => "BUFFER_APPEND_STR",
         BUFFER_APPEND_SEP_UNLESS_FIRST => "BUFFER_APPEND_SEP_UNLESS_FIRST",
         BUFFER_FINALIZE => "BUFFER_FINALIZE",
+        INT_DIV_EUCLID => "INT_DIV_EUCLID",
+        INT_MOD_EUCLID => "INT_MOD_EUCLID",
         CALL_PAR => "CALL_PAR",
         NOP => "NOP",
         _ => "UNKNOWN",
@@ -535,6 +553,8 @@ pub fn opcode_operand_width(op: u8, code: &[u8], ip: usize) -> usize {
         | BUFFER_APPEND_STR
         | BUFFER_APPEND_SEP_UNLESS_FIRST
         | BUFFER_FINALIZE
+        | INT_DIV_EUCLID
+        | INT_MOD_EUCLID
         | NOP => 0,
 
         // 1-byte

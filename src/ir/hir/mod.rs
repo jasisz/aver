@@ -376,6 +376,19 @@ pub enum BuiltinIntrinsic {
     /// `__to_str(<value>)` — coerce any value to its display string
     /// (used by interpolation lowering before `__buf_append`).
     ToStr,
+    /// `__int_div_euclid(<a>, <k>)` — unchecked Euclidean (flooring)
+    /// `(Int, Int) -> Int` division. Synthesised by the MIR `const_fold`
+    /// pass when `Int.div(a, k)`'s divisor `k` is a literal `Int` outside
+    /// `{0, -1}` (the partial cases that would `Err`), so the surrounding
+    /// `Result` wrap collapses to bare division. Never produced by the
+    /// resolver — there is no `from_name` mapping; it appears only in MIR.
+    IntDivEuclid,
+    /// `__int_mod_euclid(<a>, <k>)` — unchecked Euclidean modulo
+    /// `(Int, Int) -> Int`, partner of `IntDivEuclid` so that
+    /// `div(a,k)*k + mod(a,k) == a` for every sign. Synthesised by the
+    /// MIR `const_fold` pass for `Int.mod(a, k)` with a non-zero literal
+    /// divisor `k`.
+    IntModEuclid,
 }
 
 impl BuiltinIntrinsic {
@@ -388,12 +401,18 @@ impl BuiltinIntrinsic {
             Self::BufAppendSepUnlessFirst => "__buf_append_sep_unless_first",
             Self::BufFinalize => "__buf_finalize",
             Self::ToStr => "__to_str",
+            Self::IntDivEuclid => "__int_div_euclid",
+            Self::IntModEuclid => "__int_mod_euclid",
         }
     }
 
     /// Recognise a bare identifier as one of the known intrinsics.
     /// Returns `None` for anything else — the resolver then falls
     /// through to its regular fn / Unresolved classification.
+    ///
+    /// `IntDivEuclid` / `IntModEuclid` are deliberately absent: they are
+    /// MIR-synthesis-only (emitted by `const_fold`), never recognised
+    /// from a source / resolver identifier.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "__buf_new" => Some(Self::BufNew),

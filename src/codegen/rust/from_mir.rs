@@ -3134,19 +3134,22 @@ fn emit_mir_builtin_call(
         "Int.mod" => {
             let a = arg!(0);
             let b = arg!(1);
+            // Error string verbatim from the VM (`src/types/int.rs`) so the
+            // boxed `Result.Err` is byte-identical across backends.
             format!(
-                "if ({b}) == 0i64 {{ Err(\"Int.mod: divisor must not be zero\".to_string()) }} else {{ Ok(({a}).rem_euclid({b})) }}"
+                "if ({b}) == 0i64 {{ Err(\"division by zero\".to_string()) }} else {{ Ok(({a}).rem_euclid({b})) }}"
             )
         }
         "Int.div" => {
             let a = arg!(0);
             let b = arg!(1);
-            // Euclidean division (partner of Euclidean `Int.mod`).
-            // `checked_div_euclid` is `None` on BOTH a zero divisor and the
-            // `i64::MIN / -1` signed-overflow edge; a bare `/` would panic
-            // (debug) or silently wrap (release) on the latter.
+            // Euclidean division (partner of Euclidean `Int.mod`). Split the
+            // two failure modes so the `Result.Err` strings match the VM /
+            // wasm-gc verbatim: `"division by zero"` for a zero divisor,
+            // `"division overflow"` for the `i64::MIN / -1` edge (the only
+            // input on which `checked_div_euclid` is `None` for `b != 0`).
             format!(
-                "match ({a}).checked_div_euclid({b}) {{ Some(__q) => Ok(__q), None => Err(\"Int.div: divisor zero or overflow\".to_string()) }}"
+                "if ({b}) == 0i64 {{ Err(\"division by zero\".to_string()) }} else {{ match ({a}).checked_div_euclid({b}) {{ Some(__q) => Ok(__q), None => Err(\"division overflow\".to_string()) }} }}"
             )
         }
 
@@ -3536,6 +3539,22 @@ fn emit_mir_intrinsic_call(
                 arg
             ))
         }
+        // Const-divisor Euclidean div/mod (0.24 "Divide"). The MIR
+        // const-fold pass only emits these for a literal divisor that
+        // rules out the partial / overflow cases, so `div_euclid` /
+        // `rem_euclid` are always defined — emit the bare i64 op, no
+        // `Result`. Same routines `Int.div` / `Int.mod` use in
+        // `src/types/int.rs`.
+        BuiltinIntrinsic::IntDivEuclid => {
+            let a = emit_mir_expr(&args[0], ctx)?;
+            let b = emit_mir_expr(&args[1], ctx)?;
+            Some(format!("({}).div_euclid({})", a, b))
+        }
+        BuiltinIntrinsic::IntModEuclid => {
+            let a = emit_mir_expr(&args[0], ctx)?;
+            let b = emit_mir_expr(&args[1], ctx)?;
+            Some(format!("({}).rem_euclid({})", a, b))
+        }
     }
 }
 
@@ -3782,7 +3801,7 @@ mod tests {
         let emit = emit_mir_expr(&expr, &ctx_with_builtin("Int.mod")).expect("Int.mod emits");
         assert_eq!(
             emit,
-            "(if (3i64) == 0i64 { Err(\"Int.mod: divisor must not be zero\".to_string()) } else { Ok((7i64).rem_euclid(3i64)) }).into_aver()"
+            "(if (3i64) == 0i64 { Err(\"division by zero\".to_string()) } else { Ok((7i64).rem_euclid(3i64)) }).into_aver()"
         );
     }
 
