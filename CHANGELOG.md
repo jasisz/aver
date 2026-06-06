@@ -2,6 +2,18 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.24.1 (unreleased)
+
+Patch release on top of "Divide" — a correctness fix in the optimizer and broader `aver check` hints.
+
+### Fixed
+
+- **Constant folding no longer drops a side effect or a non-terminating computation.** When the optimizer collapsed a `match` / `Result.withDefault` / `?` over a statically-known `Result`/`Option`, or an `Int.div`/`Int.mod` by a literal zero, it could discard a sub-expression that still had to run — silently dropping its effects (e.g. a `Console.print`), or turning a program that should loop forever into one that returns; one wildcard case could also crash the VM. Folded expressions now always run their effects, in source order.
+
+### Changed
+
+- **`aver check` flags more redundant work** — a loop invariant built directly inside a recursive call's arguments, and a pure function computed more than once with the same arguments in a single expression.
+
 ## 0.24.0 "Divide" — 2026-06-06
 
 > _One middle-end under every backend; the last operator that could crash is now a function._
