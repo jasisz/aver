@@ -306,6 +306,63 @@ pub fn emit_verify_law_forall_auto_proof(
         return Some(proof);
     }
 
+    // Accumulator-threaded encoder/inverse roundtrip. The lowerer
+    // recognized the wrapper/loop/step/finish/inverse/repeat shape
+    // and captured the synthesized `count >= 0` invariant data.
+    if let Some(crate::ir::ProofStrategy::AccumulatorRoundtrip {
+        ref wrapper_fn,
+        ref loop_fn,
+        ref step_fn,
+        ref finish_fn,
+        ref inverse_fn,
+        ref expand_fn,
+        ref repeat_fn,
+        ref acc_type,
+        ref run_type,
+        ref item_type,
+        ref current_field,
+        ref count_field,
+        ref initial_acc,
+        ..
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+        && let Some(proof) = spec::emit_accumulator_roundtrip_law(
+            vb,
+            law,
+            ctx,
+            theorem_base,
+            wrapper_fn,
+            loop_fn,
+            step_fn,
+            finish_fn,
+            inverse_fn,
+            expand_fn,
+            repeat_fn,
+            acc_type,
+            run_type,
+            item_type,
+            current_field,
+            count_field,
+            initial_acc,
+        )
+    {
+        return Some(proof);
+    }
+
+    if let Some(crate::ir::ProofStrategy::StringRoundtripViaList {
+        ref string_encoder_fn,
+        ref string_decoder_fn,
+        ref list_encoder_fn,
+        ref list_law_name,
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+    {
+        return Some(spec::emit_string_roundtrip_via_list_law(
+            string_encoder_fn,
+            string_decoder_fn,
+            list_encoder_fn,
+            list_law_name,
+        ));
+    }
+
     spec::emit_spec_function_equivalence_law(vb, law, ctx, &proof_intro_names)
         .or_else(|| {
             // IR-pinned Map library axiom (has_set_self / get_set_self).

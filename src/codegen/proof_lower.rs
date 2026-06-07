@@ -911,6 +911,24 @@ fn classify_law_strategy(
     {
         return s;
     }
+    // Accumulator-threaded encoder/inverse roundtrips (RLE shape).
+    // Runs before generic list induction because the useful IH must
+    // quantify over the threaded accumulator plus its synthesized
+    // well-formedness predicate.
+    if law.when.is_none()
+        && let Some(s) = detect_accumulator_roundtrip(law, fn_name, inputs, scope)
+    {
+        return s;
+    }
+    // String wrappers over the proven list roundtrip: once
+    // `decode(encode(xs)) = xs` is pinned as an accumulator
+    // roundtrip, `decodeString(encodeString(s)) = s` follows from
+    // the generated prelude's String.intercalate/children lemma.
+    if law.when.is_none()
+        && let Some(s) = detect_string_roundtrip_via_list(law, fn_name, inputs)
+    {
+        return s;
+    }
     // Structural induction runs first — when any given binds a
     // recursive ADT, induction over its variants is the canonical
     // proof. Reflexive could also fire on `f(t) = f(t)` for `t: Tree`
@@ -2956,6 +2974,708 @@ fn detect_wrapper_over_recursion(
         other_fn,
         combine_op,
     })
+}
+
+#[derive(Debug, Clone)]
+struct AccumulatorRoundtripPlan {
+    wrapper_fn: String,
+    loop_fn: String,
+    step_fn: String,
+    finish_fn: String,
+    inverse_fn: String,
+    expand_fn: String,
+    repeat_fn: String,
+    acc_type: String,
+    run_type: String,
+    item_type: String,
+    runs_field: String,
+    current_field: String,
+    count_field: String,
+    run_value_field: String,
+    initial_acc: Spanned<crate::ast::Expr>,
+}
+
+/// **syntax-discovery-only** (epic #170 Phase 7). Recognize the
+/// accumulator-threaded encoder/inverse roundtrip shape that needs
+/// an accumulator-generalized invariant instead of plain list
+/// induction. Conservative by design: the emitted helper stack is
+/// specialized to the RLE-like record layout and repeat-by-count
+/// inverse, so every source branch is checked before pinning.
+fn detect_accumulator_roundtrip(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+    scope: Option<&str>,
+) -> Option<crate::ir::ProofStrategy> {
+    let plan = detect_accumulator_roundtrip_plan(law, fn_name, inputs)?;
+    Some(crate::ir::ProofStrategy::AccumulatorRoundtrip {
+        wrapper_fn: plan.wrapper_fn,
+        loop_fn: plan.loop_fn,
+        step_fn: plan.step_fn,
+        finish_fn: plan.finish_fn,
+        inverse_fn: plan.inverse_fn,
+        expand_fn: plan.expand_fn,
+        repeat_fn: plan.repeat_fn,
+        acc_type: plan.acc_type,
+        run_type: plan.run_type,
+        item_type: plan.item_type,
+        runs_field: plan.runs_field,
+        current_field: plan.current_field,
+        count_field: plan.count_field,
+        run_value_field: plan.run_value_field,
+        initial_acc: inputs.resolve_expr(&plan.initial_acc, scope),
+    })
+}
+
+fn detect_accumulator_roundtrip_plan(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<AccumulatorRoundtripPlan> {
+    use crate::ast::{Expr, Literal};
+
+    if law.givens.len() != 1 {
+        return None;
+    }
+    let given = &law.givens[0];
+    let item_type = list_type_arg(&given.type_name)?.to_string();
+
+    let (inverse_fn, wrapper_arg_on_lhs) =
+        extract_inverse_wrapper_call(&law.lhs, fn_name, &given.name)
+            .map(|inverse| (inverse, true))
+            .or_else(|| {
+                extract_inverse_wrapper_call(&law.rhs, fn_name, &given.name)
+                    .map(|inverse| (inverse, false))
+            })?;
+    let other_side = if wrapper_arg_on_lhs {
+        &law.rhs
+    } else {
+        &law.lhs
+    };
+    if !matches_ident_expr(other_side, &given.name) {
+        return None;
+    }
+
+    let wrapper_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if wrapper_fd.params.len() != 1 || wrapper_fd.params[0].1 != given.type_name {
+        return None;
+    }
+    let wrapper_param = wrapper_fd.params[0].0.as_str();
+    let wrapper_body = body_terminal_expr(&wrapper_fd.body)?;
+    let (loop_fn, wrapper_args) = fn_call_name_args(wrapper_body)?;
+    if wrapper_args.len() != 2 || !matches_ident_expr(&wrapper_args[0], wrapper_param) {
+        return None;
+    }
+    let initial_acc = wrapper_args[1].clone();
+    let Expr::RecordCreate {
+        type_name: acc_type,
+        fields: initial_fields,
+    } = &initial_acc.node
+    else {
+        return None;
+    };
+    let (_, initial_count) = initial_fields.iter().find(|(name, _)| name == "count")?;
+    if !matches!(&initial_count.node, Expr::Literal(Literal::Int(0))) {
+        return None;
+    }
+
+    let loop_fd = inputs.find_fn_def_by_call_name(&loop_fn)?;
+    if loop_fd.params.len() != 2
+        || loop_fd.params[0].1 != given.type_name
+        || loop_fd.params[1].1 != *acc_type
+    {
+        return None;
+    }
+    let chars_param = loop_fd.params[0].0.as_str();
+    let acc_param = loop_fd.params[1].0.as_str();
+    let loop_body = body_terminal_expr(&loop_fd.body)?;
+    let (nil_body, head_name, tail_name, cons_body) = list_match_arms(loop_body, chars_param)?;
+    let (finish_fn, finish_args) = fn_call_name_args(nil_body)?;
+    if finish_args.len() != 1 || !matches_ident_expr(&finish_args[0], acc_param) {
+        return None;
+    }
+    let (recursive_name, recursive_args) = call_or_tail_name_args(cons_body)?;
+    if recursive_name != loop_fn
+        || recursive_args.len() != 2
+        || !matches_ident_expr(&recursive_args[0], &tail_name)
+    {
+        return None;
+    }
+    let (step_fn, step_args) = fn_call_name_args(&recursive_args[1])?;
+    if step_args.len() != 2
+        || !matches_ident_expr(&step_args[0], acc_param)
+        || !matches_ident_expr(&step_args[1], &head_name)
+    {
+        return None;
+    }
+
+    let finish_fd = inputs.find_fn_def_by_call_name(&finish_fn)?;
+    if finish_fd.params.len() != 1 || finish_fd.params[0].1 != *acc_type {
+        return None;
+    }
+    let finish_acc = finish_fd.params[0].0.as_str();
+    let finish_shape =
+        detect_finish_acc_shape(body_terminal_expr(&finish_fd.body)?, finish_acc, acc_type)?;
+
+    let inverse_fd = inputs.find_fn_def_by_call_name(&inverse_fn)?;
+    if inverse_fd.params.len() != 1 {
+        return None;
+    }
+    let inverse_runs = inverse_fd.params[0].0.as_str();
+    let (expand_fn, run_param) = detect_inverse_decode_shape(
+        body_terminal_expr(&inverse_fd.body)?,
+        inverse_runs,
+        &inverse_fn,
+    )?;
+
+    let expand_fd = inputs.find_fn_def_by_call_name(&expand_fn)?;
+    if expand_fd.params.len() != 1 || expand_fd.params[0].1 != finish_shape.run_type {
+        return None;
+    }
+    let expand_run = expand_fd.params[0].0.as_str();
+    let repeat_fn = detect_expand_repeat_shape(
+        body_terminal_expr(&expand_fd.body)?,
+        expand_run,
+        &finish_shape.run_value_field,
+        &finish_shape.count_field,
+    )?;
+
+    let repeat_fd = inputs.find_fn_def_by_call_name(&repeat_fn)?;
+    if !repeat_matches_counted_append(repeat_fd, &item_type) {
+        return None;
+    }
+
+    let step_fd = inputs.find_fn_def_by_call_name(&step_fn)?;
+    if step_fd.params.len() != 2
+        || step_fd.params[0].1 != *acc_type
+        || step_fd.params[1].1 != item_type
+    {
+        return None;
+    }
+    let step_acc = step_fd.params[0].0.as_str();
+    let step_item = step_fd.params[1].0.as_str();
+    if !step_matches_rle_fold(
+        body_terminal_expr(&step_fd.body)?,
+        step_acc,
+        step_item,
+        acc_type,
+        &finish_shape,
+    ) {
+        return None;
+    }
+
+    let _ = run_param;
+
+    Some(AccumulatorRoundtripPlan {
+        wrapper_fn: fn_name.to_string(),
+        loop_fn,
+        step_fn,
+        finish_fn,
+        inverse_fn,
+        expand_fn,
+        repeat_fn,
+        acc_type: acc_type.clone(),
+        run_type: finish_shape.run_type,
+        item_type,
+        runs_field: finish_shape.runs_field,
+        current_field: finish_shape.current_field,
+        count_field: finish_shape.count_field,
+        run_value_field: finish_shape.run_value_field,
+        initial_acc,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct FinishAccShape {
+    run_type: String,
+    runs_field: String,
+    current_field: String,
+    count_field: String,
+    run_value_field: String,
+}
+
+fn detect_string_roundtrip_via_list(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<crate::ir::ProofStrategy> {
+    use crate::ast::{Expr, Literal, TopLevel, VerifyKind};
+
+    if law.givens.len() != 1 || law.givens[0].type_name != "String" {
+        return None;
+    }
+    let given_name = &law.givens[0].name;
+    let (string_decoder_fn, on_lhs) = extract_inverse_wrapper_call(&law.lhs, fn_name, given_name)
+        .map(|inverse| (inverse, true))
+        .or_else(|| {
+            extract_inverse_wrapper_call(&law.rhs, fn_name, given_name)
+                .map(|inverse| (inverse, false))
+        })?;
+    let other_side = if on_lhs { &law.rhs } else { &law.lhs };
+    if !matches_ident_expr(other_side, given_name) {
+        return None;
+    }
+
+    let encoder_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    if encoder_fd.params.len() != 1 || encoder_fd.params[0].1 != "String" {
+        return None;
+    }
+    let encoder_param = encoder_fd.params[0].0.as_str();
+    let (list_encoder_fn, encoder_args) = fn_call_name_args(body_terminal_expr(&encoder_fd.body)?)?;
+    if encoder_args.len() != 1 {
+        return None;
+    }
+    let chars_args = call_named_args(&encoder_args[0], "String.chars")?;
+    if chars_args.len() != 1 || !matches_ident_expr(&chars_args[0], encoder_param) {
+        return None;
+    }
+
+    let decoder_fd = inputs.find_fn_def_by_call_name(&string_decoder_fn)?;
+    if decoder_fd.params.len() != 1 {
+        return None;
+    }
+    let decoder_param = decoder_fd.params[0].0.as_str();
+    let join_args = call_named_args(body_terminal_expr(&decoder_fd.body)?, "String.join")?;
+    if join_args.len() != 2
+        || !matches!(&join_args[1].node, Expr::Literal(Literal::Str(s)) if s.is_empty())
+    {
+        return None;
+    }
+    let (list_decoder_fn, list_decoder_args) = fn_call_name_args(&join_args[0])?;
+    if list_decoder_args.len() != 1 || !matches_ident_expr(&list_decoder_args[0], decoder_param) {
+        return None;
+    }
+
+    let list_law_name = inputs.entry_items.iter().find_map(|item| {
+        let TopLevel::Verify(vb) = item else {
+            return None;
+        };
+        if vb.fn_name != list_encoder_fn {
+            return None;
+        }
+        let VerifyKind::Law(candidate) = &vb.kind else {
+            return None;
+        };
+        let plan = detect_accumulator_roundtrip_plan(candidate, &list_encoder_fn, inputs)?;
+        (plan.inverse_fn == list_decoder_fn).then(|| candidate.name.clone())
+    })?;
+
+    Some(crate::ir::ProofStrategy::StringRoundtripViaList {
+        string_encoder_fn: fn_name.to_string(),
+        string_decoder_fn,
+        list_encoder_fn,
+        list_law_name,
+    })
+}
+
+fn list_type_arg(type_name: &str) -> Option<&str> {
+    type_name
+        .trim()
+        .strip_prefix("List<")
+        .and_then(|rest| rest.strip_suffix('>'))
+        .map(str::trim)
+}
+
+fn fn_call_name_args(
+    expr: &Spanned<crate::ast::Expr>,
+) -> Option<(String, &[Spanned<crate::ast::Expr>])> {
+    use crate::ast::Expr;
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    Some((expr_to_dotted_name(&callee.node)?, args.as_slice()))
+}
+
+fn call_or_tail_name_args(
+    expr: &Spanned<crate::ast::Expr>,
+) -> Option<(String, Vec<Spanned<crate::ast::Expr>>)> {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::FnCall(callee, args) => Some((expr_to_dotted_name(&callee.node)?, args.clone())),
+        Expr::TailCall(td) => Some((td.target.clone(), td.args.clone())),
+        _ => None,
+    }
+}
+
+fn extract_inverse_wrapper_call(
+    expr: &Spanned<crate::ast::Expr>,
+    wrapper_fn: &str,
+    arg_name: &str,
+) -> Option<String> {
+    let (inverse_fn, inverse_args) = fn_call_name_args(expr)?;
+    if inverse_args.len() != 1 {
+        return None;
+    }
+    let (inner_fn, inner_args) = fn_call_name_args(&inverse_args[0])?;
+    if inner_fn != wrapper_fn
+        || inner_args.len() != 1
+        || !matches_ident_expr(&inner_args[0], arg_name)
+    {
+        return None;
+    }
+    Some(inverse_fn)
+}
+
+fn list_match_arms<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+    subject_name: &str,
+) -> Option<(
+    &'a Spanned<crate::ast::Expr>,
+    String,
+    String,
+    &'a Spanned<crate::ast::Expr>,
+)> {
+    use crate::ast::{Expr, Pattern};
+    let Expr::Match { subject, arms } = &expr.node else {
+        return None;
+    };
+    if !matches_ident_expr(subject, subject_name) || arms.len() != 2 {
+        return None;
+    }
+    let mut nil_body = None;
+    let mut cons = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::EmptyList => nil_body = Some(arm.body.as_ref()),
+            Pattern::Cons(head, tail) => {
+                cons = Some((head.clone(), tail.clone(), arm.body.as_ref()));
+            }
+            _ => return None,
+        }
+    }
+    let (head, tail, cons_body) = cons?;
+    Some((nil_body?, head, tail, cons_body))
+}
+
+fn bool_match_arms(
+    expr: &Spanned<crate::ast::Expr>,
+) -> Option<(
+    &Spanned<crate::ast::Expr>,
+    &Spanned<crate::ast::Expr>,
+    &Spanned<crate::ast::Expr>,
+)> {
+    use crate::ast::{Expr, Literal, Pattern};
+    let Expr::Match { subject, arms } = &expr.node else {
+        return None;
+    };
+    if arms.len() != 2 {
+        return None;
+    }
+    let mut true_body = None;
+    let mut false_body = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(Literal::Bool(true)) => true_body = Some(arm.body.as_ref()),
+            Pattern::Literal(Literal::Bool(false)) => false_body = Some(arm.body.as_ref()),
+            _ => return None,
+        }
+    }
+    Some((subject.as_ref(), true_body?, false_body?))
+}
+
+fn attr_field_of_ident<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+    base_name: &str,
+) -> Option<&'a str> {
+    use crate::ast::Expr;
+    let Expr::Attr(base, field) = &expr.node else {
+        return None;
+    };
+    matches_ident_expr(base, base_name).then_some(field.as_str())
+}
+
+fn is_attr_of_ident(expr: &Spanned<crate::ast::Expr>, base_name: &str, field_name: &str) -> bool {
+    attr_field_of_ident(expr, base_name) == Some(field_name)
+}
+
+fn is_eq_attr_int_zero(expr: &Spanned<crate::ast::Expr>, base_name: &str) -> Option<String> {
+    use crate::ast::{BinOp, Expr, Literal};
+    let Expr::BinOp(BinOp::Eq, left, right) = &expr.node else {
+        return None;
+    };
+    if !matches!(&right.node, Expr::Literal(Literal::Int(0))) {
+        return None;
+    }
+    attr_field_of_ident(left, base_name).map(str::to_string)
+}
+
+fn is_eq_attr_ident(
+    expr: &Spanned<crate::ast::Expr>,
+    base_name: &str,
+    field_name: &str,
+    ident_name: &str,
+) -> bool {
+    use crate::ast::{BinOp, Expr};
+    let Expr::BinOp(BinOp::Eq, left, right) = &expr.node else {
+        return false;
+    };
+    is_attr_of_ident(left, base_name, field_name) && matches_ident_expr(right, ident_name)
+}
+
+fn detect_finish_acc_shape(
+    expr: &Spanned<crate::ast::Expr>,
+    acc_param: &str,
+    acc_type: &str,
+) -> Option<FinishAccShape> {
+    let (subject, true_body, false_body) = bool_match_arms(expr)?;
+    let count_field = is_eq_attr_int_zero(subject, acc_param)?;
+    let runs_field = attr_field_of_ident(true_body, acc_param)?.to_string();
+    let concat_args = call_named_args(false_body, "List.concat")?;
+    if concat_args.len() != 2 || !is_attr_of_ident(&concat_args[0], acc_param, &runs_field) {
+        return None;
+    }
+    let (run_type, run_fields) = singleton_record_list(&concat_args[1])?;
+    let run_value_field = run_fields.iter().find_map(|(name, value)| {
+        attr_field_of_ident(value, acc_param)
+            .filter(|field| *field != count_field && *field != runs_field)
+            .map(|_| name.clone())
+    })?;
+    let current_value = field_expr(&run_fields, &run_value_field)?;
+    let current_field = attr_field_of_ident(current_value, acc_param)?.to_string();
+    let count_ok = run_fields.iter().any(|(name, value)| {
+        name == &count_field && is_attr_of_ident(value, acc_param, &count_field)
+    });
+    if !count_ok {
+        return None;
+    }
+    let _ = acc_type;
+    Some(FinishAccShape {
+        run_type,
+        runs_field,
+        current_field,
+        count_field,
+        run_value_field,
+    })
+}
+
+type RecordFieldList = Vec<(String, Spanned<crate::ast::Expr>)>;
+
+fn singleton_record_list(expr: &Spanned<crate::ast::Expr>) -> Option<(String, RecordFieldList)> {
+    use crate::ast::Expr;
+    let Expr::List(items) = &expr.node else {
+        return None;
+    };
+    let [item] = items.as_slice() else {
+        return None;
+    };
+    let Expr::RecordCreate { type_name, fields } = &item.node else {
+        return None;
+    };
+    Some((type_name.clone(), fields.clone()))
+}
+
+fn detect_inverse_decode_shape(
+    expr: &Spanned<crate::ast::Expr>,
+    runs_param: &str,
+    inverse_fn: &str,
+) -> Option<(String, String)> {
+    use crate::ast::Expr;
+    let (nil_body, run_name, rest_name, cons_body) = list_match_arms(expr, runs_param)?;
+    if !matches!(&nil_body.node, Expr::List(items) if items.is_empty()) {
+        return None;
+    }
+    let concat_args = call_named_args(cons_body, "List.concat")?;
+    if concat_args.len() != 2 {
+        return None;
+    }
+    let (expand_fn, expand_args) = fn_call_name_args(&concat_args[0])?;
+    if expand_args.len() != 1 || !matches_ident_expr(&expand_args[0], &run_name) {
+        return None;
+    }
+    let (recursive_inverse, recursive_args) = fn_call_name_args(&concat_args[1])?;
+    if recursive_inverse != inverse_fn
+        || recursive_args.len() != 1
+        || !matches_ident_expr(&recursive_args[0], &rest_name)
+    {
+        return None;
+    }
+    Some((expand_fn, run_name))
+}
+
+fn detect_expand_repeat_shape(
+    expr: &Spanned<crate::ast::Expr>,
+    run_param: &str,
+    run_value_field: &str,
+    count_field: &str,
+) -> Option<String> {
+    let (repeat_fn, args) = fn_call_name_args(expr)?;
+    if args.len() != 2
+        || !is_attr_of_ident(&args[0], run_param, run_value_field)
+        || !is_attr_of_ident(&args[1], run_param, count_field)
+    {
+        return None;
+    }
+    Some(repeat_fn)
+}
+
+fn repeat_matches_counted_append(fd: &crate::ast::FnDef, item_type: &str) -> bool {
+    use crate::ast::{BinOp, Expr, Literal};
+    if fd.params.len() != 2 || fd.params[0].1 != item_type || fd.params[1].1 != "Int" {
+        return false;
+    }
+    let item_param = fd.params[0].0.as_str();
+    let count_param = fd.params[1].0.as_str();
+    let Some((subject, true_body, false_body)) =
+        body_terminal_expr(&fd.body).and_then(bool_match_arms)
+    else {
+        return false;
+    };
+    let Expr::BinOp(BinOp::Lte, left, right) = &subject.node else {
+        return false;
+    };
+    if !matches_ident_expr(left, count_param)
+        || !matches!(&right.node, Expr::Literal(Literal::Int(0)))
+        || !matches!(&true_body.node, Expr::List(items) if items.is_empty())
+    {
+        return false;
+    }
+    let Some(concat_args) = call_named_args(false_body, "List.concat") else {
+        return false;
+    };
+    if concat_args.len() != 2 {
+        return false;
+    }
+    let Some((recursive_fn, recursive_args)) = fn_call_name_args(&concat_args[0]) else {
+        return false;
+    };
+    if recursive_fn != fd.name || recursive_args.len() != 2 {
+        return false;
+    }
+    let Expr::BinOp(BinOp::Sub, n_left, n_right) = &recursive_args[1].node else {
+        return false;
+    };
+    matches_ident_expr(&recursive_args[0], item_param)
+        && matches_ident_expr(n_left, count_param)
+        && matches!(&n_right.node, Expr::Literal(Literal::Int(1)))
+        && matches!(&concat_args[1].node, Expr::List(items)
+            if items.len() == 1 && matches_ident_expr(&items[0], item_param))
+}
+
+fn step_matches_rle_fold(
+    expr: &Spanned<crate::ast::Expr>,
+    acc_param: &str,
+    item_param: &str,
+    acc_type: &str,
+    finish: &FinishAccShape,
+) -> bool {
+    let Some((subject, zero_body, nonzero_body)) = bool_match_arms(expr) else {
+        return false;
+    };
+    if is_eq_attr_int_zero(subject, acc_param).as_deref() != Some(finish.count_field.as_str()) {
+        return false;
+    }
+    if !record_is_acc_zero_start(zero_body, acc_param, item_param, acc_type, finish) {
+        return false;
+    }
+    let Some((same_subject, same_body, different_body)) = bool_match_arms(nonzero_body) else {
+        return false;
+    };
+    is_eq_attr_ident(same_subject, acc_param, &finish.current_field, item_param)
+        && record_is_acc_same_run(same_body, acc_param, acc_type, finish)
+        && record_is_acc_new_run(different_body, acc_param, item_param, acc_type, finish)
+}
+
+fn record_fields_if_type<'a>(
+    expr: &'a Spanned<crate::ast::Expr>,
+    type_name: &str,
+) -> Option<&'a [(String, Spanned<crate::ast::Expr>)]> {
+    use crate::ast::Expr;
+    let Expr::RecordCreate {
+        type_name: actual,
+        fields,
+    } = &expr.node
+    else {
+        return None;
+    };
+    (actual == type_name).then_some(fields.as_slice())
+}
+
+fn field_expr<'a>(
+    fields: &'a [(String, Spanned<crate::ast::Expr>)],
+    field_name: &str,
+) -> Option<&'a Spanned<crate::ast::Expr>> {
+    fields
+        .iter()
+        .find_map(|(name, value)| (name == field_name).then_some(value))
+}
+
+fn record_is_acc_zero_start(
+    expr: &Spanned<crate::ast::Expr>,
+    acc_param: &str,
+    item_param: &str,
+    acc_type: &str,
+    finish: &FinishAccShape,
+) -> bool {
+    use crate::ast::{Expr, Literal};
+    let Some(fields) = record_fields_if_type(expr, acc_type) else {
+        return false;
+    };
+    field_expr(fields, &finish.runs_field)
+        .is_some_and(|v| is_attr_of_ident(v, acc_param, &finish.runs_field))
+        && field_expr(fields, &finish.current_field)
+            .is_some_and(|v| matches_ident_expr(v, item_param))
+        && field_expr(fields, &finish.count_field)
+            .is_some_and(|v| matches!(&v.node, Expr::Literal(Literal::Int(1))))
+}
+
+fn record_is_acc_same_run(
+    expr: &Spanned<crate::ast::Expr>,
+    acc_param: &str,
+    acc_type: &str,
+    finish: &FinishAccShape,
+) -> bool {
+    use crate::ast::{BinOp, Expr, Literal};
+    let Some(fields) = record_fields_if_type(expr, acc_type) else {
+        return false;
+    };
+    let count_inc = field_expr(fields, &finish.count_field).is_some_and(|v| {
+        let Expr::BinOp(BinOp::Add, left, right) = &v.node else {
+            return false;
+        };
+        is_attr_of_ident(left, acc_param, &finish.count_field)
+            && matches!(&right.node, Expr::Literal(Literal::Int(1)))
+    });
+    field_expr(fields, &finish.runs_field)
+        .is_some_and(|v| is_attr_of_ident(v, acc_param, &finish.runs_field))
+        && field_expr(fields, &finish.current_field)
+            .is_some_and(|v| is_attr_of_ident(v, acc_param, &finish.current_field))
+        && count_inc
+}
+
+fn record_is_acc_new_run(
+    expr: &Spanned<crate::ast::Expr>,
+    acc_param: &str,
+    item_param: &str,
+    acc_type: &str,
+    finish: &FinishAccShape,
+) -> bool {
+    use crate::ast::{Expr, Literal};
+    let Some(fields) = record_fields_if_type(expr, acc_type) else {
+        return false;
+    };
+    let runs_ok = field_expr(fields, &finish.runs_field).is_some_and(|v| {
+        let Some(concat_args) = call_named_args(v, "List.concat") else {
+            return false;
+        };
+        if concat_args.len() != 2
+            || !is_attr_of_ident(&concat_args[0], acc_param, &finish.runs_field)
+        {
+            return false;
+        }
+        let Some((run_type, run_fields)) = singleton_record_list(&concat_args[1]) else {
+            return false;
+        };
+        run_type == finish.run_type
+            && field_expr(&run_fields, &finish.run_value_field)
+                .is_some_and(|rv| is_attr_of_ident(rv, acc_param, &finish.current_field))
+            && field_expr(&run_fields, &finish.count_field)
+                .is_some_and(|rv| is_attr_of_ident(rv, acc_param, &finish.count_field))
+    });
+    runs_ok
+        && field_expr(fields, &finish.current_field)
+            .is_some_and(|v| matches_ident_expr(v, item_param))
+        && field_expr(fields, &finish.count_field)
+            .is_some_and(|v| matches!(&v.node, Expr::Literal(Literal::Int(1))))
 }
 
 fn detect_induction_target(

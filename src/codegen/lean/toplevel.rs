@@ -2074,9 +2074,17 @@ fn emit_verify_law_block(
                 "theorem {} : ∀ {}, {} := by",
                 theorem_base, quant_params, theorem_prop
             ));
-            lines.push(
-                "  -- verify law is sampled; universal proof must be provided manually".to_string(),
-            );
+            if law_mentions_recursive_fn(vb, law, ctx) {
+                lines.push(
+                    "  -- can't auto-prove this recursive law yet; provide a direct-recurrence spec function and an equivalence law"
+                        .to_string(),
+                );
+            } else {
+                lines.push(
+                    "  -- verify law is sampled; universal proof must be provided manually"
+                        .to_string(),
+                );
+            }
             lines.push("  sorry".to_string());
         }
     }
@@ -2218,6 +2226,75 @@ fn emit_verify_law_block(
         }
     }
     (lines.join("\n"), case_index_start + vb.cases.len())
+}
+
+fn law_mentions_recursive_fn(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+    fn name_is_recursive(name: &str, ctx: &CodegenContext) -> bool {
+        let bare = name.rsplit('.').next().unwrap_or(name);
+        ctx.symbol_table
+            .fn_id_of(&crate::ir::FnKey::entry(bare))
+            .is_some_and(|id| ctx.recursive_fns.contains(&id))
+    }
+
+    fn expr_mentions_recursive(expr: &Spanned<Expr>, ctx: &CodegenContext) -> bool {
+        match &expr.node {
+            Expr::FnCall(callee, args) => {
+                let callee_recursive = crate::codegen::common::expr_to_dotted_name(&callee.node)
+                    .is_some_and(|name| name_is_recursive(&name, ctx));
+                callee_recursive || args.iter().any(|arg| expr_mentions_recursive(arg, ctx))
+            }
+            Expr::Attr(base, _) => expr_mentions_recursive(base, ctx),
+            Expr::BinOp(_, left, right) => {
+                expr_mentions_recursive(left, ctx) || expr_mentions_recursive(right, ctx)
+            }
+            Expr::Neg(inner) | Expr::Constructor(_, Some(inner)) | Expr::ErrorProp(inner) => {
+                expr_mentions_recursive(inner, ctx)
+            }
+            Expr::Match { subject, arms } => {
+                expr_mentions_recursive(subject, ctx)
+                    || arms
+                        .iter()
+                        .any(|arm| expr_mentions_recursive(&arm.body, ctx))
+            }
+            Expr::InterpolatedStr(parts) => parts.iter().any(|part| {
+                matches!(part, StrPart::Parsed(inner) if expr_mentions_recursive(inner, ctx))
+            }),
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+                items.iter().any(|item| expr_mentions_recursive(item, ctx))
+            }
+            Expr::MapLiteral(entries) => entries.iter().any(|(key, value)| {
+                expr_mentions_recursive(key, ctx) || expr_mentions_recursive(value, ctx)
+            }),
+            Expr::RecordCreate { fields, .. } => fields
+                .iter()
+                .any(|(_, value)| expr_mentions_recursive(value, ctx)),
+            Expr::RecordUpdate { base, updates, .. } => {
+                expr_mentions_recursive(base, ctx)
+                    || updates
+                        .iter()
+                        .any(|(_, value)| expr_mentions_recursive(value, ctx))
+            }
+            Expr::TailCall(call) => {
+                name_is_recursive(&call.target, ctx)
+                    || call
+                        .args
+                        .iter()
+                        .any(|arg| expr_mentions_recursive(arg, ctx))
+            }
+            Expr::Constructor(_, None)
+            | Expr::Literal(_)
+            | Expr::Ident(_)
+            | Expr::Resolved { .. } => false,
+        }
+    }
+
+    name_is_recursive(&vb.fn_name, ctx)
+        || expr_mentions_recursive(&law.lhs, ctx)
+        || expr_mentions_recursive(&law.rhs, ctx)
+        || law
+            .when
+            .as_ref()
+            .is_some_and(|when| expr_mentions_recursive(when, ctx))
 }
 
 fn law_theorem_prop(

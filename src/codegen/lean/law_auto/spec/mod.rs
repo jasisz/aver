@@ -1,3 +1,4 @@
+mod accumulator_roundtrip;
 mod linear_int;
 mod linear_recurrence2;
 mod match_dispatcher_fold;
@@ -5,6 +6,9 @@ mod result_pipeline_chain;
 mod simp_normalized;
 mod wrapper_over_recursion;
 
+pub(super) use accumulator_roundtrip::{
+    emit_accumulator_roundtrip_law, emit_string_roundtrip_via_list_law,
+};
 pub(super) use linear_recurrence2::emit_second_order_linear_recurrence_spec_equivalence_law;
 pub(super) use match_dispatcher_fold::emit_match_dispatcher_fold_law;
 pub(super) use result_pipeline_chain::emit_result_pipeline_chain_law;

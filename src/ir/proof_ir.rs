@@ -690,6 +690,43 @@ pub enum ProofStrategy {
         /// (`Add` / `Mul` / `Sub`). Drives the aux lemma's RHS.
         combine_op: crate::ast::BinOp,
     },
+    /// Accumulator-threaded encoder/inverse roundtrip. The wrapper has
+    /// shape `encode(xs) = encodeLoop(xs, emptyAcc)`; the loop has
+    /// shape `match xs { [] -> flushAcc(acc); h :: t ->
+    /// encodeLoop(t, encodeFold(acc, h)) }`; the inverse decodes a
+    /// list by appending each expanded run. Backends prove a
+    /// generalized invariant over all accumulators satisfying the
+    /// synthesized sign predicate `0 ≤ acc.<count_field>`, then derive
+    /// the user law at the wrapper's initial accumulator.
+    AccumulatorRoundtrip {
+        wrapper_fn: String,
+        loop_fn: String,
+        step_fn: String,
+        finish_fn: String,
+        inverse_fn: String,
+        expand_fn: String,
+        repeat_fn: String,
+        acc_type: String,
+        run_type: String,
+        item_type: String,
+        runs_field: String,
+        current_field: String,
+        count_field: String,
+        run_value_field: String,
+        initial_acc: Spanned<crate::ir::hir::ResolvedExpr>,
+    },
+    /// String wrapper over a proven list roundtrip:
+    /// `decodeString(encodeString(s)) = s` where `encodeString(s)`
+    /// calls the list wrapper on `String.chars(s)`, `decodeString`
+    /// joins the inverse list with `""`, and a sibling
+    /// [`ProofStrategy::AccumulatorRoundtrip`] theorem proves
+    /// `decode(encode(xs)) = xs`.
+    StringRoundtripViaList {
+        string_encoder_fn: String,
+        string_decoder_fn: String,
+        list_encoder_fn: String,
+        list_law_name: String,
+    },
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,

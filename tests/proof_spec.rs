@@ -350,14 +350,11 @@ fn proof_export_builds_result_chain_when_lake_is_available() {
 
 #[test]
 fn proof_export_builds_rle_when_lake_is_available() {
-    // The encode/decode roundtrip laws are list-given, so #409 attempts Lean
-    // list-induction — but `encode` threads an accumulator (`encodeLoop`) so a
-    // plain `induction xs` IH does not align; both roundtrips fall to an honest
-    // `sorry` (per-arm `first | (simp_all; done) | sorry`, which BUILDS). The
-    // earlier #409 revision claimed 1 here, a false green — the tactic left
-    // unsolved goals that `lake build` rejects but the sorry-count metric was
-    // blind to (fixed in commands.rs to gate on lake's exit status).
-    assert_proof_builds_with_sorry_budget("examples/data/rle.av", "aver-proof-rle", 2);
+    // Accumulator roundtrip synthesis generalizes `encodeLoop` over
+    // the threaded accumulator plus `count >= 0`, then derives the
+    // string wrapper from the list theorem and the Lean prelude's
+    // `String.intercalate_empty_chars`.
+    assert_proof_builds_with_sorry_budget("examples/data/rle.av", "aver-proof-rle", 0);
 }
 
 #[test]

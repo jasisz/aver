@@ -4421,9 +4421,14 @@ fn echoConn(conn: Tcp.Connection) -> Tcp.Connection
         let lean = generated_lean_file(&out);
 
         assert!(
-            lean.contains("sorry"),
-            "expected rle proof export to contain sorry for unproved universal theorems"
+            !lean.contains("sorry"),
+            "expected rle proof export to prove roundtrip laws, got:\n{}",
+            lean
         );
+        assert!(lean.contains("theorem encode_law_roundtrip_encodeLoop_gen"));
+        assert!(lean.contains(
+            "simp [decodeString, encodeString, encode_law_roundtrip, String.intercalate_empty_chars]"
+        ));
         assert!(lean.contains(
             "theorem encode_law_roundtrip_sample_1 : decode (encode []) = [] := by native_decide"
         ));
