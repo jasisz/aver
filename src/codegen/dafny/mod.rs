@@ -643,6 +643,41 @@ function StringJoin(sep: string, parts: seq<string>): string
   else parts[0] + sep + StringJoin(sep, parts[1..])
 }
 
+// The tail of StringChars(s) is StringChars of the tail of s. A
+// support lemma for StringJoinEmptyChars below.
+lemma StringCharsTail(s: string)
+  requires |s| >= 1
+  ensures StringChars(s)[1..] == StringChars(s[1..])
+{
+  assert |StringChars(s)[1..]| == |StringChars(s[1..])|;
+  forall j | 0 <= j < |s| - 1
+    ensures StringChars(s)[1..][j] == StringChars(s[1..])[j]
+  {
+    assert s[1..][j] == s[j + 1];
+  }
+}
+
+// Joining the single-character pieces of a string with the empty
+// separator rebuilds the string: StringJoin("", StringChars(s)) == s.
+// The proof-export inverse of the chars/join pair; the Dafny
+// counterpart of the Lean prelude's String roundtrip theorem.
+lemma {:fuel StringJoin, 2} StringJoinEmptyChars(s: string)
+  ensures StringJoin("", StringChars(s)) == s
+  decreases |s|
+{
+  if |s| == 0 {
+    assert StringChars(s) == [];
+  } else if |s| == 1 {
+    assert StringChars(s) == [[s[0]]];
+    assert s == [s[0]];
+  } else {
+    StringCharsTail(s);
+    StringJoinEmptyChars(s[1..]);
+    assert StringChars(s)[0] == [s[0]];
+    assert s == [s[0]] + s[1..];
+  }
+}
+
 function StringSplit(s: string, sep: string): seq<string>
 function StringContains(s: string, sub: string): bool
 function StringStartsWith(s: string, prefix: string): bool

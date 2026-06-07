@@ -359,12 +359,66 @@ fn proof_export_builds_rle_when_lake_is_available() {
 
 #[test]
 fn proof_dafny_verifies_rle_when_dafny_is_available() {
-    // Three postcondition gaps on the encode/decode roundtrip shape
-    // (one universal lemma, one sample assertion, one
-    // `decodeString` universal). Z3 can't auto-discharge them
-    // without a richer list-induction tactic the lowerer doesn't
-    // emit yet. Tracked in issue #114.
-    assert_dafny_verifies_with_budgets("examples/data/rle.av", "aver-dafny-rle", 3, 0);
+    // The accumulator-roundtrip support stack (repeat-succ, decode-append,
+    // WF-guarded fold step, count-nonneg, the generalized-over-accumulator
+    // invariant) plus the `StringJoinEmptyChars` prelude lemma close both
+    // the list roundtrip and its string wrapper, with the deep sample
+    // discharged from the proven lemma instead of fuel. 0 errors, 0 axioms.
+    assert_dafny_verifies_with_budgets("examples/data/rle.av", "aver-dafny-rle", 0, 0);
+}
+
+#[test]
+fn proof_dafny_recognizes_roundtrip_with_renamed_count_field() {
+    // The recognizer identifies the count field by its structural role
+    // (tested `== 0` in the step, re-emitted by finish), not a hard-coded
+    // "count" name. A field-renamed clone of rle.av must still prove at
+    // budget 0/0: before the relaxation the recognizer bailed on any
+    // non-"count" field name and the roundtrip fell to `assume {:axiom}`.
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny verify smoke test: `dafny` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let rle = std::fs::read_to_string(repo_root.join("examples/data/rle.av")).expect("read rle.av");
+    let renamed = rle.replace("count", "tally");
+    let dir = temp_output_dir("aver-dafny-rle-renamed");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let src_path = dir.join("rle_renamed.av");
+    std::fs::write(&src_path, renamed).expect("write renamed rle");
+
+    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(&src_path)
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(dir.join("out"))
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).expect("parse --check-json output");
+    assert_eq!(
+        summary["errors"].as_u64(),
+        Some(0),
+        "renamed-field rle: dafny errors (recognizer must fire name-agnostically)\n{}",
+        json_line
+    );
+    assert_eq!(
+        summary["axioms"].as_u64(),
+        Some(0),
+        "renamed-field rle: dafny axioms (must prove, not axiomatize)\n{}",
+        json_line
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -4,7 +4,7 @@ use crate::codegen::CodegenContext;
 use crate::codegen::common::parse_type_annotation;
 use crate::types::Type;
 
-use super::expr::{aver_name_to_dafny, emit_expr_legacy};
+use super::expr::{aver_name_to_dafny, emit_expr, emit_expr_legacy};
 
 /// Emit a Dafny type from an Aver type annotation string.
 /// Ghost-predicate names emitted by `oracle_subtypes::dafny_subtype_predicates`
@@ -1179,6 +1179,29 @@ pub fn emit_law_samples(
             ));
         }
     } else {
+        // A roundtrip law (accumulator-roundtrip or its string wrapper)
+        // has a proven universal lemma `{fn}_{law}` whose postcondition
+        // is `lhs(x) == x`. A deep concrete sample (e.g. an 8-char string)
+        // exceeds Dafny's default fuel for direct evaluation, so discharge
+        // each sample from that lemma at the sample's value (== the RHS
+        // for a roundtrip law) instead of re-deriving it by unfolding.
+        let roundtrip_thm = ctx
+            .symbol_table
+            .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
+            .and_then(|fn_id| {
+                ctx.proof_ir
+                    .law_theorems
+                    .iter()
+                    .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+            })
+            .filter(|t| {
+                matches!(
+                    t.strategy,
+                    crate::ir::ProofStrategy::AccumulatorRoundtrip { .. }
+                        | crate::ir::ProofStrategy::StringRoundtripViaList { .. }
+                )
+            })
+            .map(|_| format!("{fn_name}_{law_name}"));
         lines.push(format!(
             "method test_{}_{}{}_samples() {{",
             fn_name, law_name, suffix
@@ -1186,6 +1209,9 @@ pub fn emit_law_samples(
         for (lhs_rw, rhs_rw) in &rewritten {
             let l = emit_expr_legacy(lhs_rw, ctx, None);
             let r = emit_expr_legacy(rhs_rw, ctx, None);
+            if let Some(thm) = &roundtrip_thm {
+                lines.push(format!("  {}({});", thm, r));
+            }
             // `{:split_here}` tells Dafny to check the preceding assert as
             // its own VC — without it, Z3 accumulates hypothesis state
             // across all samples in the method and occasionally times out
@@ -1422,6 +1448,104 @@ fn emit_wrapper_over_recursion_support_stack(
     lines.join("\n")
 }
 
+/// Emits the support-lemma stack + main law lemma for an
+/// accumulator-threaded encoder/inverse roundtrip
+/// (`examples/data/rle.av` is the canonical case). The lowerer
+/// recognized the wrapper/loop/step/finish/inverse/repeat shape and
+/// the synthesized `count >= 0` well-formedness invariant; this is the
+/// Dafny counterpart of the Lean `accumulator_roundtrip` emit. All
+/// lemmas are proven — no `assume {:axiom}`:
+///
+///   * `repeat_succ`       — counted-repeat advances by one under n >= 0
+///   * `decode_append`     — the inverse distributes over `++`
+///   * `flush_fold_step`   — one fold step preserves decoded output (WF-guarded)
+///   * `step_count_nonneg` — the step preserves the `count >= 0` invariant
+///   * `loop_gen`          — the generalized invariant over all accumulators
+///   * `{law_thm}`         — the user law, derived at the initial accumulator
+///
+/// The Run literal is reconstructed from `run_value_field`/`count_field`
+/// because Dafny (unlike Lean's `simp`) needs the explicit split point
+/// to apply `decode_append`. The run's count field is assumed to share
+/// `count_field`'s name, which holds across the RLE-shaped family the
+/// lowerer recognizes.
+#[allow(clippy::too_many_arguments)]
+fn emit_accumulator_roundtrip_support_stack(
+    ctx: &CodegenContext,
+    wrapper_fn: &str,
+    loop_fn: &str,
+    step_fn: &str,
+    finish_fn: &str,
+    inverse_fn: &str,
+    expand_fn: &str,
+    repeat_fn: &str,
+    acc_type: &str,
+    run_type: &str,
+    item_type: &str,
+    runs_field: &str,
+    current_field: &str,
+    count_field: &str,
+    run_value_field: &str,
+    initial_acc: &Spanned<crate::ir::hir::ResolvedExpr>,
+    law_thm: &str,
+) -> String {
+    let wrapper_d = aver_name_to_dafny(wrapper_fn);
+    let loop_d = aver_name_to_dafny(loop_fn);
+    let step_d = aver_name_to_dafny(step_fn);
+    let finish_d = aver_name_to_dafny(finish_fn);
+    let inverse_d = aver_name_to_dafny(inverse_fn);
+    let expand_d = aver_name_to_dafny(expand_fn);
+    let repeat_d = aver_name_to_dafny(repeat_fn);
+    let acc_d = emit_type(acc_type);
+    let run_d = emit_type(run_type);
+    let item_d = emit_type(item_type);
+    let runs_f = aver_name_to_dafny(runs_field);
+    let current_f = aver_name_to_dafny(current_field);
+    let count_f = aver_name_to_dafny(count_field);
+    let value_f = aver_name_to_dafny(run_value_field);
+    let initial_d = emit_expr(initial_acc, ctx);
+
+    let repeat_succ = format!("{law_thm}_repeat_succ");
+    let decode_append = format!("{law_thm}_decode_append");
+    let flush_step = format!("{law_thm}_flush_fold_step");
+    let count_nonneg = format!("{law_thm}_step_count_nonneg");
+    let loop_gen = format!("{law_thm}_loop_gen");
+
+    let run_lit = |c: &str, n: &str| format!("{run_d}({value_f} := {c}, {count_f} := {n})");
+    let run_new = run_lit("c", "1");
+    let run_cur_succ = run_lit(&format!("acc.{current_f}"), &format!("acc.{count_f} + 1"));
+    let run_cur = run_lit(&format!("acc.{current_f}"), &format!("acc.{count_f}"));
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "// Law: {wrapper_fn}.<roundtrip> — accumulator-roundtrip support stack"
+    ));
+    // Helper: counted-repeat advances by one (near-definitional for n >= 0).
+    lines.push(format!(
+        "lemma {{:fuel {repeat_d}, 2}} {repeat_succ}(c: {item_d}, n: int)\n  requires 0 <= n\n  ensures {repeat_d}(c, n + 1) == {repeat_d}(c, n) + [c]\n{{\n}}"
+    ));
+    // Helper: the inverse distributes over ++.
+    lines.push(format!(
+        "lemma {{:fuel {inverse_d}, 2}} {decode_append}(a: seq<{run_d}>, b: seq<{run_d}>)\n  ensures {inverse_d}(a + b) == {inverse_d}(a) + {inverse_d}(b)\n  decreases |a|\n{{\n  if |a| == 0 {{\n    assert a + b == b;\n  }} else {{\n    assert (a + b)[0] == a[0];\n    assert (a + b)[1..] == a[1..] + b;\n    {decode_append}(a[1..], b);\n  }}\n}}"
+    ));
+    // The fold step preserves decoded output, under the count >= 0 invariant.
+    lines.push(format!(
+        "lemma {{:fuel {repeat_d}, 3}} {{:fuel {expand_d}, 2}} {flush_step}(acc: {acc_d}, c: {item_d})\n  requires 0 <= acc.{count_f}\n  ensures {inverse_d}({finish_d}({step_d}(acc, c))) == {inverse_d}({finish_d}(acc)) + [c]\n{{\n  if acc.{count_f} == 0 {{\n    {decode_append}(acc.{runs_f}, [{run_new}]);\n  }} else if acc.{current_f} == c {{\n    {decode_append}(acc.{runs_f}, [{run_cur_succ}]);\n    {decode_append}(acc.{runs_f}, [{run_cur}]);\n    {repeat_succ}(acc.{current_f}, acc.{count_f});\n  }} else {{\n    {decode_append}(acc.{runs_f} + [{run_cur}], [{run_new}]);\n  }}\n}}"
+    ));
+    // The step preserves count >= 0.
+    lines.push(format!(
+        "lemma {count_nonneg}(acc: {acc_d}, c: {item_d})\n  requires 0 <= acc.{count_f}\n  ensures 0 <= {step_d}(acc, c).{count_f}\n{{\n}}"
+    ));
+    // The synthesized invariant: generalized over acc, guarded by count >= 0.
+    lines.push(format!(
+        "lemma {{:fuel {loop_d}, 2}} {loop_gen}(xs: seq<{item_d}>, acc: {acc_d})\n  requires 0 <= acc.{count_f}\n  ensures {inverse_d}({loop_d}(xs, acc)) == {inverse_d}({finish_d}(acc)) + xs\n  decreases |xs|\n{{\n  if |xs| == 0 {{\n  }} else {{\n    assert xs == [xs[0]] + xs[1..];\n    {count_nonneg}(acc, xs[0]);\n    {loop_gen}(xs[1..], {step_d}(acc, xs[0]));\n    {flush_step}(acc, xs[0]);\n  }}\n}}"
+    ));
+    // The law, derived from the invariant at the initial accumulator.
+    lines.push(format!(
+        "lemma {{:fuel {inverse_d}, 5}} {{:fuel {wrapper_d}, 5}} {{:fuel {loop_d}, 5}} {{:fuel {expand_d}, 5}} {law_thm}(xs: seq<{item_d}>)\n  ensures {inverse_d}({wrapper_d}(xs)) == xs\n{{\n  {loop_gen}(xs, {initial_d});\n}}\n"
+    ));
+    lines.join("\n")
+}
+
 pub fn emit_verify_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1574,6 +1698,89 @@ pub fn emit_verify_law(
             combine_op,
             &fn_name,
             &law_name,
+        );
+    }
+
+    // Accumulator-threaded encoder/inverse roundtrip — the Dafny
+    // counterpart of the Lean `accumulator_roundtrip` emit. Returns a
+    // proven support stack (no `assume {:axiom}`); the default fuel-only
+    // head/tail-induction body Dafny would otherwise emit can't bridge
+    // the threaded accumulator to the wrapper's initial seed (the IH is
+    // about a different accumulator than the recursive call produces).
+    if let Some(crate::ir::ProofStrategy::AccumulatorRoundtrip {
+        wrapper_fn,
+        loop_fn,
+        step_fn,
+        finish_fn,
+        inverse_fn,
+        expand_fn,
+        repeat_fn,
+        acc_type,
+        run_type,
+        item_type,
+        runs_field,
+        current_field,
+        count_field,
+        run_value_field,
+        initial_acc,
+    }) = vb_fn_id
+        .and_then(|fn_id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+        })
+        .map(|t| t.strategy.clone())
+    {
+        return emit_accumulator_roundtrip_support_stack(
+            ctx,
+            &wrapper_fn,
+            &loop_fn,
+            &step_fn,
+            &finish_fn,
+            &inverse_fn,
+            &expand_fn,
+            &repeat_fn,
+            &acc_type,
+            &run_type,
+            &item_type,
+            &runs_field,
+            &current_field,
+            &count_field,
+            &run_value_field,
+            &initial_acc,
+            &format!("{fn_name}_{law_name}"),
+        );
+    }
+
+    // String wrapper over a proven list roundtrip: prove
+    // `decodeString(encodeString(s)) == s` by instantiating the sibling
+    // list-roundtrip lemma at `StringChars(s)` and rebuilding the string
+    // with the `StringJoinEmptyChars` prelude lemma. Mirror of the Lean
+    // `string_roundtrip_via_list` emit.
+    if let Some(crate::ir::ProofStrategy::StringRoundtripViaList {
+        string_encoder_fn,
+        string_decoder_fn,
+        list_encoder_fn,
+        list_law_name,
+    }) = vb_fn_id
+        .and_then(|fn_id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+        })
+        .map(|t| t.strategy.clone())
+    {
+        let string_enc_d = aver_name_to_dafny(&string_encoder_fn);
+        let string_dec_d = aver_name_to_dafny(&string_decoder_fn);
+        let list_law_thm = format!(
+            "{}_{}",
+            aver_name_to_dafny(&list_encoder_fn),
+            aver_name_to_dafny(&list_law_name)
+        );
+        return format!(
+            "// Law: {fn_name}.{law_name} — string wrapper over the list roundtrip\nlemma {{:fuel {string_dec_d}, 5}} {{:fuel {string_enc_d}, 5}} {fn_name}_{law_name}(s: string)\n  ensures {string_dec_d}({string_enc_d}(s)) == s\n{{\n  {list_law_thm}(StringChars(s));\n  StringJoinEmptyChars(s);\n}}\n"
         );
     }
 

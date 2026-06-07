@@ -3074,10 +3074,6 @@ fn detect_accumulator_roundtrip_plan(
     else {
         return None;
     };
-    let (_, initial_count) = initial_fields.iter().find(|(name, _)| name == "count")?;
-    if !matches!(&initial_count.node, Expr::Literal(Literal::Int(0))) {
-        return None;
-    }
 
     let loop_fd = inputs.find_fn_def_by_call_name(&loop_fn)?;
     if loop_fd.params.len() != 2
@@ -3116,6 +3112,19 @@ fn detect_accumulator_roundtrip_plan(
     let finish_acc = finish_fd.params[0].0.as_str();
     let finish_shape =
         detect_finish_acc_shape(body_terminal_expr(&finish_fd.body)?, finish_acc, acc_type)?;
+
+    // The initial accumulator's count field must be zero — the base of
+    // the `count >= 0` invariant and what makes `finish(initial)` reduce
+    // to the empty run list. The count field is identified by its
+    // structural role (the field `step` tests against 0 and `finish`
+    // re-emits), discovered in `finish_shape`, not by a hard-coded name —
+    // so the recognizer fires regardless of what the field is called.
+    let initial_count = initial_fields
+        .iter()
+        .find_map(|(name, value)| (*name == finish_shape.count_field).then_some(value))?;
+    if !matches!(&initial_count.node, Expr::Literal(Literal::Int(0))) {
+        return None;
+    }
 
     let inverse_fd = inputs.find_fn_def_by_call_name(&inverse_fn)?;
     if inverse_fd.params.len() != 1 {
