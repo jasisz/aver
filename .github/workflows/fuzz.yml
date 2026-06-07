@@ -125,7 +125,7 @@ jobs:
             corpus: corpus/parser
             dict: dicts/aver.dict
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -254,7 +254,7 @@ jobs:
                  2>&1; then
               # The artifact is a tarball — colon-bearing AFL filenames
               # (`id:000000,sig:06,...`) cannot survive the
-              # actions/upload-artifact@v4 Windows-compat filename
+              # actions/upload-artifact (v4+) Windows-compat filename
               # validator unwrapped, so the upload step tars the whole
               # `default/` directory before publishing. Unpack here.
               if [ -f seed/prev/afl-nightly-${{ matrix.target }}.tar.gz ]; then
@@ -396,7 +396,7 @@ jobs:
       - name: Pack AFL output
         # AFL filenames contain `:` characters that
         # mandatory: AFL filenames contain `:` characters that
-        # actions/upload-artifact@v4 silently drops, producing a
+        # actions/upload-artifact (v4+) silently drops, producing a
         # zero-byte artifact and breaking the resume mechanism.
         if: always()
         working-directory: fuzz
@@ -414,7 +414,7 @@ jobs:
         # queue. `if: failure()` would lose the queue every time we
         # have a clean run, defeating the resume mechanism.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: afl-nightly-${{ matrix.target }}
           path: fuzz/afl-nightly-${{ matrix.target }}.tar.gz

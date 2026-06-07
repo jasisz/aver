@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -63,24 +63,35 @@ jobs:
         run: lake --version
 
       - name: Install Dafny
-        # `tests/proof_spec.rs` already gates the Dafny arms on
-        # `Command::new("dafny").arg("--version").output().is_ok()`,
-        # so locally these tests skip cleanly. On nightly we install
-        # the toolchain so the same `cargo test` invocation exercises
-        # both backends — `aver proof --backend dafny <example>`
-        # followed by `dafny verify Prog.dfy` against the emitted
-        # project. A Dafny-side proof failure on any fixture fails
-        # the job.
-        uses: dafny-lang/setup-dafny-action@v1.9.1
-        with:
-          # 4.11.0: 4.9.0 leaves 2 quicksort postconditions un-
-          # discharged on top of the 5-budget (left: 7, right: 5)
-          # and drifts on rle in the same direction; 4.11.0's SMT
-          # encoding closes both within budget on the same source.
-          # Bumping in lockstep with the macOS Homebrew Dafny used
-          # by local contributors keeps `cargo test --test
-          # proof_spec` behaviour identical between dev + CI.
-          dafny-version: 4.11.0
+        # Manual download of the self-contained (62 MB — bundles its own
+        # .NET runtime and Z3) Dafny release zip, replacing
+        # dafny-lang/setup-dafny-action. Two reasons:
+        #   1. Robustness. The action's internal 3x retry gave up after
+        #      ~40s on a transient GitHub-releases CDN 504 and failed the
+        #      nightly; `curl --retry 6 --retry-all-errors` rides a
+        #      multi-minute CDN blip instead.
+        #   2. Node-20 EOL. The action is pinned at v1.9.1 (no newer
+        #      release) and its internal setup-node@v4 / setup-dotnet@v4
+        #      are Node-20 only — GitHub force-migrates those to Node-24
+        #      on 2026-06-16 and removes Node-20 on 2026-09-16. A self-
+        #      contained zip needs no dotnet, so a plain download + PATH
+        #      sidesteps the whole chain.
+        # The next step double-checks the install via `dafny --version`
+        # (which `tests/proof_spec.rs` also gates the Dafny arms on). Keep
+        # the version in lockstep with the macOS Homebrew Dafny local
+        # contributors use so `cargo test --test proof_spec` behaves
+        # identically dev + CI (4.11.0 closes quicksort + rle within the
+        # 5-budget where 4.9.0 left 2 undischarged).
+        env:
+          DAFNY_VERSION: '4.11.0'
+        run: |
+          set -euo pipefail
+          url="https://github.com/dafny-lang/dafny/releases/download/v${DAFNY_VERSION}/dafny-${DAFNY_VERSION}-x64-ubuntu-22.04.zip"
+          curl -fSL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o /tmp/dafny.zip "$url"
+          unzip -q /tmp/dafny.zip -d "$HOME/dafny-install"
+          dafny_dir="$(dirname "$(find "$HOME/dafny-install" -name dafny -type f | head -1)")"
+          chmod +x "$dafny_dir/dafny" || true
+          echo "$dafny_dir" >> "$GITHUB_PATH"
 
       - name: Verify `dafny` reachable
         run: dafny --version
