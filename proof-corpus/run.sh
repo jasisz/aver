@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
 #
-# proof-corpus coverage runner — measures how many proof TASKS Aver's engine
-# CLOSES (the law's universal theorem, kernel-checked by Lean), as a NUMBER,
-# not a gate.
+# proof-corpus coverage runner — measures how many proof TASKS Aver CLOSES (the
+# universal law verified), as a NUMBER, not a gate. Measures BOTH backends:
+# Lean (kernel-checked, trustworthy, but only Aver's hand-rolled strategies) and
+# Dafny (Z3 automation — more reach, less trust). A task is COVERED if EITHER
+# backend proves it; the two are also reported separately because they differ a
+# LOT (Z3's automated induction proves far more of this corpus than the Lean
+# strategies). The union is the honest "what Aver can prove".
 #
-# This is NOT a regression suite: most tasks are expected to be OPEN (out of the
-# engine's current reach) by design. An open task lowers the coverage %, it is
-# never a failure. The must-prove regression set lives in the compiler repo
-# (examples/data, examples/formal + tests/proof_spec.rs assert_eq!), separate.
+# NOT a regression suite: most tasks are expected to be OPEN by design; an open
+# task lowers the number, never fails. The must-prove regression set lives in the
+# compiler repo (examples/data, examples/formal + proof_spec.rs assert_eq!).
 #
-# Metric: a task is COVERED when `aver proof <f> --check --check-json` reports
-# "passed": true — i.e. the Lean export of the universal law kernel-checks with
-# no sorry/axiom over budget, via any of Aver's auto-mode proof strategies
-# (structural induction, accumulator-fold spec-equivalence, etc.). Lake-gated.
-#
-# NOTE: this counts the AUTO-mode strategies. The `--discover` lemma-discovery
-# class (codec roundtrips, list-homomorphism enumeration) is NOT counted here;
-# run those separately if needed. A file that fails to compile counts as open.
+# Metric per backend: `aver proof <f> --backend <b> --check --check-json` reports
+# "passed": true. Retries once (lake/Z3 transient failures produce false "open",
+# never false "proved", so the reported numbers are lower bounds).
 #
 # Usage:  ./run.sh            (uses ../target/debug/aver — build it first)
 #         AVER=/path/to/aver ./run.sh
@@ -30,35 +28,37 @@ if [ ! -x "$AVER" ]; then
   exit 1
 fi
 
-covered=0
-total=0
-# Run one task; echo "proved" or "open". Retries once on a non-passed result —
-# heavy parallel/sequential lake load can transiently fail a build, which would
-# otherwise undercount (flakes produce false "open", never false "proved").
-check_one() {
-  local f="$1" attempt out json
+# proves <file> <backend> -> "proved" | "open" (retry once to absorb flakiness).
+proves() {
+  local f="$1" backend="$2" attempt out json
   for attempt in 1 2; do
     out="$(mktemp -d)"
-    json="$("$AVER" proof "$f" --check --check-json -o "$out" 2>/dev/null | grep '"passed"' | tail -1)"
+    json="$("$AVER" proof "$f" --backend "$backend" --check --check-json -o "$out" 2>/dev/null | grep '"passed"' | tail -1)"
     rm -rf "$out"
-    if printf '%s' "$json" | grep -q '"passed":true'; then
-      echo proved
-      return
-    fi
+    printf '%s' "$json" | grep -q '"passed":true' && { echo proved; return; }
   done
   echo open
 }
 
+lean=0
+dafny=0
+union=0
+total=0
 for f in $(find "$ROOT" -name '*.av' | sort); do
   [ -e "$f" ] || continue
   total=$((total + 1))
-  if [ "$(check_one "$f")" = proved ]; then
-    covered=$((covered + 1))
-    printf '  proved   %s\n' "${f#"$ROOT"/}"
-  else
-    printf '  open     %s\n' "${f#"$ROOT"/}"
+  l=$(proves "$f" lean)
+  d=$(proves "$f" dafny)
+  [ "$l" = proved ] && lean=$((lean + 1))
+  [ "$d" = proved ] && dafny=$((dafny + 1))
+  if [ "$l" = proved ] || [ "$d" = proved ]; then
+    union=$((union + 1))
+    tag="lean+dafny"
+    [ "$l" = open ] && tag="dafny-only"
+    [ "$d" = open ] && tag="lean-only"
+    printf '  proved  [%-10s] %s\n' "$tag" "${f#"$ROOT"/}"
   fi
 done
 
 echo ""
-echo "coverage: ${covered} / ${total}"
+echo "coverage (union): ${union} / ${total}   |   lean: ${lean}   dafny: ${dafny}"

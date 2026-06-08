@@ -47,20 +47,32 @@ bound. (One un-retried sweep undercounted 8 → 2.)
 
 154 tasks: TIP isaplanner (78) + TIP prod (74) + 2 handwritten. Translated by
 per-problem agents from the upstream `.smt2` with a self-validation loop
-(yield 88/88 compiling on the second batch).
+(yield 88/88 compiling on the second batch). 152 TIP compile under `aver proof`.
 
-- **152 / ~160** TIP problems translated + compile under `aver proof`
-  (the residual are higher-order or multi-type-var-pair goals — not first-order).
-- **8 / 154 proved** (retry-hardened): handwritten `sum_acc_spec`; isaplanner
-  `prop_46` (`zip [] xs = []`), `prop_82` (`take n (zip xs ys) = zip (take n xs)
-  (take n ys)`); prod `lemma_08`, `lemma_10`, `lemma_11`, `lemma_13`, `lemma_22`.
+**Coverage (union) = 32 / 154 (~21%), retry-hardened. Lean: 8. Dafny: 32.**
 
-So ~**7/152 on third-party TIP** (~5%). The value is the gap map, not the number.
-prod (Productive-Use-of-Failure, IH-generalization-heavy) contributes 5/8 — it
-sits closer to Aver's accumulator-generalization reach than the isaplanner Nat
-arithmetic. Dominant blockers: (a) Peano `Nat` `+`/`-` reported "outside proof
-subset"; (b) general list/Nat induction lemmas no current strategy auto-discovers.
-Those are the roadmap.
+The two backends differ a LOT, and Dafny is a STRICT SUPERSET here:
+- **Dafny (Z3) proves 32** — every task Lean proves PLUS 24 more. Z3's automated
+  induction + arithmetic closes Peano/Nat and list-induction lemmas (prop_11, 13,
+  15, 17, …, lemma_02, 05, 07, …) that Aver's hand-rolled Lean strategies miss.
+- **Lean proves 8** — only what Aver's bespoke strategies cover (structural
+  induction, accumulator-fold spec-equivalence): `sum_acc_spec`; isaplanner
+  `prop_46`, `prop_82`; prod `lemma_08`, `_10`, `_11`, `_13`, `_22`.
+- **Lean-only = ∅** — Lean proves nothing Dafny doesn't.
+
+Reading: "Lean = source of truth" is about TRUST (kernel-checked), not REACH.
+Dafny has more reach (Z3 automation) but less trust (Z3 is trusted, not
+kernel-certified). The 24 dafny-only tasks are "proved by Z3, not yet
+kernel-certified in Lean".
+
+The real frontier is the **~122 tasks NEITHER backend proves** — the genuinely
+hard inductive theorems needing auxiliary-lemma discovery / IH-generalization
+that no off-the-shelf prover auto-does. That is exactly where Aver's
+lemma-discovery layer (the accumulator-generalization / relational-brick work) is
+the differentiated bet, and what the corpus should be mined for next: tasks where
+discovery cracks a goal Z3 cannot. (The Lean-strategy gap vs Dafny is a TRUST
+play — kernel-certifying what Z3 already proves — not a reach play; it does not
+grow the union.)
 
 ## Adding tasks
 
