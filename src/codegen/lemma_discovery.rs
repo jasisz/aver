@@ -1619,15 +1619,52 @@ fn bounded_lemma(
 /// group, so independent invariants never share a build fate, and a record with
 /// several Int fields yields a lemma for each.
 pub fn structural_lemma_groups(inputs: &ProofLowerInputs) -> Vec<Vec<(String, String)>> {
+    // A running, globally-unique base index across both group kinds — bases need
+    // only be distinct (so names never clash in the committed artifact), not
+    // positional, so the two passes can share one counter.
+    let mut next_base = 0usize;
+    let mut next = |kind: &str| {
+        let b = format!("aver_{kind}_{next_base}");
+        next_base += 1;
+        b
+    };
+
+    // Pass 1: the relational roundtrip chains. Emitted FIRST so pass 2 knows
+    // which standalone bricks a chain already re-proves internally and can skip
+    // them (dedup) — but appended LAST, to keep the standalone-first artifact
+    // order. Each chain is self-contained (its own homomorphism / counted-repeat
+    // / nonneg copies under a unique `base`), so it builds with one `lake build`.
+    let mut relational: Vec<Vec<(String, String)>> = Vec::new();
+    let mut covered_counted: HashSet<String> = HashSet::new();
+    let mut covered_nonneg: HashSet<(String, String)> = HashSet::new();
+    for enc in detect_encoders(inputs) {
+        let base = next("relational");
+        if let Some((group, cov)) = relational_lemma_group(&enc, inputs, &base) {
+            covered_counted.insert(cov.counted_fn);
+            covered_nonneg.insert((cov.step_fn, cov.field));
+            relational.push(group);
+        }
+    }
+
+    // Pass 2: standalone structure-directed bricks, SKIPPING any a relational
+    // chain already subsumes (the chain's counted-repeat helper and its
+    // step's nonneg field) — no double-proving the same lemma under two names.
     let mut groups: Vec<Vec<(String, String)>> = Vec::new();
     for fd in inputs.pure_fns() {
         if let Some(shape) = detect_counted_repeat(fd) {
-            let base = format!("aver_structural_{}", groups.len());
-            groups.push(counted_repeat_lemmas(&shape, &base));
+            if !covered_counted.contains(&fd.name) {
+                let base = next("structural");
+                groups.push(counted_repeat_lemmas(&shape, &base));
+            }
             continue;
         }
         for (field, inv) in detect_field_invariants(fd, inputs) {
-            let base = format!("aver_structural_{}", groups.len());
+            if matches!(inv, FieldInvariant::Nonneg)
+                && covered_nonneg.contains(&(fd.name.clone(), field.clone()))
+            {
+                continue;
+            }
+            let base = next("structural");
             let lemma = match inv {
                 FieldInvariant::Nonneg => nonneg_lemma(&fd.name, &fd.params, &field, &base),
                 FieldInvariant::Bounded { lo, hi } => {
@@ -1637,16 +1674,8 @@ pub fn structural_lemma_groups(inputs: &ProofLowerInputs) -> Vec<Vec<(String, St
             groups.push(vec![lemma]);
         }
     }
-    // Relational bricks: one self-contained roundtrip chain per detected
-    // fold-encoder-with-inverse (rle, sparse, …). Each group carries its own
-    // copies of the homomorphism / counted-repeat / nonneg lemmas under a unique
-    // `base`, so it proves with a single `lake build` and never name-clashes.
-    for enc in detect_encoders(inputs) {
-        let base = format!("aver_relational_{}", groups.len());
-        if let Some(group) = relational_lemma_group(&enc, inputs, &base) {
-            groups.push(group);
-        }
-    }
+
+    groups.extend(relational);
     groups
 }
 
@@ -2091,16 +2120,26 @@ fn roundtrip_lemma(enc: &EncoderShape, x_ty_lean: &str, base: &str) -> (String, 
     (name, text)
 }
 
+/// The standalone structural bricks a relational chain re-proves internally, so
+/// `structural_lemma_groups` can skip emitting them a second time: the
+/// counted-repeat helper fn and the `(step fn, nonneg field)` the chain covers.
+struct RelationalCoverage {
+    counted_fn: String,
+    step_fn: String,
+    field: String,
+}
+
 /// Emit the full relational brick chain for one detected encoder as a single
-/// dependency-ordered group (one `lake build`). Returns `None` if any required
-/// role can't be resolved (the step's accumulator/element types, the nonneg
-/// count field, the inverse's element type, or the counted-repeat helper the
-/// `expand` body calls) — a graceful skip, never a partial chain.
+/// dependency-ordered group (one `lake build`), plus the [`RelationalCoverage`]
+/// it subsumes. Returns `None` if any required role can't be resolved (the
+/// step's accumulator/element types, the nonneg count field, the inverse's
+/// element type, or the counted-repeat helper the `expand` body calls) — a
+/// graceful skip, never a partial chain.
 fn relational_lemma_group(
     enc: &EncoderShape,
     inputs: &ProofLowerInputs,
     base: &str,
-) -> Option<Vec<(String, String)>> {
+) -> Option<(Vec<(String, String)>, RelationalCoverage)> {
     // step : (Acc, X) -> Acc — the accumulator and folded-element types.
     let step_fd = inputs.find_fn_def_by_call_name(&enc.step)?;
     if step_fd.params.len() != 2 {
@@ -2160,7 +2199,12 @@ fn relational_lemma_group(
     ));
     group.push(loop_gen_lemma(enc, &acc_ty_lean, &x_ty_lean, &field, base));
     group.push(roundtrip_lemma(enc, &x_ty_lean, base));
-    Some(group)
+    let coverage = RelationalCoverage {
+        counted_fn: cr.fn_name.clone(),
+        step_fn: enc.step.clone(),
+        field,
+    };
+    Some((group, coverage))
 }
 
 /// Candidate indices in proof-attempt order: list-homomorphism shapes first
@@ -2594,19 +2638,20 @@ verify encode law roundtrip
 
     #[test]
     fn structural_conjecturer_on_real_rle() {
-        // Three structure-directed groups fire on rle: the counted-repeat
-        // advance (`repeat`), the monotone-nonneg accumulator field of the fold
-        // (`encodeFold.count`), and the relational roundtrip chain (the
-        // encoder's full `decode (encode xs) = xs`).
+        // rle is a full encoder, so its counted-repeat (`repeat`) and
+        // monotone-nonneg (`encodeFold.count`) bricks are SUBSUMED by the
+        // relational roundtrip chain (which re-proves them internally) and are
+        // NOT emitted a second time as standalone groups — dedup. So exactly one
+        // group fires: the chain.
         let groups = with_inputs(&rle_source(), structural_lemma_groups);
         assert_eq!(
             groups.len(),
-            3,
-            "expected counted-repeat + monotone-field + relational-chain groups"
+            1,
+            "expected only the relational chain (standalone bricks deduped)"
         );
         let all: String = groups.iter().flatten().map(|(_, t)| t.as_str()).collect();
-        // brick 1: guarded counted-repeat advance (`repeat` escapes to `repeat'`;
-        // its param is named `char` in rle, used verbatim now).
+        // brick 1 (now inside the chain): guarded counted-repeat advance
+        // (`repeat` escapes to `repeat'`; its param is named `char` in rle).
         assert!(
             all.contains("repeat' char (n + 1) = repeat' char n ++ [char]"),
             "{all}"
@@ -2615,13 +2660,20 @@ verify encode law roundtrip
             all.contains("(hn : 0 <= n)") && all.contains("natAbs"),
             "{all}"
         );
-        // generalized brick 2: monotone-nonneg field invariant, with the
-        // shape-agnostic split/omega template (NOT the old RLE by_cases).
+        // generalized brick 2 (now inside the chain): monotone-nonneg field
+        // invariant, with the shape-agnostic split/omega template.
         assert!(all.contains("_count_nonneg"), "{all}");
         assert!(all.contains("0 <= (encodeFold acc char).count"), "{all}");
         assert!(
             all.contains("unfold encodeFold") && all.contains("split <;>"),
             "{all}"
+        );
+        // DEDUP regression guard: the count-nonneg invariant is proved EXACTLY
+        // once (only the chain's copy), not also as a standalone structural group.
+        assert_eq!(
+            all.matches("0 <= (encodeFold acc char).count").count(),
+            1,
+            "count_nonneg duplicated — dedup regressed"
         );
     }
 
