@@ -1700,6 +1700,24 @@ fn as_call(
     }
 }
 
+/// The inner (loop) fn of `wrapper`, IF `analysis::shape` classified it as a
+/// `WrapperOverRecursion` — this is the principled "is this a wrapper-over-
+/// recursion fold" decision, sourced from the shared shape vocabulary rather
+/// than re-derived by a bespoke AST walk. `None` when no program shape is
+/// available or the wrapper isn't so classified, so both fold-flavor detectors
+/// are GATED on the shape agreeing.
+fn shape_inner_fn(inputs: &ProofLowerInputs, wrapper: &str) -> Option<String> {
+    use crate::analysis::shape::ModulePattern;
+    inputs.program_shape?.patterns.iter().find_map(|p| match p {
+        ModulePattern::WrapperOverRecursion {
+            wrapper_fn,
+            inner_fn,
+            ..
+        } if wrapper_fn == wrapper => Some(inner_fn.clone()),
+        _ => None,
+    })
+}
+
 /// The single trailing expression of a fn body, if it is `… = expr` shaped.
 fn last_body_expr(fd: &crate::ast::FnDef) -> Option<&crate::ast::Spanned<crate::ast::Expr>> {
     match fd.body.stmts().last() {
@@ -1764,10 +1782,13 @@ fn detect_encoder(
         return None;
     }
 
-    // wrapper(var) = loop(var, initAcc).
+    // wrapper(var) = loop(var, initAcc). Shape-anchored: `analysis::shape` must
+    // classify `wrapper` as a wrapper-over-recursion, and its inner fn must be
+    // the `loop` the body calls.
+    let shape_loop = shape_inner_fn(inputs, &wrapper)?;
     let wf = inputs.find_fn_def_by_call_name(&wrapper)?;
     let (loop_fn, loop_args) = as_call(last_body_expr(wf)?)?;
-    if loop_args.len() != 2 {
+    if loop_fn != shape_loop || loop_args.len() != 2 {
         return None;
     }
     // The neutral accumulator (2nd loop arg) must render to a Lean literal — the
@@ -2299,10 +2320,15 @@ fn detect_monoidal_spec(
         return None;
     };
 
-    // wrapper(var) = loop(var, neutral), neutral a literal.
+    // wrapper(var) = loop(var, neutral), neutral a literal. Shape-anchored on
+    // the same `WrapperOverRecursion` classification as the codec flavor.
+    let shape_loop = shape_inner_fn(inputs, &wrapper)?;
     let wf = inputs.find_fn_def_by_call_name(&wrapper)?;
     let (loop_fn, loop_args) = as_call(last_body_expr(wf)?)?;
-    if loop_args.len() != 2 || cr_ident_name(&loop_args[0]).as_deref() != Some(var.as_str()) {
+    if loop_fn != shape_loop
+        || loop_args.len() != 2
+        || cr_ident_name(&loop_args[0]).as_deref() != Some(var.as_str())
+    {
         return None;
     }
     let neutral = render_init_literal(&loop_args[1])?;
@@ -2566,6 +2592,22 @@ verify encode law roundtrip
         crate::ir::pipeline::tco(&mut items);
         crate::ir::pipeline::resolve(&mut items);
         let symbols = crate::ir::SymbolTable::build(&items, &[]);
+        // Build the program shape (WrapperOverRecursion, …) so shape-anchored
+        // detection exercises the same path in tests as in the CLI (where the
+        // CodegenContext populates `program_shape`).
+        let resolved = crate::ir::hir::resolve_program(&symbols, &items);
+        let resolved_fns: Vec<&crate::ir::hir::ResolvedFnDef> = resolved
+            .iter()
+            .filter_map(|t| match t {
+                crate::ir::hir::ResolvedTopLevel::FnDef(fd) => Some(fd),
+                _ => None,
+            })
+            .collect();
+        // `analyze_program_with_modules` (not `analyze_program`) is what
+        // populates `patterns` (WrapperOverRecursion, …) — the entry-only
+        // variant leaves them empty.
+        let shape =
+            crate::analysis::shape::analyze_program_with_modules(&resolved_fns, &items, &[]);
         let prefixes: HashSet<String> = HashSet::new();
         let recursive: HashSet<crate::ir::FnId> = HashSet::new();
         let no_modules: &[ModuleInfo] = &[];
@@ -2575,7 +2617,7 @@ verify encode law roundtrip
             module_prefixes: &prefixes,
             recursive_fns: &recursive,
             symbol_table: &symbols,
-            program_shape: None,
+            program_shape: Some(&shape),
         };
         f(&inputs)
     }
@@ -2967,6 +3009,51 @@ verify encode law roundtrip
             ),
             "sparse roles: {:?}",
             encoder_roles(&sparse_source())
+        );
+    }
+
+    #[test]
+    fn shape_classifies_fold_wrappers() {
+        // Shape-anchoring precondition: `analysis::shape` must classify the
+        // encoder/monoidal wrappers as `WrapperOverRecursion` — the principled
+        // "is this a wrapper-over-recursion fold" decision the detectors gate on,
+        // sourced from the shared shape vocabulary, not a bespoke AST walk.
+        use crate::analysis::shape::ModulePattern;
+        let wrappers = |src: &str| -> Vec<(String, String)> {
+            with_inputs(src, |inputs| {
+                inputs
+                    .program_shape
+                    .map(|s| {
+                        s.patterns
+                            .iter()
+                            .filter_map(|p| match p {
+                                ModulePattern::WrapperOverRecursion {
+                                    wrapper_fn,
+                                    inner_fn,
+                                    ..
+                                } => Some((wrapper_fn.clone(), inner_fn.clone())),
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+        };
+        assert!(
+            wrappers(&rle_source()).contains(&("encode".to_string(), "encodeLoop".to_string())),
+            "rle: {:?}",
+            wrappers(&rle_source())
+        );
+        assert!(
+            wrappers(&sparse_source())
+                .contains(&("encodeSparse".to_string(), "sparseLoop".to_string())),
+            "sparse: {:?}",
+            wrappers(&sparse_source())
+        );
+        assert!(
+            wrappers(&sum_acc_source()).contains(&("sum".to_string(), "sumTR".to_string())),
+            "sum_acc: {:?}",
+            wrappers(&sum_acc_source())
         );
     }
 
