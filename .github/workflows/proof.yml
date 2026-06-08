@@ -55,12 +55,25 @@ jobs:
         # a different `lean-toolchain` still trigger elan to fetch the
         # matching version on first `lake build`.
         run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+          curl -sSfL --retry 6 --retry-all-errors --retry-delay 15 --connect-timeout 30 \
+            https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
             | sh -s -- -y --default-toolchain stable
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
       - name: Verify `lake` reachable
-        run: lake --version
+        # The first lake/lean invocation lazily fetches the pinned toolchain
+        # from releases.lean-lang.org; that download has no built-in retry and
+        # times out on transient network blips (the same failure mode the
+        # Dafny arm already hardens against with `curl --retry`). Retry the
+        # toolchain materialization a few times before failing the job.
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if lake --version; then exit 0; fi
+            echo "::warning::lake/toolchain fetch failed (attempt ${attempt}/6); retrying in 15s"
+            sleep 15
+          done
+          echo "::error::lake unreachable after 6 attempts (toolchain download)"
+          exit 1
 
       - name: Install Dafny
         # Manual download of the self-contained (62 MB — bundles its own
