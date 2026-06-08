@@ -4891,25 +4891,78 @@ pub(super) fn cmd_proof(
         true,  // run_law_lower — same
     );
 
-    // `--discover`: run the lemma-discovery pass and print its report
-    // instead of generating a proof project. Explicit, expensive, cached
-    // step (charter: `prompts/lemma-discovery.md`); normal `aver proof`
-    // never enters here. Pure analysis over the already-built context.
+    // `--discover`: the explicit, expensive, cached lemma-discovery step
+    // (charter: `prompts/lemma-discovery.md`); normal `aver proof` never enters
+    // here. Discover-once / replay-after: the proved lemmas are committed as a
+    // reviewable `<output>/DiscoveredLemmas.lean`, keyed by a discovery-surface
+    // hash. On re-run with an unchanged surface we REPLAY — re-verify the
+    // committed lemmas (the soundness guard) WITHOUT re-enumerating.
     if discover {
-        // Enumerate + VM-filter (immutable borrow of ctx, scoped so it ends
-        // before the prove step needs `&mut ctx` for Lean transpilation).
+        let lemmas_path = std::path::Path::new(output_dir).join("DiscoveredLemmas.lean");
+        let surface_hash = {
+            let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+            aver::codegen::lemma_discovery::discovery_surface_hash(&inputs)
+        };
+        let hash_tag = format!("-- cone-hash: {surface_hash}");
+
+        // REPLAY: committed lemmas present + surface unchanged → re-verify only.
+        if let Ok(existing) = std::fs::read_to_string(&lemmas_path)
+            && existing.contains(&hash_tag)
+        {
+            let count = existing
+                .lines()
+                .filter(|l| l.trim_start().starts_with("theorem "))
+                .count();
+            if lake_reverify_appended(&mut ctx, verify_mode, &existing) {
+                println!(
+                    "lemma discovery: replayed {count} committed lemma(s), re-verified (no rediscovery)\n  {}",
+                    lemmas_path.display()
+                );
+                return;
+            }
+            eprintln!(
+                "{}",
+                "warning: committed lemmas failed re-verification (surface stale?) — rediscovering"
+                    .yellow()
+            );
+        }
+
+        // DISCOVER: enumerate + VM-filter (immutable borrow of ctx, scoped so
+        // it ends before the prove step needs `&mut ctx`).
         let mut reports = {
             let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
             let mut reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
             aver::codegen::lemma_discovery::vm_filter(&mut reports, &inputs);
             reports
         };
-        // 2d: kernel-prove the top-ranked survivors via Lean.
-        prove_discovered_lemmas_lean(&mut reports, &mut ctx, verify_mode);
+        let proved_lean = prove_discovered_lemmas_lean(&mut reports, &mut ctx, verify_mode);
         print!(
             "{}",
             aver::codegen::lemma_discovery::render_report(&reports)
         );
+
+        // Persist proved lemmas as a reviewable Lean file (the committed
+        // artifact), tagged with the surface hash for replay.
+        if !proved_lean.is_empty() {
+            let _ = std::fs::create_dir_all(output_dir);
+            let mut content = format!(
+                "-- Discovered lemmas for {file} — `aver proof --discover`\n\
+                 {hash_tag}\n\
+                 -- Each theorem below was enumerated, VM-filtered, and kernel-proved.\n\
+                 -- Re-verified (not rediscovered) on replay while the cone-hash holds.\n\n"
+            );
+            for thm in &proved_lean {
+                content.push_str(thm);
+                content.push('\n');
+            }
+            if std::fs::write(&lemmas_path, &content).is_ok() {
+                println!(
+                    "\ncommitted {} proved lemma(s) → {}",
+                    proved_lean.len(),
+                    lemmas_path.display()
+                );
+            }
+        }
         return;
     }
 
@@ -4992,8 +5045,10 @@ fn prove_discovered_lemmas_lean(
     reports: &mut [aver::codegen::lemma_discovery::LawDiscovery],
     ctx: &mut codegen::CodegenContext,
     verify_mode: &super::cli::ProofVerifyMode,
-) {
+) -> Vec<String> {
     use std::process::Command;
+
+    let mut proved_lean: Vec<String> = Vec::new();
 
     // `lake` must be on PATH; otherwise leave proving to a later run.
     let lake_ok = Command::new("lake")
@@ -5002,7 +5057,7 @@ fn prove_discovered_lemmas_lean(
         .map(|o| o.status.success())
         .unwrap_or(false);
     if !lake_ok {
-        return;
+        return proved_lean;
     }
 
     let emit_mode = match verify_mode {
@@ -5016,7 +5071,7 @@ fn prove_discovered_lemmas_lean(
     let entry = format!("{}.lean", aver::codegen::common::entry_basename(ctx));
 
     let Ok(dir) = tempfile::tempdir() else {
-        return;
+        return proved_lean;
     };
     let mut entry_orig: Option<String> = None;
     for (rel, content) in &project.files {
@@ -5028,11 +5083,11 @@ fn prove_discovered_lemmas_lean(
             entry_orig = Some(content.clone());
         }
         if std::fs::write(&path, content).is_err() {
-            return;
+            return proved_lean;
         }
     }
     let Some(entry_orig) = entry_orig else {
-        return;
+        return proved_lean;
     };
     let entry_path = dir.path().join(&entry);
 
@@ -5070,9 +5125,65 @@ fn prove_discovered_lemmas_lean(
                 .unwrap_or(false);
             if proved {
                 report.proved.push(candidate.render(&report.binders));
+                proved_lean.push(theorem);
             }
         }
     }
+    proved_lean
+}
+
+/// Re-verify already-discovered lemmas (replay path): regenerate the program's
+/// Lean project, append the committed lemma source verbatim, and `lake build`.
+/// Returns whether the build still succeeds (the committed proofs still
+/// kernel-check). This — not the cone hash — is the soundness guard: a code
+/// change that staled a lemma fails loudly here instead of being trusted.
+fn lake_reverify_appended(
+    ctx: &mut codegen::CodegenContext,
+    verify_mode: &super::cli::ProofVerifyMode,
+    appended: &str,
+) -> bool {
+    use std::process::Command;
+
+    if Command::new("lake")
+        .arg("--version")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    let emit_mode = match verify_mode {
+        super::cli::ProofVerifyMode::Auto => aver::codegen::lean::VerifyEmitMode::NativeDecide,
+        super::cli::ProofVerifyMode::Sorry => aver::codegen::lean::VerifyEmitMode::Sorry,
+        super::cli::ProofVerifyMode::TheoremSkeleton => {
+            aver::codegen::lean::VerifyEmitMode::TheoremSkeleton
+        }
+    };
+    let project = aver::codegen::lean::transpile_for_proof_mode(ctx, emit_mode);
+    let entry = format!("{}.lean", aver::codegen::common::entry_basename(ctx));
+    let Ok(dir) = tempfile::tempdir() else {
+        return false;
+    };
+    for (rel, content) in &project.files {
+        let path = dir.path().join(rel);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let body = if *rel == entry {
+            format!("{content}\n\n{appended}\n")
+        } else {
+            content.clone()
+        };
+        if std::fs::write(&path, body).is_err() {
+            return false;
+        }
+    }
+    Command::new("lake")
+        .arg("build")
+        .current_dir(dir.path())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// `aver proof --check` harness: invoke the backend's verifier inside

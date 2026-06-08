@@ -3000,11 +3000,15 @@ fn discover_kernel_proves_decode_append_when_lake_is_available() {
     }
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let aver_bin = env!("CARGO_BIN_EXE_aver");
+    // Fresh `-o` so the run always discovers (no committed-lemma replay).
+    let output_dir = temp_output_dir("aver-discover-rle");
     let run = Command::new(aver_bin)
         .current_dir(&repo_root)
         .arg("proof")
         .arg("examples/data/rle.av")
         .arg("--discover")
+        .arg("-o")
+        .arg(&output_dir)
         .output()
         .expect("expected `aver proof --discover` to run");
     let stdout = String::from_utf8_lossy(&run.stdout);
@@ -3018,4 +3022,11 @@ fn discover_kernel_proves_decode_append_when_lake_is_available() {
         "decode_append was not the kernel-proved lemma:\n{}",
         format_output(&run)
     );
+    // The proved lemma is persisted as a reviewable committed artifact.
+    assert!(
+        output_dir.join("DiscoveredLemmas.lean").exists(),
+        "DiscoveredLemmas.lean was not written:\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
 }

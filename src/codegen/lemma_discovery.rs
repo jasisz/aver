@@ -19,10 +19,11 @@
 //! goal-direction *for free* — external tools (HipSpec/CCLemma/…) must
 //! reconstruct scope at cost.
 //!
-//! # What's implemented here (Phase 2a → 2d)
+//! # What's implemented here (Phase 2a → 2e)
 //!
-//! The type-directed term enumerator, candidate generator, VM-filter, and the
-//! Lean theorem rendering the CLI kernel-checks:
+//! The type-directed term enumerator, candidate generator, VM-filter, the Lean
+//! theorem rendering the CLI kernel-checks, and the discovery-surface hash that
+//! keys committed-lemma replay:
 //!
 //! 1. A **typed variable context** — a small fixed pool of variables (up to
 //!    [`MAX_VARS_PER_TYPE`] per distinct parameter type the cone fns range
@@ -46,11 +47,19 @@
 //!    the generated Lean project and `lake build`s it (proved ⟺ exit 0). This
 //!    is the proved-or-dropped gate (2d).
 //!
-//! Still ahead (2e): commit the proved lemma as a source file + re-enter the
-//! law's proof via the `ProofStrategy::SimpOverLemmas` hook (so `aver proof`
-//! replays + re-verifies it). Entry [`run_discovery`] (+ [`vm_filter`], + the
-//! CLI prove step) is invoked by `aver proof --discover`; normal `aver proof`
-//! never runs this (discovery is the explicit, expensive, cached step).
+//! 6. **Discover-once / replay** ([`discovery_surface_hash`]) — proved lemmas
+//!    are committed by the CLI as a reviewable `DiscoveredLemmas.lean` tagged
+//!    with the surface hash; on a re-run with an unchanged surface the CLI
+//!    REPLAYS (re-verifies the committed lemmas via `lake build`) instead of
+//!    re-enumerating. Re-verification — not the hash — is the soundness guard.
+//!
+//! Still ahead: re-enter the *law's own proof* with a discovered lemma (via the
+//! `ProofStrategy::SimpOverLemmas` hook) so a `verify ... law` that needs it
+//! closes under normal `aver proof` — for the flagship rle roundtrip that also
+//! needs the guarded accumulator-generalization family (charter layer 3), so
+//! it is deferred there. Entry [`run_discovery`] (+ [`vm_filter`], + the CLI
+//! prove/replay step) is invoked by `aver proof --discover`; normal
+//! `aver proof` never runs this (discovery is the explicit, cached step).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -1104,6 +1113,30 @@ fn is_homomorphism(c: &Conjecture) -> bool {
             && matches!((&r1[0], &r2[0]), (TermNode::Var(a2), TermNode::Var(b2)) if a2 == a && b2 == b)
     }
     oriented(&c.lhs, &c.rhs) || oriented(&c.rhs, &c.lhs)
+}
+
+/// A stable content hash of the discovery surface (every pure fn's signature),
+/// used as the committed-lemma cache key: a matching hash means the committed
+/// lemmas can be REPLAYED (re-verified) instead of rediscovered. FNV-1a over
+/// the sorted canonical signatures — stable across runs/platforms (unlike
+/// `DefaultHasher`). This is only a performance key (skip rediscovery); the
+/// soundness guard is re-verification every build, never the hash (charter).
+pub fn discovery_surface_hash(inputs: &ProofLowerInputs) -> String {
+    let mut sigs: Vec<String> = inputs
+        .pure_fns()
+        .iter()
+        .map(|fd| {
+            let params: Vec<String> = fd.params.iter().map(|(n, t)| format!("{n}:{t}")).collect();
+            format!("{}({})->{}", fd.name, params.join(","), fd.return_type)
+        })
+        .collect();
+    sigs.sort();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in sigs.join(";").bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 /// Candidate indices in proof-attempt order: list-homomorphism shapes first
