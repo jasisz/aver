@@ -486,9 +486,19 @@ fn indent_lines(block: &str, prefix: &str) -> Vec<String> {
         .collect()
 }
 
+/// Neutralize Lean block-comment delimiters inside doc text. A `/-` or `-/` in
+/// the text would open/close a NESTED block comment inside the `/-- ... -/` doc
+/// comment Lean wraps it in, leaving the comment unterminated and breaking the
+/// whole file (`error: unterminated comment`). Splitting the 2-char token with a
+/// space stops it tokenizing as a delimiter while reading identically in prose
+/// (e.g. an Aver `?` doc mentioning `+2/-2` renders `+2/ -2`).
+pub(crate) fn sanitize_doc(text: &str) -> String {
+    text.replace("/-", "/ -").replace("-/", "- /")
+}
+
 fn emit_doc_comment(desc: &Option<String>) -> Vec<String> {
     desc.as_ref()
-        .map(|text| vec![format!("/-- {} -/", text)])
+        .map(|text| vec![format!("/-- {} -/", sanitize_doc(text))])
         .unwrap_or_default()
 }
 
@@ -1223,7 +1233,7 @@ pub fn emit_fn_def(
 
     // Doc comment from description
     if let Some(desc) = &fd.desc {
-        lines.push(format!("/-- {} -/", desc));
+        lines.push(format!("/-- {} -/", sanitize_doc(desc)));
     }
 
     let is_recursive = recursive_fns.contains(&fd.name);
@@ -1384,7 +1394,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
 
     let mut lines = Vec::new();
     if let Some(desc) = &fd.desc {
-        lines.push(format!("/-- {} -/", desc));
+        lines.push(format!("/-- {} -/", sanitize_doc(desc)));
     }
 
     let fn_name = aver_name_to_lean(&fd.name);
@@ -2358,7 +2368,7 @@ pub fn emit_mutual_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
             continue;
         }
         if let Some(desc) = &fd.desc {
-            lines.push(format!("  /-- {} -/", desc));
+            lines.push(format!("  /-- {} -/", sanitize_doc(desc)));
         }
         let fn_name = aver_name_to_lean(&fd.name);
         let params = emit_fn_params(&fd.params);
@@ -2429,7 +2439,7 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
             continue;
         }
         if let Some(desc) = &fd.desc {
-            lines.push(format!("  /-- {} -/", desc));
+            lines.push(format!("  /-- {} -/", sanitize_doc(desc)));
         }
         let fn_name = aver_name_to_lean(&fd.name);
         let params = emit_fn_params(&fd.params);
@@ -2476,4 +2486,31 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
 
     lines.push("end".to_string());
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doc_comment_escapes_block_comment_delimiters() {
+        // An Aver `?` doc mentioning `/-` or `-/` (e.g. "+2/-2") must not open or
+        // close a NESTED block comment inside the `/-- ... -/` wrapper — that
+        // leaves the comment unterminated and breaks the whole Lean file.
+        let out = emit_doc_comment(&Some("delta +2/-2 ends with -/ token".to_string()));
+        assert_eq!(out.len(), 1);
+        let line = &out[0];
+        let inner = line
+            .strip_prefix("/-- ")
+            .and_then(|s| s.strip_suffix(" -/"))
+            .expect("doc comment keeps the /-- ... -/ wrapper");
+        assert!(
+            !inner.contains("/-"),
+            "inner doc still opens a nested block comment: {line}"
+        );
+        assert!(
+            !inner.contains("-/"),
+            "inner doc still closes a nested block comment: {line}"
+        );
+    }
 }
