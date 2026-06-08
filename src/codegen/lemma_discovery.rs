@@ -19,9 +19,9 @@
 //! goal-direction *for free* — external tools (HipSpec/CCLemma/…) must
 //! reconstruct scope at cost.
 //!
-//! # What's implemented here (Phase 2a → 2b)
+//! # What's implemented here (Phase 2a → 2c)
 //!
-//! The type-directed term enumerator and candidate-equation generator:
+//! The type-directed term enumerator, candidate generator, and VM-filter:
 //!
 //! 1. A **typed variable context** — a small fixed pool of variables (up to
 //!    [`MAX_VARS_PER_TYPE`] per distinct parameter type the cone fns range
@@ -34,19 +34,24 @@
 //! 3. **Candidate equations** — every pair of distinct, same-type terms that
 //!    share the same free-variable set (see [`conjectures_from_terms`] for
 //!    why that pruning, and what it deliberately does not yet reach).
+//! 4. **VM-filter** ([`vm_filter`]) — runs both sides of each candidate on the
+//!    Aver VM over sample variable assignments and drops counterexamples.
+//!    Conservative (an eval error / out-of-guard `Int` never refutes), so a
+//!    backend-true lemma is never wrongly dropped.
 //!
-//! Still ahead (2c–2e): VM-filter (Aver VM as test oracle, conservative on
-//! bounded-`Int` overflow), backend-prove (Lean = truth), and commit + replay
-//! via the `ProofStrategy::SimpOverLemmas` hook. No VM / prover / file writes
-//! happen here yet. Entry point [`run_discovery`] is invoked by
-//! `aver proof --discover`; normal `aver proof` never runs this (discovery is
-//! the explicit, expensive, cached step).
+//! Still ahead (2d–2e): backend-prove (Lean = truth) and commit + replay via
+//! the `ProofStrategy::SimpOverLemmas` hook. No prover / file writes happen
+//! here yet — survivors are still conjectures. Entry point [`run_discovery`]
+//! (+ [`vm_filter`]) is invoked by `aver proof --discover`; normal `aver proof`
+//! never runs this (discovery is the explicit, expensive, cached step).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::ast::{TopLevel, VerifyKind};
 use crate::codegen::proof_lower::{LawProofCone, ProofLowerInputs};
+use crate::nan_value::{NanValue, NanValueConvert};
 use crate::types::Type;
+use crate::value::Value;
 
 /// Variables minted per distinct cone parameter type. Two is the smallest
 /// count that makes distributivity-shaped lemmas (`f(a ++ b) = f a ++ f b`,
@@ -179,11 +184,17 @@ impl Conjecture {
 pub struct DiscoveryStats {
     pub cone_fn_count: usize,
     pub term_count: usize,
+    /// Candidate equations enumerated (2b), before the VM-filter.
     pub conjecture_count: usize,
     pub terms_truncated: bool,
     pub conjectures_truncated: bool,
     /// The cone exceeded [`MAX_CONE_FNS`]; enumeration was skipped entirely.
     pub skipped_large_cone: bool,
+    /// The VM-filter (2c) ran for this law. When `true`, `conjectures` holds
+    /// only the survivors and `candidates_refuted` counts the rest.
+    pub vm_filtered: bool,
+    /// Candidates the VM-filter refuted (counterexample found on sample data).
+    pub candidates_refuted: usize,
     pub max_term_size: usize,
 }
 
@@ -259,6 +270,8 @@ pub fn run_discovery(inputs: &ProofLowerInputs) -> Vec<LawDiscovery> {
                 terms_truncated,
                 conjectures_truncated,
                 skipped_large_cone,
+                vm_filtered: false,
+                candidates_refuted: 0,
                 max_term_size: MAX_TERM_SIZE,
             },
             conjectures,
@@ -623,9 +636,302 @@ fn render_type(ty: &Type) -> String {
     }
 }
 
+// ===========================================================================
+// Phase 2c — VM-filter (Aver's VM as the test oracle).
+//
+// Each enumerated candidate (2b) is a *guess*. The VM-filter instantiates the
+// equation's variables with concrete sample values and runs BOTH sides on the
+// Aver VM — if any sample makes the sides disagree, the candidate is a
+// counterexample and is dropped. Survivors are not theorems (the charter's
+// proved-or-dropped gate still demands a kernel proof, 2d), but a single false
+// candidate that the VM refutes never reaches the (expensive) prover.
+//
+// Conservative by construction (charter's semantic-model-mismatch caution): a
+// VM error, an unmodeled builtin, or an out-of-guard `Int` magnitude makes a
+// sample INCONCLUSIVE — it never refutes. So a backend-true lemma is never
+// wrongly dropped because the bounded-`Int` VM diverged from the unbounded
+// proof model; the worst case is a false candidate slipping to the prover,
+// which then rejects it.
+// ===========================================================================
+
+/// Variable instantiations tried per candidate before declaring it
+/// counterexample-free on samples.
+const VM_FILTER_ROUNDS: usize = 6;
+/// Opcode cap per `run_named_function` so a pathological term can't hang.
+const VM_STEP_LIMIT: u64 = 1_000_000;
+/// `Int` magnitudes at/above this in a result make the sample inconclusive —
+/// near i64 range the bounded VM wraps and diverges from the proof model.
+const VM_INT_MAGNITUDE_GUARD: u64 = 1 << 40;
+/// Recursion bound for the sample-value generator (records → fields → …).
+const SAMPLE_DEPTH: usize = 3;
+
+/// Refute or keep every candidate of every (enumerated) law by running both
+/// sides on the Aver VM over sample variable assignments. Compiles the
+/// program's pure cone ONCE and reuses it across all candidates. On compile
+/// failure it leaves every candidate in place (conservative — discovery stays
+/// a superset, the prover is the real gate).
+pub fn vm_filter(reports: &mut [LawDiscovery], inputs: &ProofLowerInputs) {
+    let Some(mut vm) = compile_oracle_vm(inputs) else {
+        return;
+    };
+    for report in reports.iter_mut() {
+        if report.stats.skipped_large_cone || report.conjectures.is_empty() {
+            continue;
+        }
+        let samples: Vec<Vec<Value>> = report
+            .binders
+            .iter()
+            .map(|b| sample_values(&b.ty, inputs, SAMPLE_DEPTH))
+            .collect();
+        let mut survivors = Vec::with_capacity(report.conjectures.len());
+        let mut refuted = 0usize;
+        for c in &report.conjectures {
+            if vm_refutes(c, &samples, &mut vm) {
+                refuted += 1;
+            } else {
+                survivors.push(c.clone());
+            }
+        }
+        report.stats.vm_filtered = true;
+        report.stats.candidates_refuted = refuted;
+        report.conjectures = survivors;
+    }
+}
+
+/// `true` iff some sample assignment makes the two sides evaluate to DIFFERENT
+/// values (both conclusive). Inconclusive samples (eval error / out-of-guard
+/// magnitude) are skipped, never counted as a refutation.
+fn vm_refutes(c: &Conjecture, samples: &[Vec<Value>], vm: &mut crate::vm::VM) -> bool {
+    for r in 0..VM_FILTER_ROUNDS {
+        // Offset by binder index so two same-typed variables usually differ in
+        // a round (needed to refute e.g. spurious commutativity and to give
+        // distributivity a non-degenerate test).
+        let assignment: Vec<Option<Value>> = samples
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s[(r + i) % s.len()].clone())
+                }
+            })
+            .collect();
+        let (Some(l), Some(rhs)) = (
+            eval_term(&c.lhs, &assignment, vm),
+            eval_term(&c.rhs, &assignment, vm),
+        ) else {
+            continue;
+        };
+        if !value_within_int_guard(&l) || !value_within_int_guard(&rhs) {
+            continue;
+        }
+        if l != rhs {
+            return true;
+        }
+    }
+    false
+}
+
+/// Evaluate a term under a variable assignment on the VM. `None` = inconclusive
+/// (unassigned variable, eval error, or an unmodeled builtin callee).
+fn eval_term(
+    node: &TermNode,
+    assignment: &[Option<Value>],
+    vm: &mut crate::vm::VM,
+) -> Option<Value> {
+    match node {
+        TermNode::Var(i) => assignment.get(*i).cloned().flatten(),
+        TermNode::App { callee, args } => {
+            let argvals: Option<Vec<Value>> =
+                args.iter().map(|a| eval_term(a, assignment, vm)).collect();
+            let argvals = argvals?;
+            // `List.concat` is the only builtin in the current vocabulary;
+            // evaluate it directly on `Value` (no VM call). Other builtins are
+            // left unmodeled → inconclusive.
+            if callee == "List.concat" {
+                if argvals.len() != 2 {
+                    return None;
+                }
+                return crate::value::list_concat(&argvals[0], &argvals[1]);
+            }
+            // User cone fn: call it on the VM with the constructed arguments.
+            let nanargs: Vec<NanValue> = argvals
+                .iter()
+                .map(|v| NanValue::from_value(v, &mut vm.arena))
+                .collect();
+            let result = vm.run_named_function(callee, &nanargs).ok()?;
+            Some(result.to_value(&vm.arena))
+        }
+    }
+}
+
+/// Compile the program's pure functions into a runnable VM (the oracle).
+/// Mirrors the `aver run` / `vm_verify` setup; `None` on any compile failure.
+fn compile_oracle_vm(inputs: &ProofLowerInputs) -> Option<crate::vm::VM> {
+    let resolved = crate::ir::hir::resolve_program(inputs.symbol_table, inputs.entry_items);
+    let mut arena = crate::nan_value::Arena::new();
+    let (code, globals) = crate::vm::compile_program_with_mir_fallback(
+        &resolved,
+        inputs.symbol_table,
+        &mut arena,
+        None,
+    )
+    .ok()?;
+    let mut vm = crate::vm::VM::new(code, globals, arena);
+    vm.set_step_limit(Some(VM_STEP_LIMIT));
+    vm.run_top_level().ok()?;
+    Some(vm)
+}
+
+/// `true` iff no `Int` anywhere in the value is near i64 range — beyond the
+/// guard the bounded VM wraps, so the sample can't be trusted against the
+/// unbounded proof model.
+fn value_within_int_guard(v: &Value) -> bool {
+    match v {
+        Value::Int(i) => i.unsigned_abs() < VM_INT_MAGNITUDE_GUARD,
+        Value::Ok(b) | Value::Err(b) | Value::Some(b) => value_within_int_guard(b),
+        Value::Tuple(xs) => xs.iter().all(value_within_int_guard),
+        Value::Record { fields, .. } => fields.iter().all(|(_, x)| value_within_int_guard(x)),
+        Value::Variant { fields, .. } => fields.iter().all(value_within_int_guard),
+        Value::List(_) | Value::Vector(_) => crate::value::list_to_vec(v)
+            .map(|xs| xs.iter().all(value_within_int_guard))
+            .unwrap_or(true),
+        _ => true,
+    }
+}
+
+/// Type-directed sample-value generator: a few concrete Aver [`Value`]s of a
+/// type, for the VM-filter to instantiate equation variables. Kept tiny and
+/// low-magnitude (`Int` in `0..2`) so bounded-`Int` wrap can't manufacture a
+/// false agreement. Records / variants are built from `inputs.find_type_def`;
+/// `depth` bounds recursion (recursive ADTs terminate via the empty-list base
+/// or by exhausting variants that reference the type).
+fn sample_values(ty: &Type, inputs: &ProofLowerInputs, depth: usize) -> Vec<Value> {
+    match ty {
+        Type::Int => vec![Value::Int(0), Value::Int(1), Value::Int(2)],
+        Type::Float => vec![Value::Float(0.0), Value::Float(1.0)],
+        Type::Str => vec![
+            Value::Str(String::new()),
+            Value::Str("a".to_string()),
+            Value::Str("b".to_string()),
+        ],
+        Type::Bool => vec![Value::Bool(true), Value::Bool(false)],
+        Type::Unit => vec![Value::Unit],
+        Type::List(elem) => {
+            let es = sample_values(elem, inputs, depth);
+            let mut out = vec![crate::value::list_from_vec(Vec::new())];
+            if let Some(e0) = es.first() {
+                out.push(crate::value::list_from_vec(vec![e0.clone()]));
+            }
+            if es.len() >= 2 {
+                out.push(crate::value::list_from_vec(vec![
+                    es[0].clone(),
+                    es[1].clone(),
+                ]));
+            }
+            out
+        }
+        Type::Option(inner) => {
+            let mut out = vec![Value::None];
+            if let Some(v) = sample_values(inner, inputs, depth).into_iter().next() {
+                out.push(Value::Some(Box::new(v)));
+            }
+            out
+        }
+        Type::Result(ok, err) => {
+            let mut out = Vec::new();
+            if let Some(v) = sample_values(ok, inputs, depth).into_iter().next() {
+                out.push(Value::Ok(Box::new(v)));
+            }
+            if let Some(v) = sample_values(err, inputs, depth).into_iter().next() {
+                out.push(Value::Err(Box::new(v)));
+            }
+            out
+        }
+        Type::Tuple(items) => {
+            let parts: Option<Vec<Value>> = items
+                .iter()
+                .map(|t| sample_values(t, inputs, depth).into_iter().next())
+                .collect();
+            parts.map(|p| vec![Value::Tuple(p)]).unwrap_or_default()
+        }
+        Type::Named { name, .. } => {
+            if depth == 0 {
+                return Vec::new();
+            }
+            match inputs.find_type_def(name) {
+                Some(td) => named_sample(td, inputs, depth - 1),
+                None => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Build sample values for a user ADT (`Product` → records, `Sum` → variants),
+/// recursing into field types at the (already-decremented) `depth`.
+fn named_sample(td: &crate::ast::TypeDef, inputs: &ProofLowerInputs, depth: usize) -> Vec<Value> {
+    use std::sync::Arc;
+    let field_sample = |fty: &str, pick_last: bool| -> Option<Value> {
+        let ty = crate::codegen::common::parse_type_annotation(fty);
+        let s = sample_values(&ty, inputs, depth);
+        if pick_last {
+            s.into_iter().last()
+        } else {
+            s.into_iter().next()
+        }
+    };
+    match td {
+        crate::ast::TypeDef::Product { name, fields, .. } => {
+            let build = |pick_last: bool| -> Option<Value> {
+                let built: Option<Vec<(String, Value)>> = fields
+                    .iter()
+                    .map(|(fname, fty)| field_sample(fty, pick_last).map(|v| (fname.clone(), v)))
+                    .collect();
+                built.map(|f| Value::Record {
+                    type_name: name.clone(),
+                    fields: Arc::from(f.as_slice()),
+                })
+            };
+            let mut out = Vec::new();
+            if let Some(first) = build(false) {
+                out.push(first);
+            }
+            if let Some(second) = build(true)
+                && !out.contains(&second)
+            {
+                out.push(second);
+            }
+            out
+        }
+        crate::ast::TypeDef::Sum { name, variants, .. } => {
+            let mut out = Vec::new();
+            for v in variants {
+                let built: Option<Vec<Value>> = v
+                    .fields
+                    .iter()
+                    .map(|fty| field_sample(fty, false))
+                    .collect();
+                if let Some(fields) = built {
+                    out.push(Value::Variant {
+                        type_name: name.clone(),
+                        variant: v.name.clone(),
+                        fields: Arc::from(fields.as_slice()),
+                    });
+                }
+                if out.len() >= 2 {
+                    break;
+                }
+            }
+            out
+        }
+    }
+}
+
 /// Human-readable multi-line report for `aver proof --discover` output. Shows
 /// each law's cone, variable legend, stats, and a sample of the candidate
-/// equations (the full set is pre-VM-filter, so only a sample is printed).
+/// equations (after the VM-filter, when it ran, these are survivors).
 pub fn render_report(reports: &[LawDiscovery]) -> String {
     const SAMPLE: usize = 12;
     let mut out = String::new();
@@ -670,8 +976,20 @@ pub fn render_report(reports: &[LawDiscovery]) -> String {
                 ""
             },
         ));
+        if r.stats.vm_filtered {
+            out.push_str(&format!(
+                "    VM-filter: {} survived, {} refuted on sample data\n",
+                r.conjectures.len(),
+                r.stats.candidates_refuted
+            ));
+        }
         let shown = r.conjectures.len().min(SAMPLE);
-        out.push_str(&format!("    candidates (showing {shown}):\n"));
+        let label = if r.stats.vm_filtered {
+            "survivors"
+        } else {
+            "candidates"
+        };
+        out.push_str(&format!("    {label} (showing {shown}):\n"));
         for c in r.conjectures.iter().take(SAMPLE) {
             out.push_str(&format!("      {}\n", c.render(&r.binders)));
         }
@@ -719,13 +1037,16 @@ verify encode law roundtrip
     decode(encode(xs)) => xs
 "#;
 
+    /// Enumerate (2b) AND VM-filter (2c). The full lex→parse→tco→resolve
+    /// pipeline runs so the VM-filter can compile the cone fns; `tco` +
+    /// `resolve` mirror `aver run`, and `LawProofCone::compute` works on the
+    /// resolved AST (it handles both `Ident` and `Resolved`).
     fn discover(src: &str) -> Vec<LawDiscovery> {
         let mut lexer = crate::lexer::Lexer::new(src);
         let tokens = lexer.tokenize().expect("lex");
-        let items = crate::parser::Parser::new(tokens).parse().expect("parse");
-        // `LawProofCone::compute` walks the AST directly (it does not touch
-        // the symbol table), so a parse-only fixture is sufficient and
-        // hermetic — no typecheck / resolve needed.
+        let mut items = crate::parser::Parser::new(tokens).parse().expect("parse");
+        crate::ir::pipeline::tco(&mut items);
+        crate::ir::pipeline::resolve(&mut items);
         let symbols = crate::ir::SymbolTable::build(&items, &[]);
         let prefixes: HashSet<String> = HashSet::new();
         let recursive: HashSet<crate::ir::FnId> = HashSet::new();
@@ -738,7 +1059,25 @@ verify encode law roundtrip
             symbol_table: &symbols,
             program_shape: None,
         };
-        run_discovery(&inputs)
+        let mut reports = run_discovery(&inputs);
+        vm_filter(&mut reports, &inputs);
+        reports
+    }
+
+    /// Matches the clearly-FALSE `x == List.concat(x, x)` (either orientation):
+    /// a candidate the VM-filter must refute (a non-empty list ≠ itself
+    /// appended to itself).
+    fn is_self_concat_identity(c: &Conjecture) -> bool {
+        fn oriented(l: &TermNode, r: &TermNode) -> bool {
+            let TermNode::Var(x) = l else { return false };
+            let TermNode::App { callee, args } = r else {
+                return false;
+            };
+            callee == "List.concat"
+                && args.len() == 2
+                && matches!((&args[0], &args[1]), (TermNode::Var(a), TermNode::Var(b)) if a == x && b == x)
+        }
+        oriented(&c.lhs, &c.rhs) || oriented(&c.rhs, &c.lhs)
     }
 
     /// Structural matcher for the `decode_append` shape, in either orientation:
@@ -875,5 +1214,26 @@ verify encode law roundtrip
             roundtrip.conjectures.len()
         );
         assert!(!roundtrip.stats.terms_truncated && !roundtrip.stats.conjectures_truncated);
+    }
+
+    #[test]
+    fn vm_filter_refutes_false_keeps_decode_append() {
+        let r = &discover(SRC)[0];
+        // The VM-filter actually ran (oracle compiled) and dropped candidates.
+        assert!(r.stats.vm_filtered, "VM-filter did not run");
+        assert!(
+            r.stats.candidates_refuted > 0,
+            "VM-filter refuted nothing — oracle likely failed to compile"
+        );
+        // decode_append is TRUE → survives the filter.
+        assert!(
+            r.conjectures.iter().any(is_decode_append),
+            "decode_append did not survive the VM-filter"
+        );
+        // `x == List.concat(x, x)` is FALSE → refuted, not among survivors.
+        assert!(
+            !r.conjectures.iter().any(is_self_concat_identity),
+            "false self-concat identity survived the VM-filter"
+        );
     }
 }

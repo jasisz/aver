@@ -4897,7 +4897,8 @@ pub(super) fn cmd_proof(
     // never enters here. Pure analysis over the already-built context.
     if discover {
         let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-        let reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
+        let mut reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
+        aver::codegen::lemma_discovery::vm_filter(&mut reports, &inputs);
         print!(
             "{}",
             aver::codegen::lemma_discovery::render_report(&reports)
