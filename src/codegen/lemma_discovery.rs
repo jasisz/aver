@@ -1636,6 +1636,209 @@ pub fn structural_lemma_groups(inputs: &ProofLowerInputs) -> Vec<Vec<(String, St
     groups
 }
 
+/// The function-call name + args of `e`, whether it is a direct `FnCall` or a
+/// tail call the TCO pass rewrote into a `TailCall` node (the loop/wrapper/finish
+/// bodies are all tail position, so they arrive as `TailCall`).
+#[allow(dead_code)] // consumed by the relational-brick emitter (next increment)
+fn as_call(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+) -> Option<(String, &[crate::ast::Spanned<crate::ast::Expr>])> {
+    match &e.node {
+        crate::ast::Expr::FnCall(..) => cr_fn_call(e),
+        crate::ast::Expr::TailCall(tc) => Some((tc.target.clone(), tc.args.as_slice())),
+        _ => None,
+    }
+}
+
+/// The single trailing expression of a fn body, if it is `… = expr` shaped.
+#[allow(dead_code)] // consumed by the relational-brick emitter (next increment)
+fn last_body_expr(fd: &crate::ast::FnDef) -> Option<&crate::ast::Spanned<crate::ast::Expr>> {
+    match fd.body.stmts().last() {
+        Some(crate::ast::Stmt::Expr(e)) => Some(e),
+        _ => None,
+    }
+}
+
+/// The structural roles of a fold-encoder-with-inverse, recovered from a
+/// roundtrip law `inverse(wrapper(var)) = var`. This is the substrate for the
+/// RELATIONAL bricks (flush_fold_step / loop_gen / roundtrip): once the roles
+/// are known, the proof chain is the encoder-agnostic template proven (by hand,
+/// axiom-free) on BOTH rle and sparse. Detection is by AST shape, so it fires on
+/// any encoder of this family, not a single program.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // fields consumed by the relational-brick emitter (next increment)
+struct EncoderShape {
+    /// `encode` — the law subject; `wrapper(var) = loop(var, initAcc)`.
+    wrapper: String,
+    /// `decode` — the homomorphic inverse; `[] -> []`, `h::t -> concat(expand h, inverse t)`.
+    inverse: String,
+    /// `encodeLoop` — `[] -> finish acc`, `h::t -> loop t (step acc h)`.
+    loop_fn: String,
+    /// `flushAcc` — closes the accumulator into the encoded form.
+    finish: String,
+    /// `encodeFold` — the fold step `(acc, x) -> acc`.
+    step: String,
+    /// `expandRun` — decodes one encoded element back to a list.
+    expand: String,
+    /// The law's universally-quantified input list variable.
+    var: String,
+}
+
+/// Recognize a fold-encoder-with-inverse from one roundtrip law (see
+/// [`EncoderShape`]). Returns `None` unless every role lines up by structure.
+#[allow(dead_code)] // consumed by the relational-brick emitter (next increment)
+fn detect_encoder(
+    law: &crate::ast::VerifyLaw,
+    subject_fn: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<EncoderShape> {
+    use crate::ast::{Expr, Pattern};
+
+    // Law shape: inverse(wrapper(var)) = var, with var a declared given.
+    let var = cr_ident_name(&law.rhs)?;
+    if !law.givens.iter().any(|g| g.name == var) {
+        return None;
+    }
+    let (inverse, inv_args) = as_call(&law.lhs)?;
+    if inv_args.len() != 1 {
+        return None;
+    }
+    let (wrapper, wrap_args) = as_call(&inv_args[0])?;
+    if wrapper != subject_fn
+        || wrap_args.len() != 1
+        || cr_ident_name(&wrap_args[0]).as_deref() != Some(var.as_str())
+    {
+        return None;
+    }
+
+    // wrapper(var) = loop(var, initAcc).
+    let wf = inputs.find_fn_def_by_call_name(&wrapper)?;
+    let (loop_fn, loop_args) = as_call(last_body_expr(wf)?)?;
+    if loop_args.len() != 2 {
+        return None;
+    }
+
+    // loop(list, acc): match list { [] -> finish acc; h::t -> loop t (step acc h) }.
+    let lf = inputs.find_fn_def_by_call_name(&loop_fn)?;
+    if lf.params.len() != 2 {
+        return None;
+    }
+    let list_p = lf.params[0].0.as_str();
+    let acc_p = lf.params[1].0.as_str();
+    let Expr::Match { subject, arms } = &last_body_expr(lf)?.node else {
+        return None;
+    };
+    if cr_ident_name(subject).as_deref() != Some(list_p) || arms.len() != 2 {
+        return None;
+    }
+    let mut finish: Option<String> = None;
+    let mut step: Option<String> = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::EmptyList => {
+                let (f, fargs) = as_call(&arm.body)?;
+                if fargs.len() != 1 || cr_ident_name(&fargs[0]).as_deref() != Some(acc_p) {
+                    return None;
+                }
+                finish = Some(f);
+            }
+            Pattern::Cons(h, t) => {
+                let (lp, largs) = as_call(&arm.body)?;
+                if lp != loop_fn
+                    || largs.len() != 2
+                    || cr_ident_name(&largs[0]).as_deref() != Some(t.as_str())
+                {
+                    return None;
+                }
+                let (s, sargs) = as_call(&largs[1])?;
+                if sargs.len() != 2
+                    || cr_ident_name(&sargs[0]).as_deref() != Some(acc_p)
+                    || cr_ident_name(&sargs[1]).as_deref() != Some(h.as_str())
+                {
+                    return None;
+                }
+                step = Some(s);
+            }
+            _ => return None,
+        }
+    }
+    let finish = finish?;
+    let step = step?;
+
+    // inverse(list): match list { [] -> []; h::t -> List.concat(expand h, inverse t) }.
+    let invf = inputs.find_fn_def_by_call_name(&inverse)?;
+    if invf.params.len() != 1 {
+        return None;
+    }
+    let inv_list_p = invf.params[0].0.as_str();
+    let Expr::Match {
+        subject: isubj,
+        arms: iarms,
+    } = &last_body_expr(invf)?.node
+    else {
+        return None;
+    };
+    if cr_ident_name(isubj).as_deref() != Some(inv_list_p) || iarms.len() != 2 {
+        return None;
+    }
+    let mut expand: Option<String> = None;
+    for arm in iarms {
+        match &arm.pattern {
+            Pattern::EmptyList => {
+                if !matches!(&arm.body.node, Expr::List(items) if items.is_empty()) {
+                    return None;
+                }
+            }
+            Pattern::Cons(h, t) => {
+                let (concat, cargs) = as_call(&arm.body)?;
+                if concat != "List.concat" || cargs.len() != 2 {
+                    return None;
+                }
+                let (e, eargs) = as_call(&cargs[0])?;
+                if eargs.len() != 1 || cr_ident_name(&eargs[0]).as_deref() != Some(h.as_str()) {
+                    return None;
+                }
+                let (inv2, iargs) = as_call(&cargs[1])?;
+                if inv2 != inverse
+                    || iargs.len() != 1
+                    || cr_ident_name(&iargs[0]).as_deref() != Some(t.as_str())
+                {
+                    return None;
+                }
+                expand = Some(e);
+            }
+            _ => return None,
+        }
+    }
+
+    Some(EncoderShape {
+        wrapper,
+        inverse,
+        loop_fn,
+        finish,
+        step,
+        expand: expand?,
+        var,
+    })
+}
+
+/// Every fold-encoder-with-inverse recovered from the entry module's roundtrip
+/// laws. The substrate for emitting the relational brick chain.
+#[allow(dead_code)] // consumed by the relational-brick emitter (next increment)
+fn detect_encoders(inputs: &ProofLowerInputs) -> Vec<EncoderShape> {
+    use crate::ast::{TopLevel, VerifyKind};
+    let mut out = Vec::new();
+    for item in inputs.entry_items {
+        if let TopLevel::Verify(vb) = item
+            && let VerifyKind::Law(law) = &vb.kind
+            && let Some(enc) = detect_encoder(law, &vb.fn_name, inputs)
+        {
+            out.push(enc);
+        }
+    }
+    out
+}
+
 /// Candidate indices in proof-attempt order: list-homomorphism shapes first
 /// (the highest-value, template-closable class), then smallest-first. The
 /// prover (CLI) walks this and attempts the top few within a build budget.
@@ -1835,6 +2038,28 @@ verify encode law roundtrip
             "/examples/data/twofield.av"
         ))
         .expect("read twofield.av")
+    }
+
+    fn sparse_source() -> String {
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/data/sparse.av"
+        ))
+        .expect("read sparse.av")
+    }
+
+    fn encoder_roles(src: &str) -> Vec<String> {
+        with_inputs(src, |inputs| {
+            detect_encoders(inputs)
+                .into_iter()
+                .map(|e| {
+                    format!(
+                        "{}/{}/{}/{}/{}/{}/{}",
+                        e.wrapper, e.inverse, e.loop_fn, e.finish, e.step, e.expand, e.var
+                    )
+                })
+                .collect()
+        })
     }
 
     /// Matches the clearly-FALSE `x == List.concat(x, x)` (either orientation):
@@ -2118,6 +2343,28 @@ verify encode law roundtrip
         let all: String = groups.iter().flatten().map(|(_, t)| t.as_str()).collect();
         assert!(all.contains("0 <= (grow acc x).level"), "{all}");
         assert!(all.contains("unfold grow"), "{all}");
+    }
+
+    #[test]
+    fn detect_encoder_recognizes_rle_and_sparse() {
+        // The relational-brick role detector must recover the SAME encoder
+        // skeleton from two structurally different encoders — proof it keys on
+        // the fold-with-inverse shape, not on rle. (Roles arrive via TailCall
+        // nodes after TCO; `as_call` handles that.)
+        assert!(
+            encoder_roles(&rle_source())
+                .contains(&"encode/decode/encodeLoop/flushAcc/encodeFold/expandRun/xs".to_string()),
+            "rle roles: {:?}",
+            encoder_roles(&rle_source())
+        );
+        assert!(
+            encoder_roles(&sparse_source()).contains(
+                &"encodeSparse/decodeSparse/sparseLoop/flushSparse/sparseStep/expandTok/xs"
+                    .to_string()
+            ),
+            "sparse roles: {:?}",
+            encoder_roles(&sparse_source())
+        );
     }
 
     #[test]
