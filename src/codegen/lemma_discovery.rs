@@ -1281,20 +1281,147 @@ fn counted_repeat_lemmas(shape: &CountedRepeat, base: &str) -> Vec<(String, Stri
     vec![(natabs, natabs_thm), (succ, succ_thm)]
 }
 
+/// An RLE-fold `step`: `step(acc: Acc, c: Item) -> Acc` whose body is the
+/// nested bool-match `match acc.<count> == 0 { true -> Acc{..}; false -> match
+/// acc.<current> == c { true -> Acc{..}; false -> Acc{..} } }`. The discriminant
+/// fields (`count`/`current`) are discovered by structural role. Yields the
+/// well-formedness-preservation lemma `0 <= step(acc, c).count` under
+/// `0 <= acc.count` — brick 2 of the accumulator-generalization family.
+struct RleStep {
+    fn_name: String,
+    acc_type: String,
+    item_type: String,
+    count_field: String,
+    current_field: String,
+}
+
+/// `acc.<field>` → the field name, if `e` is an attribute access of `acc`.
+fn cr_attr_of(e: &crate::ast::Spanned<crate::ast::Expr>, acc: &str) -> Option<String> {
+    if let crate::ast::Expr::Attr(obj, field) = &e.node
+        && cr_ident_name(obj).as_deref() == Some(acc)
+    {
+        return Some(field.clone());
+    }
+    None
+}
+
+/// A 2-arm bool `match`: returns (subject, true-arm body, false-arm body).
+fn cr_bool_match(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+) -> Option<(
+    &crate::ast::Spanned<crate::ast::Expr>,
+    &crate::ast::Spanned<crate::ast::Expr>,
+    &crate::ast::Spanned<crate::ast::Expr>,
+)> {
+    use crate::ast::{Expr, Literal, Pattern};
+    let Expr::Match { subject, arms } = &e.node else {
+        return None;
+    };
+    if arms.len() != 2 {
+        return None;
+    }
+    let mut t = None;
+    let mut f = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(Literal::Bool(true)) => t = Some(arm.body.as_ref()),
+            Pattern::Literal(Literal::Bool(false)) => f = Some(arm.body.as_ref()),
+            _ => return None,
+        }
+    }
+    Some((subject.as_ref(), t?, f?))
+}
+
+fn cr_is_record_of(e: &crate::ast::Spanned<crate::ast::Expr>, ty: &str) -> bool {
+    matches!(&e.node, crate::ast::Expr::RecordCreate { type_name, .. } if type_name == ty)
+}
+
+/// Recognize the RLE-fold `step` shape by structure (see [`RleStep`]).
+fn detect_rle_step(fd: &crate::ast::FnDef) -> Option<RleStep> {
+    use crate::ast::{BinOp, Expr, Stmt};
+    if fd.params.len() != 2 || fd.params[0].1 != fd.return_type {
+        return None;
+    }
+    let acc_param = fd.params[0].0.as_str();
+    let c_param = fd.params[1].0.as_str();
+    let acc_type = &fd.params[0].1;
+    let item_type = &fd.params[1].1;
+
+    let Some(Stmt::Expr(term)) = fd.body.stmts().last() else {
+        return None;
+    };
+    // outer: `match acc.<count> == 0 { true -> Acc{..}; false -> inner }`
+    let (outer_subj, outer_true, outer_false) = cr_bool_match(term)?;
+    let Expr::BinOp(BinOp::Eq, ol, or_) = &outer_subj.node else {
+        return None;
+    };
+    let count_field = cr_attr_of(ol, acc_param)?;
+    if !cr_is_int_lit(or_, 0) || !cr_is_record_of(outer_true, acc_type) {
+        return None;
+    }
+    // inner: `match acc.<current> == c { true -> Acc{..}; false -> Acc{..} }`
+    let (inner_subj, inner_true, inner_false) = cr_bool_match(outer_false)?;
+    let Expr::BinOp(BinOp::Eq, il, ir) = &inner_subj.node else {
+        return None;
+    };
+    let current_field = cr_attr_of(il, acc_param)?;
+    if cr_ident_name(ir).as_deref() != Some(c_param)
+        || !cr_is_record_of(inner_true, acc_type)
+        || !cr_is_record_of(inner_false, acc_type)
+        || count_field == current_field
+    {
+        return None;
+    }
+    Some(RleStep {
+        fn_name: fd.name.clone(),
+        acc_type: acc_type.clone(),
+        item_type: item_type.clone(),
+        count_field,
+        current_field,
+    })
+}
+
+/// The Lean theorem for step's count-invariant preservation, proved by the
+/// case-split-on-guard template (nested `by_cases` on the step's discriminant
+/// fields). No dependencies.
+fn count_nonneg_lemma(step: &RleStep, base: &str) -> (String, String) {
+    let step_l = crate::codegen::lean::aver_name_to_lean(&step.fn_name);
+    let acc_l = crate::codegen::lean::type_to_lean(&crate::codegen::common::parse_type_annotation(
+        &step.acc_type,
+    ));
+    let item_l = crate::codegen::lean::type_to_lean(
+        &crate::codegen::common::parse_type_annotation(&step.item_type),
+    );
+    let count = &step.count_field;
+    let current = &step.current_field;
+    let name = format!("{base}_count_nonneg");
+    let text = format!(
+        "theorem {name} (acc : {acc_l}) (c : {item_l}) (hcount : 0 <= acc.{count}) : \
+         0 <= ({step_l} acc c).{count} := by\n  \
+         by_cases hzero : acc.{count} = 0\n  \
+         · simp [{step_l}, hzero]\n  \
+         · by_cases hsame : acc.{current} = c\n    \
+         · simp [{step_l}, hzero, hsame]\n      \
+         omega\n    \
+         · simp [{step_l}, hzero, hsame]\n"
+    );
+    (name, text)
+}
+
 /// Structure-directed GUARDED lemma groups (layer 3): conjectures derived from
 /// a recognized recursion shape rather than blind enumeration. Each group is a
 /// set of co-dependent Lean theorems proved TOGETHER (one `lake build`, in
-/// dependency order). The first family is the counted-repeat advance. Returns
-/// one group per distinct matching fn across all pure fns.
+/// dependency order). Families so far: the counted-repeat advance
+/// (`repeat_succ`, brick 1) and the RLE-fold count-invariant (`count_nonneg`,
+/// brick 2). Returns one group per matching pure fn.
 pub fn structural_lemma_groups(inputs: &ProofLowerInputs) -> Vec<Vec<(String, String)>> {
-    let mut groups = Vec::new();
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut groups: Vec<Vec<(String, String)>> = Vec::new();
     for fd in inputs.pure_fns() {
-        if let Some(shape) = detect_counted_repeat(fd)
-            && seen.insert(shape.fn_name.clone())
-        {
-            let base = format!("aver_structural_{}", groups.len());
+        let base = format!("aver_structural_{}", groups.len());
+        if let Some(shape) = detect_counted_repeat(fd) {
             groups.push(counted_repeat_lemmas(&shape, &base));
+        } else if let Some(step) = detect_rle_step(fd) {
+            groups.push(vec![count_nonneg_lemma(&step, &base)]);
         }
     }
     groups
@@ -1676,20 +1803,24 @@ verify encode law roundtrip
     }
 
     #[test]
-    fn structural_conjecturer_finds_repeat_succ_on_real_rle() {
-        // `rle.av`'s `repeat` is the counted-append shape → exactly one
-        // structure-directed group: the natAbs bridge + the guarded advance.
+    fn structural_conjecturer_on_real_rle() {
+        // Two structure-directed families fire on rle: the counted-repeat
+        // advance (`repeat`) and the RLE-fold count-invariant (`encodeFold`).
         let groups = with_inputs(&rle_source(), structural_lemma_groups);
-        assert_eq!(groups.len(), 1, "expected one counted-repeat group");
-        let texts: String = groups[0].iter().map(|(_, t)| t.as_str()).collect();
-        assert!(texts.contains("_repeat_succ"), "{texts}");
-        // The guarded successor-advance conjecture in Lean (`repeat` escapes to
-        // `repeat'`, a Lean keyword), under the synthesized `0 <= n` guard.
+        assert_eq!(groups.len(), 2, "expected counted-repeat + rle-step groups");
+        let all: String = groups.iter().flatten().map(|(_, t)| t.as_str()).collect();
+        // brick 1: guarded counted-repeat advance (`repeat` escapes to `repeat'`).
         assert!(
-            texts.contains("repeat' c (n + 1) = repeat' c n ++ [c]"),
-            "{texts}"
+            all.contains("repeat' c (n + 1) = repeat' c n ++ [c]"),
+            "{all}"
         );
-        assert!(texts.contains("(hn : 0 <= n)"), "{texts}");
-        assert!(texts.contains("natAbs"), "{texts}");
+        assert!(
+            all.contains("(hn : 0 <= n)") && all.contains("natAbs"),
+            "{all}"
+        );
+        // brick 2: guarded step count-invariant, by_cases-on-guard template.
+        assert!(all.contains("_count_nonneg"), "{all}");
+        assert!(all.contains("0 <= (encodeFold acc c).count"), "{all}");
+        assert!(all.contains("by_cases hzero"), "{all}");
     }
 }
