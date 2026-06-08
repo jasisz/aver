@@ -1404,6 +1404,54 @@ fn collect_fn_calls_expr(
     }
 }
 
+/// Collect the user-type *names* referenced by a type annotation string
+/// (`List<Run>`, `Result<Tree, String>`, `(A, B)`, …) into `out`. Parses
+/// the annotation with [`parse_type_annotation`] and walks the resulting
+/// `Type`, harvesting every `Type::Named` leaf. Builtin scalars and the
+/// collection constructors contribute nothing themselves — only the named
+/// (potential-ADT) leaves land; the caller filters those to actual user
+/// `TypeDef`s. Drives [`LawProofCone`]'s `types` alphabet.
+fn collect_named_types_in_annotation(
+    annotation: &str,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    fn walk(ty: &crate::types::Type, out: &mut std::collections::BTreeSet<String>) {
+        use crate::types::Type;
+        match ty {
+            Type::Named { name, .. } => {
+                out.insert(name.clone());
+            }
+            Type::Result(a, b) | Type::Map(a, b) => {
+                walk(a, out);
+                walk(b, out);
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => walk(inner, out),
+            Type::Tuple(items) => {
+                for t in items {
+                    walk(t, out);
+                }
+            }
+            Type::Fn(args, ret, _) => {
+                for a in args {
+                    walk(a, out);
+                }
+                walk(ret, out);
+            }
+            Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => {}
+        }
+    }
+    walk(
+        &crate::codegen::common::parse_type_annotation(annotation),
+        out,
+    );
+}
+
 /// Find a single-param smart constructor in the unfold set whose
 /// body is the canonical `match <bool-subj> { true → Ok; false →
 /// Err }` shape. Returns the param name + bool subject of the
@@ -1597,37 +1645,49 @@ fn detect_map_update_postcondition(
     get_side(&law.lhs, &law.rhs).or_else(|| get_side(&law.rhs, &law.lhs))
 }
 
-/// Collect user helper-fn source names referenced from the law's
-/// lhs/rhs/when, expanded transitively through pure (effect-free,
-/// non-main) fn bodies. The outer fn is excluded — it's carried in
-/// the IR variant separately. Filters out stdlib / namespace calls
-/// (`Map.get`, `Option.withDefault`, …) by requiring each name to
-/// resolve to a user fn def. Sorted for deterministic emit.
 /// The scoped pure-function dependency closure of a `verify ... law` — the
-/// set of pure user functions a law's proof is allowed to mention.
+/// set of pure user functions a law's proof is allowed to mention, plus the
+/// ADTs those functions range over.
 ///
-/// Phase 0 of the lemma-discovery charter (`prompts/lemma-discovery.md`):
-/// the various strategy detectors each re-derive this closure ad hoc
+/// Phase 0/2 of the lemma-discovery charter (`prompts/lemma-discovery.md`):
+/// the various strategy detectors each re-derive the pure-fn closure ad hoc
 /// (`law_helper_unfolds`, the spec-equivalence unfold list, etc.). This is
-/// the single reusable computation they will share, and the substrate the
-/// term enumerator / proof cache build on later.
+/// the single reusable computation they share, and the substrate the term
+/// enumerator (`codegen::lemma_discovery`) builds on. `pure_fns` is the
+/// enumeration *vocabulary*; `types` is the type-directed generator's
+/// *signature alphabet* — the ADTs reachable from those fns' parameter and
+/// return annotations, which the enumerator needs to mint typed variables.
 ///
-/// Today it carries only the pure-fn closure (what `law_helper_unfolds`
-/// needs). Relevant ADT types, already-proven theorems, and a content hash
-/// (the cache key) get added when their consumers land — not before.
-struct LawProofCone<'a> {
+/// `law_helper_unfolds` consumes only `pure_fns` (transitively reachable
+/// helper source names, outer fn excluded, sorted for deterministic emit).
+/// `types` lands now because its consumer — the enumerator — has landed.
+/// Already-proven theorems and a content hash (the cache key) get added
+/// when *their* consumers (the proof cache / replay) land — not before.
+pub(crate) struct LawProofCone<'a> {
     /// Pure user fns transitively reachable from the law's lhs/rhs/when,
     /// in deterministic (sorted-by-name) order, excluding the law's own
     /// subject fn.
     pure_fns: Vec<&'a FnDef>,
+    /// User-defined ADTs (`Sum`/`Product` type defs) transitively reachable
+    /// from `pure_fns`' parameter and return type annotations, in
+    /// deterministic (sorted-by-name) order. Builtin scalars (`Int`,
+    /// `String`, …) and builtin records that don't resolve to a user
+    /// `TypeDef` are dropped — only types the enumerator can construct or
+    /// case-split on survive.
+    types: Vec<&'a TypeDef>,
 }
 
 impl<'a> LawProofCone<'a> {
     /// Build the cone: seed from the law sides (lhs/rhs/when), keep only
     /// pure user fns (no effects, not `main`), transitively expand through
     /// their bodies, then drop the law's own subject (`outer_fn`) — each
-    /// backend unfolds that one separately.
-    fn compute(law: &crate::ast::VerifyLaw, outer_fn: &str, inputs: &ProofLowerInputs<'a>) -> Self {
+    /// backend unfolds that one separately. Finally resolve the ADTs those
+    /// fns range over from their signatures (`types`).
+    pub(crate) fn compute(
+        law: &crate::ast::VerifyLaw,
+        outer_fn: &str,
+        inputs: &ProofLowerInputs<'a>,
+    ) -> Self {
         use std::collections::BTreeSet;
 
         let resolve_user_fn = |name: &str| -> Option<&'a FnDef> {
@@ -1682,13 +1742,69 @@ impl<'a> LawProofCone<'a> {
         // canonical `fd.name`s of pure user fns, so every entry re-resolves.
         let pure_fns: Vec<&'a FnDef> = names.iter().filter_map(|n| resolve_user_fn(n)).collect();
 
-        Self { pure_fns }
+        // Type alphabet: ADTs reachable from the cone fns' signatures, then
+        // transitively through those types' own field annotations (a record
+        // field can name another ADT). Seed from every param + return type
+        // string of every pure fn in the cone.
+        let mut type_names: BTreeSet<String> = BTreeSet::new();
+        for fd in &pure_fns {
+            for (_, ann) in &fd.params {
+                collect_named_types_in_annotation(ann, &mut type_names);
+            }
+            collect_named_types_in_annotation(&fd.return_type, &mut type_names);
+        }
+        loop {
+            let before = type_names.len();
+            let snapshot: Vec<String> = type_names.iter().cloned().collect();
+            for name in snapshot {
+                let Some(td) = inputs.find_type_def(&name) else {
+                    continue;
+                };
+                match td {
+                    crate::ast::TypeDef::Sum { variants, .. } => {
+                        for v in variants {
+                            for field_ty in &v.fields {
+                                collect_named_types_in_annotation(field_ty, &mut type_names);
+                            }
+                        }
+                    }
+                    crate::ast::TypeDef::Product { fields, .. } => {
+                        for (_, field_ty) in fields {
+                            collect_named_types_in_annotation(field_ty, &mut type_names);
+                        }
+                    }
+                }
+            }
+            if type_names.len() == before {
+                break;
+            }
+        }
+        // Keep only names that resolve to a user `TypeDef`; builtin scalars
+        // (`Int`/`String`/…) and unregistered builtin records drop out here.
+        let types: Vec<&'a TypeDef> = type_names
+            .iter()
+            .filter_map(|n| inputs.find_type_def(n))
+            .collect();
+
+        Self { pure_fns, types }
     }
 
     /// The cone's pure-fn names, deterministic (sorted) order, excluding the
     /// law's subject. Exactly the legacy `law_helper_unfolds` result.
     fn unfold_names(&self) -> Vec<String> {
         self.pure_fns.iter().map(|fd| fd.name.clone()).collect()
+    }
+
+    /// The cone's pure-fn vocabulary — the functions the term enumerator
+    /// may apply. Deterministic (sorted-by-name) order, law subject excluded.
+    pub(crate) fn pure_fns(&self) -> &[&'a FnDef] {
+        &self.pure_fns
+    }
+
+    /// The cone's ADT type alphabet — the user types the enumerator can mint
+    /// typed variables of or case-split on. Deterministic (sorted) order.
+    pub(crate) fn types(&self) -> &[&'a TypeDef] {
+        &self.types
     }
 }
 

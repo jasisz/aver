@@ -10,6 +10,8 @@ pub mod common;
 pub mod dafny;
 #[cfg(feature = "runtime")]
 pub mod lean;
+#[cfg(feature = "runtime")]
+pub mod lemma_discovery;
 pub mod program_view;
 #[cfg(feature = "runtime")]
 pub mod proof_lower;

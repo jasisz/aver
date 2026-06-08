@@ -4875,6 +4875,7 @@ pub(super) fn cmd_proof(
     error_budget: Option<usize>,
     sorry_budget: Option<usize>,
     check_json: bool,
+    discover: bool,
 ) {
     let (mut ctx, _module_root) = build_codegen_context(
         file,
@@ -4889,6 +4890,20 @@ pub(super) fn cmd_proof(
         true,  // run_contract_lower — same
         true,  // run_law_lower — same
     );
+
+    // `--discover`: run the lemma-discovery pass and print its report
+    // instead of generating a proof project. Explicit, expensive, cached
+    // step (charter: `prompts/lemma-discovery.md`); normal `aver proof`
+    // never enters here. Pure analysis over the already-built context.
+    if discover {
+        let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+        let reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
+        print!(
+            "{}",
+            aver::codegen::lemma_discovery::render_report(&reports)
+        );
+        return;
+    }
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
     // project's aver.toml selects cancel or sequential, fail loudly —
