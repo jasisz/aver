@@ -3135,6 +3135,34 @@ fn discover_generalizes_on_sparse_codec_when_lake_is_available() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
+/// Relational-brick acceptance (the locksmith's last layer): one `--discover`
+/// run kernel-proves the FULL roundtrip law `decode (encode xs) = xs` on
+/// `rle.av` — the auto-emitted chain (inv_append → counted_one → counted_succ →
+/// count_nonneg → flush_fold_step → loop_gen → roundtrip) replaces the retired
+/// hardcoded `AccumulatorRoundtrip` recognizer.
+#[test]
+fn discover_proves_roundtrip_on_rle_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/rle.av",
+        "aver-discover-rle-roundtrip",
+        "decode (encode xs) = xs",
+    );
+}
+
+/// DISCIPLINE GUARD (the whole point): the SAME relational emitter must fire +
+/// kernel-prove the roundtrip on a SHAPE-different second encoder (`sparse.av`:
+/// sum-type tokens, `pending` field, 2-way step guard) — `decodeSparse
+/// (encodeSparse xs) = xs`. If this passes only on rle, the chain is the key,
+/// not the locksmith; it must prove on BOTH or neither.
+#[test]
+fn discover_proves_roundtrip_on_sparse_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/sparse.av",
+        "aver-discover-sparse-roundtrip",
+        "decodeSparse (encodeSparse xs) = xs",
+    );
+}
+
 /// Read the committed `DiscoveredLemmas.lean` produced by `--discover` on
 /// `example_path` (empty string if none was written). Skips (returns `None`)
 /// when `lake` is unavailable.
@@ -3254,10 +3282,7 @@ fn discover_bounds_decreasing_accumulator_on_drain_when_lake_is_available() {
         "UNSOUND: the false count-invariant `0 <= (tick acc x).n` was kernel-proved.\n--- DiscoveredLemmas.lean ---\n{committed}",
     );
     // Generalization: the true bounded step IS proved (both sides).
-    for needle in [
-        "acc.n - 1 <= (tick acc x).n",
-        "(tick acc x).n <= acc.n + 1",
-    ] {
+    for needle in ["acc.n - 1 <= (tick acc x).n", "(tick acc x).n <= acc.n + 1"] {
         assert!(
             committed.contains(needle),
             "expected the bounded-step bound `{needle}` among kernel-proved lemmas.\n--- DiscoveredLemmas.lean ---\n{committed}",
