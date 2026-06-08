@@ -1603,61 +1603,101 @@ fn detect_map_update_postcondition(
 /// the IR variant separately. Filters out stdlib / namespace calls
 /// (`Map.get`, `Option.withDefault`, …) by requiring each name to
 /// resolve to a user fn def. Sorted for deterministic emit.
+/// The scoped pure-function dependency closure of a `verify ... law` — the
+/// set of pure user functions a law's proof is allowed to mention.
+///
+/// Phase 0 of the lemma-discovery charter (`prompts/lemma-discovery.md`):
+/// the various strategy detectors each re-derive this closure ad hoc
+/// (`law_helper_unfolds`, the spec-equivalence unfold list, etc.). This is
+/// the single reusable computation they will share, and the substrate the
+/// term enumerator / proof cache build on later.
+///
+/// Today it carries only the pure-fn closure (what `law_helper_unfolds`
+/// needs). Relevant ADT types, already-proven theorems, and a content hash
+/// (the cache key) get added when their consumers land — not before.
+struct LawProofCone<'a> {
+    /// Pure user fns transitively reachable from the law's lhs/rhs/when,
+    /// in deterministic (sorted-by-name) order, excluding the law's own
+    /// subject fn.
+    pure_fns: Vec<&'a FnDef>,
+}
+
+impl<'a> LawProofCone<'a> {
+    /// Build the cone: seed from the law sides (lhs/rhs/when), keep only
+    /// pure user fns (no effects, not `main`), transitively expand through
+    /// their bodies, then drop the law's own subject (`outer_fn`) — each
+    /// backend unfolds that one separately.
+    fn compute(law: &crate::ast::VerifyLaw, outer_fn: &str, inputs: &ProofLowerInputs<'a>) -> Self {
+        use std::collections::BTreeSet;
+
+        let resolve_user_fn = |name: &str| -> Option<&'a FnDef> {
+            let fd = inputs.find_fn_def_by_call_name(name)?;
+            if !fd.effects.is_empty() || fd.name == "main" {
+                return None;
+            }
+            Some(fd)
+        };
+
+        // Seed from law sides, immediately filtering to user-fn names.
+        let mut raw: BTreeSet<String> = BTreeSet::new();
+        collect_fn_calls_expr(&law.lhs, &mut raw);
+        collect_fn_calls_expr(&law.rhs, &mut raw);
+        if let Some(when_expr) = &law.when {
+            collect_fn_calls_expr(when_expr, &mut raw);
+        }
+        let mut names: BTreeSet<String> = raw
+            .into_iter()
+            .filter_map(|n| resolve_user_fn(&n).map(|fd| fd.name.clone()))
+            .collect();
+
+        // Transitive expansion through pure user fn bodies.
+        loop {
+            let before = names.len();
+            let snapshot: Vec<String> = names.iter().cloned().collect();
+            for name in snapshot {
+                let Some(fd) = resolve_user_fn(&name) else {
+                    continue;
+                };
+                let mut called: BTreeSet<String> = BTreeSet::new();
+                for stmt in fd.body.stmts() {
+                    match stmt {
+                        crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                            collect_fn_calls_expr(e, &mut called);
+                        }
+                    }
+                }
+                for c in called {
+                    if let Some(callee_fd) = resolve_user_fn(&c) {
+                        names.insert(callee_fd.name.clone());
+                    }
+                }
+            }
+            if names.len() == before {
+                break;
+            }
+        }
+        names.remove(outer_fn);
+
+        // Resolve the (sorted) names back to defs — `names` only ever held
+        // canonical `fd.name`s of pure user fns, so every entry re-resolves.
+        let pure_fns: Vec<&'a FnDef> = names.iter().filter_map(|n| resolve_user_fn(n)).collect();
+
+        Self { pure_fns }
+    }
+
+    /// The cone's pure-fn names, deterministic (sorted) order, excluding the
+    /// law's subject. Exactly the legacy `law_helper_unfolds` result.
+    fn unfold_names(&self) -> Vec<String> {
+        self.pure_fns.iter().map(|fd| fd.name.clone()).collect()
+    }
+}
+
 fn law_helper_unfolds(
     law: &crate::ast::VerifyLaw,
     outer_fn: &str,
     inputs: &ProofLowerInputs,
 ) -> Vec<String> {
-    use std::collections::BTreeSet;
-
-    let resolve_user_fn = |name: &str| -> Option<&FnDef> {
-        let fd = inputs.find_fn_def_by_call_name(name)?;
-        if !fd.effects.is_empty() || fd.name == "main" {
-            return None;
-        }
-        Some(fd)
-    };
-
-    // Seed from law sides, immediately filtering to user-fn names.
-    let mut raw: BTreeSet<String> = BTreeSet::new();
-    collect_fn_calls_expr(&law.lhs, &mut raw);
-    collect_fn_calls_expr(&law.rhs, &mut raw);
-    if let Some(when_expr) = &law.when {
-        collect_fn_calls_expr(when_expr, &mut raw);
-    }
-    let mut names: BTreeSet<String> = raw
-        .into_iter()
-        .filter_map(|n| resolve_user_fn(&n).map(|fd| fd.name.clone()))
-        .collect();
-
-    // Transitive expansion through pure user fn bodies.
-    loop {
-        let before = names.len();
-        let snapshot: Vec<String> = names.iter().cloned().collect();
-        for name in snapshot {
-            let Some(fd) = resolve_user_fn(&name) else {
-                continue;
-            };
-            let mut called: BTreeSet<String> = BTreeSet::new();
-            for stmt in fd.body.stmts() {
-                match stmt {
-                    crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
-                        collect_fn_calls_expr(e, &mut called);
-                    }
-                }
-            }
-            for c in called {
-                if let Some(callee_fd) = resolve_user_fn(&c) {
-                    names.insert(callee_fd.name.clone());
-                }
-            }
-        }
-        if names.len() == before {
-            break;
-        }
-    }
-    names.remove(outer_fn);
-    names.into_iter().collect()
+    LawProofCone::compute(law, outer_fn, inputs).unfold_names()
 }
 
 /// Detect functional equivalence of `fn_name` and a same-named spec
