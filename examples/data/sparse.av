@@ -1,0 +1,73 @@
+module Sparse
+    intent =
+        "Sparse run-length: collapse runs of 0 into Zeros(n), keep non-zeros as"
+        "Lit(x). A SECOND encoder-with-structural-inverse, deliberately SHAPE-"
+        "different from rle (sum-type tokens not a record run, two expand cases,"
+        "branches on x == 0 not count == 0). A corpus member to test whether the"
+        "accumulator bricks generalize across encoders or only fit rle."
+    effects [Console]
+
+type Token
+    Zeros(Int)
+    Lit(Int)
+
+record SparseAcc
+    out: List<Token>
+    pending: Int
+
+fn repeat0(n: Int) -> List<Int>
+    ? "n copies of 0 (non-positive yields [])."
+    match n <= 0
+        true -> []
+        false -> List.concat(repeat0(n - 1), [0])
+
+fn expandTok(t: Token) -> List<Int>
+    ? "Expand one token back to the Int run it stands for."
+    match t
+        Token.Zeros(n) -> repeat0(n)
+        Token.Lit(x) -> [x]
+
+fn decodeSparse(toks: List<Token>) -> List<Int>
+    ? "Decompress a token list by concatenating each token's expansion."
+    match toks
+        [] -> []
+        [t, ..rest] -> List.concat(expandTok(t), decodeSparse(rest))
+
+verify decodeSparse
+    decodeSparse([]) => []
+    decodeSparse([Token.Lit(5), Token.Zeros(2), Token.Lit(7)]) => [5, 0, 0, 7]
+
+fn flushSparse(acc: SparseAcc) -> List<Token>
+    ? "Emit any pending zero-run, closing the accumulator into a token list."
+    match acc.pending == 0
+        true -> acc.out
+        false -> List.concat(acc.out, [Token.Zeros(acc.pending)])
+
+fn sparseStep(acc: SparseAcc, x: Int) -> SparseAcc
+    ? "Fold step: grow the pending zero-run, or flush it and emit a literal."
+    match x == 0
+        true -> SparseAcc(out = acc.out, pending = acc.pending + 1)
+        false -> SparseAcc(out = List.concat(flushSparse(acc), [Token.Lit(x)]), pending = 0)
+
+verify sparseStep
+    sparseStep(SparseAcc(out = [], pending = 0), 0) => SparseAcc(out = [], pending = 1)
+    sparseStep(SparseAcc(out = [], pending = 2), 7) => SparseAcc(out = [Token.Zeros(2), Token.Lit(7)], pending = 0)
+
+fn sparseLoop(xs: List<Int>, acc: SparseAcc) -> List<Token>
+    ? "Walks the input, threading the sparse accumulator."
+    match xs
+        [] -> flushSparse(acc)
+        [x, ..rest] -> sparseLoop(rest, sparseStep(acc, x))
+
+fn encodeSparse(xs: List<Int>) -> List<Token>
+    ? "Compresses runs of zero in an Int list."
+    sparseLoop(xs, SparseAcc(out = [], pending = 0))
+
+verify encodeSparse law sparseRoundtrip
+    given xs: List<Int> = [[], [5], [0, 0], [5, 0, 0, 7], [0, 1, 0]]
+    decodeSparse(encodeSparse(xs)) => xs
+
+fn main()
+    ! [Console.print]
+    data = [5, 0, 0, 0, 7, 0, 9]
+    Console.print("encoded {List.len(data)} ints into {List.len(encodeSparse(data))} tokens")

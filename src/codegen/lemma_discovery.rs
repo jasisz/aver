@@ -1152,12 +1152,16 @@ pub fn discovery_surface_hash(inputs: &ProofLowerInputs) -> String {
 // detect-shape → conjecture → templated-proof pattern (charter layer 3).
 // ===========================================================================
 
-/// A counted-append `repeat`: `fn f(c, n) = match n <= 0 { true -> []; false ->
-/// List.concat(f(c, n - 1), [c]) }`. Detected by SHAPE (not name); `n`'s type
-/// must be `Int`. Yields the successor-advance lemma `f(c, n+1) = f(c,n) ++ [c]`.
+/// A counted-append fn: `fn f(.., n, ..) = match n <= 0 { true -> []; false ->
+/// List.concat(f(.., n - 1, ..), [E]) }` — any arity, `n` any `Int` param, and
+/// the appended element `E` a parameter or a literal (so it covers both rle's
+/// binary `repeat(c, n)` and a unary `repeat0(n) = .. ++ [0]`). Detected by
+/// SHAPE, not name. Yields `f(.., n+1, ..) = f(.., n, ..) ++ [E]` under `0<=n`.
 struct CountedRepeat {
     fn_name: String,
-    item_type: String,
+    params: Vec<(String, String)>,
+    count_idx: usize,
+    elem_lean: String,
 }
 
 fn cr_ident_name(e: &crate::ast::Spanned<crate::ast::Expr>) -> Option<String> {
@@ -1183,28 +1187,42 @@ fn cr_fn_call(
     }
 }
 
-/// Recognize the counted-append `repeat` shape by structure (see [`CountedRepeat`]).
+/// Render a counted-append's appended element to Lean: a parameter variable
+/// (its name) or an `Int` literal. Anything else is unsupported.
+fn counted_repeat_elem_lean(e: &crate::ast::Spanned<crate::ast::Expr>) -> Option<String> {
+    use crate::ast::{Expr, Literal};
+    match &e.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.clone()),
+        Expr::Literal(Literal::Int(k)) => Some(k.to_string()),
+        _ => None,
+    }
+}
+
+/// Recognize the counted-append shape by structure (see [`CountedRepeat`]).
 fn detect_counted_repeat(fd: &crate::ast::FnDef) -> Option<CountedRepeat> {
     use crate::ast::{BinOp, Expr, Literal, Pattern, Stmt};
-    if fd.params.len() != 2 || fd.params[1].1 != "Int" {
+    if fd.params.is_empty() {
         return None;
     }
-    let item_param = fd.params[0].0.as_str();
-    let count_param = fd.params[1].0.as_str();
-
     let Some(Stmt::Expr(term)) = fd.body.stmts().last() else {
         return None;
     };
     let Expr::Match { subject, arms } = &term.node else {
         return None;
     };
-    // subject = `count <= 0`
+    // subject = `<count> <= 0`, where <count> is some Int parameter.
     let Expr::BinOp(BinOp::Lte, l, r) = &subject.node else {
         return None;
     };
-    if cr_ident_name(l).as_deref() != Some(count_param) || !cr_is_int_lit(r, 0) {
+    if !cr_is_int_lit(r, 0) {
         return None;
     }
+    let count_name = cr_ident_name(l)?;
+    let count_idx = fd
+        .params
+        .iter()
+        .position(|(n, t)| *n == count_name && t == "Int")?;
+
     if arms.len() != 2 {
         return None;
     }
@@ -1221,46 +1239,81 @@ fn detect_counted_repeat(fd: &crate::ast::FnDef) -> Option<CountedRepeat> {
     if !matches!(&true_body?.node, Expr::List(items) if items.is_empty()) {
         return None;
     }
-    // false arm: `List.concat(f(c, n - 1), [c])`
+    // false arm: `List.concat(f(.., n - 1, ..), [E])`
     let (concat, cargs) = cr_fn_call(false_body?)?;
     if concat != "List.concat" || cargs.len() != 2 {
         return None;
     }
     let (rec, rargs) = cr_fn_call(&cargs[0])?;
-    if rec != fd.name || rargs.len() != 2 || cr_ident_name(&rargs[0]).as_deref() != Some(item_param)
-    {
+    if rec != fd.name || rargs.len() != fd.params.len() {
         return None;
     }
-    let Expr::BinOp(BinOp::Sub, sl, sr) = &rargs[1].node else {
-        return None;
-    };
-    if cr_ident_name(sl).as_deref() != Some(count_param) || !cr_is_int_lit(sr, 1) {
-        return None;
+    // Recursive args: the count slot is `count - 1`; every other slot is its
+    // parameter unchanged.
+    for (j, ra) in rargs.iter().enumerate() {
+        if j == count_idx {
+            let Expr::BinOp(BinOp::Sub, sl, sr) = &ra.node else {
+                return None;
+            };
+            if cr_ident_name(sl).as_deref() != Some(count_name.as_str()) || !cr_is_int_lit(sr, 1) {
+                return None;
+            }
+        } else if cr_ident_name(ra).as_deref() != Some(fd.params[j].0.as_str()) {
+            return None;
+        }
     }
     let Expr::List(tail) = &cargs[1].node else {
         return None;
     };
-    if tail.len() != 1 || cr_ident_name(&tail[0]).as_deref() != Some(item_param) {
+    if tail.len() != 1 {
         return None;
     }
+    let elem_lean = counted_repeat_elem_lean(&tail[0])?;
     Some(CountedRepeat {
         fn_name: fd.name.clone(),
-        item_type: fd.params[0].1.clone(),
+        params: fd.params.clone(),
+        count_idx,
+        elem_lean,
     })
 }
 
-/// The Lean theorems for a counted-repeat advance, in dependency order: a fixed
+/// The Lean theorems for a counted-append advance, in dependency order: a fixed
 /// `Int.natAbs` successor bridge, then the guarded advance proved by the
 /// fuel-unfold template. Names/types use the same Lean mapping the program defs
-/// are emitted with, so the theorem references the generated `repeat`/fuel defs.
+/// are emitted with, so the theorem references the generated fn/fuel defs.
 fn counted_repeat_lemmas(shape: &CountedRepeat, base: &str) -> Vec<(String, String)> {
-    let repeat_l = crate::codegen::lean::aver_name_to_lean(&shape.fn_name);
+    let f_l = crate::codegen::lean::aver_name_to_lean(&shape.fn_name);
     let fuel_l = crate::codegen::lean::aver_name_to_lean(
         &crate::codegen::recursion::fuel_helper_name(&shape.fn_name),
     );
-    let item_l = crate::codegen::lean::type_to_lean(
-        &crate::codegen::common::parse_type_annotation(&shape.item_type),
-    );
+    let count_name = &shape.params[shape.count_idx].0;
+    let binders: Vec<String> = shape
+        .params
+        .iter()
+        .map(|(p, t)| {
+            format!(
+                "({p} : {})",
+                crate::codegen::lean::type_to_lean(&crate::codegen::common::parse_type_annotation(
+                    t
+                ))
+            )
+        })
+        .collect();
+    // Applied argument lists: lhs bumps the count slot to `count + 1`, rhs keeps it.
+    let lhs_args: Vec<String> = shape
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, (p, _))| {
+            if i == shape.count_idx {
+                format!("({count_name} + 1)")
+            } else {
+                p.clone()
+            }
+        })
+        .collect();
+    let rhs_args: Vec<String> = shape.params.iter().map(|(p, _)| p.clone()).collect();
+    let elem = &shape.elem_lean;
     let natabs = format!("{base}_natAbs_succ");
     let succ = format!("{base}_repeat_succ");
 
@@ -1271,12 +1324,15 @@ fn counted_repeat_lemmas(shape: &CountedRepeat, base: &str) -> Vec<(String, Stri
          rw [Int.natAbs_of_nonneg (by omega), Int.natAbs_of_nonneg hn]\n"
     );
     let succ_thm = format!(
-        "theorem {succ} (c : {item_l}) (n : Int) (hn : 0 <= n) : \
-         {repeat_l} c (n + 1) = {repeat_l} c n ++ [c] := by\n  \
-         unfold {repeat_l}\n  \
-         rw [{natabs} n hn]\n  \
-         have hpos : ¬ n + 1 <= 0 := by omega\n  \
-         simp [{fuel_l}, hpos]\n"
+        "theorem {succ} {binders} (hn : 0 <= {count_name}) : \
+         {f_l} {lhs_args} = {f_l} {rhs_args} ++ [{elem}] := by\n  \
+         unfold {f_l}\n  \
+         rw [{natabs} {count_name} hn]\n  \
+         have hpos : ¬ {count_name} + 1 <= 0 := by omega\n  \
+         simp [{fuel_l}, hpos]\n",
+        binders = binders.join(" "),
+        lhs_args = lhs_args.join(" "),
+        rhs_args = rhs_args.join(" "),
     );
     vec![(natabs, natabs_thm), (succ, succ_thm)]
 }
@@ -1852,9 +1908,10 @@ verify encode law roundtrip
             "expected counted-repeat + monotone-field groups"
         );
         let all: String = groups.iter().flatten().map(|(_, t)| t.as_str()).collect();
-        // brick 1: guarded counted-repeat advance (`repeat` escapes to `repeat'`).
+        // brick 1: guarded counted-repeat advance (`repeat` escapes to `repeat'`;
+        // its param is named `char` in rle, used verbatim now).
         assert!(
-            all.contains("repeat' c (n + 1) = repeat' c n ++ [c]"),
+            all.contains("repeat' char (n + 1) = repeat' char n ++ [char]"),
             "{all}"
         );
         assert!(

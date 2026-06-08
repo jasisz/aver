@@ -3096,3 +3096,41 @@ fn discover_proves_tally_count_invariant_when_lake_is_available() {
         "0 <= (tallyStep acc x).seen",
     );
 }
+
+/// Generalization guard on a SHAPE-different second encoder-with-inverse
+/// (`sparse.av`: sum-type tokens, branches on `x == 0`). One `--discover` run
+/// must kernel-prove BOTH the UNARY counted-repeat advance `repeat0(n+1) =
+/// repeat0(n) ++ [0]` (brick 1's arity generalization) AND the monotone-nonneg
+/// `pending` invariant — proof that the structural conjecturers generalize
+/// across encoders, not just rle.
+#[test]
+fn discover_generalizes_on_sparse_codec_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping discovery proof test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = temp_output_dir("aver-discover-sparse");
+    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/data/sparse.av")
+        .arg("--discover")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let committed =
+        std::fs::read_to_string(output_dir.join("DiscoveredLemmas.lean")).unwrap_or_default();
+    for needle in [
+        "repeat0 (n + 1) = repeat0 n ++ [0]",
+        "0 <= (sparseStep acc x).pending",
+    ] {
+        assert!(
+            committed.contains(needle),
+            "expected `{needle}` among kernel-proved lemmas.\n--- stdout ---\n{}\n--- DiscoveredLemmas.lean ---\n{committed}",
+            format_output(&run),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
