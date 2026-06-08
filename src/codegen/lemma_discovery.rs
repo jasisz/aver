@@ -1139,6 +1139,167 @@ pub fn discovery_surface_hash(inputs: &ProofLowerInputs) -> String {
     format!("{hash:016x}")
 }
 
+// ===========================================================================
+// Layer 3 (first brick) — STRUCTURE-DIRECTED guarded conjectures.
+//
+// Some lemmas an inductive proof needs are GUARDED and arithmetic
+// (`repeat(c, n+1) = repeat(c, n) ++ [c]` under `0 <= n`) — unreachable by the
+// equational enumerator (no `n+1`/literals in its vocabulary). They are instead
+// CONJECTURED from a recognized recursion shape and proved with a dedicated
+// template (here: a fixed `Int.natAbs` bridge + a fuel-unfold). This is the
+// first member of the accumulator-generalization family (the RLE retirement
+// target); `count_nonneg` / `flush_fold_step` / `loop_gen` follow the same
+// detect-shape → conjecture → templated-proof pattern (charter layer 3).
+// ===========================================================================
+
+/// A counted-append `repeat`: `fn f(c, n) = match n <= 0 { true -> []; false ->
+/// List.concat(f(c, n - 1), [c]) }`. Detected by SHAPE (not name); `n`'s type
+/// must be `Int`. Yields the successor-advance lemma `f(c, n+1) = f(c,n) ++ [c]`.
+struct CountedRepeat {
+    fn_name: String,
+    item_type: String,
+}
+
+fn cr_ident_name(e: &crate::ast::Spanned<crate::ast::Expr>) -> Option<String> {
+    match &e.node {
+        crate::ast::Expr::Ident(n) => Some(n.clone()),
+        crate::ast::Expr::Resolved { name, .. } => Some(name.clone()),
+        _ => None,
+    }
+}
+
+fn cr_is_int_lit(e: &crate::ast::Spanned<crate::ast::Expr>, n: i64) -> bool {
+    matches!(&e.node, crate::ast::Expr::Literal(crate::ast::Literal::Int(k)) if *k == n)
+}
+
+fn cr_fn_call(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+) -> Option<(String, &[crate::ast::Spanned<crate::ast::Expr>])> {
+    if let crate::ast::Expr::FnCall(callee, args) = &e.node {
+        let name = crate::codegen::common::expr_to_dotted_name(&callee.node)?;
+        Some((name, args.as_slice()))
+    } else {
+        None
+    }
+}
+
+/// Recognize the counted-append `repeat` shape by structure (see [`CountedRepeat`]).
+fn detect_counted_repeat(fd: &crate::ast::FnDef) -> Option<CountedRepeat> {
+    use crate::ast::{BinOp, Expr, Literal, Pattern, Stmt};
+    if fd.params.len() != 2 || fd.params[1].1 != "Int" {
+        return None;
+    }
+    let item_param = fd.params[0].0.as_str();
+    let count_param = fd.params[1].0.as_str();
+
+    let Some(Stmt::Expr(term)) = fd.body.stmts().last() else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &term.node else {
+        return None;
+    };
+    // subject = `count <= 0`
+    let Expr::BinOp(BinOp::Lte, l, r) = &subject.node else {
+        return None;
+    };
+    if cr_ident_name(l).as_deref() != Some(count_param) || !cr_is_int_lit(r, 0) {
+        return None;
+    }
+    if arms.len() != 2 {
+        return None;
+    }
+    let mut true_body = None;
+    let mut false_body = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::Literal(Literal::Bool(true)) => true_body = Some(&arm.body),
+            Pattern::Literal(Literal::Bool(false)) => false_body = Some(&arm.body),
+            _ => return None,
+        }
+    }
+    // true arm: `[]`
+    if !matches!(&true_body?.node, Expr::List(items) if items.is_empty()) {
+        return None;
+    }
+    // false arm: `List.concat(f(c, n - 1), [c])`
+    let (concat, cargs) = cr_fn_call(false_body?)?;
+    if concat != "List.concat" || cargs.len() != 2 {
+        return None;
+    }
+    let (rec, rargs) = cr_fn_call(&cargs[0])?;
+    if rec != fd.name || rargs.len() != 2 || cr_ident_name(&rargs[0]).as_deref() != Some(item_param)
+    {
+        return None;
+    }
+    let Expr::BinOp(BinOp::Sub, sl, sr) = &rargs[1].node else {
+        return None;
+    };
+    if cr_ident_name(sl).as_deref() != Some(count_param) || !cr_is_int_lit(sr, 1) {
+        return None;
+    }
+    let Expr::List(tail) = &cargs[1].node else {
+        return None;
+    };
+    if tail.len() != 1 || cr_ident_name(&tail[0]).as_deref() != Some(item_param) {
+        return None;
+    }
+    Some(CountedRepeat {
+        fn_name: fd.name.clone(),
+        item_type: fd.params[0].1.clone(),
+    })
+}
+
+/// The Lean theorems for a counted-repeat advance, in dependency order: a fixed
+/// `Int.natAbs` successor bridge, then the guarded advance proved by the
+/// fuel-unfold template. Names/types use the same Lean mapping the program defs
+/// are emitted with, so the theorem references the generated `repeat`/fuel defs.
+fn counted_repeat_lemmas(shape: &CountedRepeat, base: &str) -> Vec<(String, String)> {
+    let repeat_l = crate::codegen::lean::aver_name_to_lean(&shape.fn_name);
+    let fuel_l = crate::codegen::lean::aver_name_to_lean(
+        &crate::codegen::recursion::fuel_helper_name(&shape.fn_name),
+    );
+    let item_l = crate::codegen::lean::type_to_lean(
+        &crate::codegen::common::parse_type_annotation(&shape.item_type),
+    );
+    let natabs = format!("{base}_natAbs_succ");
+    let succ = format!("{base}_repeat_succ");
+
+    let natabs_thm = format!(
+        "theorem {natabs} (n : Int) (hn : 0 <= n) : Int.natAbs (n + 1) = Int.natAbs n + 1 := by\n  \
+         apply Int.ofNat_inj.mp\n  \
+         change (Int.natAbs (n + 1) : Int) = (Int.natAbs n : Int) + 1\n  \
+         rw [Int.natAbs_of_nonneg (by omega), Int.natAbs_of_nonneg hn]\n"
+    );
+    let succ_thm = format!(
+        "theorem {succ} (c : {item_l}) (n : Int) (hn : 0 <= n) : \
+         {repeat_l} c (n + 1) = {repeat_l} c n ++ [c] := by\n  \
+         unfold {repeat_l}\n  \
+         rw [{natabs} n hn]\n  \
+         have hpos : ¬ n + 1 <= 0 := by omega\n  \
+         simp [{fuel_l}, hpos]\n"
+    );
+    vec![(natabs, natabs_thm), (succ, succ_thm)]
+}
+
+/// Structure-directed GUARDED lemma groups (layer 3): conjectures derived from
+/// a recognized recursion shape rather than blind enumeration. Each group is a
+/// set of co-dependent Lean theorems proved TOGETHER (one `lake build`, in
+/// dependency order). The first family is the counted-repeat advance. Returns
+/// one group per distinct matching fn across all pure fns.
+pub fn structural_lemma_groups(inputs: &ProofLowerInputs) -> Vec<Vec<(String, String)>> {
+    let mut groups = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for fd in inputs.pure_fns() {
+        if let Some(shape) = detect_counted_repeat(fd)
+            && seen.insert(shape.fn_name.clone())
+        {
+            let base = format!("aver_structural_{}", groups.len());
+            groups.push(counted_repeat_lemmas(&shape, &base));
+        }
+    }
+    groups
+}
+
 /// Candidate indices in proof-attempt order: list-homomorphism shapes first
 /// (the highest-value, template-closable class), then smallest-first. The
 /// prover (CLI) walks this and attempts the top few within a build budget.
@@ -1269,11 +1430,11 @@ verify encode law roundtrip
     decode(encode(xs)) => xs
 "#;
 
-    /// Enumerate (2b) AND VM-filter (2c). The full lex→parse→tco→resolve
-    /// pipeline runs so the VM-filter can compile the cone fns; `tco` +
-    /// `resolve` mirror `aver run`, and `LawProofCone::compute` works on the
-    /// resolved AST (it handles both `Ident` and `Resolved`).
-    fn discover(src: &str) -> Vec<LawDiscovery> {
+    /// Build a `ProofLowerInputs` from source and run `f` on it. The full
+    /// lex→parse→tco→resolve pipeline runs so the VM-filter / oracle can compile
+    /// the cone fns; `LawProofCone::compute` works on the resolved AST (it
+    /// handles both `Ident` and `Resolved`).
+    fn with_inputs<R>(src: &str, f: impl FnOnce(&ProofLowerInputs) -> R) -> R {
         let mut lexer = crate::lexer::Lexer::new(src);
         let tokens = lexer.tokenize().expect("lex");
         let mut items = crate::parser::Parser::new(tokens).parse().expect("parse");
@@ -1291,9 +1452,21 @@ verify encode law roundtrip
             symbol_table: &symbols,
             program_shape: None,
         };
-        let mut reports = run_discovery(&inputs);
-        vm_filter(&mut reports, &inputs);
-        reports
+        f(&inputs)
+    }
+
+    /// Enumerate (2b) AND VM-filter (2c).
+    fn discover(src: &str) -> Vec<LawDiscovery> {
+        with_inputs(src, |inputs| {
+            let mut reports = run_discovery(inputs);
+            vm_filter(&mut reports, inputs);
+            reports
+        })
+    }
+
+    fn rle_source() -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/data/rle.av"))
+            .expect("read rle.av")
     }
 
     /// Matches the clearly-FALSE `x == List.concat(x, x)` (either orientation):
@@ -1500,5 +1673,23 @@ verify encode law roundtrip
             "expected decode_append ranked first, got {}",
             first.render(&r.binders)
         );
+    }
+
+    #[test]
+    fn structural_conjecturer_finds_repeat_succ_on_real_rle() {
+        // `rle.av`'s `repeat` is the counted-append shape → exactly one
+        // structure-directed group: the natAbs bridge + the guarded advance.
+        let groups = with_inputs(&rle_source(), structural_lemma_groups);
+        assert_eq!(groups.len(), 1, "expected one counted-repeat group");
+        let texts: String = groups[0].iter().map(|(_, t)| t.as_str()).collect();
+        assert!(texts.contains("_repeat_succ"), "{texts}");
+        // The guarded successor-advance conjecture in Lean (`repeat` escapes to
+        // `repeat'`, a Lean keyword), under the synthesized `0 <= n` guard.
+        assert!(
+            texts.contains("repeat' c (n + 1) = repeat' c n ++ [c]"),
+            "{texts}"
+        );
+        assert!(texts.contains("(hn : 0 <= n)"), "{texts}");
+        assert!(texts.contains("natAbs"), "{texts}");
     }
 }

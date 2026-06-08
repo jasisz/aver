@@ -4927,15 +4927,18 @@ pub(super) fn cmd_proof(
             );
         }
 
-        // DISCOVER: enumerate + VM-filter (immutable borrow of ctx, scoped so
-        // it ends before the prove step needs `&mut ctx`).
-        let mut reports = {
+        // DISCOVER: enumerate + VM-filter + collect structure-directed guarded
+        // lemma groups (immutable borrow of ctx, scoped so it ends before the
+        // prove step needs `&mut ctx`).
+        let (mut reports, structural_groups) = {
             let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
             let mut reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
             aver::codegen::lemma_discovery::vm_filter(&mut reports, &inputs);
-            reports
+            let groups = aver::codegen::lemma_discovery::structural_lemma_groups(&inputs);
+            (reports, groups)
         };
-        let proved_lean = prove_discovered_lemmas_lean(&mut reports, &mut ctx, verify_mode);
+        let proved_lean =
+            prove_discovered_lemmas_lean(&mut reports, &structural_groups, &mut ctx, verify_mode);
         print!(
             "{}",
             aver::codegen::lemma_discovery::render_report(&reports)
@@ -4948,8 +4951,9 @@ pub(super) fn cmd_proof(
             let mut content = format!(
                 "-- Discovered lemmas for {file} — `aver proof --discover`\n\
                  {hash_tag}\n\
-                 -- Each theorem below was enumerated, VM-filtered, and kernel-proved.\n\
-                 -- Re-verified (not rediscovered) on replay while the cone-hash holds.\n\n"
+                 -- Each theorem below was discovered (by enumeration or structure)\n\
+                 -- and kernel-proved. Re-verified (not rediscovered) on replay while\n\
+                 -- the cone-hash holds.\n\n"
             );
             for thm in &proved_lean {
                 content.push_str(thm);
@@ -5043,6 +5047,7 @@ pub(super) fn cmd_proof(
 /// the expensive cached step, but `--discover` should still return promptly.
 fn prove_discovered_lemmas_lean(
     reports: &mut [aver::codegen::lemma_discovery::LawDiscovery],
+    structural_groups: &[Vec<(String, String)>],
     ctx: &mut codegen::CodegenContext,
     verify_mode: &super::cli::ProofVerifyMode,
 ) -> Vec<String> {
@@ -5091,8 +5096,38 @@ fn prove_discovered_lemmas_lean(
     };
     let entry_path = dir.path().join(&entry);
 
-    // Total `lake build` attempts across all laws. The first build warms the
-    // AverCommon/toolchain cache; subsequent ones are incremental (~2s each).
+    // Helper: append `addition` to the entry file and `lake build`; true on
+    // success (the appended theorems kernel-check, given the baseline builds).
+    let build_with = |addition: &str| -> bool {
+        let body = format!("{entry_orig}\n\n{addition}\n");
+        if std::fs::write(&entry_path, body).is_err() {
+            return false;
+        }
+        Command::new("lake")
+            .arg("build")
+            .current_dir(dir.path())
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+
+    // Layer-3 structure-directed groups first (targeted guarded lemmas, e.g.
+    // the counted-repeat advance). Each group's co-dependent theorems are
+    // appended and built together, in dependency order.
+    for group in structural_groups {
+        let addition = group
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if build_with(&addition) {
+            for (_, text) in group {
+                proved_lean.push(text.clone());
+            }
+        }
+    }
+
+    // Total `lake build` attempts for enumerated candidates across all laws.
     let mut budget = 8usize;
     let mut counter = 0usize;
     for report in reports.iter_mut() {
@@ -5113,17 +5148,7 @@ fn prove_discovered_lemmas_lean(
                 continue;
             };
             budget -= 1;
-            let combined = format!("{entry_orig}\n\n{theorem}\n");
-            if std::fs::write(&entry_path, &combined).is_err() {
-                continue;
-            }
-            let proved = Command::new("lake")
-                .arg("build")
-                .current_dir(dir.path())
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            if proved {
+            if build_with(&theorem) {
                 report.proved.push(candidate.render(&report.binders));
                 proved_lean.push(theorem);
             }
