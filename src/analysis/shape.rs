@@ -1186,9 +1186,9 @@ fn detect_wrapper_over_recursion(
 
 /// The function name + args of `e`, whether a direct `FnCall(Ident, _)` or a
 /// TCO-rewritten `TailCall` (the loop's self-call is tail position).
-fn call_target<'a>(
-    e: &'a crate::ast::Spanned<crate::ast::Expr>,
-) -> Option<(&'a str, &'a [crate::ast::Spanned<crate::ast::Expr>])> {
+fn call_target(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+) -> Option<(&str, &[crate::ast::Spanned<crate::ast::Expr>])> {
     use crate::ast::Expr;
     match &e.node {
         Expr::FnCall(callee, args) => match &callee.node {

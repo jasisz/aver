@@ -1700,20 +1700,34 @@ fn as_call(
     }
 }
 
-/// The inner (loop) fn of `wrapper`, IF `analysis::shape` classified it as a
-/// `WrapperOverRecursion` — this is the principled "is this a wrapper-over-
-/// recursion fold" decision, sourced from the shared shape vocabulary rather
-/// than re-derived by a bespoke AST walk. `None` when no program shape is
-/// available or the wrapper isn't so classified, so both fold-flavor detectors
-/// are GATED on the shape agreeing.
-fn shape_inner_fn(inputs: &ProofLowerInputs, wrapper: &str) -> Option<String> {
+/// The loop roles `analysis::shape` extracted for `wrapper`'s `AccumulatorFold`
+/// — the loop fn plus its step (named `step_fn` or inline `step_op`) and finish
+/// (named `finish_fn` or identity). Both fold-flavor detectors source these from
+/// the shared shape vocabulary instead of re-walking the loop body; `None` when
+/// no program shape is available or the wrapper isn't an accumulator fold.
+struct ShapeFoldRoles {
+    loop_fn: String,
+    step_fn: Option<String>,
+    step_op: Option<crate::ast::BinOp>,
+    finish_fn: Option<String>,
+}
+
+fn shape_fold_roles(inputs: &ProofLowerInputs, wrapper: &str) -> Option<ShapeFoldRoles> {
     use crate::analysis::shape::ModulePattern;
     inputs.program_shape?.patterns.iter().find_map(|p| match p {
-        ModulePattern::WrapperOverRecursion {
+        ModulePattern::AccumulatorFold {
             wrapper_fn,
-            inner_fn,
+            loop_fn,
+            step_fn,
+            step_op,
+            finish_fn,
             ..
-        } if wrapper_fn == wrapper => Some(inner_fn.clone()),
+        } if wrapper_fn == wrapper => Some(ShapeFoldRoles {
+            loop_fn: loop_fn.clone(),
+            step_fn: step_fn.clone(),
+            step_op: *step_op,
+            finish_fn: finish_fn.clone(),
+        }),
         _ => None,
     })
 }
@@ -1783,65 +1797,24 @@ fn detect_encoder(
     }
 
     // wrapper(var) = loop(var, initAcc). Shape-anchored: `analysis::shape` must
-    // classify `wrapper` as a wrapper-over-recursion, and its inner fn must be
-    // the `loop` the body calls.
-    let shape_loop = shape_inner_fn(inputs, &wrapper)?;
+    // classify `wrapper` as an `AccumulatorFold`, and the codec flavor's loop
+    // has a NAMED step + NAMED finish (the inline-op / identity-finish forms are
+    // the monoidal flavor). The roles come from the shape pattern — no loop-body
+    // re-walk here.
+    let roles = shape_fold_roles(inputs, &wrapper)?;
+    let loop_fn = roles.loop_fn;
+    let (Some(step), Some(finish)) = (roles.step_fn, roles.finish_fn) else {
+        return None;
+    };
     let wf = inputs.find_fn_def_by_call_name(&wrapper)?;
-    let (loop_fn, loop_args) = as_call(last_body_expr(wf)?)?;
-    if loop_fn != shape_loop || loop_args.len() != 2 {
+    let (wbody_loop, loop_args) = as_call(last_body_expr(wf)?)?;
+    if wbody_loop != loop_fn || loop_args.len() != 2 {
         return None;
     }
     // The neutral accumulator (2nd loop arg) must render to a Lean literal — the
     // roundtrip lemma instantiates `loop_gen` at it. A non-literal init is out
     // of this family's scope (graceful skip).
     let init_acc = render_init_literal(&loop_args[1])?;
-
-    // loop(list, acc): match list { [] -> finish acc; h::t -> loop t (step acc h) }.
-    let lf = inputs.find_fn_def_by_call_name(&loop_fn)?;
-    if lf.params.len() != 2 {
-        return None;
-    }
-    let list_p = lf.params[0].0.as_str();
-    let acc_p = lf.params[1].0.as_str();
-    let Expr::Match { subject, arms } = &last_body_expr(lf)?.node else {
-        return None;
-    };
-    if cr_ident_name(subject).as_deref() != Some(list_p) || arms.len() != 2 {
-        return None;
-    }
-    let mut finish: Option<String> = None;
-    let mut step: Option<String> = None;
-    for arm in arms {
-        match &arm.pattern {
-            Pattern::EmptyList => {
-                let (f, fargs) = as_call(&arm.body)?;
-                if fargs.len() != 1 || cr_ident_name(&fargs[0]).as_deref() != Some(acc_p) {
-                    return None;
-                }
-                finish = Some(f);
-            }
-            Pattern::Cons(h, t) => {
-                let (lp, largs) = as_call(&arm.body)?;
-                if lp != loop_fn
-                    || largs.len() != 2
-                    || cr_ident_name(&largs[0]).as_deref() != Some(t.as_str())
-                {
-                    return None;
-                }
-                let (s, sargs) = as_call(&largs[1])?;
-                if sargs.len() != 2
-                    || cr_ident_name(&sargs[0]).as_deref() != Some(acc_p)
-                    || cr_ident_name(&sargs[1]).as_deref() != Some(h.as_str())
-                {
-                    return None;
-                }
-                step = Some(s);
-            }
-            _ => return None,
-        }
-    }
-    let finish = finish?;
-    let step = step?;
 
     // inverse(list): match list { [] -> []; h::t -> List.concat(expand h, inverse t) }.
     let invf = inputs.find_fn_def_by_call_name(&inverse)?;
@@ -2273,22 +2246,6 @@ struct MonoidalShape {
     neutral: String,
 }
 
-/// `acc <Add> head` (either operand order), where `acc`/`head` are the named
-/// binders — the additive fold step `omega` can discharge. Returns the head name.
-fn additive_step_head(e: &crate::ast::Spanned<crate::ast::Expr>, acc: &str) -> Option<String> {
-    use crate::ast::{BinOp, Expr};
-    let Expr::BinOp(BinOp::Add, l, r) = &e.node else {
-        return None;
-    };
-    let ln = cr_ident_name(l);
-    let rn = cr_ident_name(r);
-    match (ln.as_deref(), rn.as_deref()) {
-        (Some(a), Some(h)) if a == acc => Some(h.to_string()),
-        (Some(h), Some(a)) if a == acc => Some(h.to_string()),
-        _ => None,
-    }
-}
-
 /// Recognize a monoidal wrapper-over-recursion from a spec-equivalence law
 /// `wrapper(var) = direct(var)` (see [`MonoidalShape`]). `None` unless the fold
 /// is the additive accumulator shape the `omega`-closed template proves.
@@ -2297,7 +2254,7 @@ fn detect_monoidal_spec(
     subject_fn: &str,
     inputs: &ProofLowerInputs,
 ) -> Option<MonoidalShape> {
-    use crate::ast::{Expr, Pattern};
+    use crate::ast::Expr;
 
     // Law: wrapper(var) = direct(var), var a declared given, both sides unary.
     let (lf, largs) = as_call(&law.lhs)?;
@@ -2320,12 +2277,18 @@ fn detect_monoidal_spec(
         return None;
     };
 
-    // wrapper(var) = loop(var, neutral), neutral a literal. Shape-anchored on
-    // the same `WrapperOverRecursion` classification as the codec flavor.
-    let shape_loop = shape_inner_fn(inputs, &wrapper)?;
+    // wrapper(var) = loop(var, neutral). Shape-anchored: the monoidal flavor is
+    // an `AccumulatorFold` with an INLINE additive step (`acc + h`) and an
+    // IDENTITY finish (nil arm returns `acc`). Roles from the shape pattern —
+    // no loop-body re-walk.
+    let roles = shape_fold_roles(inputs, &wrapper)?;
+    let loop_fn = roles.loop_fn;
+    if roles.finish_fn.is_some() || roles.step_op != Some(crate::ast::BinOp::Add) {
+        return None;
+    }
     let wf = inputs.find_fn_def_by_call_name(&wrapper)?;
-    let (loop_fn, loop_args) = as_call(last_body_expr(wf)?)?;
-    if loop_fn != shape_loop
+    let (wbody_loop, loop_args) = as_call(last_body_expr(wf)?)?;
+    if wbody_loop != loop_fn
         || loop_args.len() != 2
         || cr_ident_name(&loop_args[0]).as_deref() != Some(var.as_str())
     {
@@ -2333,13 +2296,11 @@ fn detect_monoidal_spec(
     }
     let neutral = render_init_literal(&loop_args[1])?;
 
-    // loop(list, acc): match list { [] -> acc; h::t -> loop(t, acc + h) }.
+    // The loop's element + accumulator types, for the lemma binders.
     let lpf = inputs.find_fn_def_by_call_name(&loop_fn)?;
     if lpf.params.len() != 2 {
         return None;
     }
-    let list_p = lpf.params[0].0.as_str();
-    let acc_p = lpf.params[1].0.as_str();
     let Type::List(elem) = crate::codegen::common::parse_type_annotation(&lpf.params[0].1) else {
         return None;
     };
@@ -2347,36 +2308,6 @@ fn detect_monoidal_spec(
     let acc_ty_lean = crate::codegen::lean::type_to_lean(
         &crate::codegen::common::parse_type_annotation(&lpf.params[1].1),
     );
-    let Expr::Match { subject, arms } = &last_body_expr(lpf)?.node else {
-        return None;
-    };
-    if cr_ident_name(subject).as_deref() != Some(list_p) || arms.len() != 2 {
-        return None;
-    }
-    for arm in arms {
-        match &arm.pattern {
-            // nil arm returns the accumulator unchanged (finish = id).
-            Pattern::EmptyList => {
-                if cr_ident_name(&arm.body).as_deref() != Some(acc_p) {
-                    return None;
-                }
-            }
-            // cons arm: loop(t, acc + h).
-            Pattern::Cons(h, t) => {
-                let (rec, rargs2) = as_call(&arm.body)?;
-                if rec != loop_fn
-                    || rargs2.len() != 2
-                    || cr_ident_name(&rargs2[0]).as_deref() != Some(t.as_str())
-                {
-                    return None;
-                }
-                if additive_step_head(&rargs2[1], acc_p).as_deref() != Some(h.as_str()) {
-                    return None;
-                }
-            }
-            _ => return None,
-        }
-    }
 
     // The direct spec must exist and be a structural recurrence simp can unfold.
     let df = inputs.find_fn_def_by_call_name(&direct)?;
