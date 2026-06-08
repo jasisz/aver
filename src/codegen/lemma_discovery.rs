@@ -1337,18 +1337,16 @@ fn counted_repeat_lemmas(shape: &CountedRepeat, base: &str) -> Vec<(String, Stri
     vec![(natabs, natabs_thm), (succ, succ_thm)]
 }
 
-/// A `step` fn `(Acc, …) -> Acc` with an Int accumulator field that is
-/// MONOTONE-NONNEG: in every record `step` builds, the field is assigned a
-/// value that stays `≥ 0` given the input field was `≥ 0` — a non-negative
-/// literal, the field unchanged, or the field plus a non-negative literal.
-/// Yields the invariant-preservation lemma `0 <= step(acc, …).field` under
-/// `0 <= acc.field`. This is the GENERALIZED brick 2: it keys on the field's
-/// update arithmetic, NOT the RLE step shape, so it fires on any such fold
-/// (e.g. rle's `encodeFold` AND a `>`-branching tally — see examples/data).
-struct MonotoneField {
-    fn_name: String,
-    params: Vec<(String, String)>,
-    field: String,
+/// The strongest sound invariant a single Int accumulator field admits, by
+/// structure. `Nonneg` is the conditional `0 <= field' given 0 <= field` (the
+/// canonical, law-consumable one, generalized brick 2 — keys on the field's
+/// update arithmetic, not the RLE step shape). `Bounded { lo, hi }` is the
+/// unconditional two-sided step bound `acc.field + lo <= field' <= acc.field + hi`,
+/// the generalization that also covers DECREASING fields (drain's `+1`/`-1`).
+/// Per field nonneg is preferred when both hold.
+enum FieldInvariant {
+    Nonneg,
+    Bounded { lo: i64, hi: i64 },
 }
 
 /// `acc.<field>` → the field name, if `e` is an attribute access of `acc`.
@@ -1399,7 +1397,10 @@ fn collect_acc_records<'a>(
 }
 
 /// `true` if `v` keeps a `≥ 0` field `≥ 0`: a non-negative `Int` literal,
-/// `acc.<field>` unchanged, or `acc.<field> + <non-negative literal>`.
+/// `acc.<field>` unchanged, `acc.<field> + <nonneg literal>`, or
+/// `acc.<field> * <nonneg literal>`. All four are closed under `≥ 0` AND stay
+/// linear in the field (multiplication is by a constant), so the `omega` leaf of
+/// the proof template discharges the resulting goal.
 fn nonneg_preserving(v: &crate::ast::Spanned<crate::ast::Expr>, acc: &str, field: &str) -> bool {
     use crate::ast::{BinOp, Expr, Literal};
     if let Expr::Literal(Literal::Int(k)) = &v.node {
@@ -1408,7 +1409,10 @@ fn nonneg_preserving(v: &crate::ast::Spanned<crate::ast::Expr>, acc: &str, field
     if cr_attr_of(v, acc).as_deref() == Some(field) {
         return true;
     }
-    if let Expr::BinOp(BinOp::Add, l, r) = &v.node {
+    // `field + nonneg` and `field * nonneg` both preserve non-negativity; a
+    // negative literal factor is rejected here and handled (if at all) as a
+    // bounded step. `field * field` is non-linear, so `nonneg_lit` excludes it.
+    if let Expr::BinOp(BinOp::Add | BinOp::Mul, l, r) = &v.node {
         let is_field = |e: &crate::ast::Spanned<Expr>| cr_attr_of(e, acc).as_deref() == Some(field);
         let nonneg_lit = |e: &crate::ast::Spanned<Expr>| matches!(&e.node, Expr::Literal(Literal::Int(k)) if *k >= 0);
         return (is_field(l) && nonneg_lit(r)) || (nonneg_lit(l) && is_field(r));
@@ -1416,23 +1420,29 @@ fn nonneg_preserving(v: &crate::ast::Spanned<crate::ast::Expr>, acc: &str, field
     false
 }
 
-/// Recognize a monotone-nonneg accumulator field by structure (see [`MonotoneField`]).
-fn detect_monotone_nonneg_field(
+/// Classify each Int field of a `step` fn `(Acc, …) -> Acc` (Acc a user record)
+/// by the strongest sound invariant it admits, returning one entry PER field
+/// that admits any — so a record with several Int fields (e.g. a nonneg counter
+/// alongside a decreasing gauge) yields a lemma for each, not just the first.
+/// Per field: the conditional nonneg invariant is preferred (law-consumable);
+/// failing that, the unconditional bounded step when every update is a constant
+/// shift of the field.
+fn detect_field_invariants(
     fd: &crate::ast::FnDef,
     inputs: &ProofLowerInputs,
-) -> Option<MonotoneField> {
+) -> Vec<(String, FieldInvariant)> {
     use crate::ast::{Stmt, TypeDef};
     // step : (Acc, …) -> Acc, Acc a user record.
     if fd.params.is_empty() || fd.params[0].1 != fd.return_type {
-        return None;
+        return Vec::new();
     }
     let acc_param = fd.params[0].0.as_str();
     let acc_type = &fd.params[0].1;
-    let TypeDef::Product {
+    let Some(TypeDef::Product {
         fields: acc_fields, ..
-    } = inputs.find_type_def(acc_type)?
+    }) = inputs.find_type_def(acc_type)
     else {
-        return None;
+        return Vec::new();
     };
     let int_fields: Vec<&str> = acc_fields
         .iter()
@@ -1441,55 +1451,87 @@ fn detect_monotone_nonneg_field(
         .collect();
 
     let Some(Stmt::Expr(term)) = fd.body.stmts().last() else {
-        return None;
+        return Vec::new();
     };
     let mut records = Vec::new();
     collect_acc_records(term, acc_type, &mut records);
     if records.is_empty() {
-        return None;
+        return Vec::new();
     }
-    // A field is a witness iff every built record assigns it a value that keeps
-    // it `≥ 0`.
-    let field = int_fields.into_iter().find(|f| {
-        records.iter().all(|rec| {
-            rec.iter()
-                .find(|(name, _)| name == f)
-                .is_some_and(|(_, v)| nonneg_preserving(v, acc_param, f))
-        })
-    })?;
-    Some(MonotoneField {
-        fn_name: fd.name.clone(),
-        params: fd.params.clone(),
-        field: field.to_string(),
-    })
+
+    let mut out = Vec::new();
+    for f in int_fields {
+        // The value this field is assigned in each built record. Every Aver
+        // record build is total, so a field missing from any record is anomalous
+        // — skip it rather than reason about a partial update.
+        let values: Vec<&crate::ast::Spanned<crate::ast::Expr>> = records
+            .iter()
+            .filter_map(|rec| rec.iter().find(|(name, _)| name == f).map(|(_, v)| v))
+            .collect();
+        if values.len() != records.len() {
+            continue;
+        }
+        // Prefer the conditional nonneg invariant…
+        if values.iter().all(|v| nonneg_preserving(v, acc_param, f)) {
+            out.push((f.to_string(), FieldInvariant::Nonneg));
+            continue;
+        }
+        // …otherwise the unconditional bounded step, if every update is a
+        // constant shift of the field.
+        let deltas: Option<Vec<i64>> = values
+            .iter()
+            .map(|v| relative_delta(v, acc_param, f))
+            .collect();
+        if let Some(deltas) = deltas
+            && !deltas.is_empty()
+        {
+            out.push((
+                f.to_string(),
+                FieldInvariant::Bounded {
+                    lo: deltas.iter().copied().min().unwrap(),
+                    hi: deltas.iter().copied().max().unwrap(),
+                },
+            ));
+        }
+    }
+    out
 }
 
-/// The Lean theorem for a monotone-nonneg field's invariant preservation. The
-/// proof is SHAPE-AGNOSTIC: unfold the step, split on whatever branches it has,
-/// and close each leaf with `omega` (every leaf is a non-negative literal or
-/// `acc.field + nonneg`, given the hypothesis) — no dependence on the RLE
-/// discriminants.
-fn monotone_nonneg_lemma(mf: &MonotoneField, base: &str) -> (String, String) {
-    let step_l = crate::codegen::lean::aver_name_to_lean(&mf.fn_name);
+/// Lean binders `(p : T) …` and the matching applied-argument list `p …` for a
+/// step fn's parameters, in the canonical Lean type mapping.
+fn lemma_binders_args(params: &[(String, String)]) -> (String, String) {
     let mut binders = Vec::new();
     let mut args = Vec::new();
-    for (pname, ptype) in &mf.params {
+    for (pname, ptype) in params {
         let ty_l = crate::codegen::lean::type_to_lean(
             &crate::codegen::common::parse_type_annotation(ptype),
         );
         binders.push(format!("({pname} : {ty_l})"));
         args.push(pname.clone());
     }
-    let acc_name = &mf.params[0].0;
-    let f = &mf.field;
-    let name = format!("{base}_count_nonneg");
+    (binders.join(" "), args.join(" "))
+}
+
+/// The Lean theorem for a field's conditional nonneg invariant. The proof is
+/// SHAPE-AGNOSTIC: unfold the step, split on whatever branches it has, and close
+/// each leaf with `omega` (every leaf is a non-negative literal, `acc.field +
+/// nonneg`, or `acc.field * nonneg`, given the hypothesis) — no dependence on
+/// the RLE discriminants.
+fn nonneg_lemma(
+    fn_name: &str,
+    params: &[(String, String)],
+    field: &str,
+    base: &str,
+) -> (String, String) {
+    let step_l = crate::codegen::lean::aver_name_to_lean(fn_name);
+    let (binders, args) = lemma_binders_args(params);
+    let acc = &params[0].0;
+    let name = format!("{base}_{field}_nonneg");
     let text = format!(
-        "theorem {name} {binders} (hcount : 0 <= {acc_name}.{f}) : \
-         0 <= ({step_l} {args}).{f} := by\n  \
+        "theorem {name} {binders} (hcount : 0 <= {acc}.{field}) : \
+         0 <= ({step_l} {args}).{field} := by\n  \
          unfold {step_l}\n  \
          split <;> (try split) <;> simp_all <;> omega\n",
-        binders = binders.join(" "),
-        args = args.join(" "),
     );
     (name, text)
 }
@@ -1523,80 +1565,6 @@ fn relative_delta(v: &crate::ast::Spanned<crate::ast::Expr>, acc: &str, field: &
     }
 }
 
-/// A `step` fn `(Acc, …) -> Acc` with an Int accumulator field whose every built
-/// value is a RELATIVE update `field + d` (`d` a literal, possibly NEGATIVE), so
-/// the field moves by a bounded delta each step. Yields the UNCONDITIONAL
-/// two-sided bound `acc.field + lo <= step(acc, …).field <= acc.field + hi`,
-/// where `lo`/`hi` are the min/max deltas. This is the generalization past
-/// monotone-nonneg: it catches accumulators that can DECREASE (e.g. drain's
-/// `+1`/`-1` counter), for which `0 <= field` is FALSE but the step bound holds.
-struct BoundedStep {
-    fn_name: String,
-    params: Vec<(String, String)>,
-    field: String,
-    lo: i64,
-    hi: i64,
-}
-
-/// Recognize a bounded-step accumulator field by structure (see [`BoundedStep`]).
-/// Tried only after [`detect_monotone_nonneg_field`] declines, so a field that
-/// admits the canonical `0 <= field` invariant keeps yielding that instead.
-fn detect_bounded_step_field(
-    fd: &crate::ast::FnDef,
-    inputs: &ProofLowerInputs,
-) -> Option<BoundedStep> {
-    use crate::ast::{Stmt, TypeDef};
-    if fd.params.is_empty() || fd.params[0].1 != fd.return_type {
-        return None;
-    }
-    let acc_param = fd.params[0].0.as_str();
-    let acc_type = &fd.params[0].1;
-    let TypeDef::Product {
-        fields: acc_fields, ..
-    } = inputs.find_type_def(acc_type)?
-    else {
-        return None;
-    };
-    let int_fields: Vec<&str> = acc_fields
-        .iter()
-        .filter(|(_, ty)| ty == "Int")
-        .map(|(n, _)| n.as_str())
-        .collect();
-
-    let Some(Stmt::Expr(term)) = fd.body.stmts().last() else {
-        return None;
-    };
-    let mut records = Vec::new();
-    collect_acc_records(term, acc_type, &mut records);
-    if records.is_empty() {
-        return None;
-    }
-    // A field qualifies iff EVERY built record shifts it by a constant. Collect
-    // the deltas; the bound is `field + min <= field' <= field + max`.
-    for f in int_fields {
-        let mut deltas: Vec<i64> = Vec::new();
-        let all_relative = records.iter().all(|rec| {
-            rec.iter()
-                .find(|(name, _)| name == f)
-                .and_then(|(_, v)| relative_delta(v, acc_param, f))
-                .is_some_and(|d| {
-                    deltas.push(d);
-                    true
-                })
-        });
-        if all_relative && !deltas.is_empty() {
-            return Some(BoundedStep {
-                fn_name: fd.name.clone(),
-                params: fd.params.clone(),
-                field: f.to_string(),
-                lo: deltas.iter().copied().min().unwrap(),
-                hi: deltas.iter().copied().max().unwrap(),
-            });
-        }
-    }
-    None
-}
-
 /// Render `acc.field` shifted by a (possibly negative) literal: `acc.f`,
 /// `acc.f + k`, or `acc.f - k`.
 fn render_acc_offset(acc: &str, field: &str, k: i64) -> String {
@@ -1607,34 +1575,30 @@ fn render_acc_offset(acc: &str, field: &str, k: i64) -> String {
     }
 }
 
-/// The Lean theorem for a bounded-step field: an UNCONDITIONAL two-sided bound,
+/// The Lean theorem for a field's bounded step: an UNCONDITIONAL two-sided bound,
 /// proved by the same shape-agnostic template as the nonneg invariant — unfold
 /// the step, split on its branches, and `omega` closes each leaf (here a
 /// conjunction of two linear bounds, every branch being `field + d` with `d` in
 /// `[lo, hi]`).
-fn bounded_step_lemma(bs: &BoundedStep, base: &str) -> (String, String) {
-    let step_l = crate::codegen::lean::aver_name_to_lean(&bs.fn_name);
-    let mut binders = Vec::new();
-    let mut args = Vec::new();
-    for (pname, ptype) in &bs.params {
-        let ty_l = crate::codegen::lean::type_to_lean(
-            &crate::codegen::common::parse_type_annotation(ptype),
-        );
-        binders.push(format!("({pname} : {ty_l})"));
-        args.push(pname.clone());
-    }
-    let acc = &bs.params[0].0;
-    let f = &bs.field;
-    let args = args.join(" ");
-    let lo = render_acc_offset(acc, f, bs.lo);
-    let hi = render_acc_offset(acc, f, bs.hi);
-    let name = format!("{base}_step_bounds");
+fn bounded_lemma(
+    fn_name: &str,
+    params: &[(String, String)],
+    field: &str,
+    lo: i64,
+    hi: i64,
+    base: &str,
+) -> (String, String) {
+    let step_l = crate::codegen::lean::aver_name_to_lean(fn_name);
+    let (binders, args) = lemma_binders_args(params);
+    let acc = &params[0].0;
+    let lo_s = render_acc_offset(acc, field, lo);
+    let hi_s = render_acc_offset(acc, field, hi);
+    let name = format!("{base}_{field}_bounds");
     let text = format!(
         "theorem {name} {binders} : \
-         {lo} <= ({step_l} {args}).{f} ∧ ({step_l} {args}).{f} <= {hi} := by\n  \
+         {lo_s} <= ({step_l} {args}).{field} ∧ ({step_l} {args}).{field} <= {hi_s} := by\n  \
          unfold {step_l}\n  \
          split <;> (try split) <;> simp_all <;> omega\n",
-        binders = binders.join(" "),
     );
     (name, text)
 }
@@ -1642,24 +1606,31 @@ fn bounded_step_lemma(bs: &BoundedStep, base: &str) -> (String, String) {
 /// Structure-directed GUARDED lemma groups (layer 3): conjectures derived from
 /// a recognized recursion shape rather than blind enumeration. Each group is a
 /// set of co-dependent Lean theorems proved TOGETHER (one `lake build`, in
-/// dependency order). Families so far: the counted-repeat advance
-/// (`repeat_succ`, brick 1), the monotone-nonneg accumulator field
-/// (`count_nonneg`, generalized brick 2), and — when nonneg does not hold — the
-/// bounded-step field (`step_bounds`), the sound generalization that admits
-/// DECREASING accumulators (so drain's `+1`/`-1` counter still yields its true
-/// `n - 1 <= step.n <= n + 1` bound, never the false `0 <= n`). Per field the
-/// strongest applicable invariant is chosen: nonneg first (the law-consumable
-/// one), then the unconditional step bound. Returns one group per matching fn.
+/// dependency order). Families: the counted-repeat advance (`repeat_succ`,
+/// brick 1, a co-dependent pair) and the per-field accumulator invariants —
+/// `<field>_nonneg` (the conditional `0 <= field`, generalized brick 2) and,
+/// where nonneg does not hold, `<field>_bounds` (the unconditional two-sided
+/// step bound, which admits DECREASING fields like drain's `+1`/`-1` counter,
+/// never the false `0 <= n`). Each field invariant is its OWN single-theorem
+/// group, so independent invariants never share a build fate, and a record with
+/// several Int fields yields a lemma for each.
 pub fn structural_lemma_groups(inputs: &ProofLowerInputs) -> Vec<Vec<(String, String)>> {
     let mut groups: Vec<Vec<(String, String)>> = Vec::new();
     for fd in inputs.pure_fns() {
-        let base = format!("aver_structural_{}", groups.len());
         if let Some(shape) = detect_counted_repeat(fd) {
+            let base = format!("aver_structural_{}", groups.len());
             groups.push(counted_repeat_lemmas(&shape, &base));
-        } else if let Some(mf) = detect_monotone_nonneg_field(fd, inputs) {
-            groups.push(vec![monotone_nonneg_lemma(&mf, &base)]);
-        } else if let Some(bs) = detect_bounded_step_field(fd, inputs) {
-            groups.push(vec![bounded_step_lemma(&bs, &base)]);
+            continue;
+        }
+        for (field, inv) in detect_field_invariants(fd, inputs) {
+            let base = format!("aver_structural_{}", groups.len());
+            let lemma = match inv {
+                FieldInvariant::Nonneg => nonneg_lemma(&fd.name, &fd.params, &field, &base),
+                FieldInvariant::Bounded { lo, hi } => {
+                    bounded_lemma(&fd.name, &fd.params, &field, lo, hi, &base)
+                }
+            };
+            groups.push(vec![lemma]);
         }
     }
     groups
@@ -1848,6 +1819,22 @@ verify encode law roundtrip
             "/examples/data/drain.av"
         ))
         .expect("read drain.av")
+    }
+
+    fn scale_source() -> String {
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/data/scale.av"
+        ))
+        .expect("read scale.av")
+    }
+
+    fn twofield_source() -> String {
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/data/twofield.av"
+        ))
+        .expect("read twofield.av")
     }
 
     /// Matches the clearly-FALSE `x == List.concat(x, x)` (either orientation):
@@ -2117,6 +2104,36 @@ verify encode law roundtrip
         assert!(all.contains("(tick acc x).n <= acc.n + 1"), "{all}");
         assert!(
             all.contains("unfold tick") && all.contains("split <;>"),
+            "{all}"
+        );
+    }
+
+    #[test]
+    fn nonneg_covers_multiplicative_scaling() {
+        // scale.av: `grow` does `acc.level * 2` / `acc.level`. The `* 2` is not a
+        // `+ k` shift, but `level * 2` keeps `0 <= level` and stays linear in the
+        // field, so the nonneg invariant still fires (closes the nonlinear-nonneg
+        // gap) — not the bounded step.
+        let groups = with_inputs(&scale_source(), structural_lemma_groups);
+        let all: String = groups.iter().flatten().map(|(_, t)| t.as_str()).collect();
+        assert!(all.contains("0 <= (grow acc x).level"), "{all}");
+        assert!(all.contains("unfold grow"), "{all}");
+    }
+
+    #[test]
+    fn multi_int_fields_each_get_a_lemma() {
+        // twofield.av: `meterStep` has a non-negative `seen` AND a strictly
+        // decreasing `budget`. Discovery must emit a lemma for EACH field, not
+        // just the first — `seen`'s nonneg invariant and `budget`'s bounded step.
+        let groups = with_inputs(&twofield_source(), structural_lemma_groups);
+        let all: String = groups.iter().flatten().map(|(_, t)| t.as_str()).collect();
+        assert!(all.contains("0 <= (meterStep acc x).seen"), "{all}");
+        assert!(
+            all.contains("acc.budget - 1 <= (meterStep acc x).budget"),
+            "{all}"
+        );
+        assert!(
+            all.contains("(meterStep acc x).budget <= acc.budget - 1"),
             "{all}"
         );
     }

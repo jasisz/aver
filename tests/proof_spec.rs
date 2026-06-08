@@ -3182,6 +3182,41 @@ fn discover_proves_gauge_plus_two_invariant_when_lake_is_available() {
     );
 }
 
+/// Completeness guard: a MULTIPLICATIVE nonneg update (`level * 2`, not a `+ k`
+/// shift) is still recognized as monotone-nonneg — `0 <= level` is closed under
+/// `* 2` and stays linear in the field, so omega proves it.
+#[test]
+fn discover_proves_scale_multiplicative_nonneg_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/scale.av",
+        "aver-discover-scale",
+        "0 <= (grow acc x).level",
+    );
+}
+
+/// Completeness guard: a record with TWO Int fields of different invariant
+/// classes — `seen` (non-negative) and `budget` (strictly decreasing) — yields
+/// a kernel-proved lemma for EACH, not just the first the conjecturer finds.
+#[test]
+fn discover_proves_both_invariants_on_two_int_fields_when_lake_is_available() {
+    let Some((committed, output_dir)) =
+        discover_committed("examples/data/twofield.av", "aver-discover-twofield")
+    else {
+        return;
+    };
+    for needle in [
+        "0 <= (meterStep acc x).seen",
+        "acc.budget - 1 <= (meterStep acc x).budget",
+        "(meterStep acc x).budget <= acc.budget - 1",
+    ] {
+        assert!(
+            committed.contains(needle),
+            "expected `{needle}` among kernel-proved lemmas.\n--- DiscoveredLemmas.lean ---\n{committed}",
+        );
+    }
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
 /// Generalization guard: the list-homomorphism discovery works over a RECORD
 /// element type (`List<Token>`), not just String. The homomorphism theorem
 /// names `expandAll` three times (lhs once, rhs twice).
