@@ -1281,18 +1281,18 @@ fn counted_repeat_lemmas(shape: &CountedRepeat, base: &str) -> Vec<(String, Stri
     vec![(natabs, natabs_thm), (succ, succ_thm)]
 }
 
-/// An RLE-fold `step`: `step(acc: Acc, c: Item) -> Acc` whose body is the
-/// nested bool-match `match acc.<count> == 0 { true -> Acc{..}; false -> match
-/// acc.<current> == c { true -> Acc{..}; false -> Acc{..} } }`. The discriminant
-/// fields (`count`/`current`) are discovered by structural role. Yields the
-/// well-formedness-preservation lemma `0 <= step(acc, c).count` under
-/// `0 <= acc.count` — brick 2 of the accumulator-generalization family.
-struct RleStep {
+/// A `step` fn `(Acc, …) -> Acc` with an Int accumulator field that is
+/// MONOTONE-NONNEG: in every record `step` builds, the field is assigned a
+/// value that stays `≥ 0` given the input field was `≥ 0` — a non-negative
+/// literal, the field unchanged, or the field plus a non-negative literal.
+/// Yields the invariant-preservation lemma `0 <= step(acc, …).field` under
+/// `0 <= acc.field`. This is the GENERALIZED brick 2: it keys on the field's
+/// update arithmetic, NOT the RLE step shape, so it fires on any such fold
+/// (e.g. rle's `encodeFold` AND a `>`-branching tally — see examples/data).
+struct MonotoneField {
     fn_name: String,
-    acc_type: String,
-    item_type: String,
-    count_field: String,
-    current_field: String,
+    params: Vec<(String, String)>,
+    field: String,
 }
 
 /// `acc.<field>` → the field name, if `e` is an attribute access of `acc`.
@@ -1305,105 +1305,135 @@ fn cr_attr_of(e: &crate::ast::Spanned<crate::ast::Expr>, acc: &str) -> Option<St
     None
 }
 
-/// A 2-arm bool `match`: returns (subject, true-arm body, false-arm body).
-fn cr_bool_match(
-    e: &crate::ast::Spanned<crate::ast::Expr>,
-) -> Option<(
-    &crate::ast::Spanned<crate::ast::Expr>,
-    &crate::ast::Spanned<crate::ast::Expr>,
-    &crate::ast::Spanned<crate::ast::Expr>,
-)> {
-    use crate::ast::{Expr, Literal, Pattern};
-    let Expr::Match { subject, arms } = &e.node else {
-        return None;
-    };
-    if arms.len() != 2 {
-        return None;
-    }
-    let mut t = None;
-    let mut f = None;
-    for arm in arms {
-        match &arm.pattern {
-            Pattern::Literal(Literal::Bool(true)) => t = Some(arm.body.as_ref()),
-            Pattern::Literal(Literal::Bool(false)) => f = Some(arm.body.as_ref()),
-            _ => return None,
+/// Collect every `RecordCreate` of `acc_type` reachable in `e` (through match
+/// arms, operands, call args, …), as borrowed field lists.
+fn collect_acc_records<'a>(
+    e: &'a crate::ast::Spanned<crate::ast::Expr>,
+    acc_type: &str,
+    out: &mut Vec<&'a [(String, crate::ast::Spanned<crate::ast::Expr>)]>,
+) {
+    use crate::ast::Expr;
+    match &e.node {
+        Expr::RecordCreate { type_name, fields } if type_name == acc_type => {
+            out.push(fields.as_slice());
         }
+        Expr::Match { subject, arms } => {
+            collect_acc_records(subject, acc_type, out);
+            for arm in arms {
+                collect_acc_records(&arm.body, acc_type, out);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            collect_acc_records(l, acc_type, out);
+            collect_acc_records(r, acc_type, out);
+        }
+        Expr::FnCall(_, args) => {
+            for a in args {
+                collect_acc_records(a, acc_type, out);
+            }
+        }
+        Expr::Attr(obj, _) => collect_acc_records(obj, acc_type, out),
+        Expr::List(items) => {
+            for i in items {
+                collect_acc_records(i, acc_type, out);
+            }
+        }
+        _ => {}
     }
-    Some((subject.as_ref(), t?, f?))
 }
 
-fn cr_is_record_of(e: &crate::ast::Spanned<crate::ast::Expr>, ty: &str) -> bool {
-    matches!(&e.node, crate::ast::Expr::RecordCreate { type_name, .. } if type_name == ty)
+/// `true` if `v` keeps a `≥ 0` field `≥ 0`: a non-negative `Int` literal,
+/// `acc.<field>` unchanged, or `acc.<field> + <non-negative literal>`.
+fn nonneg_preserving(v: &crate::ast::Spanned<crate::ast::Expr>, acc: &str, field: &str) -> bool {
+    use crate::ast::{BinOp, Expr, Literal};
+    if let Expr::Literal(Literal::Int(k)) = &v.node {
+        return *k >= 0;
+    }
+    if cr_attr_of(v, acc).as_deref() == Some(field) {
+        return true;
+    }
+    if let Expr::BinOp(BinOp::Add, l, r) = &v.node {
+        let is_field = |e: &crate::ast::Spanned<Expr>| cr_attr_of(e, acc).as_deref() == Some(field);
+        let nonneg_lit = |e: &crate::ast::Spanned<Expr>| matches!(&e.node, Expr::Literal(Literal::Int(k)) if *k >= 0);
+        return (is_field(l) && nonneg_lit(r)) || (nonneg_lit(l) && is_field(r));
+    }
+    false
 }
 
-/// Recognize the RLE-fold `step` shape by structure (see [`RleStep`]).
-fn detect_rle_step(fd: &crate::ast::FnDef) -> Option<RleStep> {
-    use crate::ast::{BinOp, Expr, Stmt};
-    if fd.params.len() != 2 || fd.params[0].1 != fd.return_type {
+/// Recognize a monotone-nonneg accumulator field by structure (see [`MonotoneField`]).
+fn detect_monotone_nonneg_field(
+    fd: &crate::ast::FnDef,
+    inputs: &ProofLowerInputs,
+) -> Option<MonotoneField> {
+    use crate::ast::{Stmt, TypeDef};
+    // step : (Acc, …) -> Acc, Acc a user record.
+    if fd.params.is_empty() || fd.params[0].1 != fd.return_type {
         return None;
     }
     let acc_param = fd.params[0].0.as_str();
-    let c_param = fd.params[1].0.as_str();
     let acc_type = &fd.params[0].1;
-    let item_type = &fd.params[1].1;
+    let TypeDef::Product {
+        fields: acc_fields, ..
+    } = inputs.find_type_def(acc_type)?
+    else {
+        return None;
+    };
+    let int_fields: Vec<&str> = acc_fields
+        .iter()
+        .filter(|(_, ty)| ty == "Int")
+        .map(|(n, _)| n.as_str())
+        .collect();
 
     let Some(Stmt::Expr(term)) = fd.body.stmts().last() else {
         return None;
     };
-    // outer: `match acc.<count> == 0 { true -> Acc{..}; false -> inner }`
-    let (outer_subj, outer_true, outer_false) = cr_bool_match(term)?;
-    let Expr::BinOp(BinOp::Eq, ol, or_) = &outer_subj.node else {
-        return None;
-    };
-    let count_field = cr_attr_of(ol, acc_param)?;
-    if !cr_is_int_lit(or_, 0) || !cr_is_record_of(outer_true, acc_type) {
+    let mut records = Vec::new();
+    collect_acc_records(term, acc_type, &mut records);
+    if records.is_empty() {
         return None;
     }
-    // inner: `match acc.<current> == c { true -> Acc{..}; false -> Acc{..} }`
-    let (inner_subj, inner_true, inner_false) = cr_bool_match(outer_false)?;
-    let Expr::BinOp(BinOp::Eq, il, ir) = &inner_subj.node else {
-        return None;
-    };
-    let current_field = cr_attr_of(il, acc_param)?;
-    if cr_ident_name(ir).as_deref() != Some(c_param)
-        || !cr_is_record_of(inner_true, acc_type)
-        || !cr_is_record_of(inner_false, acc_type)
-        || count_field == current_field
-    {
-        return None;
-    }
-    Some(RleStep {
+    // A field is a witness iff every built record assigns it a value that keeps
+    // it `≥ 0`.
+    let field = int_fields.into_iter().find(|f| {
+        records.iter().all(|rec| {
+            rec.iter()
+                .find(|(name, _)| name == f)
+                .is_some_and(|(_, v)| nonneg_preserving(v, acc_param, f))
+        })
+    })?;
+    Some(MonotoneField {
         fn_name: fd.name.clone(),
-        acc_type: acc_type.clone(),
-        item_type: item_type.clone(),
-        count_field,
-        current_field,
+        params: fd.params.clone(),
+        field: field.to_string(),
     })
 }
 
-/// The Lean theorem for step's count-invariant preservation, proved by the
-/// case-split-on-guard template (nested `by_cases` on the step's discriminant
-/// fields). No dependencies.
-fn count_nonneg_lemma(step: &RleStep, base: &str) -> (String, String) {
-    let step_l = crate::codegen::lean::aver_name_to_lean(&step.fn_name);
-    let acc_l = crate::codegen::lean::type_to_lean(&crate::codegen::common::parse_type_annotation(
-        &step.acc_type,
-    ));
-    let item_l = crate::codegen::lean::type_to_lean(
-        &crate::codegen::common::parse_type_annotation(&step.item_type),
-    );
-    let count = &step.count_field;
-    let current = &step.current_field;
+/// The Lean theorem for a monotone-nonneg field's invariant preservation. The
+/// proof is SHAPE-AGNOSTIC: unfold the step, split on whatever branches it has,
+/// and close each leaf with `omega` (every leaf is a non-negative literal or
+/// `acc.field + nonneg`, given the hypothesis) — no dependence on the RLE
+/// discriminants.
+fn monotone_nonneg_lemma(mf: &MonotoneField, base: &str) -> (String, String) {
+    let step_l = crate::codegen::lean::aver_name_to_lean(&mf.fn_name);
+    let mut binders = Vec::new();
+    let mut args = Vec::new();
+    for (pname, ptype) in &mf.params {
+        let ty_l = crate::codegen::lean::type_to_lean(
+            &crate::codegen::common::parse_type_annotation(ptype),
+        );
+        binders.push(format!("({pname} : {ty_l})"));
+        args.push(pname.clone());
+    }
+    let acc_name = &mf.params[0].0;
+    let f = &mf.field;
     let name = format!("{base}_count_nonneg");
     let text = format!(
-        "theorem {name} (acc : {acc_l}) (c : {item_l}) (hcount : 0 <= acc.{count}) : \
-         0 <= ({step_l} acc c).{count} := by\n  \
-         by_cases hzero : acc.{count} = 0\n  \
-         · simp [{step_l}, hzero]\n  \
-         · by_cases hsame : acc.{current} = c\n    \
-         · simp [{step_l}, hzero, hsame]\n      \
-         omega\n    \
-         · simp [{step_l}, hzero, hsame]\n"
+        "theorem {name} {binders} (hcount : 0 <= {acc_name}.{f}) : \
+         0 <= ({step_l} {args}).{f} := by\n  \
+         unfold {step_l}\n  \
+         split <;> (try split) <;> simp_all <;> omega\n",
+        binders = binders.join(" "),
+        args = args.join(" "),
     );
     (name, text)
 }
@@ -1412,16 +1442,16 @@ fn count_nonneg_lemma(step: &RleStep, base: &str) -> (String, String) {
 /// a recognized recursion shape rather than blind enumeration. Each group is a
 /// set of co-dependent Lean theorems proved TOGETHER (one `lake build`, in
 /// dependency order). Families so far: the counted-repeat advance
-/// (`repeat_succ`, brick 1) and the RLE-fold count-invariant (`count_nonneg`,
-/// brick 2). Returns one group per matching pure fn.
+/// (`repeat_succ`, brick 1) and the monotone-nonneg accumulator field
+/// (`count_nonneg`, generalized brick 2). Returns one group per matching fn.
 pub fn structural_lemma_groups(inputs: &ProofLowerInputs) -> Vec<Vec<(String, String)>> {
     let mut groups: Vec<Vec<(String, String)>> = Vec::new();
     for fd in inputs.pure_fns() {
         let base = format!("aver_structural_{}", groups.len());
         if let Some(shape) = detect_counted_repeat(fd) {
             groups.push(counted_repeat_lemmas(&shape, &base));
-        } else if let Some(step) = detect_rle_step(fd) {
-            groups.push(vec![count_nonneg_lemma(&step, &base)]);
+        } else if let Some(mf) = detect_monotone_nonneg_field(fd, inputs) {
+            groups.push(vec![monotone_nonneg_lemma(&mf, &base)]);
         }
     }
     groups
@@ -1594,6 +1624,14 @@ verify encode law roundtrip
     fn rle_source() -> String {
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/data/rle.av"))
             .expect("read rle.av")
+    }
+
+    fn tally_source() -> String {
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/data/tally.av"
+        ))
+        .expect("read tally.av")
     }
 
     /// Matches the clearly-FALSE `x == List.concat(x, x)` (either orientation):
@@ -1805,9 +1843,14 @@ verify encode law roundtrip
     #[test]
     fn structural_conjecturer_on_real_rle() {
         // Two structure-directed families fire on rle: the counted-repeat
-        // advance (`repeat`) and the RLE-fold count-invariant (`encodeFold`).
+        // advance (`repeat`) and the monotone-nonneg accumulator field of the
+        // fold (`encodeFold.count`).
         let groups = with_inputs(&rle_source(), structural_lemma_groups);
-        assert_eq!(groups.len(), 2, "expected counted-repeat + rle-step groups");
+        assert_eq!(
+            groups.len(),
+            2,
+            "expected counted-repeat + monotone-field groups"
+        );
         let all: String = groups.iter().flatten().map(|(_, t)| t.as_str()).collect();
         // brick 1: guarded counted-repeat advance (`repeat` escapes to `repeat'`).
         assert!(
@@ -1818,9 +1861,27 @@ verify encode law roundtrip
             all.contains("(hn : 0 <= n)") && all.contains("natAbs"),
             "{all}"
         );
-        // brick 2: guarded step count-invariant, by_cases-on-guard template.
+        // generalized brick 2: monotone-nonneg field invariant, with the
+        // shape-agnostic split/omega template (NOT the old RLE by_cases).
         assert!(all.contains("_count_nonneg"), "{all}");
-        assert!(all.contains("0 <= (encodeFold acc c).count"), "{all}");
-        assert!(all.contains("by_cases hzero"), "{all}");
+        assert!(all.contains("0 <= (encodeFold acc char).count"), "{all}");
+        assert!(
+            all.contains("unfold encodeFold") && all.contains("split <;>"),
+            "{all}"
+        );
+    }
+
+    #[test]
+    fn monotone_field_generalizes_beyond_rle_shape() {
+        // tally.av: a NON-rle accumulator that branches on `x > acc.last`
+        // (not `count == 0`). The generalized detector must still find the
+        // monotone-nonneg `seen` field and emit its invariant — proof that
+        // brick 2 keys on the field arithmetic, not the RLE step shape.
+        let groups = with_inputs(&tally_source(), structural_lemma_groups);
+        let all: String = groups.iter().flatten().map(|(_, t)| t.as_str()).collect();
+        assert!(all.contains("0 <= (tallyStep acc x).seen"), "{all}");
+        assert!(all.contains("unfold tallyStep"), "{all}");
+        // It must NOT key on the RLE discriminants.
+        assert!(!all.contains("acc.current"), "{all}");
     }
 }

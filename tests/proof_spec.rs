@@ -3083,3 +3083,16 @@ fn discover_proves_stars_repeat_succ_when_lake_is_available() {
         "stars c (n + 1) = stars c n ++ [c]",
     );
 }
+
+/// Generalization guard for the (generalized) brick 2: discovery proves the
+/// monotone-nonneg accumulator invariant on `tally.av`, whose fold branches on
+/// `x > acc.last` (NOT the RLE `count == 0` shape) — evidence the count-
+/// invariant conjecturer keys on the field arithmetic, not the RLE step.
+#[test]
+fn discover_proves_tally_count_invariant_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/tally.av",
+        "aver-discover-tally",
+        "0 <= (tallyStep acc x).seen",
+    );
+}

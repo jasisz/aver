@@ -1,0 +1,29 @@
+module Tally
+    intent =
+        "Counting 'new highs' while scanning numbers — an accumulator fold whose"
+        "`seen` field only ever grows or holds. NON-encoder, NON-RLE fixture for"
+        "lemma discovery: it branches on `x > acc.last` (not `count == 0`), so it"
+        "validates that the count-invariant conjecturer keys on the monotone-"
+        "nonneg field itself, not on the RLE step shape."
+    effects [Console]
+
+record Tally
+    seen: Int
+    last: Int
+
+fn tallyStep(acc: Tally, x: Int) -> Tally
+    ? "Count a new high when x beats the running max; always remember x."
+    match x > acc.last
+        true -> Tally(seen = acc.seen + 1, last = x)
+        false -> Tally(seen = acc.seen, last = x)
+
+verify tallyStep
+    tallyStep(Tally(seen = 0, last = 0), 5) => Tally(seen = 1, last = 5)
+    tallyStep(Tally(seen = 1, last = 5), 3) => Tally(seen = 1, last = 3)
+    tallyStep(Tally(seen = 1, last = 3), 9) => Tally(seen = 2, last = 9)
+
+fn main()
+    ! [Console.print]
+    step1 = tallyStep(Tally(seen = 0, last = 0), 5)
+    step2 = tallyStep(step1, 9)
+    Console.print("new highs so far: {step2.seen}")
