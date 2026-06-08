@@ -1,0 +1,28 @@
+module Gauge
+    intent =
+        "A monotone-nonneg accumulator whose update arithmetic is `+2`, not `+1`."
+        "`bump` branches on `x > 0`: a positive reading raises the level by 2, a"
+        "non-positive reading holds the level. NON-tally, NON-RLE fixture for lemma"
+        "discovery: it validates that the nonneg-preserving detector covers"
+        "`field + nonneg-literal` for any nonneg literal (here 2), not just `+1`."
+    effects [Console]
+
+record Gauge
+    level: Int
+
+fn bump(acc: Gauge, x: Int) -> Gauge
+    ? "Raise the level by 2 on a positive reading; otherwise hold it."
+    match x > 0
+        true -> Gauge(level = acc.level + 2)
+        false -> Gauge(level = acc.level)
+
+verify bump
+    bump(Gauge(level = 0), 5) => Gauge(level = 2)
+    bump(Gauge(level = 2), -1) => Gauge(level = 2)
+    bump(Gauge(level = 2), 3) => Gauge(level = 4)
+
+fn main()
+    ! [Console.print]
+    step1 = bump(Gauge(level = 0), 5)
+    step2 = bump(step1, 9)
+    Console.print("gauge level so far: {step2.level}")

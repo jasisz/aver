@@ -1,0 +1,30 @@
+module Drain
+    intent =
+        "Negative soundness test for lemma discovery."
+        "A counter accumulator that increments on positive input but decrements otherwise."
+        "The naive invariant 0 <= tick(acc, x).n is FALSE: from n=0 a non-positive x drains below zero."
+    effects [Console]
+
+record Counter
+    n: Int
+
+fn tick(acc: Counter, x: Int) -> Counter
+    ? "Steps the counter: increments when x is positive, decrements otherwise."
+    match x > 0
+        true -> Counter(n = acc.n + 1)
+        false -> Counter(n = acc.n - 1)
+
+verify tick
+    tick(Counter(n = 0), 5) => Counter(n = 1)
+    tick(Counter(n = 3), 5) => Counter(n = 4)
+    tick(Counter(n = 0), 0) => Counter(n = -1)
+    tick(Counter(n = 2), -7) => Counter(n = 1)
+
+fn main()
+    ! [Console.print]
+    start = Counter(n = 0)
+    up = tick(start, 5)
+    down = tick(start, 0)
+    Console.print("start.n = {start.n}")
+    Console.print("up.n    = {up.n}")
+    Console.print("down.n  = {down.n}")

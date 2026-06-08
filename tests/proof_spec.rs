@@ -3134,3 +3134,85 @@ fn discover_generalizes_on_sparse_codec_when_lake_is_available() {
     }
     let _ = std::fs::remove_dir_all(&output_dir);
 }
+
+/// Read the committed `DiscoveredLemmas.lean` produced by `--discover` on
+/// `example_path` (empty string if none was written). Skips (returns `None`)
+/// when `lake` is unavailable.
+fn discover_committed(example_path: &str, prefix: &str) -> Option<(String, PathBuf)> {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping discovery proof test: `lake` not available");
+        return None;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = temp_output_dir(prefix);
+    let _ = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(example_path)
+        .arg("--discover")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let committed =
+        std::fs::read_to_string(output_dir.join("DiscoveredLemmas.lean")).unwrap_or_default();
+    Some((committed, output_dir))
+}
+
+/// Generalization guard: counted-append with the count parameter FIRST
+/// (`pad(n, c)`), the opposite of rle's `repeat(c, n)` — the detector finds the
+/// count by role, not position.
+#[test]
+fn discover_proves_spaces_count_first_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/spaces.av",
+        "aver-discover-spaces",
+        "pad (n + 1) c = pad n c ++ [c]",
+    );
+}
+
+/// Generalization guard: monotone-nonneg field with a `+ 2` update (not `+ 1`)
+/// — the invariant conjecturer keys on `field + nonneg-literal`, any literal.
+#[test]
+fn discover_proves_gauge_plus_two_invariant_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/gauge.av",
+        "aver-discover-gauge",
+        "0 <= (bump acc x).level",
+    );
+}
+
+/// Generalization guard: the list-homomorphism discovery works over a RECORD
+/// element type (`List<Token>`), not just String. The homomorphism theorem
+/// names `expandAll` three times (lhs once, rhs twice).
+#[test]
+fn discover_proves_words_homomorphism_when_lake_is_available() {
+    let Some((committed, output_dir)) =
+        discover_committed("examples/data/words.av", "aver-discover-words")
+    else {
+        return;
+    };
+    assert!(
+        committed.matches("expandAll").count() >= 3,
+        "expected an `expandAll(a ++ b) = expandAll a ++ expandAll b` homomorphism.\n--- DiscoveredLemmas.lean ---\n{committed}",
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// SOUNDNESS guard: on `drain.av` the accumulator field can DECREASE
+/// (`Counter(n = acc.n - 1)`), so `0 <= (tick acc x).n` is FALSE. The engine
+/// must NEVER kernel-prove it (proved-or-dropped): no `tick`-nonneg theorem may
+/// appear in the committed lemmas.
+#[test]
+fn discover_rejects_false_invariant_on_drain_when_lake_is_available() {
+    let Some((committed, output_dir)) =
+        discover_committed("examples/data/drain.av", "aver-discover-drain")
+    else {
+        return;
+    };
+    assert!(
+        !committed.contains("(tick acc x).n"),
+        "UNSOUND: a false count-invariant `0 <= (tick acc x).n` was kernel-proved.\n--- DiscoveredLemmas.lean ---\n{committed}",
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}

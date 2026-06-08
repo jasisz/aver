@@ -1,0 +1,25 @@
+module Spaces
+    intent =
+        "Counted append where the count comes FIRST: pad n c builds a list of n copies of c."
+        "Mirror of run-length repeat, but with the count parameter in leading position."
+        "Exercises the structural counted-append detector finding the count param by role, not position."
+    effects [Console]
+
+fn pad(n: Int, c: String) -> List<String>
+    ? "Produces a list of n copies of c. Non-positive counts yield []."
+    match n <= 0
+        true -> []
+        false -> List.concat(pad(n - 1, c), [c])
+
+verify pad
+    pad(-1, " ") => []
+    pad(0, " ") => []
+    pad(1, " ") => [" "]
+    pad(3, "x") => ["x", "x", "x"]
+
+fn main()
+    ! [Console.print]
+    dashes = pad(5, "-")
+    line = String.join(dashes, "")
+    Console.print("padded: {line}")
+    Console.print("width:  {List.len(dashes)}")
