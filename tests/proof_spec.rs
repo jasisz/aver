@@ -415,7 +415,7 @@ fn proof_export_builds_json_when_lake_is_available() {
     // constant-RHS gate elides 4 universal-with-sorry shapes whose
     // ∀ form was vacuous (or false). Per-sample lemmas still cover
     // the declared domain.
-    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 9);
+    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 8);
 }
 
 #[test]

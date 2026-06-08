@@ -143,15 +143,17 @@ verify toString law parseRoundtrip
     fromString(toString(j)) => Result.Ok(j)
 
 fn floatRoundtripSafe(f: Float) -> Bool
-    ? "Precondition for JSON float serializer round-tripping through decimal text. Match (rather than `==`) so the parsed Result's E binds to the concrete signature — Aver's type inference doesn't yet propagate Result type args across BinOp::Eq into a bare `Result.Ok(f)` literal on the RHS."
+    ? "Precondition for JSON float serializer round-tripping through decimal text. Match (rather than `==`) so the parsed Result's E binds to the concrete signature — Aver's type inference doesn't yet propagate Result type args across BinOp::Eq into a bare `Result.Ok(f)` literal on the RHS. The String.contains check is load-bearing: an integer-valued float such as 100.0 serializes without a decimal point (just `100`), which the JSON number scanner re-parses as JsonInt rather than JsonFloat — so a float whose text carries no fraction marker is NOT round-trip safe."
     match Float.fromString(String.fromFloat(f))
-        Result.Ok(g)  -> g == f
+        Result.Ok(g)  -> match g == f
+            true  -> String.contains(String.fromFloat(f), ".")
+            false -> false
         Result.Err(_) -> false
 
 verify floatRoundtripSafe
     floatRoundtripSafe(3.5) => true
     floatRoundtripSafe(0.1) => true
-    floatRoundtripSafe(-2500.0) => true
+    floatRoundtripSafe(-2500.0) => false
 
 fn jsonListRoundtripSafe(items: List<Json>) -> Bool
     ? "True when every array element satisfies the JSON round-trip precondition."
@@ -610,6 +612,18 @@ verify finishString law plainSegmentRoundtrip
     given s: String = ["", "abc", "😀"]
     finishString(s + "\"", String.len(s) + 1, 0, []) => ParseResult.Ok(Json.JsonString(s), String.len(s) + 1)
 
+fn isPrintableChar(c: String) -> Bool
+    ? "Domain of validateChar's round-trip: a single non-control character. A control char (code < 32) errors; a multi-character string can hide an embedded quote or backslash that re-splits the scan, so restrict to one scalar."
+    match String.len(c) == 1
+        true  -> Char.toCode(c) >= 32
+        false -> false
+
+verify isPrintableChar
+    isPrintableChar("a") => true
+    isPrintableChar("😀") => true
+    isPrintableChar("\t") => false
+    isPrintableChar("ab") => false
+
 fn validateChar(s: String, pos: Int, segmentStart: Int, chunks: List<String>, c: String) -> ParseResult
     ? "JSON helper: validateChar."
     match Char.toCode(c) < 32
@@ -622,6 +636,7 @@ verify validateChar
 
 verify validateChar law printableCharRoundtrip
     given c: String = ["a", "😀"]
+    when isPrintableChar(c)
     validateChar(c + "\"", 0, 0, [], c) => ParseResult.Ok(Json.JsonString(c), String.len(c) + 1)
 
 fn parseEscape(s: String, pos: Int, slashPos: Int, segmentStart: Int, chunks: List<String>) -> ParseResult
