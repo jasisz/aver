@@ -19,9 +19,10 @@
 //! goal-direction *for free* — external tools (HipSpec/CCLemma/…) must
 //! reconstruct scope at cost.
 //!
-//! # What's implemented here (Phase 2a → 2c)
+//! # What's implemented here (Phase 2a → 2d)
 //!
-//! The type-directed term enumerator, candidate generator, and VM-filter:
+//! The type-directed term enumerator, candidate generator, VM-filter, and the
+//! Lean theorem rendering the CLI kernel-checks:
 //!
 //! 1. A **typed variable context** — a small fixed pool of variables (up to
 //!    [`MAX_VARS_PER_TYPE`] per distinct parameter type the cone fns range
@@ -39,10 +40,16 @@
 //!    Conservative (an eval error / out-of-guard `Int` never refutes), so a
 //!    backend-true lemma is never wrongly dropped.
 //!
-//! Still ahead (2d–2e): backend-prove (Lean = truth) and commit + replay via
-//! the `ProofStrategy::SimpOverLemmas` hook. No prover / file writes happen
-//! here yet — survivors are still conjectures. Entry point [`run_discovery`]
-//! (+ [`vm_filter`]) is invoked by `aver proof --discover`; normal `aver proof`
+//! 5. **Lean theorem rendering** ([`lean_lemma_theorem`], [`rank_candidate_indices`])
+//!    — a survivor with a list free variable becomes a theorem with the
+//!    list-induction template; the CLI (`aver proof --discover`) appends it to
+//!    the generated Lean project and `lake build`s it (proved ⟺ exit 0). This
+//!    is the proved-or-dropped gate (2d).
+//!
+//! Still ahead (2e): commit the proved lemma as a source file + re-enter the
+//! law's proof via the `ProofStrategy::SimpOverLemmas` hook (so `aver proof`
+//! replays + re-verifies it). Entry [`run_discovery`] (+ [`vm_filter`], + the
+//! CLI prove step) is invoked by `aver proof --discover`; normal `aver proof`
 //! never runs this (discovery is the explicit, expensive, cached step).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -213,8 +220,12 @@ pub struct LawDiscovery {
     pub cone_types: Vec<String>,
     /// The shared typed variable context the conjectures range over.
     pub binders: Vec<Binder>,
-    /// Candidate equations (size-ascending), pre-VM-filter, pre-proof.
+    /// Candidate equations (size-ascending); after the VM-filter, survivors.
     pub conjectures: Vec<Conjecture>,
+    /// Rendered equations kernel-proved by a backend (2d). Filled by the prove
+    /// step (which needs a `CodegenContext` + prover, so it lives in the CLI);
+    /// `run_discovery` leaves it empty.
+    pub proved: Vec<String>,
     /// Coverage / truncation accounting.
     pub stats: DiscoveryStats,
 }
@@ -263,6 +274,7 @@ pub fn run_discovery(inputs: &ProofLowerInputs) -> Vec<LawDiscovery> {
                 .map(|td| crate::codegen::common::type_def_name(td).to_string())
                 .collect(),
             binders,
+            proved: Vec::new(),
             stats: DiscoveryStats {
                 cone_fn_count,
                 term_count,
@@ -929,9 +941,187 @@ fn named_sample(td: &crate::ast::TypeDef, inputs: &ProofLowerInputs, depth: usiz
     }
 }
 
+// ===========================================================================
+// Phase 2d — render a candidate to a Lean theorem for kernel proof.
+//
+// A VM-survivor is still a guess; the proved-or-dropped gate demands a kernel
+// proof. These pure helpers render a candidate to standalone Lean theorem text
+// using the SAME name/type mapping the program defs are emitted with (so the
+// theorem references `decode` / `Run` / `++` exactly as generated). The actual
+// `lake build` (needs a CodegenContext + prover process) lives in the CLI.
+// ===========================================================================
+
+/// Render a candidate as a standalone Lean theorem with the list-induction
+/// template, IF it has a list-typed free variable to induct on (else `None` —
+/// the template doesn't apply). Proof:
+/// `induction <v> with | nil => simp [fns] | cons .. ih => simp [fns, ih, List.append_assoc]`,
+/// which closes the list-homomorphism class (`decode_append` and kin).
+pub fn lean_lemma_theorem(c: &Conjecture, binders: &[Binder], name: &str) -> Option<String> {
+    let mut fvs = BTreeSet::new();
+    c.lhs.free_vars(&mut fvs);
+    c.rhs.free_vars(&mut fvs);
+    // Induction target: the first list-typed free variable.
+    let induct = fvs
+        .iter()
+        .copied()
+        .find(|&i| matches!(binders.get(i).map(|b| &b.ty), Some(Type::List(_))))?;
+
+    // Lean binder declarations for the free variables, in index order.
+    let binder_decls: Vec<String> = fvs
+        .iter()
+        .filter_map(|&i| binders.get(i))
+        .map(|b| {
+            format!(
+                "({} : {})",
+                b.name,
+                crate::codegen::lean::type_to_lean(&b.ty)
+            )
+        })
+        .collect();
+
+    // User fns referenced (the simp unfold list); `List.concat` is `++`, not a
+    // simp lemma, so it's excluded.
+    let mut fns = BTreeSet::new();
+    collect_user_fns(&c.lhs, &mut fns);
+    collect_user_fns(&c.rhs, &mut fns);
+    let unfolds: Vec<String> = fns
+        .iter()
+        .map(|f| crate::codegen::lean::aver_name_to_lean(f))
+        .collect();
+
+    let lhs = term_to_lean(&c.lhs, binders);
+    let rhs = term_to_lean(&c.rhs, binders);
+    let iv = &binders[induct].name;
+    let nil_simp = unfolds.join(", ");
+    let cons_simp = {
+        let mut v = unfolds.clone();
+        v.push("ih".to_string());
+        v.push("List.append_assoc".to_string());
+        v.join(", ")
+    };
+    Some(format!(
+        "theorem {name} {binders} : {lhs} = {rhs} := by\n  \
+         induction {iv} with\n  \
+         | nil => simp [{nil_simp}]\n  \
+         | cons head tail ih => simp [{cons_simp}]\n",
+        binders = binder_decls.join(" "),
+    ))
+}
+
+/// Render a term to a Lean expression: `Var` → binder name, `List.concat` →
+/// `(a ++ b)`, any other callee → `(f arg …)` via [`aver_name_to_lean`].
+fn term_to_lean(node: &TermNode, binders: &[Binder]) -> String {
+    match node {
+        TermNode::Var(i) => binders
+            .get(*i)
+            .map(|b| b.name.clone())
+            .unwrap_or_else(|| format!("x{i}")),
+        TermNode::App { callee, args } => {
+            if callee == "List.concat" && args.len() == 2 {
+                return format!(
+                    "({} ++ {})",
+                    term_to_lean(&args[0], binders),
+                    term_to_lean(&args[1], binders)
+                );
+            }
+            let lean_fn = crate::codegen::lean::aver_name_to_lean(callee);
+            let rendered: Vec<String> = args.iter().map(|a| term_to_lean(a, binders)).collect();
+            format!("({} {})", lean_fn, rendered.join(" "))
+        }
+    }
+}
+
+/// Collect user-fn callees in a term (everything but the `List.concat` builtin).
+fn collect_user_fns(node: &TermNode, out: &mut BTreeSet<String>) {
+    if let TermNode::App { callee, args } = node {
+        if callee != "List.concat" {
+            out.insert(callee.clone());
+        }
+        for a in args {
+            collect_user_fns(a, out);
+        }
+    }
+}
+
+/// `true` iff the candidate is the list-homomorphism shape
+/// `g(a ++ b) == g(a) ++ g(b)` (either orientation), `g` a user fn, `a`/`b`
+/// distinct variables. These are the highest-value proof targets, ranked first.
+fn is_homomorphism(c: &Conjecture) -> bool {
+    fn oriented(l: &TermNode, r: &TermNode) -> bool {
+        let TermNode::App {
+            callee: g,
+            args: la,
+        } = l
+        else {
+            return false;
+        };
+        if g == "List.concat" || la.len() != 1 {
+            return false;
+        }
+        let TermNode::App {
+            callee: cc,
+            args: ca,
+        } = &la[0]
+        else {
+            return false;
+        };
+        if cc != "List.concat" || ca.len() != 2 {
+            return false;
+        }
+        let (TermNode::Var(a), TermNode::Var(b)) = (&ca[0], &ca[1]) else {
+            return false;
+        };
+        if a == b {
+            return false;
+        }
+        let TermNode::App {
+            callee: rc,
+            args: ra,
+        } = r
+        else {
+            return false;
+        };
+        if rc != "List.concat" || ra.len() != 2 {
+            return false;
+        }
+        let (
+            TermNode::App {
+                callee: g1,
+                args: r1,
+            },
+            TermNode::App {
+                callee: g2,
+                args: r2,
+            },
+        ) = (&ra[0], &ra[1])
+        else {
+            return false;
+        };
+        g1 == g
+            && g2 == g
+            && r1.len() == 1
+            && r2.len() == 1
+            && matches!((&r1[0], &r2[0]), (TermNode::Var(a2), TermNode::Var(b2)) if a2 == a && b2 == b)
+    }
+    oriented(&c.lhs, &c.rhs) || oriented(&c.rhs, &c.lhs)
+}
+
+/// Candidate indices in proof-attempt order: list-homomorphism shapes first
+/// (the highest-value, template-closable class), then smallest-first. The
+/// prover (CLI) walks this and attempts the top few within a build budget.
+pub fn rank_candidate_indices(report: &LawDiscovery) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..report.conjectures.len()).collect();
+    idx.sort_by_key(|&i| {
+        let c = &report.conjectures[i];
+        let homo = if is_homomorphism(c) { 0 } else { 1 };
+        (homo, c.lhs.size() + c.rhs.size(), c.render(&report.binders))
+    });
+    idx
+}
+
 /// Human-readable multi-line report for `aver proof --discover` output. Shows
-/// each law's cone, variable legend, stats, and a sample of the candidate
-/// equations (after the VM-filter, when it ran, these are survivors).
+/// each law's cone, variable legend, stats, a sample of the candidate
+/// equations (after the VM-filter, survivors), and any kernel-proved lemmas.
 pub fn render_report(reports: &[LawDiscovery]) -> String {
     const SAMPLE: usize = 12;
     let mut out = String::new();
@@ -998,6 +1188,15 @@ pub fn render_report(reports: &[LawDiscovery]) -> String {
                 "      … and {} more\n",
                 r.conjectures.len() - SAMPLE
             ));
+        }
+        if !r.proved.is_empty() {
+            out.push_str(&format!(
+                "    PROVED (Lean, kernel-checked): {}\n",
+                r.proved.len()
+            ));
+            for p in &r.proved {
+                out.push_str(&format!("      ✓ {p}\n"));
+            }
         }
     }
     out
@@ -1234,6 +1433,39 @@ verify encode law roundtrip
         assert!(
             !r.conjectures.iter().any(is_self_concat_identity),
             "false self-concat identity survived the VM-filter"
+        );
+    }
+
+    #[test]
+    fn lean_theorem_renders_decode_append() {
+        let r = &discover(SRC)[0];
+        let c = r
+            .conjectures
+            .iter()
+            .find(|c| is_decode_append(c))
+            .expect("decode_append survives");
+        let thm = lean_lemma_theorem(c, &r.binders, "L").expect("template applies");
+        // Statement: `theorem L (x.. : List Run) (..) : decode (.. ++ ..) = .. := by`
+        assert!(thm.contains("theorem L "), "{thm}");
+        assert!(thm.contains(": List Run)"), "{thm}");
+        assert!(thm.contains("decode (") && thm.contains("++"), "{thm}");
+        // Tactic: list-induction template with the decode unfold + append_assoc.
+        assert!(thm.contains("induction "), "{thm}");
+        assert!(thm.contains("| nil => simp [decode]"), "{thm}");
+        assert!(thm.contains("List.append_assoc"), "{thm}");
+        assert!(thm.contains("ih"), "{thm}");
+    }
+
+    #[test]
+    fn ranking_puts_homomorphism_first() {
+        let r = &discover(SRC)[0];
+        let ranked = rank_candidate_indices(r);
+        // The first ranked candidate is the list-homomorphism (decode_append).
+        let first = &r.conjectures[ranked[0]];
+        assert!(
+            is_decode_append(first),
+            "expected decode_append ranked first, got {}",
+            first.render(&r.binders)
         );
     }
 }

@@ -4896,9 +4896,16 @@ pub(super) fn cmd_proof(
     // step (charter: `prompts/lemma-discovery.md`); normal `aver proof`
     // never enters here. Pure analysis over the already-built context.
     if discover {
-        let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
-        let mut reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
-        aver::codegen::lemma_discovery::vm_filter(&mut reports, &inputs);
+        // Enumerate + VM-filter (immutable borrow of ctx, scoped so it ends
+        // before the prove step needs `&mut ctx` for Lean transpilation).
+        let mut reports = {
+            let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+            let mut reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
+            aver::codegen::lemma_discovery::vm_filter(&mut reports, &inputs);
+            reports
+        };
+        // 2d: kernel-prove the top-ranked survivors via Lean.
+        prove_discovered_lemmas_lean(&mut reports, &mut ctx, verify_mode);
         print!(
             "{}",
             aver::codegen::lemma_discovery::render_report(&reports)
@@ -4967,6 +4974,104 @@ pub(super) fn cmd_proof(
             check_json,
             dafny_entry,
         );
+    }
+}
+
+/// Phase 2d of lemma discovery: attempt to kernel-prove the top-ranked
+/// surviving candidates by appending each as a standalone Lean theorem to the
+/// program's generated Lean project and running `lake build`.
+///
+/// A candidate proves iff the build still succeeds: the program's own law
+/// theorems carry `sorry` fallbacks (warnings → lake exit 0), while a
+/// discovered theorem has NO `sorry`, so it can only flip the exit code by
+/// failing (unsolved goals → exit 1). Records proved equations into
+/// `report.proved`. Skips silently if `lake` is unavailable (discovery
+/// degrades to survivors-only). Bounded by a small build budget — discovery is
+/// the expensive cached step, but `--discover` should still return promptly.
+fn prove_discovered_lemmas_lean(
+    reports: &mut [aver::codegen::lemma_discovery::LawDiscovery],
+    ctx: &mut codegen::CodegenContext,
+    verify_mode: &super::cli::ProofVerifyMode,
+) {
+    use std::process::Command;
+
+    // `lake` must be on PATH; otherwise leave proving to a later run.
+    let lake_ok = Command::new("lake")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !lake_ok {
+        return;
+    }
+
+    let emit_mode = match verify_mode {
+        super::cli::ProofVerifyMode::Auto => aver::codegen::lean::VerifyEmitMode::NativeDecide,
+        super::cli::ProofVerifyMode::Sorry => aver::codegen::lean::VerifyEmitMode::Sorry,
+        super::cli::ProofVerifyMode::TheoremSkeleton => {
+            aver::codegen::lean::VerifyEmitMode::TheoremSkeleton
+        }
+    };
+    let project = aver::codegen::lean::transpile_for_proof_mode(ctx, emit_mode);
+    let entry = format!("{}.lean", aver::codegen::common::entry_basename(ctx));
+
+    let Ok(dir) = tempfile::tempdir() else {
+        return;
+    };
+    let mut entry_orig: Option<String> = None;
+    for (rel, content) in &project.files {
+        let path = dir.path().join(rel);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if *rel == entry {
+            entry_orig = Some(content.clone());
+        }
+        if std::fs::write(&path, content).is_err() {
+            return;
+        }
+    }
+    let Some(entry_orig) = entry_orig else {
+        return;
+    };
+    let entry_path = dir.path().join(&entry);
+
+    // Total `lake build` attempts across all laws. The first build warms the
+    // AverCommon/toolchain cache; subsequent ones are incremental (~2s each).
+    let mut budget = 8usize;
+    let mut counter = 0usize;
+    for report in reports.iter_mut() {
+        for idx in aver::codegen::lemma_discovery::rank_candidate_indices(report) {
+            if budget == 0 {
+                break;
+            }
+            let candidate = &report.conjectures[idx];
+            let name = format!("aver_discovered_lemma_{counter}");
+            counter += 1;
+            let Some(theorem) = aver::codegen::lemma_discovery::lean_lemma_theorem(
+                candidate,
+                &report.binders,
+                &name,
+            ) else {
+                // No list-typed free variable → the list-induction template
+                // doesn't apply; don't spend build budget on it.
+                continue;
+            };
+            budget -= 1;
+            let combined = format!("{entry_orig}\n\n{theorem}\n");
+            if std::fs::write(&entry_path, &combined).is_err() {
+                continue;
+            }
+            let proved = Command::new("lake")
+                .arg("build")
+                .current_dir(dir.path())
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if proved {
+                report.proved.push(candidate.render(&report.binders));
+            }
+        }
     }
 }
 

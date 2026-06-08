@@ -12,6 +12,13 @@ mod shared;
 mod toplevel;
 mod types;
 
+// Re-exports for the lemma-discovery pass (`codegen::lemma_discovery`), which
+// renders discovered candidate lemmas to Lean theorem text using the SAME
+// name/type mapping the program defs are emitted with — so a discovered
+// theorem references `decode` / `Run` / `++` exactly as generated.
+pub(crate) use expr::aver_name_to_lean;
+pub(crate) use types::type_to_lean;
+
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{FnDef, Spanned, TopLevel, VerifyKind};

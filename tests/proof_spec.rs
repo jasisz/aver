@@ -2987,3 +2987,35 @@ fn proof_export_gates_trace_projection_law_lhs_as_runtime_only() {
 
     let _ = std::fs::remove_dir_all(&dafny_dir);
 }
+
+/// Phase 2/2d acceptance (lemma discovery): `aver proof <rle> --discover`
+/// enumerates candidate equations, VM-filters them, and kernel-proves the
+/// `decode_append` survivor via `lake build` — end to end, with no
+/// RLE-specific recognizer. Skips when `lake` is unavailable.
+#[test]
+fn discover_kernel_proves_decode_append_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping discovery proof test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/data/rle.av")
+        .arg("--discover")
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("PROVED (Lean, kernel-checked)"),
+        "no kernel-proved lemma in `--discover` output:\n{}",
+        format_output(&run)
+    );
+    assert!(
+        stdout.contains("decode(List.concat(x2, x3)) == List.concat(decode(x2), decode(x3))"),
+        "decode_append was not the kernel-proved lemma:\n{}",
+        format_output(&run)
+    );
+}
