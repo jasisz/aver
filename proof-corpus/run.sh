@@ -32,13 +32,27 @@ fi
 
 covered=0
 total=0
+# Run one task; echo "proved" or "open". Retries once on a non-passed result —
+# heavy parallel/sequential lake load can transiently fail a build, which would
+# otherwise undercount (flakes produce false "open", never false "proved").
+check_one() {
+  local f="$1" attempt out json
+  for attempt in 1 2; do
+    out="$(mktemp -d)"
+    json="$("$AVER" proof "$f" --check --check-json -o "$out" 2>/dev/null | grep '"passed"' | tail -1)"
+    rm -rf "$out"
+    if printf '%s' "$json" | grep -q '"passed":true'; then
+      echo proved
+      return
+    fi
+  done
+  echo open
+}
+
 for f in $(find "$ROOT" -name '*.av' | sort); do
   [ -e "$f" ] || continue
   total=$((total + 1))
-  out="$(mktemp -d)"
-  json="$("$AVER" proof "$f" --check --check-json -o "$out" 2>/dev/null | grep '"passed"' | tail -1)"
-  rm -rf "$out"
-  if printf '%s' "$json" | grep -q '"passed":true'; then
+  if [ "$(check_one "$f")" = proved ]; then
     covered=$((covered + 1))
     printf '  proved   %s\n' "${f#"$ROOT"/}"
   else

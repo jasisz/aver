@@ -38,22 +38,29 @@ homomorphism enumeration — was measured to add nothing on the current TIP slic
 since its law-closing classes are codec-roundtrip, absent here, and additive-monoid,
 already covered by the auto-mode strategy.)
 
-## First measurement (Aver 0.24.1-dev, branch proof-lemma-discovery)
+KNOWN FLAKINESS: a sweep of all tasks transiently fails some `lake` builds under
+load, which records false "open" (never false "proved"). `run.sh` retries a
+non-passed task once to absorb that; the reported number is therefore a lower
+bound. (One un-retried sweep undercounted 8 → 2.)
 
-TIP isaplanner (86 problems), translated by per-problem agents from the upstream
-`.smt2`:
+## Measurement (Aver 0.24.1-dev, branch proof-lemma-discovery)
 
-- **77 / 85** translated (8 flagged untranslatable into first-order Aver: needs
-  higher-order functions or multi-type-var pairs).
-- **64** compile for proof (the other ~13 were translation errors, dropped).
-- **1** proves: `prop_82` (`take n (zip xs ys) = zip (take n xs) (take n ys)`,
-  closed by structural induction). Plus the handwritten `sum_acc_spec`
-  (`sumFold = sumSpec`, accumulator-fold spec-equivalence).
+154 tasks: TIP isaplanner (78) + TIP prod (74) + 2 handwritten. Translated by
+per-problem agents from the upstream `.smt2` with a self-validation loop
+(yield 88/88 compiling on the second batch).
 
-So on the third-party TIP slice the honest figure is **~1 proved**. The value is
-the gap map, not the number: the dominant blockers are (a) Peano `Nat` arithmetic
-functions (`+`, `-`) reported "outside proof subset", and (b) general list/Nat
-induction lemmas that no current strategy auto-discovers. Those are the roadmap.
+- **152 / ~160** TIP problems translated + compile under `aver proof`
+  (the residual are higher-order or multi-type-var-pair goals — not first-order).
+- **8 / 154 proved** (retry-hardened): handwritten `sum_acc_spec`; isaplanner
+  `prop_46` (`zip [] xs = []`), `prop_82` (`take n (zip xs ys) = zip (take n xs)
+  (take n ys)`); prod `lemma_08`, `lemma_10`, `lemma_11`, `lemma_13`, `lemma_22`.
+
+So ~**7/152 on third-party TIP** (~5%). The value is the gap map, not the number.
+prod (Productive-Use-of-Failure, IH-generalization-heavy) contributes 5/8 — it
+sits closer to Aver's accumulator-generalization reach than the isaplanner Nat
+arithmetic. Dominant blockers: (a) Peano `Nat` `+`/`-` reported "outside proof
+subset"; (b) general list/Nat induction lemmas no current strategy auto-discovers.
+Those are the roadmap.
 
 ## Adding tasks
 
