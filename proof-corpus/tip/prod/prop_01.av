@@ -1,0 +1,22 @@
+module Prop01
+    intent =
+        "TIP prod prop_01: double x = x + x over Peano Nat."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn double(x: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(y) -> Nat.S(Nat.S(double(y)))
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify double law doublePlus
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    double(x) => plus(x, x)

@@ -1,0 +1,28 @@
+module Prop28
+    intent =
+        "TIP prod prop_28: revflat x = qrevflat x []."
+    effects []
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> append(rev(xs), [y])
+
+fn qrevflat(x: List<List<Int>>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [xs, ..xss] -> qrevflat(xss, append(rev(xs), y))
+
+fn revflat(x: List<List<Int>>) -> List<Int>
+    match x
+        [] -> []
+        [xs, ..xss] -> append(revflat(xss), rev(xs))
+
+verify revflat law revflatQrevflat
+    given x: List<List<Int>> = [[], [[1]], [[1, 2], [3]], [[1], [2, 3]]]
+    revflat(x) => qrevflat(x, [])

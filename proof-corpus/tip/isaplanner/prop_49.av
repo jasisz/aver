@@ -1,0 +1,26 @@
+module Prop49
+    intent =
+        "TIP isaplanner prop_49: butlast (xs ++ ys) = butlastConcat xs ys."
+    effects []
+
+fn butlast(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..z] -> match z
+            [] -> []
+            [x2, ..x3] -> List.concat([y], butlast(z))
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+fn butlastConcat(x: List<Int>, y: List<Int>) -> List<Int>
+    match y
+        [] -> butlast(x)
+        [z, ..x2] -> append(x, butlast(y))
+
+verify butlast law butlastConcatLaw
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given ys: List<Int> = [[], [2], [4, 5]]
+    butlast(append(xs, ys)) => butlastConcat(xs, ys)

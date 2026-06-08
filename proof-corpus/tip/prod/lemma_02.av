@@ -1,0 +1,27 @@
+module Lemma02
+    intent =
+        "TIP prod lemma_02: length(xs ++ (y :: ys)) = S(length(xs ++ ys))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(xs: List<Int>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(length(ys))
+
+fn append(xs: List<Int>, ys: List<Int>) -> List<Int>
+    match xs
+        [] -> ys
+        [z, ..zs] -> List.concat([z], append(zs, ys))
+
+fn cons(y: Int, ys: List<Int>) -> List<Int>
+    List.concat([y], ys)
+
+verify length law lengthAppendCons
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given y: Int = [0, 5, 9]
+    given ys: List<Int> = [[], [2], [4, 5]]
+    length(append(xs, cons(y, ys))) => Nat.S(length(append(xs, ys)))

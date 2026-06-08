@@ -1,0 +1,13 @@
+module Prop30
+    intent =
+        "TIP prod prop_30: rev (rev x ++ nil) = x."
+    effects []
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> List.concat(rev(xs), [y])
+
+verify rev law revRevAppendNil
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    rev(List.concat(rev(x), [])) => x

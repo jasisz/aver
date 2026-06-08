@@ -1,0 +1,14 @@
+module Prop18
+    intent =
+        "TIP prod prop_18: rev (rev x ++ y) = rev y ++ x."
+    effects []
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> List.concat(rev(xs), [y])
+
+verify rev law revAppendRev
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given y: List<Int> = [[], [4], [4, 5], [4, 5, 6]]
+    rev(List.concat(rev(x), y)) => List.concat(rev(y), x)

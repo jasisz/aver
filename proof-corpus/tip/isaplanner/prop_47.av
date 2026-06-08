@@ -1,0 +1,33 @@
+module Prop47
+    intent =
+        "TIP isaplanner prop_47: height (mirror t) = height t."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+type Tree
+    Leaf
+    Node(Tree, Int, Tree)
+
+fn mirror(x: Tree) -> Tree
+    match x
+        Tree.Leaf -> Tree.Leaf
+        Tree.Node(l, y, r) -> Tree.Node(mirror(r), y, mirror(l))
+
+fn max(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> Nat.S(max(z, x2))
+
+fn height(x: Tree) -> Nat
+    match x
+        Tree.Leaf -> Nat.Z
+        Tree.Node(l, y, r) -> Nat.S(max(height(l), height(r)))
+
+verify height law mirrorHeight
+    given t: Tree = [Tree.Leaf, Tree.Node(Tree.Leaf, 1, Tree.Leaf), Tree.Node(Tree.Node(Tree.Leaf, 2, Tree.Leaf), 1, Tree.Leaf)]
+    height(mirror(t)) => height(t)

@@ -32,7 +32,7 @@ fi
 
 covered=0
 total=0
-for f in "$ROOT"/*/*.av; do
+for f in $(find "$ROOT" -name '*.av' | sort); do
   [ -e "$f" ] || continue
   total=$((total + 1))
   out="$(mktemp -d)"

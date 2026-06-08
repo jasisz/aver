@@ -1,0 +1,36 @@
+module Prop35
+    intent =
+        "TIP prod prop_35: exp x y = qexp x y one (tail-recursive exponentiation)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn one() -> Nat
+    Nat.S(Nat.Z)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+fn mult(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> plus(y, mult(z, y))
+
+fn exp(x: Nat, y: Nat) -> Nat
+    match y
+        Nat.Z -> Nat.S(Nat.Z)
+        Nat.S(n) -> mult(x, exp(x, n))
+
+fn qexp(x: Nat, y: Nat, z: Nat) -> Nat
+    match y
+        Nat.Z -> z
+        Nat.S(n) -> qexp(x, n, mult(x, z))
+
+verify exp law expQexp
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    exp(x, y) => qexp(x, y, one())

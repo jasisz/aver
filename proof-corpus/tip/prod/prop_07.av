@@ -1,0 +1,28 @@
+module Prop07
+    intent =
+        "TIP prod prop_07: length (qrev x y) = length x + length y."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn qrev(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> qrev(xs, List.concat([z], y))
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify length law qrevLength
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    given y: List<Int> = [[], [2], [4, 5]]
+    length(qrev(x, y)) => plus(length(x), length(y))

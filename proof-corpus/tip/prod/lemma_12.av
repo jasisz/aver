@@ -1,0 +1,40 @@
+module Lemma12
+    intent =
+        "TIP prod lemma_12: sorted y => sorted (insert x y)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> lessEq(z, x2)
+
+fn insert(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match lessEq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insert(x, xs))
+
+fn and(x: Bool, y: Bool) -> Bool
+    match x
+        true -> y
+        false -> false
+
+fn sorted(x: List<Nat>) -> Bool
+    match x
+        [] -> true
+        [y, ..z] -> match z
+            [] -> true
+            [y2, ..xs] -> and(lessEq(y, y2), sorted(z))
+
+verify insert law sortedInsert
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when sorted(y)
+    sorted(insert(x, y)) => true

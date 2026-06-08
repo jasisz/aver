@@ -1,0 +1,24 @@
+module Prop20
+    intent =
+        "TIP prod prop_20: even (length (x ++ x))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn even(x: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(y) -> match y
+            Nat.Z -> false
+            Nat.S(z) -> even(z)
+
+verify even law evenLengthConcatSelf
+    given x: List<Int> = [[1], [1, 2], [1, 2, 3]]
+    even(length(List.concat(x, x))) => true

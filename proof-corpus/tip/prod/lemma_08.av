@@ -1,0 +1,19 @@
+module Lemma08
+    intent =
+        "TIP prod lemma_08: rev (x ++ [y]) = y : rev x."
+    effects []
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> append(rev(xs), [y])
+
+verify rev law revAppendSingleton
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    given y: Int = [0, 1, 2]
+    rev(append(x, [y])) => List.concat([y], rev(x))

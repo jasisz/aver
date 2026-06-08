@@ -1,0 +1,41 @@
+module Prop39
+    intent =
+        "TIP prod prop_39: elem x (drop y z) => elem x z."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn drop(x: Nat, y: List<Nat>) -> List<Nat>
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+fn barbar(x: Bool, y: Bool) -> Bool
+    match x
+        true -> true
+        false -> y
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> barbar(eqNat(x, z), elem(x, xs))
+
+verify elem law elemDrop
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given z: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    when elem(x, drop(y, z))
+    elem(x, drop(y, z)) => elem(x, z)

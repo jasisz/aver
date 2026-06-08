@@ -1,0 +1,17 @@
+module Prop15
+    intent =
+        "TIP prod prop_15: x + S(x) = S(x + x)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify plus law plusSuccSelf
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, Nat.S(x)) => Nat.S(plus(x, x))

@@ -1,0 +1,19 @@
+module Prop12
+    intent =
+        "TIP prod prop_12: qrev x y = rev x ++ y."
+    effects []
+
+fn qrev(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> qrev(xs, List.concat([z], y))
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> List.concat(rev(xs), [y])
+
+verify qrev law qrevRevAppend
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    given y: List<Int> = [[], [4], [4, 5]]
+    qrev(x, y) => List.concat(rev(x), y)

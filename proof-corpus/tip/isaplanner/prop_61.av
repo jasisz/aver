@@ -1,0 +1,25 @@
+module Prop61
+    intent =
+        "TIP isaplanner prop_61: last (xs ++ ys) = lastOfTwo xs ys."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn last(x: List<Nat>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..z] -> match z
+            [] -> y
+            [x2, ..x3] -> last(z)
+
+fn lastOfTwo(x: List<Nat>, y: List<Nat>) -> Nat
+    match y
+        [] -> last(x)
+        [z, ..x2] -> last(y)
+
+verify last law lastConcatTwo
+    given xs: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z]]
+    given ys: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)], [Nat.Z, Nat.S(Nat.Z)]]
+    last(List.concat(xs, ys)) => lastOfTwo(xs, ys)

@@ -1,0 +1,18 @@
+module Prop29
+    intent =
+        "TIP prod prop_29: rev (qrev x nil) = x."
+    effects []
+
+fn qrev(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> qrev(xs, List.concat([z], y))
+
+fn rev(x: List<Int>) -> List<Int>
+    match x
+        [] -> []
+        [y, ..xs] -> List.concat(rev(xs), [y])
+
+verify rev law revQrevNil
+    given x: List<Int> = [[], [1], [1, 2, 3]]
+    rev(qrev(x, [])) => x

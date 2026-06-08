@@ -1,0 +1,45 @@
+module Prop83
+    intent =
+        "TIP isaplanner prop_83: zip (xs ++ ys) zs = zip xs (take (len xs) zs) ++ zip ys (drop (len xs) zs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+fn zip(x: List<Int>, y: List<Int>) -> List<Tuple<Int, Int>>
+    match x
+        [] -> []
+        [z, ..x2] -> match y
+            [] -> []
+            [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
+
+fn take(n: Nat, y: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+fn len(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(len(xs))
+
+fn drop(n: Nat, y: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+verify zip law zipAppendTakeDrop
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [4, 5]]
+    given zs: List<Int> = [[], [7, 8], [7, 8, 9, 10]]
+    zip(append(xs, ys), zs) => List.concat(zip(xs, take(len(xs), zs)), zip(ys, drop(len(xs), zs)))

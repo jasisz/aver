@@ -1,0 +1,22 @@
+module Prop44
+    intent =
+        "TIP isaplanner prop_44: zip (cons x xs) ys = zipConcat x xs ys."
+    effects []
+
+fn zip(x: List<Int>, y: List<Int>) -> List<Tuple<Int, Int>>
+    match x
+        [] -> []
+        [z, ..x2] -> match y
+            [] -> []
+            [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
+
+fn zipConcat(x: Int, y: List<Int>, z: List<Int>) -> List<Tuple<Int, Int>>
+    match z
+        [] -> []
+        [y2, ..ys] -> List.concat([(x, y2)], zip(y, ys))
+
+verify zip law zipConcatEq
+    given x: Int = [0, 1, 2]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [4, 5, 6]]
+    zip(List.concat([x], xs), ys) => zipConcat(x, xs, ys)

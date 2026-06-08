@@ -1,0 +1,24 @@
+module Prop32
+    intent =
+        "TIP prod prop_32: rotate (length x) x = x."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn rotate(x: Nat, y: List<Int>) -> List<Int>
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> rotate(z, List.concat(x3, [x2]))
+
+verify rotate law rotateLengthId
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    rotate(length(x), x) => x

@@ -1,0 +1,18 @@
+module Lemma17
+    intent =
+        "TIP prod lemma_17: plus(x, S(S(y))) = S(S(plus(x, y)))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify plus law plusShiftTwo
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, Nat.S(Nat.S(y))) => Nat.S(Nat.S(plus(x, y)))

@@ -1,0 +1,24 @@
+module Lemma23
+    intent =
+        "TIP prod lemma_23: (x * y) * z = x * (y * z), multiplication associativity on Nat."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+fn mult(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> plus(y, mult(z, y))
+
+verify mult law multAssoc
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    mult(mult(x, y), z) => mult(x, mult(y, z))

@@ -1,0 +1,32 @@
+module Lemma18
+    intent =
+        "TIP prod lemma_18: length (insert x y) = S (length y)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Nat>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> lessEq(z, x2)
+
+fn insert(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match lessEq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insert(x, xs))
+
+verify length law insertLength
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    length(insert(x, y)) => Nat.S(length(y))
