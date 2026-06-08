@@ -2942,7 +2942,7 @@ fn detect_wrapper_over_recursion(
     inputs: &ProofLowerInputs,
 ) -> Option<crate::ir::ProofStrategy> {
     use crate::analysis::shape::ModulePattern;
-    use crate::ast::{BinOp, Expr, Pattern, Stmt};
+    use crate::ast::{BinOp, Expr, Stmt};
 
     // Pre-pipeline AST has `Expr::Ident(n)`; post-pipeline the
     // resolver rewrites local/param idents to `Expr::Resolved { name }`.
@@ -2964,16 +2964,24 @@ fn detect_wrapper_over_recursion(
     }
     let given_name = &law.givens[0].name;
 
-    // Find the matching pattern in the shape — wrapper_fn must
-    // equal the law's surrounding fn.
-    let (wrapper_fn, inner_fn) = shape.patterns.iter().find_map(|p| match p {
-        ModulePattern::WrapperOverRecursion {
+    // Read the loop fn + its fold step from the shared `AccumulatorFold` pattern
+    // (recognized once by `analysis::shape`, consumed by both this strategy and
+    // the `--discover` lemma chains) — no bespoke inner-body re-walk for the OP.
+    // The monoidal strategy needs an additive/multiplicative inline step and an
+    // identity finish (the nil arm returns the accumulator).
+    let (inner_fn, combine_op) = shape.patterns.iter().find_map(|p| match p {
+        ModulePattern::AccumulatorFold {
             wrapper_fn,
-            inner_fn,
+            loop_fn,
+            step_op: Some(op),
+            finish_fn: None,
             ..
-        } if wrapper_fn == fn_name => Some((wrapper_fn.clone(), inner_fn.clone())),
+        } if wrapper_fn == fn_name && matches!(op, BinOp::Add | BinOp::Mul) => {
+            Some((loop_fn.clone(), *op))
+        }
         _ => None,
     })?;
+    let wrapper_fn = fn_name.to_string();
 
     // Law shape: `wrapper(g) == other(g)` (either side).
     let extract = |expr: &Spanned<crate::ast::Expr>| -> Option<String> {
@@ -2996,81 +3004,6 @@ fn detect_wrapper_over_recursion(
         (Some(l), Some(r)) if r == wrapper_fn && l != wrapper_fn => l,
         _ => return None,
     };
-
-    // Inner fn must have body shape
-    //   match xs { [] -> acc; [h, ..t] -> inner(t, acc OP h) }
-    // — extract OP.
-    let inner_fd = inputs.find_fn_def_by_call_name(&inner_fn)?;
-    if inner_fd.params.len() != 2 {
-        return None;
-    }
-    let stmts = inner_fd.body.stmts();
-    if stmts.len() != 1 {
-        return None;
-    }
-    let Stmt::Expr(body) = &stmts[0] else {
-        return None;
-    };
-    let Expr::Match { subject, arms } = &body.node else {
-        return None;
-    };
-    if ident_name(subject)? != inner_fd.params[0].0 {
-        return None;
-    }
-    if arms.len() != 2 {
-        return None;
-    }
-    let mut nil_acc_ok = false;
-    let mut cons_op: Option<BinOp> = None;
-    let acc_name = &inner_fd.params[1].0;
-    for arm in arms {
-        match &arm.pattern {
-            Pattern::EmptyList => {
-                if ident_name(&arm.body) == Some(acc_name.as_str()) {
-                    nil_acc_ok = true;
-                }
-            }
-            Pattern::Cons(head_name, tail_name) => {
-                // Body must be `inner(tail, acc OP head)` (or with `head OP acc`).
-                // Post-pipeline the call can also be a `TailCall`.
-                let (callee_name, args) = match &arm.body.node {
-                    Expr::FnCall(c, a) => (ident_name(c)?, a.clone()),
-                    Expr::TailCall(td) => (td.target.as_str(), td.args.clone()),
-                    _ => return None,
-                };
-                if callee_name != inner_fn {
-                    return None;
-                }
-                if args.len() != 2 {
-                    return None;
-                }
-                if ident_name(&args[0])? != tail_name.as_str() {
-                    return None;
-                }
-                let Expr::BinOp(op, l, r) = &args[1].node else {
-                    return None;
-                };
-                if !matches!(op, BinOp::Add | BinOp::Mul) {
-                    return None;
-                }
-                let l_n = ident_name(l);
-                let r_n = ident_name(r);
-                let l_is_acc = l_n == Some(acc_name.as_str());
-                let r_is_head = r_n == Some(head_name.as_str());
-                let l_is_head = l_n == Some(head_name.as_str());
-                let r_is_acc = r_n == Some(acc_name.as_str());
-                if !((l_is_acc && r_is_head) || (l_is_head && r_is_acc)) {
-                    return None;
-                }
-                cons_op = Some(*op);
-            }
-            _ => return None,
-        }
-    }
-    if !nil_acc_ok {
-        return None;
-    }
-    let combine_op = cons_op?;
 
     // Wrapper body must be `inner(<given>, neutral)` where neutral is
     // 0 for Add and 1 for Mul. Verify against the fn def to be sure.
