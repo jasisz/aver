@@ -3030,3 +3030,56 @@ fn discover_kernel_proves_decode_append_when_lake_is_available() {
     );
     let _ = std::fs::remove_dir_all(&output_dir);
 }
+
+/// Run `aver proof <path> --discover` and assert the committed
+/// `DiscoveredLemmas.lean` contains `lemma_needle` (a kernel-proved lemma).
+/// Skips when `lake` is unavailable.
+fn assert_discover_proves(example_path: &str, prefix: &str, lemma_needle: &str) {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping discovery proof test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = temp_output_dir(prefix);
+    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(example_path)
+        .arg("--discover")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let committed =
+        std::fs::read_to_string(output_dir.join("DiscoveredLemmas.lean")).unwrap_or_default();
+    assert!(
+        committed.contains(lemma_needle),
+        "expected `{lemma_needle}` among kernel-proved lemmas.\n--- stdout ---\n{}\n--- DiscoveredLemmas.lean ---\n{committed}",
+        format_output(&run),
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Generalization guard: discovery proves the `flatten` list-homomorphism on a
+/// NON-encoder program (no RLE shape anywhere) — evidence the enumeration path
+/// is genuinely general, not fitted to `rle.av`.
+#[test]
+fn discover_proves_flatten_homomorphism_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/flatten.av",
+        "aver-discover-flatten",
+        "(flatten (x0 ++ x1)) = ((flatten x0) ++ (flatten x1))",
+    );
+}
+
+/// Generalization guard: the structural counted-repeat conjecturer fires on a
+/// differently-named fn (`stars`, not `repeat`) in a non-encoder program —
+/// evidence brick 1 keys on shape, not the RLE name.
+#[test]
+fn discover_proves_stars_repeat_succ_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/stars.av",
+        "aver-discover-stars",
+        "stars c (n + 1) = stars c n ++ [c]",
+    );
+}
