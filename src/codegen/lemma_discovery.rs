@@ -1645,6 +1645,14 @@ pub fn structural_lemma_groups(inputs: &ProofLowerInputs) -> Vec<Vec<(String, St
             relational.push(group);
         }
     }
+    // The monoidal flavor of the same accumulator-generalization schema:
+    // `wrapper(xs) = direct(xs)` for an additive tail-recursive fold (sum vs
+    // sumDirect). Shares `loop_gen`'s induct-and-instantiate skeleton with the
+    // codec roundtrip; closes with `omega` instead of the codec step bricks.
+    for shape in detect_monoidal_specs(inputs) {
+        let base = next("monoidal");
+        relational.push(monoidal_spec_group(&shape, &base));
+    }
 
     // Pass 2: standalone structure-directed bricks, SKIPPING any a relational
     // chain already subsumes (the chain's counted-repeat helper and its
@@ -2207,6 +2215,216 @@ fn relational_lemma_group(
     Some((group, coverage))
 }
 
+// ===========================================================================
+// The accumulator-generalization schema, MONOIDAL flavor.
+//
+// The codec roundtrip above and the monoidal spec-equivalence here are the two
+// flavors of ONE schema: "a tail-recursive fold equals a direct spec, proved by
+// strengthening the IH over the threaded accumulator". The shared skeleton is
+// `loop_gen` — induct on the list, instantiate at the neutral accumulator:
+//
+//   codec:    inverse (loop list acc) = inverse (finish acc) ++ list   (combine = ++,  spec = id)
+//   monoidal: loop list acc           = acc + direct list              (combine = +,   spec = direct)
+//
+// Only the per-element step lemma and the closer differ (flush_fold_step + the
+// counted/nonneg bricks for the codec; a plain `omega` for the additive
+// monoid). This flavor proves `wrapper(xs) = direct(xs)` for the canonical
+// `sum(xs) = sumTR(xs, 0)` vs `sumDirect(xs)` shape. Additive ops only — `omega`
+// closes `+`/`-`; a multiplicative monoid would need `ring` (Mathlib), out of
+// scope for core-Lean export.
+// ===========================================================================
+
+/// A monoidal wrapper-over-recursion: a non-recursive `wrapper(xs) = loop(xs,
+/// neutral)` whose `loop` folds the list into an accumulator via an additive
+/// step, paired with a `direct` structural recurrence the law equates it to.
+struct MonoidalShape {
+    /// `sum` — the law subject; `wrapper(xs) = loop(xs, neutral)`.
+    wrapper: String,
+    /// `sumTR` — the accumulator fold `[] -> acc`, `h::t -> loop t (acc + h)`.
+    loop_fn: String,
+    /// `sumDirect` — the direct recurrence `[] -> 0`, `h::t -> h + direct t`.
+    direct: String,
+    /// Lean type of the list element (`Int`).
+    x_ty_lean: String,
+    /// Lean type of the accumulator (`Int`).
+    acc_ty_lean: String,
+    /// The neutral accumulator from the wrapper body, rendered (`0`).
+    neutral: String,
+}
+
+/// `acc <Add> head` (either operand order), where `acc`/`head` are the named
+/// binders — the additive fold step `omega` can discharge. Returns the head name.
+fn additive_step_head(e: &crate::ast::Spanned<crate::ast::Expr>, acc: &str) -> Option<String> {
+    use crate::ast::{BinOp, Expr};
+    let Expr::BinOp(BinOp::Add, l, r) = &e.node else {
+        return None;
+    };
+    let ln = cr_ident_name(l);
+    let rn = cr_ident_name(r);
+    match (ln.as_deref(), rn.as_deref()) {
+        (Some(a), Some(h)) if a == acc => Some(h.to_string()),
+        (Some(h), Some(a)) if a == acc => Some(h.to_string()),
+        _ => None,
+    }
+}
+
+/// Recognize a monoidal wrapper-over-recursion from a spec-equivalence law
+/// `wrapper(var) = direct(var)` (see [`MonoidalShape`]). `None` unless the fold
+/// is the additive accumulator shape the `omega`-closed template proves.
+fn detect_monoidal_spec(
+    law: &crate::ast::VerifyLaw,
+    subject_fn: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<MonoidalShape> {
+    use crate::ast::{Expr, Pattern};
+
+    // Law: wrapper(var) = direct(var), var a declared given, both sides unary.
+    let (lf, largs) = as_call(&law.lhs)?;
+    let (rf, rargs) = as_call(&law.rhs)?;
+    if largs.len() != 1 || rargs.len() != 1 {
+        return None;
+    }
+    let var = cr_ident_name(&largs[0])?;
+    if cr_ident_name(&rargs[0]).as_deref() != Some(var.as_str())
+        || !law.givens.iter().any(|g| g.name == var)
+    {
+        return None;
+    }
+    // The subject is the wrapper; the other side is the direct spec.
+    let (wrapper, direct) = if lf == subject_fn {
+        (lf, rf)
+    } else if rf == subject_fn {
+        (rf, lf)
+    } else {
+        return None;
+    };
+
+    // wrapper(var) = loop(var, neutral), neutral a literal.
+    let wf = inputs.find_fn_def_by_call_name(&wrapper)?;
+    let (loop_fn, loop_args) = as_call(last_body_expr(wf)?)?;
+    if loop_args.len() != 2 || cr_ident_name(&loop_args[0]).as_deref() != Some(var.as_str()) {
+        return None;
+    }
+    let neutral = render_init_literal(&loop_args[1])?;
+
+    // loop(list, acc): match list { [] -> acc; h::t -> loop(t, acc + h) }.
+    let lpf = inputs.find_fn_def_by_call_name(&loop_fn)?;
+    if lpf.params.len() != 2 {
+        return None;
+    }
+    let list_p = lpf.params[0].0.as_str();
+    let acc_p = lpf.params[1].0.as_str();
+    let Type::List(elem) = crate::codegen::common::parse_type_annotation(&lpf.params[0].1) else {
+        return None;
+    };
+    let x_ty_lean = crate::codegen::lean::type_to_lean(&elem);
+    let acc_ty_lean = crate::codegen::lean::type_to_lean(
+        &crate::codegen::common::parse_type_annotation(&lpf.params[1].1),
+    );
+    let Expr::Match { subject, arms } = &last_body_expr(lpf)?.node else {
+        return None;
+    };
+    if cr_ident_name(subject).as_deref() != Some(list_p) || arms.len() != 2 {
+        return None;
+    }
+    for arm in arms {
+        match &arm.pattern {
+            // nil arm returns the accumulator unchanged (finish = id).
+            Pattern::EmptyList => {
+                if cr_ident_name(&arm.body).as_deref() != Some(acc_p) {
+                    return None;
+                }
+            }
+            // cons arm: loop(t, acc + h).
+            Pattern::Cons(h, t) => {
+                let (rec, rargs2) = as_call(&arm.body)?;
+                if rec != loop_fn
+                    || rargs2.len() != 2
+                    || cr_ident_name(&rargs2[0]).as_deref() != Some(t.as_str())
+                {
+                    return None;
+                }
+                if additive_step_head(&rargs2[1], acc_p).as_deref() != Some(h.as_str()) {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    // The direct spec must exist and be a structural recurrence simp can unfold.
+    let df = inputs.find_fn_def_by_call_name(&direct)?;
+    if !matches!(
+        last_body_expr(df).map(|e| &e.node),
+        Some(Expr::Match { .. })
+    ) {
+        return None;
+    }
+
+    Some(MonoidalShape {
+        wrapper,
+        loop_fn,
+        direct,
+        x_ty_lean,
+        acc_ty_lean,
+        neutral,
+    })
+}
+
+/// Every monoidal wrapper-over-recursion recovered from the entry module's laws.
+fn detect_monoidal_specs(inputs: &ProofLowerInputs) -> Vec<MonoidalShape> {
+    use crate::ast::{TopLevel, VerifyKind};
+    let mut out = Vec::new();
+    for item in inputs.entry_items {
+        if let TopLevel::Verify(vb) = item
+            && let VerifyKind::Law(law) = &vb.kind
+            && let Some(s) = detect_monoidal_spec(law, &vb.fn_name, inputs)
+        {
+            out.push(s);
+        }
+    }
+    out
+}
+
+/// Emit the monoidal accumulator-generalization chain (the additive flavor of
+/// the shared schema): `loop_gen` by induction + the law by instantiation at the
+/// neutral accumulator. Two lemmas, dependency-ordered, one `lake build`.
+fn monoidal_spec_group(shape: &MonoidalShape, base: &str) -> Vec<(String, String)> {
+    let loop_l = crate::codegen::lean::aver_name_to_lean(&shape.loop_fn);
+    let direct_l = crate::codegen::lean::aver_name_to_lean(&shape.direct);
+    let wrapper_l = crate::codegen::lean::aver_name_to_lean(&shape.wrapper);
+    let MonoidalShape {
+        x_ty_lean,
+        acc_ty_lean,
+        neutral,
+        ..
+    } = shape;
+
+    let loop_gen = format!("{base}_loop_gen");
+    let loop_gen_text = format!(
+        "theorem {loop_gen} : ∀ (list : List {x_ty_lean}) (acc : {acc_ty_lean}), \
+         {loop_l} list acc = acc + {direct_l} list := by\n  \
+         intro list\n  \
+         induction list with\n  \
+         | nil => intro acc; simp [{loop_l}, {direct_l}]\n  \
+         | cons h t ih =>\n    \
+         intro acc\n    \
+         simp only [{loop_l}, {direct_l}]\n    \
+         rw [ih (acc + h)]\n    \
+         omega\n",
+    );
+
+    let spec = format!("{base}_spec_equiv");
+    let spec_text = format!(
+        "theorem {spec} (xs : List {x_ty_lean}) : {wrapper_l} xs = {direct_l} xs := by\n  \
+         unfold {wrapper_l}\n  \
+         rw [{loop_gen} xs {neutral}]\n  \
+         simp\n",
+    );
+
+    vec![(loop_gen, loop_gen_text), (spec, spec_text)]
+}
+
 /// Candidate indices in proof-attempt order: list-homomorphism shapes first
 /// (the highest-value, template-closable class), then smallest-first. The
 /// prover (CLI) walks this and attempts the top few within a build budget.
@@ -2414,6 +2632,14 @@ verify encode law roundtrip
             "/examples/data/sparse.av"
         ))
         .expect("read sparse.av")
+    }
+
+    fn sum_acc_source() -> String {
+        std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/data/sum_acc.av"
+        ))
+        .expect("read sum_acc.av")
     }
 
     fn encoder_roles(src: &str) -> Vec<String> {
@@ -2742,6 +2968,35 @@ verify encode law roundtrip
             "sparse roles: {:?}",
             encoder_roles(&sparse_source())
         );
+    }
+
+    #[test]
+    fn monoidal_spec_equivalence_emitted_for_sum_acc() {
+        // The MONOIDAL flavor of the same accumulator-generalization schema: the
+        // detector recognizes `sum(xs) = sumDirect(xs)` (sum = sumTR(·, 0), an
+        // additive fold) and emits the shared `loop_gen` skeleton closed by
+        // `omega` — NOT the codec roundtrip chain. Evidence the schema is one
+        // thing across codec and monoidal, not two bespoke recognizers.
+        let all: String = with_inputs(&sum_acc_source(), structural_lemma_groups)
+            .iter()
+            .flatten()
+            .map(|(_, t)| t.as_str())
+            .collect();
+        // The law itself + the strengthened loop invariant.
+        assert!(all.contains("sum xs = sumDirect xs"), "{all}");
+        assert!(
+            all.contains("sumTR list acc = acc + sumDirect list"),
+            "{all}"
+        );
+        // The shared induct-and-instantiate skeleton, additive closer.
+        assert!(all.contains("induction list with"), "{all}");
+        assert!(
+            all.contains("rw [ih (acc + h)]") && all.contains("omega"),
+            "{all}"
+        );
+        // It must NOT drag in the codec bricks (no inverse / counted-repeat here).
+        assert!(!all.contains("flush_fold_step"), "{all}");
+        assert!(!all.contains("inv_append"), "{all}");
     }
 
     #[test]

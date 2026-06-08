@@ -3163,6 +3163,19 @@ fn discover_proves_roundtrip_on_sparse_when_lake_is_available() {
     );
 }
 
+/// MONOIDAL flavor of the unified accumulator-generalization schema: the same
+/// `--discover` path that proves codec roundtrips also kernel-proves the
+/// spec-equivalence `sum xs = sumDirect xs` (sum = sumTR(·, 0), an additive
+/// fold) — codec roundtrip and monoidal fold are two flavors of ONE schema.
+#[test]
+fn discover_proves_monoidal_spec_equivalence_on_sum_acc_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/sum_acc.av",
+        "aver-discover-sum-monoidal",
+        "sum xs = sumDirect xs",
+    );
+}
+
 /// Read the committed `DiscoveredLemmas.lean` produced by `--discover` on
 /// `example_path` (empty string if none was written). Skips (returns `None`)
 /// when `lake` is unavailable.
