@@ -1,0 +1,25 @@
+module Prop65
+    intent =
+        "TIP isaplanner prop_65: i < S(m + i)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn lt(x: Nat, y: Nat) -> Bool
+    match y
+        Nat.Z -> false
+        Nat.S(z) -> match x
+            Nat.Z -> true
+            Nat.S(x2) -> lt(x2, z)
+
+fn add(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(add(z, y))
+
+verify lt law ltSuccAdd
+    given i: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    lt(i, Nat.S(add(m, i))) => true

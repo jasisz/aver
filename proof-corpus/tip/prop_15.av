@@ -1,0 +1,32 @@
+module Prop15
+    intent =
+        "TIP isaplanner prop_15: len (ins x xs) = S (len xs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn len(xs: List<Nat>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(len(ys))
+
+fn lt(x: Nat, y: Nat) -> Bool
+    match y
+        Nat.Z -> false
+        Nat.S(z) -> match x
+            Nat.Z -> true
+            Nat.S(x2) -> lt(x2, z)
+
+fn ins(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match lt(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], ins(x, xs))
+
+verify ins law lenInsSucc
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]]
+    len(ins(x, xs)) => Nat.S(len(xs))

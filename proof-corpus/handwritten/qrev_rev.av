@@ -1,0 +1,23 @@
+module QrevRev
+    intent =
+        "TIP isaplanner: fast reverse via a cons-accumulator equals naive reverse."
+        "Probes whether the accumulator-generalization reaches a CONS-accumulator"
+        "step (List.concat([h], acc)) — not just an additive or named-fn step."
+    effects []
+
+fn rev(xs: List<Int>) -> List<Int>
+    match xs
+        [] -> []
+        [h, ..t] -> List.concat(rev(t), [h])
+
+fn qrev(xs: List<Int>, acc: List<Int>) -> List<Int>
+    match xs
+        [] -> acc
+        [h, ..t] -> qrev(t, List.concat([h], acc))
+
+fn fastRev(xs: List<Int>) -> List<Int>
+    qrev(xs, [])
+
+verify fastRev law equalsRev
+    given xs: List<Int> = [[], [1], [1, 2, 3], [3, 1, 2]]
+    fastRev(xs) => rev(xs)

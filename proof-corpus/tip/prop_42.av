@@ -1,0 +1,21 @@
+module Prop42
+    intent =
+        "TIP isaplanner prop_42: take (S n) (cons x xs) = cons x (take n xs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn take(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+verify take law takeConsShift
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given x: Int = [1, 2, 3]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    take(Nat.S(n), List.concat([x], xs)) => List.concat([x], take(n, xs))

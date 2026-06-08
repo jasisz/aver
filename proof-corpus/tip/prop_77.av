@@ -1,0 +1,44 @@
+module Prop77
+    intent =
+        "TIP isaplanner prop_77: sorted xs implies sorted (insort x xs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn le(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> le(z, x2)
+
+fn insort(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match le(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insort(x, xs))
+
+fn andB(x: Bool, y: Bool) -> Bool
+    match x
+        true -> y
+        false -> false
+
+fn sorted(x: List<Nat>) -> Bool
+    match x
+        [] -> true
+        [y, ..z] -> match z
+            [] -> true
+            [y2, ..ys] -> andB(le(y, y2), sorted(z))
+
+fn implies(a: Bool, b: Bool) -> Bool
+    match a
+        true -> b
+        false -> true
+
+verify insort law sortedInsort
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    implies(sorted(xs), sorted(insort(x, xs))) => true

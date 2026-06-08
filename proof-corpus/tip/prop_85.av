@@ -1,0 +1,55 @@
+module Prop85
+    intent =
+        "TIP isaplanner prop_85: if len xs = len ys then zip (rev xs) (rev ys) = rev (zip xs ys). Monomorphized to List<Int> with pairs as Tuple<Int, Int>."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn natEq(a: Nat, b: Nat) -> Bool
+    match a
+        Nat.Z -> match b
+            Nat.Z -> true
+            Nat.S(y) -> false
+        Nat.S(x) -> match b
+            Nat.Z -> false
+            Nat.S(y) -> natEq(x, y)
+
+fn len(xs: List<Int>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(len(ys))
+
+fn appendInt(xs: List<Int>, ys: List<Int>) -> List<Int>
+    match xs
+        [] -> ys
+        [z, ..zs] -> List.concat([z], appendInt(zs, ys))
+
+fn appendPair(xs: List<Tuple<Int, Int>>, ys: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> ys
+        [z, ..zs] -> List.concat([z], appendPair(zs, ys))
+
+fn rev(xs: List<Int>) -> List<Int>
+    match xs
+        [] -> []
+        [y, ..ys] -> appendInt(rev(ys), [y])
+
+fn revPair(xs: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> []
+        [y, ..ys] -> appendPair(revPair(ys), [y])
+
+fn zip(xs: List<Int>, ys: List<Int>) -> List<Tuple<Int, Int>>
+    match xs
+        [] -> []
+        [z, ..x2] -> match ys
+            [] -> []
+            [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
+
+verify zip law zipRev
+    given xs: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [4, 5], [4, 5, 6]]
+    when natEq(len(xs), len(ys))
+    zip(rev(xs), rev(ys)) => revPair(zip(xs, ys))

@@ -1,0 +1,20 @@
+module Prop16
+    intent =
+        "TIP isaplanner prop_16: if xs = nil then last(cons(x, xs)) = x."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn last(xs: List<Nat>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..z] -> match z
+            [] -> y
+            [x2, ..x3] -> last(z)
+
+verify last law lastSingleton
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [], []]
+    last(List.concat([x], xs)) => x

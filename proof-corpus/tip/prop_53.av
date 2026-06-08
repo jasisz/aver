@@ -1,0 +1,48 @@
+module Prop53
+    intent =
+        "TIP isaplanner prop_53: count n xs = count n (sort xs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn count(x: Nat, y: List<Nat>) -> Nat
+    match y
+        [] -> Nat.Z
+        [z, ..ys] -> match eqNat(x, z)
+            true -> Nat.S(count(x, ys))
+            false -> count(x, ys)
+
+fn leNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> leNat(z, x2)
+
+fn insort(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match leNat(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insort(x, xs))
+
+fn sort(x: List<Nat>) -> List<Nat>
+    match x
+        [] -> []
+        [y, ..xs] -> insort(y, sort(xs))
+
+verify count law countSort
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.S(Nat.Z)], [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.Z)]]
+    count(n, xs) => count(n, sort(xs))

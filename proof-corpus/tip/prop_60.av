@@ -1,0 +1,20 @@
+module Prop60
+    intent =
+        "TIP isaplanner prop_60: if ys is non-nil then last(xs ++ ys) = last(ys)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn last(xs: List<Nat>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..z] -> match z
+            [] -> y
+            [x2, ..x3] -> last(z)
+
+verify last law lastAppend
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    given ys: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)], [Nat.Z, Nat.S(Nat.Z)]]
+    last(List.concat(xs, ys)) => last(ys)

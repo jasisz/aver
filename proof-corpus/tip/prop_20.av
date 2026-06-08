@@ -1,0 +1,36 @@
+module Prop20
+    intent =
+        "TIP isaplanner prop_20: len (sort xs) = len xs for insertion sort over Nat lists."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn len(x: List<Nat>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(len(xs))
+
+fn leq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> leq(z, x2)
+
+fn insort(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match leq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insort(x, xs))
+
+fn sort(x: List<Nat>) -> List<Nat>
+    match x
+        [] -> []
+        [y, ..xs] -> insort(y, sort(xs))
+
+verify sort law sortPreservesLength
+    given xs: List<Nat> = [[], [Nat.S(Nat.Z)], [Nat.S(Nat.S(Nat.Z)), Nat.Z, Nat.S(Nat.Z)]]
+    len(sort(xs)) => len(xs)

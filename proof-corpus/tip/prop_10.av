@@ -1,0 +1,19 @@
+module Prop10
+    intent =
+        "TIP isaplanner prop_10: minus m m = Z."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn minus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> minus(z, x2)
+
+verify minus law minusSelf
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    minus(m, m) => Nat.Z

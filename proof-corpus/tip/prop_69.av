@@ -1,0 +1,25 @@
+module Prop69
+    intent =
+        "TIP isaplanner prop_69: n <= m + n."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn le(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> le(z, x2)
+
+fn add(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(add(z, y))
+
+verify le law leAddRight
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    le(n, add(m, n)) => true

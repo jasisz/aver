@@ -1,0 +1,43 @@
+module Prop78
+    intent =
+        "TIP isaplanner prop_78: sorted(sort(xs)) holds for all xs (insertion sort produces a sorted list)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn leq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> leq(z, x2)
+
+fn insort(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match leq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insort(x, xs))
+
+fn sort(x: List<Nat>) -> List<Nat>
+    match x
+        [] -> []
+        [y, ..xs] -> insort(y, sort(xs))
+
+fn and2(x: Bool, y: Bool) -> Bool
+    match x
+        true -> y
+        false -> false
+
+fn sorted(x: List<Nat>) -> Bool
+    match x
+        [] -> true
+        [y, ..z] -> match z
+            [] -> true
+            [y2, ..ys] -> and2(leq(y, y2), sorted(z))
+
+verify sort law sortProducesSorted
+    given xs: List<Nat> = [[], [Nat.S(Nat.Z)], [Nat.S(Nat.S(Nat.Z)), Nat.Z], [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.S(Nat.Z))]]
+    sorted(sort(xs)) => true

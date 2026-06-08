@@ -1,0 +1,26 @@
+module Prop56
+    intent =
+        "TIP isaplanner prop_56: drop n (drop m xs) = drop (n + m) xs."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn drop(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> xs
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+fn add(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(add(z, y))
+
+verify drop law dropDropAdd
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    drop(n, drop(m, xs)) => drop(add(n, m), xs)

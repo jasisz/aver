@@ -1,0 +1,36 @@
+module Prop34
+    intent =
+        "TIP isaplanner prop_34: (min a b == b) = (b <= a)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn min(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> Nat.Z
+            Nat.S(y1) -> Nat.S(min(z, y1))
+
+fn eq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eq(x2, y2)
+
+fn le(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> le(z, x2)
+
+verify eq law minEqLe
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given b: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    eq(min(a, b), b) => le(b, a)
