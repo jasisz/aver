@@ -3199,20 +3199,34 @@ fn discover_proves_words_homomorphism_when_lake_is_available() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
-/// SOUNDNESS guard: on `drain.av` the accumulator field can DECREASE
-/// (`Counter(n = acc.n - 1)`), so `0 <= (tick acc x).n` is FALSE. The engine
-/// must NEVER kernel-prove it (proved-or-dropped): no `tick`-nonneg theorem may
-/// appear in the committed lemmas.
+/// SOUNDNESS + GENERALIZATION guard: on `drain.av` the accumulator field can
+/// DECREASE (`Counter(n = acc.n - 1)`), so `0 <= (tick acc x).n` is FALSE. The
+/// engine must NEVER kernel-prove that (proved-or-dropped). But the field DOES
+/// move by a bounded delta each step (`+1`/`-1`), so the generalized bounded-
+/// step conjecturer must discover and prove the TRUE two-sided bound — proof the
+/// engine generalizes past monotone-nonneg without becoming unsound: it picks
+/// the right invariant for a decreasing accumulator, not the false one.
 #[test]
-fn discover_rejects_false_invariant_on_drain_when_lake_is_available() {
+fn discover_bounds_decreasing_accumulator_on_drain_when_lake_is_available() {
     let Some((committed, output_dir)) =
         discover_committed("examples/data/drain.av", "aver-discover-drain")
     else {
         return;
     };
+    // Soundness: the false nonneg invariant is never proved.
     assert!(
-        !committed.contains("(tick acc x).n"),
-        "UNSOUND: a false count-invariant `0 <= (tick acc x).n` was kernel-proved.\n--- DiscoveredLemmas.lean ---\n{committed}",
+        !committed.contains("0 <= (tick acc x).n"),
+        "UNSOUND: the false count-invariant `0 <= (tick acc x).n` was kernel-proved.\n--- DiscoveredLemmas.lean ---\n{committed}",
     );
+    // Generalization: the true bounded step IS proved (both sides).
+    for needle in [
+        "acc.n - 1 <= (tick acc x).n",
+        "(tick acc x).n <= acc.n + 1",
+    ] {
+        assert!(
+            committed.contains(needle),
+            "expected the bounded-step bound `{needle}` among kernel-proved lemmas.\n--- DiscoveredLemmas.lean ---\n{committed}",
+        );
+    }
     let _ = std::fs::remove_dir_all(&output_dir);
 }
