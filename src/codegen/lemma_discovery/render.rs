@@ -56,18 +56,38 @@ pub fn lean_lemma_theorem(c: &Conjecture, binders: &[Binder], name: &str) -> Opt
     let lhs = term_to_lean(&c.lhs, binders);
     let rhs = term_to_lean(&c.rhs, binders);
     let iv = &binders[induct].name;
-    let nil_simp = unfolds.join(", ");
-    let cons_simp = {
+    // Session-grade list-induction ladder (mirrors `law_auto::induction::
+    // emit_list_induction`), so a discovered candidate gets the SAME reach the
+    // user-stated-law prover has: `omega` for the linear-arithmetic residual a
+    // count/length homomorphism leaves (`1 + (m+n) = (1+m)+n`), and a `split`
+    // branch that case-splits a recursive fn's inner Bool/enum `match` (e.g.
+    // `count`'s `match eqNat n head`) which plain `simp` leaves stuck.
+    //
+    // CRUCIAL difference from the session prover: NO trailing `| sorry`.
+    // Discovery is proved-or-dropped — a `sorry` builds clean (exit 0) and would
+    // FALSELY mark a refuted candidate "proved". Omitting it means a candidate
+    // that no branch closes leaves an `unsolved goals` ERROR, `lake build`
+    // fails, and the candidate is correctly dropped. `omega`/`split`/`simp` are
+    // all sound, so a candidate that DOES close is genuinely proved.
+    let nil_defs = unfolds.join(", ");
+    let cons_defs = {
         let mut v = unfolds.clone();
-        v.push("ih".to_string());
         v.push("List.append_assoc".to_string());
         v.join(", ")
     };
+    // `simp only [..]` set for the split branch — guard the empty-`unfolds` case
+    // so we never emit a leading-comma `simp only [, …]` (a parse error).
+    let nil_split = if unfolds.is_empty() {
+        "List.cons_append".to_string()
+    } else {
+        format!("{nil_defs}, List.cons_append")
+    };
+    let cons_split = format!("{cons_defs}, List.cons_append");
     Some(format!(
         "theorem {name} {binders} : {lhs} = {rhs} := by\n  \
          induction {iv} with\n  \
-         | nil => simp [{nil_simp}]\n  \
-         | cons head tail ih => simp [{cons_simp}]\n",
+         | nil => first | (simp [{nil_defs}]; done) | (simp [{nil_defs}]; omega) | (simp only [{nil_split}]; split <;> simp_all [{nil_defs}] <;> omega)\n  \
+         | cons head tail ih => first | (simp_all [{cons_defs}]; done) | (simp_all [{cons_defs}]; omega) | (simp only [{cons_split}]; split <;> simp_all [{cons_defs}] <;> omega)\n",
         binders = binder_decls.join(" "),
     ))
 }

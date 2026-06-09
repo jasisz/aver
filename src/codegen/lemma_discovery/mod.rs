@@ -595,11 +595,27 @@ verify encode law roundtrip
         assert!(thm.contains("theorem L "), "{thm}");
         assert!(thm.contains(": List Run)"), "{thm}");
         assert!(thm.contains("decode (") && thm.contains("++"), "{thm}");
-        // Tactic: list-induction template with the decode unfold + append_assoc.
+        // Tactic: session-grade list-induction ladder (mirrors the user-stated-law
+        // prover) — the decode unfold + append_assoc, plus the `omega` and
+        // `split` branches that give discovered candidates the same reach.
         assert!(thm.contains("induction "), "{thm}");
-        assert!(thm.contains("| nil => simp [decode]"), "{thm}");
+        assert!(thm.contains("| nil => first | (simp [decode]"), "{thm}");
         assert!(thm.contains("List.append_assoc"), "{thm}");
         assert!(thm.contains("ih"), "{thm}");
+        assert!(
+            thm.contains("omega"),
+            "ladder must include the omega branch: {thm}"
+        );
+        assert!(
+            thm.contains("split <;>"),
+            "ladder must include the inner-match split branch: {thm}"
+        );
+        // Discovery is proved-or-dropped: NO `sorry` fallback (a sorry builds
+        // clean and would falsely mark a refuted candidate "proved").
+        assert!(
+            !thm.contains("sorry"),
+            "discovered-lemma tactic must never carry a sorry fallback: {thm}"
+        );
     }
 
     #[test]
