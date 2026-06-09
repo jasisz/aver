@@ -683,6 +683,80 @@ fn proof_lean_peano_lift_nat_arith_kernel_clean() {
 }
 
 #[test]
+fn proof_lean_proves_count_plus_concat_homomorphism_kernel_clean() {
+    // Induction-target selection (the generic fix behind #1): a list-
+    // homomorphism `plus (count n xs) (count n ys) = count n (xs ++ ys)` has
+    // BOTH a Nat given (`n`) and List givens. Inducting on `n` — which the old
+    // "first recursive-typed given" rule did — gets nowhere (`count` recurses
+    // on the LIST, not on `n`) and falls to `sorry`. law_auto now routes
+    // induction to the variable the VERIFIED fn structurally recurses on, so
+    // it inducts on `xs`. The cons arm then needs the inner `match eqNat n
+    // head` peeled: the `split`-based ladder branch case-splits the symbolic
+    // Bool scrutinee and closes both arms with the IH + `omega`. The result is
+    // a GENUINE universal (`#print axioms = [propext]`, `universal:true`), not
+    // a bounded `native_decide`. (TIP isaplanner prop_02.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean count-homomorphism test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-count-hom-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module CountHom\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn eqNat(x: Nat, y: Nat) -> Bool\n    match x\n        Nat.Z -> match y\n            Nat.Z -> true\n            Nat.S(z) -> false\n        Nat.S(x2) -> match y\n            Nat.Z -> false\n            Nat.S(y2) -> eqNat(x2, y2)\n\n\
+         fn count(x: Nat, y: List<Nat>) -> Nat\n    match y\n        [] -> Nat.Z\n        [z, ..ys] -> match eqNat(x, z)\n            true -> Nat.S(count(x, ys))\n            false -> count(x, ys)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn appendNat(xs: List<Nat>, ys: List<Nat>) -> List<Nat>\n    List.concat(xs, ys)\n\n\
+         verify count law countPlusConcat\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given xs: List<Nat> = [[], [Nat.Z]]\n    given ys: List<Nat> = [[], [Nat.S(Nat.Z)]]\n    plus(count(n, xs), count(n, ys)) => count(n, appendNat(xs, ys))\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-count-hom-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    // The induction must target the LIST, not the Nat given.
+    let lean = std::fs::read_to_string(out.join("CountHom.lean")).expect("read CountHom.lean");
+    assert!(
+        lean.contains("induction xs with"),
+        "count homomorphism must induct on the list given `xs` (the var `count` \
+         recurses on), not the Nat given `n`:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "count/++ homomorphism must kernel-prove as a GENUINE universal via \
+         list-induction on `xs` + the inner-match `split` (passed, 0 sorries, \
+         universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
     // SAME backend-neutral `RevOp` recognizer as the Dafny test above, but a
     // Lean renderer: `rev (rev x) = x` on List<Int> kernel-proves because the

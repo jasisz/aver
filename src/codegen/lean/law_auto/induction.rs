@@ -164,9 +164,37 @@ pub(super) fn emit_structural_induction_law(
         return None;
     }
 
-    // (a) A `given` is a user-defined recursive sum type: structural induction
+    // Route induction to the variable the VERIFIED fn actually recurses on,
+    // not merely the first recursive-typed `given`. A list-homomorphism like
+    // `plus (count n xs) (count n ys) = count n (xs ++ ys)` has BOTH a Nat
+    // given (`n`) and List givens: inducting on `n` gets nowhere — neither
+    // `count` nor the append recurses on it — and falls through to `sorry`.
+    // The fn under verification (`count`) structurally recurses on its LIST
+    // parameter, so list-induction on the list given is what makes both sides
+    // peel in lockstep (the cons IH plus `omega` for the `1 + (m+n) = (1+m)+n`
+    // residual). Generic: ask which parameter shape the verified fn recurses
+    // on and prefer the matching given, rather than hard-coding a precedence.
+    let verified_recurses_on_list = ctx
+        .fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
+        .is_some_and(|fd| {
+            crate::codegen::recursion::detect::single_list_structural_param_index(fd).is_some()
+        });
+
+    let list_target = find_list_induction_target(law);
+    let sum_target = find_induction_target(law, ctx);
+
+    // (a) Verified fn recurses on a `List<T>` and the law has a list given:
+    //     structural nil/cons induction on that list (the Lean counterpart to
+    //     Dafny's `|xs| == 0 / xs[1..]` list-given idiom, #409 Gap A). Closes
+    //     list-homomorphism universals that inducting on a co-occurring Nat
+    //     given would leave at `sorry`.
+    if verified_recurses_on_list && let Some(target_idx) = list_target {
+        return emit_list_induction(vb, law, ctx, intro_names, target_idx);
+    }
+
+    // (b) A `given` is a user-defined recursive sum type: structural induction
     //     over its variants.
-    if let Some((target_idx, _target_name, type_name)) = find_induction_target(law, ctx) {
+    if let Some((target_idx, _target_name, type_name)) = sum_target {
         let (_, variants) = find_sum_type(ctx, type_name)?;
         if has_indirect_variants(variants, type_name) {
             return None;
@@ -174,12 +202,8 @@ pub(super) fn emit_structural_induction_law(
         return emit_simple_induction(vb, law, ctx, intro_names, target_idx, type_name, variants);
     }
 
-    // (b) A `given` is a builtin `List<T>`: structural induction via Lean's
-    //     nil/cons. The Lean-side counterpart to Dafny's already-shipped
-    //     `|xs| == 0 / xs[1..]` list-given idiom (#409 Gap A) — closes
-    //     universal laws over user list-recursive fns that previously fell
-    //     through to `sorry`.
-    if let Some(target_idx) = find_list_induction_target(law) {
+    // (c) No sum-type given, but a builtin `List<T>` given is present.
+    if let Some(target_idx) = list_target {
         return emit_list_induction(vb, law, ctx, intro_names, target_idx);
     }
 
@@ -221,6 +245,17 @@ fn emit_list_induction(
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
 
+    // `simp only` set for the split fallback below. `List.cons_append`
+    // ((a::l) ++ l' = a :: (l ++ l')) lets the appended list peel a cons in
+    // lockstep with the recursing fn; guard against an empty `simp_list` so we
+    // never emit a leading-comma `simp only [, …]` (a parse error `first`
+    // could not recover from).
+    let split_set = if simp_list.is_empty() {
+        "List.cons_append".to_string()
+    } else {
+        format!("{simp_list}, List.cons_append")
+    };
+
     // Each arm closes fully or admits `sorry` — and crucially BUILDS either
     // way. `induction .. with | arm => tac` requires each arm's `tac` to close
     // its goal; a leftover goal is an `unsolved goals` ERROR at the arm (a hard
@@ -235,16 +270,30 @@ fn emit_list_induction(
     // goals; anything it can't (rle/json roundtrips, the fuel-wrapped quicksort
     // SCC) still degrades to an honest `sorry` that lake builds — never a
     // silent unsolved-goals error.
+    // The trailing `split` branch (before `sorry`) handles a recursive fn
+    // whose body matches on an inner Bool/enum — e.g. `count`'s `match
+    // eqNat(n, head)` — which leaves a STUCK `match` after `simp_all` because
+    // the scrutinee is symbolic (`n`, `head` are universally bound). `simp
+    // only [defs, List.cons_append]` unfolds the fns and peels the appended
+    // cons so both sides expose the SAME scrutinee, then `split` case-splits
+    // it (one goal per arm) and `simp_all <;> omega` discharges each with the
+    // induction hypothesis plus the linear-arith residual. This converts the
+    // count/length-homomorphism family from `sorry` to a genuine universal.
+    // Purely additive: it runs only after the two `simp_all` branches fail, so
+    // cases that already close are untouched, and `split`/`simp_all`/`omega`
+    // are all sound — an unprovable goal still degrades to the honest `sorry`.
     let proof_lines = vec![
         format!("  intro {}", intro_names.join(" ")),
         format!("  induction {} with", target_lean),
         format!(
-            "  | nil => first | (simp [{d}]; done) | (simp [{d}]; omega) | sorry",
-            d = simp_list
+            "  | nil => first | (simp [{d}]; done) | (simp [{d}]; omega) | (simp only [{s}]; split <;> simp_all [{d}] <;> omega) | sorry",
+            d = simp_list,
+            s = split_set
         ),
         format!(
-            "  | cons head tail ih => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega) | sorry",
-            d = simp_list
+            "  | cons head tail ih => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega) | (simp only [{s}]; split <;> simp_all [{d}] <;> omega) | sorry",
+            d = simp_list,
+            s = split_set
         ),
     ];
 
