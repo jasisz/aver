@@ -18,7 +18,7 @@ use crate::ast::{TypeDef, TypeVariant, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
 
 /// Lean renderer for the backend-neutral rev anti-homomorphism recognizer
-/// (`crate::codegen::dafny::lemmas::collect_rev_ops_in_law` — shared with the
+/// (`crate::codegen::proof_recognize::collect_rev_ops_in_law` — shared with the
 /// Dafny backend; despite the module path it returns source-name structs only).
 /// Produces the proved append-nil-right / associativity / rev-distribution
 /// theorems (prepended as `support_lines`) and the distribution lemma's name to
@@ -26,7 +26,7 @@ use crate::codegen::CodegenContext;
 /// `def … termination_by`, so these close kernel-clean (`#print axioms =
 /// [propext]`) — the Lean counterpart of the Dafny rev strategy, SAME recognizer.
 fn lean_rev_support(
-    ops: &[crate::codegen::dafny::lemmas::RevOp],
+    ops: &[crate::codegen::proof_recognize::RevOp],
     law_uid: &str,
 ) -> (Vec<String>, Vec<String>) {
     let mut support = Vec::new();
@@ -215,7 +215,7 @@ fn emit_list_induction(
         aver_name_to_lean(&vb.fn_name),
         aver_name_to_lean(&law.name)
     );
-    let rev_ops = crate::codegen::dafny::lemmas::collect_rev_ops_in_law(law, ctx);
+    let rev_ops = crate::codegen::proof_recognize::collect_rev_ops_in_law(law, ctx);
     let (rev_support, rev_simp) = lean_rev_support(&rev_ops, &law_uid);
     simp_defs.extend(rev_simp);
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");

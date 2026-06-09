@@ -736,66 +736,6 @@ fn fn_handles_negative_first(fd: &FnDef, pname: &str) -> bool {
     )
 }
 
-/// Collect all function names called in an expression (top-level only).
-pub(super) fn collect_called_fns(
-    expr: &Spanned<Expr>,
-    out: &mut std::collections::BTreeSet<String>,
-) {
-    match &expr.node {
-        Expr::FnCall(f, args) => {
-            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node) {
-                // Skip builtins — only user functions need fuel
-                if !name.contains('.') {
-                    out.insert(name);
-                }
-            }
-            collect_called_fns(f, out);
-            for a in args {
-                collect_called_fns(a, out);
-            }
-        }
-        Expr::BinOp(_, l, r) => {
-            collect_called_fns(l, out);
-            collect_called_fns(r, out);
-        }
-        Expr::Match { subject, arms, .. } => {
-            collect_called_fns(subject, out);
-            for arm in arms {
-                collect_called_fns(&arm.body, out);
-            }
-        }
-        Expr::ErrorProp(inner) => collect_called_fns(inner, out),
-        Expr::Constructor(_, Some(arg)) => collect_called_fns(arg, out),
-        Expr::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::List(elems) => {
-            for e in elems {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::TailCall(tc) => {
-            let TailCallData { target, args, .. } = tc.as_ref();
-            if !target.contains('.') {
-                out.insert(target.clone());
-            }
-            for a in args {
-                collect_called_fns(a, out);
-            }
-        }
-        Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
-            for e in elems {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::Attr(obj, _) => collect_called_fns(obj, out),
-        Expr::Neg(inner) => collect_called_fns(inner, out),
-        _ => {}
-    }
-}
-
 /// Get the top-level function name from a law expression like `fib(n)`.
 fn law_top_level_fn(expr: &Spanned<Expr>) -> Option<String> {
     match &expr.node {
@@ -883,22 +823,6 @@ fn count_recursive_calls_in_body(body: &FnBody, fn_name: &str) -> usize {
                 Stmt::Expr(expr) => count_recursive_calls(expr, fn_name),
             })
             .sum(),
-    }
-}
-
-pub(super) fn collect_called_fns_in_body(
-    body: &FnBody,
-    out: &mut std::collections::BTreeSet<String>,
-) {
-    match body {
-        FnBody::Block(stmts) => {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Binding(_, _, expr) => collect_called_fns(expr, out),
-                    Stmt::Expr(expr) => collect_called_fns(expr, out),
-                }
-            }
-        }
     }
 }
 
@@ -1098,8 +1022,8 @@ pub fn emit_law_samples(
             let l = emit_expr_legacy(lhs_rw, ctx, None);
             let r = emit_expr_legacy(rhs_rw, ctx, None);
             let mut callees = std::collections::BTreeSet::new();
-            collect_called_fns(lhs_rw, &mut callees);
-            collect_called_fns(rhs_rw, &mut callees);
+            crate::codegen::proof_recognize::collect_called_fns(lhs_rw, &mut callees);
+            crate::codegen::proof_recognize::collect_called_fns(rhs_rw, &mut callees);
             // Full transitive closure — 1-level was missing deep
             // SCC members (addLeft → addStep → addDigits → ...).
             // Without them, fuel attrs only land on direct callees
@@ -1126,7 +1050,10 @@ pub fn emit_law_samples(
                         .find(|fd| &fd.name == f)
                     {
                         let before = callees.len();
-                        collect_called_fns_in_body(&fd.body, &mut callees);
+                        crate::codegen::proof_recognize::collect_called_fns_in_body(
+                            &fd.body,
+                            &mut callees,
+                        );
                         if callees.len() != before {
                             changed = true;
                         }
@@ -1242,7 +1169,7 @@ pub fn transitive_opaque_closure(
                 continue;
             }
             let mut callees = std::collections::BTreeSet::new();
-            collect_called_fns_in_body(&fd.body, &mut callees);
+            crate::codegen::proof_recognize::collect_called_fns_in_body(&fd.body, &mut callees);
             let hits = callees.iter().any(|name| {
                 crate::codegen::common::fn_id_for_dotted_name(ctx, name)
                     .is_some_and(|id| result.contains(&id))
@@ -1685,13 +1612,16 @@ pub fn emit_verify_law(
     let mut lines = Vec::new();
     // Collect all functions used in the law for fuel annotations
     let mut law_fns = std::collections::BTreeSet::new();
-    collect_called_fns(&law.lhs, &mut law_fns);
-    collect_called_fns(&law.rhs, &mut law_fns);
+    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut law_fns);
+    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut law_fns);
     // Add transitive callees
     let mut transitive_fns = std::collections::BTreeSet::new();
     for f in &law_fns {
         if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-            collect_called_fns_in_body(&fd.body, &mut transitive_fns);
+            crate::codegen::proof_recognize::collect_called_fns_in_body(
+                &fd.body,
+                &mut transitive_fns,
+            );
         }
     }
     law_fns.extend(transitive_fns);
@@ -1906,11 +1836,11 @@ pub fn emit_verify_law(
         // behind a thin facade (`decodeString = String.join(decode(...))`
         // — `decode` is recursive but `decodeString` isn't).
         let mut called: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        collect_called_fns(&law.lhs, &mut called);
-        collect_called_fns(&law.rhs, &mut called);
+        crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut called);
+        crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut called);
         for f in called.clone() {
             if let Some(fd) = ctx.fn_def_by_name(&f, ctx.active_module_scope().as_deref()) {
-                collect_called_fns_in_body(&fd.body, &mut called);
+                crate::codegen::proof_recognize::collect_called_fns_in_body(&fd.body, &mut called);
             }
         }
         let any_recursive = called.iter().any(|f| is_directly_recursive(f, ctx));

@@ -13,8 +13,9 @@ pub mod lean;
 #[cfg(feature = "runtime")]
 pub mod lemma_discovery;
 pub mod program_view;
-#[cfg(feature = "runtime")]
 pub mod proof_lower;
+#[cfg(feature = "runtime")]
+pub(crate) mod proof_recognize;
 #[cfg(feature = "runtime")]
 pub mod recursion;
 #[cfg(feature = "runtime")]

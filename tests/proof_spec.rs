@@ -642,10 +642,7 @@ fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
     let summary: serde_json::Value =
         serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
     assert_eq!(
-        (
-            summary["passed"].as_bool(),
-            summary["sorries"].as_u64(),
-        ),
+        (summary["passed"].as_bool(), summary["sorries"].as_u64(),),
         (Some(true), Some(0)),
         "rev∘rev must kernel-prove on Lean via the shared recognizer (passed, \
          0 sorries on the universal).\n{}",

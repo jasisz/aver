@@ -163,10 +163,6 @@ struct AdditiveOp {
     succ_ctor: String,
 }
 
-fn short_ctor(name: &str) -> &str {
-    name.rsplit('.').next().unwrap_or(name)
-}
-
 /// Recognize the canonical additive-monoid shape (see [`AdditiveOp`]).
 /// Conservative: every structural requirement is checked, so a non-additive
 /// binary fn never matches and the lemmas built from the result are always
@@ -209,23 +205,30 @@ fn detect_additive_op(fd: &FnDef, ctx: &CodegenContext) -> Option<AdditiveOp> {
                     && crate::codegen::recursion::detect::local_name_of(&arm.body)
                         .is_some_and(|n| n == p1) =>
             {
-                base_ctor = Some(short_ctor(cname).to_string());
+                base_ctor = Some(crate::codegen::proof_recognize::short_ctor(cname).to_string());
             }
             // succ arm: `Succ(q) -> Succ(op(q, p1))`
             Pattern::Constructor(cname, binders) if binders.len() == 1 => {
                 let q = &binders[0];
                 if let Expr::FnCall(body_callee, body_args) = &arm.body.node
                     && body_args.len() == 1
-                    && dotted(body_callee).as_deref().map(short_ctor) == Some(short_ctor(cname))
+                    && dotted(body_callee)
+                        .as_deref()
+                        .map(crate::codegen::proof_recognize::short_ctor)
+                        == Some(crate::codegen::proof_recognize::short_ctor(cname))
                     && let Expr::FnCall(rec_callee, rec_args) = &body_args[0].node
-                    && dotted(rec_callee).as_deref().map(short_ctor) == Some(fd.name.as_str())
+                    && dotted(rec_callee)
+                        .as_deref()
+                        .map(crate::codegen::proof_recognize::short_ctor)
+                        == Some(fd.name.as_str())
                     && rec_args.len() == 2
                     && crate::codegen::recursion::detect::local_name_of(&rec_args[0])
                         .is_some_and(|n| n == q)
                     && crate::codegen::recursion::detect::local_name_of(&rec_args[1])
                         .is_some_and(|n| n == p1)
                 {
-                    succ_ctor = Some(short_ctor(cname).to_string());
+                    succ_ctor =
+                        Some(crate::codegen::proof_recognize::short_ctor(cname).to_string());
                 }
             }
             _ => {}
@@ -255,12 +258,12 @@ fn detect_additive_op(fd: &FnDef, ctx: &CodegenContext) -> Option<AdditiveOp> {
 /// Collect the distinct additive operators a law's two sides invoke.
 fn collect_additive_ops_in_law(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<AdditiveOp> {
     let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    super::toplevel::collect_called_fns(&law.lhs, &mut names);
-    super::toplevel::collect_called_fns(&law.rhs, &mut names);
+    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut names);
+    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut names);
     let mut transitive: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for f in &names {
         if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-            super::toplevel::collect_called_fns_in_body(&fd.body, &mut transitive);
+            crate::codegen::proof_recognize::collect_called_fns_in_body(&fd.body, &mut transitive);
         }
     }
     names.extend(transitive);
@@ -303,139 +306,16 @@ fn additive_op_lemmas(ops: &[AdditiveOp], law_uid: &str) -> (Vec<String>, Vec<St
     (defs, lifts)
 }
 
-/// Recognize a recursive left cons-append `fn A(p0, p1) = match p0 { [] -> p1;
-/// [h, ..t] -> List.concat([h], A(t, p1)) }` — the canonical `++`. Drives the
-/// rev anti-homomorphism's append-associativity / nil-right helper lemmas.
-fn is_recursive_left_append(fd: &FnDef, _ctx: &CodegenContext) -> bool {
-    if fd.params.len() != 2 {
-        return false;
-    }
-    let p0 = fd.params[0].0.as_str();
-    let p1 = fd.params[1].0.as_str();
-    let dotted = |e: &Spanned<Expr>| crate::codegen::common::expr_to_dotted_name(&e.node);
-    let ln = crate::codegen::recursion::detect::local_name_of;
-    let Some(tail) = fd.body.tail_expr() else {
-        return false;
-    };
-    let Expr::Match { subject, arms, .. } = &tail.node else {
-        return false;
-    };
-    if ln(subject) != Some(p0) || arms.len() != 2 {
-        return false;
-    }
-    let mut nil_ok = false;
-    let mut cons_ok = false;
-    for arm in arms {
-        match &arm.pattern {
-            Pattern::EmptyList => nil_ok = ln(&arm.body) == Some(p1),
-            Pattern::Cons(h, t) => {
-                if let Expr::FnCall(callee, args) = &arm.body.node
-                    && dotted(callee).as_deref() == Some("List.concat")
-                    && args.len() == 2
-                    && matches!(&args[0].node, Expr::List(es) if es.len() == 1 && ln(&es[0]) == Some(h.as_str()))
-                    && let Expr::FnCall(rc, ra) = &args[1].node
-                    && dotted(rc).as_deref().map(short_ctor) == Some(fd.name.as_str())
-                    && ra.len() == 2
-                    && ln(&ra[0]) == Some(t.as_str())
-                    && ln(&ra[1]) == Some(p1)
-                {
-                    cons_ok = true;
-                }
-            }
-            _ => {}
-        }
-    }
-    nil_ok && cons_ok
-}
-
-/// A list-reversing fold `fn R(p0) = match p0 { [] -> []; [h, ..t] ->
-/// A(R(t), [h]) }` paired with its left-append `A`. The classic anti-
-/// homomorphism: `R(A(a, b)) == A(R(b), R(a))`. This recognizer is
-/// backend-neutral (source names only) — the Lean backend consumes it too,
-/// via [`collect_rev_ops_in_law`], to render a kernel-checked proof. (TODO:
-/// relocate the recognizer to a backend-neutral module; it lives here for now.)
-pub(crate) struct RevOp {
-    pub rev: String,
-    pub append: String,
-}
-
-fn detect_rev_fn(fd: &FnDef, ctx: &CodegenContext) -> Option<RevOp> {
-    if fd.params.len() != 1 {
-        return None;
-    }
-    let p0 = fd.params[0].0.as_str();
-    let dotted = |e: &Spanned<Expr>| crate::codegen::common::expr_to_dotted_name(&e.node);
-    let ln = crate::codegen::recursion::detect::local_name_of;
-    let tail = fd.body.tail_expr()?;
-    let Expr::Match { subject, arms, .. } = &tail.node else {
-        return None;
-    };
-    if ln(subject) != Some(p0) || arms.len() != 2 {
-        return None;
-    }
-    let mut nil_ok = false;
-    let mut append_name: Option<String> = None;
-    for arm in arms {
-        match &arm.pattern {
-            Pattern::EmptyList => {
-                nil_ok = matches!(&arm.body.node, Expr::List(es) if es.is_empty())
-            }
-            Pattern::Cons(h, t) => {
-                if let Expr::FnCall(callee, args) = &arm.body.node
-                    && let Some(app) = dotted(callee)
-                    && args.len() == 2
-                    && let Expr::FnCall(rc, ra) = &args[0].node
-                    && dotted(rc).as_deref().map(short_ctor) == Some(fd.name.as_str())
-                    && ra.len() == 1
-                    && ln(&ra[0]) == Some(t.as_str())
-                    && matches!(&args[1].node, Expr::List(es) if es.len() == 1 && ln(&es[0]) == Some(h.as_str()))
-                    && ctx
-                        .fn_def_by_name(&app, ctx.active_module_scope().as_deref())
-                        .is_some_and(|afd| is_recursive_left_append(afd, ctx))
-                {
-                    append_name = Some(app);
-                }
-            }
-            _ => {}
-        }
-    }
-    if nil_ok {
-        append_name.map(|append| RevOp {
-            rev: fd.name.clone(),
-            append,
-        })
-    } else {
-        None
-    }
-}
-
-pub(crate) fn collect_rev_ops_in_law(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<RevOp> {
-    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    super::toplevel::collect_called_fns(&law.lhs, &mut names);
-    super::toplevel::collect_called_fns(&law.rhs, &mut names);
-    let mut transitive: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for f in &names {
-        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-            super::toplevel::collect_called_fns_in_body(&fd.body, &mut transitive);
-        }
-    }
-    names.extend(transitive);
-    let mut seen = std::collections::BTreeSet::new();
-    names
-        .iter()
-        .filter_map(|f| ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()))
-        .filter_map(|fd| detect_rev_fn(fd, ctx))
-        .filter(|op| seen.insert(op.rev.clone()))
-        .collect()
-}
-
 /// For each rev/append pair a law uses, emit the proved append-nil-right,
 /// append-associativity and rev-distribution (anti-homomorphism) lemmas and
 /// the `forall`-lift of the distribution fact, so a `rev(rev x) = x` /
 /// `rev(x ++ y) = rev y ++ rev x` style law closes by list induction. The
 /// per-step cons bridges (`rev(x) == A(rev(x[1..]), [x[0]])` etc.) are emitted
 /// at the induction site where the list parameter is in scope.
-fn rev_algebra_lemmas(ops: &[RevOp], law_uid: &str) -> (Vec<String>, Vec<String>) {
+fn rev_algebra_lemmas(
+    ops: &[crate::codegen::proof_recognize::RevOp],
+    law_uid: &str,
+) -> (Vec<String>, Vec<String>) {
     let mut defs = Vec::new();
     let mut lifts = Vec::new();
     for op in ops {
@@ -463,7 +343,10 @@ fn rev_algebra_lemmas(ops: &[RevOp], law_uid: &str) -> (Vec<String>, Vec<String>
 /// Per-step cons bridges for rev/append laws: unfold each `rev` at the
 /// induction variable and pin the singleton-prepend identity, so Z3 lands on
 /// the right `revDist` instantiation instead of searching (which times out).
-fn rev_step_bridges(ops: &[RevOp], list_param: &str) -> Vec<String> {
+fn rev_step_bridges(
+    ops: &[crate::codegen::proof_recognize::RevOp],
+    list_param: &str,
+) -> Vec<String> {
     let mut out = Vec::new();
     if ops.is_empty() {
         return out;
@@ -505,7 +388,7 @@ pub(super) fn algebra_lemmas(
 ) -> AlgebraLemmas {
     let additive = collect_additive_ops_in_law(law, ctx);
     let (mut defs, mut lifts) = additive_op_lemmas(&additive, law_uid);
-    let rev = collect_rev_ops_in_law(law, ctx);
+    let rev = crate::codegen::proof_recognize::collect_rev_ops_in_law(law, ctx);
     let (rev_defs, rev_lifts) = rev_algebra_lemmas(&rev, law_uid);
     defs.extend(rev_defs);
     lifts.extend(rev_lifts);
@@ -542,7 +425,7 @@ pub(super) fn list_bridges(
             c_full, list_param, c_tail
         ));
     }
-    let rev_ops = collect_rev_ops_in_law(law, ctx);
+    let rev_ops = crate::codegen::proof_recognize::collect_rev_ops_in_law(law, ctx);
     step.extend(rev_step_bridges(&rev_ops, list_param));
     ListBridges { base, step }
 }
