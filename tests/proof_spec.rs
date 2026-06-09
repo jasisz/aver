@@ -495,6 +495,166 @@ fn proof_dafny_check_verifies_entry_module_not_arbitrary_dependency() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// Write `source` to a temp `.av`, run `aver proof --backend dafny --check
+/// --check-json`, and assert the law's universal closed for real: passed,
+/// with no Dafny errors, no trusted axioms, and no dropped (sample-only)
+/// universal. Used to pin the Dafny homomorphism strategies.
+fn assert_dafny_proves_inline(source: &str, prefix: &str) {
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny proof test ({prefix}): `dafny` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir(&format!("{prefix}-src"));
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(src.join("m.av"), source).expect("write m.av");
+    let out = temp_output_dir(&format!("{prefix}-out"));
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["errors"].as_u64(),
+            summary["axioms"].as_u64(),
+            summary["omitted"].as_u64(),
+        ),
+        (Some(true), Some(0), Some(0), Some(0)),
+        "{prefix}: law must close as a real ∀ proof (passed, 0 errors, 0 \
+         axioms, 0 omitted).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_dafny_proves_concat_fold_homomorphism() {
+    // The list-induction emitter supplies cons-decomposition bridge asserts
+    // for a fold over `concat(<ind-var>, ys)` (here `count`), which is what
+    // lets Z3 close `count(n, xs ++ ys) == plus(count n xs, count n ys)` —
+    // a goal it times out on without the head/tail hint. Generic over any
+    // left-concat (builtin `List.concat` and user wrappers).
+    assert_dafny_proves_inline(
+        "module ConcatHom\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn eqNat(a: Nat, b: Nat) -> Bool\n    match a\n        Nat.Z -> match b\n            Nat.Z -> true\n            Nat.S(w) -> false\n        Nat.S(p) -> match b\n            Nat.Z -> false\n            Nat.S(q) -> eqNat(p, q)\n\n\
+         fn count(n: Nat, xs: List<Nat>) -> Nat\n    match xs\n        [] -> Nat.Z\n        [h, ..t] -> match eqNat(n, h)\n            true -> Nat.S(count(n, t))\n            false -> count(n, t)\n\n\
+         fn plus(a: Nat, b: Nat) -> Nat\n    match a\n        Nat.Z -> b\n        Nat.S(z) -> Nat.S(plus(z, b))\n\n\
+         verify count law countConcat\n    given n: Nat = [Nat.Z]\n    given xs: List<Nat> = [[Nat.Z]]\n    given ys: List<Nat> = [[Nat.Z]]\n    plus(count(n, xs), count(n, ys)) => count(n, List.concat(xs, ys))\n",
+        "aver-concat-hom",
+    );
+}
+
+#[test]
+fn proof_dafny_proves_additive_monoid_homomorphism() {
+    // When the induction variable lands in an additive op's SECOND argument
+    // (`plus(length y, length x)`), the emitter hoists the op's right-identity
+    // and succ-shift lemmas to quantified facts so Z3 closes the homomorphism.
+    // Generic over any additive op / Peano-shaped codomain; the helper lemmas
+    // are proved, not trusted.
+    assert_dafny_proves_inline(
+        "module AddLift\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn length(xs: List<Int>) -> Nat\n    match xs\n        [] -> Nat.Z\n        [h, ..t] -> Nat.S(length(t))\n\n\
+         fn plus(a: Nat, b: Nat) -> Nat\n    match a\n        Nat.Z -> b\n        Nat.S(z) -> Nat.S(plus(z, b))\n\n\
+         fn append(xs: List<Int>, ys: List<Int>) -> List<Int>\n    match xs\n        [] -> ys\n        [h, ..t] -> List.concat([h], append(t, ys))\n\n\
+         verify length law lenAppend\n    given x: List<Int> = [[1]]\n    given y: List<Int> = [[2]]\n    length(append(x, y)) => plus(length(y), length(x))\n",
+        "aver-add-lift",
+    );
+}
+
+#[test]
+fn proof_check_dafny_rejects_sample_only_universal_as_unproven() {
+    // Soundness: when the emitter cannot state a law's universal `∀`-claim it
+    // drops it to concrete samples plus a `… (universal lemma omitted)`
+    // comment. Dafny then finishes with 0 errors / exit 0 because the
+    // universal was never asserted — a false-green the errors-only and
+    // axiom-only gates both miss. `--check` must charge an omitted universal
+    // against the sorry budget (like `assume {:axiom}`) so it reports
+    // `passed:false`. The `fac = qfac · one` accumulator-equivalence is a
+    // stable instance: both fns verify cleanly (errors:0) but the universal
+    // needs an IH generalization the emitter does not do, so it is omitted.
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny omitted-universal soundness test: `dafny` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-omit-sound-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("omit.av"),
+        "module Omit\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn mult(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> plus(y, mult(z, y))\n\n\
+         fn fac(x: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.S(Nat.Z)\n        Nat.S(y) -> mult(x, fac(y))\n\n\
+         fn qfac(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> qfac(z, mult(x, y))\n\n\
+         verify fac law facQfac\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    fac(x) => qfac(x, Nat.S(Nat.Z))\n",
+    )
+    .expect("write omit.av");
+    let out = temp_output_dir("aver-omit-sound-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("omit.av"))
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    // errors:0 confirms the ONLY reason for failure is the dropped universal,
+    // so this exercises the omitted-gate specifically.
+    assert_eq!(
+        summary["errors"].as_u64(),
+        Some(0),
+        "expected a clean verify (errors:0); the omitted-universal gate, not \
+         a Dafny error, must drive the failure.\n{}",
+        format_output(&run)
+    );
+    assert!(
+        summary["omitted"].as_u64().unwrap_or(0) >= 1,
+        "expected the `facQfac` universal to be dropped to sample-only \
+         (omitted >= 1).\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(false),
+        "a sample-only law whose universal was omitted must NOT pass --check \
+         — dropping the ∀-claim is the Dafny analog of a sorry.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 #[test]
 fn proof_warns_when_dependency_module_has_verify_blocks() {
     // A `verify ... law` in a dependency module is silently dropped
@@ -2872,9 +3032,21 @@ fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
     // Both gated at the universal emit step; sample / checked_domain
     // lemmas remain (concrete inputs stay decidable). Lake build
     // succeeds; `aver verify` runtime hits every declared case.
-    assert_proof_builds(
+    //
+    // Sorry budget 2: the `detect.rs` resolved-subject fix (which lets
+    // Dafny/Z3 prove the Peano-fold homomorphism family) also admits
+    // `size` / `toSorted`'s structural recursion into the proof subset, so
+    // their two universals now EMIT a `∀ … induction t with …` proof rather
+    // than gating to sample-only. On Lean those still can't close — the
+    // `__fuel`-wrapped recursion needs a fuel-saturation lemma the auto
+    // template lacks — so the tactic chain honestly falls through to
+    // `sorry` (lake stays green; the claim is visibly unproven, not
+    // dropped). Z3 supplies that induction automatically, which is why the
+    // same two laws DO prove on the Dafny backend.
+    assert_proof_builds_with_sorry_budget(
         "examples/data/red_black_tree.av",
         "aver-proof-red-black-tree",
+        2,
     );
 }
 

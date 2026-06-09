@@ -306,7 +306,7 @@ pub(crate) fn grow_recursive_subterm_binders_from_expr(
 ) {
     match &expr.node {
         Expr::Match { subject, arms, .. } => {
-            if let Expr::Ident(subject_name) = &subject.node
+            if let Some(subject_name) = local_name_of(subject)
                 && tracked.contains(subject_name)
             {
                 for arm in arms {

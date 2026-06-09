@@ -5339,7 +5339,7 @@ fn run_proof_check(
     // law, and neither backend charges that fn-level trust to the budget.)
     let error_budget_v = error_budget.unwrap_or(0);
     let sorry_budget_v = sorry_budget.unwrap_or(0);
-    let (errors, sorries, axioms, budget, passed) = match backend {
+    let (errors, sorries, axioms, omitted, budget, passed) = match backend {
         super::cli::ProofBackend::Dafny => {
             let errors = match parse_dafny_error_count(&stdout) {
                 Some(n) => n,
@@ -5355,15 +5355,34 @@ fn run_proof_check(
                     std::process::exit(2);
                 }
             };
+            // An unproven law obligation has TWO shapes on Dafny, both of
+            // which keep `errors == 0` / exit 0 and would false-green an
+            // errors-only check: (1) `assume {:axiom} lhs == rhs;` (the law is
+            // TRUSTED), and (2) the universal lemma is DROPPED entirely and
+            // only concrete samples remain ("sample-only (universal lemma
+            // omitted)" — the law's ∀-claim is never stated, so Dafny has
+            // nothing to fail on). Both mean "this law was not proven
+            // universally"; charge BOTH against the sorry budget so a degraded
+            // law cannot pass. (Trace-projection "runtime-only" laws are a
+            // deliberate non-Dafny gate, not a coverage claim, and are excluded.)
             let axioms = count_dafny_axioms(output_dir);
+            let omitted = count_dafny_omitted_universals(output_dir);
+            let unproven = axioms + omitted;
             let passed =
-                output.status.success() && errors <= error_budget_v && axioms <= sorry_budget_v;
-            (Some(errors), None, Some(axioms), error_budget_v, passed)
+                output.status.success() && errors <= error_budget_v && unproven <= sorry_budget_v;
+            (
+                Some(errors),
+                None,
+                Some(axioms),
+                Some(omitted),
+                error_budget_v,
+                passed,
+            )
         }
         super::cli::ProofBackend::Lean => {
             let sorries = count_lean_sorries(&stderr) + count_lean_sorries(&stdout);
             let passed = output.status.success() && sorries <= sorry_budget_v;
-            (None, Some(sorries), None, sorry_budget_v, passed)
+            (None, Some(sorries), None, None, sorry_budget_v, passed)
         }
     };
 
@@ -5380,6 +5399,9 @@ fn run_proof_check(
             obj.insert("axioms".into(), a.into());
             obj.insert("axiom_budget".into(), sorry_budget_v.into());
         }
+        if let Some(o) = omitted {
+            obj.insert("omitted".into(), o.into());
+        }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
         println!(
@@ -5395,11 +5417,12 @@ fn run_proof_check(
         let (metric, budget_desc) = match backend {
             super::cli::ProofBackend::Dafny => (
                 format!(
-                    "{} errors, {} axioms",
+                    "{} errors, {} axioms, {} omitted",
                     errors.unwrap_or(0),
-                    axioms.unwrap_or(0)
+                    axioms.unwrap_or(0),
+                    omitted.unwrap_or(0)
                 ),
-                format!("errors ≤ {error_budget_v}, axioms ≤ {sorry_budget_v}"),
+                format!("errors ≤ {error_budget_v}, axioms+omitted ≤ {sorry_budget_v}"),
             ),
             super::cli::ProofBackend::Lean => (
                 format!("{} sorries", sorries.unwrap_or(0)),
@@ -5464,6 +5487,32 @@ fn count_dafny_axioms(dir: &str) -> usize {
                 && let Ok(contents) = std::fs::read_to_string(entry.path())
             {
                 total += contents.matches("assume {:axiom}").count();
+            }
+        }
+    }
+    total
+}
+
+/// Count laws whose universal `∀` lemma was DROPPED to sample-only across
+/// the emitted `.dfy` files in `dir`. When the emitter cannot express a
+/// law's universal claim (e.g. it calls a recursive fn still outside the
+/// proof subset) it emits concrete sample assertions plus a
+/// `…, sample-only (universal lemma omitted)` comment and NO `∀`-lemma.
+/// Dafny then verifies with 0 errors / exit 0 because the universal claim
+/// was never stated — a false-green the errors-only and axiom-only checks
+/// both miss. These are unproven law obligations exactly like
+/// `assume {:axiom}`, so `--check` charges them against the sorry budget
+/// too. (The deliberate trace-projection `runtime-only` gate is NOT a
+/// coverage claim and carries a different marker, so it is not counted.)
+fn count_dafny_omitted_universals(dir: &str) -> usize {
+    let mut total = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().ends_with(".dfy")
+                && let Ok(contents) = std::fs::read_to_string(entry.path())
+            {
+                total += contents.matches("(universal lemma omitted)").count();
             }
         }
     }
