@@ -581,6 +581,23 @@ fn proof_dafny_proves_additive_monoid_homomorphism() {
 }
 
 #[test]
+fn proof_dafny_proves_rev_antihomomorphism() {
+    // `rev (rev x) = x` needs the rev anti-homomorphism `rev(a ++ b) =
+    // rev b ++ rev a` as an auxiliary lemma. The emitter detects the
+    // rev/append fold pair, emits the proved append-nil-right /
+    // associativity / rev-distribution lemmas, hoists the distribution to a
+    // ∀-fact, and adds the per-step cons bridges. Generic over any
+    // reverse-via-left-append fold.
+    assert_dafny_proves_inline(
+        "module RevHom\n    effects []\n\n\
+         fn append(x: List<Int>, y: List<Int>) -> List<Int>\n    match x\n        [] -> y\n        [z, ..xs] -> List.concat([z], append(xs, y))\n\n\
+         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> append(rev(xs), [y])\n\n\
+         verify rev law revRev\n    given x: List<Int> = [[1, 2]]\n    rev(rev(x)) => x\n",
+        "aver-rev-antihom",
+    );
+}
+
+#[test]
 fn proof_check_dafny_rejects_sample_only_universal_as_unproven() {
     // Soundness: when the emitter cannot state a law's universal `∀`-claim it
     // drops it to concrete samples plus a `… (universal lemma omitted)`

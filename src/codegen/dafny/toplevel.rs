@@ -1087,6 +1087,187 @@ fn additive_op_lemmas(ops: &[AdditiveOp], law_uid: &str) -> (Vec<String>, Vec<St
     (defs, lifts)
 }
 
+/// Recognize a recursive left cons-append `fn A(p0, p1) = match p0 { [] -> p1;
+/// [h, ..t] -> List.concat([h], A(t, p1)) }` — the canonical `++`. Drives the
+/// rev anti-homomorphism's append-associativity / nil-right helper lemmas.
+fn is_recursive_left_append(fd: &FnDef, _ctx: &CodegenContext) -> bool {
+    if fd.params.len() != 2 {
+        return false;
+    }
+    let p0 = fd.params[0].0.as_str();
+    let p1 = fd.params[1].0.as_str();
+    let dotted = |e: &Spanned<Expr>| crate::codegen::common::expr_to_dotted_name(&e.node);
+    let ln = crate::codegen::recursion::detect::local_name_of;
+    let Some(tail) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::Match { subject, arms, .. } = &tail.node else {
+        return false;
+    };
+    if ln(subject) != Some(p0) || arms.len() != 2 {
+        return false;
+    }
+    let mut nil_ok = false;
+    let mut cons_ok = false;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::EmptyList => nil_ok = ln(&arm.body) == Some(p1),
+            Pattern::Cons(h, t) => {
+                if let Expr::FnCall(callee, args) = &arm.body.node
+                    && dotted(callee).as_deref() == Some("List.concat")
+                    && args.len() == 2
+                    && matches!(&args[0].node, Expr::List(es) if es.len() == 1 && ln(&es[0]) == Some(h.as_str()))
+                    && let Expr::FnCall(rc, ra) = &args[1].node
+                    && dotted(rc).as_deref().map(short_ctor) == Some(fd.name.as_str())
+                    && ra.len() == 2
+                    && ln(&ra[0]) == Some(t.as_str())
+                    && ln(&ra[1]) == Some(p1)
+                {
+                    cons_ok = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    nil_ok && cons_ok
+}
+
+/// A list-reversing fold `fn R(p0) = match p0 { [] -> []; [h, ..t] ->
+/// A(R(t), [h]) }` paired with its left-append `A`. The classic anti-
+/// homomorphism: `R(A(a, b)) == A(R(b), R(a))`.
+struct RevOp {
+    rev: String,
+    append: String,
+}
+
+fn detect_rev_fn(fd: &FnDef, ctx: &CodegenContext) -> Option<RevOp> {
+    if fd.params.len() != 1 {
+        return None;
+    }
+    let p0 = fd.params[0].0.as_str();
+    let dotted = |e: &Spanned<Expr>| crate::codegen::common::expr_to_dotted_name(&e.node);
+    let ln = crate::codegen::recursion::detect::local_name_of;
+    let tail = fd.body.tail_expr()?;
+    let Expr::Match { subject, arms, .. } = &tail.node else {
+        return None;
+    };
+    if ln(subject) != Some(p0) || arms.len() != 2 {
+        return None;
+    }
+    let mut nil_ok = false;
+    let mut append_name: Option<String> = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::EmptyList => {
+                nil_ok = matches!(&arm.body.node, Expr::List(es) if es.is_empty())
+            }
+            Pattern::Cons(h, t) => {
+                if let Expr::FnCall(callee, args) = &arm.body.node
+                    && let Some(app) = dotted(callee)
+                    && args.len() == 2
+                    && let Expr::FnCall(rc, ra) = &args[0].node
+                    && dotted(rc).as_deref().map(short_ctor) == Some(fd.name.as_str())
+                    && ra.len() == 1
+                    && ln(&ra[0]) == Some(t.as_str())
+                    && matches!(&args[1].node, Expr::List(es) if es.len() == 1 && ln(&es[0]) == Some(h.as_str()))
+                    && ctx
+                        .fn_def_by_name(&app, ctx.active_module_scope().as_deref())
+                        .is_some_and(|afd| is_recursive_left_append(afd, ctx))
+                {
+                    append_name = Some(app);
+                }
+            }
+            _ => {}
+        }
+    }
+    if nil_ok {
+        append_name.map(|append| RevOp {
+            rev: fd.name.clone(),
+            append,
+        })
+    } else {
+        None
+    }
+}
+
+fn collect_rev_ops_in_law(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<RevOp> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    collect_called_fns(&law.lhs, &mut names);
+    collect_called_fns(&law.rhs, &mut names);
+    let mut transitive: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for f in &names {
+        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
+            collect_called_fns_in_body(&fd.body, &mut transitive);
+        }
+    }
+    names.extend(transitive);
+    let mut seen = std::collections::BTreeSet::new();
+    names
+        .iter()
+        .filter_map(|f| ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()))
+        .filter_map(|fd| detect_rev_fn(fd, ctx))
+        .filter(|op| seen.insert(op.rev.clone()))
+        .collect()
+}
+
+/// For each rev/append pair a law uses, emit the proved append-nil-right,
+/// append-associativity and rev-distribution (anti-homomorphism) lemmas and
+/// the `forall`-lift of the distribution fact, so a `rev(rev x) = x` /
+/// `rev(x ++ y) = rev y ++ rev x` style law closes by list induction. The
+/// per-step cons bridges (`rev(x) == A(rev(x[1..]), [x[0]])` etc.) are emitted
+/// at the induction site where the list parameter is in scope.
+fn rev_algebra_lemmas(ops: &[RevOp], law_uid: &str) -> (Vec<String>, Vec<String>) {
+    let mut defs = Vec::new();
+    let mut lifts = Vec::new();
+    for op in ops {
+        let r = aver_name_to_dafny(&op.rev);
+        let a = aver_name_to_dafny(&op.append);
+        let nilr = format!("{law_uid}_{a}_nilR");
+        let assoc = format!("{law_uid}_{a}_assoc");
+        let dist = format!("{law_uid}_{r}_revDist");
+        defs.push(format!(
+            "lemma {nilr}(a: seq<int>)\n  ensures {a}(a, []) == a\n  decreases |a|\n{{\n  if |a| > 0 {{ {nilr}(a[1..]); }}\n}}"
+        ));
+        defs.push(format!(
+            "lemma {assoc}(a: seq<int>, b: seq<int>, c: seq<int>)\n  ensures {a}({a}(a, b), c) == {a}(a, {a}(b, c))\n  decreases |a|\n{{\n  if |a| > 0 {{ {assoc}(a[1..], b, c); }}\n}}"
+        ));
+        defs.push(format!(
+            "lemma {dist}(a: seq<int>, b: seq<int>)\n  ensures {r}({a}(a, b)) == {a}({r}(b), {r}(a))\n  decreases |a|\n{{\n  if |a| == 0 {{ {nilr}({r}(b)); }} else {{ {dist}(a[1..], b); {assoc}({r}(b), {r}(a[1..]), [a[0]]); }}\n}}"
+        ));
+        lifts.push(format!(
+            "  forall a: seq<int>, b: seq<int> ensures {r}({a}(a, b)) == {a}({r}(b), {r}(a)) {{ {dist}(a, b); }}"
+        ));
+    }
+    (defs, lifts)
+}
+
+/// Per-step cons bridges for rev/append laws: unfold each `rev` at the
+/// induction variable and pin the singleton-prepend identity, so Z3 lands on
+/// the right `revDist` instantiation instead of searching (which times out).
+fn rev_step_bridges(ops: &[RevOp], list_param: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if ops.is_empty() {
+        return out;
+    }
+    out.push(format!(
+        "    assert {p} == [{p}[0]] + {p}[1..];",
+        p = list_param
+    ));
+    for op in ops {
+        let r = aver_name_to_dafny(&op.rev);
+        let a = aver_name_to_dafny(&op.append);
+        out.push(format!(
+            "    assert {r}({p}) == {a}({r}({p}[1..]), [{p}[0]]);",
+            p = list_param
+        ));
+        out.push(format!(
+            "    assert {a}([{p}[0]], {p}[1..]) == {p};",
+            p = list_param
+        ));
+    }
+    out
+}
+
 /// Check if a function is directly recursive (calls itself in its own body).
 ///
 /// Stage 5 of #232: routes through `ctx.program_shape` when available
@@ -1959,7 +2140,14 @@ pub fn emit_verify_law(
     // standalone lemmas are proved by Dafny so nothing is trusted.
     let law_uid = format!("{}_{}", fn_name, law_name);
     let additive_ops = collect_additive_ops_in_law(law, ctx);
-    let (op_lemma_defs, op_lifts) = additive_op_lemmas(&additive_ops, &law_uid);
+    let (mut op_lemma_defs, mut op_lifts) = additive_op_lemmas(&additive_ops, &law_uid);
+    // Rev anti-homomorphism algebra (append-nil-right / assoc / rev-dist),
+    // hoisted the same way: proved lemmas prepended, distribution fact lifted
+    // to a ∀, plus per-step cons bridges added at the list-induction site.
+    let rev_ops = collect_rev_ops_in_law(law, ctx);
+    let (rev_defs, rev_lifts) = rev_algebra_lemmas(&rev_ops, &law_uid);
+    op_lemma_defs.extend(rev_defs);
+    op_lifts.extend(rev_lifts);
 
     let mut lines = Vec::new();
     // Collect all functions used in the law for fuel annotations
@@ -2228,6 +2416,9 @@ pub fn emit_verify_law(
                     "    assert {} == [{}[0]] + {};",
                     c_full, list_param, c_tail
                 ));
+            }
+            for bridge in rev_step_bridges(&rev_ops, &list_param) {
+                lines.push(bridge);
             }
             lines.push(format!("    {}({});", lemma_name, other_args.join(", ")));
             lines.push("  }".to_string());
