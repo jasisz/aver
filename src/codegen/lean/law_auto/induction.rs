@@ -54,26 +54,43 @@ fn lean_rev_support(
     (support, simp_extra)
 }
 
-/// Lean renderer for the backend-neutral canonical-Peano-arithmetic recognizer
-/// (`collect_nat_arith_ops_in_law`). For each user fn the law invokes that IS
-/// the standard Peano `+` / truncated `-`, emit a kernel-CHECKED bridge lemma
-/// `<fn> a b = a + b` (proved by induction over the lifted builtin `Nat`) and
-/// return its name for the law's `simp` set. Rewriting the user op to the host
-/// builtin hands the goal to Lean's `omega`, which decides linear Nat
-/// arithmetic with truncated subtraction — closing identities like `(n+m)-n=m`
-/// that structural induction alone leaves at `sorry`. The bridge is PROVED, not
-/// trusted: a misrecognized op makes the bridge proof fail (degrading to an
+/// Lean renderer for the backend-neutral canonical-Peano operation recognizers
+/// (`collect_nat_arith_ops_in_law` + `collect_nat_compare_ops_in_law`). For each
+/// user fn the law invokes that IS a standard Peano `+`/`-`/`*` or `≤`/`<`, emit
+/// a kernel-CHECKED bridge lemma (proved by induction over the lifted builtin
+/// `Nat`) and return its name for the law's `simp only` set. Rewriting the user
+/// op to the host builtin hands the goal to `omega` (for `+`/`-`/`≤`/`<`, which
+/// it decides) or to core `Nat.mul_*` lemmas (for `*`). The bridge is PROVED,
+/// not trusted: a misrecognized op makes the bridge proof fail (degrading to an
 /// honest `sorry` caught by the sorry-gate), never a false theorem. Names are
 /// law-scoped (`law_uid`) so multiple laws in one module don't collide.
-fn lean_nat_arith_support(
+///
+/// Returns `(support_theorems, simp_lemma_names)`. The simp set carries the
+/// bridge names plus, when a `*` bridge is present, the core distributivity /
+/// associativity lemmas (`*` is nonlinear so `omega` can't close it and core
+/// Lean has no `ring`; pure-commutativity laws fall through to `sorry`).
+fn lean_nat_lift_support(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     law_uid: &str,
 ) -> (Vec<String>, Vec<String>) {
-    use crate::codegen::proof_recognize::NatArithKind;
+    use crate::codegen::proof_recognize::{NatArithKind, NatCompareKind};
     let mut support = Vec::new();
     let mut simp_extra = Vec::new();
-    for op in crate::codegen::proof_recognize::collect_nat_arith_ops_in_law(law, ctx) {
+
+    let arith = crate::codegen::proof_recognize::collect_nat_arith_ops_in_law(law, ctx);
+    // The `*` bridge proof rewrites with the `+` bridge, so resolve the addition
+    // op's bridge name up front and emit Add/Sub before Mul.
+    let add_bridge_name = arith
+        .iter()
+        .find(|op| op.kind == NatArithKind::Add)
+        .map(|op| format!("{law_uid}_{}_isNatAdd", aver_name_to_lean(&op.fn_name)));
+    let mut has_mul = false;
+    let ordered = arith
+        .iter()
+        .filter(|o| o.kind != NatArithKind::Mul)
+        .chain(arith.iter().filter(|o| o.kind == NatArithKind::Mul));
+    for op in ordered {
         let f = aver_name_to_lean(&op.fn_name);
         match op.kind {
             NatArithKind::Add => {
@@ -90,8 +107,67 @@ fn lean_nat_arith_support(
                 ));
                 simp_extra.push(name);
             }
+            NatArithKind::Mul => {
+                // `times a b = a * b`; the succ case rewrites `times (k+1) b =
+                // b + times k b` (def) → `b + k*b` (ih) → `(k+1)*b` via
+                // `Nat.succ_mul` + commuting the sum. Needs the `+` bridge.
+                let Some(add_name) = &add_bridge_name else {
+                    continue;
+                };
+                let name = format!("{law_uid}_{f}_isNatMul");
+                support.push(format!(
+                    "theorem {name} : ∀ a b, {f} a b = a * b := by\n  intro a b\n  induction a with\n  | zero => first | (simp [{f}]; done) | (simp [{f}]; omega) | sorry\n  | succ k ih => first | (simp only [{f}, {add_name}, ih, Nat.succ_mul, Nat.add_comm]) | sorry"
+                ));
+                simp_extra.push(name);
+                has_mul = true;
+            }
         }
     }
+
+    for op in crate::codegen::proof_recognize::collect_nat_compare_ops_in_law(law, ctx) {
+        let f = aver_name_to_lean(&op.fn_name);
+        match op.kind {
+            // `(le a b = true) = (a ≤ b)`: a Prop-equality (propext) so `simp only`
+            // rewrites the Bool goal `le _ _ = true` straight into `_ ≤ _` for omega.
+            NatCompareKind::Le => {
+                let name = format!("{law_uid}_{f}_isNatLe");
+                support.push(format!(
+                    "theorem {name} : ∀ a b, ({f} a b = true) = (a ≤ b) := by\n  intro a b\n  induction a generalizing b with\n  | zero => first | (simp [{f}]) | sorry\n  | succ k ih => cases b with\n    | zero => first | (simp [{f}]) | sorry\n    | succ w => first | (simp [{f}, ih]) | sorry"
+                ));
+                simp_extra.push(name);
+            }
+            // `<` matches its SECOND arg first, so the bridge inducts on `b`.
+            NatCompareKind::Lt => {
+                let name = format!("{law_uid}_{f}_isNatLt");
+                support.push(format!(
+                    "theorem {name} : ∀ a b, ({f} a b = true) = (a < b) := by\n  intro a b\n  induction b generalizing a with\n  | zero => cases a <;> first | (simp [{f}]) | sorry\n  | succ k ih => cases a <;> first | (simp [{f}, ih]) | sorry"
+                ));
+                simp_extra.push(name);
+            }
+        }
+    }
+
+    // `*` is nonlinear: `omega` treats `a*b` as an opaque atom, and core Lean has
+    // no `ring`. Add the core distributivity / associativity lemmas so laws of
+    // that shape normalize to a form `omega` (over atoms) or `simp` then closes.
+    // Pure-commutativity (`a*b = b*a`) is NOT in this set (it would loop) and
+    // honestly falls through to the induction fallback / `sorry`.
+    if has_mul {
+        for lemma in [
+            "Nat.mul_add",
+            "Nat.add_mul",
+            "Nat.mul_assoc",
+            "Nat.succ_mul",
+            "Nat.mul_succ",
+            "Nat.mul_one",
+            "Nat.one_mul",
+            "Nat.mul_zero",
+            "Nat.zero_mul",
+        ] {
+            simp_extra.push(lemma.to_string());
+        }
+    }
+
     (support, simp_extra)
 }
 
@@ -359,17 +435,18 @@ fn emit_simple_induction(
     let target_lean = &intro_names[target_idx];
     let premise_names = premise_intro_names(law, intro_names);
 
-    // Canonical-Peano-arithmetic bridges: lift any `plus`/`minus` the law uses
-    // to builtin `+`/`-` so `omega` can decide the goal directly. Kept SEPARATE
-    // from the induction's `simp` set — mixing a fn's def equations with its
-    // `= a + b` bridge in one `simp` call leaves the rewrite stuck — and applied
-    // as a `simp only [bridges] <;> omega` fast path tried BEFORE induction.
+    // Canonical-Peano operation bridges: lift any `+`/`-`/`*`/`≤`/`<` the law
+    // uses to the builtin so `omega` (or core `Nat.mul_*` lemmas) decides the
+    // goal directly. Kept SEPARATE from the induction's `simp` set — mixing a
+    // fn's def equations with its `= a + b` bridge in one `simp` call leaves the
+    // rewrite stuck — and applied as a `simp only [bridges] <;> omega` fast path
+    // tried BEFORE induction.
     let law_uid = format!(
         "{}_{}",
         aver_name_to_lean(&vb.fn_name),
         aver_name_to_lean(&law.name)
     );
-    let (arith_support, arith_bridges) = lean_nat_arith_support(law, ctx, &law_uid);
+    let (arith_support, arith_bridges) = lean_nat_lift_support(law, ctx, &law_uid);
 
     let mut intro_parts = intro_names.to_vec();
     intro_parts.extend(premise_names.iter().cloned());

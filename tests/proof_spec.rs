@@ -754,6 +754,173 @@ fn proof_lean_proves_peano_arith_identity_via_nat_lift_kernel_clean() {
 }
 
 #[test]
+fn proof_lean_proves_comparison_lift_le_and_lt_kernel_clean() {
+    // Comparison half of the canonical Peano family (#3 completion): `le`/`lt`
+    // (Bool-returning `≤`/`<`) lift via a kernel-proved Prop-equality bridge
+    // `(op a b = true) = (a R b)`, turning the Bool law goal into a Prop that
+    // `omega` closes. `lt` matches its SECOND arg first (the bridge inducts on
+    // `b`). Pins the two committed corpus instances that were Lean-open before:
+    // prop_69 `n ≤ m+n` and prop_65 `i < S(m+i)`. Both must be GENUINE
+    // universals (`universal:true`, `#print axioms` free of ofReduceBool).
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean comparison-lift test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    for (file, op) in [
+        ("proof-corpus/tip/isaplanner/prop_69.av", "le (≤)"),
+        ("proof-corpus/tip/isaplanner/prop_65.av", "lt (<)"),
+    ] {
+        let out = temp_output_dir("aver-cmp-lift-out");
+        let run = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("proof")
+            .arg(file)
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(&out)
+            .arg("--check")
+            .arg("--check-json")
+            .output()
+            .expect("expected `aver proof --check --check-json` to run");
+        let json_line = run
+            .stdout
+            .split(|&b| b == b'\n')
+            .rev()
+            .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+            .unwrap_or_else(|| panic!("{op}: no JSON line:\n{}", format_output(&run)));
+        let summary: serde_json::Value = serde_json::from_str(json_line)
+            .unwrap_or_else(|e| panic!("{op}: bad JSON ({e}):\n{json_line}"));
+        assert_eq!(
+            (summary["passed"].as_bool(), summary["universal"].as_bool()),
+            (Some(true), Some(true)),
+            "{op} comparison law must kernel-prove as a GENUINE universal via the \
+             `(op a b = true) = (a R b)` bridge + omega.\n{}",
+            format_output(&run)
+        );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+}
+
+#[test]
+fn proof_lean_proves_mul_distributivity_via_nat_lift_kernel_clean() {
+    // `*` member of the family. `times` lifts to builtin `*` via a kernel-proved
+    // bridge `times a b = a * b` (whose succ case uses the `+` bridge). `*` is
+    // nonlinear — omega can't and core Lean has no `ring` — so distributivity
+    // closes via core `Nat.mul_add` after the bridges rewrite. GENUINE universal.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean mul-lift test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-mul-lift-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module MulDist\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn times(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> plus(y, times(z, y))\n\n\
+         verify times law leftDistrib\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given c: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    times(a, plus(b, c)) => plus(times(a, b), times(a, c))\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-mul-lift-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("MulDist.lean")).expect("read MulDist.lean");
+    assert!(
+        lean.contains("_times_isNatMul") && lean.contains("_plus_isNatAdd"),
+        "the `*` bridge (and its prerequisite `+` bridge) must be emitted:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "left-distributivity `a*(b+c) = a*b + a*c` must kernel-prove as a GENUINE \
+         universal via the times/plus bridges + Nat.mul_add.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_rejects_noncanonical_peano_ops_no_bridge() {
+    // NEGATIVE test (the soundness gate the reviewer flagged as missing): the
+    // arithmetic/comparison recognizers key on SHAPE, so a lookalike that is NOT
+    // the canonical operation must NOT get a bridge. `addTwo` adds TWO per step
+    // (`2a+b`, not `a+b`); `weirdCmp` ignores its second arg (not `≤`/`<`).
+    // Neither is a canonical Peano op, so NO `_isNat{Add,Sub,Mul,Le,Lt}` bridge
+    // may be emitted — if one were, its kernel proof would be a false claim.
+    // (The bridge is also kernel-checked, so even a hypothetical misfire could
+    // not mint a theorem; this pins the recognizer's conservativeness directly.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean negative-recognizer test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-noncanon-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module NonCanon\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn addTwo(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(Nat.S(addTwo(z, y)))\n\n\
+         fn weirdCmp(x: Nat, y: Nat) -> Bool\n    match x\n        Nat.Z -> true\n        Nat.S(z) -> weirdCmp(z, y)\n\n\
+         verify addTwo law selfEq\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    addTwo(a, b) => addTwo(a, b)\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-noncanon-out");
+    let _ = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    let lean = std::fs::read_to_string(out.join("NonCanon.lean")).expect("read NonCanon.lean");
+    for marker in [
+        "_isNatAdd",
+        "_isNatSub",
+        "_isNatMul",
+        "_isNatLe",
+        "_isNatLt",
+    ] {
+        assert!(
+            !lean.contains(marker),
+            "a non-canonical op must NOT get the `{marker}` bridge (recognizer must \
+             reject lookalike shapes):\n{lean}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_proves_count_plus_concat_homomorphism_kernel_clean() {
     // Induction-target selection (the generic fix behind #1): a list-
     // homomorphism `plus (count n xs) (count n ys) = count n (xs ++ ys)` has

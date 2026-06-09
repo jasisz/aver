@@ -393,22 +393,27 @@ pub(crate) fn collect_len_folds_in_law(law: &VerifyLaw, ctx: &CodegenContext) ->
 }
 
 /// A canonical Peano arithmetic operator a proof backend can lift to the host's
-/// builtin `Nat` operation, unlocking the solver's full linear-arithmetic
-/// automation (`omega`). Shape, NOT name: a binary fn on a canonical Peano type
-/// `T` (returning `T`) whose body is EXACTLY the standard recursion of the named
-/// operation —
+/// builtin `Nat` operation, unlocking the solver's arithmetic automation. Shape,
+/// NOT name: a binary fn on a canonical Peano type `T` (returning `T`) whose body
+/// is EXACTLY the standard recursion of the named operation —
 ///   Add: `match a { Base -> b; Succ(q) -> Succ(op(q, b)) }`            (a + b)
 ///   Sub: `match a { Base -> Base; Succ(q) -> match b {                 (truncated a - b)
 ///             Base -> a; Succ(r) -> op(q, r) } }`
-/// Builtin `Nat`'s `+`/`-` ARE these equations, so the lift is a sound
+///   Mul: `match a { Base -> Base; Succ(q) -> add(b, op(q, b)) }`       (a * b)
+///        where `add` is itself a recognized [`NatArithKind::Add`].
+/// Builtin `Nat`'s `+`/`-`/`*` ARE these equations, so the lift is a sound
 /// isomorphism. Crucially the recognizer is never trusted: a backend emits a
 /// kernel-CHECKED bridge `op a b = a + b` (proved by induction), so a
 /// misrecognition makes that bridge proof fail — it can never mint a false
 /// theorem. Conservative by construction (every structural slot is pinned).
+/// `omega` decides `+`/`-`; `*` is nonlinear (no `omega`, and core Lean has no
+/// `ring`) so only laws expressible via core `Nat.mul_*` lemmas (distributivity,
+/// associativity) close — pure commutativity needs `ring`/Mathlib and falls back.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum NatArithKind {
     Add,
     Sub,
+    Mul,
 }
 
 #[derive(Clone, Debug)]
@@ -533,7 +538,173 @@ fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind>
         }
     }
 
+    // Mul: `Base -> Base` and `Succ(q) -> add(b, op(q, b))` where `add` is itself a
+    // recognized canonical addition. `times x y = match x { Z -> Z; S z -> plus(y,
+    // times(z, y)) }`. The bridge `times a b = a * b` is proved USING the add
+    // bridge, so the renderer must emit the add bridge first.
+    if base_is_base
+        && let Some((add_fn, args)) = call_or_ctor(succ_body)
+        && args.len() == 2
+        && ln(args[0]) == Some(p1.as_str())
+        && call_or_ctor(args[1]).is_some_and(|(rc, ra)| {
+            rc == fd.name && ra.len() == 2 && ln(ra[0]) == Some(q) && ln(ra[1]) == Some(p1.as_str())
+        })
+        && ctx
+            .fn_def_by_name(&add_fn, ctx.active_module_scope().as_deref())
+            .is_some_and(|afd| {
+                afd.name != fd.name && detect_nat_arith_op(afd, ctx) == Some(NatArithKind::Add)
+            })
+    {
+        return Some(NatArithKind::Mul);
+    }
+
     None
+}
+
+/// A canonical Peano comparison operator (`≤` / `<`) — a binary fn on a canonical
+/// Peano type RETURNING `Bool`, whose body is exactly the standard comparison
+/// recursion:
+///   Le: `match a { Base -> true; Succ(q) -> match b { Base -> false; Succ(r) -> op(q, r) } }`
+///   Lt: `match b { Base -> false; Succ(q) -> match a { Base -> true; Succ(r) -> op(r, q) } }`
+/// Note `<` matches its SECOND argument first. A backend lifts `op a b = true` to
+/// the Prop `a ≤ b` / `a < b` via a kernel-proved bridge `(op a b = true) = (a R b)`,
+/// handing the goal to `omega`. Same untrusted-recognizer guarantee as
+/// [`NatArithKind`]: a misrecognition fails the bridge proof, never mints a theorem.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NatCompareKind {
+    Le,
+    Lt,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NatCompareOp {
+    pub fn_name: String,
+    pub kind: NatCompareKind,
+}
+
+/// Split a 2-arm `match` over a canonical Peano value into
+/// `(base_arm_body, succ_binder, succ_arm_body)`. `None` if the arms are not
+/// exactly one nullary base ctor + one unary succ ctor of `peano`.
+fn split_peano_match<'a>(
+    arms: &'a [crate::ast::MatchArm],
+    peano: &PeanoType,
+) -> Option<(&'a Spanned<Expr>, &'a str, &'a Spanned<Expr>)> {
+    if arms.len() != 2 {
+        return None;
+    }
+    let mut base: Option<&Spanned<Expr>> = None;
+    let mut succ_q: Option<&str> = None;
+    let mut succ_b: Option<&Spanned<Expr>> = None;
+    for arm in arms {
+        let Pattern::Constructor(cname, binders) = &arm.pattern else {
+            return None;
+        };
+        let short = short_ctor(cname);
+        if short == peano.base_ctor && binders.is_empty() {
+            base = Some(&arm.body);
+        } else if short == peano.succ_ctor && binders.len() == 1 {
+            succ_q = Some(binders[0].as_str());
+            succ_b = Some(&arm.body);
+        } else {
+            return None;
+        }
+    }
+    Some((base?, succ_q?, succ_b?))
+}
+
+fn as_bool_lit(e: &Spanned<Expr>) -> Option<bool> {
+    match &e.node {
+        Expr::Literal(crate::ast::Literal::Bool(b)) => Some(*b),
+        _ => None,
+    }
+}
+
+/// Recognize a canonical Peano `≤` / `<` (see [`NatCompareKind`]).
+fn detect_nat_compare_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatCompareKind> {
+    if fd.params.len() != 2 || fd.return_type.trim() != "Bool" {
+        return None;
+    }
+    let (p0, t0) = &fd.params[0];
+    let (p1, t1) = &fd.params[1];
+    if t0 != t1 {
+        return None;
+    }
+    let peano = peano_type_named(ctx, t0)?;
+    let ln = crate::codegen::recursion::detect::local_name_of;
+    let tail = fd.body.tail_expr()?;
+    let Expr::Match { subject, arms, .. } = &tail.node else {
+        return None;
+    };
+    let outer_on = ln(subject)?;
+    let (base_body, q, succ_body) = split_peano_match(arms, &peano)?;
+
+    // The succ arm nests a match on the OTHER param; recursion strips one succ
+    // from each. The base-arm bool and the inner-base bool encode `≤` vs `<`.
+    let Expr::Match {
+        subject: inner_subj,
+        arms: inner_arms,
+        ..
+    } = &succ_body.node
+    else {
+        return None;
+    };
+    let inner_on = ln(inner_subj)?;
+    let (inner_base, r, inner_succ) = split_peano_match(inner_arms, &peano)?;
+    let rec_ok = |first: &str, second: &str| {
+        call_or_ctor(inner_succ).is_some_and(|(rc, ra)| {
+            rc == fd.name && ra.len() == 2 && ln(ra[0]) == Some(first) && ln(ra[1]) == Some(second)
+        })
+    };
+
+    // Le: outer on p0; `Base -> true`, inner on p1 `Base -> false`, `Succ(r) -> op(q, r)`.
+    if outer_on == p0.as_str()
+        && inner_on == p1.as_str()
+        && as_bool_lit(base_body) == Some(true)
+        && as_bool_lit(inner_base) == Some(false)
+        && rec_ok(q, r)
+    {
+        return Some(NatCompareKind::Le);
+    }
+
+    // Lt: outer on p1; `Base -> false`, inner on p0 `Base -> true`, `Succ(r) -> op(r, q)`.
+    if outer_on == p1.as_str()
+        && inner_on == p0.as_str()
+        && as_bool_lit(base_body) == Some(false)
+        && as_bool_lit(inner_base) == Some(true)
+        && rec_ok(r, q)
+    {
+        return Some(NatCompareKind::Lt);
+    }
+
+    None
+}
+
+/// Collect the distinct canonical Peano comparison operators a law invokes.
+pub(crate) fn collect_nat_compare_ops_in_law(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<NatCompareOp> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    collect_called_fns(&law.lhs, &mut names);
+    collect_called_fns(&law.rhs, &mut names);
+    let mut transitive: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for f in &names {
+        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
+            collect_called_fns_in_body(&fd.body, &mut transitive);
+        }
+    }
+    names.extend(transitive);
+    let mut seen = std::collections::BTreeSet::new();
+    names
+        .iter()
+        .filter_map(|f| ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()))
+        .filter_map(|fd| detect_nat_compare_op(fd, ctx).map(|kind| (fd, kind)))
+        .filter(|(fd, _)| seen.insert(fd.name.clone()))
+        .map(|(fd, kind)| NatCompareOp {
+            fn_name: fd.name.clone(),
+            kind,
+        })
+        .collect()
 }
 
 /// Collect the distinct canonical Peano arithmetic operators a law invokes
