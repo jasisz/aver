@@ -288,6 +288,137 @@ fn discovered_support_lines(
     out
 }
 
+/// Lean names of every pure program fn — the membership universe for
+/// orientation / scope / source-fn analysis.
+fn program_fn_lean_names(ctx: &CodegenContext) -> BTreeSet<String> {
+    ctx.modules
+        .iter()
+        .flat_map(|m| m.fn_defs.iter())
+        .chain(ctx.fn_defs.iter())
+        .filter(|fd| crate::codegen::common::is_pure_fn(fd))
+        .map(|fd| aver_name_to_lean(&fd.name))
+        .collect()
+}
+
+/// The discovery feedback loop, część A: earlier proved user `verify … law`
+/// blocks in the same file, usable as `simp` rewrite rules for THIS law.
+///
+/// Eligibility mirrors the committed-lemma planner: a sibling joins only if
+/// every program fn its statement mentions is in this law's proof cone ∪
+/// subject (keeps the simp set focused and bounds loop surface). Only blocks
+/// EARLIER in source are eligible — source order is emit order, so the
+/// referenced theorem precedes this one, and the strict ordering makes cyclic
+/// lemma use impossible by construction. Each result is a `reference`
+/// (`embed = false`): the theorem is already emitted, so only its NAME joins
+/// the simp set; the synthesized statement text drives orientation + loop
+/// analysis. Soundness rides on the same guard as everything else — if the
+/// referenced law itself only `sorry`s, this law's proof inherits `sorryAx`
+/// and the universal metric reports false.
+fn earlier_law_lemmas(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<crate::codegen::lemma_discovery::CommittedLemma> {
+    use crate::ast::{TopLevel, VerifyKind};
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let mut scope: BTreeSet<String> = cone
+        .pure_fns()
+        .iter()
+        .map(|fd| aver_name_to_lean(&fd.name))
+        .collect();
+    scope.insert(aver_name_to_lean(&vb.fn_name));
+
+    let program_index: std::collections::BTreeMap<String, String> = program_fn_lean_names(ctx)
+        .into_iter()
+        .map(|l| (l.clone(), l))
+        .collect();
+
+    let mut out = Vec::new();
+    for item in &ctx.items {
+        let TopLevel::Verify(prev) = item else {
+            continue;
+        };
+        // Stop at the consumer law itself; only earlier blocks are eligible.
+        if prev.line == vb.line && prev.fn_name == vb.fn_name {
+            break;
+        }
+        let VerifyKind::Law(prev_law) = &prev.kind else {
+            continue;
+        };
+        let Some((name, stmt)) =
+            crate::codegen::lean::toplevel::law_as_lemma_statement(prev, prev_law, ctx)
+        else {
+            continue;
+        };
+        let text = format!("theorem {name} : {stmt} := by");
+        let mentions = crate::codegen::lemma_discovery::mentioned_fns(&text, &program_index);
+        if mentions.is_empty() || !mentions.is_subset(&scope) {
+            continue;
+        }
+        out.push(crate::codegen::lemma_discovery::CommittedLemma::reference(
+            name, text,
+        ));
+    }
+    out
+}
+
+/// Fast-path `simp` set for the feedback emit: the committed pinned lemmas
+/// (`committed_names` → `ctx.discovered_lemmas`) PLUS the eligible earlier
+/// sibling laws, run together through `lemma_discovery::simp_entries` so the
+/// loop-exclusion sees the whole set (a committed Reversed rule + a sibling
+/// Forward rule that would cycle is dropped — a simp loop is an uncatchable
+/// maxHeartbeats build error). Siblings feed ONLY this fast path, never the
+/// induction-arm simp sets, so a law that already closed on its ladder keeps
+/// that ladder byte-identical as the fallback.
+fn fastpath_simp_entries(
+    ctx: &CodegenContext,
+    committed_names: &[String],
+    siblings: &[crate::codegen::lemma_discovery::CommittedLemma],
+) -> Vec<String> {
+    let program_fns = program_fn_lean_names(ctx);
+    let mut pool: Vec<&crate::codegen::lemma_discovery::CommittedLemma> = ctx
+        .discovered_lemmas
+        .iter()
+        .filter(|l| committed_names.contains(&l.name))
+        .collect();
+    pool.extend(siblings.iter());
+    if pool.is_empty() {
+        return Vec::new();
+    }
+    crate::codegen::lemma_discovery::simp_entries(&pool, &program_fns)
+}
+
+/// Program fns mentioned by the committed pins AND the sibling laws — drives
+/// the bridge scan (`lean_nat_lift_support`'s `extra_fns`) so a Peano op a
+/// homomorphism introduces (`plus` rewriting into a law that only said
+/// `length`) still gets its `= a + b` bridge for the fast path's `omega`.
+fn feedback_source_fns(
+    ctx: &CodegenContext,
+    committed_names: &[String],
+    siblings: &[crate::codegen::lemma_discovery::CommittedLemma],
+) -> BTreeSet<String> {
+    // Lean-name → SOURCE-name: the bridge collector (`collect_nat_arith_ops_
+    // for_names`) resolves source names via `fn_def_by_name`, so the projection
+    // must land on source names (not Lean names).
+    let lean_to_source: std::collections::BTreeMap<String, String> = ctx
+        .modules
+        .iter()
+        .flat_map(|m| m.fn_defs.iter())
+        .chain(ctx.fn_defs.iter())
+        .filter(|fd| crate::codegen::common::is_pure_fn(fd))
+        .map(|fd| (aver_name_to_lean(&fd.name), fd.name.clone()))
+        .collect();
+    let mut out = discovered_lemma_source_fns(ctx, committed_names);
+    for s in siblings {
+        out.extend(crate::codegen::lemma_discovery::mentioned_fns(
+            &s.text,
+            &lean_to_source,
+        ));
+    }
+    out
+}
+
 enum VariantKind {
     Leaf,
     DirectRec,
@@ -494,11 +625,14 @@ fn emit_list_induction(
     let rev_ops = crate::codegen::proof_recognize::collect_rev_ops_in_law(law, ctx);
     let (rev_support, rev_simp) = lean_rev_support(&rev_ops, &law_uid);
     simp_defs.extend(rev_simp);
-    // Discovery feedback: the simp-oriented pinned lemmas join the induction
-    // arms' simp sets as rewrite rules (e.g. a count/length homomorphism
-    // collapsing `g (a ++ b)` so the inductive hypothesis lines up). The
-    // full `discovered` set is embedded; only the oriented subset rewrites.
+    // Discovery feedback: the COMMITTED pinned lemmas (from `--discover`) join
+    // the induction arms' simp sets as rewrite rules (e.g. a count/length
+    // homomorphism collapsing `g (a ++ b)`). EARLIER sibling user laws
+    // (część A) feed ONLY the fast path below, never the arms — so a law that
+    // already closed on its ladder keeps that ladder byte-identical here.
     let discovered_simp = discovered_simp_entries(ctx, discovered);
+    let siblings = earlier_law_lemmas(vb, law, ctx);
+    let fast_simp = fastpath_simp_entries(ctx, discovered, &siblings);
     simp_defs.extend(discovered_simp.iter().cloned());
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
@@ -579,33 +713,36 @@ fn emit_list_induction(
 
     let mut proof_lines = vec![format!("  intro {}", intro_names.join(" "))];
     let mut support_lines = Vec::new();
-    if discovered.is_empty() {
+    // Feedback mode fires when any usable rewrite rule is in scope — a
+    // committed pin OR an eligible earlier sibling law (`fast_simp` carries
+    // both). With neither, the emit is byte-identical to the pre-feedback
+    // ladder.
+    if fast_simp.is_empty() {
         let (nil_arm, cons_arm) = mk_arms(None);
         proof_lines.push(format!("  induction {} with", target_lean));
         proof_lines.push(format!("  {nil_arm}"));
         proof_lines.push(format!("  {cons_arm}"));
     } else {
-        // Discovery feedback (`SimpOverLemmas`): before inducting, try closing
-        // the goal OUTRIGHT with the pinned lemmas — many laws that NEED an
-        // auxiliary homomorphism are a pure rewrite once it exists (e.g.
-        // `length (x ++ y) = plus (length y) (length x)` under the length
-        // homomorphism + the `plus = +` bridge + `omega`). Two `simp only`
-        // shapes: lemmas+bridges alone (the goal already matches the lemma),
-        // then with the law's def unfolds added (a wrapper like `appendNat`
-        // must unfold to `++` before the lemma can fire) — minus the bridged
-        // fns' own defs (def + bridge in one simp call sticks). Both paths
-        // are sound (`simp only` rewrites with proved equations, `omega`
-        // decides), so a miss just falls through to the induction ladder,
-        // which is the exact pre-feedback emit with the lemmas joined to its
-        // simp sets. Coverage can only grow.
-        let lemma_fns = discovered_lemma_source_fns(ctx, discovered);
+        // Discovery feedback: before inducting, try closing the goal OUTRIGHT
+        // with the available lemmas — many laws that NEED an auxiliary
+        // homomorphism are a pure rewrite once it exists (e.g. `length (x ++
+        // y) = plus (length y) (length x)` under the length homomorphism + the
+        // `plus = +` bridge + `omega`). Two `simp only` shapes: lemmas+bridges
+        // alone (the goal already matches a lemma), then with the law's def
+        // unfolds added (a wrapper like `appendNat` must unfold to `++` before
+        // the lemma can fire) — minus the bridged fns' own defs (def + bridge
+        // in one simp call sticks). Both paths are sound, so a miss falls
+        // through to the induction ladder; the ladder's arm simp sets carry
+        // only the COMMITTED pins (`discovered_simp`), keeping a previously-
+        // closing ladder unchanged. Coverage can only grow.
+        let lemma_fns = feedback_source_fns(ctx, discovered, &siblings);
         let (arith_support, arith_bridges, bridged_fns) =
             lean_nat_lift_support(law, ctx, &law_uid, &lemma_fns);
-        let mut fast_lemmas: Vec<String> = discovered_simp.clone();
+        let mut fast_lemmas: Vec<String> = fast_simp.clone();
         fast_lemmas.extend(arith_bridges.iter().cloned());
         let fast_unfolds: BTreeSet<String> = law_simp_defs(ctx, vb, law)
             .into_iter()
-            .chain(discovered_simp.iter().cloned())
+            .chain(fast_simp.iter().cloned())
             .chain(arith_bridges.iter().cloned())
             .filter(|n| !bridged_fns.contains(n))
             .collect();
@@ -651,9 +788,13 @@ fn emit_simple_induction(
     discovered: &[String],
 ) -> Option<AutoProof> {
     let mut simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
-    // Discovery feedback: the simp-oriented pinned lemmas join the arm simp
-    // sets (see `emit_list_induction`); empty for a plain `Induction` pin.
+    // Discovery feedback: COMMITTED pins join the arm simp sets (see
+    // `emit_list_induction`); EARLIER sibling laws (część A) feed only the
+    // fast path. Empty `fast_simp` (no committed, no eligible sibling) keeps
+    // the emit byte-identical to the pre-feedback ladder.
     let discovered_simp = discovered_simp_entries(ctx, discovered);
+    let siblings = earlier_law_lemmas(vb, law, ctx);
+    let fast_simp = fastpath_simp_entries(ctx, discovered, &siblings);
     simp_defs.extend(discovered_simp.iter().cloned());
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
@@ -670,7 +811,7 @@ fn emit_simple_induction(
         aver_name_to_lean(&vb.fn_name),
         aver_name_to_lean(&law.name)
     );
-    let lemma_fns = discovered_lemma_source_fns(ctx, discovered);
+    let lemma_fns = feedback_source_fns(ctx, discovered, &siblings);
     let (arith_support, arith_bridges, bridged_fns) =
         lean_nat_lift_support(law, ctx, &law_uid, &lemma_fns);
 
@@ -760,8 +901,8 @@ fn emit_simple_induction(
     }
 
     let mut proof_lines = vec![format!("  intro {}", intro_parts.join(" "))];
-    if arith_bridges.is_empty() && discovered_simp.is_empty() {
-        // No arithmetic to lift, no discovered lemmas: plain structural
+    if arith_bridges.is_empty() && fast_simp.is_empty() {
+        // No arithmetic to lift, no committed/sibling lemmas: plain structural
         // induction.
         proof_lines.push(format!("  induction {} with", target_lean));
         proof_lines.extend(arm_lines.into_iter().map(|a| format!("  {a}")));
@@ -776,17 +917,17 @@ fn emit_simple_induction(
         // (and a second def-unfolding variant is tried — see
         // `emit_list_induction`); the bridged fns' own defs stay out of the
         // `simp only` calls (def + bridge in one call sticks).
-        let mut fast_lemmas: Vec<String> = discovered_simp.clone();
+        let mut fast_lemmas: Vec<String> = fast_simp.clone();
         fast_lemmas.extend(arith_bridges.iter().cloned());
         proof_lines.push("  first".to_string());
         proof_lines.push(format!(
             "  | (simp only [{}] <;> omega)",
             fast_lemmas.join(", ")
         ));
-        if !discovered_simp.is_empty() {
+        if !fast_simp.is_empty() {
             let fast_unfolds: BTreeSet<String> = law_simp_defs(ctx, vb, law)
                 .into_iter()
-                .chain(discovered_simp.iter().cloned())
+                .chain(fast_simp.iter().cloned())
                 .chain(arith_bridges.iter().cloned())
                 .filter(|n| !bridged_fns.contains(n))
                 .collect();

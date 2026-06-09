@@ -3558,20 +3558,28 @@ fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
     // lemmas remain (concrete inputs stay decidable). Lake build
     // succeeds; `aver verify` runtime hits every declared case.
     //
-    // Sorry budget 2: the `detect.rs` resolved-subject fix (which lets
+    // Sorry budget 1 (was 2): the `detect.rs` resolved-subject fix (which lets
     // Dafny/Z3 prove the Peano-fold homomorphism family) also admits
     // `size` / `toSorted`'s structural recursion into the proof subset, so
-    // their two universals now EMIT a `∀ … induction t with …` proof rather
-    // than gating to sample-only. On Lean those still can't close — the
+    // their two universals EMIT a `∀ … induction t with …` proof rather than
+    // gating to sample-only. On Lean those can't close on the ladder — the
     // `__fuel`-wrapped recursion needs a fuel-saturation lemma the auto
-    // template lacks — so the tactic chain honestly falls through to
-    // `sorry` (lake stays green; the claim is visibly unproven, not
-    // dropped). Z3 supplies that induction automatically, which is why the
-    // same two laws DO prove on the Dafny backend.
+    // template lacks.
+    //
+    // The drop 2→1 is the discovery feedback loop, część A: `toSorted_law_
+    // sizePreserved` now closes its TACTIC BLOCK via the fast path `simp only
+    // [size_law_equalsSortedLen] <;> omega`, referencing the earlier sibling
+    // theorem — so it no longer emits its OWN `sorry`. This is a textual-count
+    // drop only, NOT a new genuine universal: `size_law_equalsSortedLen` still
+    // `sorry`s, so the consumer inherits `sorryAx` and the `universal` metric
+    // correctly stays false for both (verified via `#print axioms`). The
+    // honest coverage number is unchanged; only the weaker sorry-count metric
+    // moved. Z3 supplies the missing induction automatically, which is why the
+    // same laws DO prove on the Dafny backend.
     assert_proof_builds_with_sorry_budget(
         "examples/data/red_black_tree.av",
         "aver-proof-red-black-tree",
-        2,
+        1,
     );
 }
 
@@ -4097,4 +4105,97 @@ fn discovered_lemmas_close_length_homomorphism_law_when_lake_is_available() {
 
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// THE FEEDBACK LOOP, część A — an already-proved EARLIER user `verify … law`
+/// feeds a later law's proof, with NO `--discover` step at all. The file holds
+/// two laws over `length`: `lengthHomo` (the homomorphism `length (append xs
+/// ys) = plus (length xs) (length ys)`, provable on its own by induction) and,
+/// AFTER it, `lengthAppendSwap` (`length (append xs ys) = plus (length ys)
+/// (length xs)`), which needs the homomorphism plus commutativity. The later
+/// law must close ONLY because the earlier one is in scope:
+///
+/// 1. `lengthAppendSwap` ALONE (its own file) must NOT close — it has no
+///    helper, so the universal stays `sorry`;
+/// 2. the same law AFTER `lengthHomo` in one file must close `universal:true`
+///    — the backend references the earlier theorem in the later proof's `simp`
+///    set (verified by inspecting the emitted Lean), no discovery artifact
+///    involved.
+///
+/// This is the user-written-decomposition half of the loop: a hard law closes
+/// because an earlier proved law is available as a lemma.
+#[test]
+fn earlier_user_law_feeds_later_law_proof_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping część A test: `lake` not available");
+        return;
+    }
+    let nat_helpers = "type Nat\n    Z\n    S(Nat)\n\n\
+         fn length(xs: List<Int>) -> Nat\n    match xs\n        [] -> Nat.Z\n        [y, ..ys] -> Nat.S(length(ys))\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn append(xs: List<Int>, ys: List<Int>) -> List<Int>\n    match xs\n        [] -> ys\n        [z, ..zs] -> List.concat([z], append(zs, ys))\n\n";
+    let swap_law = "verify length law lengthAppendSwap\n    given xs: List<Int> = [[], [1], [1, 2]]\n    given ys: List<Int> = [[], [3]]\n    length(append(xs, ys)) => plus(length(ys), length(xs))\n";
+    let homo_law = "verify length law lengthHomo\n    given xs: List<Int> = [[], [1], [1, 2]]\n    given ys: List<Int> = [[], [3]]\n    length(append(xs, ys)) => plus(length(xs), length(ys))\n\n";
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let universal_of = |source: &str, prefix: &str| -> (bool, String, String) {
+        let src = temp_output_dir(&format!("{prefix}-src"));
+        std::fs::create_dir_all(&src).expect("create src dir");
+        std::fs::write(src.join("m.av"), source).expect("write m.av");
+        let out = temp_output_dir(&format!("{prefix}-out"));
+        let run = Command::new(aver_bin)
+            .arg("proof")
+            .arg(src.join("m.av"))
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(&out)
+            .arg("--check")
+            .arg("--check-json")
+            .output()
+            .expect("aver proof ran");
+        let json = run
+            .stdout
+            .split(|&b| b == b'\n')
+            .rev()
+            .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+            .unwrap_or_else(|| panic!("{prefix}: no JSON line:\n{}", format_output(&run)))
+            .to_string();
+        let summary: serde_json::Value =
+            serde_json::from_str(&json).unwrap_or_else(|e| panic!("{prefix}: bad JSON ({e})"));
+        let emitted = std::fs::read_to_string(out.join("M.lean")).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&out);
+        (
+            summary["universal"].as_bool().unwrap_or(false),
+            format_output(&run),
+            emitted,
+        )
+    };
+
+    // 1. swap law alone — no helper in scope → must stay open.
+    let solo =
+        format!("module M\n    intent = \"solo\"\n    effects []\n\n{nat_helpers}{swap_law}");
+    let (solo_universal, solo_out, _) = universal_of(&solo, "aver-partA-solo");
+    assert!(
+        !solo_universal,
+        "swap law closed WITHOUT a helper — the fixture no longer exercises część A:\n{solo_out}"
+    );
+
+    // 2. helper FIRST, then swap law — must close via the earlier theorem.
+    let paired = format!(
+        "module M\n    intent = \"paired\"\n    effects []\n\n{nat_helpers}{homo_law}{swap_law}"
+    );
+    let (paired_universal, paired_out, emitted) = universal_of(&paired, "aver-partA-paired");
+    assert!(
+        paired_universal,
+        "swap law did not close with the earlier homomorphism law in scope (część A broken):\n{paired_out}"
+    );
+    // The later proof must actually reference the earlier law's theorem — proof
+    // that the close came from the sibling lemma, not some incidental tactic.
+    assert!(
+        emitted.contains("length_law_lengthAppendSwap")
+            && emitted.contains("simp only [length_law_lengthHomo"),
+        "the swap law's proof does not simp over the earlier homomorphism theorem:\n{emitted}"
+    );
 }

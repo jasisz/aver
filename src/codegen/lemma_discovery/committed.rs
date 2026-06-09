@@ -29,13 +29,39 @@ use crate::ast::{TopLevel, VerifyKind};
 use crate::codegen::proof_lower::{LawProofCone, ProofLowerInputs};
 use crate::ir::proof_ir::ProofIR;
 
-/// One kernel-proved lemma parsed back from a committed
-/// `DiscoveredLemmas.lean`: its theorem name plus the verbatim Lean text
-/// (statement AND tactic) to embed into the generated proof project.
+/// A lemma available to a law's proof: its theorem name plus Lean text
+/// (statement, and for embedded ones the tactic too). Two provenances flow
+/// through the same orientation / loop-exclusion / simp-selection machinery:
+///
+/// - **embedded** (`embed = true`) — a kernel-proved lemma parsed back from a
+///   committed `DiscoveredLemmas.lean`; its full text is written into the
+///   generated proof project (re-proved in the same `lake build`).
+/// - **reference** (`embed = false`) — an already-proved EARLIER user
+///   `verify … law` in the same file (część A): its theorem is already
+///   emitted, so only the NAME joins later laws' simp sets; `text` carries
+///   just the synthesized `theorem <name> : <lhs> = <rhs>` statement, used
+///   for orientation + loop analysis, never written out.
 #[derive(Debug, Clone)]
 pub struct CommittedLemma {
     pub name: String,
     pub text: String,
+    /// Write `text` verbatim into the proof project (`true`), or only
+    /// reference `name` in simp sets because it is already emitted (`false`).
+    pub embed: bool,
+}
+
+impl CommittedLemma {
+    /// A reference to an already-emitted theorem (an earlier user law) — name
+    /// plus synthesized statement, never written out. `text` should be a
+    /// well-formed `theorem <name> : <stmt> := by` head so the shared
+    /// orientation / loop analysis reads it like any other lemma.
+    pub fn reference(name: String, text: String) -> Self {
+        Self {
+            name,
+            text,
+            embed: false,
+        }
+    }
 }
 
 /// Parse a committed `DiscoveredLemmas.lean` into its theorem blocks. A block
@@ -61,6 +87,7 @@ pub fn parse_committed_lemmas(content: &str) -> Vec<CommittedLemma> {
             current = Some(CommittedLemma {
                 name,
                 text: line.to_string(),
+                embed: true,
             });
         } else if let Some(block) = current.as_mut() {
             block.text.push('\n');
@@ -697,6 +724,7 @@ verify count law countPlusConcat
             let lemmas = vec![CommittedLemma {
                 name: "free_floating".to_string(),
                 text: "theorem free_floating (a : Nat) : a + 0 = a := by simp".to_string(),
+                embed: true,
             }];
             assert!(plan_simp_over_lemma_pins(inputs, &ir, &lemmas).is_empty());
         });
