@@ -631,6 +631,75 @@ verify encode law roundtrip
         );
     }
 
+    /// A `count`-into-`plus` fold whose `count(n, a ++ b) = plus(count n a,
+    /// count n b)` monoid homomorphism is size ~7 — past the enumerator's
+    /// `MAX_TERM_SIZE = 5` — so only the structure-directed conjecturer can mint it.
+    const COUNT_HOMO_SRC: &str = r#"
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn count(x: Nat, y: List<Nat>) -> Nat
+    match y
+        [] -> Nat.Z
+        [z, ..ys] -> match eqNat(x, z)
+            true -> Nat.S(count(x, ys))
+            false -> count(x, ys)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+fn appendNat(xs: List<Nat>, ys: List<Nat>) -> List<Nat>
+    List.concat(xs, ys)
+
+verify count law countPlusConcat
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given xs: List<Nat> = [[], [Nat.Z]]
+    given ys: List<Nat> = [[], [Nat.S(Nat.Z)]]
+    plus(count(n, xs), count(n, ys)) => count(n, appendNat(xs, ys))
+"#;
+
+    #[test]
+    fn structural_homomorphism_conjectured_for_count_fold() {
+        // The conjecturer mints the count homomorphism (the subject fn `count`
+        // is excluded from the cone, so the conjecturer adds it back), and the
+        // VM-filter KEEPS it (it is a true homomorphism). A render like
+        // `count(x2, List.concat(x0, x1)) == plus(count(x2, x0), count(x2, x1))`.
+        let r = &discover(COUNT_HOMO_SRC)[0];
+        let found = r.conjectures.iter().any(|c| {
+            let s = c.render(&r.binders);
+            s.contains("List.concat(") && s.contains("plus(count(")
+        });
+        assert!(
+            found,
+            "count→plus homomorphism not conjectured/surviving; survivors:\n{}",
+            r.conjectures
+                .iter()
+                .map(|c| c.render(&r.binders))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        // It must also rank first — it is the highest-value target, so the
+        // bounded prove budget reaches it.
+        let ranked = rank_candidate_indices(r);
+        let top = r.conjectures[ranked[0]].render(&r.binders);
+        assert!(
+            top.contains("List.concat(") && top.contains("plus(count("),
+            "count homomorphism must rank first, got {top}"
+        );
+    }
+
     #[test]
     fn structural_conjecturer_on_real_rle() {
         // rle is a full encoder, so its counted-repeat (`repeat`) and
