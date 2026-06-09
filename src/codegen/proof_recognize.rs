@@ -391,3 +391,176 @@ pub(crate) fn collect_len_folds_in_law(law: &VerifyLaw, ctx: &CodegenContext) ->
         .filter(|fold| seen.insert(fold.name.clone()))
         .collect()
 }
+
+/// A canonical Peano arithmetic operator a proof backend can lift to the host's
+/// builtin `Nat` operation, unlocking the solver's full linear-arithmetic
+/// automation (`omega`). Shape, NOT name: a binary fn on a canonical Peano type
+/// `T` (returning `T`) whose body is EXACTLY the standard recursion of the named
+/// operation —
+///   Add: `match a { Base -> b; Succ(q) -> Succ(op(q, b)) }`            (a + b)
+///   Sub: `match a { Base -> Base; Succ(q) -> match b {                 (truncated a - b)
+///             Base -> a; Succ(r) -> op(q, r) } }`
+/// Builtin `Nat`'s `+`/`-` ARE these equations, so the lift is a sound
+/// isomorphism. Crucially the recognizer is never trusted: a backend emits a
+/// kernel-CHECKED bridge `op a b = a + b` (proved by induction), so a
+/// misrecognition makes that bridge proof fail — it can never mint a false
+/// theorem. Conservative by construction (every structural slot is pinned).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum NatArithKind {
+    Add,
+    Sub,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NatArithOp {
+    pub fn_name: String,
+    pub kind: NatArithKind,
+}
+
+/// Extract `(short ctor/callee name, arg exprs)` from either constructor spelling:
+/// `Nat.S(x)` parses as an `FnCall` to a dotted ctor name, while a bare nullary
+/// `Nat.Z` is an `Expr::Constructor(_, None)`.
+fn call_or_ctor(e: &Spanned<Expr>) -> Option<(String, Vec<&Spanned<Expr>>)> {
+    match &e.node {
+        Expr::FnCall(callee, args) => {
+            let name = crate::codegen::common::expr_to_dotted_name(&callee.node)?;
+            Some((short_ctor(&name).to_string(), args.iter().collect()))
+        }
+        Expr::Constructor(name, arg) => Some((
+            short_ctor(name).to_string(),
+            arg.iter().map(|b| b.as_ref()).collect(),
+        )),
+        // A bare nullary constructor (`Nat.Z`) is parsed as attribute access
+        // `Attr(Ident("Nat"), "Z")`, not `Expr::Constructor`, in the source AST
+        // these recognizers walk.
+        Expr::Attr(..) => crate::codegen::common::expr_to_dotted_name(&e.node)
+            .map(|name| (short_ctor(&name).to_string(), Vec::new())),
+        // A tail-position self-call (`minus(z, x2)` as the whole arm body) is
+        // rewritten by the TCO pass to `TailCall`, not `FnCall` — the canonical
+        // `minus` recurses in tail position, so this arm is load-bearing for Sub.
+        Expr::TailCall(tc) => Some((short_ctor(&tc.target).to_string(), tc.args.iter().collect())),
+        _ => None,
+    }
+}
+
+/// Recognize a canonical Peano `+` / truncated `-` (see [`NatArithKind`]).
+fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind> {
+    if fd.params.len() != 2 {
+        return None;
+    }
+    let (p0, t0) = &fd.params[0];
+    let (p1, t1) = &fd.params[1];
+    if t0 != t1 || &fd.return_type != t0 {
+        return None;
+    }
+    let peano = peano_type_named(ctx, t0)?;
+    let ln = crate::codegen::recursion::detect::local_name_of;
+    let tail = fd.body.tail_expr()?;
+    let Expr::Match { subject, arms, .. } = &tail.node else {
+        return None;
+    };
+    if ln(subject) != Some(p0.as_str()) || arms.len() != 2 {
+        return None;
+    }
+    // Split the outer match on `p0` into its base / succ(q) arms.
+    let mut base_body: Option<&Spanned<Expr>> = None;
+    let mut succ_q: Option<&String> = None;
+    let mut succ_body: Option<&Spanned<Expr>> = None;
+    for arm in arms {
+        let Pattern::Constructor(cname, binders) = &arm.pattern else {
+            return None;
+        };
+        let short = short_ctor(cname);
+        if short == peano.base_ctor && binders.is_empty() {
+            base_body = Some(&arm.body);
+        } else if short == peano.succ_ctor && binders.len() == 1 {
+            succ_q = Some(&binders[0]);
+            succ_body = Some(&arm.body);
+        } else {
+            return None;
+        }
+    }
+    let (base_body, q, succ_body) = (base_body?, succ_q?.as_str(), succ_body?);
+
+    // Add: `Base -> b` and `Succ(q) -> Succ(op(q, b))`.
+    let add_succ_ok = call_or_ctor(succ_body).is_some_and(|(c, a)| {
+        c == peano.succ_ctor
+            && a.len() == 1
+            && call_or_ctor(a[0]).is_some_and(|(rc, ra)| {
+                rc == fd.name
+                    && ra.len() == 2
+                    && ln(ra[0]) == Some(q)
+                    && ln(ra[1]) == Some(p1.as_str())
+            })
+    });
+    if ln(base_body) == Some(p1.as_str()) && add_succ_ok {
+        return Some(NatArithKind::Add);
+    }
+
+    // Sub (truncated): `Base -> Base` and `Succ(q) -> match b { Base -> a; Succ(r) -> op(q, r) }`.
+    let base_is_base =
+        call_or_ctor(base_body).is_some_and(|(c, a)| c == peano.base_ctor && a.is_empty());
+    if base_is_base
+        && let Expr::Match {
+            subject: inner_subj,
+            arms: inner_arms,
+            ..
+        } = &succ_body.node
+        && ln(inner_subj) == Some(p1.as_str())
+        && inner_arms.len() == 2
+    {
+        let mut inner_base_ok = false;
+        let mut inner_succ_ok = false;
+        for arm in inner_arms {
+            let Pattern::Constructor(cname, binders) = &arm.pattern else {
+                return None;
+            };
+            let short = short_ctor(cname);
+            if short == peano.base_ctor && binders.is_empty() {
+                // `minus(S q, Z) = S q = p0` (the whole first argument).
+                inner_base_ok = ln(&arm.body) == Some(p0.as_str());
+            } else if short == peano.succ_ctor && binders.len() == 1 {
+                let r = binders[0].as_str();
+                inner_succ_ok = call_or_ctor(&arm.body).is_some_and(|(rc, ra)| {
+                    rc == fd.name && ra.len() == 2 && ln(ra[0]) == Some(q) && ln(ra[1]) == Some(r)
+                });
+            } else {
+                return None;
+            }
+        }
+        if inner_base_ok && inner_succ_ok {
+            return Some(NatArithKind::Sub);
+        }
+    }
+
+    None
+}
+
+/// Collect the distinct canonical Peano arithmetic operators a law invokes
+/// (directly or transitively), each tagged with the host op it lifts to.
+pub(crate) fn collect_nat_arith_ops_in_law(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<NatArithOp> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    collect_called_fns(&law.lhs, &mut names);
+    collect_called_fns(&law.rhs, &mut names);
+    let mut transitive: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for f in &names {
+        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
+            collect_called_fns_in_body(&fd.body, &mut transitive);
+        }
+    }
+    names.extend(transitive);
+    let mut seen = std::collections::BTreeSet::new();
+    names
+        .iter()
+        .filter_map(|f| ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()))
+        .filter_map(|fd| detect_nat_arith_op(fd, ctx).map(|kind| (fd, kind)))
+        .filter(|(fd, _)| seen.insert(fd.name.clone()))
+        .map(|(fd, kind)| NatArithOp {
+            fn_name: fd.name.clone(),
+            kind,
+        })
+        .collect()
+}

@@ -683,6 +683,77 @@ fn proof_lean_peano_lift_nat_arith_kernel_clean() {
 }
 
 #[test]
+fn proof_lean_proves_peano_arith_identity_via_nat_lift_kernel_clean() {
+    // Layer-2 of the Peano lift (#3): recognize the canonical `plus` (left-
+    // recursive addition) and `minus` (truncated subtraction) and emit a
+    // kernel-CHECKED bridge `op a b = a + b` / `a - b` (proved by induction on
+    // the lifted builtin `Nat`). Rewriting the user ops to the host builtins
+    // hands `(n+m)-n = m` to `omega`, which decides linear Nat arithmetic with
+    // truncated subtraction — closing a pure-arithmetic identity that bare
+    // structural induction leaves at `sorry`. The bridge is PROVED not trusted:
+    // a misrecognized op fails its bridge proof (honest `sorry`), never a false
+    // theorem. Result is a GENUINE universal (`universal:true`,
+    // `#print axioms`-clean of `ofReduceBool`). (TIP isaplanner prop_07.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean peano-arith test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-peano-arith-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module PeanoArithLift\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn minus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> match y\n            Nat.Z -> x\n            Nat.S(x2) -> minus(z, x2)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         verify minus law plusMinusCancel\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    minus(plus(n, m), n) => m\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-peano-arith-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    // Both arithmetic bridges must be emitted (the `minus` truncated-subtraction
+    // recognizer reaches through the TCO'd tail self-call).
+    let lean =
+        std::fs::read_to_string(out.join("PeanoArithLift.lean")).expect("read PeanoArithLift.lean");
+    assert!(
+        lean.contains("_plus_isNatAdd") && lean.contains("_minus_isNatSub"),
+        "both the `plus`→`+` and `minus`→`-` bridges must be emitted:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "`(n+m)-n=m` must kernel-prove as a GENUINE universal via the plus/minus \
+         Nat-arithmetic bridges + omega (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_proves_count_plus_concat_homomorphism_kernel_clean() {
     // Induction-target selection (the generic fix behind #1): a list-
     // homomorphism `plus (count n xs) (count n ys) = count n (xs ++ ys)` has

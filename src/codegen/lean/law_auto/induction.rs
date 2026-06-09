@@ -54,6 +54,47 @@ fn lean_rev_support(
     (support, simp_extra)
 }
 
+/// Lean renderer for the backend-neutral canonical-Peano-arithmetic recognizer
+/// (`collect_nat_arith_ops_in_law`). For each user fn the law invokes that IS
+/// the standard Peano `+` / truncated `-`, emit a kernel-CHECKED bridge lemma
+/// `<fn> a b = a + b` (proved by induction over the lifted builtin `Nat`) and
+/// return its name for the law's `simp` set. Rewriting the user op to the host
+/// builtin hands the goal to Lean's `omega`, which decides linear Nat
+/// arithmetic with truncated subtraction — closing identities like `(n+m)-n=m`
+/// that structural induction alone leaves at `sorry`. The bridge is PROVED, not
+/// trusted: a misrecognized op makes the bridge proof fail (degrading to an
+/// honest `sorry` caught by the sorry-gate), never a false theorem. Names are
+/// law-scoped (`law_uid`) so multiple laws in one module don't collide.
+fn lean_nat_arith_support(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    law_uid: &str,
+) -> (Vec<String>, Vec<String>) {
+    use crate::codegen::proof_recognize::NatArithKind;
+    let mut support = Vec::new();
+    let mut simp_extra = Vec::new();
+    for op in crate::codegen::proof_recognize::collect_nat_arith_ops_in_law(law, ctx) {
+        let f = aver_name_to_lean(&op.fn_name);
+        match op.kind {
+            NatArithKind::Add => {
+                let name = format!("{law_uid}_{f}_isNatAdd");
+                support.push(format!(
+                    "theorem {name} : ∀ a b, {f} a b = a + b := by\n  intro a b\n  induction a with\n  | zero => first | (simp [{f}]; done) | (simp [{f}]; omega) | sorry\n  | succ k ih => first | (simp [{f}, ih]; done) | (simp [{f}, ih]; omega) | sorry"
+                ));
+                simp_extra.push(name);
+            }
+            NatArithKind::Sub => {
+                let name = format!("{law_uid}_{f}_isNatSub");
+                support.push(format!(
+                    "theorem {name} : ∀ a b, {f} a b = a - b := by\n  intro a b\n  induction a generalizing b with\n  | zero => first | (simp [{f}]; done) | (simp [{f}]; omega) | sorry\n  | succ k ih => cases b with\n    | zero => first | (simp [{f}]; done) | (simp [{f}]; omega) | sorry\n    | succ j => first | (simp [{f}, ih]; done) | (simp [{f}, ih]; omega) | sorry"
+                ));
+                simp_extra.push(name);
+            }
+        }
+    }
+    (support, simp_extra)
+}
+
 enum VariantKind {
     Leaf,
     DirectRec,
@@ -318,16 +359,35 @@ fn emit_simple_induction(
     let target_lean = &intro_names[target_idx];
     let premise_names = premise_intro_names(law, intro_names);
 
-    let mut proof_lines = Vec::new();
+    // Canonical-Peano-arithmetic bridges: lift any `plus`/`minus` the law uses
+    // to builtin `+`/`-` so `omega` can decide the goal directly. Kept SEPARATE
+    // from the induction's `simp` set — mixing a fn's def equations with its
+    // `= a + b` bridge in one `simp` call leaves the rewrite stuck — and applied
+    // as a `simp only [bridges] <;> omega` fast path tried BEFORE induction.
+    let law_uid = format!(
+        "{}_{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name)
+    );
+    let (arith_support, arith_bridges) = lean_nat_arith_support(law, ctx, &law_uid);
+
     let mut intro_parts = intro_names.to_vec();
     intro_parts.extend(premise_names.iter().cloned());
-    proof_lines.push(format!("  intro {}", intro_parts.join(" ")));
-    proof_lines.push(format!("  induction {} with", target_lean));
 
+    // Per-variant induction arms. Each closes fully or degrades to an honest
+    // `sorry` — and BUILDS either way. `induction .. with | arm => tac` requires
+    // the arm tactic to close its goal; a leftover goal is an `unsolved goals`
+    // ERROR (a hard lake-build failure), not a countable `sorry`. Gate on
+    // `first | (simp[_all] [defs]; done) | (simp[_all] [defs]; omega) | sorry`:
+    // `; done` turns a non-closing `simp` into a throw that `first` catches; the
+    // `omega` arm discharges a linear-arithmetic residual (sound — closes only
+    // true goals); anything still unproved becomes an honest building `sorry`.
+    //
     // When the induction target is a canonical Peano type lifted to builtin
-    // `Nat`, the `induction … with` arm names must be Lean's `Nat` constructors
-    // (`zero`/`succ`), not the user's lowercased `z`/`s`.
+    // `Nat`, the arm names must be Lean's `Nat` constructors (`zero`/`succ`),
+    // not the user's lowercased `z`/`s`.
     let peano = crate::codegen::proof_recognize::peano_type_named(ctx, type_name);
+    let mut arm_lines: Vec<String> = Vec::new();
     for variant in variants {
         let lean_variant = match &peano {
             Some(p) if variant.name == p.base_ctor => "zero".to_string(),
@@ -338,32 +398,19 @@ fn emit_simple_induction(
             .map(|index| format!("f{}", index))
             .collect();
 
-        // Each arm closes fully or degrades to an honest `sorry` — and
-        // BUILDS either way. `induction .. with | arm => tac` requires the
-        // arm tactic to close its goal; a leftover goal is an
-        // `unsolved goals` ERROR (a hard lake-build failure), not a
-        // countable `sorry`. Gate on `first | (simp[_all] [defs]; done) |
-        // (simp[_all] [defs]; omega) | sorry` (matching the List-induction
-        // path): `; done` turns a non-closing `simp` into a throw that `first`
-        // catches; the `omega` arm then discharges any linear-arithmetic
-        // residual (sound — closes only true goals); anything still unproved
-        // becomes an honest building sorry rather than a false-RED hard error.
         match classify_variant(variant, type_name) {
             VariantKind::Leaf => {
-                if field_binders.is_empty() {
-                    proof_lines.push(format!(
-                        "  | {v} => first | (simp [{d}]; done) | (simp [{d}]; omega) | sorry",
-                        v = lean_variant,
-                        d = simp_list
-                    ));
+                let binders = if field_binders.is_empty() {
+                    String::new()
                 } else {
-                    proof_lines.push(format!(
-                        "  | {v} {b} => first | (simp [{d}]; done) | (simp [{d}]; omega) | sorry",
-                        v = lean_variant,
-                        b = field_binders.join(" "),
-                        d = simp_list
-                    ));
-                }
+                    format!(" {}", field_binders.join(" "))
+                };
+                arm_lines.push(format!(
+                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega) | sorry",
+                    v = lean_variant,
+                    b = binders,
+                    d = simp_list
+                ));
             }
             VariantKind::DirectRec => {
                 let ih_names: Vec<String> = variant
@@ -374,8 +421,8 @@ fn emit_simple_induction(
                     .map(|(index, _)| format!("ih{}", index))
                     .collect();
 
-                proof_lines.push(format!(
-                    "  | {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega) | sorry",
+                arm_lines.push(format!(
+                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega) | sorry",
                     v = lean_variant,
                     b = field_binders.join(" "),
                     ih = ih_names.join(" "),
@@ -386,8 +433,36 @@ fn emit_simple_induction(
         }
     }
 
+    let mut proof_lines = vec![format!("  intro {}", intro_parts.join(" "))];
+    if arith_bridges.is_empty() {
+        // No arithmetic to lift: plain structural induction.
+        proof_lines.push(format!("  induction {} with", target_lean));
+        proof_lines.extend(arm_lines.into_iter().map(|a| format!("  {a}")));
+    } else {
+        // Try the arithmetic fast path first; fall back to induction. The fast
+        // path closes pure-arith identities like `(n+m)-n=m` that structural
+        // induction leaves at `sorry`; the induction fallback preserves every
+        // case the bare strategy already proved (a law that merely MENTIONS
+        // `plus`/`minus` but needs induction just fails the fast path and
+        // proceeds), so the wrapping can only ever ADD coverage.
+        proof_lines.push("  first".to_string());
+        proof_lines.push(format!(
+            "  | (simp only [{}] <;> omega)",
+            arith_bridges.join(", ")
+        ));
+        proof_lines.push(format!("  | (induction {} with", target_lean));
+        let last = arm_lines.len().saturating_sub(1);
+        for (idx, arm) in arm_lines.into_iter().enumerate() {
+            if idx == last {
+                proof_lines.push(format!("     {arm})"));
+            } else {
+                proof_lines.push(format!("     {arm}"));
+            }
+        }
+    }
+
     Some(AutoProof {
-        support_lines: Vec::new(),
+        support_lines: arith_support,
         proof_lines,
         replaces_theorem: false,
     })

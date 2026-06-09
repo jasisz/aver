@@ -5659,7 +5659,14 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             );
-            o.status.success() && !combined.contains("Lean.ofReduceBool")
+            // `ofReduceBool` = native_decide (bounded). `sorryAx` = a `sorry`
+            // reached transitively (e.g. a bridge lemma that failed to prove);
+            // the sorry-count gate above already covers the common case, but
+            // checking the axiom set too is belt-and-suspenders against a
+            // proof that depends on a sorried lemma without itself warning.
+            o.status.success()
+                && !combined.contains("Lean.ofReduceBool")
+                && !combined.contains("sorryAx")
         }
         Err(_) => false,
     }
