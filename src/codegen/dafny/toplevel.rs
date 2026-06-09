@@ -1112,9 +1112,42 @@ pub fn emit_law_samples(
             ));
         }
     } else {
+        // Mirror the universal lemma's fuel attrs onto the sample method.
+        // A `function` with `decreases` does not unfold inside a bare
+        // `assert` without fuel, so a concrete sample like
+        // `length([1, 0]) == S(length([1]))` spuriously fails to verify even
+        // though the universal law (which carries `{:fuel}`) proves — masking
+        // a genuinely-closed proof behind a sample error.
+        let mut sample_fns = std::collections::BTreeSet::new();
+        crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut sample_fns);
+        crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut sample_fns);
+        let mut transitive = std::collections::BTreeSet::new();
+        for f in &sample_fns {
+            if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
+                crate::codegen::proof_recognize::collect_called_fns_in_body(
+                    &fd.body,
+                    &mut transitive,
+                );
+            }
+        }
+        sample_fns.extend(transitive);
+        let sample_fuel: String = sample_fns
+            .iter()
+            .filter(|f| {
+                ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
+                    .is_some()
+            })
+            .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let fuel_prefix = if sample_fuel.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", sample_fuel)
+        };
         lines.push(format!(
-            "method test_{}_{}{}_samples() {{",
-            fn_name, law_name, suffix
+            "method {}test_{}_{}{}_samples() {{",
+            fuel_prefix, fn_name, law_name, suffix
         ));
         for (lhs_rw, rhs_rw) in &rewritten {
             let l = emit_expr_legacy(lhs_rw, ctx, None);

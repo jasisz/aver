@@ -213,3 +213,79 @@ pub(crate) fn collect_rev_ops_in_law(law: &VerifyLaw, ctx: &CodegenContext) -> V
         .filter(|op| seen.insert(op.rev.clone()))
         .collect()
 }
+
+/// A list-length fold `fn L(x: List<Int>) = match x { [] -> base; [h, ..t] ->
+/// Succ(L(t)) }` where `Succ` is any unary wrapper (typically a `Nat` succ
+/// ctor). For this shape the snoc law `L(s ++ [e]) == Succ(L(s))` holds
+/// structurally (one extra `Succ` per appended element), which is what a
+/// length-preservation proof needs (e.g. `length(rev x) == length x`).
+/// `succ` carries the wrapper as written (e.g. `Nat.S`) so the renderer can
+/// reproduce it verbatim.
+pub(crate) struct LenFold {
+    pub name: String,
+    pub succ: String,
+}
+
+fn detect_len_fold(fd: &FnDef) -> Option<LenFold> {
+    if fd.params.len() != 1 || fd.params[0].1.trim() != "List<Int>" {
+        return None;
+    }
+    let p0 = fd.params[0].0.as_str();
+    let dotted = |e: &Spanned<Expr>| crate::codegen::common::expr_to_dotted_name(&e.node);
+    let ln = crate::codegen::recursion::detect::local_name_of;
+    let tail = fd.body.tail_expr()?;
+    let Expr::Match { subject, arms, .. } = &tail.node else {
+        return None;
+    };
+    if ln(subject) != Some(p0) || arms.len() != 2 {
+        return None;
+    }
+    let mut has_base = false;
+    let mut succ: Option<String> = None;
+    for arm in arms {
+        match &arm.pattern {
+            Pattern::EmptyList => has_base = true,
+            Pattern::Cons(_h, t) => {
+                if let Expr::FnCall(scallee, sargs) = &arm.body.node
+                    && sargs.len() == 1
+                    && let Some(sname) = dotted(scallee)
+                    && let Expr::FnCall(rc, ra) = &sargs[0].node
+                    && dotted(rc).as_deref().map(short_ctor) == Some(fd.name.as_str())
+                    && ra.len() == 1
+                    && ln(&ra[0]) == Some(t.as_str())
+                {
+                    succ = Some(sname);
+                }
+            }
+            _ => {}
+        }
+    }
+    if has_base {
+        succ.map(|succ| LenFold {
+            name: fd.name.clone(),
+            succ,
+        })
+    } else {
+        None
+    }
+}
+
+pub(crate) fn collect_len_folds_in_law(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<LenFold> {
+    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    collect_called_fns(&law.lhs, &mut names);
+    collect_called_fns(&law.rhs, &mut names);
+    let mut transitive: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for f in &names {
+        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
+            collect_called_fns_in_body(&fd.body, &mut transitive);
+        }
+    }
+    names.extend(transitive);
+    let mut seen = std::collections::BTreeSet::new();
+    names
+        .iter()
+        .filter_map(|f| ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()))
+        .filter_map(detect_len_fold)
+        .filter(|fold| seen.insert(fold.name.clone()))
+        .collect()
+}

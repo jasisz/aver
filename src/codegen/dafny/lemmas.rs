@@ -378,9 +378,9 @@ pub(super) struct AlgebraLemmas {
     pub lifts: Vec<String>,
 }
 
-/// Run the helper-lemma strategies (additive monoid ops + rev anti-homomorphism)
-/// over a law and merge their contributions. Adding a new helper-lemma family =
-/// add its recognizer + emitter here.
+/// Run the helper-lemma strategies (additive monoid ops, rev anti-homomorphism,
+/// length-snoc) over a law and merge their contributions. Adding a new
+/// helper-lemma family means adding its recognizer plus emitter here.
 pub(super) fn algebra_lemmas(
     law: &VerifyLaw,
     ctx: &CodegenContext,
@@ -392,7 +392,37 @@ pub(super) fn algebra_lemmas(
     let (rev_defs, rev_lifts) = rev_algebra_lemmas(&rev, law_uid);
     defs.extend(rev_defs);
     lifts.extend(rev_lifts);
+    let len_folds = crate::codegen::proof_recognize::collect_len_folds_in_law(law, ctx);
+    let (len_defs, len_lifts) = len_snoc_lemmas(&len_folds, law_uid);
+    defs.extend(len_defs);
+    lifts.extend(len_lifts);
     AlgebraLemmas { defs, lifts }
+}
+
+/// For each list-length fold a law uses, emit the proved snoc lemma
+/// `L(s ++ [e]) == Succ(L(s))` and hoist it to a `forall`-fact. Closes
+/// length-preservation laws (`length(rev x) == length x`) and the snoc law
+/// itself (`length(xs ++ [y]) == S(length xs)`) by list induction — the fold's
+/// own recursion + the IH handle the rest. `succ` is reproduced verbatim from
+/// the recognizer, so it works for any unary successor wrapper.
+fn len_snoc_lemmas(
+    folds: &[crate::codegen::proof_recognize::LenFold],
+    law_uid: &str,
+) -> (Vec<String>, Vec<String>) {
+    let mut defs = Vec::new();
+    let mut lifts = Vec::new();
+    for fold in folds {
+        let l = aver_name_to_dafny(&fold.name);
+        let succ = &fold.succ;
+        let snoc = format!("{law_uid}_{l}_snoc");
+        defs.push(format!(
+            "lemma {snoc}(s: seq<int>, e: int)\n  ensures {l}(s + [e]) == {succ}({l}(s))\n  decreases |s|\n{{\n  if |s| > 0 {{ {snoc}(s[1..], e); assert s + [e] == [s[0]] + (s[1..] + [e]); }}\n}}"
+        ));
+        lifts.push(format!(
+            "  forall s: seq<int>, e: int ensures {l}(s + [e]) == {succ}({l}(s)) {{ {snoc}(s, e); }}"
+        ));
+    }
+    (defs, lifts)
 }
 
 /// Cons-decomposition asserts for the list-induction case split: `base` lands in

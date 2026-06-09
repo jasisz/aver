@@ -581,6 +581,25 @@ fn proof_dafny_proves_additive_monoid_homomorphism() {
 }
 
 #[test]
+fn proof_dafny_proves_length_snoc_with_evaluable_samples() {
+    // Two things in one: (1) the `length-snoc` strategy — for a list-length
+    // fold the emitter hoists `length(s ++ [e]) == S(length s)` to a ∀-fact,
+    // which directly closes the snoc law; (2) the sample-fuel fix — the
+    // concrete samples (`length([1, 2, 3]) == S(length([1, 2]))`) only verify
+    // because the sample method now carries the same `{:fuel length, 5}` the
+    // universal lemma gets (a `function` with `decreases` does not unfold in a
+    // bare `assert` otherwise, so the sample would spuriously fail while the
+    // universal proves). `passed && axioms:0 && omitted:0` covers both.
+    assert_dafny_proves_inline(
+        "module LenSnoc\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn length(x: List<Int>) -> Nat\n    match x\n        [] -> Nat.Z\n        [y, ..xs] -> Nat.S(length(xs))\n\n\
+         verify length law snoc\n    given xs: List<Int> = [[1, 2]]\n    given y: Int = [3]\n    length(List.concat(xs, [y])) => Nat.S(length(xs))\n",
+        "aver-len-snoc",
+    );
+}
+
+#[test]
 fn proof_dafny_proves_rev_antihomomorphism() {
     // `rev (rev x) = x` needs the rev anti-homomorphism `rev(a ++ b) =
     // rev b ++ rev a` as an auxiliary lemma. The emitter detects the
