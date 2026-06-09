@@ -12,9 +12,17 @@
 # task lowers the number, never fails. The must-prove regression set lives in the
 # compiler repo (examples/data, examples/formal + proof_spec.rs assert_eq!).
 #
-# Metric per backend: `aver proof <f> --backend <b> --check --check-json` reports
-# "passed": true. Retries once (lake/Z3 transient failures produce false "open",
-# never false "proved", so the reported numbers are lower bounds).
+# Metric per backend: `aver proof <f> --backend <b> --check --check-json`.
+#   - Dafny keys on "passed": true — its check already folds the "universal
+#     lemma omitted" / `assume {:axiom}` degradations into `passed`, so a
+#     passing Dafny check IS an honest universal closure.
+#   - Lean keys on "universal": true, NOT "passed". Lean's `passed` stays
+#     lenient (a bounded `native_decide` verify-on-domain is a legitimate but
+#     weaker check the regression corpus relies on); "universal" is the
+#     `#print axioms`-gated signal that the ∀-claim is genuinely kernel-proved
+#     (no `Lean.ofReduceBool`). Coverage must count only genuine closures.
+# Retries once (lake/Z3 transient failures produce false "open", never false
+# "proved", so the reported numbers are lower bounds).
 #
 # Usage:  ./run.sh            (uses ../target/debug/aver — build it first)
 #         AVER=/path/to/aver ./run.sh
@@ -29,13 +37,19 @@ if [ ! -x "$AVER" ]; then
 fi
 
 # proves <file> <backend> -> "proved" | "open" (retry once to absorb flakiness).
+# The honest key differs per backend: Dafny -> "passed":true, Lean ->
+# "universal":true (see the metric note above).
 proves() {
-  local f="$1" backend="$2" attempt out json
+  local f="$1" backend="$2" key attempt out json
+  case "$backend" in
+    lean) key='"universal":true' ;;
+    *)    key='"passed":true' ;;
+  esac
   for attempt in 1 2; do
     out="$(mktemp -d)"
     json="$("$AVER" proof "$f" --backend "$backend" --check --check-json -o "$out" 2>/dev/null | grep '"passed"' | tail -1)"
     rm -rf "$out"
-    printf '%s' "$json" | grep -q '"passed":true' && { echo proved; return; }
+    printf '%s' "$json" | grep -q "$key" && { echo proved; return; }
   done
   echo open
 }

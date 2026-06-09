@@ -667,9 +667,15 @@ fn proof_lean_peano_lift_nat_arith_kernel_clean() {
     let summary: serde_json::Value =
         serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
     assert_eq!(
-        (summary["passed"].as_bool(), summary["sorries"].as_u64(),),
-        (Some(true), Some(0)),
-        "Peano nat-arithmetic must kernel-prove on Lean via the lift.\n{}",
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "Peano nat-arithmetic must kernel-prove on Lean via the lift as a GENUINE \
+         universal — `--check-json` `universal:true` means `#print axioms` is \
+         `ofReduceBool`-free (not a bounded `native_decide`).\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);
@@ -721,13 +727,69 @@ fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
     let summary: serde_json::Value =
         serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
     assert_eq!(
-        (summary["passed"].as_bool(), summary["sorries"].as_u64(),),
-        (Some(true), Some(0)),
-        "rev∘rev must kernel-prove on Lean via the shared recognizer (passed, \
-         0 sorries on the universal).\n{}",
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "rev∘rev must kernel-prove on Lean via the shared recognizer as a GENUINE \
+         universal (passed, 0 sorries, `universal:true` = `#print axioms` is \
+         `ofReduceBool`-free).\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_check_lean_universal_field_distinguishes_bounded_from_genuine() {
+    // The honest-coverage gate behind `--check-json` `universal`. Lean's
+    // `passed` is deliberately lenient: a law the auto-prover cannot close by
+    // genuine induction still emits a finite domain-guarded `∀ … -> …` proved
+    // by `native_decide`, which `lake build` accepts (passed:true, 0 sorries) —
+    // a legitimate-but-weaker bounded verify-on-domain. That bounded proof
+    // depends on `Lean.ofReduceBool` (the kernel trusting the compiler's
+    // evaluation over the concrete domain), NOT the universal claim, so
+    // `#print axioms` exposes it. `universal` must report `false` there while
+    // `passed` stays `true` — the exact split the field exists for. prop_85
+    // (zip/rev over a bounded sample domain) is the committed corpus instance.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean universal-field test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-universal-bounded-out");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("proof-corpus/tip/isaplanner/prop_85.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (summary["passed"].as_bool(), summary["universal"].as_bool()),
+        (Some(true), Some(false)),
+        "a bounded `native_decide` proof must stay lenient on `passed` but report \
+         `universal:false` (it depends on `Lean.ofReduceBool`, not the ∀-claim). \
+         If `universal` flipped to true, prop_85 now closes genuinely — celebrate \
+         and re-baseline this test.\n{}",
+        format_output(&run)
+    );
     let _ = std::fs::remove_dir_all(&out);
 }
 

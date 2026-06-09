@@ -5386,6 +5386,22 @@ fn run_proof_check(
         }
     };
 
+    // Honest-coverage signal (Lean only): did the proof establish the law's
+    // UNIVERSAL `∀`-claim by genuine kernel reasoning, or only by bounded
+    // `native_decide` enumeration over the finite sample domain? `passed`
+    // stays deliberately lenient — a bounded verify-on-domain is a
+    // legitimate (if weaker) check the corpus must not regress on (e.g.
+    // `examples/refinement/email`) — so the proof-corpus runner keys on this
+    // `universal` field instead for an honest "what Aver kernel-proves"
+    // count. (Dafny already folds the analogous "universal lemma omitted"
+    // degradation into its own `passed`, so it needs no separate field.)
+    let universal: Option<bool> = match backend {
+        super::cli::ProofBackend::Lean => {
+            Some(output.status.success() && lean_universal_proof(output_dir, sorries.unwrap_or(0)))
+        }
+        super::cli::ProofBackend::Dafny => None,
+    };
+
     if check_json {
         let mut obj = serde_json::Map::new();
         obj.insert("backend".into(), backend_tag.into());
@@ -5401,6 +5417,9 @@ fn run_proof_check(
         }
         if let Some(o) = omitted {
             obj.insert("omitted".into(), o.into());
+        }
+        if let Some(u) = universal {
+            obj.insert("universal".into(), u.into());
         }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
@@ -5425,7 +5444,11 @@ fn run_proof_check(
                 format!("errors ≤ {error_budget_v}, axioms+omitted ≤ {sorry_budget_v}"),
             ),
             super::cli::ProofBackend::Lean => (
-                format!("{} sorries", sorries.unwrap_or(0)),
+                format!(
+                    "{} sorries, universal: {}",
+                    sorries.unwrap_or(0),
+                    if universal == Some(true) { "yes" } else { "no" }
+                ),
                 format!("sorries ≤ {sorry_budget_v}"),
             ),
         };
@@ -5535,6 +5558,159 @@ fn count_lean_sorries(s: &str) -> usize {
     s.lines()
         .filter(|l| l.contains("declaration uses") && l.contains("sorry"))
         .count()
+}
+
+/// Honest-coverage distinguisher for the Lean backend: did the emitted
+/// proof establish the law's UNIVERSAL `∀`-claim by genuine kernel
+/// reasoning, or only by bounded `native_decide` enumeration over the
+/// finite sample domain?
+///
+/// `passed` stays deliberately lenient — a bounded verify-on-domain is a
+/// legitimate (if weaker) check the corpus must not regress on (e.g.
+/// `examples/refinement/email`). But the proof-corpus coverage runner wants
+/// the HONEST count: only laws whose `∀`-theorem is kernel-clean.
+///
+/// The ground-truth signal is `#print axioms`: a genuine proof depends only
+/// on logical axioms (`propext` / `Classical.choice` / `Quot.sound`), while
+/// `native_decide` injects `Lean.ofReduceBool` — the kernel trusting the
+/// compiler's reduction of a `Bool` over the concrete domain, NOT the
+/// universal claim. We collect the main law theorems (`*_law_*` / `*_eq_*`,
+/// excluding the `_checked_domain` and `_sample_N` bounded cross-checks
+/// built off the same base) and run `#print axioms` on each against the
+/// freshly built environment. The law is universal iff EVERY main theorem
+/// is `ofReduceBool`-free — and at least one exists, and there are no
+/// sorries.
+///
+/// A task whose universal theorem was dropped entirely (`skip_universal`:
+/// const-RHS singleton or a fuel-bounded recursive callee — the Lean analog
+/// of Dafny's "universal lemma omitted") emits no `*_law_*` theorem, so the
+/// empty set correctly reports `false`.
+///
+/// Conservative on any failure (missing `lake`, import error, non-zero
+/// exit): returns `false`. A false "not-universal" only lowers the coverage
+/// number, never inflates it — the right bias for an honest metric.
+fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
+    use std::process::Command;
+    if sorries > 0 {
+        return false;
+    }
+    // Import every root from the lakefile so unqualified law-theorem names
+    // resolve. The law theorems live at top level in the entry root;
+    // importing all roots is robust without identifying which is the entry.
+    let roots = lean_lakefile_roots(dir);
+    if roots.is_empty() {
+        return false;
+    }
+    // Collect the main universal law theorems across the emitted sources.
+    let mut law_thms: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".lean") || name == "lakefile.lean" {
+                continue;
+            }
+            if let Ok(contents) = std::fs::read_to_string(entry.path()) {
+                for line in contents.lines() {
+                    if let Some(rest) = line.strip_prefix("theorem ") {
+                        let thm = rest
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .trim_end_matches(':');
+                        if is_main_law_theorem(thm) {
+                            law_thms.push(thm.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if law_thms.is_empty() {
+        return false;
+    }
+    law_thms.sort();
+    law_thms.dedup();
+    // Throwaway checker: print each main law theorem's axiom dependency
+    // against the already-built environment.
+    let mut src = String::new();
+    for r in &roots {
+        src.push_str("import ");
+        src.push_str(r);
+        src.push('\n');
+    }
+    for t in &law_thms {
+        src.push_str("#print axioms ");
+        src.push_str(t);
+        src.push('\n');
+    }
+    let checker = std::path::Path::new(dir).join("_aver_axcheck.lean");
+    if std::fs::write(&checker, &src).is_err() {
+        return false;
+    }
+    let out = Command::new("lake")
+        .args(["env", "lean", "_aver_axcheck.lean"])
+        .current_dir(dir)
+        .output();
+    let _ = std::fs::remove_file(&checker);
+    match out {
+        Ok(o) => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            o.status.success() && !combined.contains("Lean.ofReduceBool")
+        }
+        Err(_) => false,
+    }
+}
+
+/// True for the main universal law theorem names emitted by the Lean
+/// backend (`<fn>_law_<law>` or `<fn>_eq_<spec>`), excluding the bounded
+/// cross-checks built off the same base (`_checked_domain`, `_sample_N`)
+/// which are proved by `native_decide` by design.
+fn is_main_law_theorem(name: &str) -> bool {
+    if !(name.contains("_law_") || name.contains("_eq_")) {
+        return false;
+    }
+    if name.ends_with("_checked_domain") {
+        return false;
+    }
+    if let Some(idx) = name.rfind("_sample_") {
+        let tail = &name[idx + "_sample_".len()..];
+        if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Parse the root modules out of a generated `lakefile.lean`
+/// (`roots := #[`A, `B]`).
+fn lean_lakefile_roots(dir: &str) -> Vec<String> {
+    let path = std::path::Path::new(dir).join("lakefile.lean");
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    for line in contents.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("roots :=") {
+            return rest
+                .split(',')
+                .filter_map(|tok| {
+                    let t = tok
+                        .trim()
+                        .trim_start_matches("#[")
+                        .trim_end_matches(']')
+                        .trim()
+                        .trim_start_matches('`')
+                        .trim();
+                    (!t.is_empty()).then(|| t.to_string())
+                })
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
 fn cmd_proof_lean(
