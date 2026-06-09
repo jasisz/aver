@@ -33,10 +33,17 @@ A task is **covered** when `aver proof <f> --check --check-json` reports
 `"passed": true` — the Lean export of the universal law kernel-checks with no
 sorry/axiom over budget, via any auto-mode strategy (structural induction,
 accumulator-fold spec-equivalence, …). Lake-gated; run `cargo build --bin aver`
-first, then `./run.sh`. (The `--discover` lemma-discovery class — codec roundtrips,
-homomorphism enumeration — was measured to add nothing on the current TIP slice,
-since its law-closing classes are codec-roundtrip, absent here, and additive-monoid,
-already covered by the auto-mode strategy.)
+first, then `./run.sh`.
+
+`DISCOVER=1 ./run.sh` additionally runs `aver proof --discover` into each
+task's output dir before the Lean check, so the committed kernel-proved
+lemmas feed the law's own proof (the `ProofStrategy::SimpOverLemmas`
+feedback loop). The default run stays discovery-free — that is the honest
+no-discovery baseline, and the delta between the two runs is discovery's
+measured coverage value. First measured win on this corpus: prod `prop_03`,
+whose stated law needs the unstated `length (a ++ b) = plus (length a)
+(length b)` homomorphism that discovery conjectures, kernel-proves, and
+feeds back.
 
 KNOWN FLAKINESS: a sweep of all tasks transiently fails some `lake` builds under
 load, which records false "open" (never false "proved"). `run.sh` retries a

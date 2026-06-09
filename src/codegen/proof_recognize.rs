@@ -448,17 +448,29 @@ fn call_or_ctor(e: &Spanned<Expr>) -> Option<(String, Vec<&Spanned<Expr>>)> {
     }
 }
 
-/// Recognize a canonical Peano `+` / truncated `-` (see [`NatArithKind`]).
-fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind> {
+/// `(p0, p1, base_arm_body, succ_binder, succ_arm_body)` — the decomposition
+/// [`peano_outer_split`] returns for a canonical binary Peano fn.
+type PeanoSplit<'a> = (
+    &'a str,
+    &'a str,
+    &'a Spanned<Expr>,
+    &'a str,
+    &'a Spanned<Expr>,
+);
+
+/// Param checks + outer `match p0` split shared by the arithmetic recognizers.
+/// Returns `(p0, p1, base_arm_body, succ_binder, succ_arm_body)` for a binary fn
+/// over `peano`'s type whose body matches its FIRST param into the canonical
+/// base / succ(binder) arms; `None` otherwise.
+fn peano_outer_split<'a>(fd: &'a FnDef, peano: &PeanoType) -> Option<PeanoSplit<'a>> {
     if fd.params.len() != 2 {
         return None;
     }
     let (p0, t0) = &fd.params[0];
     let (p1, t1) = &fd.params[1];
-    if t0 != t1 || &fd.return_type != t0 {
+    if t0 != t1 || &fd.return_type != t0 || t0.trim() != peano.type_name {
         return None;
     }
-    let peano = peano_type_named(ctx, t0)?;
     let ln = crate::codegen::recursion::detect::local_name_of;
     let tail = fd.body.tail_expr()?;
     let Expr::Match { subject, arms, .. } = &tail.node else {
@@ -467,7 +479,6 @@ fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind>
     if ln(subject) != Some(p0.as_str()) || arms.len() != 2 {
         return None;
     }
-    // Split the outer match on `p0` into its base / succ(q) arms.
     let mut base_body: Option<&Spanned<Expr>> = None;
     let mut succ_q: Option<&String> = None;
     let mut succ_body: Option<&Spanned<Expr>> = None;
@@ -485,33 +496,54 @@ fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind>
             return None;
         }
     }
-    let (base_body, q, succ_body) = (base_body?, succ_q?.as_str(), succ_body?);
+    Some((
+        p0.as_str(),
+        p1.as_str(),
+        base_body?,
+        succ_q?.as_str(),
+        succ_body?,
+    ))
+}
 
-    // Add: `Base -> b` and `Succ(q) -> Succ(op(q, b))`.
+/// True iff `fd` is the canonical Peano addition over `peano`
+/// (`match a { Base -> b; Succ(q) -> Succ(op(q, b)) }`). Takes the `PeanoType`
+/// directly so it needs NO `CodegenContext` — the lemma-discovery layer (which
+/// has only a `ProofLowerInputs` type lookup) uses this to find the monoid `⊕`
+/// for a structural homomorphism conjecture.
+pub(crate) fn is_canonical_add(fd: &FnDef, peano: &PeanoType) -> bool {
+    let Some((_p0, p1, base_body, q, succ_body)) = peano_outer_split(fd, peano) else {
+        return false;
+    };
+    let ln = crate::codegen::recursion::detect::local_name_of;
     let add_succ_ok = call_or_ctor(succ_body).is_some_and(|(c, a)| {
         c == peano.succ_ctor
             && a.len() == 1
             && call_or_ctor(a[0]).is_some_and(|(rc, ra)| {
-                rc == fd.name
-                    && ra.len() == 2
-                    && ln(ra[0]) == Some(q)
-                    && ln(ra[1]) == Some(p1.as_str())
+                rc == fd.name && ra.len() == 2 && ln(ra[0]) == Some(q) && ln(ra[1]) == Some(p1)
             })
     });
-    if ln(base_body) == Some(p1.as_str()) && add_succ_ok {
+    ln(base_body) == Some(p1) && add_succ_ok
+}
+
+/// Recognize a canonical Peano `+` / truncated `-` / `*` (see [`NatArithKind`]).
+fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind> {
+    let peano = peano_type_named(ctx, &fd.params.first()?.1)?;
+    if is_canonical_add(fd, &peano) {
         return Some(NatArithKind::Add);
     }
-
-    // Sub (truncated): `Base -> Base` and `Succ(q) -> match b { Base -> a; Succ(r) -> op(q, r) }`.
+    let (p0, p1, base_body, q, succ_body) = peano_outer_split(fd, &peano)?;
+    let ln = crate::codegen::recursion::detect::local_name_of;
     let base_is_base =
         call_or_ctor(base_body).is_some_and(|(c, a)| c == peano.base_ctor && a.is_empty());
+
+    // Sub (truncated): `Base -> Base` and `Succ(q) -> match b { Base -> a; Succ(r) -> op(q, r) }`.
     if base_is_base
         && let Expr::Match {
             subject: inner_subj,
             arms: inner_arms,
             ..
         } = &succ_body.node
-        && ln(inner_subj) == Some(p1.as_str())
+        && ln(inner_subj) == Some(p1)
         && inner_arms.len() == 2
     {
         let mut inner_base_ok = false;
@@ -523,7 +555,7 @@ fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind>
             let short = short_ctor(cname);
             if short == peano.base_ctor && binders.is_empty() {
                 // `minus(S q, Z) = S q = p0` (the whole first argument).
-                inner_base_ok = ln(&arm.body) == Some(p0.as_str());
+                inner_base_ok = ln(&arm.body) == Some(p0);
             } else if short == peano.succ_ctor && binders.len() == 1 {
                 let r = binders[0].as_str();
                 inner_succ_ok = call_or_ctor(&arm.body).is_some_and(|(rc, ra)| {
@@ -539,21 +571,19 @@ fn detect_nat_arith_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatArithKind>
     }
 
     // Mul: `Base -> Base` and `Succ(q) -> add(b, op(q, b))` where `add` is itself a
-    // recognized canonical addition. `times x y = match x { Z -> Z; S z -> plus(y,
-    // times(z, y)) }`. The bridge `times a b = a * b` is proved USING the add
-    // bridge, so the renderer must emit the add bridge first.
+    // recognized canonical addition over the same Peano type. `times x y = match
+    // x { Z -> Z; S z -> plus(y, times(z, y)) }`. The bridge `times a b = a * b`
+    // is proved USING the add bridge, so the renderer emits the add bridge first.
     if base_is_base
         && let Some((add_fn, args)) = call_or_ctor(succ_body)
         && args.len() == 2
-        && ln(args[0]) == Some(p1.as_str())
+        && ln(args[0]) == Some(p1)
         && call_or_ctor(args[1]).is_some_and(|(rc, ra)| {
-            rc == fd.name && ra.len() == 2 && ln(ra[0]) == Some(q) && ln(ra[1]) == Some(p1.as_str())
+            rc == fd.name && ra.len() == 2 && ln(ra[0]) == Some(q) && ln(ra[1]) == Some(p1)
         })
         && ctx
             .fn_def_by_name(&add_fn, ctx.active_module_scope().as_deref())
-            .is_some_and(|afd| {
-                afd.name != fd.name && detect_nat_arith_op(afd, ctx) == Some(NatArithKind::Add)
-            })
+            .is_some_and(|afd| afd.name != fd.name && is_canonical_add(afd, &peano))
     {
         return Some(NatArithKind::Mul);
     }
@@ -679,11 +709,12 @@ fn detect_nat_compare_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatCompareK
     None
 }
 
-/// Collect the distinct canonical Peano comparison operators a law invokes.
-pub(crate) fn collect_nat_compare_ops_in_law(
+/// Fn names a law invokes directly plus one level of transitive callees —
+/// the shared name-gathering step of the canonical-op collectors below.
+fn law_called_fn_names(
     law: &VerifyLaw,
     ctx: &CodegenContext,
-) -> Vec<NatCompareOp> {
+) -> std::collections::BTreeSet<String> {
     let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     collect_called_fns(&law.lhs, &mut names);
     collect_called_fns(&law.rhs, &mut names);
@@ -694,6 +725,25 @@ pub(crate) fn collect_nat_compare_ops_in_law(
         }
     }
     names.extend(transitive);
+    names
+}
+
+/// Collect the distinct canonical Peano comparison operators a law invokes.
+pub(crate) fn collect_nat_compare_ops_in_law(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<NatCompareOp> {
+    collect_nat_compare_ops_for_names(&law_called_fn_names(law, ctx), ctx)
+}
+
+/// Canonical Peano comparison operators among an explicit fn-name set —
+/// the name-driven core of [`collect_nat_compare_ops_in_law`]. Also used by
+/// the discovery feedback loop, where a committed lemma can introduce an op
+/// (e.g. `lessEq`) the law itself never mentions.
+pub(crate) fn collect_nat_compare_ops_for_names(
+    names: &std::collections::BTreeSet<String>,
+    ctx: &CodegenContext,
+) -> Vec<NatCompareOp> {
     let mut seen = std::collections::BTreeSet::new();
     names
         .iter()
@@ -713,16 +763,17 @@ pub(crate) fn collect_nat_arith_ops_in_law(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Vec<NatArithOp> {
-    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    collect_called_fns(&law.lhs, &mut names);
-    collect_called_fns(&law.rhs, &mut names);
-    let mut transitive: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for f in &names {
-        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-            collect_called_fns_in_body(&fd.body, &mut transitive);
-        }
-    }
-    names.extend(transitive);
+    collect_nat_arith_ops_for_names(&law_called_fn_names(law, ctx), ctx)
+}
+
+/// Canonical Peano arithmetic operators among an explicit fn-name set —
+/// the name-driven core of [`collect_nat_arith_ops_in_law`]. Also used by
+/// the discovery feedback loop, where a committed homomorphism lemma can
+/// introduce an op (e.g. `plus`) the law itself never mentions.
+pub(crate) fn collect_nat_arith_ops_for_names(
+    names: &std::collections::BTreeSet<String>,
+    ctx: &CodegenContext,
+) -> Vec<NatArithOp> {
     let mut seen = std::collections::BTreeSet::new();
     names
         .iter()

@@ -56,18 +56,38 @@ pub fn lean_lemma_theorem(c: &Conjecture, binders: &[Binder], name: &str) -> Opt
     let lhs = term_to_lean(&c.lhs, binders);
     let rhs = term_to_lean(&c.rhs, binders);
     let iv = &binders[induct].name;
-    let nil_simp = unfolds.join(", ");
-    let cons_simp = {
+    // Session-grade list-induction ladder (mirrors `law_auto::induction::
+    // emit_list_induction`), so a discovered candidate gets the SAME reach the
+    // user-stated-law prover has: `omega` for the linear-arithmetic residual a
+    // count/length homomorphism leaves (`1 + (m+n) = (1+m)+n`), and a `split`
+    // branch that case-splits a recursive fn's inner Bool/enum `match` (e.g.
+    // `count`'s `match eqNat n head`) which plain `simp` leaves stuck.
+    //
+    // CRUCIAL difference from the session prover: NO trailing `| sorry`.
+    // Discovery is proved-or-dropped — a `sorry` builds clean (exit 0) and would
+    // FALSELY mark a refuted candidate "proved". Omitting it means a candidate
+    // that no branch closes leaves an `unsolved goals` ERROR, `lake build`
+    // fails, and the candidate is correctly dropped. `omega`/`split`/`simp` are
+    // all sound, so a candidate that DOES close is genuinely proved.
+    let nil_defs = unfolds.join(", ");
+    let cons_defs = {
         let mut v = unfolds.clone();
-        v.push("ih".to_string());
         v.push("List.append_assoc".to_string());
         v.join(", ")
     };
+    // `simp only [..]` set for the split branch — guard the empty-`unfolds` case
+    // so we never emit a leading-comma `simp only [, …]` (a parse error).
+    let nil_split = if unfolds.is_empty() {
+        "List.cons_append".to_string()
+    } else {
+        format!("{nil_defs}, List.cons_append")
+    };
+    let cons_split = format!("{cons_defs}, List.cons_append");
     Some(format!(
         "theorem {name} {binders} : {lhs} = {rhs} := by\n  \
          induction {iv} with\n  \
-         | nil => simp [{nil_simp}]\n  \
-         | cons head tail ih => simp [{cons_simp}]\n",
+         | nil => first | (simp [{nil_defs}]; done) | (simp [{nil_defs}]; omega) | (simp only [{nil_split}]; split <;> simp_all [{nil_defs}] <;> omega)\n  \
+         | cons head tail ih => first | (simp_all [{cons_defs}]; done) | (simp_all [{cons_defs}]; omega) | (simp only [{cons_split}]; split <;> simp_all [{cons_defs}] <;> omega)\n",
         binders = binder_decls.join(" "),
     ))
 }
@@ -107,65 +127,91 @@ fn collect_user_fns(node: &TermNode, out: &mut BTreeSet<String>) {
     }
 }
 
-/// `true` iff the candidate is the list-homomorphism shape
-/// `g(a ++ b) == g(a) ++ g(b)` (either orientation), `g` a user fn, `a`/`b`
-/// distinct variables. These are the highest-value proof targets, ranked first.
+/// `true` iff the candidate is the monoid-homomorphism shape
+/// `g(a ++ b) == ⊕(g(a), g(b))` (either orientation), `g` a user fn, `⊕` any
+/// binary op (list `++` for a list-valued `g`, or e.g. `plus` for a Peano-valued
+/// fold like `count`/`length`), `a`/`b` distinct variables. These are the
+/// highest-value proof targets — including the structurally-synthesized ones
+/// the enumerator can't mint — so they are ranked first.
 fn is_homomorphism(c: &Conjecture) -> bool {
+    fn var(t: &TermNode) -> Option<usize> {
+        if let TermNode::Var(i) = t {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+    // `l = g(.., a ++ b, ..)` with EXACTLY one argument `a ++ b` (a≠b) and every
+    // other argument a bare variable; `r = ⊕(g(.., a, ..), g(.., b, ..))` with
+    // the appended position replaced by `a` / `b` and all other positions
+    // identical. Generalizes the unary list-homomorphism to a multi-arg fold
+    // (`count(n, a++b)`, the fixed `n` held across all three calls).
     fn oriented(l: &TermNode, r: &TermNode) -> bool {
         let TermNode::App {
             callee: g,
-            args: la,
+            args: largs,
         } = l
         else {
             return false;
         };
-        if g == "List.concat" || la.len() != 1 {
+        if g == "List.concat" || largs.is_empty() {
             return false;
         }
-        let TermNode::App {
-            callee: cc,
-            args: ca,
-        } = &la[0]
-        else {
+        let mut pos: Option<usize> = None;
+        let mut ab: Option<(usize, usize)> = None;
+        for (i, arg) in largs.iter().enumerate() {
+            if let TermNode::App {
+                callee: cc,
+                args: ca,
+            } = arg
+                && cc == "List.concat"
+                && ca.len() == 2
+                && let (Some(a), Some(b)) = (var(&ca[0]), var(&ca[1]))
+                && a != b
+            {
+                if pos.is_some() {
+                    return false; // more than one appended position
+                }
+                pos = Some(i);
+                ab = Some((a, b));
+            } else if var(arg).is_none() {
+                return false; // a non-appended argument must be a bare variable
+            }
+        }
+        let (Some(pos), Some((a, b))) = (pos, ab) else {
             return false;
         };
-        if cc != "List.concat" || ca.len() != 2 {
-            return false;
-        }
-        let (TermNode::Var(a), TermNode::Var(b)) = (&ca[0], &ca[1]) else {
-            return false;
-        };
-        if a == b {
-            return false;
-        }
         let TermNode::App {
-            callee: rc,
+            callee: _op,
             args: ra,
         } = r
         else {
             return false;
         };
-        if rc != "List.concat" || ra.len() != 2 {
+        if ra.len() != 2 {
             return false;
         }
-        let (
-            TermNode::App {
-                callee: g1,
-                args: r1,
-            },
-            TermNode::App {
-                callee: g2,
-                args: r2,
-            },
-        ) = (&ra[0], &ra[1])
-        else {
-            return false;
+        // Each side is `g` applied to `largs` with the appended slot set to the
+        // matching half and every other slot the same variable as in `largs`.
+        let side_ok = |side: &TermNode, repl: usize| -> bool {
+            let TermNode::App {
+                callee: gg,
+                args: gargs,
+            } = side
+            else {
+                return false;
+            };
+            gg == g
+                && gargs.len() == largs.len()
+                && gargs.iter().enumerate().all(|(i, t)| {
+                    if i == pos {
+                        var(t) == Some(repl)
+                    } else {
+                        var(t).is_some() && var(t) == var(&largs[i])
+                    }
+                })
         };
-        g1 == g
-            && g2 == g
-            && r1.len() == 1
-            && r2.len() == 1
-            && matches!((&r1[0], &r2[0]), (TermNode::Var(a2), TermNode::Var(b2)) if a2 == a && b2 == b)
+        side_ok(&ra[0], a) && side_ok(&ra[1], b)
     }
     oriented(&c.lhs, &c.rhs) || oriented(&c.rhs, &c.lhs)
 }

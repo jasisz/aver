@@ -38,6 +38,16 @@ pub fn run_discovery(inputs: &ProofLowerInputs) -> Vec<LawDiscovery> {
             terms_truncated = tt;
             conjectures = conj;
             conjectures_truncated = ct;
+            // Structure-directed candidates the size-capped enumerator can't
+            // mint (a homomorphism is ~7 nodes > MAX_TERM_SIZE). Appended after
+            // the enumerated set; the VM-filter + proved-or-dropped gate still
+            // apply, so a non-homomorphism is dropped.
+            conjectures.extend(homomorphism_conjectures(
+                &cone,
+                &binders,
+                inputs,
+                &vb.fn_name,
+            ));
         }
 
         reports.push(LawDiscovery {
@@ -66,6 +76,129 @@ pub fn run_discovery(inputs: &ProofLowerInputs) -> Vec<LawDiscovery> {
         });
     }
     reports
+}
+
+/// Structure-directed conjecturer: synthesize the monoid homomorphism
+/// `g(..a++b..) = ⊕(g(..a..), g(..b..))` for each cone fn `g` that structurally
+/// recurses on a `List` parameter and returns a canonical Peano type, given a
+/// cone fn `⊕` that is the canonical addition over that type. These candidates
+/// are ~7 nodes — far past [`MAX_TERM_SIZE`] — so the blind enumerator can never
+/// produce them; this is the generation unlock. The recognizer is LIBERAL (it
+/// conjectures for any list→Peano recursive fn): a `g` that is not actually a
+/// homomorphism is refuted by the VM-filter and, failing that, dropped by the
+/// proved-or-dropped kernel gate — the same "conjecture liberally, kernel
+/// proves" discipline as the proof-only bridges.
+fn homomorphism_conjectures(
+    cone: &LawProofCone,
+    binders: &[Binder],
+    inputs: &ProofLowerInputs,
+    subject_fn: &str,
+) -> Vec<Conjecture> {
+    use crate::codegen::proof_recognize::{detect_canonical_peano, is_canonical_add};
+    use crate::codegen::recursion::detect::single_list_structural_param_index;
+
+    // The cone EXCLUDES the law's subject fn, but the subject is often exactly
+    // the fold we want a homomorphism for (`verify count law …` → `count`), so
+    // add it back to the candidate `g` set.
+    let mut fns: Vec<&crate::ast::FnDef> = cone.pure_fns().to_vec();
+    if let Some(subj) = inputs.find_fn_def_by_call_name(subject_fn)
+        && !fns.iter().any(|f| f.name == subj.name)
+    {
+        fns.push(subj);
+    }
+    let fns = &fns;
+    // The monoid `⊕`: a cone fn that is the canonical addition over a Peano type.
+    let add = fns.iter().find_map(|&fd| {
+        let p = inputs
+            .find_type_def(fd.return_type.trim())
+            .and_then(detect_canonical_peano)?;
+        is_canonical_add(fd, &p).then(|| (fd.name.clone(), p))
+    });
+    let Some((add_name, peano)) = add else {
+        return Vec::new();
+    };
+
+    // Binder indices whose rendered type matches `ann` (the variable_context
+    // keys binders by rendered type, so this is exact).
+    let render_of = |ann: &str| render_type(&crate::codegen::common::parse_type_annotation(ann));
+    let bidx = |ann: &str| -> Vec<usize> {
+        let want = render_of(ann);
+        binders
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| render_type(&b.ty) == want)
+            .map(|(i, _)| i)
+            .collect()
+    };
+
+    let mut out = Vec::new();
+    for &g in fns {
+        if g.name == add_name {
+            continue;
+        }
+        // `g` must return the SAME Peano type `⊕` combines.
+        match inputs
+            .find_type_def(g.return_type.trim())
+            .and_then(detect_canonical_peano)
+        {
+            Some(gp) if gp.type_name == peano.type_name => {}
+            _ => continue,
+        }
+        let Some(list_idx) = single_list_structural_param_index(g) else {
+            continue;
+        };
+        // Two distinct list-typed binders `a`, `b` for the appended argument.
+        let list_bs = bidx(&g.params[list_idx].1);
+        if list_bs.len() < 2 {
+            continue;
+        }
+        let (a, b) = (list_bs[0], list_bs[1]);
+        // One binder per OTHER parameter, held fixed across all three g-calls.
+        let mut fixed: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut ok = true;
+        for (j, (_, ann)) in g.params.iter().enumerate() {
+            if j == list_idx {
+                continue;
+            }
+            match bidx(ann).first() {
+                Some(&bi) => {
+                    fixed.insert(j, bi);
+                }
+                None => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if !ok {
+            continue;
+        }
+        let g_at = |list_val: TermNode| TermNode::App {
+            callee: g.name.clone(),
+            args: (0..g.params.len())
+                .map(|j| {
+                    if j == list_idx {
+                        list_val.clone()
+                    } else {
+                        TermNode::Var(fixed[&j])
+                    }
+                })
+                .collect(),
+        };
+        let concat = TermNode::App {
+            callee: "List.concat".to_string(),
+            args: vec![TermNode::Var(a), TermNode::Var(b)],
+        };
+        out.push(Conjecture {
+            lhs: g_at(concat),
+            rhs: TermNode::App {
+                callee: add_name.clone(),
+                args: vec![g_at(TermNode::Var(a)), g_at(TermNode::Var(b))],
+            },
+            ty: crate::codegen::common::parse_type_annotation(&g.return_type),
+        });
+    }
+    out
 }
 
 /// Mint the shared variable context: up to [`MAX_VARS_PER_TYPE`] variables for

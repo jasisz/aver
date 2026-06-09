@@ -53,13 +53,19 @@
 //!    REPLAYS (re-verifies the committed lemmas via `lake build`) instead of
 //!    re-enumerating. Re-verification — not the hash — is the soundness guard.
 //!
-//! Still ahead: re-enter the *law's own proof* with a discovered lemma (via the
-//! `ProofStrategy::SimpOverLemmas` hook) so a `verify ... law` that needs it
-//! closes under normal `aver proof` — for the flagship rle roundtrip that also
-//! needs the guarded accumulator-generalization family (charter layer 3), so
-//! it is deferred there. Entry [`run_discovery`] (+ [`vm_filter`], + the CLI
-//! prove/replay step) is invoked by `aver proof --discover`; normal
-//! `aver proof` never runs this (discovery is the explicit, cached step).
+//! 7. **Feedback into the law's own proof** ([`committed`] — the
+//!    `ProofStrategy::SimpOverLemmas` hook): on a NORMAL `aver proof` run the
+//!    CLI parses a committed `DiscoveredLemmas.lean` (hash-gated for
+//!    staleness only), re-pins each in-scope `Induction` law to
+//!    `SimpOverLemmas(names)`, and the Lean backend embeds the lemma texts
+//!    before the law theorem (re-proving them in the same `lake build`) and
+//!    simps over their names — so a law that NEEDS a discovered auxiliary
+//!    lemma closes under normal `aver proof` after one `--discover` run.
+//!
+//! Entry [`run_discovery`] (+ [`vm_filter`], + the CLI prove/replay step) is
+//! invoked by `aver proof --discover`; normal `aver proof` never enumerates
+//! (discovery is the explicit, cached step — it only CONSUMES the committed
+//! artifact via step 7).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -240,11 +246,17 @@ pub struct LawDiscovery {
 }
 
 mod bricks;
+mod committed;
 mod enumerate;
 mod render;
 mod vm_filter;
 
 pub use bricks::structural_lemma_groups;
+pub use committed::{
+    CommittedLemma, SimpDirection, apply_simp_over_lemma_pins, forbidden_token_in_lemma,
+    mentioned_fns, parse_committed_lemmas, plan_simp_over_lemma_pins, simp_entries,
+    simp_orientation,
+};
 pub use enumerate::run_discovery;
 pub use render::{
     discovery_surface_hash, lean_lemma_theorem, rank_candidate_indices, render_report,
@@ -595,11 +607,27 @@ verify encode law roundtrip
         assert!(thm.contains("theorem L "), "{thm}");
         assert!(thm.contains(": List Run)"), "{thm}");
         assert!(thm.contains("decode (") && thm.contains("++"), "{thm}");
-        // Tactic: list-induction template with the decode unfold + append_assoc.
+        // Tactic: session-grade list-induction ladder (mirrors the user-stated-law
+        // prover) — the decode unfold + append_assoc, plus the `omega` and
+        // `split` branches that give discovered candidates the same reach.
         assert!(thm.contains("induction "), "{thm}");
-        assert!(thm.contains("| nil => simp [decode]"), "{thm}");
+        assert!(thm.contains("| nil => first | (simp [decode]"), "{thm}");
         assert!(thm.contains("List.append_assoc"), "{thm}");
         assert!(thm.contains("ih"), "{thm}");
+        assert!(
+            thm.contains("omega"),
+            "ladder must include the omega branch: {thm}"
+        );
+        assert!(
+            thm.contains("split <;>"),
+            "ladder must include the inner-match split branch: {thm}"
+        );
+        // Discovery is proved-or-dropped: NO `sorry` fallback (a sorry builds
+        // clean and would falsely mark a refuted candidate "proved").
+        assert!(
+            !thm.contains("sorry"),
+            "discovered-lemma tactic must never carry a sorry fallback: {thm}"
+        );
     }
 
     #[test]
@@ -612,6 +640,75 @@ verify encode law roundtrip
             is_decode_append(first),
             "expected decode_append ranked first, got {}",
             first.render(&r.binders)
+        );
+    }
+
+    /// A `count`-into-`plus` fold whose `count(n, a ++ b) = plus(count n a,
+    /// count n b)` monoid homomorphism is size ~7 — past the enumerator's
+    /// `MAX_TERM_SIZE = 5` — so only the structure-directed conjecturer can mint it.
+    const COUNT_HOMO_SRC: &str = r#"
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn count(x: Nat, y: List<Nat>) -> Nat
+    match y
+        [] -> Nat.Z
+        [z, ..ys] -> match eqNat(x, z)
+            true -> Nat.S(count(x, ys))
+            false -> count(x, ys)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+fn appendNat(xs: List<Nat>, ys: List<Nat>) -> List<Nat>
+    List.concat(xs, ys)
+
+verify count law countPlusConcat
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]
+    given xs: List<Nat> = [[], [Nat.Z]]
+    given ys: List<Nat> = [[], [Nat.S(Nat.Z)]]
+    plus(count(n, xs), count(n, ys)) => count(n, appendNat(xs, ys))
+"#;
+
+    #[test]
+    fn structural_homomorphism_conjectured_for_count_fold() {
+        // The conjecturer mints the count homomorphism (the subject fn `count`
+        // is excluded from the cone, so the conjecturer adds it back), and the
+        // VM-filter KEEPS it (it is a true homomorphism). A render like
+        // `count(x2, List.concat(x0, x1)) == plus(count(x2, x0), count(x2, x1))`.
+        let r = &discover(COUNT_HOMO_SRC)[0];
+        let found = r.conjectures.iter().any(|c| {
+            let s = c.render(&r.binders);
+            s.contains("List.concat(") && s.contains("plus(count(")
+        });
+        assert!(
+            found,
+            "count→plus homomorphism not conjectured/surviving; survivors:\n{}",
+            r.conjectures
+                .iter()
+                .map(|c| c.render(&r.binders))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        // It must also rank first — it is the highest-value target, so the
+        // bounded prove budget reaches it.
+        let ranked = rank_candidate_indices(r);
+        let top = r.conjectures[ranked[0]].render(&r.binders);
+        assert!(
+            top.contains("List.concat(") && top.contains("plus(count("),
+            "count homomorphism must rank first, got {top}"
         );
     }
 

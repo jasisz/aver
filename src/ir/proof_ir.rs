@@ -398,10 +398,15 @@ pub enum QuantifierType {
 pub enum ProofStrategy {
     /// `rfl` / definitional equality — `lhs ≡ rhs` syntactically.
     Reflexive,
-    /// `simp` chain over named lemmas (e.g. `[Int.add_comm,
-    /// Int.mul_comm]`). Legacy draft variant; not yet emitted by
-    /// the lowerer — kept for future use when a strategy wants to
-    /// hand the backend a specific lemma list.
+    /// `simp` chain over named lemmas. The discovery feedback loop
+    /// (`lemma_discovery::committed`) pins this when a committed
+    /// `DiscoveredLemmas.lean` holds kernel-proved lemmas in-scope
+    /// for an `Induction` law: the names are the discovered theorem
+    /// names, and the Lean renderer reuses the induction ladder with
+    /// those lemmas embedded + joined to its simp sets. Pinned by
+    /// the CLI (post-lowering re-pin), never by
+    /// `classify_law_strategy` — discovery feedback is opt-in via
+    /// the committed artifact.
     SimpOverLemmas(Vec<String>),
     /// `∀ a b, f(a, b) = f(b, a)` — commutativity of the law's fn,
     /// whose body reduces to `a <op> b`. The `op` tag lets backends

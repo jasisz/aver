@@ -65,20 +65,36 @@ fn lean_rev_support(
 /// honest `sorry` caught by the sorry-gate), never a false theorem. Names are
 /// law-scoped (`law_uid`) so multiple laws in one module don't collide.
 ///
-/// Returns `(support_theorems, simp_lemma_names)`. The simp set carries the
-/// bridge names plus, when a `*` bridge is present, the core distributivity /
-/// associativity lemmas (`*` is nonlinear so `omega` can't close it and core
-/// Lean has no `ring`; pure-commutativity laws fall through to `sorry`).
+/// Returns `(support_theorems, simp_lemma_names, bridged_fn_lean_names)`. The
+/// simp set carries the bridge names plus, when a `*` bridge is present, the
+/// core distributivity / associativity lemmas (`*` is nonlinear so `omega`
+/// can't close it and core Lean has no `ring`; pure-commutativity laws fall
+/// through to `sorry`). `bridged_fn_lean_names` are the Lean names of the
+/// lifted user fns themselves — callers building a combined `simp only` set
+/// must EXCLUDE those defs (mixing a fn's def equations with its `= a + b`
+/// bridge in one call leaves the rewrite stuck).
+///
+/// `extra_fns` extends the scan beyond the law's own call graph — the
+/// discovery feedback loop passes the fns its committed lemmas mention, so an
+/// op a homomorphism lemma INTRODUCES (e.g. `plus` rewriting into a law that
+/// only said `double`) still gets its bridge. Empty for the plain path.
 fn lean_nat_lift_support(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     law_uid: &str,
-) -> (Vec<String>, Vec<String>) {
+    extra_fns: &BTreeSet<String>,
+) -> (Vec<String>, Vec<String>, BTreeSet<String>) {
     use crate::codegen::proof_recognize::{NatArithKind, NatCompareKind};
     let mut support = Vec::new();
     let mut simp_extra = Vec::new();
+    let mut bridged_fns: BTreeSet<String> = BTreeSet::new();
 
-    let arith = crate::codegen::proof_recognize::collect_nat_arith_ops_in_law(law, ctx);
+    let mut arith = crate::codegen::proof_recognize::collect_nat_arith_ops_in_law(law, ctx);
+    for op in crate::codegen::proof_recognize::collect_nat_arith_ops_for_names(extra_fns, ctx) {
+        if !arith.iter().any(|o| o.fn_name == op.fn_name) {
+            arith.push(op);
+        }
+    }
     // The `*` bridge proof rewrites with the `+` bridge, so resolve the addition
     // op's bridge name up front and emit Add/Sub before Mul.
     let add_bridge_name = arith
@@ -92,6 +108,7 @@ fn lean_nat_lift_support(
         .chain(arith.iter().filter(|o| o.kind == NatArithKind::Mul));
     for op in ordered {
         let f = aver_name_to_lean(&op.fn_name);
+        bridged_fns.insert(f.clone());
         match op.kind {
             NatArithKind::Add => {
                 let name = format!("{law_uid}_{f}_isNatAdd");
@@ -124,8 +141,15 @@ fn lean_nat_lift_support(
         }
     }
 
-    for op in crate::codegen::proof_recognize::collect_nat_compare_ops_in_law(law, ctx) {
+    let mut compare = crate::codegen::proof_recognize::collect_nat_compare_ops_in_law(law, ctx);
+    for op in crate::codegen::proof_recognize::collect_nat_compare_ops_for_names(extra_fns, ctx) {
+        if !compare.iter().any(|o| o.fn_name == op.fn_name) {
+            compare.push(op);
+        }
+    }
+    for op in compare {
         let f = aver_name_to_lean(&op.fn_name);
+        bridged_fns.insert(f.clone());
         match op.kind {
             // `(le a b = true) = (a ≤ b)`: a Prop-equality (propext) so `simp only`
             // rewrites the Bool goal `le _ _ = true` straight into `_ ≤ _` for omega.
@@ -168,7 +192,100 @@ fn lean_nat_lift_support(
         }
     }
 
-    (support, simp_extra)
+    (support, simp_extra, bridged_fns)
+}
+
+/// Source names of the program fns mentioned by the given pinned discovered
+/// lemmas (`ProofStrategy::SimpOverLemmas` names → `ctx.discovered_lemmas`
+/// texts → token scan against every pure program fn's Lean name). Drives the
+/// lemma-aware extension of [`lean_nat_lift_support`].
+fn discovered_lemma_source_fns(ctx: &CodegenContext, names: &[String]) -> BTreeSet<String> {
+    use std::collections::BTreeMap;
+    if names.is_empty() {
+        return BTreeSet::new();
+    }
+    let lean_index: BTreeMap<String, String> = ctx
+        .modules
+        .iter()
+        .flat_map(|m| m.fn_defs.iter())
+        .chain(ctx.fn_defs.iter())
+        .filter(|fd| crate::codegen::common::is_pure_fn(fd))
+        .map(|fd| (aver_name_to_lean(&fd.name), fd.name.clone()))
+        .collect();
+    ctx.discovered_lemmas
+        .iter()
+        .filter(|l| names.contains(&l.name))
+        .flat_map(|l| crate::codegen::lemma_discovery::mentioned_fns(&l.text, &lean_index))
+        .collect()
+}
+
+/// The pinned lemmas usable as `simp` rewrite rules, as ready-to-emit simp
+/// set entries (`lemma_discovery::simp_entries`): `name` for a Forward lemma
+/// (program-fn-headed LHS), `← name` for a Reversed one (builtin-headed LHS,
+/// program-fn-headed RHS — e.g. the trivia `(x0 ++ x1) = append x0 x1`,
+/// which reversed UNFOLDS the opaque wrapper into `++` so a forward
+/// homomorphism can fire), minus loop-prone forward/reversed combinations
+/// (a simp cycle is an uncatchable maxHeartbeats BUILD error). The pin
+/// carries EVERY in-scope lemma so embedded proofs keep their dependencies;
+/// only this selection joins the simp sets.
+fn discovered_simp_entries(ctx: &CodegenContext, names: &[String]) -> Vec<String> {
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let program_fns: BTreeSet<String> = ctx
+        .modules
+        .iter()
+        .flat_map(|m| m.fn_defs.iter())
+        .chain(ctx.fn_defs.iter())
+        .filter(|fd| crate::codegen::common::is_pure_fn(fd))
+        .map(|fd| aver_name_to_lean(&fd.name))
+        .collect();
+    let pinned: Vec<&crate::codegen::lemma_discovery::CommittedLemma> = ctx
+        .discovered_lemmas
+        .iter()
+        .filter(|l| names.contains(&l.name))
+        .collect();
+    crate::codegen::lemma_discovery::simp_entries(&pinned, &program_fns)
+}
+
+/// Verbatim texts of the pinned discovered lemmas THIS law is responsible for
+/// emitting. A lemma is embedded exactly once per generated file: by the
+/// first law (in `proof_ir.law_theorems` order, which mirrors entry-item
+/// order) whose `SimpOverLemmas` pin carries its name — later laws only
+/// reference the name, which Lean resolves against the earlier definition.
+/// Embedding re-proves the lemma inside the same `lake build`, so a stale
+/// committed lemma fails the build loudly (the replay soundness guard) rather
+/// than being trusted via the cone hash.
+fn discovered_support_lines(
+    ctx: &CodegenContext,
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    names: &[String],
+) -> Vec<String> {
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let Some(fn_id) = ctx
+        .symbol_table
+        .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for name in names {
+        let first_user = ctx.proof_ir.law_theorems.iter().find(|t| {
+            matches!(&t.strategy,
+                crate::ir::ProofStrategy::SimpOverLemmas(ns) if ns.contains(name))
+        });
+        let this_law_is_first =
+            first_user.is_some_and(|t| t.fn_id == fn_id && t.law_name == law.name);
+        if this_law_is_first
+            && let Some(lemma) = ctx.discovered_lemmas.iter().find(|l| &l.name == name)
+        {
+            out.push(lemma.text.clone());
+        }
+    }
+    out
 }
 
 enum VariantKind {
@@ -268,6 +385,13 @@ fn premise_intro_names(law: &VerifyLaw, intro_names: &[String]) -> Vec<String> {
     names
 }
 
+/// `discovered` carries the lemma names of an IR-pinned
+/// `ProofStrategy::SimpOverLemmas` (the discovery feedback loop): the emits
+/// below add them to the law's simp sets, embed their texts (first user
+/// only), and try a lemma-first `simp only … <;> omega` fast path before
+/// induction. Empty for a plain `Induction` pin — the output is then
+/// byte-identical to the pre-feedback emit.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_structural_induction_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -276,6 +400,7 @@ pub(super) fn emit_structural_induction_law(
     _theorem_base: &str,
     _quant_params: &str,
     _theorem_prop: &str,
+    discovered: &[String],
 ) -> Option<AutoProof> {
     if law.when.is_some() {
         return None;
@@ -306,7 +431,7 @@ pub(super) fn emit_structural_induction_law(
     //     list-homomorphism universals that inducting on a co-occurring Nat
     //     given would leave at `sorry`.
     if verified_recurses_on_list && let Some(target_idx) = list_target {
-        return emit_list_induction(vb, law, ctx, intro_names, target_idx);
+        return emit_list_induction(vb, law, ctx, intro_names, target_idx, discovered);
     }
 
     // (b) A `given` is a user-defined recursive sum type: structural induction
@@ -316,12 +441,21 @@ pub(super) fn emit_structural_induction_law(
         if has_indirect_variants(variants, type_name) {
             return None;
         }
-        return emit_simple_induction(vb, law, ctx, intro_names, target_idx, type_name, variants);
+        return emit_simple_induction(
+            vb,
+            law,
+            ctx,
+            intro_names,
+            target_idx,
+            type_name,
+            variants,
+            discovered,
+        );
     }
 
     // (c) No sum-type given, but a builtin `List<T>` given is present.
     if let Some(target_idx) = list_target {
-        return emit_list_induction(vb, law, ctx, intro_names, target_idx);
+        return emit_list_induction(vb, law, ctx, intro_names, target_idx, discovered);
     }
 
     None
@@ -346,6 +480,7 @@ fn emit_list_induction(
     ctx: &CodegenContext,
     intro_names: &[String],
     target_idx: usize,
+    discovered: &[String],
 ) -> Option<AutoProof> {
     let mut simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
     // Rev anti-homomorphism: prepend the proved aux lemmas (support_lines) and
@@ -359,6 +494,12 @@ fn emit_list_induction(
     let rev_ops = crate::codegen::proof_recognize::collect_rev_ops_in_law(law, ctx);
     let (rev_support, rev_simp) = lean_rev_support(&rev_ops, &law_uid);
     simp_defs.extend(rev_simp);
+    // Discovery feedback: the simp-oriented pinned lemmas join the induction
+    // arms' simp sets as rewrite rules (e.g. a count/length homomorphism
+    // collapsing `g (a ++ b)` so the inductive hypothesis lines up). The
+    // full `discovered` set is embedded; only the oriented subset rewrites.
+    let discovered_simp = discovered_simp_entries(ctx, discovered);
+    simp_defs.extend(discovered_simp.iter().cloned());
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
 
@@ -399,28 +540,106 @@ fn emit_list_induction(
     // Purely additive: it runs only after the two `simp_all` branches fail, so
     // cases that already close are untouched, and `split`/`simp_all`/`omega`
     // are all sound — an unprovable goal still degrades to the honest `sorry`.
-    let proof_lines = vec![
-        format!("  intro {}", intro_names.join(" ")),
-        format!("  induction {} with", target_lean),
-        format!(
-            "  | nil => first | (simp [{d}]; done) | (simp [{d}]; omega) | (simp only [{s}]; split <;> simp_all [{d}] <;> omega) | sorry",
-            d = simp_list,
-            s = split_set
-        ),
-        format!(
-            "  | cons head tail ih => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega) | (simp only [{s}]; split <;> simp_all [{d}] <;> omega) | sorry",
-            d = simp_list,
-            s = split_set
-        ),
-    ];
+    // Feedback mode adds two BRIDGE branches per arm (`bridges` = the
+    // canonical-Peano op bridges, e.g. `plus a b = a + b`): after the def
+    // unfolds + induction hypothesis, a goal like `S (plus a b) = plus a
+    // (S b)` is stuck (the op recurses on a symbolic arg) but is pure linear
+    // arithmetic once bridged — `simp only [bridges] <;> omega` decides it.
+    // The split variant covers the same residual under an inner Bool/enum
+    // match (`try` so a goal with nothing to bridge still reaches `omega`).
+    // All branches are sound, so each can only ADD closures.
+    let mk_arms = |bridges: Option<&str>| -> (String, String) {
+        let nil_bridge = bridges
+            .map(|b| format!(" | (simp [{d}]; simp only [{b}] <;> omega)", d = simp_list))
+            .unwrap_or_default();
+        let cons_bridge = bridges
+            .map(|b| {
+                format!(
+                    " | (simp_all [{d}]; simp only [{b}] <;> omega)",
+                    d = simp_list
+                )
+            })
+            .unwrap_or_default();
+        let split_bridge = bridges
+            .map(|b| format!(" <;> (try simp only [{b}])"))
+            .unwrap_or_default();
+        (
+            format!(
+                "| nil => first | (simp [{d}]; done) | (simp [{d}]; omega){nil_bridge} | (simp only [{s}]; split <;> simp_all [{d}]{split_bridge} <;> omega) | sorry",
+                d = simp_list,
+                s = split_set
+            ),
+            format!(
+                "| cons head tail ih => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){cons_bridge} | (simp only [{s}]; split <;> simp_all [{d}]{split_bridge} <;> omega) | sorry",
+                d = simp_list,
+                s = split_set
+            ),
+        )
+    };
+
+    let mut proof_lines = vec![format!("  intro {}", intro_names.join(" "))];
+    let mut support_lines = Vec::new();
+    if discovered.is_empty() {
+        let (nil_arm, cons_arm) = mk_arms(None);
+        proof_lines.push(format!("  induction {} with", target_lean));
+        proof_lines.push(format!("  {nil_arm}"));
+        proof_lines.push(format!("  {cons_arm}"));
+    } else {
+        // Discovery feedback (`SimpOverLemmas`): before inducting, try closing
+        // the goal OUTRIGHT with the pinned lemmas — many laws that NEED an
+        // auxiliary homomorphism are a pure rewrite once it exists (e.g.
+        // `length (x ++ y) = plus (length y) (length x)` under the length
+        // homomorphism + the `plus = +` bridge + `omega`). Two `simp only`
+        // shapes: lemmas+bridges alone (the goal already matches the lemma),
+        // then with the law's def unfolds added (a wrapper like `appendNat`
+        // must unfold to `++` before the lemma can fire) — minus the bridged
+        // fns' own defs (def + bridge in one simp call sticks). Both paths
+        // are sound (`simp only` rewrites with proved equations, `omega`
+        // decides), so a miss just falls through to the induction ladder,
+        // which is the exact pre-feedback emit with the lemmas joined to its
+        // simp sets. Coverage can only grow.
+        let lemma_fns = discovered_lemma_source_fns(ctx, discovered);
+        let (arith_support, arith_bridges, bridged_fns) =
+            lean_nat_lift_support(law, ctx, &law_uid, &lemma_fns);
+        let mut fast_lemmas: Vec<String> = discovered_simp.clone();
+        fast_lemmas.extend(arith_bridges.iter().cloned());
+        let fast_unfolds: BTreeSet<String> = law_simp_defs(ctx, vb, law)
+            .into_iter()
+            .chain(discovered_simp.iter().cloned())
+            .chain(arith_bridges.iter().cloned())
+            .filter(|n| !bridged_fns.contains(n))
+            .collect();
+        let bridge_set = if arith_bridges.is_empty() {
+            None
+        } else {
+            Some(arith_bridges.join(", "))
+        };
+        let (nil_arm, cons_arm) = mk_arms(bridge_set.as_deref());
+        proof_lines.push("  first".to_string());
+        proof_lines.push(format!(
+            "  | (simp only [{}] <;> omega)",
+            fast_lemmas.join(", ")
+        ));
+        proof_lines.push(format!(
+            "  | (simp only [{}] <;> omega)",
+            fast_unfolds.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+        proof_lines.push(format!("  | (induction {} with", target_lean));
+        proof_lines.push(format!("     {nil_arm}"));
+        proof_lines.push(format!("     {cons_arm})"));
+        support_lines.extend(discovered_support_lines(ctx, vb, law, discovered));
+        support_lines.extend(arith_support);
+    }
+    support_lines.extend(rev_support);
 
     Some(AutoProof {
-        support_lines: rev_support,
+        support_lines,
         proof_lines,
         replaces_theorem: false,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_simple_induction(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -429,8 +648,13 @@ fn emit_simple_induction(
     target_idx: usize,
     type_name: &str,
     variants: &[TypeVariant],
+    discovered: &[String],
 ) -> Option<AutoProof> {
-    let simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    let mut simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    // Discovery feedback: the simp-oriented pinned lemmas join the arm simp
+    // sets (see `emit_list_induction`); empty for a plain `Induction` pin.
+    let discovered_simp = discovered_simp_entries(ctx, discovered);
+    simp_defs.extend(discovered_simp.iter().cloned());
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
     let premise_names = premise_intro_names(law, intro_names);
@@ -446,7 +670,9 @@ fn emit_simple_induction(
         aver_name_to_lean(&vb.fn_name),
         aver_name_to_lean(&law.name)
     );
-    let (arith_support, arith_bridges) = lean_nat_lift_support(law, ctx, &law_uid);
+    let lemma_fns = discovered_lemma_source_fns(ctx, discovered);
+    let (arith_support, arith_bridges, bridged_fns) =
+        lean_nat_lift_support(law, ctx, &law_uid, &lemma_fns);
 
     let mut intro_parts = intro_names.to_vec();
     intro_parts.extend(premise_names.iter().cloned());
@@ -464,6 +690,16 @@ fn emit_simple_induction(
     // `Nat`, the arm names must be Lean's `Nat` constructors (`zero`/`succ`),
     // not the user's lowercased `z`/`s`.
     let peano = crate::codegen::proof_recognize::peano_type_named(ctx, type_name);
+    // Feedback mode (`SimpOverLemmas` + canonical-op bridges present): each
+    // arm gets a bridge branch before `sorry` — defs/lemmas first, then
+    // `simp only [bridges] <;> omega` for the arithmetic residual a stuck
+    // Peano op leaves (see `emit_list_induction`'s `mk_arms`). Sound, so the
+    // branch can only add closures; absent in plain mode (byte-identical).
+    let arm_bridge = if !discovered_simp.is_empty() && !arith_bridges.is_empty() {
+        Some(arith_bridges.join(", "))
+    } else {
+        None
+    };
     let mut arm_lines: Vec<String> = Vec::new();
     for variant in variants {
         let lean_variant = match &peano {
@@ -482,8 +718,12 @@ fn emit_simple_induction(
                 } else {
                     format!(" {}", field_binders.join(" "))
                 };
+                let bridge = arm_bridge
+                    .as_deref()
+                    .map(|b| format!(" | (simp [{d}]; simp only [{b}] <;> omega)", d = simp_list))
+                    .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega) | sorry",
+                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge} | sorry",
                     v = lean_variant,
                     b = binders,
                     d = simp_list
@@ -498,8 +738,17 @@ fn emit_simple_induction(
                     .map(|(index, _)| format!("ih{}", index))
                     .collect();
 
+                let bridge = arm_bridge
+                    .as_deref()
+                    .map(|b| {
+                        format!(
+                            " | (simp_all [{d}]; simp only [{b}] <;> omega)",
+                            d = simp_list
+                        )
+                    })
+                    .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega) | sorry",
+                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge} | sorry",
                     v = lean_variant,
                     b = field_binders.join(" "),
                     ih = ih_names.join(" "),
@@ -511,8 +760,9 @@ fn emit_simple_induction(
     }
 
     let mut proof_lines = vec![format!("  intro {}", intro_parts.join(" "))];
-    if arith_bridges.is_empty() {
-        // No arithmetic to lift: plain structural induction.
+    if arith_bridges.is_empty() && discovered_simp.is_empty() {
+        // No arithmetic to lift, no discovered lemmas: plain structural
+        // induction.
         proof_lines.push(format!("  induction {} with", target_lean));
         proof_lines.extend(arm_lines.into_iter().map(|a| format!("  {a}")));
     } else {
@@ -521,12 +771,30 @@ fn emit_simple_induction(
         // induction leaves at `sorry`; the induction fallback preserves every
         // case the bare strategy already proved (a law that merely MENTIONS
         // `plus`/`minus` but needs induction just fails the fast path and
-        // proceeds), so the wrapping can only ever ADD coverage.
+        // proceeds), so the wrapping can only ever ADD coverage. With a
+        // `SimpOverLemmas` pin the discovered lemma names join the fast path
+        // (and a second def-unfolding variant is tried — see
+        // `emit_list_induction`); the bridged fns' own defs stay out of the
+        // `simp only` calls (def + bridge in one call sticks).
+        let mut fast_lemmas: Vec<String> = discovered_simp.clone();
+        fast_lemmas.extend(arith_bridges.iter().cloned());
         proof_lines.push("  first".to_string());
         proof_lines.push(format!(
             "  | (simp only [{}] <;> omega)",
-            arith_bridges.join(", ")
+            fast_lemmas.join(", ")
         ));
+        if !discovered_simp.is_empty() {
+            let fast_unfolds: BTreeSet<String> = law_simp_defs(ctx, vb, law)
+                .into_iter()
+                .chain(discovered_simp.iter().cloned())
+                .chain(arith_bridges.iter().cloned())
+                .filter(|n| !bridged_fns.contains(n))
+                .collect();
+            proof_lines.push(format!(
+                "  | (simp only [{}] <;> omega)",
+                fast_unfolds.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
         proof_lines.push(format!("  | (induction {} with", target_lean));
         let last = arm_lines.len().saturating_sub(1);
         for (idx, arm) in arm_lines.into_iter().enumerate() {
@@ -538,8 +806,10 @@ fn emit_simple_induction(
         }
     }
 
+    let mut support_lines = discovered_support_lines(ctx, vb, law, discovered);
+    support_lines.extend(arith_support);
     Some(AutoProof {
-        support_lines: arith_support,
+        support_lines,
         proof_lines,
         replaces_theorem: false,
     })

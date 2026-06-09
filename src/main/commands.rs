@@ -5003,6 +5003,94 @@ pub(super) fn cmd_proof(
         }
     }
 
+    // Discovery feedback loop (the `ProofStrategy::SimpOverLemmas` hook):
+    // when a prior `--discover` run committed kernel-proved lemmas for THIS
+    // surface into `<output>/DiscoveredLemmas.lean`, a normal Lean proof run
+    // re-pins each in-scope `Induction` law so the backend embeds the lemmas
+    // (re-proving them in the same `lake build` — the soundness guard) and
+    // `simp`s over them. The cone-hash gate is staleness-only: a stale file
+    // is IGNORED (behaves exactly like no discovery ran), never trusted.
+    // Lean-only — discovery commits no Dafny artifact today.
+    if matches!(backend, super::cli::ProofBackend::Lean) {
+        let lemmas_path = std::path::Path::new(output_dir).join("DiscoveredLemmas.lean");
+        // The cone-hash HEADER (any hash) is what identifies the file as the
+        // discovery artifact at all — a previously-emitted entry root from a
+        // user module that happens to be named `DiscoveredLemmas` has no such
+        // header and is silently ignored, not warned about as "stale".
+        if let Ok(content) = std::fs::read_to_string(&lemmas_path)
+            && content.contains("-- cone-hash:")
+        {
+            let lemmas = {
+                let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+                let hash_tag = format!(
+                    "-- cone-hash: {}",
+                    aver::codegen::lemma_discovery::discovery_surface_hash(&inputs)
+                );
+                if content.contains(&hash_tag) {
+                    let parsed = aver::codegen::lemma_discovery::parse_committed_lemmas(&content);
+                    // Soundness gate: the texts are embedded VERBATIM into the
+                    // generated Lean, so a block carrying any top-level
+                    // declaration keyword (`axiom`, `set_option`, …) beyond
+                    // its own theorem would join the kernel environment.
+                    // Discovery never emits those — reject the whole artifact
+                    // loudly instead of trusting hand-edited content. (The
+                    // axiom whitelist in `--check`'s universal metric is the
+                    // backstop if anything ever slips through.)
+                    match parsed.iter().find_map(|l| {
+                        aver::codegen::lemma_discovery::forbidden_token_in_lemma(&l.text)
+                            .map(|tok| (l.name.clone(), tok))
+                    }) {
+                        Some((name, tok)) => {
+                            eprintln!(
+                                "{}",
+                                format!(
+                                    "warning: committed discovered lemma `{name}` contains a \
+                                     forbidden declaration token `{tok}` — the artifact was NOT \
+                                     emitted by `aver proof --discover`; ignoring it entirely. \
+                                     Delete {} and re-run `aver proof --discover`.",
+                                    lemmas_path.display()
+                                )
+                                .yellow()
+                            );
+                            Vec::new()
+                        }
+                        None => parsed,
+                    }
+                } else {
+                    eprintln!(
+                        "{}",
+                        "warning: committed discovered lemmas are stale (surface changed) — \
+                         ignored; re-run `aver proof --discover` to refresh"
+                            .yellow()
+                    );
+                    Vec::new()
+                }
+            };
+            if !lemmas.is_empty() {
+                let plan = {
+                    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+                    aver::codegen::lemma_discovery::plan_simp_over_lemma_pins(
+                        &inputs,
+                        &ctx.proof_ir,
+                        &lemmas,
+                    )
+                };
+                if !plan.is_empty() {
+                    aver::codegen::lemma_discovery::apply_simp_over_lemma_pins(
+                        &mut ctx.proof_ir,
+                        &plan,
+                    );
+                    println!(
+                        "lemma feedback: {} committed lemma(s) joined {} law(s) (simp-over-lemmas)",
+                        lemmas.len(),
+                        plan.len()
+                    );
+                }
+                ctx.discovered_lemmas = lemmas;
+            }
+        }
+    }
+
     match backend {
         super::cli::ProofBackend::Lean => {
             cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
@@ -5610,6 +5698,19 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
                 continue;
             }
             if let Ok(contents) = std::fs::read_to_string(entry.path()) {
+                // `DiscoveredLemmas.lean` WITH a cone-hash header is the
+                // committed `--discover` ARTIFACT, not an emitted proof file:
+                // lake doesn't build it (it's not a lakefile root), so
+                // theorems scanned from it wouldn't resolve in the
+                // axiom-checker environment — the lemmas that actually joined
+                // a proof are embedded in the entry root and scanned there.
+                // The header check keeps an entry MODULE legitimately named
+                // `DiscoveredLemmas` (whose emitted root has no such header)
+                // in the scan instead of silently zeroing its universal
+                // metric.
+                if name == "DiscoveredLemmas.lean" && contents.contains("-- cone-hash:") {
+                    continue;
+                }
                 for line in contents.lines() {
                     if let Some(rest) = line.strip_prefix("theorem ") {
                         let thm = rest
@@ -5659,17 +5760,47 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             );
-            // `ofReduceBool` = native_decide (bounded). `sorryAx` = a `sorry`
-            // reached transitively (e.g. a bridge lemma that failed to prove);
-            // the sorry-count gate above already covers the common case, but
-            // checking the axiom set too is belt-and-suspenders against a
-            // proof that depends on a sorried lemma without itself warning.
+            // WHITELIST: every axiom a law theorem depends on must be one of
+            // the three core logical axioms. A blacklist (no `ofReduceBool` =
+            // native_decide, no `sorryAx`) was equivalent while every line of
+            // emitted Lean came from typed IR — but the discovery feedback
+            // loop embeds COMMITTED `DiscoveredLemmas.lean` text verbatim, so
+            // an artifact smuggling e.g. a top-level `axiom` declaration must
+            // flip the metric to false, not slide past a name blacklist. The
+            // output format is `'name' depends on axioms: [a, b]` (or `does
+            // not depend on any axioms`); the two blacklist probes stay as a
+            // belt-and-suspenders floor against output-format drift.
             o.status.success()
+                && lean_axiom_lines_whitelisted(&combined)
                 && !combined.contains("Lean.ofReduceBool")
                 && !combined.contains("sorryAx")
         }
         Err(_) => false,
     }
+}
+
+/// `true` iff every `#print axioms` result line in `output` reports only the
+/// core logical axioms (`propext`, `Classical.choice`, `Quot.sound`). Lines
+/// not matching the `depends on axioms: […]` shape are ignored — the caller's
+/// blacklist probes remain the floor for those.
+fn lean_axiom_lines_whitelisted(output: &str) -> bool {
+    const ALLOWED: [&str; 3] = ["propext", "Classical.choice", "Quot.sound"];
+    for line in output.lines() {
+        let Some(idx) = line.find("depends on axioms:") else {
+            continue;
+        };
+        let list = line[idx + "depends on axioms:".len()..]
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']');
+        for axiom in list.split(',') {
+            let axiom = axiom.trim();
+            if !axiom.is_empty() && !ALLOWED.contains(&axiom) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// True for the main universal law theorem names emitted by the Lean
@@ -6069,6 +6200,24 @@ mod tests {
     }
 
     #[test]
+    fn lean_axiom_whitelist_rejects_foreign_axioms() {
+        // The universal metric must be a WHITELIST over `#print axioms`
+        // output: only the three core logical axioms pass. A custom axiom
+        // (e.g. smuggled through a tampered DiscoveredLemmas.lean and
+        // referenced transitively by a law's proof) is neither
+        // `Lean.ofReduceBool` nor `sorryAx`, so the old blacklist would have
+        // reported universal:true for a false law.
+        let clean = "'f_law_x' depends on axioms: [propext, Classical.choice, Quot.sound]";
+        let none = "'f_law_x' does not depend on any axioms";
+        let foreign = "'f_law_x' depends on axioms: [propext, cheat]";
+        let native = "'f_law_x' depends on axioms: [Lean.ofReduceBool]";
+        assert!(super::lean_axiom_lines_whitelisted(clean));
+        assert!(super::lean_axiom_lines_whitelisted(none));
+        assert!(!super::lean_axiom_lines_whitelisted(foreign));
+        assert!(!super::lean_axiom_lines_whitelisted(native));
+    }
+
+    #[test]
     fn count_lean_sorries_matches_both_quote_glyphs() {
         // Lean ≤4.15 prints straight quotes, ≥4.17 prints backticks.
         // `sorry` is a non-fatal warning (lake exits 0), so the count is
@@ -6113,6 +6262,7 @@ mod tests {
             resolved_program: aver::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,
+            discovered_lemmas: Vec::new(),
         }
     }
 
