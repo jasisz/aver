@@ -194,6 +194,32 @@ body { overflow-x: hidden; }
 }
 .hero-proof a:hover { color: var(--accent); }
 
+/* Thin social-proof line under the hero — one elegant line, not a banner. */
+.hero-podcast {
+    max-width: 760px;
+    margin: -0.5rem auto 0;
+    padding: 0 1.5rem;
+    text-align: center;
+    font-size: 0.86rem;
+    line-height: 1.5;
+    color: var(--muted);
+}
+.hero-podcast em {
+    font-style: normal;
+    font-weight: 620;
+    color: var(--text);
+}
+.hero-podcast a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 650;
+    white-space: nowrap;
+}
+.hero-podcast a:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.16em;
+}
+
 .btn {
     display: inline-flex;
     align-items: center;
