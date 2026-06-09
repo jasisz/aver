@@ -1418,6 +1418,9 @@ fn collect_named_types_in_annotation(
     fn walk(ty: &crate::types::Type, out: &mut std::collections::BTreeSet<String>) {
         use crate::types::Type;
         match ty {
+            // syntax-discovery-only: collects named types from a source type
+            // annotation into the LawProofCone alphabet; `name` is the discovery
+            // cone key, not a backend-routing / output identity decision.
             Type::Named { name, .. } => {
                 out.insert(name.clone());
             }

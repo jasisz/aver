@@ -418,6 +418,8 @@ pub(super) fn render_type(ty: &Type) -> String {
             args.iter().map(render_type).collect::<Vec<_>>().join(", "),
             render_type(ret)
         ),
+        // display-only: renders the named type into its display string for the
+        // discovered-lemma output; `name` IS the surface, no routing decision.
         Type::Named { name, .. } => name.clone(),
         Type::Var(n) => n.clone(),
         Type::Invalid => "<invalid>".to_string(),

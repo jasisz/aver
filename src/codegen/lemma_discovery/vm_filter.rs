@@ -225,6 +225,10 @@ fn sample_values(ty: &Type, inputs: &ProofLowerInputs, depth: usize) -> Vec<Valu
                 .collect();
             parts.map(|p| vec![Value::Tuple(p)]).unwrap_or_default()
         }
+        // syntax-discovery-only: the discovery VM-sampler walks proof-cone types
+        // by source name to look up the user TypeDef for value generation —
+        // discovery-internal sampling over the pure-fn cone, never backend-routed
+        // identity (no codegen output keys off this).
         Type::Named { name, .. } => {
             if depth == 0 {
                 return Vec::new();
