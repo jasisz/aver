@@ -4000,3 +4000,101 @@ fn discover_bounds_decreasing_accumulator_on_drain_when_lake_is_available() {
     }
     let _ = std::fs::remove_dir_all(&output_dir);
 }
+
+/// THE FEEDBACK LOOP (`ProofStrategy::SimpOverLemmas`) — the coverage win
+/// condition, end to end. The law states `plus(length(ys), length(xs)) =
+/// length(append(xs, ys))` — closing it needs the UNSTATED length-into-plus
+/// homomorphism (`length (a ++ b) = plus (length a) (length b)`), which the
+/// induction ladder alone cannot conjure (the `plus` recursion is stuck on a
+/// symbolic first argument, and `omega` sees only opaque atoms). The loop:
+///
+/// 1. baseline `aver proof --check` — builds, but the universal stays `sorry`
+///    (`universal:false`): the honest no-discovery floor;
+/// 2. `aver proof --discover` conjectures AND kernel-proves the homomorphism,
+///    committing it to `DiscoveredLemmas.lean`;
+/// 3. the SAME `aver proof --check` in the SAME output dir now re-pins the
+///    law to `SimpOverLemmas`, embeds + re-proves the lemma, and closes the
+///    universal for real (`universal:true`, zero sorries).
+///
+/// This is discovery moving COVERAGE, not just reach.
+#[test]
+fn discovered_lemmas_close_length_homomorphism_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping feedback-loop test: `lake` not available");
+        return;
+    }
+    let source = "module LenHomo\n    intent =\n        \"plus(length ys, length xs) = length(xs ++ ys) — needs the unstated length homomorphism\"\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn length(xs: List<Int>) -> Nat\n    match xs\n        [] -> Nat.Z\n        [y, ..ys] -> Nat.S(length(ys))\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn append(xs: List<Int>, ys: List<Int>) -> List<Int>\n    List.concat(xs, ys)\n\n\
+         verify length law lenAppendSwap\n    given xs: List<Int> = [[], [1], [1, 2]]\n    given ys: List<Int> = [[], [3]]\n    plus(length(ys), length(xs)) => length(append(xs, ys))\n";
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-feedback-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(src.join("m.av"), source).expect("write m.av");
+    let out = temp_output_dir("aver-feedback-out");
+
+    let check = |label: &str| -> (bool, String) {
+        let run = Command::new(aver_bin)
+            .arg("proof")
+            .arg(src.join("m.av"))
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(&out)
+            .arg("--check")
+            .arg("--check-json")
+            .output()
+            .unwrap_or_else(|e| panic!("{label}: aver proof failed to run: {e}"));
+        let json_line = run
+            .stdout
+            .split(|&b| b == b'\n')
+            .rev()
+            .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+            .unwrap_or_else(|| panic!("{label}: no JSON line:\n{}", format_output(&run)))
+            .to_string();
+        let summary: serde_json::Value = serde_json::from_str(&json_line)
+            .unwrap_or_else(|e| panic!("{label}: bad JSON ({e}):\n{json_line}"));
+        (
+            summary["universal"].as_bool().unwrap_or(false),
+            format_output(&run),
+        )
+    };
+
+    // 1. The honest floor: without discovery the universal must NOT close —
+    //    if it ever starts closing, the fixture stopped exercising the loop
+    //    (tighten it) rather than the loop having regressed.
+    let (universal_before, output_before) = check("baseline");
+    assert!(
+        !universal_before,
+        "fixture closes WITHOUT discovery — it no longer exercises the feedback loop:\n{output_before}"
+    );
+
+    // 2. Discover + commit into the same output dir.
+    let discover = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--discover")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let committed = std::fs::read_to_string(out.join("DiscoveredLemmas.lean")).unwrap_or_default();
+    assert!(
+        committed.contains("length (") && committed.contains("plus (length"),
+        "discovery did not commit the length homomorphism:\n--- DiscoveredLemmas.lean ---\n{committed}\n--- discover output ---\n{}",
+        format_output(&discover)
+    );
+
+    // 3. The win: the SAME check now closes the universal via the committed
+    //    lemma (re-proved in the same build — no trust shortcut).
+    let (universal_after, output_after) = check("with-discovery");
+    assert!(
+        universal_after,
+        "committed discovered lemmas did not close the law (feedback loop broken):\n{output_after}"
+    );
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

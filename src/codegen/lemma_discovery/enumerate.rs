@@ -101,10 +101,10 @@ fn homomorphism_conjectures(
     // the fold we want a homomorphism for (`verify count law …` → `count`), so
     // add it back to the candidate `g` set.
     let mut fns: Vec<&crate::ast::FnDef> = cone.pure_fns().to_vec();
-    if let Some(subj) = inputs.find_fn_def_by_call_name(subject_fn) {
-        if !fns.iter().any(|f| f.name == subj.name) {
-            fns.push(subj);
-        }
+    if let Some(subj) = inputs.find_fn_def_by_call_name(subject_fn)
+        && !fns.iter().any(|f| f.name == subj.name)
+    {
+        fns.push(subj);
     }
     let fns = &fns;
     // The monoid `⊕`: a cone fn that is the canonical addition over a Peano type.

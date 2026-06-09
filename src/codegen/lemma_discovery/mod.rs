@@ -53,13 +53,19 @@
 //!    REPLAYS (re-verifies the committed lemmas via `lake build`) instead of
 //!    re-enumerating. Re-verification — not the hash — is the soundness guard.
 //!
-//! Still ahead: re-enter the *law's own proof* with a discovered lemma (via the
-//! `ProofStrategy::SimpOverLemmas` hook) so a `verify ... law` that needs it
-//! closes under normal `aver proof` — for the flagship rle roundtrip that also
-//! needs the guarded accumulator-generalization family (charter layer 3), so
-//! it is deferred there. Entry [`run_discovery`] (+ [`vm_filter`], + the CLI
-//! prove/replay step) is invoked by `aver proof --discover`; normal
-//! `aver proof` never runs this (discovery is the explicit, cached step).
+//! 7. **Feedback into the law's own proof** ([`committed`] — the
+//!    `ProofStrategy::SimpOverLemmas` hook): on a NORMAL `aver proof` run the
+//!    CLI parses a committed `DiscoveredLemmas.lean` (hash-gated for
+//!    staleness only), re-pins each in-scope `Induction` law to
+//!    `SimpOverLemmas(names)`, and the Lean backend embeds the lemma texts
+//!    before the law theorem (re-proving them in the same `lake build`) and
+//!    simps over their names — so a law that NEEDS a discovered auxiliary
+//!    lemma closes under normal `aver proof` after one `--discover` run.
+//!
+//! Entry [`run_discovery`] (+ [`vm_filter`], + the CLI prove/replay step) is
+//! invoked by `aver proof --discover`; normal `aver proof` never enumerates
+//! (discovery is the explicit, cached step — it only CONSUMES the committed
+//! artifact via step 7).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -240,11 +246,17 @@ pub struct LawDiscovery {
 }
 
 mod bricks;
+mod committed;
 mod enumerate;
 mod render;
 mod vm_filter;
 
 pub use bricks::structural_lemma_groups;
+pub use committed::{
+    CommittedLemma, SimpDirection, apply_simp_over_lemma_pins, forbidden_token_in_lemma,
+    mentioned_fns, parse_committed_lemmas, plan_simp_over_lemma_pins, simp_entries,
+    simp_orientation,
+};
 pub use enumerate::run_discovery;
 pub use render::{
     discovery_surface_hash, lean_lemma_theorem, rank_candidate_indices, render_report,

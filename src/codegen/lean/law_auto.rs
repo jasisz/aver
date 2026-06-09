@@ -68,9 +68,22 @@ pub fn emit_verify_law_forall_auto_proof(
     // (still called for BackendDispatch laws that the lowerer
     // hasn't classified — shouldn't trigger for canonical recursive-
     // ADT shapes after Step 31).
+    //
+    // `SimpOverLemmas(names)` (the discovery feedback loop — the CLI
+    // re-pins an `Induction` law when committed discovered lemmas are
+    // in-scope) routes to the SAME induction emit with the lemma
+    // names threaded through: the emit embeds the lemma texts, adds
+    // the names to the simp sets, and tries a lemma-first fast path
+    // before inducting.
+    let pinned = law_strategy_for(ctx, &vb.fn_name, &law.name);
+    let discovered: Vec<String> = match &pinned {
+        Some(crate::ir::ProofStrategy::SimpOverLemmas(names)) => names.clone(),
+        _ => Vec::new(),
+    };
     if matches!(
-        law_strategy_for(ctx, &vb.fn_name, &law.name),
+        pinned,
         Some(crate::ir::ProofStrategy::Induction { .. })
+            | Some(crate::ir::ProofStrategy::SimpOverLemmas(_))
     ) && let Some(proof) = induction::emit_structural_induction_law(
         vb,
         law,
@@ -79,6 +92,7 @@ pub fn emit_verify_law_forall_auto_proof(
         theorem_base,
         quant_params,
         theorem_prop,
+        &discovered,
     ) {
         return Some(proof);
     }

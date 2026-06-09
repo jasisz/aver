@@ -2021,6 +2021,7 @@ fn emit_verify_law_block(
             !matches!(
                 t.strategy,
                 crate::ir::ProofStrategy::Induction { .. }
+                    | crate::ir::ProofStrategy::SimpOverLemmas(_)
                     | crate::ir::ProofStrategy::BackendDispatch
                     | crate::ir::ProofStrategy::Sorry
             )

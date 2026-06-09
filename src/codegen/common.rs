@@ -2933,6 +2933,7 @@ mod tests {
             resolved_program: crate::codegen::program_view::ResolvedProgramView::default(),
             program_shape: None,
             mir_program: None,
+            discovered_lemmas: Vec::new(),
         };
         ctx.proof_ir
             .refined_types

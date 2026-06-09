@@ -448,20 +448,21 @@ fn call_or_ctor(e: &Spanned<Expr>) -> Option<(String, Vec<&Spanned<Expr>>)> {
     }
 }
 
+/// `(p0, p1, base_arm_body, succ_binder, succ_arm_body)` — the decomposition
+/// [`peano_outer_split`] returns for a canonical binary Peano fn.
+type PeanoSplit<'a> = (
+    &'a str,
+    &'a str,
+    &'a Spanned<Expr>,
+    &'a str,
+    &'a Spanned<Expr>,
+);
+
 /// Param checks + outer `match p0` split shared by the arithmetic recognizers.
 /// Returns `(p0, p1, base_arm_body, succ_binder, succ_arm_body)` for a binary fn
 /// over `peano`'s type whose body matches its FIRST param into the canonical
 /// base / succ(binder) arms; `None` otherwise.
-fn peano_outer_split<'a>(
-    fd: &'a FnDef,
-    peano: &PeanoType,
-) -> Option<(
-    &'a str,
-    &'a str,
-    &'a Spanned<Expr>,
-    &'a str,
-    &'a Spanned<Expr>,
-)> {
+fn peano_outer_split<'a>(fd: &'a FnDef, peano: &PeanoType) -> Option<PeanoSplit<'a>> {
     if fd.params.len() != 2 {
         return None;
     }
@@ -708,11 +709,12 @@ fn detect_nat_compare_op(fd: &FnDef, ctx: &CodegenContext) -> Option<NatCompareK
     None
 }
 
-/// Collect the distinct canonical Peano comparison operators a law invokes.
-pub(crate) fn collect_nat_compare_ops_in_law(
+/// Fn names a law invokes directly plus one level of transitive callees —
+/// the shared name-gathering step of the canonical-op collectors below.
+fn law_called_fn_names(
     law: &VerifyLaw,
     ctx: &CodegenContext,
-) -> Vec<NatCompareOp> {
+) -> std::collections::BTreeSet<String> {
     let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     collect_called_fns(&law.lhs, &mut names);
     collect_called_fns(&law.rhs, &mut names);
@@ -723,6 +725,25 @@ pub(crate) fn collect_nat_compare_ops_in_law(
         }
     }
     names.extend(transitive);
+    names
+}
+
+/// Collect the distinct canonical Peano comparison operators a law invokes.
+pub(crate) fn collect_nat_compare_ops_in_law(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Vec<NatCompareOp> {
+    collect_nat_compare_ops_for_names(&law_called_fn_names(law, ctx), ctx)
+}
+
+/// Canonical Peano comparison operators among an explicit fn-name set —
+/// the name-driven core of [`collect_nat_compare_ops_in_law`]. Also used by
+/// the discovery feedback loop, where a committed lemma can introduce an op
+/// (e.g. `lessEq`) the law itself never mentions.
+pub(crate) fn collect_nat_compare_ops_for_names(
+    names: &std::collections::BTreeSet<String>,
+    ctx: &CodegenContext,
+) -> Vec<NatCompareOp> {
     let mut seen = std::collections::BTreeSet::new();
     names
         .iter()
@@ -742,16 +763,17 @@ pub(crate) fn collect_nat_arith_ops_in_law(
     law: &VerifyLaw,
     ctx: &CodegenContext,
 ) -> Vec<NatArithOp> {
-    let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    collect_called_fns(&law.lhs, &mut names);
-    collect_called_fns(&law.rhs, &mut names);
-    let mut transitive: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for f in &names {
-        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-            collect_called_fns_in_body(&fd.body, &mut transitive);
-        }
-    }
-    names.extend(transitive);
+    collect_nat_arith_ops_for_names(&law_called_fn_names(law, ctx), ctx)
+}
+
+/// Canonical Peano arithmetic operators among an explicit fn-name set —
+/// the name-driven core of [`collect_nat_arith_ops_in_law`]. Also used by
+/// the discovery feedback loop, where a committed homomorphism lemma can
+/// introduce an op (e.g. `plus`) the law itself never mentions.
+pub(crate) fn collect_nat_arith_ops_for_names(
+    names: &std::collections::BTreeSet<String>,
+    ctx: &CodegenContext,
+) -> Vec<NatArithOp> {
     let mut seen = std::collections::BTreeSet::new();
     names
         .iter()

@@ -279,6 +279,14 @@ pub struct CodegenContext {
     /// runtime codegen after the HIR walker's deletion (W6/Stage-3).
     /// `None` for hand-assembled test contexts that skip `build_context`.
     pub mir_program: Option<crate::ir::mir::MirProgram>,
+    /// Kernel-proved lemmas parsed back from a committed
+    /// `DiscoveredLemmas.lean` (the `--discover` artifact), set by the CLI
+    /// on a normal `aver proof` run when the discovery-surface hash still
+    /// matches. The Lean backend embeds each pinned lemma's text before the
+    /// first law theorem that uses it (re-proving it in the same build) and
+    /// `simp`s over its name (`ProofStrategy::SimpOverLemmas`). Empty unless
+    /// the CLI wired it — discovery feedback is strictly opt-in.
+    pub discovered_lemmas: Vec<crate::codegen::lemma_discovery::CommittedLemma>,
 }
 
 /// Output files from a codegen backend.
@@ -565,6 +573,7 @@ pub fn build_context(
         program_shape,
         resolved_program,
         mir_program,
+        discovered_lemmas: Vec::new(),
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);
