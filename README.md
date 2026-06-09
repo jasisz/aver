@@ -211,6 +211,14 @@ The intended workflow is explicit: AI writes Aver, humans review contracts and i
 
 ---
 
+## Talks
+
+I discussed Aver on Happy Path Programming #120 with Bruce Eckel and James Ward: why the optimization target is the reviewer and not the generator; why effects, intent, verify blocks, and decisions belong in the language itself; and what "AI-native" should actually mean when generated code still has to be trusted by a human.
+
+Watch / listen: https://www.youtube.com/watch?v=D_mPxGtSzbQ
+
+---
+
 ## Execution modes
 
 ### Default (VM)
