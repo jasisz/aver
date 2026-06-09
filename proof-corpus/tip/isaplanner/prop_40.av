@@ -1,0 +1,19 @@
+module Prop40
+    intent =
+        "TIP isaplanner prop_40: take Z xs = nil."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn take(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+verify take law takeZeroNil
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    take(Nat.Z, xs) => []

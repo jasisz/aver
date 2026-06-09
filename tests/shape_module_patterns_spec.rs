@@ -201,6 +201,86 @@ fn fibonacci_module_pins_fib_over_fibtr_wrapper() {
     );
 }
 
+// ─── AccumulatorFold (role-bearing refinement of WrapperOverRecursion) ───────
+
+/// `(wrapper, loop, step_fn, step_op, finish_fn)` for each AccumulatorFold.
+fn accumulator_folds(
+    path: &str,
+) -> Vec<(
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+)> {
+    detect_in_file(path)
+        .iter()
+        .filter_map(|p| match p {
+            ModulePattern::AccumulatorFold {
+                wrapper_fn,
+                loop_fn,
+                step_fn,
+                step_op,
+                finish_fn,
+                ..
+            } => Some((
+                wrapper_fn.clone(),
+                loop_fn.clone(),
+                step_fn.clone(),
+                step_op.map(|o| format!("{o:?}")),
+                finish_fn.clone(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn codec_fold_pins_named_step_and_finish() {
+    // rle's `encode → encodeLoop` is an AccumulatorFold with a NAMED step
+    // (`encodeFold`) and a NAMED finish (`flushAcc`) — the codec flavor.
+    let folds = accumulator_folds("examples/data/rle.av");
+    assert!(
+        folds.contains(&(
+            "encode".to_string(),
+            "encodeLoop".to_string(),
+            Some("encodeFold".to_string()),
+            None,
+            Some("flushAcc".to_string()),
+        )),
+        "expected encode→encodeLoop codec fold; got {folds:?}"
+    );
+}
+
+#[test]
+fn monoidal_fold_pins_inline_op_and_identity_finish() {
+    // sum_acc's `sum → sumTR` is an AccumulatorFold with an INLINE additive
+    // step (`acc + h` → step_op = Add) and an IDENTITY finish (nil arm returns
+    // `acc`, so finish_fn = None) — the monoidal flavor of the same schema.
+    let folds = accumulator_folds("examples/data/sum_acc.av");
+    assert!(
+        folds.contains(&(
+            "sum".to_string(),
+            "sumTR".to_string(),
+            None,
+            Some("Add".to_string()),
+            None,
+        )),
+        "expected sum→sumTR monoidal fold; got {folds:?}"
+    );
+}
+
+#[test]
+fn non_list_wrapper_is_not_an_accumulator_fold() {
+    // `fib → fibTR` is a WrapperOverRecursion but NOT an AccumulatorFold — its
+    // inner recurs on an `Int`, not a `match list` fold. The two are distinct.
+    let folds = accumulator_folds("examples/data/fibonacci.av");
+    assert!(
+        !folds.iter().any(|(w, _, _, _, _)| w == "fib"),
+        "fib must not be an AccumulatorFold; got {folds:?}"
+    );
+}
+
 // ─── Stage 6d: ResultPipelineChain ──────────────────────────────────────────
 
 #[test]

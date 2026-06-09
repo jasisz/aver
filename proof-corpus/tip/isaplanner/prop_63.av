@@ -1,0 +1,42 @@
+module Prop63
+    intent =
+        "TIP isaplanner prop_63: if n < len xs then last (drop n xs) = last xs."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn len(x: List<Nat>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(len(xs))
+
+fn last(x: List<Nat>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..z] -> match z
+            [] -> y
+            [x2, ..x3] -> last(z)
+
+fn drop(x: Nat, y: List<Nat>) -> List<Nat>
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+fn lt(x: Nat, y: Nat) -> Bool
+    match y
+        Nat.Z -> false
+        Nat.S(z) -> match x
+            Nat.Z -> true
+            Nat.S(x2) -> lt(x2, z)
+
+verify last law lastDropWhenLess
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]]
+    match lt(n, len(xs))
+        true -> last(drop(n, xs))
+        false -> last(xs)
+    => last(xs)

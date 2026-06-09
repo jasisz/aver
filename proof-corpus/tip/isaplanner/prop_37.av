@@ -1,0 +1,36 @@
+module Prop37
+    intent =
+        "TIP isaplanner prop_37: x is not an element of (delete x xs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn delete(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> []
+        [z, ..xs] -> match eqNat(x, z)
+            true -> delete(x, xs)
+            false -> List.concat([z], delete(x, xs))
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> match eqNat(x, z)
+            true -> true
+            false -> elem(x, xs)
+
+verify elem law elemDelete
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.Z]]
+    elem(x, delete(x, xs)) => false

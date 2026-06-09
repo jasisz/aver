@@ -1,0 +1,21 @@
+module Prop22
+    intent =
+        "TIP isaplanner prop_22: max (max a b) c = max a (max b c) (associativity of max on Nat)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn max(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> Nat.S(max(z, x2))
+
+verify max law maxAssoc
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given b: Nat = [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.S(Nat.Z))]
+    given c: Nat = [Nat.S(Nat.S(Nat.Z)), Nat.S(Nat.Z), Nat.Z]
+    max(max(a, b), c) => max(a, max(b, c))

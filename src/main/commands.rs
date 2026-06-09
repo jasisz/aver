@@ -4875,6 +4875,7 @@ pub(super) fn cmd_proof(
     error_budget: Option<usize>,
     sorry_budget: Option<usize>,
     check_json: bool,
+    discover: bool,
 ) {
     let (mut ctx, _module_root) = build_codegen_context(
         file,
@@ -4889,6 +4890,85 @@ pub(super) fn cmd_proof(
         true,  // run_contract_lower — same
         true,  // run_law_lower — same
     );
+
+    // `--discover`: the explicit, expensive, cached lemma-discovery step
+    // (charter: `prompts/lemma-discovery.md`); normal `aver proof` never enters
+    // here. Discover-once / replay-after: the proved lemmas are committed as a
+    // reviewable `<output>/DiscoveredLemmas.lean`, keyed by a discovery-surface
+    // hash. On re-run with an unchanged surface we REPLAY — re-verify the
+    // committed lemmas (the soundness guard) WITHOUT re-enumerating.
+    if discover {
+        let lemmas_path = std::path::Path::new(output_dir).join("DiscoveredLemmas.lean");
+        let surface_hash = {
+            let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+            aver::codegen::lemma_discovery::discovery_surface_hash(&inputs)
+        };
+        let hash_tag = format!("-- cone-hash: {surface_hash}");
+
+        // REPLAY: committed lemmas present + surface unchanged → re-verify only.
+        if let Ok(existing) = std::fs::read_to_string(&lemmas_path)
+            && existing.contains(&hash_tag)
+        {
+            let count = existing
+                .lines()
+                .filter(|l| l.trim_start().starts_with("theorem "))
+                .count();
+            if lake_reverify_appended(&mut ctx, verify_mode, &existing) {
+                println!(
+                    "lemma discovery: replayed {count} committed lemma(s), re-verified (no rediscovery)\n  {}",
+                    lemmas_path.display()
+                );
+                return;
+            }
+            eprintln!(
+                "{}",
+                "warning: committed lemmas failed re-verification (surface stale?) — rediscovering"
+                    .yellow()
+            );
+        }
+
+        // DISCOVER: enumerate + VM-filter + collect structure-directed guarded
+        // lemma groups (immutable borrow of ctx, scoped so it ends before the
+        // prove step needs `&mut ctx`).
+        let (mut reports, structural_groups) = {
+            let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
+            let mut reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
+            aver::codegen::lemma_discovery::vm_filter(&mut reports, &inputs);
+            let groups = aver::codegen::lemma_discovery::structural_lemma_groups(&inputs);
+            (reports, groups)
+        };
+        let proved_lean =
+            prove_discovered_lemmas_lean(&mut reports, &structural_groups, &mut ctx, verify_mode);
+        print!(
+            "{}",
+            aver::codegen::lemma_discovery::render_report(&reports)
+        );
+
+        // Persist proved lemmas as a reviewable Lean file (the committed
+        // artifact), tagged with the surface hash for replay.
+        if !proved_lean.is_empty() {
+            let _ = std::fs::create_dir_all(output_dir);
+            let mut content = format!(
+                "-- Discovered lemmas for {file} — `aver proof --discover`\n\
+                 {hash_tag}\n\
+                 -- Each theorem below was discovered (by enumeration or structure)\n\
+                 -- and kernel-proved. Re-verified (not rediscovered) on replay while\n\
+                 -- the cone-hash holds.\n\n"
+            );
+            for thm in &proved_lean {
+                content.push_str(thm);
+                content.push('\n');
+            }
+            if std::fs::write(&lemmas_path, &content).is_ok() {
+                println!(
+                    "\ncommitted {} proved lemma(s) → {}",
+                    proved_lean.len(),
+                    lemmas_path.display()
+                );
+            }
+        }
+        return;
+    }
 
     // Oracle v1: aver proof only models `?!` in complete mode. If the
     // project's aver.toml selects cancel or sequential, fail loudly —
@@ -4952,6 +5032,183 @@ pub(super) fn cmd_proof(
             dafny_entry,
         );
     }
+}
+
+/// Phase 2d of lemma discovery: attempt to kernel-prove the top-ranked
+/// surviving candidates by appending each as a standalone Lean theorem to the
+/// program's generated Lean project and running `lake build`.
+///
+/// A candidate proves iff the build still succeeds: the program's own law
+/// theorems carry `sorry` fallbacks (warnings → lake exit 0), while a
+/// discovered theorem has NO `sorry`, so it can only flip the exit code by
+/// failing (unsolved goals → exit 1). Records proved equations into
+/// `report.proved`. Skips silently if `lake` is unavailable (discovery
+/// degrades to survivors-only). Bounded by a small build budget — discovery is
+/// the expensive cached step, but `--discover` should still return promptly.
+fn prove_discovered_lemmas_lean(
+    reports: &mut [aver::codegen::lemma_discovery::LawDiscovery],
+    structural_groups: &[Vec<(String, String)>],
+    ctx: &mut codegen::CodegenContext,
+    verify_mode: &super::cli::ProofVerifyMode,
+) -> Vec<String> {
+    use std::process::Command;
+
+    let mut proved_lean: Vec<String> = Vec::new();
+
+    // `lake` must be on PATH; otherwise leave proving to a later run.
+    let lake_ok = Command::new("lake")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !lake_ok {
+        return proved_lean;
+    }
+
+    let emit_mode = match verify_mode {
+        super::cli::ProofVerifyMode::Auto => aver::codegen::lean::VerifyEmitMode::NativeDecide,
+        super::cli::ProofVerifyMode::Sorry => aver::codegen::lean::VerifyEmitMode::Sorry,
+        super::cli::ProofVerifyMode::TheoremSkeleton => {
+            aver::codegen::lean::VerifyEmitMode::TheoremSkeleton
+        }
+    };
+    let project = aver::codegen::lean::transpile_for_proof_mode(ctx, emit_mode);
+    let entry = format!("{}.lean", aver::codegen::common::entry_basename(ctx));
+
+    let Ok(dir) = tempfile::tempdir() else {
+        return proved_lean;
+    };
+    let mut entry_orig: Option<String> = None;
+    for (rel, content) in &project.files {
+        let path = dir.path().join(rel);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if *rel == entry {
+            entry_orig = Some(content.clone());
+        }
+        if std::fs::write(&path, content).is_err() {
+            return proved_lean;
+        }
+    }
+    let Some(entry_orig) = entry_orig else {
+        return proved_lean;
+    };
+    let entry_path = dir.path().join(&entry);
+
+    // Helper: append `addition` to the entry file and `lake build`; true on
+    // success (the appended theorems kernel-check, given the baseline builds).
+    let build_with = |addition: &str| -> bool {
+        let body = format!("{entry_orig}\n\n{addition}\n");
+        if std::fs::write(&entry_path, body).is_err() {
+            return false;
+        }
+        Command::new("lake")
+            .arg("build")
+            .current_dir(dir.path())
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+
+    // Layer-3 structure-directed groups first (targeted guarded lemmas, e.g.
+    // the counted-repeat advance). Each group's co-dependent theorems are
+    // appended and built together, in dependency order.
+    for group in structural_groups {
+        let addition = group
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if build_with(&addition) {
+            for (_, text) in group {
+                proved_lean.push(text.clone());
+            }
+        }
+    }
+
+    // Total `lake build` attempts for enumerated candidates across all laws.
+    let mut budget = 8usize;
+    let mut counter = 0usize;
+    for report in reports.iter_mut() {
+        for idx in aver::codegen::lemma_discovery::rank_candidate_indices(report) {
+            if budget == 0 {
+                break;
+            }
+            let candidate = &report.conjectures[idx];
+            let name = format!("aver_discovered_lemma_{counter}");
+            counter += 1;
+            let Some(theorem) = aver::codegen::lemma_discovery::lean_lemma_theorem(
+                candidate,
+                &report.binders,
+                &name,
+            ) else {
+                // No list-typed free variable → the list-induction template
+                // doesn't apply; don't spend build budget on it.
+                continue;
+            };
+            budget -= 1;
+            if build_with(&theorem) {
+                report.proved.push(candidate.render(&report.binders));
+                proved_lean.push(theorem);
+            }
+        }
+    }
+    proved_lean
+}
+
+/// Re-verify already-discovered lemmas (replay path): regenerate the program's
+/// Lean project, append the committed lemma source verbatim, and `lake build`.
+/// Returns whether the build still succeeds (the committed proofs still
+/// kernel-check). This — not the cone hash — is the soundness guard: a code
+/// change that staled a lemma fails loudly here instead of being trusted.
+fn lake_reverify_appended(
+    ctx: &mut codegen::CodegenContext,
+    verify_mode: &super::cli::ProofVerifyMode,
+    appended: &str,
+) -> bool {
+    use std::process::Command;
+
+    if Command::new("lake")
+        .arg("--version")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    let emit_mode = match verify_mode {
+        super::cli::ProofVerifyMode::Auto => aver::codegen::lean::VerifyEmitMode::NativeDecide,
+        super::cli::ProofVerifyMode::Sorry => aver::codegen::lean::VerifyEmitMode::Sorry,
+        super::cli::ProofVerifyMode::TheoremSkeleton => {
+            aver::codegen::lean::VerifyEmitMode::TheoremSkeleton
+        }
+    };
+    let project = aver::codegen::lean::transpile_for_proof_mode(ctx, emit_mode);
+    let entry = format!("{}.lean", aver::codegen::common::entry_basename(ctx));
+    let Ok(dir) = tempfile::tempdir() else {
+        return false;
+    };
+    for (rel, content) in &project.files {
+        let path = dir.path().join(rel);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let body = if *rel == entry {
+            format!("{content}\n\n{appended}\n")
+        } else {
+            content.clone()
+        };
+        if std::fs::write(&path, body).is_err() {
+            return false;
+        }
+    }
+    Command::new("lake")
+        .arg("build")
+        .current_dir(dir.path())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// `aver proof --check` harness: invoke the backend's verifier inside
@@ -5082,7 +5339,7 @@ fn run_proof_check(
     // law, and neither backend charges that fn-level trust to the budget.)
     let error_budget_v = error_budget.unwrap_or(0);
     let sorry_budget_v = sorry_budget.unwrap_or(0);
-    let (errors, sorries, axioms, budget, passed) = match backend {
+    let (errors, sorries, axioms, omitted, budget, passed) = match backend {
         super::cli::ProofBackend::Dafny => {
             let errors = match parse_dafny_error_count(&stdout) {
                 Some(n) => n,
@@ -5098,16 +5355,51 @@ fn run_proof_check(
                     std::process::exit(2);
                 }
             };
+            // An unproven law obligation has TWO shapes on Dafny, both of
+            // which keep `errors == 0` / exit 0 and would false-green an
+            // errors-only check: (1) `assume {:axiom} lhs == rhs;` (the law is
+            // TRUSTED), and (2) the universal lemma is DROPPED entirely and
+            // only concrete samples remain ("sample-only (universal lemma
+            // omitted)" — the law's ∀-claim is never stated, so Dafny has
+            // nothing to fail on). Both mean "this law was not proven
+            // universally"; charge BOTH against the sorry budget so a degraded
+            // law cannot pass. (Trace-projection "runtime-only" laws are a
+            // deliberate non-Dafny gate, not a coverage claim, and are excluded.)
             let axioms = count_dafny_axioms(output_dir);
+            let omitted = count_dafny_omitted_universals(output_dir);
+            let unproven = axioms + omitted;
             let passed =
-                output.status.success() && errors <= error_budget_v && axioms <= sorry_budget_v;
-            (Some(errors), None, Some(axioms), error_budget_v, passed)
+                output.status.success() && errors <= error_budget_v && unproven <= sorry_budget_v;
+            (
+                Some(errors),
+                None,
+                Some(axioms),
+                Some(omitted),
+                error_budget_v,
+                passed,
+            )
         }
         super::cli::ProofBackend::Lean => {
             let sorries = count_lean_sorries(&stderr) + count_lean_sorries(&stdout);
             let passed = output.status.success() && sorries <= sorry_budget_v;
-            (None, Some(sorries), None, sorry_budget_v, passed)
+            (None, Some(sorries), None, None, sorry_budget_v, passed)
         }
+    };
+
+    // Honest-coverage signal (Lean only): did the proof establish the law's
+    // UNIVERSAL `∀`-claim by genuine kernel reasoning, or only by bounded
+    // `native_decide` enumeration over the finite sample domain? `passed`
+    // stays deliberately lenient — a bounded verify-on-domain is a
+    // legitimate (if weaker) check the corpus must not regress on (e.g.
+    // `examples/refinement/email`) — so the proof-corpus runner keys on this
+    // `universal` field instead for an honest "what Aver kernel-proves"
+    // count. (Dafny already folds the analogous "universal lemma omitted"
+    // degradation into its own `passed`, so it needs no separate field.)
+    let universal: Option<bool> = match backend {
+        super::cli::ProofBackend::Lean => {
+            Some(output.status.success() && lean_universal_proof(output_dir, sorries.unwrap_or(0)))
+        }
+        super::cli::ProofBackend::Dafny => None,
     };
 
     if check_json {
@@ -5122,6 +5414,12 @@ fn run_proof_check(
         if let Some(a) = axioms {
             obj.insert("axioms".into(), a.into());
             obj.insert("axiom_budget".into(), sorry_budget_v.into());
+        }
+        if let Some(o) = omitted {
+            obj.insert("omitted".into(), o.into());
+        }
+        if let Some(u) = universal {
+            obj.insert("universal".into(), u.into());
         }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
@@ -5138,14 +5436,19 @@ fn run_proof_check(
         let (metric, budget_desc) = match backend {
             super::cli::ProofBackend::Dafny => (
                 format!(
-                    "{} errors, {} axioms",
+                    "{} errors, {} axioms, {} omitted",
                     errors.unwrap_or(0),
-                    axioms.unwrap_or(0)
+                    axioms.unwrap_or(0),
+                    omitted.unwrap_or(0)
                 ),
-                format!("errors ≤ {error_budget_v}, axioms ≤ {sorry_budget_v}"),
+                format!("errors ≤ {error_budget_v}, axioms+omitted ≤ {sorry_budget_v}"),
             ),
             super::cli::ProofBackend::Lean => (
-                format!("{} sorries", sorries.unwrap_or(0)),
+                format!(
+                    "{} sorries, universal: {}",
+                    sorries.unwrap_or(0),
+                    if universal == Some(true) { "yes" } else { "no" }
+                ),
                 format!("sorries ≤ {sorry_budget_v}"),
             ),
         };
@@ -5213,6 +5516,32 @@ fn count_dafny_axioms(dir: &str) -> usize {
     total
 }
 
+/// Count laws whose universal `∀` lemma was DROPPED to sample-only across
+/// the emitted `.dfy` files in `dir`. When the emitter cannot express a
+/// law's universal claim (e.g. it calls a recursive fn still outside the
+/// proof subset) it emits concrete sample assertions plus a
+/// `…, sample-only (universal lemma omitted)` comment and NO `∀`-lemma.
+/// Dafny then verifies with 0 errors / exit 0 because the universal claim
+/// was never stated — a false-green the errors-only and axiom-only checks
+/// both miss. These are unproven law obligations exactly like
+/// `assume {:axiom}`, so `--check` charges them against the sorry budget
+/// too. (The deliberate trace-projection `runtime-only` gate is NOT a
+/// coverage claim and carries a different marker, so it is not counted.)
+fn count_dafny_omitted_universals(dir: &str) -> usize {
+    let mut total = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().ends_with(".dfy")
+                && let Ok(contents) = std::fs::read_to_string(entry.path())
+            {
+                total += contents.matches("(universal lemma omitted)").count();
+            }
+        }
+    }
+    total
+}
+
 /// Count Lean's `declaration uses 'sorry'` warnings in build output.
 /// Lake emits one such warning per `sorry` in the residual program;
 /// counting them matches the budget the proof_spec gating tests use.
@@ -5229,6 +5558,166 @@ fn count_lean_sorries(s: &str) -> usize {
     s.lines()
         .filter(|l| l.contains("declaration uses") && l.contains("sorry"))
         .count()
+}
+
+/// Honest-coverage distinguisher for the Lean backend: did the emitted
+/// proof establish the law's UNIVERSAL `∀`-claim by genuine kernel
+/// reasoning, or only by bounded `native_decide` enumeration over the
+/// finite sample domain?
+///
+/// `passed` stays deliberately lenient — a bounded verify-on-domain is a
+/// legitimate (if weaker) check the corpus must not regress on (e.g.
+/// `examples/refinement/email`). But the proof-corpus coverage runner wants
+/// the HONEST count: only laws whose `∀`-theorem is kernel-clean.
+///
+/// The ground-truth signal is `#print axioms`: a genuine proof depends only
+/// on logical axioms (`propext` / `Classical.choice` / `Quot.sound`), while
+/// `native_decide` injects `Lean.ofReduceBool` — the kernel trusting the
+/// compiler's reduction of a `Bool` over the concrete domain, NOT the
+/// universal claim. We collect the main law theorems (`*_law_*` / `*_eq_*`,
+/// excluding the `_checked_domain` and `_sample_N` bounded cross-checks
+/// built off the same base) and run `#print axioms` on each against the
+/// freshly built environment. The law is universal iff EVERY main theorem
+/// is `ofReduceBool`-free — and at least one exists, and there are no
+/// sorries.
+///
+/// A task whose universal theorem was dropped entirely (`skip_universal`:
+/// const-RHS singleton or a fuel-bounded recursive callee — the Lean analog
+/// of Dafny's "universal lemma omitted") emits no `*_law_*` theorem, so the
+/// empty set correctly reports `false`.
+///
+/// Conservative on any failure (missing `lake`, import error, non-zero
+/// exit): returns `false`. A false "not-universal" only lowers the coverage
+/// number, never inflates it — the right bias for an honest metric.
+fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
+    use std::process::Command;
+    if sorries > 0 {
+        return false;
+    }
+    // Import every root from the lakefile so unqualified law-theorem names
+    // resolve. The law theorems live at top level in the entry root;
+    // importing all roots is robust without identifying which is the entry.
+    let roots = lean_lakefile_roots(dir);
+    if roots.is_empty() {
+        return false;
+    }
+    // Collect the main universal law theorems across the emitted sources.
+    let mut law_thms: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".lean") || name == "lakefile.lean" {
+                continue;
+            }
+            if let Ok(contents) = std::fs::read_to_string(entry.path()) {
+                for line in contents.lines() {
+                    if let Some(rest) = line.strip_prefix("theorem ") {
+                        let thm = rest
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or("")
+                            .trim_end_matches(':');
+                        if is_main_law_theorem(thm) {
+                            law_thms.push(thm.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if law_thms.is_empty() {
+        return false;
+    }
+    law_thms.sort();
+    law_thms.dedup();
+    // Throwaway checker: print each main law theorem's axiom dependency
+    // against the already-built environment.
+    let mut src = String::new();
+    for r in &roots {
+        src.push_str("import ");
+        src.push_str(r);
+        src.push('\n');
+    }
+    for t in &law_thms {
+        src.push_str("#print axioms ");
+        src.push_str(t);
+        src.push('\n');
+    }
+    let checker = std::path::Path::new(dir).join("_aver_axcheck.lean");
+    if std::fs::write(&checker, &src).is_err() {
+        return false;
+    }
+    let out = Command::new("lake")
+        .args(["env", "lean", "_aver_axcheck.lean"])
+        .current_dir(dir)
+        .output();
+    let _ = std::fs::remove_file(&checker);
+    match out {
+        Ok(o) => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            // `ofReduceBool` = native_decide (bounded). `sorryAx` = a `sorry`
+            // reached transitively (e.g. a bridge lemma that failed to prove);
+            // the sorry-count gate above already covers the common case, but
+            // checking the axiom set too is belt-and-suspenders against a
+            // proof that depends on a sorried lemma without itself warning.
+            o.status.success()
+                && !combined.contains("Lean.ofReduceBool")
+                && !combined.contains("sorryAx")
+        }
+        Err(_) => false,
+    }
+}
+
+/// True for the main universal law theorem names emitted by the Lean
+/// backend (`<fn>_law_<law>` or `<fn>_eq_<spec>`), excluding the bounded
+/// cross-checks built off the same base (`_checked_domain`, `_sample_N`)
+/// which are proved by `native_decide` by design.
+fn is_main_law_theorem(name: &str) -> bool {
+    if !(name.contains("_law_") || name.contains("_eq_")) {
+        return false;
+    }
+    if name.ends_with("_checked_domain") {
+        return false;
+    }
+    if let Some(idx) = name.rfind("_sample_") {
+        let tail = &name[idx + "_sample_".len()..];
+        if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Parse the root modules out of a generated `lakefile.lean`
+/// (`roots := #[`A, `B]`).
+fn lean_lakefile_roots(dir: &str) -> Vec<String> {
+    let path = std::path::Path::new(dir).join("lakefile.lean");
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    for line in contents.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("roots :=") {
+            return rest
+                .split(',')
+                .filter_map(|tok| {
+                    let t = tok
+                        .trim()
+                        .trim_start_matches("#[")
+                        .trim_end_matches(']')
+                        .trim()
+                        .trim_start_matches('`')
+                        .trim();
+                    (!t.is_empty()).then(|| t.to_string())
+                })
+                .collect();
+        }
+    }
+    Vec::new()
 }
 
 fn cmd_proof_lean(

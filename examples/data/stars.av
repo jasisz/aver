@@ -1,0 +1,31 @@
+module Stars
+    intent =
+        "Drawing N copies of a symbol — a counted-append `repeat` in a"
+        "non-encoder setting, deliberately named `stars` (not `repeat`)."
+        "Fixture for lemma discovery: the structural counted-repeat detector"
+        "should fire here too, since it keys on SHAPE, not the function name."
+    effects [Console]
+
+fn stars(c: String, n: Int) -> List<String>
+    ? "Produces n copies of c; non-positive counts yield []."
+    match n <= 0
+        true -> []
+        false -> List.concat(stars(c, n - 1), [c])
+
+verify stars
+    stars("*", -2) => []
+    stars("*", 0) => []
+    stars("*", 1) => ["*"]
+    stars("*", 4) => ["*", "*", "*", "*"]
+
+fn bar(width: Int) -> String
+    ? "A bar of the given width as a single string."
+    String.join(stars("#", width), "")
+
+verify bar
+    bar(0) => ""
+    bar(3) => "###"
+
+fn main()
+    ! [Console.print]
+    Console.print("bar(5) = {bar(5)}")

@@ -1,0 +1,27 @@
+module Lemma14
+    intent =
+        "TIP prod lemma_14: even(length(w ++ z)) = even(length(w ++ (x :: y :: z)))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(xs: List<Int>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(length(ys))
+
+fn even(x: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(y) -> match y
+            Nat.Z -> false
+            Nat.S(z) -> even(z)
+
+verify even law evenLengthAppendTwo
+    given w: List<Int> = [[1], [1, 2], [1, 2, 3], [4, 5]]
+    given x: Int = [0, 5, 9, 2]
+    given y: Int = [0, 7, 1, 4]
+    given z: List<Int> = [[3], [3, 4], [5, 6, 7], [8]]
+    even(length(List.concat(w, z))) => even(length(List.concat(w, List.concat([x, y], z))))

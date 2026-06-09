@@ -1,0 +1,22 @@
+module Prop09
+    intent =
+        "TIP prod prop_09: drop w (drop x (drop y z)) = drop y (drop x (drop w z))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn drop(x: Nat, y: List<Int>) -> List<Int>
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+verify drop law dropCommute
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given z: List<Int> = [[], [1], [1, 2, 3]]
+    given w: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    drop(w, drop(x, drop(y, z))) => drop(y, drop(x, drop(w, z)))

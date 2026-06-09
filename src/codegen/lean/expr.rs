@@ -400,9 +400,20 @@ fn emit_constructor(
         ResolvedCtor::Builtin(BuiltinCtor::OptionSome) => format!("some {}", inner_str()),
         ResolvedCtor::Builtin(BuiltinCtor::OptionNone) => "none".to_string(),
         ResolvedCtor::User { type_id, name, .. } => {
+            let type_name = ctx.symbol_table.type_entry(*type_id).key.name.clone();
+            // Canonical Peano type lifted to builtin `Nat`: `Z` → `0`, `S(e)` → `(e + 1)`.
+            if let Some(role) =
+                crate::codegen::proof_recognize::peano_ctor_role(ctx, &type_name, name)
+            {
+                return match role {
+                    crate::codegen::proof_recognize::PeanoCtor::Zero => "0".to_string(),
+                    crate::codegen::proof_recognize::PeanoCtor::Succ => {
+                        format!("({} + 1)", inner_str())
+                    }
+                };
+            }
             // User ctor: `Type.variant` in Lean. Lean convention is
             // lowercase variant names; type stays as written.
-            let type_name = ctx.symbol_table.type_entry(*type_id).key.name.clone();
             let variant = to_lower_first(name);
             let arg_strs: Vec<String> = args.iter().map(|a| emit_expr_atom(a, ctx)).collect();
             if arg_strs.is_empty() {
@@ -476,7 +487,7 @@ fn emit_match(
     let subj = emit_expr(subject, ctx);
     let mut arm_strs = Vec::new();
     for arm in arms {
-        let pat = emit_pattern(&arm.pattern);
+        let pat = emit_pattern(&arm.pattern, ctx);
         let body = emit_expr(&arm.body, ctx);
         if body.contains('\n') {
             let body_lines: Vec<&str> = body.lines().collect();
@@ -636,7 +647,7 @@ pub fn emit_pattern_legacy(
     let active = ctx.active_module_scope();
     let effective = scope.or(active.as_deref());
     let resolved = ctx.resolve_pattern(pat, effective);
-    super::pattern::emit_pattern(&resolved)
+    super::pattern::emit_pattern(&resolved, ctx)
 }
 
 /// Convert an Aver identifier to a valid Lean 4 identifier.

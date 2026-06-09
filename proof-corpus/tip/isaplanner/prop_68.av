@@ -1,0 +1,41 @@
+module Prop68
+    intent =
+        "TIP isaplanner prop_68: len (delete n xs) <= len xs."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn len(xs: List<Nat>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..rest] -> Nat.S(len(rest))
+
+fn eq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eq(x2, y2)
+
+fn delete(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> []
+        [z, ..xs] -> match eq(x, z)
+            true -> delete(x, xs)
+            false -> List.concat([z], delete(x, xs))
+
+fn leq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> leq(z, x2)
+
+verify delete law deleteLenLeq
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    leq(len(delete(n, xs)), len(xs)) => true

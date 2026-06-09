@@ -1,0 +1,22 @@
+module SumAccSpec
+    intent =
+        "TIP-style accumulator-generalization: a tail-recursive sum equals the"
+        "direct recurrence. The hard step is strengthening the IH over the acc."
+    effects []
+
+fn sumTR(xs: List<Int>, acc: Int) -> Int
+    match xs
+        [] -> acc
+        [h, ..t] -> sumTR(t, acc + h)
+
+fn sumFold(xs: List<Int>) -> Int
+    sumTR(xs, 0)
+
+fn sumSpec(xs: List<Int>) -> Int
+    match xs
+        [] -> 0
+        [h, ..t] -> h + sumSpec(t)
+
+verify sumFold law equalsSpec
+    given xs: List<Int> = [[], [1], [1, 2, 3], [4, 5, 6, 7]]
+    sumFold(xs) => sumSpec(xs)

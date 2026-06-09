@@ -1,0 +1,36 @@
+module Prop25
+    intent =
+        "TIP isaplanner prop_25: (max a b == b) = (a <= b)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn max(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> Nat.S(max(z, x2))
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn leNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> leNat(z, x2)
+
+verify max law maxEqLe
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given b: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    eqNat(max(a, b), b) => leNat(a, b)

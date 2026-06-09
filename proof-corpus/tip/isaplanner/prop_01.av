@@ -1,0 +1,28 @@
+module Prop01
+    intent =
+        "TIP isaplanner prop_01 (Johansson/Dixon/Bundy, ITP 2010):"
+        "take n xs ++ drop n xs = xs. Translated from benchmarks/isaplanner/prop_01.smt2."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn take(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+fn drop(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> xs
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+verify take law takeDropAppend
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    List.concat(take(n, xs), drop(n, xs)) => xs

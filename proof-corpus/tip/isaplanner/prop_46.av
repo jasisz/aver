@@ -1,0 +1,15 @@
+module Prop46
+    intent =
+        "TIP isaplanner prop_46: zip nil xs = nil."
+    effects []
+
+fn zip(x: List<Int>, y: List<Int>) -> List<Tuple<Int, Int>>
+    match x
+        [] -> []
+        [z, ..x2] -> match y
+            [] -> []
+            [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
+
+verify zip law zipNilLeft
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    zip([], xs) => []

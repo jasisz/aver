@@ -1,0 +1,21 @@
+module Prop31
+    intent =
+        "TIP isaplanner prop_31: min is associative — min (min a b) c = min a (min b c)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn min(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> Nat.Z
+            Nat.S(y1) -> Nat.S(min(z, y1))
+
+verify min law minAssoc
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given b: Nat = [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.S(Nat.Z))]
+    given c: Nat = [Nat.S(Nat.S(Nat.Z)), Nat.S(Nat.Z), Nat.Z]
+    min(min(a, b), c) => min(a, min(b, c))

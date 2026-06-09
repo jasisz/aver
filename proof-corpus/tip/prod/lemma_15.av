@@ -1,0 +1,25 @@
+module Lemma15
+    intent =
+        "TIP prod lemma_15: length(w ++ [x, y] ++ z) = S(S(length(w ++ z)))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+verify length law lengthAppendTwo
+    given w: List<Int> = [[], [1], [1, 2]]
+    given x: Int = [0, 1, 2]
+    given y: Int = [0, 1, 2]
+    given z: List<Int> = [[], [3], [3, 4]]
+    length(append(w, List.concat([x, y], z))) => Nat.S(Nat.S(length(append(w, z))))

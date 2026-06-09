@@ -495,6 +495,691 @@ fn proof_dafny_check_verifies_entry_module_not_arbitrary_dependency() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// Write `source` to a temp `.av`, run `aver proof --backend dafny --check
+/// --check-json`, and assert the law's universal closed for real: passed,
+/// with no Dafny errors, no trusted axioms, and no dropped (sample-only)
+/// universal. Used to pin the Dafny homomorphism strategies.
+fn assert_dafny_proves_inline(source: &str, prefix: &str) {
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny proof test ({prefix}): `dafny` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir(&format!("{prefix}-src"));
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(src.join("m.av"), source).expect("write m.av");
+    let out = temp_output_dir(&format!("{prefix}-out"));
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["errors"].as_u64(),
+            summary["axioms"].as_u64(),
+            summary["omitted"].as_u64(),
+        ),
+        (Some(true), Some(0), Some(0), Some(0)),
+        "{prefix}: law must close as a real ∀ proof (passed, 0 errors, 0 \
+         axioms, 0 omitted).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_dafny_proves_concat_fold_homomorphism() {
+    // The list-induction emitter supplies cons-decomposition bridge asserts
+    // for a fold over `concat(<ind-var>, ys)` (here `count`), which is what
+    // lets Z3 close `count(n, xs ++ ys) == plus(count n xs, count n ys)` —
+    // a goal it times out on without the head/tail hint. Generic over any
+    // left-concat (builtin `List.concat` and user wrappers).
+    assert_dafny_proves_inline(
+        "module ConcatHom\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn eqNat(a: Nat, b: Nat) -> Bool\n    match a\n        Nat.Z -> match b\n            Nat.Z -> true\n            Nat.S(w) -> false\n        Nat.S(p) -> match b\n            Nat.Z -> false\n            Nat.S(q) -> eqNat(p, q)\n\n\
+         fn count(n: Nat, xs: List<Nat>) -> Nat\n    match xs\n        [] -> Nat.Z\n        [h, ..t] -> match eqNat(n, h)\n            true -> Nat.S(count(n, t))\n            false -> count(n, t)\n\n\
+         fn plus(a: Nat, b: Nat) -> Nat\n    match a\n        Nat.Z -> b\n        Nat.S(z) -> Nat.S(plus(z, b))\n\n\
+         verify count law countConcat\n    given n: Nat = [Nat.Z]\n    given xs: List<Nat> = [[Nat.Z]]\n    given ys: List<Nat> = [[Nat.Z]]\n    plus(count(n, xs), count(n, ys)) => count(n, List.concat(xs, ys))\n",
+        "aver-concat-hom",
+    );
+}
+
+#[test]
+fn proof_dafny_proves_additive_monoid_homomorphism() {
+    // When the induction variable lands in an additive op's SECOND argument
+    // (`plus(length y, length x)`), the emitter hoists the op's right-identity
+    // and succ-shift lemmas to quantified facts so Z3 closes the homomorphism.
+    // Generic over any additive op / Peano-shaped codomain; the helper lemmas
+    // are proved, not trusted.
+    assert_dafny_proves_inline(
+        "module AddLift\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn length(xs: List<Int>) -> Nat\n    match xs\n        [] -> Nat.Z\n        [h, ..t] -> Nat.S(length(t))\n\n\
+         fn plus(a: Nat, b: Nat) -> Nat\n    match a\n        Nat.Z -> b\n        Nat.S(z) -> Nat.S(plus(z, b))\n\n\
+         fn append(xs: List<Int>, ys: List<Int>) -> List<Int>\n    match xs\n        [] -> ys\n        [h, ..t] -> List.concat([h], append(t, ys))\n\n\
+         verify length law lenAppend\n    given x: List<Int> = [[1]]\n    given y: List<Int> = [[2]]\n    length(append(x, y)) => plus(length(y), length(x))\n",
+        "aver-add-lift",
+    );
+}
+
+#[test]
+fn proof_dafny_proves_length_snoc_with_evaluable_samples() {
+    // Two things in one: (1) the `length-snoc` strategy — for a list-length
+    // fold the emitter hoists `length(s ++ [e]) == S(length s)` to a ∀-fact,
+    // which directly closes the snoc law; (2) the sample-fuel fix — the
+    // concrete samples (`length([1, 2, 3]) == S(length([1, 2]))`) only verify
+    // because the sample method now carries the same `{:fuel length, 5}` the
+    // universal lemma gets (a `function` with `decreases` does not unfold in a
+    // bare `assert` otherwise, so the sample would spuriously fail while the
+    // universal proves). `passed && axioms:0 && omitted:0` covers both.
+    assert_dafny_proves_inline(
+        "module LenSnoc\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn length(x: List<Int>) -> Nat\n    match x\n        [] -> Nat.Z\n        [y, ..xs] -> Nat.S(length(xs))\n\n\
+         verify length law snoc\n    given xs: List<Int> = [[1, 2]]\n    given y: Int = [3]\n    length(List.concat(xs, [y])) => Nat.S(length(xs))\n",
+        "aver-len-snoc",
+    );
+}
+
+#[test]
+fn proof_dafny_proves_rev_antihomomorphism() {
+    // `rev (rev x) = x` needs the rev anti-homomorphism `rev(a ++ b) =
+    // rev b ++ rev a` as an auxiliary lemma. The emitter detects the
+    // rev/append fold pair, emits the proved append-nil-right /
+    // associativity / rev-distribution lemmas, hoists the distribution to a
+    // ∀-fact, and adds the per-step cons bridges. Generic over any
+    // reverse-via-left-append fold.
+    assert_dafny_proves_inline(
+        "module RevHom\n    effects []\n\n\
+         fn append(x: List<Int>, y: List<Int>) -> List<Int>\n    match x\n        [] -> y\n        [z, ..xs] -> List.concat([z], append(xs, y))\n\n\
+         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> append(rev(xs), [y])\n\n\
+         verify rev law revRev\n    given x: List<Int> = [[1, 2]]\n    rev(rev(x)) => x\n",
+        "aver-rev-antihom",
+    );
+}
+
+#[test]
+fn proof_lean_peano_lift_nat_arith_kernel_clean() {
+    // Proof-only Peano representation lift: a canonical `type Nat { Z; S(Nat) }`
+    // is emitted as Lean's builtin `Nat` (no `inductive`, `Z`→`0`, `S(x)`→`x+1`,
+    // structural recursion not fuel), so `omega`/`simp` close the nat-arithmetic.
+    // `minus(n, plus(n, m)) == 0` then kernel-proves as a genuine UNBOUNDED
+    // universal — `#print axioms = [propext]`, not the bounded `native_decide`
+    // fallback. We pin the lift mechanics (no `inductive Nat`, no `__fuel`) AND
+    // a clean pass, which together imply the structural-Nat proof.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean peano-lift test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-peano-lift-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module PeanoArith\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn minus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(a) -> match y\n            Nat.Z -> x\n            Nat.S(b) -> minus(a, b)\n\n\
+         verify minus law cancel\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    minus(n, plus(n, m)) => Nat.Z\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-peano-lift-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("PeanoArith.lean")).expect("read PeanoArith.lean");
+    assert!(
+        !lean.contains("inductive Nat") && !lean.contains("__fuel"),
+        "the Peano type must lift to builtin Nat (no `inductive Nat`, no fuel):\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "Peano nat-arithmetic must kernel-prove on Lean via the lift as a GENUINE \
+         universal — `--check-json` `universal:true` means `#print axioms` is \
+         `ofReduceBool`-free (not a bounded `native_decide`).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_proves_peano_arith_identity_via_nat_lift_kernel_clean() {
+    // Layer-2 of the Peano lift (#3): recognize the canonical `plus` (left-
+    // recursive addition) and `minus` (truncated subtraction) and emit a
+    // kernel-CHECKED bridge `op a b = a + b` / `a - b` (proved by induction on
+    // the lifted builtin `Nat`). Rewriting the user ops to the host builtins
+    // hands `(n+m)-n = m` to `omega`, which decides linear Nat arithmetic with
+    // truncated subtraction — closing a pure-arithmetic identity that bare
+    // structural induction leaves at `sorry`. The bridge is PROVED not trusted:
+    // a misrecognized op fails its bridge proof (honest `sorry`), never a false
+    // theorem. Result is a GENUINE universal (`universal:true`,
+    // `#print axioms`-clean of `ofReduceBool`). (TIP isaplanner prop_07.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean peano-arith test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-peano-arith-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module PeanoArithLift\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn minus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> match y\n            Nat.Z -> x\n            Nat.S(x2) -> minus(z, x2)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         verify minus law plusMinusCancel\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    minus(plus(n, m), n) => m\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-peano-arith-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    // Both arithmetic bridges must be emitted (the `minus` truncated-subtraction
+    // recognizer reaches through the TCO'd tail self-call).
+    let lean =
+        std::fs::read_to_string(out.join("PeanoArithLift.lean")).expect("read PeanoArithLift.lean");
+    assert!(
+        lean.contains("_plus_isNatAdd") && lean.contains("_minus_isNatSub"),
+        "both the `plus`→`+` and `minus`→`-` bridges must be emitted:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "`(n+m)-n=m` must kernel-prove as a GENUINE universal via the plus/minus \
+         Nat-arithmetic bridges + omega (passed, 0 sorries, universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_proves_comparison_lift_le_and_lt_kernel_clean() {
+    // Comparison half of the canonical Peano family (#3 completion): `le`/`lt`
+    // (Bool-returning `≤`/`<`) lift via a kernel-proved Prop-equality bridge
+    // `(op a b = true) = (a R b)`, turning the Bool law goal into a Prop that
+    // `omega` closes. `lt` matches its SECOND arg first (the bridge inducts on
+    // `b`). Pins the two committed corpus instances that were Lean-open before:
+    // prop_69 `n ≤ m+n` and prop_65 `i < S(m+i)`. Both must be GENUINE
+    // universals (`universal:true`, `#print axioms` free of ofReduceBool).
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean comparison-lift test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    for (file, op) in [
+        ("proof-corpus/tip/isaplanner/prop_69.av", "le (≤)"),
+        ("proof-corpus/tip/isaplanner/prop_65.av", "lt (<)"),
+    ] {
+        let out = temp_output_dir("aver-cmp-lift-out");
+        let run = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("proof")
+            .arg(file)
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(&out)
+            .arg("--check")
+            .arg("--check-json")
+            .output()
+            .expect("expected `aver proof --check --check-json` to run");
+        let json_line = run
+            .stdout
+            .split(|&b| b == b'\n')
+            .rev()
+            .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+            .unwrap_or_else(|| panic!("{op}: no JSON line:\n{}", format_output(&run)));
+        let summary: serde_json::Value = serde_json::from_str(json_line)
+            .unwrap_or_else(|e| panic!("{op}: bad JSON ({e}):\n{json_line}"));
+        assert_eq!(
+            (summary["passed"].as_bool(), summary["universal"].as_bool()),
+            (Some(true), Some(true)),
+            "{op} comparison law must kernel-prove as a GENUINE universal via the \
+             `(op a b = true) = (a R b)` bridge + omega.\n{}",
+            format_output(&run)
+        );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+}
+
+#[test]
+fn proof_lean_proves_mul_distributivity_via_nat_lift_kernel_clean() {
+    // `*` member of the family. `times` lifts to builtin `*` via a kernel-proved
+    // bridge `times a b = a * b` (whose succ case uses the `+` bridge). `*` is
+    // nonlinear — omega can't and core Lean has no `ring` — so distributivity
+    // closes via core `Nat.mul_add` after the bridges rewrite. GENUINE universal.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean mul-lift test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-mul-lift-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module MulDist\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn times(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> plus(y, times(z, y))\n\n\
+         verify times law leftDistrib\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given c: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    times(a, plus(b, c)) => plus(times(a, b), times(a, c))\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-mul-lift-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("MulDist.lean")).expect("read MulDist.lean");
+    assert!(
+        lean.contains("_times_isNatMul") && lean.contains("_plus_isNatAdd"),
+        "the `*` bridge (and its prerequisite `+` bridge) must be emitted:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "left-distributivity `a*(b+c) = a*b + a*c` must kernel-prove as a GENUINE \
+         universal via the times/plus bridges + Nat.mul_add.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_rejects_noncanonical_peano_ops_no_bridge() {
+    // NEGATIVE test (the soundness gate the reviewer flagged as missing): the
+    // arithmetic/comparison recognizers key on SHAPE, so a lookalike that is NOT
+    // the canonical operation must NOT get a bridge. `addTwo` adds TWO per step
+    // (`2a+b`, not `a+b`); `weirdCmp` ignores its second arg (not `≤`/`<`).
+    // Neither is a canonical Peano op, so NO `_isNat{Add,Sub,Mul,Le,Lt}` bridge
+    // may be emitted — if one were, its kernel proof would be a false claim.
+    // (The bridge is also kernel-checked, so even a hypothetical misfire could
+    // not mint a theorem; this pins the recognizer's conservativeness directly.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean negative-recognizer test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-noncanon-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module NonCanon\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn addTwo(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(Nat.S(addTwo(z, y)))\n\n\
+         fn weirdCmp(x: Nat, y: Nat) -> Bool\n    match x\n        Nat.Z -> true\n        Nat.S(z) -> weirdCmp(z, y)\n\n\
+         verify addTwo law selfEq\n    given a: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given b: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    addTwo(a, b) => addTwo(a, b)\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-noncanon-out");
+    let _ = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    let lean = std::fs::read_to_string(out.join("NonCanon.lean")).expect("read NonCanon.lean");
+    for marker in [
+        "_isNatAdd",
+        "_isNatSub",
+        "_isNatMul",
+        "_isNatLe",
+        "_isNatLt",
+    ] {
+        assert!(
+            !lean.contains(marker),
+            "a non-canonical op must NOT get the `{marker}` bridge (recognizer must \
+             reject lookalike shapes):\n{lean}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_proves_count_plus_concat_homomorphism_kernel_clean() {
+    // Induction-target selection (the generic fix behind #1): a list-
+    // homomorphism `plus (count n xs) (count n ys) = count n (xs ++ ys)` has
+    // BOTH a Nat given (`n`) and List givens. Inducting on `n` — which the old
+    // "first recursive-typed given" rule did — gets nowhere (`count` recurses
+    // on the LIST, not on `n`) and falls to `sorry`. law_auto now routes
+    // induction to the variable the VERIFIED fn structurally recurses on, so
+    // it inducts on `xs`. The cons arm then needs the inner `match eqNat n
+    // head` peeled: the `split`-based ladder branch case-splits the symbolic
+    // Bool scrutinee and closes both arms with the IH + `omega`. The result is
+    // a GENUINE universal (`#print axioms = [propext]`, `universal:true`), not
+    // a bounded `native_decide`. (TIP isaplanner prop_02.)
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean count-homomorphism test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-count-hom-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module CountHom\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn eqNat(x: Nat, y: Nat) -> Bool\n    match x\n        Nat.Z -> match y\n            Nat.Z -> true\n            Nat.S(z) -> false\n        Nat.S(x2) -> match y\n            Nat.Z -> false\n            Nat.S(y2) -> eqNat(x2, y2)\n\n\
+         fn count(x: Nat, y: List<Nat>) -> Nat\n    match y\n        [] -> Nat.Z\n        [z, ..ys] -> match eqNat(x, z)\n            true -> Nat.S(count(x, ys))\n            false -> count(x, ys)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn appendNat(xs: List<Nat>, ys: List<Nat>) -> List<Nat>\n    List.concat(xs, ys)\n\n\
+         verify count law countPlusConcat\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given xs: List<Nat> = [[], [Nat.Z]]\n    given ys: List<Nat> = [[], [Nat.S(Nat.Z)]]\n    plus(count(n, xs), count(n, ys)) => count(n, appendNat(xs, ys))\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-count-hom-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    // The induction must target the LIST, not the Nat given.
+    let lean = std::fs::read_to_string(out.join("CountHom.lean")).expect("read CountHom.lean");
+    assert!(
+        lean.contains("induction xs with"),
+        "count homomorphism must induct on the list given `xs` (the var `count` \
+         recurses on), not the Nat given `n`:\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "count/++ homomorphism must kernel-prove as a GENUINE universal via \
+         list-induction on `xs` + the inner-match `split` (passed, 0 sorries, \
+         universal:true).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
+    // SAME backend-neutral `RevOp` recognizer as the Dafny test above, but a
+    // Lean renderer: `rev (rev x) = x` on List<Int> kernel-proves because the
+    // fold lowers to a clean `def … termination_by` (no fuel / no Nat
+    // collision). The renderer prepends the proved append-nil-right /
+    // associativity / rev-distribution theorems and adds rev-distribution to
+    // the list-induction simp set. `lake build` succeeds with ZERO sorries on
+    // the universal, i.e. it is kernel-checked (`#print axioms = [propext]`).
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean rev kernel test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-rev-lean-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module RevHomLean\n    effects []\n\n\
+         fn append(x: List<Int>, y: List<Int>) -> List<Int>\n    match x\n        [] -> y\n        [z, ..xs] -> List.concat([z], append(xs, y))\n\n\
+         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> append(rev(xs), [y])\n\n\
+         verify rev law revRev\n    given x: List<Int> = [[1, 2]]\n    rev(rev(x)) => x\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-rev-lean-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "rev∘rev must kernel-prove on Lean via the shared recognizer as a GENUINE \
+         universal (passed, 0 sorries, `universal:true` = `#print axioms` is \
+         `ofReduceBool`-free).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_check_lean_universal_field_distinguishes_bounded_from_genuine() {
+    // The honest-coverage gate behind `--check-json` `universal`. Lean's
+    // `passed` is deliberately lenient: a law the auto-prover cannot close by
+    // genuine induction still emits a finite domain-guarded `∀ … -> …` proved
+    // by `native_decide`, which `lake build` accepts (passed:true, 0 sorries) —
+    // a legitimate-but-weaker bounded verify-on-domain. That bounded proof
+    // depends on `Lean.ofReduceBool` (the kernel trusting the compiler's
+    // evaluation over the concrete domain), NOT the universal claim, so
+    // `#print axioms` exposes it. `universal` must report `false` there while
+    // `passed` stays `true` — the exact split the field exists for. prop_85
+    // (zip/rev over a bounded sample domain) is the committed corpus instance.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean universal-field test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-universal-bounded-out");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("proof-corpus/tip/isaplanner/prop_85.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (summary["passed"].as_bool(), summary["universal"].as_bool()),
+        (Some(true), Some(false)),
+        "a bounded `native_decide` proof must stay lenient on `passed` but report \
+         `universal:false` (it depends on `Lean.ofReduceBool`, not the ∀-claim). \
+         If `universal` flipped to true, prop_85 now closes genuinely — celebrate \
+         and re-baseline this test.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_check_dafny_rejects_sample_only_universal_as_unproven() {
+    // Soundness: when the emitter cannot state a law's universal `∀`-claim it
+    // drops it to concrete samples plus a `… (universal lemma omitted)`
+    // comment. Dafny then finishes with 0 errors / exit 0 because the
+    // universal was never asserted — a false-green the errors-only and
+    // axiom-only gates both miss. `--check` must charge an omitted universal
+    // against the sorry budget (like `assume {:axiom}`) so it reports
+    // `passed:false`. The `fac = qfac · one` accumulator-equivalence is a
+    // stable instance: both fns verify cleanly (errors:0) but the universal
+    // needs an IH generalization the emitter does not do, so it is omitted.
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny omitted-universal soundness test: `dafny` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-omit-sound-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("omit.av"),
+        "module Omit\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn mult(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(z) -> plus(y, mult(z, y))\n\n\
+         fn fac(x: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.S(Nat.Z)\n        Nat.S(y) -> mult(x, fac(y))\n\n\
+         fn qfac(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> qfac(z, mult(x, y))\n\n\
+         verify fac law facQfac\n    given x: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    fac(x) => qfac(x, Nat.S(Nat.Z))\n",
+    )
+    .expect("write omit.av");
+    let out = temp_output_dir("aver-omit-sound-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("omit.av"))
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    // errors:0 confirms the ONLY reason for failure is the dropped universal,
+    // so this exercises the omitted-gate specifically.
+    assert_eq!(
+        summary["errors"].as_u64(),
+        Some(0),
+        "expected a clean verify (errors:0); the omitted-universal gate, not \
+         a Dafny error, must drive the failure.\n{}",
+        format_output(&run)
+    );
+    assert!(
+        summary["omitted"].as_u64().unwrap_or(0) >= 1,
+        "expected the `facQfac` universal to be dropped to sample-only \
+         (omitted >= 1).\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(false),
+        "a sample-only law whose universal was omitted must NOT pass --check \
+         — dropping the ∀-claim is the Dafny analog of a sorry.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 #[test]
 fn proof_warns_when_dependency_module_has_verify_blocks() {
     // A `verify ... law` in a dependency module is silently dropped
@@ -2872,9 +3557,21 @@ fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
     // Both gated at the universal emit step; sample / checked_domain
     // lemmas remain (concrete inputs stay decidable). Lake build
     // succeeds; `aver verify` runtime hits every declared case.
-    assert_proof_builds(
+    //
+    // Sorry budget 2: the `detect.rs` resolved-subject fix (which lets
+    // Dafny/Z3 prove the Peano-fold homomorphism family) also admits
+    // `size` / `toSorted`'s structural recursion into the proof subset, so
+    // their two universals now EMIT a `∀ … induction t with …` proof rather
+    // than gating to sample-only. On Lean those still can't close — the
+    // `__fuel`-wrapped recursion needs a fuel-saturation lemma the auto
+    // template lacks — so the tactic chain honestly falls through to
+    // `sorry` (lake stays green; the claim is visibly unproven, not
+    // dropped). Z3 supplies that induction automatically, which is why the
+    // same two laws DO prove on the Dafny backend.
+    assert_proof_builds_with_sorry_budget(
         "examples/data/red_black_tree.av",
         "aver-proof-red-black-tree",
+        2,
     );
 }
 
@@ -2986,4 +3683,320 @@ fn proof_export_gates_trace_projection_law_lhs_as_runtime_only() {
     );
 
     let _ = std::fs::remove_dir_all(&dafny_dir);
+}
+
+/// Phase 2/2d acceptance (lemma discovery): `aver proof <rle> --discover`
+/// enumerates candidate equations, VM-filters them, and kernel-proves the
+/// `decode_append` survivor via `lake build` — end to end, with no
+/// RLE-specific recognizer. Skips when `lake` is unavailable.
+#[test]
+fn discover_kernel_proves_decode_append_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping discovery proof test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    // Fresh `-o` so the run always discovers (no committed-lemma replay).
+    let output_dir = temp_output_dir("aver-discover-rle");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/data/rle.av")
+        .arg("--discover")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("PROVED (Lean, kernel-checked)"),
+        "no kernel-proved lemma in `--discover` output:\n{}",
+        format_output(&run)
+    );
+    assert!(
+        stdout.contains("decode(List.concat(x2, x3)) == List.concat(decode(x2), decode(x3))"),
+        "decode_append was not the kernel-proved lemma:\n{}",
+        format_output(&run)
+    );
+    // The proved lemma is persisted as a reviewable committed artifact.
+    assert!(
+        output_dir.join("DiscoveredLemmas.lean").exists(),
+        "DiscoveredLemmas.lean was not written:\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Run `aver proof <path> --discover` and assert the committed
+/// `DiscoveredLemmas.lean` contains `lemma_needle` (a kernel-proved lemma).
+/// Skips when `lake` is unavailable.
+fn assert_discover_proves(example_path: &str, prefix: &str, lemma_needle: &str) {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping discovery proof test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = temp_output_dir(prefix);
+    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(example_path)
+        .arg("--discover")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let committed =
+        std::fs::read_to_string(output_dir.join("DiscoveredLemmas.lean")).unwrap_or_default();
+    assert!(
+        committed.contains(lemma_needle),
+        "expected `{lemma_needle}` among kernel-proved lemmas.\n--- stdout ---\n{}\n--- DiscoveredLemmas.lean ---\n{committed}",
+        format_output(&run),
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Generalization guard: discovery proves the `flatten` list-homomorphism on a
+/// NON-encoder program (no RLE shape anywhere) — evidence the enumeration path
+/// is genuinely general, not fitted to `rle.av`.
+#[test]
+fn discover_proves_flatten_homomorphism_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/flatten.av",
+        "aver-discover-flatten",
+        "(flatten (x0 ++ x1)) = ((flatten x0) ++ (flatten x1))",
+    );
+}
+
+/// Generalization guard: the structural counted-repeat conjecturer fires on a
+/// differently-named fn (`stars`, not `repeat`) in a non-encoder program —
+/// evidence brick 1 keys on shape, not the RLE name.
+#[test]
+fn discover_proves_stars_repeat_succ_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/stars.av",
+        "aver-discover-stars",
+        "stars c (n + 1) = stars c n ++ [c]",
+    );
+}
+
+/// Generalization guard for the (generalized) brick 2: discovery proves the
+/// monotone-nonneg accumulator invariant on `tally.av`, whose fold branches on
+/// `x > acc.last` (NOT the RLE `count == 0` shape) — evidence the count-
+/// invariant conjecturer keys on the field arithmetic, not the RLE step.
+#[test]
+fn discover_proves_tally_count_invariant_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/tally.av",
+        "aver-discover-tally",
+        "0 <= (tallyStep acc x).seen",
+    );
+}
+
+/// Generalization guard on a SHAPE-different second encoder-with-inverse
+/// (`sparse.av`: sum-type tokens, branches on `x == 0`). One `--discover` run
+/// must kernel-prove BOTH the UNARY counted-repeat advance `repeat0(n+1) =
+/// repeat0(n) ++ [0]` (brick 1's arity generalization) AND the monotone-nonneg
+/// `pending` invariant — proof that the structural conjecturers generalize
+/// across encoders, not just rle.
+#[test]
+fn discover_generalizes_on_sparse_codec_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping discovery proof test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = temp_output_dir("aver-discover-sparse");
+    let run = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/data/sparse.av")
+        .arg("--discover")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let committed =
+        std::fs::read_to_string(output_dir.join("DiscoveredLemmas.lean")).unwrap_or_default();
+    for needle in [
+        "repeat0 (n + 1) = repeat0 n ++ [0]",
+        "0 <= (sparseStep acc x).pending",
+    ] {
+        assert!(
+            committed.contains(needle),
+            "expected `{needle}` among kernel-proved lemmas.\n--- stdout ---\n{}\n--- DiscoveredLemmas.lean ---\n{committed}",
+            format_output(&run),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Relational-brick acceptance (the locksmith's last layer): one `--discover`
+/// run kernel-proves the FULL roundtrip law `decode (encode xs) = xs` on
+/// `rle.av` — the auto-emitted chain (inv_append → counted_one → counted_succ →
+/// count_nonneg → flush_fold_step → loop_gen → roundtrip) replaces the retired
+/// hardcoded `AccumulatorRoundtrip` recognizer.
+#[test]
+fn discover_proves_roundtrip_on_rle_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/rle.av",
+        "aver-discover-rle-roundtrip",
+        "decode (encode xs) = xs",
+    );
+}
+
+/// DISCIPLINE GUARD (the whole point): the SAME relational emitter must fire +
+/// kernel-prove the roundtrip on a SHAPE-different second encoder (`sparse.av`:
+/// sum-type tokens, `pending` field, 2-way step guard) — `decodeSparse
+/// (encodeSparse xs) = xs`. If this passes only on rle, the chain is the key,
+/// not the locksmith; it must prove on BOTH or neither.
+#[test]
+fn discover_proves_roundtrip_on_sparse_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/sparse.av",
+        "aver-discover-sparse-roundtrip",
+        "decodeSparse (encodeSparse xs) = xs",
+    );
+}
+
+/// MONOIDAL flavor of the unified accumulator-generalization schema: the same
+/// `--discover` path that proves codec roundtrips also kernel-proves the
+/// spec-equivalence `sum xs = sumDirect xs` (sum = sumTR(·, 0), an additive
+/// fold) — codec roundtrip and monoidal fold are two flavors of ONE schema.
+#[test]
+fn discover_proves_monoidal_spec_equivalence_on_sum_acc_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/sum_acc.av",
+        "aver-discover-sum-monoidal",
+        "sum xs = sumDirect xs",
+    );
+}
+
+/// Read the committed `DiscoveredLemmas.lean` produced by `--discover` on
+/// `example_path` (empty string if none was written). Skips (returns `None`)
+/// when `lake` is unavailable.
+fn discover_committed(example_path: &str, prefix: &str) -> Option<(String, PathBuf)> {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping discovery proof test: `lake` not available");
+        return None;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = temp_output_dir(prefix);
+    let _ = Command::new(env!("CARGO_BIN_EXE_aver"))
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg(example_path)
+        .arg("--discover")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof --discover` to run");
+    let committed =
+        std::fs::read_to_string(output_dir.join("DiscoveredLemmas.lean")).unwrap_or_default();
+    Some((committed, output_dir))
+}
+
+/// Generalization guard: counted-append with the count parameter FIRST
+/// (`pad(n, c)`), the opposite of rle's `repeat(c, n)` — the detector finds the
+/// count by role, not position.
+#[test]
+fn discover_proves_spaces_count_first_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/spaces.av",
+        "aver-discover-spaces",
+        "pad (n + 1) c = pad n c ++ [c]",
+    );
+}
+
+/// Generalization guard: monotone-nonneg field with a `+ 2` update (not `+ 1`)
+/// — the invariant conjecturer keys on `field + nonneg-literal`, any literal.
+#[test]
+fn discover_proves_gauge_plus_two_invariant_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/gauge.av",
+        "aver-discover-gauge",
+        "0 <= (bump acc x).level",
+    );
+}
+
+/// Completeness guard: a MULTIPLICATIVE nonneg update (`level * 2`, not a `+ k`
+/// shift) is still recognized as monotone-nonneg — `0 <= level` is closed under
+/// `* 2` and stays linear in the field, so omega proves it.
+#[test]
+fn discover_proves_scale_multiplicative_nonneg_when_lake_is_available() {
+    assert_discover_proves(
+        "examples/data/scale.av",
+        "aver-discover-scale",
+        "0 <= (grow acc x).level",
+    );
+}
+
+/// Completeness guard: a record with TWO Int fields of different invariant
+/// classes — `seen` (non-negative) and `budget` (strictly decreasing) — yields
+/// a kernel-proved lemma for EACH, not just the first the conjecturer finds.
+#[test]
+fn discover_proves_both_invariants_on_two_int_fields_when_lake_is_available() {
+    let Some((committed, output_dir)) =
+        discover_committed("examples/data/twofield.av", "aver-discover-twofield")
+    else {
+        return;
+    };
+    for needle in [
+        "0 <= (meterStep acc x).seen",
+        "acc.budget - 1 <= (meterStep acc x).budget",
+        "(meterStep acc x).budget <= acc.budget - 1",
+    ] {
+        assert!(
+            committed.contains(needle),
+            "expected `{needle}` among kernel-proved lemmas.\n--- DiscoveredLemmas.lean ---\n{committed}",
+        );
+    }
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Generalization guard: the list-homomorphism discovery works over a RECORD
+/// element type (`List<Token>`), not just String. The homomorphism theorem
+/// names `expandAll` three times (lhs once, rhs twice).
+#[test]
+fn discover_proves_words_homomorphism_when_lake_is_available() {
+    let Some((committed, output_dir)) =
+        discover_committed("examples/data/words.av", "aver-discover-words")
+    else {
+        return;
+    };
+    assert!(
+        committed.matches("expandAll").count() >= 3,
+        "expected an `expandAll(a ++ b) = expandAll a ++ expandAll b` homomorphism.\n--- DiscoveredLemmas.lean ---\n{committed}",
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// SOUNDNESS + GENERALIZATION guard: on `drain.av` the accumulator field can
+/// DECREASE (`Counter(n = acc.n - 1)`), so `0 <= (tick acc x).n` is FALSE. The
+/// engine must NEVER kernel-prove that (proved-or-dropped). But the field DOES
+/// move by a bounded delta each step (`+1`/`-1`), so the generalized bounded-
+/// step conjecturer must discover and prove the TRUE two-sided bound — proof the
+/// engine generalizes past monotone-nonneg without becoming unsound: it picks
+/// the right invariant for a decreasing accumulator, not the false one.
+#[test]
+fn discover_bounds_decreasing_accumulator_on_drain_when_lake_is_available() {
+    let Some((committed, output_dir)) =
+        discover_committed("examples/data/drain.av", "aver-discover-drain")
+    else {
+        return;
+    };
+    // Soundness: the false nonneg invariant is never proved.
+    assert!(
+        !committed.contains("0 <= (tick acc x).n"),
+        "UNSOUND: the false count-invariant `0 <= (tick acc x).n` was kernel-proved.\n--- DiscoveredLemmas.lean ---\n{committed}",
+    );
+    // Generalization: the true bounded step IS proved (both sides).
+    for needle in ["acc.n - 1 <= (tick acc x).n", "(tick acc x).n <= acc.n + 1"] {
+        assert!(
+            committed.contains(needle),
+            "expected the bounded-step bound `{needle}` among kernel-proved lemmas.\n--- DiscoveredLemmas.lean ---\n{committed}",
+        );
+    }
+    let _ = std::fs::remove_dir_all(&output_dir);
 }

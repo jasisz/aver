@@ -699,6 +699,39 @@ pub enum ModulePattern {
         fn_name: String,
         list_param: String,
     },
+    /// `accumulator-fold` shape: the role-bearing refinement of
+    /// `WrapperOverRecursion` for a tail-recursive LIST fold. A
+    /// non-recursive `wrapper(xs) = loop(xs, neutral)` whose `loop` is
+    /// `match list { [] -> finish(acc); h::t -> loop(t, step) }`, where
+    /// `step` is either a named fold fn `step_fn(acc, h)` or an inline
+    /// binop `acc <step_op> h`, and the nil arm is either `finish_fn(acc)`
+    /// or `acc` itself (`finish_fn = None`, an identity finish).
+    ///
+    /// This is the single shape both the codec-roundtrip and the monoidal
+    /// spec-equivalence proofs key on — the accumulator-generalization
+    /// schema. Carrying the roles here lets BOTH the `--discover` lemma
+    /// chains (`codegen::lemma_discovery`) and the normal-path
+    /// `ProofStrategy` (`codegen::proof_lower::detect_wrapper_over_recursion`)
+    /// read them from one recognizer instead of each re-walking the loop.
+    /// `fib(n) = fibTR(n, 0, 1)` is a `WrapperOverRecursion` but NOT an
+    /// `AccumulatorFold` (its inner recurs on an `Int`, not a `match list`),
+    /// so the two patterns are distinct.
+    AccumulatorFold {
+        scope: Option<String>,
+        wrapper_fn: String,
+        loop_fn: String,
+        list_param: String,
+        acc_param: String,
+        /// Named fold step `step_fn(acc, h)`, or `None` when the step is an
+        /// inline binop (then `step_op` is set).
+        step_fn: Option<String>,
+        /// Inline additive fold step `acc <op> h`, or `None` when the step
+        /// is a named fn (then `step_fn` is set).
+        step_op: Option<crate::ast::BinOp>,
+        /// Nil-arm finishing fn `finish_fn(acc)`, or `None` for an identity
+        /// finish (the nil arm returns `acc` unchanged).
+        finish_fn: Option<String>,
+    },
 }
 
 /// Walk entry items + dep modules and collect the names of sum types
@@ -892,6 +925,14 @@ pub fn detect_module_patterns(
     for m in dep_modules {
         let fns: Vec<&crate::ast::FnDef> = m.fn_defs.iter().collect();
         detect_wrapper_over_recursion(Some(m.prefix.clone()), &fns, &mut out);
+    }
+
+    // The role-bearing refinement of the above (step/finish extracted), for
+    // the accumulator-generalization proofs that consume the loop's roles.
+    detect_accumulator_fold(None, &entry_fns, &mut out);
+    for m in dep_modules {
+        let fns: Vec<&crate::ast::FnDef> = m.fn_defs.iter().collect();
+        detect_accumulator_fold(Some(m.prefix.clone()), &fns, &mut out);
     }
 
     // Stage 6d of #232: `ResultPipelineChain` per-scope detection.
@@ -1139,6 +1180,168 @@ fn detect_wrapper_over_recursion(
             wrapper_fn: fd.name.clone(),
             inner_scope: scope.clone(),
             inner_fn: inner,
+        });
+    }
+}
+
+/// The function name + args of `e`, whether a direct `FnCall(Ident, _)` or a
+/// TCO-rewritten `TailCall` (the loop's self-call is tail position).
+fn call_target(
+    e: &crate::ast::Spanned<crate::ast::Expr>,
+) -> Option<(&str, &[crate::ast::Spanned<crate::ast::Expr>])> {
+    use crate::ast::Expr;
+    match &e.node {
+        Expr::FnCall(callee, args) => match &callee.node {
+            Expr::Ident(n) => Some((n.as_str(), args.as_slice())),
+            _ => None,
+        },
+        Expr::TailCall(td) => Some((td.target.as_str(), td.args.as_slice())),
+        _ => None,
+    }
+}
+
+/// `acc.<field>`-free identifier name (`Ident` or resolved), if `e` is one.
+fn plain_ident(e: &crate::ast::Spanned<crate::ast::Expr>) -> Option<&str> {
+    match &e.node {
+        crate::ast::Expr::Ident(n) => Some(n.as_str()),
+        crate::ast::Expr::Resolved { name, .. } => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+/// `AccumulatorFold` detection: the role-bearing refinement of
+/// `WrapperOverRecursion`. Finds the same wrapper→loop pairs, then inspects the
+/// loop body for the `match list { [] -> finish(acc); h::t -> loop(t, step) }`
+/// fold shape and extracts the step/finish roles. Loops that aren't list-folds
+/// (e.g. `fibTR` recurring on an `Int`) yield no `AccumulatorFold`.
+fn detect_accumulator_fold(
+    scope: Option<String>,
+    fns: &[&crate::ast::FnDef],
+    out: &mut Vec<ModulePattern>,
+) {
+    use crate::ast::{Expr, Pattern, Stmt};
+
+    let mut recursive: HashSet<String> = HashSet::new();
+    for fd in fns {
+        if body_calls_name(&fd.body, &fd.name) {
+            recursive.insert(fd.name.clone());
+        }
+    }
+    if recursive.is_empty() {
+        return;
+    }
+
+    for fd in fns {
+        if recursive.contains(&fd.name) || fd.params.is_empty() {
+            continue;
+        }
+        let outer_params: Vec<&str> = fd.params.iter().map(|(n, _)| n.as_str()).collect();
+        let mut hits: Vec<String> = Vec::new();
+        collect_qualifying_inner_calls(&fd.body, &outer_params, &recursive, &mut hits);
+        hits.sort();
+        hits.dedup();
+        if hits.len() != 1 {
+            continue;
+        }
+        let loop_fn = hits.into_iter().next().unwrap();
+
+        // The loop fn must be a 2-param `(list, acc)` structural fold.
+        let Some(lf) = fns.iter().find(|f| f.name == loop_fn) else {
+            continue;
+        };
+        if lf.params.len() != 2 {
+            continue;
+        }
+        let list_param = lf.params[0].0.clone();
+        let acc_param = lf.params[1].0.clone();
+        let Some(Stmt::Expr(body)) = lf.body.stmts().last() else {
+            continue;
+        };
+        let Expr::Match { subject, arms } = &body.node else {
+            continue;
+        };
+        if plain_ident(subject) != Some(list_param.as_str()) || arms.len() != 2 {
+            continue;
+        }
+
+        let mut finish_fn: Option<Option<String>> = None; // outer Option = "arm seen"
+        let mut step_fn: Option<String> = None;
+        let mut step_op: Option<crate::ast::BinOp> = None;
+        let mut step_seen = false;
+        let mut ok = true;
+        for arm in arms {
+            match &arm.pattern {
+                Pattern::EmptyList => {
+                    // nil -> finish_fn(acc)  |  nil -> acc
+                    if let Some((name, fargs)) = call_target(&arm.body) {
+                        if fargs.len() == 1 && plain_ident(&fargs[0]) == Some(acc_param.as_str()) {
+                            finish_fn = Some(Some(name.to_string()));
+                        } else {
+                            ok = false;
+                        }
+                    } else if plain_ident(&arm.body) == Some(acc_param.as_str()) {
+                        finish_fn = Some(None);
+                    } else {
+                        ok = false;
+                    }
+                }
+                Pattern::Cons(h, t) => {
+                    // cons -> loop(t, step), step = step_fn(acc, h) | acc <op> h
+                    let Some((callee, cargs)) = call_target(&arm.body) else {
+                        ok = false;
+                        continue;
+                    };
+                    if callee != loop_fn
+                        || cargs.len() != 2
+                        || plain_ident(&cargs[0]) != Some(t.as_str())
+                    {
+                        ok = false;
+                        continue;
+                    }
+                    match &cargs[1].node {
+                        Expr::FnCall(sc, sargs) => {
+                            if let Expr::Ident(sname) = &sc.node
+                                && sargs.len() == 2
+                                && plain_ident(&sargs[0]) == Some(acc_param.as_str())
+                                && plain_ident(&sargs[1]) == Some(h.as_str())
+                            {
+                                step_fn = Some(sname.clone());
+                                step_seen = true;
+                            } else {
+                                ok = false;
+                            }
+                        }
+                        Expr::BinOp(op, l, r) => {
+                            let ln = plain_ident(l);
+                            let rn = plain_ident(r);
+                            let acc_h = ln == Some(acc_param.as_str()) && rn == Some(h.as_str());
+                            let h_acc = ln == Some(h.as_str()) && rn == Some(acc_param.as_str());
+                            if acc_h || h_acc {
+                                step_op = Some(*op);
+                                step_seen = true;
+                            } else {
+                                ok = false;
+                            }
+                        }
+                        _ => ok = false,
+                    }
+                }
+                _ => ok = false,
+            }
+        }
+
+        let (Some(finish_fn), true, true) = (finish_fn, step_seen, ok) else {
+            continue;
+        };
+        out.push(ModulePattern::AccumulatorFold {
+            scope: scope.clone(),
+            wrapper_fn: fd.name.clone(),
+            loop_fn,
+            list_param,
+            acc_param,
+            step_fn,
+            step_op,
+            finish_fn,
         });
     }
 }

@@ -1,0 +1,15 @@
+module Lemma22
+    intent =
+        "TIP prod lemma_22: (xs ++ ys) ++ zs = xs ++ (ys ++ zs) — append associativity."
+    effects []
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+verify append law appendAssoc
+    given xs: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [4, 5], [4, 5, 6]]
+    given zs: List<Int> = [[], [7], [7, 8], [7, 8, 9]]
+    append(append(xs, ys), zs) => append(xs, append(ys, zs))

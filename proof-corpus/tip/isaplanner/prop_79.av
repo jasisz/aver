@@ -1,0 +1,21 @@
+module Prop79
+    intent =
+        "TIP isaplanner prop_79: (S m - n) - (S k) = (m - n) - k for truncated Nat subtraction."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn sub(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> sub(z, x2)
+
+verify sub law subShiftCancel
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given k: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    sub(sub(Nat.S(m), n), Nat.S(k)) => sub(sub(m, n), k)

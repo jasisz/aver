@@ -1,0 +1,28 @@
+module Scale
+    intent =
+        "A monotone-nonneg accumulator whose growth is MULTIPLICATIVE, not"
+        "additive: grow doubles the level on a positive reading and holds it"
+        "otherwise. Closes the nonlinear-nonneg gap for lemma discovery -- level"
+        "times 2 keeps 0 less-equal level (it is linear in the field, so omega"
+        "discharges it) even though it is not a plus-k shift like gauge or tally."
+    effects [Console]
+
+record Scale
+    level: Int
+
+fn grow(acc: Scale, x: Int) -> Scale
+    ? "Double the level on a positive reading; otherwise hold it."
+    match x > 0
+        true -> Scale(level = acc.level * 2)
+        false -> Scale(level = acc.level)
+
+verify grow
+    grow(Scale(level = 1), 5) => Scale(level = 2)
+    grow(Scale(level = 2), -1) => Scale(level = 2)
+    grow(Scale(level = 3), 4) => Scale(level = 6)
+
+fn main()
+    ! [Console.print]
+    step1 = grow(Scale(level = 1), 5)
+    step2 = grow(step1, 9)
+    Console.print("scale level so far: {step2.level}")

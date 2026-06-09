@@ -1,0 +1,26 @@
+module Prop48
+    intent =
+        "TIP isaplanner prop_48: for non-empty xs, butlast xs ++ [last xs] = xs."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn last(xs: List<Nat>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..z] -> match z
+            [] -> y
+            [x2, ..x3] -> last(z)
+
+fn butlast(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..z] -> match z
+            [] -> []
+            [x2, ..x3] -> List.concat([y], butlast(z))
+
+verify butlast law butlastLastAppend
+    given xs: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]]
+    List.concat(butlast(xs), [last(xs)]) => xs

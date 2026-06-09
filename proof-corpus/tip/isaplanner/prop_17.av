@@ -1,0 +1,28 @@
+module Prop17
+    intent =
+        "TIP isaplanner prop_17: (n <= Z) = (n == Z) over Nat."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eq(x2, y2)
+
+fn le(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> le(z, x2)
+
+verify le law leZeroEqZero
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    le(n, Nat.Z) => eq(n, Nat.Z)

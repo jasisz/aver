@@ -1404,6 +1404,57 @@ fn collect_fn_calls_expr(
     }
 }
 
+/// Collect the user-type *names* referenced by a type annotation string
+/// (`List<Run>`, `Result<Tree, String>`, `(A, B)`, …) into `out`. Parses
+/// the annotation with [`parse_type_annotation`] and walks the resulting
+/// `Type`, harvesting every `Type::Named` leaf. Builtin scalars and the
+/// collection constructors contribute nothing themselves — only the named
+/// (potential-ADT) leaves land; the caller filters those to actual user
+/// `TypeDef`s. Drives [`LawProofCone`]'s `types` alphabet.
+fn collect_named_types_in_annotation(
+    annotation: &str,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    fn walk(ty: &crate::types::Type, out: &mut std::collections::BTreeSet<String>) {
+        use crate::types::Type;
+        match ty {
+            // syntax-discovery-only: collects named types from a source type
+            // annotation into the LawProofCone alphabet; `name` is the discovery
+            // cone key, not a backend-routing / output identity decision.
+            Type::Named { name, .. } => {
+                out.insert(name.clone());
+            }
+            Type::Result(a, b) | Type::Map(a, b) => {
+                walk(a, out);
+                walk(b, out);
+            }
+            Type::Option(inner) | Type::List(inner) | Type::Vector(inner) => walk(inner, out),
+            Type::Tuple(items) => {
+                for t in items {
+                    walk(t, out);
+                }
+            }
+            Type::Fn(args, ret, _) => {
+                for a in args {
+                    walk(a, out);
+                }
+                walk(ret, out);
+            }
+            Type::Int
+            | Type::Float
+            | Type::Str
+            | Type::Bool
+            | Type::Unit
+            | Type::Var(_)
+            | Type::Invalid => {}
+        }
+    }
+    walk(
+        &crate::codegen::common::parse_type_annotation(annotation),
+        out,
+    );
+}
+
 /// Find a single-param smart constructor in the unfold set whose
 /// body is the canonical `match <bool-subj> { true → Ok; false →
 /// Err }` shape. Returns the param name + bool subject of the
@@ -1597,67 +1648,175 @@ fn detect_map_update_postcondition(
     get_side(&law.lhs, &law.rhs).or_else(|| get_side(&law.rhs, &law.lhs))
 }
 
-/// Collect user helper-fn source names referenced from the law's
-/// lhs/rhs/when, expanded transitively through pure (effect-free,
-/// non-main) fn bodies. The outer fn is excluded — it's carried in
-/// the IR variant separately. Filters out stdlib / namespace calls
-/// (`Map.get`, `Option.withDefault`, …) by requiring each name to
-/// resolve to a user fn def. Sorted for deterministic emit.
+/// The scoped pure-function dependency closure of a `verify ... law` — the
+/// set of pure user functions a law's proof is allowed to mention, plus the
+/// ADTs those functions range over.
+///
+/// Phase 0/2 of the lemma-discovery charter (`prompts/lemma-discovery.md`):
+/// the various strategy detectors each re-derive the pure-fn closure ad hoc
+/// (`law_helper_unfolds`, the spec-equivalence unfold list, etc.). This is
+/// the single reusable computation they share, and the substrate the term
+/// enumerator (`codegen::lemma_discovery`) builds on. `pure_fns` is the
+/// enumeration *vocabulary*; `types` is the type-directed generator's
+/// *signature alphabet* — the ADTs reachable from those fns' parameter and
+/// return annotations, which the enumerator needs to mint typed variables.
+///
+/// `law_helper_unfolds` consumes only `pure_fns` (transitively reachable
+/// helper source names, outer fn excluded, sorted for deterministic emit).
+/// `types` lands now because its consumer — the enumerator — has landed.
+/// Already-proven theorems and a content hash (the cache key) get added
+/// when *their* consumers (the proof cache / replay) land — not before.
+pub(crate) struct LawProofCone<'a> {
+    /// Pure user fns transitively reachable from the law's lhs/rhs/when,
+    /// in deterministic (sorted-by-name) order, excluding the law's own
+    /// subject fn.
+    pure_fns: Vec<&'a FnDef>,
+    /// User-defined ADTs (`Sum`/`Product` type defs) transitively reachable
+    /// from `pure_fns`' parameter and return type annotations, in
+    /// deterministic (sorted-by-name) order. Builtin scalars (`Int`,
+    /// `String`, …) and builtin records that don't resolve to a user
+    /// `TypeDef` are dropped — only types the enumerator can construct or
+    /// case-split on survive.
+    types: Vec<&'a TypeDef>,
+}
+
+impl<'a> LawProofCone<'a> {
+    /// Build the cone: seed from the law sides (lhs/rhs/when), keep only
+    /// pure user fns (no effects, not `main`), transitively expand through
+    /// their bodies, then drop the law's own subject (`outer_fn`) — each
+    /// backend unfolds that one separately. Finally resolve the ADTs those
+    /// fns range over from their signatures (`types`).
+    pub(crate) fn compute(
+        law: &crate::ast::VerifyLaw,
+        outer_fn: &str,
+        inputs: &ProofLowerInputs<'a>,
+    ) -> Self {
+        use std::collections::BTreeSet;
+
+        let resolve_user_fn = |name: &str| -> Option<&'a FnDef> {
+            let fd = inputs.find_fn_def_by_call_name(name)?;
+            if !fd.effects.is_empty() || fd.name == "main" {
+                return None;
+            }
+            Some(fd)
+        };
+
+        // Seed from law sides, immediately filtering to user-fn names.
+        let mut raw: BTreeSet<String> = BTreeSet::new();
+        collect_fn_calls_expr(&law.lhs, &mut raw);
+        collect_fn_calls_expr(&law.rhs, &mut raw);
+        if let Some(when_expr) = &law.when {
+            collect_fn_calls_expr(when_expr, &mut raw);
+        }
+        let mut names: BTreeSet<String> = raw
+            .into_iter()
+            .filter_map(|n| resolve_user_fn(&n).map(|fd| fd.name.clone()))
+            .collect();
+
+        // Transitive expansion through pure user fn bodies.
+        loop {
+            let before = names.len();
+            let snapshot: Vec<String> = names.iter().cloned().collect();
+            for name in snapshot {
+                let Some(fd) = resolve_user_fn(&name) else {
+                    continue;
+                };
+                let mut called: BTreeSet<String> = BTreeSet::new();
+                for stmt in fd.body.stmts() {
+                    match stmt {
+                        crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                            collect_fn_calls_expr(e, &mut called);
+                        }
+                    }
+                }
+                for c in called {
+                    if let Some(callee_fd) = resolve_user_fn(&c) {
+                        names.insert(callee_fd.name.clone());
+                    }
+                }
+            }
+            if names.len() == before {
+                break;
+            }
+        }
+        names.remove(outer_fn);
+
+        // Resolve the (sorted) names back to defs — `names` only ever held
+        // canonical `fd.name`s of pure user fns, so every entry re-resolves.
+        let pure_fns: Vec<&'a FnDef> = names.iter().filter_map(|n| resolve_user_fn(n)).collect();
+
+        // Type alphabet: ADTs reachable from the cone fns' signatures, then
+        // transitively through those types' own field annotations (a record
+        // field can name another ADT). Seed from every param + return type
+        // string of every pure fn in the cone.
+        let mut type_names: BTreeSet<String> = BTreeSet::new();
+        for fd in &pure_fns {
+            for (_, ann) in &fd.params {
+                collect_named_types_in_annotation(ann, &mut type_names);
+            }
+            collect_named_types_in_annotation(&fd.return_type, &mut type_names);
+        }
+        loop {
+            let before = type_names.len();
+            let snapshot: Vec<String> = type_names.iter().cloned().collect();
+            for name in snapshot {
+                let Some(td) = inputs.find_type_def(&name) else {
+                    continue;
+                };
+                match td {
+                    crate::ast::TypeDef::Sum { variants, .. } => {
+                        for v in variants {
+                            for field_ty in &v.fields {
+                                collect_named_types_in_annotation(field_ty, &mut type_names);
+                            }
+                        }
+                    }
+                    crate::ast::TypeDef::Product { fields, .. } => {
+                        for (_, field_ty) in fields {
+                            collect_named_types_in_annotation(field_ty, &mut type_names);
+                        }
+                    }
+                }
+            }
+            if type_names.len() == before {
+                break;
+            }
+        }
+        // Keep only names that resolve to a user `TypeDef`; builtin scalars
+        // (`Int`/`String`/…) and unregistered builtin records drop out here.
+        let types: Vec<&'a TypeDef> = type_names
+            .iter()
+            .filter_map(|n| inputs.find_type_def(n))
+            .collect();
+
+        Self { pure_fns, types }
+    }
+
+    /// The cone's pure-fn names, deterministic (sorted) order, excluding the
+    /// law's subject. Exactly the legacy `law_helper_unfolds` result.
+    fn unfold_names(&self) -> Vec<String> {
+        self.pure_fns.iter().map(|fd| fd.name.clone()).collect()
+    }
+
+    /// The cone's pure-fn vocabulary — the functions the term enumerator
+    /// may apply. Deterministic (sorted-by-name) order, law subject excluded.
+    pub(crate) fn pure_fns(&self) -> &[&'a FnDef] {
+        &self.pure_fns
+    }
+
+    /// The cone's ADT type alphabet — the user types the enumerator can mint
+    /// typed variables of or case-split on. Deterministic (sorted) order.
+    pub(crate) fn types(&self) -> &[&'a TypeDef] {
+        &self.types
+    }
+}
+
 fn law_helper_unfolds(
     law: &crate::ast::VerifyLaw,
     outer_fn: &str,
     inputs: &ProofLowerInputs,
 ) -> Vec<String> {
-    use std::collections::BTreeSet;
-
-    let resolve_user_fn = |name: &str| -> Option<&FnDef> {
-        let fd = inputs.find_fn_def_by_call_name(name)?;
-        if !fd.effects.is_empty() || fd.name == "main" {
-            return None;
-        }
-        Some(fd)
-    };
-
-    // Seed from law sides, immediately filtering to user-fn names.
-    let mut raw: BTreeSet<String> = BTreeSet::new();
-    collect_fn_calls_expr(&law.lhs, &mut raw);
-    collect_fn_calls_expr(&law.rhs, &mut raw);
-    if let Some(when_expr) = &law.when {
-        collect_fn_calls_expr(when_expr, &mut raw);
-    }
-    let mut names: BTreeSet<String> = raw
-        .into_iter()
-        .filter_map(|n| resolve_user_fn(&n).map(|fd| fd.name.clone()))
-        .collect();
-
-    // Transitive expansion through pure user fn bodies.
-    loop {
-        let before = names.len();
-        let snapshot: Vec<String> = names.iter().cloned().collect();
-        for name in snapshot {
-            let Some(fd) = resolve_user_fn(&name) else {
-                continue;
-            };
-            let mut called: BTreeSet<String> = BTreeSet::new();
-            for stmt in fd.body.stmts() {
-                match stmt {
-                    crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
-                        collect_fn_calls_expr(e, &mut called);
-                    }
-                }
-            }
-            for c in called {
-                if let Some(callee_fd) = resolve_user_fn(&c) {
-                    names.insert(callee_fd.name.clone());
-                }
-            }
-        }
-        if names.len() == before {
-            break;
-        }
-    }
-    names.remove(outer_fn);
-    names.into_iter().collect()
+    LawProofCone::compute(law, outer_fn, inputs).unfold_names()
 }
 
 /// Detect functional equivalence of `fn_name` and a same-named spec
@@ -2786,7 +2945,7 @@ fn detect_wrapper_over_recursion(
     inputs: &ProofLowerInputs,
 ) -> Option<crate::ir::ProofStrategy> {
     use crate::analysis::shape::ModulePattern;
-    use crate::ast::{BinOp, Expr, Pattern, Stmt};
+    use crate::ast::{BinOp, Expr, Stmt};
 
     // Pre-pipeline AST has `Expr::Ident(n)`; post-pipeline the
     // resolver rewrites local/param idents to `Expr::Resolved { name }`.
@@ -2808,16 +2967,24 @@ fn detect_wrapper_over_recursion(
     }
     let given_name = &law.givens[0].name;
 
-    // Find the matching pattern in the shape — wrapper_fn must
-    // equal the law's surrounding fn.
-    let (wrapper_fn, inner_fn) = shape.patterns.iter().find_map(|p| match p {
-        ModulePattern::WrapperOverRecursion {
+    // Read the loop fn + its fold step from the shared `AccumulatorFold` pattern
+    // (recognized once by `analysis::shape`, consumed by both this strategy and
+    // the `--discover` lemma chains) — no bespoke inner-body re-walk for the OP.
+    // The monoidal strategy needs an additive/multiplicative inline step and an
+    // identity finish (the nil arm returns the accumulator).
+    let (inner_fn, combine_op) = shape.patterns.iter().find_map(|p| match p {
+        ModulePattern::AccumulatorFold {
             wrapper_fn,
-            inner_fn,
+            loop_fn,
+            step_op: Some(op),
+            finish_fn: None,
             ..
-        } if wrapper_fn == fn_name => Some((wrapper_fn.clone(), inner_fn.clone())),
+        } if wrapper_fn == fn_name && matches!(op, BinOp::Add | BinOp::Mul) => {
+            Some((loop_fn.clone(), *op))
+        }
         _ => None,
     })?;
+    let wrapper_fn = fn_name.to_string();
 
     // Law shape: `wrapper(g) == other(g)` (either side).
     let extract = |expr: &Spanned<crate::ast::Expr>| -> Option<String> {
@@ -2840,81 +3007,6 @@ fn detect_wrapper_over_recursion(
         (Some(l), Some(r)) if r == wrapper_fn && l != wrapper_fn => l,
         _ => return None,
     };
-
-    // Inner fn must have body shape
-    //   match xs { [] -> acc; [h, ..t] -> inner(t, acc OP h) }
-    // — extract OP.
-    let inner_fd = inputs.find_fn_def_by_call_name(&inner_fn)?;
-    if inner_fd.params.len() != 2 {
-        return None;
-    }
-    let stmts = inner_fd.body.stmts();
-    if stmts.len() != 1 {
-        return None;
-    }
-    let Stmt::Expr(body) = &stmts[0] else {
-        return None;
-    };
-    let Expr::Match { subject, arms } = &body.node else {
-        return None;
-    };
-    if ident_name(subject)? != inner_fd.params[0].0 {
-        return None;
-    }
-    if arms.len() != 2 {
-        return None;
-    }
-    let mut nil_acc_ok = false;
-    let mut cons_op: Option<BinOp> = None;
-    let acc_name = &inner_fd.params[1].0;
-    for arm in arms {
-        match &arm.pattern {
-            Pattern::EmptyList => {
-                if ident_name(&arm.body) == Some(acc_name.as_str()) {
-                    nil_acc_ok = true;
-                }
-            }
-            Pattern::Cons(head_name, tail_name) => {
-                // Body must be `inner(tail, acc OP head)` (or with `head OP acc`).
-                // Post-pipeline the call can also be a `TailCall`.
-                let (callee_name, args) = match &arm.body.node {
-                    Expr::FnCall(c, a) => (ident_name(c)?, a.clone()),
-                    Expr::TailCall(td) => (td.target.as_str(), td.args.clone()),
-                    _ => return None,
-                };
-                if callee_name != inner_fn {
-                    return None;
-                }
-                if args.len() != 2 {
-                    return None;
-                }
-                if ident_name(&args[0])? != tail_name.as_str() {
-                    return None;
-                }
-                let Expr::BinOp(op, l, r) = &args[1].node else {
-                    return None;
-                };
-                if !matches!(op, BinOp::Add | BinOp::Mul) {
-                    return None;
-                }
-                let l_n = ident_name(l);
-                let r_n = ident_name(r);
-                let l_is_acc = l_n == Some(acc_name.as_str());
-                let r_is_head = r_n == Some(head_name.as_str());
-                let l_is_head = l_n == Some(head_name.as_str());
-                let r_is_acc = r_n == Some(acc_name.as_str());
-                if !((l_is_acc && r_is_head) || (l_is_head && r_is_acc)) {
-                    return None;
-                }
-                cons_op = Some(*op);
-            }
-            _ => return None,
-        }
-    }
-    if !nil_acc_ok {
-        return None;
-    }
-    let combine_op = cons_op?;
 
     // Wrapper body must be `inner(<given>, neutral)` where neutral is
     // 0 for Add and 1 for Mul. Verify against the fn def to be sure.

@@ -609,6 +609,14 @@ pub(super) enum Commands {
         /// failure.
         #[arg(long, requires = "check")]
         check_json: bool,
+        /// Run the (expensive) lemma-discovery pass and print its report
+        /// instead of generating a proof project. Discovery enumerates the
+        /// auxiliary-lemma candidates each `verify ... law` needs over its
+        /// pure-fn proof cone; see `prompts/lemma-discovery.md`. This is the
+        /// explicit, cached discovery step — normal `aver proof` only
+        /// replays already-committed, re-verified lemmas.
+        #[arg(long)]
+        discover: bool,
     },
 }
 

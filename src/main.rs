@@ -384,6 +384,7 @@ fn main() {
             error_budget,
             sorry_budget,
             check_json,
+            discover,
         } => {
             commands::cmd_proof(
                 file,
@@ -396,6 +397,7 @@ fn main() {
                 *error_budget,
                 *sorry_budget,
                 *check_json,
+                *discover,
             );
         }
     }

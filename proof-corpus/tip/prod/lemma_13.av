@@ -1,0 +1,15 @@
+module Lemma13
+    intent =
+        "TIP prod lemma_13: (x ++ y) ++ [z] = x ++ (y ++ [z])."
+    effects []
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+verify append law appendAssocSingleton
+    given x: List<Int> = [[], [1], [1, 2]]
+    given y: List<Int> = [[], [3], [3, 4]]
+    given z: Int = [5, 6, 7]
+    append(append(x, y), [z]) => append(x, append(y, [z]))

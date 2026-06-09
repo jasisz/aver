@@ -1,0 +1,48 @@
+module Prop58
+    intent =
+        "TIP isaplanner prop_58: drop n (zip xs ys) = zip (drop n xs) (drop n ys)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn zip(xs: List<Int>, ys: List<Int>) -> List<Tuple<Int, Int>>
+    ? "Pair up elements of two lists, truncating to the shorter."
+    match xs
+        [] -> []
+        [z, ..x2] -> match ys
+            [] -> []
+            [x3, ..x4] -> List.concat([(z, x3)], zip(x2, x4))
+
+fn dropInt(n: Nat, ys: List<Int>) -> List<Int>
+    ? "Drop the first n elements of an Int list."
+    match n
+        Nat.Z -> ys
+        Nat.S(z) -> match ys
+            [] -> []
+            [x2, ..x3] -> dropInt(z, x3)
+
+fn dropPair(n: Nat, ys: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    ? "Drop the first n elements of a pair list."
+    match n
+        Nat.Z -> ys
+        Nat.S(z) -> match ys
+            [] -> []
+            [x2, ..x3] -> dropPair(z, x3)
+
+verify zip law zipSelf
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [4, 5, 6]]
+    zip(xs, ys) => zip(xs, ys)
+
+verify dropInt law dropIntSelf
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    dropInt(n, xs) => dropInt(n, xs)
+
+verify dropPair law dropZip
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [4, 5, 6]]
+    dropPair(n, zip(xs, ys)) => zip(dropInt(n, xs), dropInt(n, ys))

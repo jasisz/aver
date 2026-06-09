@@ -1,0 +1,42 @@
+module Prop44
+    intent =
+        "TIP prod prop_44: elem x y => elem x z => elem x (intersect y z)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn barbar(x: Bool, y: Bool) -> Bool
+    match x
+        true -> true
+        false -> y
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> barbar(eqNat(x, z), elem(x, xs))
+
+fn intersect(x: List<Nat>, y: List<Nat>) -> List<Nat>
+    match x
+        [] -> []
+        [z, ..xs] -> match elem(z, y)
+            true -> List.concat([z], intersect(xs, y))
+            false -> intersect(xs, y)
+
+verify elem law elemIntersect
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: List<Nat> = [[Nat.Z], [Nat.Z, Nat.S(Nat.Z)], [Nat.S(Nat.Z)]]
+    given z: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)], [Nat.Z, Nat.S(Nat.Z)]]
+    when elem(x, y)
+    when elem(x, z)
+    elem(x, intersect(y, z)) => true

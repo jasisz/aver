@@ -5390,7 +5390,9 @@ fn collect_call_indirect_sigs(
 /// Used to gate registration of the (T=String) split/join helpers in
 /// `lists::ListHelperRegistry::assign_slots`.
 fn fn_defs_use_string_split_join(fn_defs: &[crate::ir::hir::ResolvedFnDef]) -> bool {
-    use crate::ir::hir::{ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedStmt};
+    use crate::ir::hir::{
+        ResolvedCallee, ResolvedExpr, ResolvedFnBody, ResolvedStmt, ResolvedStrPart,
+    };
     fn walk(e: &ResolvedExpr) -> bool {
         match e {
             ResolvedExpr::Call(callee, args) => {
@@ -5410,8 +5412,19 @@ fn fn_defs_use_string_split_join(fn_defs: &[crate::ir::hir::ResolvedFnDef]) -> b
             ResolvedExpr::Attr(obj, _) => walk(&obj.node),
             ResolvedExpr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| walk(&e.node)),
             ResolvedExpr::Ctor(_, args) => args.iter().any(|a| walk(&a.node)),
-            ResolvedExpr::List(items) => items.iter().any(|x| walk(&x.node)),
-            ResolvedExpr::InterpolatedStr(_) => false,
+            ResolvedExpr::List(items)
+            | ResolvedExpr::Tuple(items)
+            | ResolvedExpr::IndependentProduct(items, _) => items.iter().any(|x| walk(&x.node)),
+            ResolvedExpr::ErrorProp(inner) => walk(&inner.node),
+            // A `String.split`/`String.join` can hide inside an interpolation
+            // (`"... {String.join(xs, sep)}"`) — the original arm returned
+            // `false` here, so a program that ONLY uses join via interpolation
+            // never registered the helper and the emitted call failed validation
+            // (examples/data/words.av). Walk the parsed parts. Over-detecting is
+            // safe: an unused helper is DCE'd by `wasm-opt`; under-detecting trapped.
+            ResolvedExpr::InterpolatedStr(parts) => parts
+                .iter()
+                .any(|p| matches!(p, ResolvedStrPart::Parsed(inner) if walk(&inner.node))),
             _ => false,
         }
     }

@@ -736,63 +736,6 @@ fn fn_handles_negative_first(fd: &FnDef, pname: &str) -> bool {
     )
 }
 
-/// Collect all function names called in an expression (top-level only).
-fn collect_called_fns(expr: &Spanned<Expr>, out: &mut std::collections::BTreeSet<String>) {
-    match &expr.node {
-        Expr::FnCall(f, args) => {
-            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&f.node) {
-                // Skip builtins — only user functions need fuel
-                if !name.contains('.') {
-                    out.insert(name);
-                }
-            }
-            collect_called_fns(f, out);
-            for a in args {
-                collect_called_fns(a, out);
-            }
-        }
-        Expr::BinOp(_, l, r) => {
-            collect_called_fns(l, out);
-            collect_called_fns(r, out);
-        }
-        Expr::Match { subject, arms, .. } => {
-            collect_called_fns(subject, out);
-            for arm in arms {
-                collect_called_fns(&arm.body, out);
-            }
-        }
-        Expr::ErrorProp(inner) => collect_called_fns(inner, out),
-        Expr::Constructor(_, Some(arg)) => collect_called_fns(arg, out),
-        Expr::RecordCreate { fields, .. } => {
-            for (_, e) in fields {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::List(elems) => {
-            for e in elems {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::TailCall(tc) => {
-            let TailCallData { target, args, .. } = tc.as_ref();
-            if !target.contains('.') {
-                out.insert(target.clone());
-            }
-            for a in args {
-                collect_called_fns(a, out);
-            }
-        }
-        Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
-            for e in elems {
-                collect_called_fns(e, out);
-            }
-        }
-        Expr::Attr(obj, _) => collect_called_fns(obj, out),
-        Expr::Neg(inner) => collect_called_fns(inner, out),
-        _ => {}
-    }
-}
-
 /// Get the top-level function name from a law expression like `fib(n)`.
 fn law_top_level_fn(expr: &Spanned<Expr>) -> Option<String> {
     match &expr.node {
@@ -880,19 +823,6 @@ fn count_recursive_calls_in_body(body: &FnBody, fn_name: &str) -> usize {
                 Stmt::Expr(expr) => count_recursive_calls(expr, fn_name),
             })
             .sum(),
-    }
-}
-
-fn collect_called_fns_in_body(body: &FnBody, out: &mut std::collections::BTreeSet<String>) {
-    match body {
-        FnBody::Block(stmts) => {
-            for stmt in stmts {
-                match stmt {
-                    Stmt::Binding(_, _, expr) => collect_called_fns(expr, out),
-                    Stmt::Expr(expr) => collect_called_fns(expr, out),
-                }
-            }
-        }
     }
 }
 
@@ -1092,8 +1022,8 @@ pub fn emit_law_samples(
             let l = emit_expr_legacy(lhs_rw, ctx, None);
             let r = emit_expr_legacy(rhs_rw, ctx, None);
             let mut callees = std::collections::BTreeSet::new();
-            collect_called_fns(lhs_rw, &mut callees);
-            collect_called_fns(rhs_rw, &mut callees);
+            crate::codegen::proof_recognize::collect_called_fns(lhs_rw, &mut callees);
+            crate::codegen::proof_recognize::collect_called_fns(rhs_rw, &mut callees);
             // Full transitive closure — 1-level was missing deep
             // SCC members (addLeft → addStep → addDigits → ...).
             // Without them, fuel attrs only land on direct callees
@@ -1120,7 +1050,10 @@ pub fn emit_law_samples(
                         .find(|fd| &fd.name == f)
                     {
                         let before = callees.len();
-                        collect_called_fns_in_body(&fd.body, &mut callees);
+                        crate::codegen::proof_recognize::collect_called_fns_in_body(
+                            &fd.body,
+                            &mut callees,
+                        );
                         if callees.len() != before {
                             changed = true;
                         }
@@ -1179,9 +1112,42 @@ pub fn emit_law_samples(
             ));
         }
     } else {
+        // Mirror the universal lemma's fuel attrs onto the sample method.
+        // A `function` with `decreases` does not unfold inside a bare
+        // `assert` without fuel, so a concrete sample like
+        // `length([1, 0]) == S(length([1]))` spuriously fails to verify even
+        // though the universal law (which carries `{:fuel}`) proves — masking
+        // a genuinely-closed proof behind a sample error.
+        let mut sample_fns = std::collections::BTreeSet::new();
+        crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut sample_fns);
+        crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut sample_fns);
+        let mut transitive = std::collections::BTreeSet::new();
+        for f in &sample_fns {
+            if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
+                crate::codegen::proof_recognize::collect_called_fns_in_body(
+                    &fd.body,
+                    &mut transitive,
+                );
+            }
+        }
+        sample_fns.extend(transitive);
+        let sample_fuel: String = sample_fns
+            .iter()
+            .filter(|f| {
+                ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
+                    .is_some()
+            })
+            .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let fuel_prefix = if sample_fuel.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", sample_fuel)
+        };
         lines.push(format!(
-            "method test_{}_{}{}_samples() {{",
-            fn_name, law_name, suffix
+            "method {}test_{}_{}{}_samples() {{",
+            fuel_prefix, fn_name, law_name, suffix
         ));
         for (lhs_rw, rhs_rw) in &rewritten {
             let l = emit_expr_legacy(lhs_rw, ctx, None);
@@ -1236,7 +1202,7 @@ pub fn transitive_opaque_closure(
                 continue;
             }
             let mut callees = std::collections::BTreeSet::new();
-            collect_called_fns_in_body(&fd.body, &mut callees);
+            crate::codegen::proof_recognize::collect_called_fns_in_body(&fd.body, &mut callees);
             let hits = callees.iter().any(|name| {
                 crate::codegen::common::fn_id_for_dotted_name(ctx, name)
                     .is_some_and(|id| result.contains(&id))
@@ -1665,16 +1631,30 @@ pub fn emit_verify_law(
     let lhs = emit_expr_legacy(&law_lhs, ctx, None);
     let rhs = emit_expr_legacy(&law_rhs, ctx, None);
 
+    // Proof lemma library: per-shape recognizers contribute proved helper
+    // lemmas (prepended) + `forall`-lifted facts (hoisted into the body), e.g.
+    // additive-monoid op laws and the rev anti-homomorphism. See
+    // `super::lemmas`. The per-step cons bridges come later, at the
+    // list-induction site, via `super::lemmas::list_bridges`.
+    let law_uid = format!("{}_{}", fn_name, law_name);
+    let super::lemmas::AlgebraLemmas {
+        defs: op_lemma_defs,
+        lifts: op_lifts,
+    } = super::lemmas::algebra_lemmas(law, ctx, &law_uid);
+
     let mut lines = Vec::new();
     // Collect all functions used in the law for fuel annotations
     let mut law_fns = std::collections::BTreeSet::new();
-    collect_called_fns(&law.lhs, &mut law_fns);
-    collect_called_fns(&law.rhs, &mut law_fns);
+    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut law_fns);
+    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut law_fns);
     // Add transitive callees
     let mut transitive_fns = std::collections::BTreeSet::new();
     for f in &law_fns {
         if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
-            collect_called_fns_in_body(&fd.body, &mut transitive_fns);
+            crate::codegen::proof_recognize::collect_called_fns_in_body(
+                &fd.body,
+                &mut transitive_fns,
+            );
         }
     }
     law_fns.extend(transitive_fns);
@@ -1794,6 +1774,14 @@ pub fn emit_verify_law(
     lines.push(format!("  ensures {} == {}", lhs, rhs));
     lines.push("{".to_string());
 
+    // Hoist additive-op facts at the top of the body (inductive paths only;
+    // bounded-form bodies dispatch to samples and never reach the universal).
+    if !needs_bounded_form {
+        for lift in &op_lifts {
+            lines.push(lift.clone());
+        }
+    }
+
     if needs_bounded_form {
         if all_explicit_int {
             // Per-pair case split. Each case_givens[idx] gives the
@@ -1881,11 +1869,11 @@ pub fn emit_verify_law(
         // behind a thin facade (`decodeString = String.join(decode(...))`
         // — `decode` is recursive but `decodeString` isn't).
         let mut called: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        collect_called_fns(&law.lhs, &mut called);
-        collect_called_fns(&law.rhs, &mut called);
+        crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut called);
+        crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut called);
         for f in called.clone() {
             if let Some(fd) = ctx.fn_def_by_name(&f, ctx.active_module_scope().as_deref()) {
-                collect_called_fns_in_body(&fd.body, &mut called);
+                crate::codegen::proof_recognize::collect_called_fns_in_body(&fd.body, &mut called);
             }
         }
         let any_recursive = called.iter().any(|f| is_directly_recursive(f, ctx));
@@ -1904,8 +1892,21 @@ pub fn emit_verify_law(
                     }
                 })
                 .collect();
+            // Cons-decomposition bridges for folds over `concat(<ind_var>, ys)`
+            // and the rev unfold — `super::lemmas::list_bridges` assembles the
+            // exact assert lines (base → `|xs| == 0` arm, step → `else` arm).
+            // Without these Z3 hunts for the seq decomposition and times out.
+            let ind_var_src = &law.givens[list_given_idx].name;
+            let bridges = super::lemmas::list_bridges(law, ctx, &list_param, ind_var_src);
+
             lines.push(format!("  if |{}| == 0 {{", list_param));
+            for assert in &bridges.base {
+                lines.push(assert.clone());
+            }
             lines.push("  } else {".to_string());
+            for assert in &bridges.step {
+                lines.push(assert.clone());
+            }
             lines.push(format!("    {}({});", lemma_name, other_args.join(", ")));
             lines.push("  }".to_string());
         }
@@ -1913,5 +1914,11 @@ pub fn emit_verify_law(
 
     lines.push("}\n".to_string());
 
-    lines.join("\n")
+    // Prepend the proved additive-op lemmas the `forall`-lift above refers
+    // to (only reached on the inductive path — bounded-form returns earlier).
+    if op_lemma_defs.is_empty() {
+        lines.join("\n")
+    } else {
+        format!("{}\n{}", op_lemma_defs.join("\n"), lines.join("\n"))
+    }
 }

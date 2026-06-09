@@ -1,0 +1,29 @@
+module TwoField
+    intent =
+        "An accumulator with TWO Int fields of DIFFERENT invariant classes: a"
+        "non-negative seen counter alongside a strictly DECREASING budget. Closes"
+        "the multi-field gap for lemma discovery -- the conjecturer must emit a"
+        "lemma for EACH qualifying field (seen's nonneg invariant AND budget's"
+        "bounded step), not just the first one it finds."
+    effects [Console]
+
+record Meter
+    seen: Int
+    budget: Int
+
+fn meterStep(acc: Meter, x: Int) -> Meter
+    ? "Count a hit when x is positive; always spend one unit of budget."
+    match x > 0
+        true -> Meter(seen = acc.seen + 1, budget = acc.budget - 1)
+        false -> Meter(seen = acc.seen, budget = acc.budget - 1)
+
+verify meterStep
+    meterStep(Meter(seen = 0, budget = 10), 5) => Meter(seen = 1, budget = 9)
+    meterStep(Meter(seen = 1, budget = 9), -2) => Meter(seen = 1, budget = 8)
+    meterStep(Meter(seen = 1, budget = 8), 7) => Meter(seen = 2, budget = 7)
+
+fn main()
+    ! [Console.print]
+    s1 = meterStep(Meter(seen = 0, budget = 10), 5)
+    s2 = meterStep(s1, 9)
+    Console.print("seen {s2.seen}, budget {s2.budget}")

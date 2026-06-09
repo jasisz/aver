@@ -1,0 +1,24 @@
+module Lemma07
+    intent =
+        "TIP prod lemma_07: drop (S u) (drop v (drop (S w) (x::y::z))) = drop (S u) (drop v (drop w (x::z)))."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn drop(x: Nat, y: List<Int>) -> List<Int>
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+verify drop law dropDropDrop
+    given u: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given v: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given w: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given x: Int = [1, 2, 3]
+    given y: Int = [4, 5, 6]
+    given z: List<Int> = [[], [7], [7, 8, 9]]
+    drop(Nat.S(u), drop(v, drop(Nat.S(w), List.concat([x], List.concat([y], z))))) => drop(Nat.S(u), drop(v, drop(w, List.concat([x], z))))

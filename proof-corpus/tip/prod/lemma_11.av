@@ -1,0 +1,16 @@
+module Lemma11
+    intent =
+        "TIP prod lemma_11 (Ireland/Bundy, JAR 1996):"
+        "(x ++ [y]) ++ z = x ++ (y :: z)."
+    effects []
+
+fn append(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [h, ..t] -> List.concat([h], append(t, y))
+
+verify append law appendSnocAssoc
+    given x: List<Int> = [[], [1], [1, 2]]
+    given y: Int = [0, 3]
+    given z: List<Int> = [[], [4], [5, 6]]
+    append(append(x, [y]), z) => append(x, List.concat([y], z))

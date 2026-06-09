@@ -38,6 +38,13 @@ pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
 /// with a bare name resolves to the current module's canonical
 /// entry instead of whichever module populated first.
 pub fn emit_type_def_in_scope(td: &TypeDef, ctx: &CodegenContext, scope: Option<&str>) -> String {
+    // Canonical Peano type lifted to builtin `Nat`: emit NO `inductive` — its
+    // constructors/patterns are rendered as `0` / `_ + 1` and references resolve
+    // to Lean's builtin `Nat`. (Skips the DecidableEq scaffold too, which keys
+    // off this same emit.)
+    if crate::codegen::proof_recognize::detect_canonical_peano(td).is_some() {
+        return String::new();
+    }
     match td {
         TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants),
         TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, ctx, scope),
@@ -486,9 +493,19 @@ fn indent_lines(block: &str, prefix: &str) -> Vec<String> {
         .collect()
 }
 
+/// Neutralize Lean block-comment delimiters inside doc text. A `/-` or `-/` in
+/// the text would open/close a NESTED block comment inside the `/-- ... -/` doc
+/// comment Lean wraps it in, leaving the comment unterminated and breaking the
+/// whole file (`error: unterminated comment`). Splitting the 2-char token with a
+/// space stops it tokenizing as a delimiter while reading identically in prose
+/// (e.g. an Aver `?` doc mentioning `+2/-2` renders `+2/ -2`).
+pub(crate) fn sanitize_doc(text: &str) -> String {
+    text.replace("/-", "/ -").replace("-/", "- /")
+}
+
 fn emit_doc_comment(desc: &Option<String>) -> Vec<String> {
     desc.as_ref()
-        .map(|text| vec![format!("/-- {} -/", text)])
+        .map(|text| vec![format!("/-- {} -/", sanitize_doc(text))])
         .unwrap_or_default()
 }
 
@@ -1223,7 +1240,7 @@ pub fn emit_fn_def(
 
     // Doc comment from description
     if let Some(desc) = &fd.desc {
-        lines.push(format!("/-- {} -/", desc));
+        lines.push(format!("/-- {} -/", sanitize_doc(desc)));
     }
 
     let is_recursive = recursive_fns.contains(&fd.name);
@@ -1357,6 +1374,12 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
 
     // SizeOfStructural — `Fuel { SizeOfPlusOne }`. No params bound;
     // sizeOf walks the whole call frame.
+    //
+    // EXCEPT when the structural recursion is on a canonical Peano parameter
+    // lifted to builtin `Nat`: then the recursion is structural on `Nat`
+    // (`Nat.rec`), so it falls through to the plain `def` below and Lean infers
+    // termination — fuel would only re-introduce the unfolding barrier the lift
+    // removes (no `simp [f]`, no `omega`).
     if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && matches!(
             contract.recursion,
@@ -1364,6 +1387,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
                 fuel_metric: crate::ir::FuelMetric::SizeOfPlusOne,
             })
         )
+        && !crate::codegen::proof_recognize::recurses_on_peano(fd, ctx)
     {
         return Some(emit_fuelized_sizeof_fn(fd, ctx));
     }
@@ -1384,7 +1408,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
 
     let mut lines = Vec::new();
     if let Some(desc) = &fd.desc {
-        lines.push(format!("/-- {} -/", desc));
+        lines.push(format!("/-- {} -/", sanitize_doc(desc)));
     }
 
     let fn_name = aver_name_to_lean(&fd.name);
@@ -2358,7 +2382,7 @@ pub fn emit_mutual_group(fns: &[&FnDef], ctx: &CodegenContext) -> String {
             continue;
         }
         if let Some(desc) = &fd.desc {
-            lines.push(format!("  /-- {} -/", desc));
+            lines.push(format!("  /-- {} -/", sanitize_doc(desc)));
         }
         let fn_name = aver_name_to_lean(&fd.name);
         let params = emit_fn_params(&fd.params);
@@ -2429,7 +2453,7 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
             continue;
         }
         if let Some(desc) = &fd.desc {
-            lines.push(format!("  /-- {} -/", desc));
+            lines.push(format!("  /-- {} -/", sanitize_doc(desc)));
         }
         let fn_name = aver_name_to_lean(&fd.name);
         let params = emit_fn_params(&fd.params);
@@ -2476,4 +2500,31 @@ pub fn emit_mutual_group_proof(fns: &[&FnDef], ctx: &CodegenContext) -> String {
 
     lines.push("end".to_string());
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doc_comment_escapes_block_comment_delimiters() {
+        // An Aver `?` doc mentioning `/-` or `-/` (e.g. "+2/-2") must not open or
+        // close a NESTED block comment inside the `/-- ... -/` wrapper — that
+        // leaves the comment unterminated and breaks the whole Lean file.
+        let out = emit_doc_comment(&Some("delta +2/-2 ends with -/ token".to_string()));
+        assert_eq!(out.len(), 1);
+        let line = &out[0];
+        let inner = line
+            .strip_prefix("/-- ")
+            .and_then(|s| s.strip_suffix(" -/"))
+            .expect("doc comment keeps the /-- ... -/ wrapper");
+        assert!(
+            !inner.contains("/-"),
+            "inner doc still opens a nested block comment: {line}"
+        );
+        assert!(
+            !inner.contains("-/"),
+            "inner doc still closes a nested block comment: {line}"
+        );
+    }
 }

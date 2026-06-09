@@ -1,0 +1,35 @@
+module Prop57
+    intent =
+        "TIP isaplanner prop_57: drop n (take m xs) = take (m - n) (drop n xs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn take(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+fn drop(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> xs
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+fn minus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> minus(z, x2)
+
+verify drop law dropTakeMinus
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    drop(n, take(m, xs)) => take(minus(m, n), drop(n, xs))

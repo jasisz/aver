@@ -1,0 +1,44 @@
+module Prop72
+    intent =
+        "TIP isaplanner prop_72: rev (drop i xs) = take (len xs - i) (rev xs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn take(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+fn len(xs: List<Int>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(len(ys))
+
+fn drop(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> xs
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+fn minus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> minus(z, x2)
+
+fn rev(xs: List<Int>) -> List<Int>
+    match xs
+        [] -> []
+        [y, ..ys] -> List.concat(rev(ys), [y])
+
+verify rev law revDropTakeRev
+    given i: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    rev(drop(i, xs)) => take(minus(len(xs), i), rev(xs))

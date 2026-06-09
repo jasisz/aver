@@ -1,0 +1,41 @@
+module Prop26
+    intent =
+        "TIP isaplanner prop_26 (Johansson/Dixon/Bundy, ITP 2010):"
+        "elem x xs => elem x (xs ++ ys). Translated from benchmarks/isaplanner/prop_26.smt2."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> match eqNat(x, z)
+            true -> true
+            false -> elem(x, xs)
+
+fn appendNat(xs: List<Nat>, ys: List<Nat>) -> List<Nat>
+    match xs
+        [] -> ys
+        [z, ..rest] -> List.concat([z], appendNat(rest, ys))
+
+fn implies(p: Bool, q: Bool) -> Bool
+    match p
+        true -> q
+        false -> true
+
+verify elem law elemConcat
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    given ys: List<Nat> = [[], [Nat.S(Nat.Z)], [Nat.Z]]
+    implies(elem(x, xs), elem(x, appendNat(xs, ys))) => true

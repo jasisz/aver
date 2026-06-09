@@ -1095,6 +1095,28 @@ fn render_module_pattern_line(p: &ModulePattern) -> String {
             scoped(scope, fn_name).bold(),
             list_param.cyan(),
         ),
+        ModulePattern::AccumulatorFold {
+            scope,
+            wrapper_fn,
+            loop_fn,
+            step_fn,
+            step_op,
+            finish_fn,
+            ..
+        } => {
+            let step = step_fn
+                .clone()
+                .unwrap_or_else(|| step_op.map(|o| format!("{o:?}")).unwrap_or_default());
+            let finish = finish_fn.clone().unwrap_or_else(|| "id".to_string());
+            format!(
+                "{}           {} → {}  (step {}, finish {})",
+                "AccumulatorFold".magenta().bold(),
+                scoped(scope, wrapper_fn).bold(),
+                scoped(scope, loop_fn).bold(),
+                step.cyan(),
+                finish.cyan(),
+            )
+        }
     }
 }
 
@@ -1426,6 +1448,26 @@ fn module_pattern_to_json(p: &ModulePattern) -> serde_json::Value {
             "scope": scope_json(scope),
             "fn_name": fn_name,
             "list_param": list_param,
+        }),
+        ModulePattern::AccumulatorFold {
+            scope,
+            wrapper_fn,
+            loop_fn,
+            list_param,
+            acc_param,
+            step_fn,
+            step_op,
+            finish_fn,
+        } => json!({
+            "kind": "AccumulatorFold",
+            "scope": scope_json(scope),
+            "wrapper_fn": wrapper_fn,
+            "loop_fn": loop_fn,
+            "list_param": list_param,
+            "acc_param": acc_param,
+            "step_fn": step_fn,
+            "step_op": step_op.map(|o| format!("{o:?}")),
+            "finish_fn": finish_fn,
         }),
     }
 }

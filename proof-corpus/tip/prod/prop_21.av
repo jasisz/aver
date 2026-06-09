@@ -1,0 +1,25 @@
+module Prop21
+    intent =
+        "TIP prod prop_21: rotate (length x) (x ++ y) = y ++ x."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn rotate(x: Nat, y: List<Int>) -> List<Int>
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> rotate(z, List.concat(x3, [x2]))
+
+verify rotate law rotateLengthConcat
+    given x: List<Int> = [[1], [3], [1, 2, 3]]
+    given y: List<Int> = [[9], [2], [4, 5]]
+    rotate(length(x), List.concat(x, y)) => List.concat(y, x)

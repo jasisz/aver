@@ -1,0 +1,43 @@
+module Prop14
+    intent =
+        "TIP prod prop_14 (isaplanner #78): sorted(isort(x)) holds for all lists."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> lessEq(z, x2)
+
+fn insert(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match lessEq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insert(x, xs))
+
+fn isort(x: List<Nat>) -> List<Nat>
+    match x
+        [] -> []
+        [y, ..xs] -> insert(y, isort(xs))
+
+fn andBool(x: Bool, y: Bool) -> Bool
+    match x
+        true -> y
+        false -> false
+
+fn sorted(x: List<Nat>) -> Bool
+    match x
+        [] -> true
+        [y, ..z] -> match z
+            [] -> true
+            [y2, ..xs] -> andBool(lessEq(y, y2), sorted(z))
+
+verify isort law sortedIsort
+    given x: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.Z]]
+    sorted(isort(x)) => true

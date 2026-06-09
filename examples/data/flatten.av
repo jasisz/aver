@@ -1,0 +1,32 @@
+module Flatten
+    intent =
+        "Flattening a list of lists by concatenation — a list homomorphism."
+        "A NON-encoder fixture for lemma discovery: `flatten` distributes over"
+        "`List.concat`, so discovery should surface and kernel-prove the"
+        "homomorphism `flatten(a ++ b) = flatten(a) ++ flatten(b)` with no"
+        "RLE-specific shape anywhere in sight."
+    effects [Console]
+
+fn flatten(xss: List<List<Int>>) -> List<Int>
+    ? "Concatenates a list of Int lists into one flat list."
+    match xss
+        [] -> []
+        [xs, ..rest] -> List.concat(xs, flatten(rest))
+
+verify flatten
+    flatten([]) => []
+    flatten([[1], [2, 3]]) => [1, 2, 3]
+    flatten([[], [1], [], [2, 3]]) => [1, 2, 3]
+
+fn flattenThenCount(xss: List<List<Int>>) -> Int
+    ? "Total element count via flatten; its law's cone contains `flatten`."
+    List.len(flatten(xss))
+
+verify flattenThenCount law countViaFlatten
+    given xss: List<List<Int>> = [[], [[1]], [[1], [2, 3]], [[1, 2], [3], []]]
+    flattenThenCount(xss) => List.len(flatten(xss))
+
+fn main()
+    ! [Console.print]
+    runs = [[1], [2, 3], [4, 5, 6]]
+    Console.print("flattened {List.len(runs)} lists into {List.len(flatten(runs))} elements")

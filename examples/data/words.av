@@ -1,0 +1,62 @@
+module Words
+    intent =
+        "Token expansion: each token renders to a list of word strings."
+        "expandAll is a list homomorphism over a record element type (Token)."
+        "countAll = len . expandAll sits the homomorphism in a law cone."
+    effects [Console]
+
+record Token
+    text: String
+    repeat: Int
+
+fn renderRepeat(text: String, n: Int) -> List<String>
+    ? "Produces n copies of text. Non-positive counts yield []."
+    match n <= 0
+        true -> []
+        false -> List.concat(renderRepeat(text, n - 1), [text])
+
+verify renderRepeat
+    renderRepeat("a", -1) => []
+    renderRepeat("a", 0) => []
+    renderRepeat("a", 1) => ["a"]
+    renderRepeat("a", 3) => ["a", "a", "a"]
+
+fn render(t: Token) -> List<String>
+    ? "Renders a single token into repeated word strings."
+    renderRepeat(t.text, t.repeat)
+
+verify render
+    render(Token(text = "x", repeat = 0)) => []
+    render(Token(text = "x", repeat = 2)) => ["x", "x"]
+
+fn expandAll(xs: List<Token>) -> List<String>
+    ? "Expands a list of tokens into the concatenation of their renderings."
+    match xs
+        [] -> []
+        [t, ..rest] -> List.concat(render(t), expandAll(rest))
+
+verify expandAll
+    expandAll([]) => []
+    expandAll([Token(text = "a", repeat = 2)]) => ["a", "a"]
+    expandAll([Token(text = "a", repeat = 2), Token(text = "b", repeat = 1)]) => ["a", "a", "b"]
+
+fn countAll(xs: List<Token>) -> Int
+    ? "Counts the total number of rendered words across all tokens."
+    List.len(expandAll(xs))
+
+verify countAll
+    countAll([]) => 0
+    countAll([Token(text = "a", repeat = 2)]) => 2
+    countAll([Token(text = "a", repeat = 2), Token(text = "b", repeat = 1)]) => 3
+
+verify countAll law viaExpand
+    given xs: List<Token> = [[], [Token(text = "a", repeat = 2)], [Token(text = "a", repeat = 1), Token(text = "b", repeat = 2)]]
+    countAll(xs) => List.len(expandAll(xs))
+
+fn main()
+    ! [Console.print]
+    tokens = [Token(text = "ho", repeat = 3), Token(text = "ha", repeat = 1)]
+    words = expandAll(tokens)
+    Console.print("Tokens:   {List.len(tokens)}")
+    Console.print("Expanded: {String.join(words, " ")}")
+    Console.print("Count:    {countAll(tokens)}")

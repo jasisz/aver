@@ -1,0 +1,20 @@
+module Prop70
+    intent =
+        "TIP isaplanner prop_70: m <= n implies m <= S(n)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn le(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> le(z, x2)
+
+verify le law leSucc
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    le(m, n) => le(m, Nat.S(n))

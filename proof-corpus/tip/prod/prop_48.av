@@ -1,0 +1,36 @@
+module Prop48
+    intent =
+        "TIP prod prop_48: insertion sort preserves length (length (isort x) = length x)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Nat>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> lessEq(z, x2)
+
+fn insert(x: Nat, y: List<Nat>) -> List<Nat>
+    match y
+        [] -> [x]
+        [z, ..xs] -> match lessEq(x, z)
+            true -> List.concat([x], y)
+            false -> List.concat([z], insert(x, xs))
+
+fn isort(x: List<Nat>) -> List<Nat>
+    match x
+        [] -> []
+        [y, ..xs] -> insert(y, isort(xs))
+
+verify length law isortPreservesLength
+    given x: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.S(Nat.Z))]]
+    length(isort(x)) => length(x)
