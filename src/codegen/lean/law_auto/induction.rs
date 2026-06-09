@@ -275,8 +275,16 @@ fn emit_simple_induction(
     proof_lines.push(format!("  intro {}", intro_parts.join(" ")));
     proof_lines.push(format!("  induction {} with", target_lean));
 
+    // When the induction target is a canonical Peano type lifted to builtin
+    // `Nat`, the `induction … with` arm names must be Lean's `Nat` constructors
+    // (`zero`/`succ`), not the user's lowercased `z`/`s`.
+    let peano = crate::codegen::proof_recognize::peano_type_named(ctx, type_name);
     for variant in variants {
-        let lean_variant = to_lower_first(&variant.name);
+        let lean_variant = match &peano {
+            Some(p) if variant.name == p.base_ctor => "zero".to_string(),
+            Some(p) if variant.name == p.succ_ctor => "succ".to_string(),
+            _ => to_lower_first(&variant.name),
+        };
         let field_binders: Vec<String> = (0..variant.fields.len())
             .map(|index| format!("f{}", index))
             .collect();

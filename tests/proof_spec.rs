@@ -617,6 +617,66 @@ fn proof_dafny_proves_rev_antihomomorphism() {
 }
 
 #[test]
+fn proof_lean_peano_lift_nat_arith_kernel_clean() {
+    // Proof-only Peano representation lift: a canonical `type Nat { Z; S(Nat) }`
+    // is emitted as Lean's builtin `Nat` (no `inductive`, `Z`→`0`, `S(x)`→`x+1`,
+    // structural recursion not fuel), so `omega`/`simp` close the nat-arithmetic.
+    // `minus(n, plus(n, m)) == 0` then kernel-proves as a genuine UNBOUNDED
+    // universal — `#print axioms = [propext]`, not the bounded `native_decide`
+    // fallback. We pin the lift mechanics (no `inductive Nat`, no `__fuel`) AND
+    // a clean pass, which together imply the structural-Nat proof.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean peano-lift test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-peano-lift-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module PeanoArith\n    effects []\n\n\
+         type Nat\n    Z\n    S(Nat)\n\n\
+         fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n\
+         fn minus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> Nat.Z\n        Nat.S(a) -> match y\n            Nat.Z -> x\n            Nat.S(b) -> minus(a, b)\n\n\
+         verify minus law cancel\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given m: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    minus(n, plus(n, m)) => Nat.Z\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-peano-lift-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let lean = std::fs::read_to_string(out.join("PeanoArith.lean")).expect("read PeanoArith.lean");
+    assert!(
+        !lean.contains("inductive Nat") && !lean.contains("__fuel"),
+        "the Peano type must lift to builtin Nat (no `inductive Nat`, no fuel):\n{lean}"
+    );
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (summary["passed"].as_bool(), summary["sorries"].as_u64(),),
+        (Some(true), Some(0)),
+        "Peano nat-arithmetic must kernel-prove on Lean via the lift.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
     // SAME backend-neutral `RevOp` recognizer as the Dafny test above, but a
     // Lean renderer: `rev (rev x) = x` on List<Int> kernel-proves because the

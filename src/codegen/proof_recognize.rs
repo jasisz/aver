@@ -5,8 +5,110 @@
 //! (`codegen::dafny::lemmas`) and the Lean renderer
 //! (`codegen::lean::law_auto::induction`) both consume these, so a single
 //! recognizer drives a proof on either backend.
-use crate::ast::{Expr, FnBody, FnDef, Pattern, Spanned, Stmt, TailCallData, VerifyLaw};
+use crate::ast::{Expr, FnBody, FnDef, Pattern, Spanned, Stmt, TailCallData, TypeDef, VerifyLaw};
 use crate::codegen::CodegenContext;
+
+/// A canonical Peano ADT: EXACTLY one nullary constructor and exactly one unary
+/// constructor whose single field is the type itself (e.g. `type Nat { Z; S(Nat) }`).
+/// Shape, NOT name — the type need not be called `Nat`; keying on the name would
+/// make a host-builtin collision the (wrong) criterion. A proof backend may lift
+/// such a type to the host's builtin `Nat` (`Z` ↔ `0`, `S x` ↔ `x + 1`): builtin
+/// `Nat` is exactly the initial algebra of this shape, so the lift is a sound
+/// isomorphism — proof reasons about the SAME algebra, just a representation the
+/// kernel/solver automates (structural recursion, `omega`, `simp`). Conservative
+/// by construction: a third constructor, an extra field, a non-self field type,
+/// or a record-shaped field all disqualify, so the lift can only ever be total.
+#[derive(Clone, Debug)]
+pub(crate) struct PeanoType {
+    pub type_name: String,
+    pub base_ctor: String,
+    pub succ_ctor: String,
+}
+
+/// Recognize the canonical Peano shape on a single type definition.
+pub(crate) fn detect_canonical_peano(td: &TypeDef) -> Option<PeanoType> {
+    let TypeDef::Sum { name, variants, .. } = td else {
+        return None;
+    };
+    if variants.len() != 2 {
+        return None;
+    }
+    let mut base: Option<String> = None;
+    let mut succ: Option<String> = None;
+    for v in variants {
+        match v.fields.len() {
+            0 => {
+                if base.replace(v.name.clone()).is_some() {
+                    return None; // two nullary ctors — not Peano
+                }
+            }
+            1 if v.fields[0].trim() == name => {
+                if succ.replace(v.name.clone()).is_some() {
+                    return None; // two succ ctors — not Peano
+                }
+            }
+            // extra field, non-self field type, or record-shaped field: disqualify
+            _ => return None,
+        }
+    }
+    Some(PeanoType {
+        type_name: name.clone(),
+        base_ctor: base?,
+        succ_ctor: succ?,
+    })
+}
+
+/// Collect every canonical Peano type declared in the program (entry + modules).
+pub(crate) fn collect_peano_types(ctx: &CodegenContext) -> Vec<PeanoType> {
+    ctx.type_defs
+        .iter()
+        .chain(ctx.modules.iter().flat_map(|m| m.type_defs.iter()))
+        .filter_map(detect_canonical_peano)
+        .collect()
+}
+
+/// Role of a constructor inside a lifted Peano type.
+pub(crate) enum PeanoCtor {
+    /// The nullary base — lifts to `0`.
+    Zero,
+    /// The unary successor — lifts to `x + 1`.
+    Succ,
+}
+
+/// If `type_name` names a canonical Peano type in this program, return it.
+pub(crate) fn peano_type_named(ctx: &CodegenContext, type_name: &str) -> Option<PeanoType> {
+    collect_peano_types(ctx)
+        .into_iter()
+        .find(|p| p.type_name == type_name)
+}
+
+/// Classify a short constructor name within a (possibly Peano) type.
+pub(crate) fn peano_ctor_role(
+    ctx: &CodegenContext,
+    type_name: &str,
+    ctor_short: &str,
+) -> Option<PeanoCtor> {
+    let p = peano_type_named(ctx, type_name)?;
+    if ctor_short == p.base_ctor {
+        Some(PeanoCtor::Zero)
+    } else if ctor_short == p.succ_ctor {
+        Some(PeanoCtor::Succ)
+    } else {
+        None
+    }
+}
+
+/// Does function `fd` recurse structurally on a (lifted) Peano parameter? Such a
+/// function must NOT be fuel-encoded on a proof backend that lifts the type to a
+/// host builtin `Nat`: the recursion is then structural on `Nat` (host `Nat.rec`)
+/// and a fuel wrapper would only re-introduce the unfolding barrier the lift
+/// removes. Conservative: requires a parameter of a canonical Peano type.
+pub(crate) fn recurses_on_peano(fd: &FnDef, ctx: &CodegenContext) -> bool {
+    let peanos = collect_peano_types(ctx);
+    fd.params
+        .iter()
+        .any(|(_, ty)| peanos.iter().any(|p| ty.trim() == p.type_name))
+}
 
 /// Collect all function names called in an expression (top-level only).
 pub(crate) fn collect_called_fns(

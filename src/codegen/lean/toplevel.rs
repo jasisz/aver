@@ -38,6 +38,13 @@ pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
 /// with a bare name resolves to the current module's canonical
 /// entry instead of whichever module populated first.
 pub fn emit_type_def_in_scope(td: &TypeDef, ctx: &CodegenContext, scope: Option<&str>) -> String {
+    // Canonical Peano type lifted to builtin `Nat`: emit NO `inductive` — its
+    // constructors/patterns are rendered as `0` / `_ + 1` and references resolve
+    // to Lean's builtin `Nat`. (Skips the DecidableEq scaffold too, which keys
+    // off this same emit.)
+    if crate::codegen::proof_recognize::detect_canonical_peano(td).is_some() {
+        return String::new();
+    }
     match td {
         TypeDef::Sum { name, variants, .. } => emit_sum_type(name, variants),
         TypeDef::Product { name, fields, .. } => emit_product_type(name, fields, ctx, scope),
@@ -1367,6 +1374,12 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
 
     // SizeOfStructural — `Fuel { SizeOfPlusOne }`. No params bound;
     // sizeOf walks the whole call frame.
+    //
+    // EXCEPT when the structural recursion is on a canonical Peano parameter
+    // lifted to builtin `Nat`: then the recursion is structural on `Nat`
+    // (`Nat.rec`), so it falls through to the plain `def` below and Lean infers
+    // termination — fuel would only re-introduce the unfolding barrier the lift
+    // removes (no `simp [f]`, no `omega`).
     if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
         && matches!(
             contract.recursion,
@@ -1374,6 +1387,7 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
                 fuel_metric: crate::ir::FuelMetric::SizeOfPlusOne,
             })
         )
+        && !crate::codegen::proof_recognize::recurses_on_peano(fd, ctx)
     {
         return Some(emit_fuelized_sizeof_fn(fd, ctx));
     }

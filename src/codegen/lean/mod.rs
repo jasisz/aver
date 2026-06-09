@@ -1350,7 +1350,9 @@ fn transpile_unified(
                     ctx,
                     Some(module.prefix.as_str()),
                 ));
-                if toplevel::is_recursive_type_def(td) {
+                if toplevel::is_recursive_type_def(td)
+                    && crate::codegen::proof_recognize::detect_canonical_peano(td).is_none()
+                {
                     body_sections.push(toplevel::emit_recursive_decidable_eq(
                         toplevel::type_def_name(td),
                     ));
@@ -1405,7 +1407,9 @@ fn transpile_unified(
     let mut entry_body_sections: Vec<String> = Vec::new();
     for td in &ctx.type_defs {
         entry_body_sections.push(toplevel::emit_type_def(td, ctx));
-        if toplevel::is_recursive_type_def(td) {
+        if toplevel::is_recursive_type_def(td)
+            && crate::codegen::proof_recognize::detect_canonical_peano(td).is_none()
+        {
             entry_body_sections.push(toplevel::emit_recursive_decidable_eq(
                 toplevel::type_def_name(td),
             ));
