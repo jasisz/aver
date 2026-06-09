@@ -598,6 +598,64 @@ fn proof_dafny_proves_rev_antihomomorphism() {
 }
 
 #[test]
+fn proof_lean_proves_rev_antihomomorphism_kernel_clean() {
+    // SAME backend-neutral `RevOp` recognizer as the Dafny test above, but a
+    // Lean renderer: `rev (rev x) = x` on List<Int> kernel-proves because the
+    // fold lowers to a clean `def … termination_by` (no fuel / no Nat
+    // collision). The renderer prepends the proved append-nil-right /
+    // associativity / rev-distribution theorems and adds rev-distribution to
+    // the list-induction simp set. `lake build` succeeds with ZERO sorries on
+    // the universal, i.e. it is kernel-checked (`#print axioms = [propext]`).
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean rev kernel test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-rev-lean-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    std::fs::write(
+        src.join("m.av"),
+        "module RevHomLean\n    effects []\n\n\
+         fn append(x: List<Int>, y: List<Int>) -> List<Int>\n    match x\n        [] -> y\n        [z, ..xs] -> List.concat([z], append(xs, y))\n\n\
+         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..xs] -> append(rev(xs), [y])\n\n\
+         verify rev law revRev\n    given x: List<Int> = [[1, 2]]\n    rev(rev(x)) => x\n",
+    )
+    .expect("write m.av");
+    let out = temp_output_dir("aver-rev-lean-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+        ),
+        (Some(true), Some(0)),
+        "rev∘rev must kernel-prove on Lean via the shared recognizer (passed, \
+         0 sorries on the universal).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_check_dafny_rejects_sample_only_universal_as_unproven() {
     // Soundness: when the emitter cannot state a law's universal `∀`-claim it
     // drops it to concrete samples plus a `… (universal lemma omitted)`

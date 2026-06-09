@@ -350,10 +350,13 @@ fn is_recursive_left_append(fd: &FnDef, _ctx: &CodegenContext) -> bool {
 
 /// A list-reversing fold `fn R(p0) = match p0 { [] -> []; [h, ..t] ->
 /// A(R(t), [h]) }` paired with its left-append `A`. The classic anti-
-/// homomorphism: `R(A(a, b)) == A(R(b), R(a))`.
-struct RevOp {
-    rev: String,
-    append: String,
+/// homomorphism: `R(A(a, b)) == A(R(b), R(a))`. This recognizer is
+/// backend-neutral (source names only) — the Lean backend consumes it too,
+/// via [`collect_rev_ops_in_law`], to render a kernel-checked proof. (TODO:
+/// relocate the recognizer to a backend-neutral module; it lives here for now.)
+pub(crate) struct RevOp {
+    pub rev: String,
+    pub append: String,
 }
 
 fn detect_rev_fn(fd: &FnDef, ctx: &CodegenContext) -> Option<RevOp> {
@@ -406,7 +409,7 @@ fn detect_rev_fn(fd: &FnDef, ctx: &CodegenContext) -> Option<RevOp> {
     }
 }
 
-fn collect_rev_ops_in_law(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<RevOp> {
+pub(crate) fn collect_rev_ops_in_law(law: &VerifyLaw, ctx: &CodegenContext) -> Vec<RevOp> {
     let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     super::toplevel::collect_called_fns(&law.lhs, &mut names);
     super::toplevel::collect_called_fns(&law.rhs, &mut names);

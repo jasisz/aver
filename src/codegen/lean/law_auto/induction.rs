@@ -10,11 +10,49 @@
 /// paths until a genuinely generic indirect-recursion engine exists.
 use std::collections::BTreeSet;
 
+use super::super::expr::aver_name_to_lean;
 use super::super::shared::to_lower_first;
 use super::AutoProof;
 use super::shared::law_simp_defs;
 use crate::ast::{TypeDef, TypeVariant, VerifyBlock, VerifyLaw};
 use crate::codegen::CodegenContext;
+
+/// Lean renderer for the backend-neutral rev anti-homomorphism recognizer
+/// (`crate::codegen::dafny::lemmas::collect_rev_ops_in_law` — shared with the
+/// Dafny backend; despite the module path it returns source-name structs only).
+/// Produces the proved append-nil-right / associativity / rev-distribution
+/// theorems (prepended as `support_lines`) and the distribution lemma's name to
+/// add to the induction's `simp` set. List<Int> folds lower to clean
+/// `def … termination_by`, so these close kernel-clean (`#print axioms =
+/// [propext]`) — the Lean counterpart of the Dafny rev strategy, SAME recognizer.
+fn lean_rev_support(
+    ops: &[crate::codegen::dafny::lemmas::RevOp],
+    law_uid: &str,
+) -> (Vec<String>, Vec<String>) {
+    let mut support = Vec::new();
+    let mut simp_extra = Vec::new();
+    for op in ops {
+        let r = aver_name_to_lean(&op.rev);
+        let a = aver_name_to_lean(&op.append);
+        let nilr = format!("{law_uid}_{a}_nilR");
+        let assoc = format!("{law_uid}_{a}_assoc");
+        let dist = format!("{law_uid}_{r}_revDist");
+        support.push(format!(
+            "theorem {nilr} : ∀ (xa : List Int), {a} xa [] = xa := by\n  intro xa; induction xa with\n  | nil => simp [{a}]\n  | cons h t ih => simp [{a}, ih]"
+        ));
+        support.push(format!(
+            "theorem {assoc} : ∀ (xa xb xc : List Int), {a} ({a} xa xb) xc = {a} xa ({a} xb xc) := by\n  intro xa xb xc; induction xa with\n  | nil => simp [{a}]\n  | cons h t ih => simp [{a}, ih]"
+        ));
+        support.push(format!(
+            "theorem {dist} : ∀ (xa xb : List Int), {r} ({a} xa xb) = {a} ({r} xb) ({r} xa) := by\n  intro xa xb; induction xa with\n  | nil => simp [{r}, {a}, {nilr}]\n  | cons h t ih => simp [{r}, {a}, ih, {assoc}]"
+        ));
+        // The append fn name is needed in the main induction's simp set too
+        // (revDist rewrites into `append`, which must then unfold).
+        simp_extra.push(a);
+        simp_extra.push(dist);
+    }
+    (support, simp_extra)
+}
 
 enum VariantKind {
     Leaf,
@@ -168,7 +206,18 @@ fn emit_list_induction(
     intro_names: &[String],
     target_idx: usize,
 ) -> Option<AutoProof> {
-    let simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    let mut simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
+    // Rev anti-homomorphism: prepend the proved aux lemmas (support_lines) and
+    // add the rev-distribution + append fn to the simp set so the cons arm
+    // closes. Shared recognizer with the Dafny backend.
+    let law_uid = format!(
+        "{}_{}",
+        aver_name_to_lean(&vb.fn_name),
+        aver_name_to_lean(&law.name)
+    );
+    let rev_ops = crate::codegen::dafny::lemmas::collect_rev_ops_in_law(law, ctx);
+    let (rev_support, rev_simp) = lean_rev_support(&rev_ops, &law_uid);
+    simp_defs.extend(rev_simp);
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
 
@@ -200,7 +249,7 @@ fn emit_list_induction(
     ];
 
     Some(AutoProof {
-        support_lines: Vec::new(),
+        support_lines: rev_support,
         proof_lines,
         replaces_theorem: false,
     })

@@ -6,7 +6,7 @@
 /// file holding the trust header, top-level items, and verify lemmas.
 mod expr;
 mod fuel;
-mod lemmas;
+pub(crate) mod lemmas;
 mod toplevel;
 
 use crate::ast::{FnDef, TopLevel, VerifyKind};
