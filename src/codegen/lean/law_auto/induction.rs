@@ -835,7 +835,7 @@ fn emit_list_induction(
             "  | cons head tail ih => {}",
             wrap(&ladder("simp_all"))
         ));
-    } else if fast_simp.is_empty() {
+    } else if fast_simp.is_empty() && gen_given.is_none() {
         let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, None, true);
         proof_lines.push(format!("  induction {} with", target_lean));
         proof_lines.push(format!("  {nil_arm}"));
@@ -905,7 +905,78 @@ fn emit_list_induction(
                 fast_unfolds.into_iter().collect::<Vec<_>>().join(", ")
             ));
         }
-        if arm_forward_siblings.is_empty() {
+        if let Some((gv, needs_cases)) = gen_given.as_ref() {
+            // LUKA 2 — GENERALIZING induction WITH in-arm Forward siblings.
+            // This is the missing combination: the subject fn threads/decrements
+            // a Peano `<gv>` synchronously with the recursing list (`take`/`drop`'s
+            // `n`, or `qrev`'s threaded `acc`) AND earlier-sibling helper laws are
+            // in scope. The plain feedback ladder below would induct on the list
+            // WITHOUT `generalizing <gv>`, fixing the cons IH at the original
+            // `<gv>` — after `cases <gv>` the residual needs the IH at the
+            // predecessor, which doesn't exist, so it `sorry`s. Emitting the
+            // generalizing form makes the cons IH `∀ <gv>, P <gv> tail`, so it
+            // applies at the recursion's threaded/decremented value, while the
+            // Forward siblings rewrite the helper-shaped residual in-arm (e.g.
+            // `rev (drop n xs) = take (len xs - n) (rev xs)` needs `len (rev _)`,
+            // take-all, and a take-over-append split inside the succ arm).
+            //
+            // SOUNDNESS / no-loop: the arm set is `simp_list ∪ arm_forward_siblings`
+            // — Forward-only and loop-excluded, EXACTLY as część C's ladderB. We
+            // do NOT inject Reversed (`← `) rules into the arms: an unfold rule
+            // mixed with the fn's own def in an arm can simp-loop, and a simp loop
+            // is an uncatchable `maxHeartbeats` build hang. Reversed rules stay on
+            // the fast path above. Each arm keeps the sound
+            // `first | (simp…;done) | (…;omega) | (split…) | sorry` shape, so a
+            // non-closing arm degrades to an honest `sorry` (caught by the
+            // universal metric), never an unsolved-goals build error.
+            let gen_simp = {
+                let mut v: Vec<String> = simp_list.split(", ").map(String::from).collect();
+                v.extend(arm_forward_siblings.iter().cloned());
+                v.retain(|s| !s.is_empty());
+                v.join(", ")
+            };
+            let gen_split = if gen_simp.is_empty() {
+                "List.cons_append".to_string()
+            } else {
+                format!("{gen_simp}, List.cons_append")
+            };
+            // Same sound chain as the gen-only branch, with the Peano-op bridge
+            // (`plus a b = a + b`, `minus`'s `= a - b`) appended after the def
+            // unfolds + IH: a goal like `take (minus (len t) z) (rev t ++ [h]) =
+            // …` is pure once `minus` is bridged and the take-over-append sibling
+            // has fired. The bridge variant only runs after the plain `simp`/`omega`
+            // arms fail, so closing arms are untouched; `simp only [bridge] <;>
+            // omega` is a sound decision step.
+            let ladder = |s: &str| -> String {
+                let bridge_arm = bridge_set
+                    .as_deref()
+                    .map(|b| format!(" | ({s} [{gen_simp}]; simp only [{b}] <;> omega)"))
+                    .unwrap_or_default();
+                let split_bridge = bridge_set
+                    .as_deref()
+                    .map(|b| format!(" <;> (try simp only [{b}])"))
+                    .unwrap_or_default();
+                format!(
+                    "first | ({s} [{gen_simp}]; done) | ({s} [{gen_simp}]; omega){bridge_arm} | (simp only [{gen_split}]; split <;> simp_all [{gen_simp}]{split_bridge} <;> omega) | sorry"
+                )
+            };
+            let wrap = |arm: &str| -> String {
+                if *needs_cases {
+                    format!("cases {gv} <;> ({arm})")
+                } else {
+                    arm.to_string()
+                }
+            };
+            proof_lines.push(format!(
+                "  | (induction {} generalizing {} with",
+                target_lean, gv
+            ));
+            proof_lines.push(format!("     | nil => {}", wrap(&ladder("simp"))));
+            proof_lines.push(format!(
+                "     | cons head tail ih => {})",
+                wrap(&ladder("simp_all"))
+            ));
+        } else if arm_forward_siblings.is_empty() {
             // No in-arm sibling to add: one committed-only ladder, with sorry.
             let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, bridge_set.as_deref(), true);
             proof_lines.push(format!("  | (induction {} with", target_lean));
