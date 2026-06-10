@@ -63,11 +63,8 @@ fn checkRight(left: Tree, value: Int, right: Tree) -> Tree
         _ -> Tree.Black(left, value, right)
     _ -> Tree.Black(left, value, right)
 
-verify checkRight law emptyRight
-  given left: Tree = [Tree.Empty]
-  given value: Int = [1]
-  given right: Tree = [Tree.Empty]
-  checkRight(left, value, right) => Tree.Black(Tree.Empty, 1, Tree.Empty)
+verify checkRight
+  checkRight(Tree.Empty, 1, Tree.Empty) => Tree.Black(Tree.Empty, 1, Tree.Empty)
 
 fn balanceBlack(left: Tree, value: Int, right: Tree) -> Tree
   ? "Rebalance a black node — handles all four rotation cases"
@@ -79,11 +76,8 @@ fn balanceBlack(left: Tree, value: Int, right: Tree) -> Tree
         _ -> checkRight(left, value, right)
     _ -> checkRight(left, value, right)
 
-verify balanceBlack law emptyChildren
-  given left: Tree = [Tree.Empty]
-  given value: Int = [1]
-  given right: Tree = [Tree.Empty]
-  balanceBlack(left, value, right) => Tree.Black(Tree.Empty, 1, Tree.Empty)
+verify balanceBlack
+  balanceBlack(Tree.Empty, 1, Tree.Empty) => Tree.Black(Tree.Empty, 1, Tree.Empty)
 
 fn ins(x: Int, t: Tree) -> Tree
   ? "Insert helper — preserves invariants except possibly at root"
@@ -139,11 +133,8 @@ fn balDeleteLeft(left: Tree, value: Int, right: Tree) -> Tree
         _ -> Tree.Black(left, value, right)
       _ -> Tree.Black(left, value, right)
 
-verify balDeleteLeft law leftRedShortPath
-  given left: Tree = [Tree.Red(Tree.Empty, 1, Tree.Empty)]
-  given value: Int = [2]
-  given right: Tree = [Tree.Empty]
-  balDeleteLeft(left, value, right) => Tree.Red(Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)
+verify balDeleteLeft
+  balDeleteLeft(Tree.Red(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty) => Tree.Red(Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)
 
 fn balDeleteRight(left: Tree, value: Int, right: Tree) -> Tree
   ? "Rebalance after right subtree lost a black level"
@@ -156,11 +147,8 @@ fn balDeleteRight(left: Tree, value: Int, right: Tree) -> Tree
         _ -> Tree.Black(left, value, right)
       _ -> Tree.Black(left, value, right)
 
-verify balDeleteRight law rightRedShortPath
-  given left: Tree = [Tree.Empty]
-  given value: Int = [2]
-  given right: Tree = [Tree.Red(Tree.Empty, 1, Tree.Empty)]
-  balDeleteRight(left, value, right) => Tree.Red(Tree.Empty, 2, Tree.Black(Tree.Empty, 1, Tree.Empty))
+verify balDeleteRight
+  balDeleteRight(Tree.Empty, 2, Tree.Red(Tree.Empty, 1, Tree.Empty)) => Tree.Red(Tree.Empty, 2, Tree.Black(Tree.Empty, 1, Tree.Empty))
 
 fn fuseRedRed(l1: Tree, v1: Int, r1: Tree, l2: Tree, v2: Int, r2: Tree) -> Tree
   ? "Fuse two red subtrees after root removal"
@@ -169,14 +157,8 @@ fn fuseRedRed(l1: Tree, v1: Int, r1: Tree, l2: Tree, v2: Int, r2: Tree) -> Tree
     Tree.Red(sl, sv, sr) -> Tree.Red(Tree.Red(l1, v1, sl), sv, Tree.Red(sr, v2, r2))
     _ -> Tree.Red(l1, v1, Tree.Red(s, v2, r2))
 
-verify fuseRedRed law minimalCase
-  given l1: Tree = [Tree.Empty]
-  given v1: Int = [1]
-  given r1: Tree = [Tree.Empty]
-  given l2: Tree = [Tree.Empty]
-  given v2: Int = [2]
-  given r2: Tree = [Tree.Empty]
-  fuseRedRed(l1, v1, r1, l2, v2, r2) => Tree.Red(Tree.Empty, 1, Tree.Red(Tree.Empty, 2, Tree.Empty))
+verify fuseRedRed
+  fuseRedRed(Tree.Empty, 1, Tree.Empty, Tree.Empty, 2, Tree.Empty) => Tree.Red(Tree.Empty, 1, Tree.Red(Tree.Empty, 2, Tree.Empty))
 
 fn fuseBlackBlack(l1: Tree, v1: Int, r1: Tree, l2: Tree, v2: Int, r2: Tree) -> Tree
   ? "Fuse two black subtrees after root removal"
@@ -185,14 +167,8 @@ fn fuseBlackBlack(l1: Tree, v1: Int, r1: Tree, l2: Tree, v2: Int, r2: Tree) -> T
     Tree.Red(sl, sv, sr) -> Tree.Red(Tree.Black(l1, v1, sl), sv, Tree.Black(sr, v2, r2))
     _ -> balDeleteLeft(Tree.Black(l1, v1, s), v2, r2)
 
-verify fuseBlackBlack law minimalCase
-  given l1: Tree = [Tree.Empty]
-  given v1: Int = [1]
-  given r1: Tree = [Tree.Empty]
-  given l2: Tree = [Tree.Empty]
-  given v2: Int = [2]
-  given r2: Tree = [Tree.Empty]
-  fuseBlackBlack(l1, v1, r1, l2, v2, r2) => Tree.Black(Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)
+verify fuseBlackBlack
+  fuseBlackBlack(Tree.Empty, 1, Tree.Empty, Tree.Empty, 2, Tree.Empty) => Tree.Black(Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty)
 
 fn fuse(left: Tree, right: Tree) -> Tree
   ? "Merge two subtrees after removing their common root"
@@ -207,10 +183,8 @@ fn fuse(left: Tree, right: Tree) -> Tree
       Tree.Red(l2, v2, r2) -> Tree.Red(fuse(left, l2), v2, r2)
       Tree.Black(l2, v2, r2) -> fuseBlackBlack(l1, v1, r1, l2, v2, r2)
 
-verify fuse law emptyLeft
-  given left: Tree = [Tree.Empty]
-  given right: Tree = [Tree.Black(Tree.Empty, 2, Tree.Empty)]
-  fuse(left, right) => Tree.Black(Tree.Empty, 2, Tree.Empty)
+verify fuse
+  fuse(Tree.Empty, Tree.Black(Tree.Empty, 2, Tree.Empty)) => Tree.Black(Tree.Empty, 2, Tree.Empty)
 
 fn delL(x: Int, left: Tree, value: Int, right: Tree) -> Tree
   ? "Delete from left subtree with rebalancing if needed"
@@ -218,12 +192,8 @@ fn delL(x: Int, left: Tree, value: Int, right: Tree) -> Tree
     Tree.Black(_, _, _) -> balDeleteLeft(del(x, left), value, right)
     _ -> Tree.Red(del(x, left), value, right)
 
-verify delL law blackLeftBranch
-  given x: Int = [1]
-  given left: Tree = [Tree.Black(Tree.Empty, 1, Tree.Empty)]
-  given value: Int = [2]
-  given right: Tree = [Tree.Empty]
-  delL(x, left, value, right) => Tree.Black(Tree.Empty, 2, Tree.Empty)
+verify delL
+  delL(1, Tree.Black(Tree.Empty, 1, Tree.Empty), 2, Tree.Empty) => Tree.Black(Tree.Empty, 2, Tree.Empty)
 
 fn delR(x: Int, left: Tree, value: Int, right: Tree) -> Tree
   ? "Delete from right subtree with rebalancing if needed"
@@ -231,12 +201,8 @@ fn delR(x: Int, left: Tree, value: Int, right: Tree) -> Tree
     Tree.Black(_, _, _) -> balDeleteRight(left, value, del(x, right))
     _ -> Tree.Red(left, value, del(x, right))
 
-verify delR law blackRightBranch
-  given x: Int = [1]
-  given left: Tree = [Tree.Empty]
-  given value: Int = [2]
-  given right: Tree = [Tree.Black(Tree.Empty, 1, Tree.Empty)]
-  delR(x, left, value, right) => Tree.Black(Tree.Empty, 2, Tree.Empty)
+verify delR
+  delR(1, Tree.Empty, 2, Tree.Black(Tree.Empty, 1, Tree.Empty)) => Tree.Black(Tree.Empty, 2, Tree.Empty)
 
 fn del(x: Int, t: Tree) -> Tree
   ? "Delete helper — may temporarily violate root color"
@@ -253,10 +219,8 @@ fn del(x: Int, t: Tree) -> Tree
         true -> delL(x, left, value, right)
         false -> delR(x, left, value, right)
 
-verify del law deleteRootLeaf
-  given x: Int = [1]
-  given t: Tree = [Tree.Black(Tree.Empty, 1, Tree.Empty)]
-  del(x, t) => Tree.Empty
+verify del
+  del(1, Tree.Black(Tree.Empty, 1, Tree.Empty)) => Tree.Empty
 
 fn delete(x: Int, t: Tree) -> Tree
   ? "Delete a value from the red-black tree"
@@ -303,9 +267,8 @@ fn fromList(items: List<Int>) -> Tree
   ? "Build a tree from a list of integers"
   fromListAcc(items, Tree.Empty)
 
-verify fromList law emptyInput
-  given items: List<Int> = [[]]
-  fromList(items) => Tree.Empty
+verify fromList
+  fromList([]) => Tree.Empty
 
 fn fromListAcc(items: List<Int>, acc: Tree) -> Tree
   ? "Builds a tree by inserting items from left to right."
@@ -321,20 +284,15 @@ fn concatLists(a: List<Int>, b: List<Int>) -> List<Int>
   ? "Concatenate two lists while preserving order"
   List.concat(a, b)
 
-verify concatLists law keepsOrder
-  given a: List<Int> = [[1, 2]]
-  given b: List<Int> = [[3, 4]]
-  concatLists(a, b) => [1, 2, 3, 4]
+verify concatLists
+  concatLists([1, 2], [3, 4]) => [1, 2, 3, 4]
 
 fn collectInOrder(left: Tree, value: Int, right: Tree) -> List<Int>
   ? "Collect elements from a node in sorted order"
   concatLists(List.concat(toSorted(left), [value]), toSorted(right))
 
-verify collectInOrder law singletonNode
-  given left: Tree = [Tree.Empty]
-  given value: Int = [2]
-  given right: Tree = [Tree.Empty]
-  collectInOrder(left, value, right) => [2]
+verify collectInOrder
+  collectInOrder(Tree.Empty, 2, Tree.Empty) => [2]
 
 fn toSorted(t: Tree) -> List<Int>
   ? "In-order traversal — returns elements in ascending order"
@@ -359,10 +317,8 @@ fn checkBothSubtrees(left: Tree, right: Tree) -> Bool
     true -> hasNoRedRed(right)
     false -> false
 
-verify checkBothSubtrees law emptyOk
-  given left: Tree = [Tree.Empty]
-  given right: Tree = [Tree.Empty]
-  checkBothSubtrees(left, right) => true
+verify checkBothSubtrees
+  checkBothSubtrees(Tree.Empty, Tree.Empty) => true
 
 fn hasNoRedRed(t: Tree) -> Bool
   ? "Check that no red node has a red child"
