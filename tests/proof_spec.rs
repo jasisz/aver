@@ -4357,7 +4357,10 @@ fn part_c_arm_injection_closes_in_arm_helpers_when_lake_is_available() {
 /// isaplanner prop_01, a union-OPEN frontier shape nothing closed before.)
 #[test]
 fn lean_proves_generalizing_induction_take_drop_when_lake_is_available() {
-    assert_proof_builds("proof-corpus/tip/isaplanner/prop_01.av", "aver-gen-takedrop");
+    assert_proof_builds(
+        "proof-corpus/tip/isaplanner/prop_01.av",
+        "aver-gen-takedrop",
+    );
 }
 
 /// Leaf-reach: a user fn named `max` (colliding with Lean 4's Max-typeclass
