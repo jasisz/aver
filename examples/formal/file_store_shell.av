@@ -19,13 +19,15 @@ fn fakeWriteErr(path: BranchPath, n: Int, file: String, content: String) -> Resu
     ? "Stub: every write fails."
     Result.Err("disk full")
 
-verify persistEntry law happyPath
+verify persistEntry trace
     given write: Disk.writeText = [fakeWriteOk]
-    persistEntry("a.txt", "hi") => Result.Ok(Unit)
+    report = persistEntry("a.txt", "hi")
+    report.result => Result.Ok(Unit)
 
-verify persistEntry law unhappyPath
+verify persistEntry trace
     given write: Disk.writeText = [fakeWriteErr]
-    persistEntry("a.txt", "hi") => Result.Err("disk full")
+    report = persistEntry("a.txt", "hi")
+    report.result => Result.Err("disk full")
 
 fn main() -> Unit
     ! [Console.print]
