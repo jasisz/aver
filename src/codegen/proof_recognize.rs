@@ -98,18 +98,6 @@ pub(crate) fn peano_ctor_role(
     }
 }
 
-/// Does function `fd` recurse structurally on a (lifted) Peano parameter? Such a
-/// function must NOT be fuel-encoded on a proof backend that lifts the type to a
-/// host builtin `Nat`: the recursion is then structural on `Nat` (host `Nat.rec`)
-/// and a fuel wrapper would only re-introduce the unfolding barrier the lift
-/// removes. Conservative: requires a parameter of a canonical Peano type.
-pub(crate) fn recurses_on_peano(fd: &FnDef, ctx: &CodegenContext) -> bool {
-    let peanos = collect_peano_types(ctx);
-    fd.params
-        .iter()
-        .any(|(_, ty)| peanos.iter().any(|p| ty.trim() == p.type_name))
-}
-
 /// Collect all function names called in an expression (top-level only).
 pub(crate) fn collect_called_fns(
     expr: &Spanned<Expr>,
@@ -448,6 +436,96 @@ fn call_or_ctor(e: &Spanned<Expr>) -> Option<(String, Vec<&Spanned<Expr>>)> {
     }
 }
 
+/// Whether a law is a commutativity or associativity statement of a binary fn.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum BinaryLawShape {
+    /// `f a b = f b a` over two givens.
+    Commutativity,
+    /// `f (f a b) c = f a (f b c)` over three givens.
+    Associativity,
+}
+
+/// Recognize a law as the commutativity (`f a b = f b a`) or associativity
+/// (`f (f a b) c = f a (f b c)`) of `fn_name`, where each leaf argument is a
+/// distinct law `given`. Pure syntactic match against the law's `lhs`/`rhs`:
+/// every operand of `f` is a bare given identifier (no nested user calls, no
+/// constructors), the givens used are exactly the law's givens, and `f` is the
+/// only fn applied. Returns `None` for anything else — including a `when`
+/// premise (a conditional law is not an unconditional algebraic identity).
+///
+/// This is what gates the both-args-peeling generalizing-induction emit: it
+/// fires ONLY on these two genuine algebraic shapes, so a same-shaped fn used
+/// in an unrelated law (`minus(plus(n,m),n) = m`, a comparison `n ≤ m+n`) is
+/// NOT matched and keeps its existing proof path.
+pub(crate) fn recognize_binary_law_shape(
+    law: &VerifyLaw,
+    fn_name: &str,
+    given_names: &[String],
+) -> Option<BinaryLawShape> {
+    if law.when.is_some() {
+        return None;
+    }
+    // `f(x, y)` where `f`'s short name is `fn_name` → `(x, y)`.
+    let as_self_call = |e: &Spanned<Expr>| -> Option<(Spanned<Expr>, Spanned<Expr>)> {
+        let (callee, args) = match &e.node {
+            Expr::FnCall(c, a) => (crate::codegen::common::expr_to_dotted_name(&c.node)?, a),
+            _ => return None,
+        };
+        if short_ctor(&callee) != short_ctor(fn_name) || args.len() != 2 {
+            return None;
+        }
+        Some((args[0].clone(), args[1].clone()))
+    };
+    let given_name_of = |e: &Spanned<Expr>| -> Option<String> {
+        crate::codegen::recursion::detect::local_name_of(e)
+            .filter(|id| given_names.iter().any(|g| g == id))
+            .map(str::to_string)
+    };
+
+    // Commutativity: `f(a, b) = f(b, a)`, both args bare distinct givens.
+    if given_names.len() == 2
+        && let Some((la, lb)) = as_self_call(&law.lhs)
+        && let Some((ra, rb)) = as_self_call(&law.rhs)
+        && let (Some(la), Some(lb), Some(ra), Some(rb)) = (
+            given_name_of(&la),
+            given_name_of(&lb),
+            given_name_of(&ra),
+            given_name_of(&rb),
+        )
+        && la != lb
+        && la == rb
+        && lb == ra
+    {
+        return Some(BinaryLawShape::Commutativity);
+    }
+
+    // Associativity: `f(f(a, b), c) = f(a, f(b, c))`.
+    if given_names.len() == 3
+        && let Some((l_inner, lc)) = as_self_call(&law.lhs)
+        && let Some((la_inner, lb_inner)) = as_self_call(&l_inner)
+        && let Some((ra, r_inner)) = as_self_call(&law.rhs)
+        && let Some((rb_inner, rc_inner)) = as_self_call(&r_inner)
+        && let (Some(la), Some(lb), Some(lc), Some(ra), Some(rb), Some(rc)) = (
+            given_name_of(&la_inner),
+            given_name_of(&lb_inner),
+            given_name_of(&lc),
+            given_name_of(&ra),
+            given_name_of(&rb_inner),
+            given_name_of(&rc_inner),
+        )
+        && la == ra
+        && lb == rb
+        && lc == rc
+        && la != lb
+        && lb != lc
+        && la != lc
+    {
+        return Some(BinaryLawShape::Associativity);
+    }
+
+    None
+}
+
 /// `(p0, p1, base_arm_body, succ_binder, succ_arm_body)` — the decomposition
 /// [`peano_outer_split`] returns for a canonical binary Peano fn.
 type PeanoSplit<'a> = (
@@ -523,6 +601,59 @@ pub(crate) fn is_canonical_add(fd: &FnDef, peano: &PeanoType) -> bool {
             })
     });
     ln(base_body) == Some(p1) && add_succ_ok
+}
+
+/// `true` iff `fd` is a STRUCTURALLY COMMUTATIVE both-args-peeling Peano binary
+/// fn — the `max`/`min` shape whose two base arms are symmetric:
+/// `match a { Base -> A; Succ(q) -> match b { Base -> B; Succ(w) -> Succ(op(q, w)) } }`
+/// is commutative exactly when `(A, B)` is a symmetric pair: either `A = b` and
+/// `B = a` (the `B` reads as the whole first arg) — the `max` shape — or `A` and
+/// `B` are both the base constructor — the `min` shape. Both readings give
+/// `op(Base, y) = op(y, Base)` for every `y`, which together with the symmetric
+/// `Succ(op(q, w))` recursion makes `op a b = op b a` a theorem (proved by
+/// `induction a generalizing b … cases b`). Used to gate emitting a kernel-proved
+/// `comm` support lemma for a consumed `max`/`min`: a non-commutative
+/// both-args-peeling fn is rejected here, so no spurious `comm` lemma (which
+/// would only `sorry`) is ever emitted.
+pub(crate) fn both_args_peeling_is_commutative(fd: &FnDef, ctx: &CodegenContext) -> Option<()> {
+    if !crate::codegen::recursion::detect::recurses_decrementing_both_args(fd) {
+        return None;
+    }
+    let peano = peano_type_named(ctx, &fd.params.first()?.1)?;
+    let (p0, p1, base_body, q, succ_body) = peano_outer_split(fd, &peano)?;
+    let ln = crate::codegen::recursion::detect::local_name_of;
+    let is_base = |e: &Spanned<Expr>| {
+        call_or_ctor(e).is_some_and(|(c, a)| c == peano.base_ctor && a.is_empty())
+    };
+    // succ arm is an inner match on p1 with the canonical `Succ(op(q, w))` rec.
+    let Expr::Match {
+        subject: inner_subj,
+        arms: inner_arms,
+        ..
+    } = &succ_body.node
+    else {
+        return None;
+    };
+    if ln(inner_subj) != Some(p1) {
+        return None;
+    }
+    let (inner_base, w, inner_succ) = split_peano_match(inner_arms, &peano)?;
+    let rec_ok = call_or_ctor(inner_succ).is_some_and(|(c, a)| {
+        c == peano.succ_ctor
+            && a.len() == 1
+            && call_or_ctor(a[0]).is_some_and(|(rc, ra)| {
+                rc == fd.name && ra.len() == 2 && ln(ra[0]) == Some(q) && ln(ra[1]) == Some(w)
+            })
+    });
+    if !rec_ok {
+        return None;
+    }
+    // max shape: outer-base returns the other param (`b`), inner-base returns
+    // the first param (`a`, bound as the whole `Succ(q)` value).
+    let max_shape = ln(base_body) == Some(p1) && ln(inner_base) == Some(p0);
+    // min shape: both base arms return the base constructor.
+    let min_shape = is_base(base_body) && is_base(inner_base);
+    (max_shape || min_shape).then_some(())
 }
 
 /// Recognize a canonical Peano `+` / truncated `-` / `*` (see [`NatArithKind`]).

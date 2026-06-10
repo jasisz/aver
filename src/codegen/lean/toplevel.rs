@@ -876,37 +876,6 @@ fn emit_int_ascending_wrapper(
     ]
 }
 
-fn emit_fuelized_sizeof_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
-    let helper_name = fuel_helper_name(&fd.name);
-    let params = emit_fn_params(&fd.params);
-    let ret_type = ret_type_or_unit(fd);
-    let recursive_types: HashSet<String> = ctx
-        .modules
-        .iter()
-        .flat_map(|m| m.type_defs.iter())
-        .chain(ctx.type_defs.iter())
-        .filter(|td| is_recursive_type_def(td))
-        .map(|td| type_def_name(td).to_string())
-        .collect();
-    let rewritten = rewrite_recursive_calls_body(
-        &fd.body,
-        &HashSet::from([fd.name.clone()]),
-        STRING_POS_FUEL_VAR,
-    );
-    let body = emit_fn_body_for(fd, &rewritten, ctx);
-
-    [
-        emit_doc_comment(&fd.desc),
-        emit_fuel_helper_def(&helper_name, &params, &ret_type, &body, ""),
-        vec![String::new()],
-        emit_mutual_sizeof_wrapper(fd, &helper_name, 1, &recursive_types),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join("\n")
-}
-
 /// Read the rank component of a `Fuel { Lex { .., rank } }` contract.
 /// Returns `None` when the fn has no contract or the contract isn't
 /// a Lex shape (non-mutual variant or non-recursive).
@@ -1372,25 +1341,26 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
         ));
     }
 
-    // SizeOfStructural — `Fuel { SizeOfPlusOne }`. No params bound;
-    // sizeOf walks the whole call frame.
+    // SizeOfStructural — `Fuel { SizeOfPlusOne }`. The classifier only assigns
+    // this contract when the recursion strictly shrinks a recursive sub-term
+    // binder (`supports_single_sizeof_structural`), i.e. it is genuine
+    // structural recursion on the user ADT's immediate sub-fields. Lean's
+    // equation compiler accepts exactly that natively, so we emit a plain `def`
+    // (fall through below) and let Lean infer structural termination — NO fuel.
     //
-    // EXCEPT when the structural recursion is on a canonical Peano parameter
-    // lifted to builtin `Nat`: then the recursion is structural on `Nat`
-    // (`Nat.rec`), so it falls through to the plain `def` below and Lean infers
-    // termination — fuel would only re-introduce the unfolding barrier the lift
-    // removes (no `simp [f]`, no `omega`).
-    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
-        && matches!(
-            contract.recursion,
-            Some(crate::ir::RecursionContract::Fuel {
-                fuel_metric: crate::ir::FuelMetric::SizeOfPlusOne,
-            })
-        )
-        && !crate::codegen::proof_recognize::recurses_on_peano(fd, ctx)
-    {
-        return Some(emit_fuelized_sizeof_fn(fd, ctx));
-    }
+    // This is strictly better than the old fuel helper: a plain structural `def`
+    // has DEFINITIONAL recursive equations (`height (Node l y r) = …` is `rfl`),
+    // whereas a fuel counter destroys that (the fuel arg on a child differs from
+    // the child's own measure, so `simp [f]`/`omega` can't unfold it for
+    // symbolic/universal proofs — the very reason fuel forced the universal law
+    // to be skipped, Issue #128). Empirically (Lean 4.15) naive structural also
+    // covers mutual / accumulator / lexicographic recursion; only recursion
+    // hidden inside a higher-order container combinator (e.g. `kids.map f` over a
+    // nested-recursive field) needs an explicit well-founded measure, and that
+    // shape is never classified SizeOfStructural.
+    //
+    // The Peano-lift case already fell through here for the same reason
+    // (`recurses_on_peano` → structural on `Nat.rec`); it now shares the path.
 
     // StringPosAdvance — `Fuel { StringLenMinusPos { string, pos } }`.
     // Lean's emit reads the params from fd.params directly so the

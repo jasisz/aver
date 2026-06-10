@@ -770,6 +770,85 @@ pub(crate) fn param_threaded_in_recursion(fd: &FnDef, param_index: usize) -> boo
     })
 }
 
+/// `true` iff `fd` is a binary fn that recurses by peeling a constructor off
+/// BOTH arguments synchronously — the canonical `max`/`min` shape:
+/// `match p0 { base -> …; succ(z) -> match p1 { base -> …; succ(w) -> …rec(z, w)… } }`.
+/// Exactly one self-call, reached only from inside both succ arms, passing the
+/// two inner succ binders (NOT either original param) at positions 0 and 1.
+///
+/// This is the recursion shape that a commutativity (`f a b = f b a`) or
+/// associativity (`f (f a b) c = f a (f b c)`) proof must induct on with
+/// `induction a generalizing <rest> with | zero => cases <rest> … | succ k ih =>
+/// cases <rest> …`: inducting on one arg alone leaves the other arg's peel
+/// stuck. Conservative — both params must share one type, there must be exactly
+/// one self-call, and its two args must be the freshly-bound succ predecessors,
+/// so it fires only on the genuine both-args-peeling family and never on a
+/// single-arg-recursive fn (whose self-call repeats one original param).
+pub(crate) fn recurses_decrementing_both_args(fd: &FnDef) -> bool {
+    if fd.params.len() != 2 {
+        return false;
+    }
+    let (p0, t0) = &fd.params[0];
+    let (p1, t1) = &fd.params[1];
+    if t0 != t1 {
+        return false;
+    }
+    // Exactly one self-call, both args bare locals distinct from the originals.
+    let calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    if calls.len() != 1 {
+        return false;
+    }
+    let args = &calls[0];
+    let (Some(a0), Some(a1)) = (
+        args.first().and_then(|a| local_name_of(a)),
+        args.get(1).and_then(|a| local_name_of(a)),
+    ) else {
+        return false;
+    };
+    if a0 == p0 || a0 == p1 || a1 == p0 || a1 == p1 || a0 == a1 {
+        return false;
+    }
+    // Outer match on p0 with a succ arm binding `a0`, whose body is an inner
+    // match on p1 with a succ arm binding `a1`. Mirrors `peano_outer_split` but
+    // stays local to detect.rs (which has no `CodegenContext`/Peano lookup).
+    let Some(tail) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::Match { subject, arms, .. } = &tail.node else {
+        return false;
+    };
+    if local_name_of(subject) != Some(p0.as_str()) {
+        return false;
+    }
+    arms.iter().any(|arm| {
+        let Pattern::Constructor(_, binders) = &arm.pattern else {
+            return false;
+        };
+        if binders.len() != 1 || binders[0] != a0 {
+            return false;
+        }
+        let Expr::Match {
+            subject: inner_subj,
+            arms: inner_arms,
+            ..
+        } = &arm.body.node
+        else {
+            return false;
+        };
+        if local_name_of(inner_subj) != Some(p1.as_str()) {
+            return false;
+        }
+        inner_arms.iter().any(|inner| {
+            matches!(&inner.pattern,
+                Pattern::Constructor(_, b) if b.len() == 1 && b[0] == a1)
+        })
+    })
+}
+
 pub(crate) fn is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
     local_name_of(expr).is_some_and(|id| id == name)
 }

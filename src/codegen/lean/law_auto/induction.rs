@@ -589,6 +589,18 @@ pub(super) fn emit_structural_induction_law(
         return emit_list_induction(vb, law, ctx, intro_names, target_idx, discovered);
     }
 
+    // (a2) The verified fn peels a constructor off BOTH args synchronously
+    //      (the `max`/`min` monoid shape) and the law is a commutativity /
+    //      associativity statement whose givens are all that Peano type:
+    //      `induction g1 generalizing <rest> with … cases <rest> …`. Inducting
+    //      on a single arg (branch (b)) leaves the other arg's peel stuck at
+    //      `sorry`; generalizing + case-splitting the remaining givens exposes
+    //      every constructor pairing so the cons IH applies. Tried before the
+    //      single-variable structural branch.
+    if let Some(proof) = emit_both_args_peeling_law(vb, law, ctx, intro_names) {
+        return Some(proof);
+    }
+
     // (b) A `given` is a user-defined recursive sum type: structural induction
     //     over its variants.
     if let Some((target_idx, _target_name, type_name)) = sum_target {
@@ -934,6 +946,136 @@ fn emit_list_induction(
     })
 }
 
+/// Kernel-proved commutativity (`f a b = f b a`) theorem for a both-args-peeling
+/// commutative Peano fn (`max`/`min`), using the same generalizing-induction
+/// ladder as [`emit_both_args_peeling_law`]. Returns `(theorem_text, name)`.
+/// Proved, not trusted: a non-commutative fn never reaches here (the caller
+/// gates on `both_args_peeling_is_commutative`), and even if it did the ladder
+/// would degrade to `sorry` (caught by the universal metric), never minting a
+/// false theorem.
+fn both_args_peeling_comm_theorem(fn_lean: &str, law_uid: &str) -> (String, String) {
+    let name = format!("{law_uid}_{fn_lean}_comm");
+    let ladder = format!(
+        "first | (cases b <;> simp_all [{fn_lean}]; done) | (cases b <;> simp_all [{fn_lean}]; omega) | sorry"
+    );
+    let text = format!(
+        "theorem {name} : ∀ (a b : Nat), {fn_lean} a b = {fn_lean} b a := by\n  intro a b\n  induction a generalizing b with\n  | zero => {ladder}\n  | succ k ih => {ladder}"
+    );
+    (text, name)
+}
+
+/// Commutative both-args-peeling Peano fns in THIS law's proof cone — each gets
+/// a kernel-proved `comm` support lemma whose name is injected into the
+/// induction arms. `height (mirror t) = height t` reduces (after the IH) to
+/// `max (height r) (height l) = max (height l) (height r)`, which only closes if
+/// `max`'s commutativity is available as a rewrite. The verified fn itself is
+/// excluded (a `max`-commutativity law is proven directly by
+/// [`emit_both_args_peeling_law`], not via a self-referential support lemma).
+/// Returns `(support_theorem_texts, lemma_names)`.
+fn consumed_comm_lemmas(
+    ctx: &CodegenContext,
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    law_uid: &str,
+) -> (Vec<String>, Vec<String>) {
+    let mut support = Vec::new();
+    let mut names = Vec::new();
+    for src_name in super::shared::law_simp_source_names(ctx, vb, law) {
+        if src_name == vb.fn_name {
+            continue;
+        }
+        let Some(fd) = ctx.fn_def_by_name(&src_name, ctx.active_module_scope().as_deref()) else {
+            continue;
+        };
+        if crate::codegen::proof_recognize::both_args_peeling_is_commutative(fd, ctx).is_none() {
+            continue;
+        }
+        let fn_lean = aver_name_to_lean(&src_name);
+        let (text, name) = both_args_peeling_comm_theorem(&fn_lean, law_uid);
+        support.push(text);
+        names.push(name);
+    }
+    (support, names)
+}
+
+/// Generalizing induction for a commutativity / associativity law of a
+/// both-args-peeling Nat fn (`max`/`min`). Fires only when:
+/// - the verified fn has the synchronous two-arg-peeling recursion shape
+///   (`detect::recurses_decrementing_both_args`), and
+/// - every law `given` is that fn's (canonical-Peano) parameter type, and
+/// - the law has 2 givens (commutativity) or 3 (associativity) — the families
+///   whose proof needs the other arg(s) case-split inside each induction arm.
+///
+/// Emits `induction g1 generalizing g2 [g3] with | zero => … | succ k ih => …`,
+/// where each arm `cases`-splits the remaining givens then runs the same sound
+/// `first | (cases…<;> simp_all [defs]; done) | (… ; omega) | sorry` ladder used
+/// elsewhere. `simp_all` carries the `succ`-arm IH (`∀ g2 [g3], P k g2 [g3]`)
+/// automatically, so the recursion's both-args peel rewrites in lockstep. Every
+/// branch is sound (`simp_all`/`omega` close only true goals; a non-closing arm
+/// degrades to the honest `sorry` the universal metric catches), so this can
+/// only ever ADD closures — a false law still reports `universal:false`.
+fn emit_both_args_peeling_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Option<AutoProof> {
+    // 2 (comm) or 3 (assoc) givens, all the verified fn's both-args-peeling
+    // Peano param type.
+    if law.givens.len() != 2 && law.givens.len() != 3 {
+        return None;
+    }
+    let fd = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
+    if !crate::codegen::recursion::detect::recurses_decrementing_both_args(fd) {
+        return None;
+    }
+    let param_type = fd.params.first()?.1.trim().to_string();
+    crate::codegen::proof_recognize::peano_type_named(ctx, &param_type)?;
+    if law.givens.iter().any(|g| g.type_name.trim() != param_type) {
+        return None;
+    }
+    if intro_names.len() != law.givens.len() {
+        return None;
+    }
+    // The law must be a genuine commutativity / associativity of THIS fn over
+    // its givens — not merely some 2-/3-given law that happens to mention a
+    // both-args-peeling fn. A `minus(plus(n,m),n)=m` or a `n ≤ m+n` keeps its
+    // existing bridge proof; this generalizing template fires only on
+    // `f a b = f b a` / `f (f a b) c = f a (f b c)`.
+    let given_names: Vec<String> = law.givens.iter().map(|g| g.name.clone()).collect();
+    crate::codegen::proof_recognize::recognize_binary_law_shape(law, &vb.fn_name, &given_names)?;
+
+    let simp_list = law_simp_defs(ctx, vb, law)
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let induct_on = &intro_names[0];
+    let rest = &intro_names[1..];
+    let generalizing = rest.join(" ");
+    // Case-split every remaining given so each constructor pairing is exposed;
+    // `simp_all` then unfolds the defs, applies the succ-arm IH, and closes.
+    let cases_prefix = rest
+        .iter()
+        .map(|g| format!("cases {g} <;> "))
+        .collect::<String>();
+    let ladder = format!(
+        "first | ({cases_prefix}simp_all [{simp_list}]; done) | ({cases_prefix}simp_all [{simp_list}]; omega) | sorry"
+    );
+
+    let proof_lines = vec![
+        format!("  intro {}", intro_names.join(" ")),
+        format!("  induction {induct_on} generalizing {generalizing} with"),
+        format!("  | zero => {ladder}"),
+        format!("  | succ k ih => {ladder}"),
+    ];
+
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines,
+        replaces_theorem: false,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_simple_induction(
     vb: &VerifyBlock,
@@ -993,12 +1135,54 @@ fn emit_simple_induction(
     // arm gets a bridge branch before `sorry` — defs/lemmas first, then
     // `simp only [bridges] <;> omega` for the arithmetic residual a stuck
     // Peano op leaves (see `emit_list_induction`'s `mk_arms`). Sound, so the
-    // branch can only add closures; absent in plain mode (byte-identical).
-    let arm_bridge = if !discovered_simp.is_empty() && !arith_bridges.is_empty() {
+    // branch can only add closures.
+    //
+    // część A2 — the arm bridge fires whenever a canonical-Peano op bridge is
+    // in scope, NOT only in `--discover` mode. `double x = plus x x` needs the
+    // `plus = +` bridge applied INSIDE the succ arm: after `simp [double]` +
+    // the IH the goal is `S (S (plus y y)) = plus (S y) (S y)`, whose RHS is
+    // stuck (`plus` recurses on a symbolic arg) but is pure linear arithmetic
+    // once `plus` rewrites to `+`. The top-level `simp only [bridge] <;> omega`
+    // fast path can't reach it (`double x` stays opaque there), so the bridge
+    // must ride the induction arm. Sound — `omega` decides only true goals; a
+    // residual it can't close still degrades to the honest `sorry`.
+    let arm_bridge = if !arith_bridges.is_empty() {
         Some(arith_bridges.join(", "))
     } else {
         None
     };
+
+    // część A2 (the `max`/`min` consumer) — kernel-proved commutativity lemmas
+    // for both-args-peeling Peano fns this law's cone consumes. `height (mirror
+    // t) = height t` collapses (after the node-arm IH) to `max (height r)
+    // (height l) = max (height l) (height r)`, closable only with `max`'s
+    // commutativity in the simp set. The lemma's simp set DROPS the comm'd fn's
+    // own def (unfolding `max'` alongside its `= flip` rewrite leaves the goal
+    // stuck), keeping every other law def. Both branches sound: a goal needing
+    // no commutativity still reaches the plain ladder, and the lemma is proved
+    // (a non-commutative fn never reaches here), never minting a false theorem.
+    let (comm_support, comm_lemma_names) = consumed_comm_lemmas(ctx, vb, law, &law_uid);
+    let comm_arm: Option<(String, String)> = if comm_lemma_names.is_empty() {
+        None
+    } else {
+        let commd_fns: BTreeSet<String> = comm_lemma_names
+            .iter()
+            .filter_map(|n| n.strip_suffix("_comm"))
+            .filter_map(|s| s.strip_prefix(&format!("{law_uid}_")))
+            .map(str::to_string)
+            .collect();
+        let mut comm_set: Vec<String> = law_simp_defs(ctx, vb, law)
+            .into_iter()
+            .filter(|d| !commd_fns.contains(d))
+            .collect();
+        comm_set.extend(comm_lemma_names.iter().cloned());
+        let set = comm_set.join(", ");
+        Some((
+            format!(" | (simp [{set}]; done)"),
+            format!(" | (simp_all [{set}]; done)"),
+        ))
+    };
+
     let mut arm_lines: Vec<String> = Vec::new();
     for variant in variants {
         let lean_variant = match &peano {
@@ -1021,8 +1205,12 @@ fn emit_simple_induction(
                     .as_deref()
                     .map(|b| format!(" | (simp [{d}]; simp only [{b}] <;> omega)", d = simp_list))
                     .unwrap_or_default();
+                let comm = comm_arm
+                    .as_ref()
+                    .map(|(leaf, _)| leaf.as_str())
+                    .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge} | sorry",
+                    "| {v}{b} => first | (simp [{d}]; done) | (simp [{d}]; omega){bridge}{comm} | sorry",
                     v = lean_variant,
                     b = binders,
                     d = simp_list
@@ -1046,8 +1234,12 @@ fn emit_simple_induction(
                         )
                     })
                     .unwrap_or_default();
+                let comm = comm_arm
+                    .as_ref()
+                    .map(|(_, rec)| rec.as_str())
+                    .unwrap_or_default();
                 arm_lines.push(format!(
-                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge} | sorry",
+                    "| {v} {b} {ih} => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){bridge}{comm} | sorry",
                     v = lean_variant,
                     b = field_binders.join(" "),
                     ih = ih_names.join(" "),
@@ -1112,6 +1304,7 @@ fn emit_simple_induction(
 
     let mut support_lines = discovered_support_lines(ctx, vb, law, discovered);
     support_lines.extend(arith_support);
+    support_lines.extend(comm_support);
     Some(AutoProof {
         support_lines,
         proof_lines,

@@ -35,7 +35,7 @@ pub(super) fn law_simp_defs(
         .collect()
 }
 
-fn law_simp_source_names(
+pub(super) fn law_simp_source_names(
     ctx: &CodegenContext,
     vb: &VerifyBlock,
     law: &VerifyLaw,
