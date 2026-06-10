@@ -681,6 +681,15 @@ const LEAN_RESERVED: &[&str] = &[
     "local",
     "macro",
     "match",
+    // Not Lean keywords, but GLOBAL Lean 4 functions (via the Max/Min
+    // typeclasses) a bare user fn shadows/collides with — a user `fn max`
+    // emits `def max`/calls `max a b` that resolve to Lean's builtin
+    // (typeclass-dispatched, NOT the user's recursion), so the proof can't
+    // reference the user fn. Escaping to `max'`/`min'` sidesteps it. (Other
+    // stdlib names like `length`/`take`/`drop` are reached as METHODS
+    // `xs.length` and don't collide as bare identifiers.)
+    "max",
+    "min",
     "mutual",
     "namespace",
     "noncomputable",
@@ -725,6 +734,10 @@ mod tests {
         assert_eq!(aver_name_to_lean("by"), "by'");
         assert_eq!(aver_name_to_lean("termination_by"), "termination_by'");
         assert_eq!(aver_name_to_lean("value"), "value");
+        // Global Lean builtins (Max/Min typeclass) — escaped so a user
+        // `fn max`/`min` doesn't collide with the typeclass-dispatched form.
+        assert_eq!(aver_name_to_lean("max"), "max'");
+        assert_eq!(aver_name_to_lean("min"), "min'");
     }
 
     #[test]
