@@ -748,6 +748,28 @@ pub(crate) fn param_decremented_in_recursion(fd: &FnDef, param_index: usize) -> 
     })
 }
 
+/// `true` iff every recursive self-call passes at `param_index` a RECONSTRUCTED
+/// expression (not a bare identifier) — a THREADED accumulator (`qrev`'s `acc`
+/// gets `List.concat([h], acc)`). The "not a bare local" requirement is what
+/// separates a genuine accumulator from a SYNCHRONOUS second list: `zip(xs,
+/// ys)` recurses with `ys`'s tail binder `yt` (a bare local), which is a
+/// structural decrement to be inducted normally, NOT a threaded accumulator to
+/// generalize-without-cases. Such a param must be GENERALIZED (so the IH reads
+/// `∀ acc, P xs acc` and applies at the threaded value) but NOT case-split.
+pub(crate) fn param_threaded_in_recursion(fd: &FnDef, param_index: usize) -> bool {
+    let calls: Vec<(String, Vec<&Spanned<Expr>>)> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .collect();
+    if calls.is_empty() {
+        return false;
+    }
+    calls.iter().all(|(_, args)| {
+        args.get(param_index)
+            .is_some_and(|a| local_name_of(a).is_none())
+    })
+}
+
 pub(crate) fn is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
     local_name_of(expr).is_some_and(|id| id == name)
 }

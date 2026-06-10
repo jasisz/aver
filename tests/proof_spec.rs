@@ -4379,3 +4379,53 @@ fn lean_escapes_user_max_min_collision_when_lake_is_available() {
         1,
     );
 }
+
+/// Leaf-reach: the Lean backend auto-proves an ACCUMULATOR-generalizing law —
+/// `qrev(xs, acc) = rev(xs) ++ acc`, where `qrev` recurses on `xs` while
+/// THREADING `acc` (fed `List.concat([h], acc)`). The IH must be `∀ acc,
+/// P xs acc`, so the backend emits `induction xs generalizing acc` (no `cases`
+/// — `acc` is not a Peano scrutinee, distinct from the take/drop Nat case).
+/// No helper, bare — the lemma that previously SORRIED. (The qrev↔rev
+/// equivalence `fastRev = rev` then closes by decomposition over it.)
+#[test]
+fn lean_proves_accumulator_generalizing_qrev_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping accumulator-gen test: `lake` not available");
+        return;
+    }
+    let source = "module QrevAccGen\n    intent = \"qrev acc-generalization\"\n    effects []\n\n\
+        fn rev(xs: List<Int>) -> List<Int>\n    match xs\n        [] -> []\n        [h, ..t] -> List.concat(rev(t), [h])\n\n\
+        fn qrev(xs: List<Int>, acc: List<Int>) -> List<Int>\n    match xs\n        [] -> acc\n        [h, ..t] -> qrev(t, List.concat([h], acc))\n\n\
+        verify qrev law qrevRevAppend\n    given xs: List<Int> = [[1], [1, 2, 3]]\n    given acc: List<Int> = [[9], [8, 7]]\n    qrev(xs, acc) => List.concat(rev(xs), acc)\n";
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-accgen-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-accgen-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "accumulator-generalizing must close qrev(xs,acc)=rev(xs)++acc bare\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

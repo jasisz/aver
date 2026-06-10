@@ -659,23 +659,46 @@ fn emit_list_induction(
     // (closes the synchronous Nat+List family, e.g. `take n xs ++ drop n xs =
     // xs`). The `induction X generalizing Y` + `cases Y` shape already proves the
     // canonical-Peano `Sub`/`Le`/`Lt` bridges, so it is well-trodden.
-    let gen_given: Option<String> = ctx
+    // `(intro_name, needs_cases)`: the given to generalize over, and whether to
+    // `cases` it in each arm. A Peano param the fn decrements synchronously
+    // (`take`/`drop`'s `n`) is generalized AND case-split (the IH lands at the
+    // predecessor); a THREADED accumulator (`qrev`'s `acc`, fed
+    // `List.concat([h], acc)`) is generalized only (no scrutinee to split, the
+    // IH `∀ acc, P xs acc` applies at the threaded value).
+    use crate::codegen::recursion::detect::{
+        param_decremented_in_recursion, param_threaded_in_recursion,
+        single_list_structural_param_index,
+    };
+    let gen_given: Option<(String, bool)> = ctx
         .fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
         .and_then(|fd| {
-            let lidx = crate::codegen::recursion::detect::single_list_structural_param_index(fd)?;
-            let decr = fd.params.iter().enumerate().find(|(i, (_, ty))| {
+            let lidx = single_list_structural_param_index(fd)?;
+            let given_intro = |fn_param: &str| -> Option<String> {
+                law.givens
+                    .iter()
+                    .position(|g| g.name == fn_param)
+                    .map(|gi| intro_names[gi].clone())
+            };
+            // Peano sync-decremented param → generalize + cases.
+            if let Some((_, (pname, _))) = fd.params.iter().enumerate().find(|(i, (_, ty))| {
                 *i != lidx
                     && (ty.trim() == "Nat"
                         || crate::codegen::proof_recognize::peano_type_named(ctx, ty.trim())
                             .is_some())
-                    && crate::codegen::recursion::detect::param_decremented_in_recursion(fd, *i)
-            })?;
-            let decr_name = &decr.1.0;
-            // Map that fn param to the law given of the same name → its intro.
-            law.givens
+                    && param_decremented_in_recursion(fd, *i)
+            }) {
+                return given_intro(pname).map(|n| (n, true));
+            }
+            // Threaded accumulator param → generalize only.
+            if let Some((_, (pname, _))) = fd
+                .params
                 .iter()
-                .position(|g| &g.name == decr_name)
-                .map(|gi| intro_names[gi].clone())
+                .enumerate()
+                .find(|(i, _)| *i != lidx && param_threaded_in_recursion(fd, *i))
+            {
+                return given_intro(pname).map(|n| (n, false));
+            }
+            None
         });
 
     // `simp only` set for the split fallback below. `List.cons_append`
@@ -759,13 +782,14 @@ fn emit_list_induction(
     // committed pin OR an eligible earlier sibling law (`fast_simp` carries
     // both). With neither, the emit is byte-identical to the pre-feedback
     // ladder.
-    if let Some(gv) = gen_given.as_ref().filter(|_| fast_simp.is_empty()) {
-        // Generalizing induction (synchronous Nat+List family). Each arm
-        // `cases <gen> <;> (ladder)` splits the generalized Peano var so the
-        // cons IH (`∀ n, P n tail`) applies at the predecessor; the ladder is
-        // the same sound first|simp|omega|split|sorry chain, distributed over
-        // both zero/succ goals. nil also needs the split (`take n []` only
-        // reduces once `n` is a concrete constructor).
+    if let Some((gv, needs_cases)) = gen_given.as_ref().filter(|_| fast_simp.is_empty()) {
+        // Generalizing induction. `induction list generalizing <gv>` makes the
+        // cons IH `∀ <gv>, P <gv> tail`, so it applies at the recursion's
+        // threaded/decremented value. For a Peano `<gv>` (`take`/`drop`'s `n`)
+        // each arm `cases <gv> <;> (ladder)` splits zero/succ so the IH lands
+        // at the predecessor; for a threaded accumulator (`qrev`'s `acc`) no
+        // split is needed (the IH applies at `h::acc` directly). The ladder is
+        // the same sound first|simp|omega|split|sorry chain.
         let ladder = |s: &str| -> String {
             format!(
                 "first | ({s} [{d}]; done) | ({s} [{d}]; omega) | (simp only [{sp}]; split <;> simp_all [{d}] <;> omega) | sorry",
@@ -773,14 +797,21 @@ fn emit_list_induction(
                 sp = split_set
             )
         };
+        let wrap = |arm: &str| -> String {
+            if *needs_cases {
+                format!("cases {gv} <;> ({arm})")
+            } else {
+                arm.to_string()
+            }
+        };
         proof_lines.push(format!(
             "  induction {} generalizing {} with",
             target_lean, gv
         ));
-        proof_lines.push(format!("  | nil => cases {gv} <;> ({})", ladder("simp")));
+        proof_lines.push(format!("  | nil => {}", wrap(&ladder("simp"))));
         proof_lines.push(format!(
-            "  | cons head tail ih => cases {gv} <;> ({})",
-            ladder("simp_all")
+            "  | cons head tail ih => {}",
+            wrap(&ladder("simp_all"))
         ));
     } else if fast_simp.is_empty() {
         let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, None, true);
