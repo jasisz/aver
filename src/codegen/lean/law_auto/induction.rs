@@ -327,7 +327,8 @@ fn earlier_law_lemmas(
         .iter()
         .map(|fd| aver_name_to_lean(&fd.name))
         .collect();
-    scope.insert(aver_name_to_lean(&vb.fn_name));
+    let subject = aver_name_to_lean(&vb.fn_name);
+    scope.insert(subject.clone());
 
     let program_index: std::collections::BTreeMap<String, String> = program_fn_lean_names(ctx)
         .into_iter()
@@ -353,12 +354,25 @@ fn earlier_law_lemmas(
         };
         let text = format!("theorem {name} : {stmt} := by");
         let mentions = crate::codegen::lemma_discovery::mentioned_fns(&text, &program_index);
-        if mentions.is_empty() || !mentions.is_subset(&scope) {
+        if mentions.is_empty() {
             continue;
         }
-        out.push(crate::codegen::lemma_discovery::CommittedLemma::reference(
-            name, text,
-        ));
+        // Eligibility: either the sibling stays entirely inside the consumer's
+        // proof cone (the conservative rule), OR it mentions the consumer's
+        // SUBJECT fn — the strongest "this decomposes THIS law" signal, which
+        // also lets a decomposition INTRODUCE a new combinator. A count-homo
+        // helper `count n (a++b) = plus (count n a)(count n b)` mentions
+        // `plus` (outside count-rev's cone {count,rev,eqNat}) but shares the
+        // subject `count`, so it must be admitted — that `plus` is exactly the
+        // combinator the decomposition needs, and its `= a+b` bridge is
+        // synthesized downstream. Tight enough to stay relevant (a length-homo
+        // in a count file shares neither cone nor subject → rejected); loop
+        // safety is handled separately by `simp_entries`.
+        if mentions.is_subset(&scope) || mentions.contains(&subject) {
+            out.push(crate::codegen::lemma_discovery::CommittedLemma::reference(
+                name, text,
+            ));
+        }
     }
     out
 }
@@ -682,31 +696,32 @@ fn emit_list_induction(
     // The split variant covers the same residual under an inner Bool/enum
     // match (`try` so a goal with nothing to bridge still reaches `omega`).
     // All branches are sound, so each can only ADD closures.
-    let mk_arms = |bridges: Option<&str>| -> (String, String) {
+    // Build the nil/cons arms over an explicit `arm_simp`/`arm_split` set, with
+    // the trailing `| sorry` only when `with_sorry`. część C uses this to emit
+    // TWO ladders: ladderA over the committed-only set WITHOUT sorry (so it
+    // THROWS on an open arm and `first` falls through) and ladderB over the
+    // committed + Forward-sibling set WITH sorry (the honest building floor).
+    let mk_arms = |arm_simp: &str,
+                   arm_split: &str,
+                   bridges: Option<&str>,
+                   with_sorry: bool|
+     -> (String, String) {
         let nil_bridge = bridges
-            .map(|b| format!(" | (simp [{d}]; simp only [{b}] <;> omega)", d = simp_list))
+            .map(|b| format!(" | (simp [{arm_simp}]; simp only [{b}] <;> omega)"))
             .unwrap_or_default();
         let cons_bridge = bridges
-            .map(|b| {
-                format!(
-                    " | (simp_all [{d}]; simp only [{b}] <;> omega)",
-                    d = simp_list
-                )
-            })
+            .map(|b| format!(" | (simp_all [{arm_simp}]; simp only [{b}] <;> omega)"))
             .unwrap_or_default();
         let split_bridge = bridges
             .map(|b| format!(" <;> (try simp only [{b}])"))
             .unwrap_or_default();
+        let tail = if with_sorry { " | sorry" } else { "" };
         (
             format!(
-                "| nil => first | (simp [{d}]; done) | (simp [{d}]; omega){nil_bridge} | (simp only [{s}]; split <;> simp_all [{d}]{split_bridge} <;> omega) | sorry",
-                d = simp_list,
-                s = split_set
+                "| nil => first | (simp [{arm_simp}]; done) | (simp [{arm_simp}]; omega){nil_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega){tail}"
             ),
             format!(
-                "| cons head tail ih => first | (simp_all [{d}]; done) | (simp_all [{d}]; omega){cons_bridge} | (simp only [{s}]; split <;> simp_all [{d}]{split_bridge} <;> omega) | sorry",
-                d = simp_list,
-                s = split_set
+                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega){tail}"
             ),
         )
     };
@@ -718,7 +733,7 @@ fn emit_list_induction(
     // both). With neither, the emit is byte-identical to the pre-feedback
     // ladder.
     if fast_simp.is_empty() {
-        let (nil_arm, cons_arm) = mk_arms(None);
+        let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, None, true);
         proof_lines.push(format!("  induction {} with", target_lean));
         proof_lines.push(format!("  {nil_arm}"));
         proof_lines.push(format!("  {cons_arm}"));
@@ -731,10 +746,8 @@ fn emit_list_induction(
         // alone (the goal already matches a lemma), then with the law's def
         // unfolds added (a wrapper like `appendNat` must unfold to `++` before
         // the lemma can fire) — minus the bridged fns' own defs (def + bridge
-        // in one simp call sticks). Both paths are sound, so a miss falls
-        // through to the induction ladder; the ladder's arm simp sets carry
-        // only the COMMITTED pins (`discovered_simp`), keeping a previously-
-        // closing ladder unchanged. Coverage can only grow.
+        // in one simp call sticks). Both sound, so a miss falls through to the
+        // induction ladder.
         let lemma_fns = feedback_source_fns(ctx, discovered, &siblings);
         let (arith_support, arith_bridges, bridged_fns) =
             lean_nat_lift_support(law, ctx, &law_uid, &lemma_fns);
@@ -751,7 +764,29 @@ fn emit_list_induction(
         } else {
             Some(arith_bridges.join(", "))
         };
-        let (nil_arm, cons_arm) = mk_arms(bridge_set.as_deref());
+
+        // część C — ARM injection of Forward siblings. Some laws need the
+        // helper applied INSIDE the cons arm, not just at the top level (e.g.
+        // `count n xs = count n (rev xs)`: the cons goal `count n (rev t ++
+        // [h])` only collapses if the count-homomorphism rewrites in-arm).
+        // The fast-path (committed + ALL siblings, Reversed included) is tried
+        // first; then ladderA over the COMMITTED-only arm set WITHOUT a sorry
+        // — so a previously-closing ladder closes here IDENTICALLY, but an open
+        // arm THROWS and `first` falls to ladderB. ladderB injects the Forward
+        // siblings into the arms (Reversed stay fast-path-only — an unfold rule
+        // mixed with the fn's own def in an arm can loop, and a simp loop is an
+        // uncatchable maxHeartbeats build error) and carries the sorry floor.
+        // Forward homomorphisms CONSUME appends as they rewrite, so they
+        // terminate in `simp_all`; the loop-exclusion in `simp_entries` already
+        // dropped any cyclic forward/reversed pair. When no Forward sibling
+        // adds anything beyond the committed arm set, stay single-ladder
+        // (byte-identical to the committed-only feedback emit).
+        let arm_forward_siblings: Vec<String> = fast_simp
+            .iter()
+            .filter(|e| !e.starts_with("← ") && !discovered_simp.contains(*e))
+            .cloned()
+            .collect();
+
         proof_lines.push("  first".to_string());
         proof_lines.push(format!(
             "  | (simp only [{}] <;> omega)",
@@ -761,9 +796,35 @@ fn emit_list_induction(
             "  | (simp only [{}] <;> omega)",
             fast_unfolds.into_iter().collect::<Vec<_>>().join(", ")
         ));
-        proof_lines.push(format!("  | (induction {} with", target_lean));
-        proof_lines.push(format!("     {nil_arm}"));
-        proof_lines.push(format!("     {cons_arm})"));
+        if arm_forward_siblings.is_empty() {
+            // No in-arm sibling to add: one committed-only ladder, with sorry.
+            let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, bridge_set.as_deref(), true);
+            proof_lines.push(format!("  | (induction {} with", target_lean));
+            proof_lines.push(format!("     {nil_arm}"));
+            proof_lines.push(format!("     {cons_arm})"));
+        } else {
+            // ladderA: committed-only arms, NO sorry (throws → ladderB).
+            let (nil_a, cons_a) = mk_arms(&simp_list, &split_set, bridge_set.as_deref(), false);
+            proof_lines.push(format!("  | (induction {} with", target_lean));
+            proof_lines.push(format!("     {nil_a}"));
+            proof_lines.push(format!("     {cons_a})"));
+            // ladderB: committed + Forward siblings in the arms, WITH sorry.
+            let simp_b = {
+                let mut v: Vec<String> = simp_list.split(", ").map(String::from).collect();
+                v.extend(arm_forward_siblings.iter().cloned());
+                v.retain(|s| !s.is_empty());
+                v.join(", ")
+            };
+            let split_b = if simp_b.is_empty() {
+                "List.cons_append".to_string()
+            } else {
+                format!("{simp_b}, List.cons_append")
+            };
+            let (nil_b, cons_b) = mk_arms(&simp_b, &split_b, bridge_set.as_deref(), true);
+            proof_lines.push(format!("  | (induction {} with", target_lean));
+            proof_lines.push(format!("     {nil_b}"));
+            proof_lines.push(format!("     {cons_b})"));
+        }
         support_lines.extend(discovered_support_lines(ctx, vb, law, discovered));
         support_lines.extend(arith_support);
     }
