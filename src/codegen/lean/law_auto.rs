@@ -181,6 +181,32 @@ pub fn emit_verify_law_forall_auto_proof(
         });
     }
 
+    // IR-pinned `EnumConstantFold` — the lowerer validated the law
+    // pins every non-Int param to a constructor literal and the call
+    // tree is non-recursive, so the goal is a ground equality. Unfold
+    // the fn + transitively-reached callees with `simp only`, then
+    // close each residual branch with a `split`/`rfl`/`decide` cascade.
+    // The `first | ... ` tries the cheapest closer first; the kernel
+    // re-checks whichever fires, and a goal the cascade can't close
+    // surfaces honestly (the law would then need a hand proof) rather
+    // than a false `sorry`-free claim.
+    if let Some(crate::ir::ProofStrategy::EnumConstantFold { ref unfold_fns }) =
+        law_strategy_for(ctx, &vb.fn_name, &law.name)
+    {
+        let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines: intro_then(
+                &proof_intro_names,
+                vec![format!(
+                    "simp only [{}] <;> (first | (split <;> rfl) | rfl | decide)",
+                    lean_names.join(", ")
+                )],
+            ),
+            replaces_theorem: false,
+        });
+    }
+
     // IR-pinned `LinearIntSpecEquivalence` — Step 40: lowerer
     // validated substituted bodies are pure linear arithmetic over
     // Int givens. Backend emits `change <impl> = <spec> ; omega`.

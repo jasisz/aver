@@ -1433,6 +1433,14 @@ pub fn emit_verify_law(
                 crate::ir::ProofStrategy::Induction { .. }
                     | crate::ir::ProofStrategy::BackendDispatch
                     | crate::ir::ProofStrategy::Sorry
+                    // No dedicated Dafny emit for the enum constant-fold
+                    // strategy — it falls through to the default fuel-
+                    // bumped lemma (Z3 unfolds the non-recursive fns and
+                    // decides the constructor branch). Treat it like
+                    // `BackendDispatch` for the singleton-domain gate so
+                    // Dafny's behaviour is unchanged from before the
+                    // Lean-only strategy existed.
+                    | crate::ir::ProofStrategy::EnumConstantFold { .. }
             )
         });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs
