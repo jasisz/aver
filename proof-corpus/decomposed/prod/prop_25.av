@@ -1,0 +1,40 @@
+module Prop25
+    intent =
+        "TIP prod prop_25: even(length(x ++ y)) = even(length y + length x)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn length(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(length(xs))
+
+fn even(x: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(y) -> match y
+            Nat.Z -> false
+            Nat.S(z) -> even(z)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify length law lengthConcatHomo
+    given x: List<Int> = [[1], [2, 3], [4, 5, 6]]
+    given y: List<Int> = [[7], [8, 9], [0]]
+    length(List.concat(x, y)) => plus(length(x), length(y))
+
+verify plus law plusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, y) => plus(y, x)
+
+verify even law evenLengthConcat
+    given x: List<Int> = [[1], [2, 3], [4, 5, 6]]
+    given y: List<Int> = [[7], [8, 9], [0]]
+    even(length(List.concat(x, y))) => even(plus(length(y), length(x)))

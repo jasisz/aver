@@ -24,6 +24,10 @@ per-PR; coverage = a number from `run.sh`, informational.
   `tip/LICENSE.TIP` (upstream license retained for attribution; the repo itself
   stays MIT).
 - `handwritten/` — license-clean canonical tasks we authored.
+- `decomposed/` — OPEN `tip/` tasks closed by **LLM-written helper laws** via
+  the discovery feedback loop (część A). A SEPARATE "loop reach" metric, NOT the
+  baseline — `run.sh` excludes it so the coverage number stays "unaided on bare
+  `tip/`". See `decomposed/README.md`.
 - `run.sh` — the coverage runner (lives with the corpus so it travels if the
   corpus ever graduates to its own repo).
 

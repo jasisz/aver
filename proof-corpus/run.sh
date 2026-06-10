@@ -71,7 +71,11 @@ lean=0
 dafny=0
 union=0
 total=0
-for f in $(find "$ROOT" -name '*.av' | sort); do
+# `decomposed/` holds LLM helper-law-augmented copies of OPEN tip/ tasks (a
+# SEPARATE "loop reach" metric, see decomposed/README.md). Excluded here so the
+# baseline `coverage (union)` stays "what the engine proves UNAIDED on bare
+# tip/" — counting the augmented copies would double-count + inflate it.
+for f in $(find "$ROOT" -name '*.av' -not -path '*/decomposed/*' | sort); do
   [ -e "$f" ] || continue
   total=$((total + 1))
   l=$(proves "$f" lean)

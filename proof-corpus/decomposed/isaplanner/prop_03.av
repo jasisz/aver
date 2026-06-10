@@ -1,0 +1,46 @@
+module Prop03
+    intent =
+        "TIP isaplanner prop_03: count n xs <= count n (xs ++ ys)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn count(x: Nat, y: List<Nat>) -> Nat
+    match y
+        [] -> Nat.Z
+        [z, ..ys] -> match eqNat(x, z)
+            true -> Nat.S(count(x, ys))
+            false -> count(x, ys)
+
+fn lessEq(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> lessEq(z, x2)
+
+fn countMonotone(n: Nat, xs: List<Nat>, ys: List<Nat>) -> Bool
+    lessEq(count(n, xs), count(n, List.concat(xs, ys)))
+
+verify count law countConcatMonotone
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[Nat.Z], [Nat.Z, Nat.S(Nat.Z)]]
+    given ys: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)]]
+    lessEq(count(n, xs), count(n, List.concat(xs, ys))) => true
+
+verify countMonotone law countAppendMonotone
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[Nat.Z], [Nat.Z, Nat.S(Nat.Z)], []]
+    given ys: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)], []]
+    countMonotone(n, xs, ys) => true

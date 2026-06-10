@@ -4199,3 +4199,63 @@ fn earlier_user_law_feeds_later_law_proof_when_lake_is_available() {
         "the swap law's proof does not simp over the earlier homomorphism theorem:\n{emitted}"
     );
 }
+
+/// The `proof-corpus/decomposed/` artifacts: OPEN bare-`tip/` TIP tasks that an
+/// LLM closed by writing helper `verify ... law` blocks (część A / the loop).
+/// Each must stay `universal:true` on its own merits — every law in the file,
+/// helpers included, kernel-clean (no `sorry`, axiom set ⊆ {propext,
+/// Classical.choice, Quot.sound}). This guards the feedback loop AND the
+/// auto-prover's leaf reach from regressing: if a future change stops closing
+/// any helper, its file drops to universal:false and this test fails loudly.
+/// Distinct from the corpus coverage runner — these are NOT counted in the
+/// baseline (run.sh excludes decomposed/); they are the loop-reach record.
+#[test]
+fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping decomposed-corpus test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let tasks = [
+        "proof-corpus/decomposed/isaplanner/prop_03.av",
+        "proof-corpus/decomposed/isaplanner/prop_75.av",
+        "proof-corpus/decomposed/prod/prop_03.av",
+        "proof-corpus/decomposed/prod/prop_25.av",
+    ];
+    for task in tasks {
+        let out = temp_output_dir(&format!(
+            "aver-decomposed-{}",
+            task.rsplit('/').next().unwrap().trim_end_matches(".av")
+        ));
+        let run = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("proof")
+            .arg(task)
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(&out)
+            .arg("--check")
+            .arg("--check-json")
+            .output()
+            .unwrap_or_else(|e| panic!("{task}: aver proof failed to run: {e}"));
+        let json = run
+            .stdout
+            .split(|&b| b == b'\n')
+            .rev()
+            .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+            .unwrap_or_else(|| panic!("{task}: no JSON line:\n{}", format_output(&run)));
+        let summary: serde_json::Value =
+            serde_json::from_str(json).unwrap_or_else(|e| panic!("{task}: bad JSON ({e})"));
+        assert_eq!(
+            summary["universal"].as_bool(),
+            Some(true),
+            "{task}: decomposed artifact must stay universal:true (every law, helpers \
+             included, kernel-clean). A drop means część A or an auto-prover leaf \
+             regressed.\n{}",
+            format_output(&run)
+        );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+}
