@@ -1,0 +1,39 @@
+module Prop55
+    intent =
+        "TIP isaplanner prop_55: drop n (xs ++ ys) = drop n xs ++ drop (n - len xs) ys."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn len(x: List<Int>) -> Nat
+    match x
+        [] -> Nat.Z
+        [y, ..xs] -> Nat.S(len(xs))
+
+fn drop(x: Nat, y: List<Int>) -> List<Int>
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> match y
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+fn minus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> minus(z, x2)
+
+verify drop law dropConcatGen
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[1], [1, 2], [1, 2, 3]]
+    given ys: List<Int> = [[4], [4, 5], [6]]
+    drop(x, List.concat(xs, ys)) => List.concat(drop(x, xs), drop(minus(x, len(xs)), ys))
+
+verify drop law dropConcat
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[1], [1, 2], [1, 2, 3]]
+    given ys: List<Int> = [[4], [4, 5], [6]]
+    drop(n, List.concat(xs, ys)) => List.concat(drop(n, xs), drop(minus(n, len(xs)), ys))
