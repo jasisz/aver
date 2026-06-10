@@ -4228,6 +4228,13 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         "proof-corpus/decomposed/isaplanner/prop_75.av",
         "proof-corpus/decomposed/prod/prop_03.av",
         "proof-corpus/decomposed/prod/prop_25.av",
+        // decomposition-reach chunk #1 (reverse/accumulator family).
+        "proof-corpus/decomposed/handwritten/qrev_rev.av",
+        "proof-corpus/decomposed/isaplanner/prop_19.av",
+        "proof-corpus/decomposed/prod/prop_27.av",
+        "proof-corpus/decomposed/prod/prop_29.av",
+        "proof-corpus/decomposed/prod/prop_30.av",
+        "proof-corpus/decomposed/prod/prop_31.av",
     ];
     for task in tasks {
         let out = temp_output_dir(&format!(

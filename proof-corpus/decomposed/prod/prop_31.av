@@ -1,0 +1,18 @@
+module Prop31
+    intent =
+        "TIP prod prop_31: qrev (qrev x nil) nil = x."
+    effects []
+
+fn qrev(x: List<Int>, y: List<Int>) -> List<Int>
+    match x
+        [] -> y
+        [z, ..xs] -> qrev(xs, List.concat([z], y))
+
+verify qrev law qrevMaster
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given y: List<Int> = [[], [9], [8, 7], [6]]
+    qrev(qrev(x, y), []) => qrev(y, x)
+
+verify qrev law qrevQrev
+    given x: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    qrev(qrev(x, []), []) => x

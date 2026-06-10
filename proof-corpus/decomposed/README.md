@@ -38,7 +38,12 @@ Problems)**, `github.com/tip-org/benchmarks`, BSD-3-Clause — see
 `../tip/PROVENANCE.md` and `../tip/LICENSE.TIP`. The helper laws are our
 authorship; the surrounding program is the upstream-derived task verbatim.
 
-## Contents (10)
+## Contents (16)
+
+The first ten are the original chunk; the last six are **decomposition-reach
+chunk #1** (2026-06-10) — the reverse/accumulator family, opened up by the
+accumulator-generalizing induction that landed in the auto-prover (`induction xs
+generalizing acc`). All six were OPEN even to Z3/Dafny.
 
 | file | target | bare-`tip/` status | what the decomposition added |
 |------|--------|--------------------|------------------------------|
@@ -52,12 +57,19 @@ authorship; the surrounding program is the upstream-derived task verbatim.
 | `isaplanner/prop_75.av` | `count n [x] + count n xs = count n (x::xs)` | Dafny-only → also Lean-genuine | count-homomorphism + `plus` commutativity |
 | `prod/prop_03.av` | `length(x++y) = plus(length y)(length x)` | Dafny-only → also Lean-genuine | the two "right" laws of `plus` |
 | `prod/prop_25.av` | `even(length(x++y)) = even(length y + length x)` | OPEN (frontier) | length-homomorphism + `plus` commutativity |
+| `handwritten/qrev_rev.av` | `fastRev x = rev x` | OPEN (frontier) | accumulator-generalization: `qrev(xs,acc) = rev(xs)++acc` |
+| `isaplanner/prop_19.av` | `len(drop n xs) = len xs − n` | OPEN (frontier) | the generalized `len∘drop` law over `n` |
+| `prod/prop_27.av` | `rev x = qrev x []` | OPEN (frontier) | `qrev` spec `qrev(x,y) = rev(x)++y` |
+| `prod/prop_29.av` | `rev(qrev x []) = x` | OPEN (frontier) | qrev-spec + rev-append homomorphism + rev involution |
+| `prod/prop_30.av` | `rev(rev x ++ []) = x` | OPEN (frontier) | rev-snoc + rev involution |
+| `prod/prop_31.av` | `qrev(qrev x []) [] = x` | OPEN (frontier) | generalized `qrev` "master" law `qrev(qrev(x,y),[]) = qrev(y,x)` |
 
-Eight of the ten move the **union frontier** — the unaided engine (auto-mode,
-`--discover`, and single-shot Dafny/Z3) closes none of them. The other two
-upgrade a Dafny-only (Z3-automated) task to a kernel-checked Lean proof. Every
-helper is a CANONICAL lemma (reflexivity, a homomorphism, a length/count
-preservation, the right-laws of `plus`) — textbook decompositions, not exotic
-tricks — and each bottoms out in something Aver's auto-prover discharges on its
-own (structural induction / homomorphism / the canonical-Peano bridge). The
-loop is exactly as strong as that leaf reach.
+Fourteen of the sixteen move the **union frontier** — the unaided engine
+(auto-mode, `--discover`, and single-shot Dafny/Z3) closes none of them. The
+other two upgrade a Dafny-only (Z3-automated) task to a kernel-checked Lean
+proof. Every helper is a CANONICAL lemma (reflexivity, a homomorphism, an
+accumulator/qrev specification, a length/count preservation, the right-laws of
+`plus`) — textbook decompositions, not exotic tricks — and each bottoms out in
+something Aver's auto-prover discharges on its own (structural induction /
+accumulator-generalizing induction / homomorphism / the canonical-Peano
+bridge). The loop is exactly as strong as that leaf reach.
