@@ -4219,6 +4219,12 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
     let aver_bin = env!("CARGO_BIN_EXE_aver");
     let tasks = [
         "proof-corpus/decomposed/isaplanner/prop_03.av",
+        "proof-corpus/decomposed/isaplanner/prop_04.av",
+        "proof-corpus/decomposed/isaplanner/prop_20.av",
+        "proof-corpus/decomposed/isaplanner/prop_28.av",
+        "proof-corpus/decomposed/isaplanner/prop_29.av",
+        "proof-corpus/decomposed/isaplanner/prop_30.av",
+        "proof-corpus/decomposed/isaplanner/prop_38.av",
         "proof-corpus/decomposed/isaplanner/prop_75.av",
         "proof-corpus/decomposed/prod/prop_03.av",
         "proof-corpus/decomposed/prod/prop_25.av",
