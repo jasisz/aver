@@ -372,10 +372,15 @@ fn proof_dafny_verifies_rle_when_dafny_is_available() {
 
 #[test]
 fn proof_export_builds_quicksort_when_lake_is_available() {
-    // The three list-given laws (`sort.resultOrdered` / `sort.lengthPreserved`
-    // / `sort.idempotent`) are attempted via #409 Lean list-induction, but
-    // `sort` is a fuel-wrapped partition recursion that `simp_all` cannot
-    // reduce, so each falls to an honest `sorry` that BUILDS (per-arm
+    // `sort` / `sortWithPivot` now emit as a genuine well-founded `mutual`
+    // block: the computed-arg partition recursion's termination is discharged
+    // by synthesised, kernel-proved `smallerOrEqual_len_le` /
+    // `greaterThan_len_le` length-monotonicity lemmas (termination-as-a-law,
+    // no fuel / no `partial` / `#print axioms` = [propext, Quot.sound]).
+    // The three list-given BEHAVIORAL laws (`sort.resultOrdered` /
+    // `sort.lengthPreserved` / `sort.idempotent`) are attempted via #409 Lean
+    // list-induction, but `simp_all` cannot reduce the partition recursion, so
+    // each still falls to an honest `sorry` that BUILDS (per-arm
     // `first | (simp_all; done) | sorry`). An earlier #409 revision reported 0
     // here — a FALSE GREEN: the tactic left unsolved goals that `lake build`
     // rejects (exit 1), which the `declaration uses 'sorry'` count metric was
