@@ -4562,6 +4562,69 @@ fn lean_proves_map_fold_homomorphism_when_lake_is_available() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// A ground ∀-law over fixed enum/ADT constructors (with unused Int givens) must
+/// close via the `EnumConstantFold` strategy. `bonus(Cell.Empty, x) = 0` pins the
+/// ADT param to a constructor; LinearArithmetic rejects it (non-Int param) and
+/// Induction finds no recursive given, so it used to fall to BackendDispatch and
+/// `sorry`. The new strategy emits `intro …; simp only [fn, defs] <;> (split <;>
+/// rfl | rfl | decide)`. (Found on real `games/checkers/ai.av` centerBonus /
+/// pieceValue laws.)
+#[test]
+fn lean_proves_enum_constant_fold_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping enum-constant-fold test: `lake` not available");
+        return;
+    }
+    let source = r#"module EnumFold
+    intent = "a ground law over fixed enum/ADT constructors with unused Int givens"
+    effects []
+
+type Cell
+    Empty
+    Piece(Int)
+
+fn bonus(c: Cell, x: Int) -> Int
+    match c
+        Cell.Empty -> 0
+        Cell.Piece(v) -> v + x
+
+verify bonus law emptyZero
+    given x: Int = [0, 5, 9]
+    bonus(Cell.Empty, x) => 0
+"#;
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-enumfold-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-enumfold-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "a ground enum/ADT constant-fold law must close kernel-clean\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A LinearArithmetic law over a fn using `Int.max`/`Int.min` must close. Two
 /// bugs blocked it: (1) `Int.max` (lowercase leaf) leaked into the unfold set as
 /// the non-existent constant `Int.max` → `unknown constant` compile error;

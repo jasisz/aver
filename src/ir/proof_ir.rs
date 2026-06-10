@@ -695,6 +695,26 @@ pub enum ProofStrategy {
         /// (`Add` / `Mul` / `Sub`). Drives the aux lemma's RHS.
         combine_op: crate::ast::BinOp,
     },
+    /// Ground constant-fold over fixed ADT/enum constructor
+    /// arguments. The law's call(s) pin every non-Int param of the
+    /// verified fn to a constructor literal (`CellContent.Empty`,
+    /// `Color.Black`); any scalar `given`s are quantified but irrelevant
+    /// to the chosen branch (the constructor selects a fixed arm). The
+    /// verified fn and its transitively-reached callees are
+    /// non-recursive, so the whole call tree folds to a closed term and
+    /// the goal becomes a decidable ground equality. Backends unfold the
+    /// fn + callees (the same `unfold_fns` list the LinearArithmetic
+    /// detector builds) and close with a `split`/`rfl`/`decide` cascade.
+    /// Demonstrated by `examples/games/checkers/ai.av`
+    /// (`centerBonus.emptyNeutral`, `pieceValue.antisymmetry`,
+    /// `pieceValue.kingWorthTripleMan`). Named for the algebraic content
+    /// (constant-folding over a fixed constructor), not the Lean tactic.
+    EnumConstantFold {
+        /// Ordered fn unfold list — top-level law fn first, then
+        /// transitively-reached non-recursive callees. Source names;
+        /// backends translate to their lemma vocabulary.
+        unfold_fns: Vec<String>,
+    },
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,

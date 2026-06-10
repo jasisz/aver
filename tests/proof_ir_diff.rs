@@ -1439,3 +1439,78 @@ fn linear_int_spec_equivalence_pinned_on_commutative_addition() {
         "unfolded_spec should reference n and literal 1, got: {spec_repr}"
     );
 }
+
+#[test]
+fn enum_constant_fold_pinned_for_constructor_pinned_ground_law() {
+    // A non-recursive fn with a non-Int (enum) param, the law pins
+    // that param to a constructor literal and leaves the Int given
+    // quantified-but-unused — the canonical EnumConstantFold shape
+    // (mirrors `centerBonus.emptyNeutral` in
+    // `examples/games/checkers/ai.av`). No earlier detector accepts
+    // it: LinearArithmetic rejects the non-Int param, Induction needs
+    // a recursive-ADT given.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         type Color\n\
+         \x20   Black\n\
+         \x20   White\n\
+         \n\
+         fn score(c: Color, x: Int) -> Int\n\
+         \x20   match c\n\
+         \x20       Color.Black -> 0\n\
+         \x20       Color.White -> 1\n\
+         \n\
+         verify score law blackIsZero\n\
+         \x20   given x: Int = 0..3\n\
+         \x20   score(Color.Black, x) => 0\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "score", "blackIsZero")
+        .expect("score::blackIsZero law theorem missing from ProofIR");
+    let aver::ir::ProofStrategy::EnumConstantFold { ref unfold_fns } = theorem.strategy else {
+        panic!(
+            "constructor-pinned ground law must pin EnumConstantFold, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert!(
+        unfold_fns.iter().any(|n| n == "score"),
+        "unfold list must include the verified fn, got: {unfold_fns:?}"
+    );
+}
+
+#[test]
+fn enum_constant_fold_not_pinned_when_adt_param_unpinned() {
+    // CONSERVATIVE guard: the enum param is itself a `given` (a free
+    // quantified variable), NOT pinned to a constructor. The
+    // `split`/`rfl`/`decide` cascade can't discharge the free enum,
+    // so the detector must decline and fall through to
+    // BackendDispatch — no false universal claim.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         type Color\n\
+         \x20   Black\n\
+         \x20   White\n\
+         \n\
+         fn score(c: Color, x: Int) -> Int\n\
+         \x20   match c\n\
+         \x20       Color.Black -> 0\n\
+         \x20       Color.White -> 0\n\
+         \n\
+         verify score law alwaysZero\n\
+         \x20   given c: Color = [Color.Black]\n\
+         \x20   given x: Int = 0..3\n\
+         \x20   score(c, x) => 0\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "score", "alwaysZero")
+        .expect("score::alwaysZero law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::EnumConstantFold { .. }
+        ),
+        "law with an unpinned enum given must NOT pin EnumConstantFold, got: {:?}",
+        theorem.strategy
+    );
+}

@@ -1051,7 +1051,199 @@ fn classify_law_strategy(
             lifted: plan.lifted,
         };
     }
+    // Ground constant-fold over fixed ADT/enum constructors — the
+    // last typed fallback before `BackendDispatch`. Fires only for the
+    // narrow shape no earlier detector accepts: a non-recursive fn with
+    // ≥1 non-Int param, whose every non-Int param is pinned to a
+    // constructor literal at the law's call site(s). LinearArithmetic
+    // rejected it (non-Int param), Induction rejected it (no recursive
+    // ADT given) — so this can't steal a law another strategy owns.
+    if law.when.is_none()
+        && let Some(unfold_fns) = detect_enum_constant_fold(law, fn_name, inputs)
+    {
+        return ProofStrategy::EnumConstantFold { unfold_fns };
+    }
     ProofStrategy::BackendDispatch
+}
+
+/// Ground enum/ADT constant-fold detector (new fallback before
+/// `BackendDispatch`). Fires when the verified fn has at least one
+/// non-Int (ADT/enum) param and the law pins *every* such param to a
+/// constructor literal at the call site — so the constructor selects a
+/// fixed match arm and the whole non-recursive call tree folds to a
+/// closed term. Any scalar `given`s are quantified but irrelevant to
+/// the chosen branch. Returns the ordered unfold list (fn first, then
+/// transitively-reached callees) on match; `None` otherwise.
+///
+/// CONSERVATIVE by construction:
+/// - rejects when the fn has no non-Int param (LinearArithmetic /
+///   omega owns the all-Int shape);
+/// - rejects unless *every* non-Int param at *every* call to `fn_name`
+///   in lhs/rhs is a constructor literal (an unpinned ADT arg would
+///   leave a free variable the `split`/`rfl` cascade can't discharge);
+/// - rejects when any fn in the unfold set is self-recursive (a single
+///   `simp only [fn]` step leaves a stale recursive call);
+/// - rejects when the verified fn calls a builtin-collection method
+///   (`List.*` / `Map.* `/ `Vector.*`) — those don't fold to a ground
+///   term by `split`/`rfl`/`decide`.
+fn detect_enum_constant_fold(
+    law: &crate::ast::VerifyLaw,
+    fn_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<Vec<String>> {
+    use std::collections::BTreeSet;
+
+    let outer_fd = inputs.find_fn_def_by_call_name(fn_name)?;
+    // Need at least one non-Int (ADT/enum) param. An all-Int fn is the
+    // LinearArithmetic/omega shape; this detector must not poach it.
+    let non_int_params: Vec<&str> = outer_fd
+        .params
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, t))| t != "Int")
+        .map(|(i, _)| outer_fd.params[i].1.as_str())
+        .collect();
+    if non_int_params.is_empty() {
+        return None;
+    }
+    // The result must be a scalar (`Int` / `Bool`) ground equality the
+    // `split`/`rfl`/`decide` cascade can discharge. A wrapper return
+    // (Result/Option/record) is out of scope for this fallback.
+    let ret = outer_fd.return_type.as_str();
+    if ret != "Int" && ret != "Bool" {
+        return None;
+    }
+
+    // Every call to `fn_name` in lhs/rhs must pin each non-Int param
+    // position to a constructor literal. The Int positions may carry
+    // the quantified scalar givens (they're irrelevant to the branch).
+    let mut saw_call = false;
+    let mut ok = true;
+    check_enum_calls_pinned(&law.lhs, fn_name, outer_fd, &mut saw_call, &mut ok);
+    check_enum_calls_pinned(&law.rhs, fn_name, outer_fd, &mut saw_call, &mut ok);
+    if !saw_call || !ok {
+        return None;
+    }
+
+    // Build the transitive unfold set from both law sides + the outer
+    // fn, exactly like `detect_simp_omega_unfold`.
+    let mut fn_names: BTreeSet<String> = BTreeSet::new();
+    collect_fn_calls_expr(&law.lhs, &mut fn_names);
+    collect_fn_calls_expr(&law.rhs, &mut fn_names);
+    fn_names.insert(fn_name.to_string());
+    loop {
+        let before = fn_names.len();
+        let snapshot: Vec<String> = fn_names.iter().cloned().collect();
+        for fd in iter_all_fn_defs(inputs) {
+            if !snapshot.contains(&fd.name) {
+                continue;
+            }
+            for stmt in fd.body.stmts() {
+                match stmt {
+                    crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                        collect_fn_calls_expr(e, &mut fn_names);
+                    }
+                }
+            }
+        }
+        if fn_names.len() == before {
+            break;
+        }
+    }
+
+    // Self-recursion rejection — a single unfold step can't close a
+    // recursive call. Mirrors the `detect_simp_omega_unfold` guard.
+    for fd in iter_all_fn_defs(inputs) {
+        if !fn_names.contains(&fd.name) {
+            continue;
+        }
+        let mut self_only: BTreeSet<String> = BTreeSet::new();
+        self_only.insert(fd.name.clone());
+        if body_calls_any_of_inputs(&fd.body, &self_only) {
+            return None;
+        }
+    }
+
+    // Order: top-level law fn first (Lean's `simp only`/`unfold` peels
+    // the outermost call layer first), then the transitively-reached
+    // callees.
+    let mut ordered: Vec<String> = Vec::new();
+    if fn_names.contains(fn_name) {
+        ordered.push(fn_name.to_string());
+    }
+    for n in &fn_names {
+        if n != fn_name {
+            ordered.push(n.clone());
+        }
+    }
+    Some(ordered)
+}
+
+/// Walk an expr looking for calls to `fn_name`; for each, verify every
+/// non-Int param position carries a constructor literal. Sets `saw_call`
+/// on the first matched call and clears `ok` on any unpinned ADT arg.
+fn check_enum_calls_pinned(
+    expr: &Spanned<crate::ast::Expr>,
+    fn_name: &str,
+    fd: &FnDef,
+    saw_call: &mut bool,
+    ok: &mut bool,
+) {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            if let Some(name) = expr_to_dotted_name(&callee.node) {
+                let leaf = name.rsplit('.').next().unwrap_or(&name);
+                if leaf == fn_name && args.len() == fd.params.len() {
+                    *saw_call = true;
+                    for (i, (_, ptype)) in fd.params.iter().enumerate() {
+                        if ptype != "Int" && !is_constructor_literal(&args[i].node) {
+                            *ok = false;
+                        }
+                    }
+                }
+            }
+            check_enum_calls_pinned(callee, fn_name, fd, saw_call, ok);
+            for a in args {
+                check_enum_calls_pinned(a, fn_name, fd, saw_call, ok);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            check_enum_calls_pinned(l, fn_name, fd, saw_call, ok);
+            check_enum_calls_pinned(r, fn_name, fd, saw_call, ok);
+        }
+        Expr::Neg(inner) | Expr::ErrorProp(inner) => {
+            check_enum_calls_pinned(inner, fn_name, fd, saw_call, ok);
+        }
+        Expr::Attr(obj, _) => check_enum_calls_pinned(obj, fn_name, fd, saw_call, ok),
+        Expr::List(elems) | Expr::Tuple(elems) => {
+            for e in elems {
+                check_enum_calls_pinned(e, fn_name, fd, saw_call, ok);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// True when `expr` is a fixed ADT/enum constructor literal — either a
+/// built-in `Expr::Constructor` (`Option.Some`, `Result.Ok`) or a
+/// dotted `Type.Variant` access (`CellContent.Empty`, `Color.Black`)
+/// where both segments start uppercase (a user enum variant, not a
+/// builtin scalar-namespace method like `Int.max`).
+fn is_constructor_literal(expr: &crate::ast::Expr) -> bool {
+    use crate::ast::Expr;
+    match expr {
+        Expr::Constructor(_, _) => true,
+        Expr::Attr(obj, field) => {
+            let head_upper = matches!(
+                &obj.node,
+                Expr::Ident(n) if n.chars().next().is_some_and(|c| c.is_uppercase())
+            );
+            let field_upper = field.chars().next().is_some_and(|c| c.is_uppercase());
+            head_upper && field_upper
+        }
+        _ => false,
+    }
 }
 
 /// Internal scratch for the simp+omega detector. Carries the
