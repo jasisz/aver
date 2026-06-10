@@ -636,6 +636,292 @@ fn find_list_induction_target(law: &VerifyLaw) -> Option<usize> {
         .position(|given| given.type_name.trim().starts_with("List<"))
 }
 
+/// Which map query a fold-homomorphism law inspects on the map built by the
+/// verified fold fn. `Get` covers the `Map.get` / `Option.withDefault(Map.get…)`
+/// shape (value homomorphism); `Has` covers the `Map.has` presence shape.
+enum MapFoldQuery {
+    Get,
+    Has,
+}
+
+/// A recognized **map-fold-homomorphism** law: one side queries
+/// `Map.get`/`Map.has` over `<verified-fold> <list-given>` at a per-element
+/// `<key-given>`, where the verified fold's cons step updates the map at the
+/// cons head (e.g. `countWords` = fold of `incCount`, itself a `Map.set` keyed
+/// on the inserted word). The matched-key branch closes via the self-key Map
+/// lemmas; the DIFFERENT-key branch needs the general-key prelude lemmas
+/// (`AverMap.get_set_ne` / `AverMap.has_set`) with the `head ≠ key` fact the
+/// `by_cases` on key-equality puts in scope.
+struct MapFoldHomomorphism {
+    query: MapFoldQuery,
+    /// Lean name of the per-element key given (the second arg to `get`/`has`).
+    key_lean: String,
+}
+
+/// Pull the dotted source callee name off a `Map.get`/`Map.has`/`…` call.
+fn call_dotted_name(expr: &crate::ast::Spanned<crate::ast::Expr>) -> Option<String> {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::FnCall(callee, _) => super::shared::expr_dotted_name(callee),
+        _ => None,
+    }
+}
+
+/// `Map.get(<fold>(<list>), <key>)` / `Map.has(<fold>(<list>), <key>)` where
+/// `<fold>` is the verified fn applied to the list given and `<key>` is another
+/// given. Returns the key given's name when matched.
+fn map_query_over_fold(
+    expr: &crate::ast::Spanned<crate::ast::Expr>,
+    fold_fn: &str,
+    list_given: &str,
+    given_names: &[String],
+) -> Option<String> {
+    use crate::ast::Expr;
+    let Expr::FnCall(_, args) = &expr.node else {
+        return None;
+    };
+    if args.len() != 2 {
+        return None;
+    }
+    // First arg: `<fold_fn>(<list_given>)`.
+    let Expr::FnCall(map_callee, map_args) = &args[0].node else {
+        return None;
+    };
+    if super::shared::expr_dotted_name(map_callee).as_deref() != Some(fold_fn) {
+        return None;
+    }
+    if map_args.len() != 1
+        || !matches!(&map_args[0].node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == list_given)
+    {
+        return None;
+    }
+    // Second arg: a bare given that is NOT the list itself (the per-element key).
+    let key = match &args[1].node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n.clone(),
+        _ => return None,
+    };
+    if key == list_given || !given_names.iter().any(|g| g == &key) {
+        return None;
+    }
+    Some(key)
+}
+
+/// Recognize the map-fold-homomorphism shape on either side of the law. The
+/// verified fn must be a single-list-structural fold whose cons step updates a
+/// map via `Map.set` (so the general-key prelude lemmas are the missing piece).
+fn recognize_map_fold_homomorphism(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+    target_idx: usize,
+) -> Option<MapFoldHomomorphism> {
+    use crate::ast::Expr;
+    // The verified fn folds a single list and its cons step ultimately calls
+    // `Map.set` (directly or through one helper level).
+    let fd = ctx.fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())?;
+    crate::codegen::recursion::detect::single_list_structural_param_index(fd)?;
+    if !fold_step_updates_map(fd, ctx) {
+        return None;
+    }
+
+    let list_given = &law.givens.get(target_idx)?.name;
+    let given_names: Vec<String> = law.givens.iter().map(|g| g.name.clone()).collect();
+
+    // Scan a side for `Option.withDefault(Map.get(fold(list), key), d)` (Get) or
+    // `Map.has(fold(list), key)` (Has). `withDefault` may be the immediate
+    // wrapper of a `get`, or `get` may appear bare (no default).
+    let recognize_side = |side: &crate::ast::Spanned<Expr>| -> Option<(MapFoldQuery, String)> {
+        match call_dotted_name(side).as_deref() {
+            Some("Option.withDefault") | Some("Map.getD") => {
+                let Expr::FnCall(_, args) = &side.node else {
+                    return None;
+                };
+                let inner = args.first()?;
+                if call_dotted_name(inner).as_deref() != Some("Map.get") {
+                    return None;
+                }
+                let key = map_query_over_fold(inner, &vb.fn_name, list_given, &given_names)?;
+                Some((MapFoldQuery::Get, key))
+            }
+            Some("Map.get") => {
+                let key = map_query_over_fold(side, &vb.fn_name, list_given, &given_names)?;
+                Some((MapFoldQuery::Get, key))
+            }
+            Some("Map.has") => {
+                let key = map_query_over_fold(side, &vb.fn_name, list_given, &given_names)?;
+                Some((MapFoldQuery::Has, key))
+            }
+            _ => None,
+        }
+    };
+
+    let (query, key) = recognize_side(&law.lhs).or_else(|| recognize_side(&law.rhs))?;
+    let key_lean = intro_names
+        .get(given_names.iter().position(|g| g == &key)?)?
+        .clone();
+    Some(MapFoldHomomorphism { query, key_lean })
+}
+
+/// Whether the verified fold's cons step updates a map — its body (or a helper
+/// it calls one level deep) contains a `Map.set` call. Conservative: a false
+/// positive only widens the simp set of a `sorry`-floored ladder.
+fn fold_step_updates_map(fd: &crate::ast::FnDef, ctx: &CodegenContext) -> bool {
+    fn expr_calls_map_set(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+        use crate::ast::Expr;
+        match &expr.node {
+            Expr::FnCall(callee, args) => {
+                super::shared::expr_dotted_name(callee).as_deref() == Some("Map.set")
+                    || args.iter().any(expr_calls_map_set)
+                    || expr_calls_map_set(callee)
+            }
+            Expr::Attr(base, _) => expr_calls_map_set(base),
+            Expr::BinOp(_, l, r) => expr_calls_map_set(l) || expr_calls_map_set(r),
+            Expr::Neg(inner) | Expr::ErrorProp(inner) => expr_calls_map_set(inner),
+            Expr::Match { subject, arms } => {
+                expr_calls_map_set(subject) || arms.iter().any(|a| expr_calls_map_set(&a.body))
+            }
+            Expr::Constructor(_, inner) => inner.as_deref().is_some_and(expr_calls_map_set),
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+                items.iter().any(expr_calls_map_set)
+            }
+            _ => false,
+        }
+    }
+    fn body_calls_map_set(fd: &crate::ast::FnDef) -> bool {
+        fd.body.stmts().iter().any(|s| match s {
+            crate::ast::Stmt::Expr(e) | crate::ast::Stmt::Binding(_, _, e) => expr_calls_map_set(e),
+        })
+    }
+    fn collect_called_fns(
+        expr: &crate::ast::Spanned<crate::ast::Expr>,
+        out: &mut BTreeSet<String>,
+    ) {
+        use crate::ast::Expr;
+        if let Expr::FnCall(callee, args) = &expr.node {
+            if let Some(n) = super::shared::expr_dotted_name(callee) {
+                out.insert(n);
+            }
+            args.iter().for_each(|a| collect_called_fns(a, out));
+        }
+        match &expr.node {
+            Expr::FnCall(callee, _) => collect_called_fns(callee, out),
+            Expr::Attr(base, _) => collect_called_fns(base, out),
+            Expr::BinOp(_, l, r) => {
+                collect_called_fns(l, out);
+                collect_called_fns(r, out);
+            }
+            Expr::Neg(i) | Expr::ErrorProp(i) => collect_called_fns(i, out),
+            Expr::Match { subject, arms } => {
+                collect_called_fns(subject, out);
+                arms.iter().for_each(|a| collect_called_fns(&a.body, out));
+            }
+            Expr::Constructor(_, Some(i)) => collect_called_fns(i, out),
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+                items.iter().for_each(|i| collect_called_fns(i, out));
+            }
+            _ => {}
+        }
+    }
+    if body_calls_map_set(fd) {
+        return true;
+    }
+    let mut callees = BTreeSet::new();
+    for s in fd.body.stmts() {
+        match s {
+            crate::ast::Stmt::Expr(e) | crate::ast::Stmt::Binding(_, _, e) => {
+                collect_called_fns(e, &mut callees)
+            }
+        }
+    }
+    callees.iter().any(|name| {
+        ctx.fn_def_by_name(name, ctx.active_module_scope().as_deref())
+            .is_some_and(body_calls_map_set)
+    })
+}
+
+/// Emit the dedicated map-fold-homomorphism proof: `induction <list>`, and in
+/// the cons arm `by_cases <head> = <key>` to split matched vs different key,
+/// then `cases` the inner map lookup. The matched branch closes via the self-key
+/// Map lemmas; the different-key branch fires the conditional `AverMap.get_set_ne`
+/// (its `head ≠ key` side-goal discharged from the `by_cases` `false` fact) and
+/// the general `AverMap.has_set`. Each arm keeps a `sorry` floor so a shape the
+/// kernel can't actually close degrades to an honest sorry (caught by the
+/// universal metric), never an unsolved-goals build error — all tactics used
+/// (`simp_all`, `omega`, the kernel-proved Map lemmas) are sound.
+fn emit_map_fold_homomorphism(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+    target_idx: usize,
+    plan: &MapFoldHomomorphism,
+) -> AutoProof {
+    let simp_list = law_simp_defs(ctx, vb, law)
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let target_lean = &intro_names[target_idx];
+    let key = &plan.key_lean;
+    let fold_lean = aver_name_to_lean(&vb.fn_name);
+
+    // The general-key Map lemmas plus the bool/decidable bridges `simp` needs to
+    // collapse the matched/different-key facts. `get_set_self`/`get_set_ne` for
+    // the Get shape, `has_set` for the Has shape; including both is harmless
+    // (a non-matching lemma simply never fires).
+    // Do NOT add `AverMap.get`/`AverMap.has` to the cons-arm rewrite set: they
+    // would unfold `has`/`get` to their `.any`/`match` forms BEFORE the
+    // `*_set*` lemmas (stated over `AverMap.has`/`AverMap.get`) can match the
+    // `… (set m k v) …` head. The defs are unfolded only in the nil arm.
+    let map_lemmas = match plan.query {
+        MapFoldQuery::Get => "AverMap.get_set_self, AverMap.get_set_ne, beq_iff_eq",
+        MapFoldQuery::Has => "AverMap.has_set, beq_iff_eq",
+    };
+    // The Get shape leaves a `+ 1` / `0` Peano residual the IH closes under
+    // `omega`; the Has shape is pure Bool with nothing for `omega` to do.
+    let close = match plan.query {
+        MapFoldQuery::Get => " <;> omega",
+        MapFoldQuery::Has => "",
+    };
+    // List membership only matters for the Has shape; harmless in the unfold set
+    // otherwise. `at *` rewrites the IH alongside the goal so both expose the
+    // same `head ?= key` scrutinee.
+    let nil_simp = format!("{simp_list}, AverMap.get, AverMap.has");
+
+    // Cons arm. `simp only [defs] at *` unfolds the fold + map updater (exposing
+    // `AverMap.set … head …` and the inner `AverMap.get … head`); `by_cases head
+    // = key` splits matched vs different key; `cases` the inner lookup. Each rung
+    // is gated on `; done` (or `<;> omega`, itself closing) so a `simp_all` that
+    // makes progress but leaves a goal THROWS and `first` falls through — without
+    // it, the goal-leaving `simp_all` counts as success and `first` would stop at
+    // an unsolved-goals build error. Two sound rungs before the `sorry` floor:
+    // (1) Map lemmas + IH, with `omega` (Get arithmetic residual) or `try rfl;
+    // done` (the residual `(decide (key = head) || …) = (key == head || …)`, where
+    // Bool `==` and `decide (… = …)` are definitionally equal for the key type);
+    // (2) the same set, plain `; done`. A shape the kernel can't close degrades to
+    // the honest `sorry` (caught by the universal metric), never a build error.
+    let rung_close = match plan.query {
+        MapFoldQuery::Get => format!("simp_all [{map_lemmas}, hkey, hget]{close}"),
+        MapFoldQuery::Has => format!("simp_all [{map_lemmas}, hkey, hget]; try rfl; done"),
+    };
+    let cons_arm = format!(
+        "| cons head tail ih => simp only [{simp_list}, List.contains_cons] at * <;> by_cases hkey : head = {key} <;> cases hget : AverMap.get ({fold_lean} tail) head <;> first | ({rung_close}) | (simp_all [{map_lemmas}, hkey, hget]; done) | sorry"
+    );
+
+    let proof_lines = vec![
+        format!("  intro {}", intro_names.join(" ")),
+        format!("  induction {target_lean} with"),
+        format!("  | nil => first | (simp [{nil_simp}]) | sorry"),
+        format!("  {cons_arm}"),
+    ];
+
+    AutoProof {
+        support_lines: Vec::new(),
+        proof_lines,
+        replaces_theorem: false,
+    }
+}
+
 /// Lean structural induction over a builtin `List<T>` given:
 /// `induction xs with | nil => simp [defs] | cons head tail ih => simp_all [defs]`.
 /// `List.length_cons` is a default simp lemma, so a length-relating law over a
@@ -649,6 +935,24 @@ fn emit_list_induction(
     target_idx: usize,
     discovered: &[String],
 ) -> Option<AutoProof> {
+    // Map-fold-homomorphism: a law querying `Map.get`/`Map.has` over a
+    // `Map.set`-folding builder at a per-element key. Its cons arm needs the
+    // general-key prelude lemmas (`get_set_ne`/`has_set`) under a `by_cases` on
+    // key-equality, which the generic ladder below does not produce. Tried first
+    // for this shape (only when no discovery feedback is in play, so committed
+    // discovered lemmas still route through their own ladder).
+    if discovered.is_empty()
+        && let Some(plan) = recognize_map_fold_homomorphism(vb, law, ctx, intro_names, target_idx)
+    {
+        return Some(emit_map_fold_homomorphism(
+            vb,
+            law,
+            ctx,
+            intro_names,
+            target_idx,
+            &plan,
+        ));
+    }
     let mut simp_defs: BTreeSet<String> = law_simp_defs(ctx, vb, law);
     // Rev anti-homomorphism: prepend the proved aux lemmas (support_lines) and
     // add the rev-distribution + append fn to the simp set so the cons arm
