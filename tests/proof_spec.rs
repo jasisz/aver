@@ -4373,17 +4373,18 @@ fn lean_proves_generalizing_induction_take_drop_when_lake_is_available() {
 /// Leaf-reach: a user fn named `max` (colliding with Lean 4's Max-typeclass
 /// `max`) is emitted as `max'`, so the proof can reference the user's
 /// recursion instead of the typeclass form. Before the escape the generated
-/// Lean failed to build (ambiguous/typeclass `max`); now it builds clean —
-/// proven by `assert_proof_builds` (which fails if lake errors) with the law
-/// honestly falling to one `sorry` (max-associativity is a 3-var induction the
-/// bare prover leaves open; the point is the file BUILDS, unblocking the
-/// decomposition loop on the max/min family). TIP isaplanner prop_22.
+/// Lean failed to build (ambiguous/typeclass `max`); now it builds clean.
+/// max-associativity USED to fall to one honest `sorry` (a 3-var induction the
+/// bare prover left open); the both-args-peeling generalizing emit now closes
+/// it as a GENUINE universal — `induction a generalizing b c with … cases b
+/// <;> cases c <;> simp_all`, `#print axioms = [propext]`. Budget is 0:
+/// fully proven. TIP isaplanner prop_22.
 #[test]
 fn lean_escapes_user_max_min_collision_when_lake_is_available() {
     assert_proof_builds_with_sorry_budget(
         "proof-corpus/tip/isaplanner/prop_22.av",
         "aver-max-escape",
-        1,
+        0,
     );
 }
 
