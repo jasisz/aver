@@ -4732,9 +4732,17 @@ verify weird law weirdSpec
 
         let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
         let lean = generated_lean_file(&out);
-        assert!(lean.contains("def termToString__fuel"));
-        assert!(lean.contains("def subst__fuel"));
-        assert!(lean.contains("def countS__fuel"));
+        // termToString / subst / countS recurse structurally on the `Term`
+        // ADT, so they emit as plain structural defs (Lean infers termination,
+        // definitional unfolds) — the fuel retirement for SizeOfStructural. No
+        // `__fuel` helper. `eval` stays outside the proof subset (`partial def`);
+        // step/stepApp remain a mutual-fuel SCC (computed-arg recursion).
+        assert!(lean.contains("def termToString (t : Term)"));
+        assert!(lean.contains("def subst (x : String) (s : Term) (t : Term)"));
+        assert!(lean.contains("def countS (t : Term)"));
+        assert!(!lean.contains("def termToString__fuel"));
+        assert!(!lean.contains("def subst__fuel"));
+        assert!(!lean.contains("def countS__fuel"));
         assert!(!lean.contains("partial def termToString"));
         assert!(!lean.contains("partial def subst"));
         assert!(!lean.contains("partial def countS"));
