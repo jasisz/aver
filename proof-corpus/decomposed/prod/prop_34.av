@@ -1,0 +1,38 @@
+module Prop34
+    intent =
+        "TIP prod prop_34: *2 x y = mult x y Z (direct mult equals accumulator mult)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+fn mult(x: Nat, y: Nat, z: Nat) -> Nat
+    match x
+        Nat.Z -> z
+        Nat.S(x2) -> mult(x2, y, plus(y, z))
+
+fn times(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> plus(y, times(z, y))
+
+verify plus law plusRightZero
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, Nat.Z) => x
+
+verify mult law multAccumGen
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given z: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    mult(x, y, z) => plus(times(x, y), z)
+
+verify times law multAccum
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    times(x, y) => mult(x, y, Nat.Z)
