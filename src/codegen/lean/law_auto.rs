@@ -486,6 +486,7 @@ pub fn emit_verify_law_forall_auto_proof(
                 } else {
                     &proof_intro_names
                 };
+                let uses_max_min = linear_arith_uses_max_min(unfold_fns, ctx);
                 return Some(AutoProof {
                     support_lines: Vec::new(),
                     proof_lines: emit_simp_omega_from_ir(
@@ -495,6 +496,7 @@ pub fn emit_verify_law_forall_auto_proof(
                         lifted,
                         chosen_intro,
                         law.when.is_some(),
+                        uses_max_min,
                         ctx,
                     ),
                     replaces_theorem: false,
@@ -520,6 +522,7 @@ pub fn emit_verify_law_forall_auto_proof(
 /// emit body of the legacy `emit_simp_omega_law` (kept as fallback
 /// for `BackendDispatch`) but sources `unfold_fns` / `wrapper_
 /// return` / `smart_guard` from `ProofIR.law_theorems[*].strategy`.
+#[allow(clippy::too_many_arguments)]
 fn emit_simp_omega_from_ir(
     unfold_fns: &[String],
     wrapper_return: bool,
@@ -527,6 +530,7 @@ fn emit_simp_omega_from_ir(
     lifted: bool,
     intro_names: &[String],
     has_when: bool,
+    uses_max_min: bool,
     ctx: &CodegenContext,
 ) -> Vec<String> {
     let lean_names: Vec<String> = unfold_fns.iter().map(|n| aver_name_to_lean(n)).collect();
@@ -585,12 +589,95 @@ fn emit_simp_omega_from_ir(
         // premise opaque and `omega` fails ("no usable constraints"),
         // wrongly rejecting a valid law. Without a `when`, keep the
         // conservative `simp only` — there is no premise to simplify.
-        let tac = if has_when {
+        let tac = if uses_max_min {
+            // `Int.max`/`Int.min` lower to core `max`/`min`, which
+            // `omega` treats as opaque atoms (it has no `max`/`min`
+            // theory). Unfolding `Int.max_def`/`Int.min_def` exposes
+            // the underlying `if a ≤ b then …` so `split` peels each
+            // branch into a linear goal `omega` can close. `try split`
+            // (not bare `split`) keeps this safe when the unfold leaves
+            // nothing to split — a bare `split` on a split-free goal is
+            // an error. `simp_all` discharges the residual `if`/premise
+            // shape before `omega`. GATED: only laws whose unfold chain
+            // actually calls `Int.max`/`Int.min` take this path; every
+            // other linear-arithmetic law stays byte-identical to the
+            // `simp only [...] <;> omega` / `simp_all [...] <;> omega`
+            // forms below so no existing law regresses.
+            let lemmas: Vec<String> = lean_names
+                .iter()
+                .cloned()
+                .chain(["Int.max_def".to_string(), "Int.min_def".to_string()])
+                .collect();
+            format!(
+                "simp only [{}] <;> (try split) <;> simp_all <;> omega",
+                lemmas.join(", ")
+            )
+        } else if has_when {
             format!("simp_all [{}] <;> omega", lean_names.join(", "))
         } else {
             format!("simp only [{}] <;> omega", lean_names.join(", "))
         };
         intro_then(intro_names, vec![tac])
+    }
+}
+
+/// Detect whether the LinearArithmetic unfold chain calls
+/// `Int.max` / `Int.min`. Drives the gated `Int.max_def`/`Int.min_def`
+/// split tactic in [`emit_simp_omega_from_ir`] — only laws that
+/// actually involve min/max take the split path; everything else stays
+/// on the byte-identical `simp only`/`simp_all` + `omega` forms.
+///
+/// Walks the *bodies* of every fn named in `unfold_fns` (the same fns
+/// the tactic will `simp only [...]`-unfold), so an `Int.max` buried in
+/// a helper that the law transitively unfolds is still caught. Resolves
+/// each name via the symbol table (entry scope, then every dep module),
+/// matching how the unfold list itself is sourced.
+fn linear_arith_uses_max_min(unfold_fns: &[String], ctx: &CodegenContext) -> bool {
+    unfold_fns.iter().any(|name| {
+        let fd = ctx.fn_def_by_name(name, None).or_else(|| {
+            ctx.modules
+                .iter()
+                .find_map(|m| ctx.fn_def_by_name(name, Some(&m.prefix)))
+        });
+        fd.is_some_and(|fd| fn_body_calls_max_min(&fd.body))
+    })
+}
+
+/// True when `body` contains a call to `Int.max` or `Int.min`.
+fn fn_body_calls_max_min(body: &crate::ast::FnBody) -> bool {
+    body.stmts().iter().any(|stmt| match stmt {
+        crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => expr_calls_max_min(e),
+    })
+}
+
+fn expr_calls_max_min(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::FnCall(f, args) => {
+            let is_max_min = crate::codegen::common::expr_to_dotted_name(&f.node)
+                .is_some_and(|n| n == "Int.max" || n == "Int.min");
+            is_max_min || args.iter().any(expr_calls_max_min)
+        }
+        Expr::BinOp(_, l, r) => expr_calls_max_min(l) || expr_calls_max_min(r),
+        Expr::Neg(inner) | Expr::Attr(inner, _) | Expr::ErrorProp(inner) => {
+            expr_calls_max_min(inner)
+        }
+        Expr::Match { subject, arms } => {
+            expr_calls_max_min(subject) || arms.iter().any(|arm| expr_calls_max_min(&arm.body))
+        }
+        Expr::Constructor(_, Some(inner)) => expr_calls_max_min(inner),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(expr_calls_max_min)
+        }
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_calls_max_min(k) || expr_calls_max_min(v)),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_calls_max_min(e)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_calls_max_min(base) || updates.iter().any(|(_, e)| expr_calls_max_min(e))
+        }
+        Expr::TailCall(boxed) => boxed.args.iter().any(expr_calls_max_min),
+        _ => false,
     }
 }
 

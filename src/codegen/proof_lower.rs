@@ -1377,8 +1377,21 @@ fn collect_fn_calls_expr(
                 // segment's case discriminates user fns from
                 // namespace types (cross-module user calls survive
                 // because the leaf fn name starts lower-case).
+                //
+                // Builtin *scalar*-namespace methods (`Int.max`,
+                // `Float.abs`, `Bool.and`, `String.len`, …) have a
+                // lowercase leaf but lower to **core** Lean ops, not
+                // to unfoldable user defs — `Int.max` becomes `max`,
+                // there is no constant named `Int.max` in scope. Citing
+                // them in `simp only [...]` is a hard `unknown constant`
+                // error, so the scalar namespaces are excluded by their
+                // HEAD segment. Cross-module USER calls (`MyModule.helper`)
+                // keep flowing through — only the four builtin scalar
+                // namespaces are filtered.
                 let last = name.rsplit('.').next().unwrap_or(&name);
-                if last.chars().next().is_some_and(|c| c.is_lowercase()) {
+                let head = name.split('.').next().unwrap_or(&name);
+                let is_builtin_scalar_ns = matches!(head, "Int" | "Float" | "Bool" | "String");
+                if !is_builtin_scalar_ns && last.chars().next().is_some_and(|c| c.is_lowercase()) {
                     out.insert(name);
                 }
             }

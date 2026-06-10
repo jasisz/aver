@@ -4517,6 +4517,65 @@ verify sumSafe law commutative
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// A LinearArithmetic law over a fn using `Int.max`/`Int.min` must close. Two
+/// bugs blocked it: (1) `Int.max` (lowercase leaf) leaked into the unfold set as
+/// the non-existent constant `Int.max` → `unknown constant` compile error;
+/// (2) even removed, `omega` treats `max` as opaque. Fix: filter `Int`/`Float`/
+/// `Bool`/`String` scalar-namespace methods from the unfold set, and — gated on
+/// the law actually using max/min — emit `simp only […, Int.max_def, Int.min_def]
+/// <;> (try split) <;> simp_all <;> omega` (byte-identical otherwise). (Found on
+/// the real `games/rogue/types.av` calcDamage = `Int.max(1, atk-def)`.)
+#[test]
+fn lean_proves_int_max_linear_arith_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping Int.max test: `lake` not available");
+        return;
+    }
+    let source = r#"module MaxPos
+    intent = "an Int.max LinearArithmetic law must unfold Int.max_def + split"
+    effects []
+
+fn dmg(atk: Int, def: Int) -> Int
+    Int.max(1, atk - def)
+
+verify dmg law alwaysPositive
+    given atk: Int = [0, 5, 10]
+    given def: Int = [0, 3, 20]
+    dmg(atk, def) > 0 => true
+"#;
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-maxpos-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-maxpos-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "an Int.max LinearArithmetic law must close kernel-clean\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// LUKA 2: generalizing induction and sibling-lemma injection must COMBINE. The
 /// `dropRevLen` law's verified fn (`drop`) threads a Peano param (`n`) while
 /// recursing on a list, so it needs `induction xs generalizing n`; AND it needs
