@@ -98,18 +98,6 @@ pub(crate) fn peano_ctor_role(
     }
 }
 
-/// Does function `fd` recurse structurally on a (lifted) Peano parameter? Such a
-/// function must NOT be fuel-encoded on a proof backend that lifts the type to a
-/// host builtin `Nat`: the recursion is then structural on `Nat` (host `Nat.rec`)
-/// and a fuel wrapper would only re-introduce the unfolding barrier the lift
-/// removes. Conservative: requires a parameter of a canonical Peano type.
-pub(crate) fn recurses_on_peano(fd: &FnDef, ctx: &CodegenContext) -> bool {
-    let peanos = collect_peano_types(ctx);
-    fd.params
-        .iter()
-        .any(|(_, ty)| peanos.iter().any(|p| ty.trim() == p.type_name))
-}
-
 /// Collect all function names called in an expression (top-level only).
 pub(crate) fn collect_called_fns(
     expr: &Spanned<Expr>,
