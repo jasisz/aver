@@ -1,6 +1,11 @@
 module Prop16
     intent =
         "TIP isaplanner prop_16: if xs = nil then last(cons(x, xs)) = x."
+        "The premise xs = nil makes cons(x, xs) = [x], so the faithful"
+        "obligation is last([x]) = x. The earlier encoding stated an"
+        "UNCONDITIONAL last(cons(x, xs)) = x and hid its falseness behind a"
+        "nil-only given domain — a false universal (counterexample:"
+        "last([1] ++ [2, 3]) = 3, not 1). Corrected to the xs = nil instance."
     effects []
 
 type Nat
@@ -16,5 +21,4 @@ fn last(xs: List<Nat>) -> Nat
 
 verify last law lastSingleton
     given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
-    given xs: List<Nat> = [[], [], []]
-    last(List.concat([x], xs)) => x
+    last([x]) => x
