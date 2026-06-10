@@ -1,0 +1,46 @@
+module Prop75
+    intent =
+        "TIP isaplanner prop_75: count n xs + count n [m] = count n (m :: xs)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn count(x: Nat, y: List<Nat>) -> Nat
+    match y
+        [] -> Nat.Z
+        [z, ..ys] -> match eqNat(x, z)
+            true -> Nat.S(count(x, ys))
+            false -> count(x, ys)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+verify plus law plusComm
+    given a: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given b: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(a, b) => plus(b, a)
+
+verify count law countHomo
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    given ys: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    count(n, List.concat(xs, ys)) => plus(count(n, xs), count(n, ys))
+
+verify count law countConsSplit
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given m: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.Z)]]
+    plus(count(n, xs), count(n, [m])) => count(n, List.concat([m], xs))

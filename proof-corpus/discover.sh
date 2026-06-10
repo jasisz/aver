@@ -32,7 +32,9 @@ fi
 tasks_with=0
 total_lemmas=0
 total=0
-for f in $(find "$ROOT" -name '*.av' | sort); do
+# Exclude decomposed/ (LLM helper-augmented copies — a separate metric; see
+# decomposed/README.md). Reach is measured on the bare tip/ tasks.
+for f in $(find "$ROOT" -name '*.av' -not -path '*/decomposed/*' | sort); do
   [ -e "$f" ] || continue
   total=$((total + 1))
   out="$(mktemp -d)"
