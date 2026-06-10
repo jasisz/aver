@@ -4448,6 +4448,75 @@ fn lean_proves_accumulator_generalizing_qrev_when_lake_is_available() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// A law whose verified fn body propagates errors with `?` must still collect
+/// the `?`-wrapped calls into its unfold set. `sumSafe`'s body is
+/// `x = safe(a)?; y = safe(b)?; Ok(x + y)` — every call hides behind `?`
+/// (`Expr::ErrorProp`). Before `collect_fn_calls_expr` handled `ErrorProp`, the
+/// unfold set missed `safe`, so the LinearArithmetic tactic stalled with "simp
+/// made no progress" and the commutativity law stayed open. With the arm, `safe`
+/// unfolds and the law closes kernel-clean. (Found on the real
+/// `refinement/natural_app.av` safeSum commutativity — a `?`-pipeline the TIP
+/// corpus never exercises.)
+#[test]
+fn lean_proves_error_prop_pipeline_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping ?-pipeline test: `lake` not available");
+        return;
+    }
+    let source = r#"module QPipe
+    intent = "a law over a ?-propagating body must unfold the ?-wrapped calls"
+    effects []
+
+fn safe(x: Int) -> Result<Int, String>
+    ? "non-negative gate"
+    match x >= 0
+        true -> Result.Ok(x)
+        false -> Result.Err("neg")
+
+fn sumSafe(a: Int, b: Int) -> Result<Int, String>
+    ? "add two gated ints; ? short-circuits"
+    x = safe(a)?
+    y = safe(b)?
+    Result.Ok(x + y)
+
+verify sumSafe law commutative
+    given a: Int = [0, 1, 7]
+    given b: Int = [0, 2, 9]
+    sumSafe(a, b) => sumSafe(b, a)
+"#;
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-qpipe-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-qpipe-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "a law over a ?-propagating body must unfold its ?-wrapped calls and close\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// LUKA 2: generalizing induction and sibling-lemma injection must COMBINE. The
 /// `dropRevLen` law's verified fn (`drop`) threads a Peano param (`n`) while
 /// recursing on a list, so it needs `induction xs generalizing n`; AND it needs

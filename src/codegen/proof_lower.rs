@@ -1403,6 +1403,24 @@ fn collect_fn_calls_expr(
                 collect_fn_calls_expr(arg, out);
             }
         }
+        // Value-carrying expressions whose sub-exprs hold fn calls the proof's
+        // unfold set needs. Crucially `ErrorProp` (`?`): a refinement-pipeline
+        // body like `na = fromInt(a)?; add(na, nb)?` hides every call behind `?`,
+        // so without this arm the unfold set misses `fromInt`/`add` and the
+        // LinearArithmetic tactic stalls with "simp made no progress". Mirrors
+        // `proof_recognize::collect_called_fns`.
+        Expr::ErrorProp(inner) | Expr::Neg(inner) => collect_fn_calls_expr(inner, out),
+        Expr::Constructor(_, Some(arg)) => collect_fn_calls_expr(arg, out),
+        Expr::RecordCreate { fields, .. } => {
+            for (_, e) in fields {
+                collect_fn_calls_expr(e, out);
+            }
+        }
+        Expr::List(elems) | Expr::Tuple(elems) | Expr::IndependentProduct(elems, _) => {
+            for e in elems {
+                collect_fn_calls_expr(e, out);
+            }
+        }
         _ => {}
     }
 }
