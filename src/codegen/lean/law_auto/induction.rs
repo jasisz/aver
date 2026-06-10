@@ -368,7 +368,17 @@ fn earlier_law_lemmas(
         // synthesized downstream. Tight enough to stay relevant (a length-homo
         // in a count file shares neither cone nor subject → rejected); loop
         // safety is handled separately by `simp_entries`.
-        if mentions.is_subset(&scope) || mentions.contains(&subject) {
+        // Admit by the subject rule only when the sibling is a law ABOUT a fn
+        // this law's proof actually involves (its OWN subject fn ∈ scope). A
+        // sibling that merely mentions the subject incidentally on its RHS —
+        // `length (x ++ y) = plus …` carrying `plus` into a `plus`-commutativity
+        // proof — is inert in the goal (nothing to rewrite) and only adds noise.
+        // The genuine decomposition case is preserved: a count-homomorphism
+        // helper IS a law about `count`, the very subject it shares.
+        let prev_subject = aver_name_to_lean(&prev.fn_name);
+        if mentions.is_subset(&scope)
+            || (mentions.contains(&subject) && scope.contains(&prev_subject))
+        {
             out.push(crate::codegen::lemma_discovery::CommittedLemma::reference(
                 name, text,
             ));
@@ -873,10 +883,16 @@ fn emit_list_induction(
             "  | (simp only [{}] <;> omega)",
             fast_lemmas.join(", ")
         ));
-        proof_lines.push(format!(
-            "  | (simp only [{}] <;> omega)",
-            fast_unfolds.into_iter().collect::<Vec<_>>().join(", ")
-        ));
+        // The def-unfolding variant is a distinct alternative only when it adds
+        // a def beyond the lemma+bridge set; when every law def is bridged out
+        // it collapses to the line above, so emit it once — not as a duplicate.
+        let fast_lemmas_set: BTreeSet<String> = fast_lemmas.iter().cloned().collect();
+        if fast_unfolds != fast_lemmas_set {
+            proof_lines.push(format!(
+                "  | (simp only [{}] <;> omega)",
+                fast_unfolds.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
         if arm_forward_siblings.is_empty() {
             // No in-arm sibling to add: one committed-only ladder, with sorry.
             let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, bridge_set.as_deref(), true);
@@ -1073,10 +1089,15 @@ fn emit_simple_induction(
                 .chain(arith_bridges.iter().cloned())
                 .filter(|n| !bridged_fns.contains(n))
                 .collect();
-            proof_lines.push(format!(
-                "  | (simp only [{}] <;> omega)",
-                fast_unfolds.into_iter().collect::<Vec<_>>().join(", ")
-            ));
+            // Skip the def-unfolding variant when it collapses to the lemma+
+            // bridge line above (every law def bridged out) — no duplicate alt.
+            let fast_lemmas_set: BTreeSet<String> = fast_lemmas.iter().cloned().collect();
+            if fast_unfolds != fast_lemmas_set {
+                proof_lines.push(format!(
+                    "  | (simp only [{}] <;> omega)",
+                    fast_unfolds.into_iter().collect::<Vec<_>>().join(", ")
+                ));
+            }
         }
         proof_lines.push(format!("  | (induction {} with", target_lean));
         let last = arm_lines.len().saturating_sub(1);
