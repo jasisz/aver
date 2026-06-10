@@ -2245,6 +2245,112 @@ fn emit_verify_law_block(
     (lines.join("\n"), case_index_start + vb.cases.len())
 }
 
+/// The discovery feedback loop, część A: a proved earlier `verify … law`
+/// becomes a lemma for later laws. Returns `(theorem_name, "lhs = rhs")` for a
+/// law usable as a `simp` rewrite rule, mirroring `emit_verify_law_block`'s
+/// name + lhs/rhs template computation EXACTLY (so the referenced name and the
+/// orientation-analysis text match the actually-emitted theorem). `None` for
+/// shapes that aren't a clean equational rewrite rule: trace-projection LHS
+/// (no theorem emitted), a `when` premise (a conditional equation, not a plain
+/// rewrite), or a refinement-lifted given (the statement quantifies over a
+/// subtype — not a useful rewrite over the carrier). The name is the SAME
+/// `<fn>_eq_<spec>` / `<fn>_law_<name>` the block emits, so a later law's
+/// `simp [<name>]` resolves against the earlier theorem already in scope.
+pub(crate) fn law_as_lemma_statement(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> Option<(String, String)> {
+    if law.when.is_some() {
+        return None;
+    }
+    if crate::codegen::common::law_lhs_has_trace_projection(&law.lhs) {
+        return None;
+    }
+    // A referenceable lemma must actually be EMITTED as a `∀`-theorem with the
+    // name we synthesize below — otherwise a later law's `simp [<name>]` hits
+    // an unknown identifier and fails the whole file's build. Decline exactly
+    // the cases `emit_verify_law_block` skips the universal theorem:
+    //   - no givens → no quantified theorem (only concrete samples);
+    //   - `skip_universal` — a singleton-domain const-RHS law (vacuous/false
+    //     universal) or a law calling a fuel-bounded recursive helper (the
+    //     auto-prover can't close it, only per-sample lemmas are emitted).
+    // Mirrors the guard in `emit_verify_law_block` (kept in sync by the
+    // część A regression test); a false decline only forgoes a helper, never
+    // references a missing theorem.
+    if law.givens.is_empty() {
+        return None;
+    }
+    let ir_strategy_closes_const_rhs = ctx
+        .symbol_table
+        .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
+        .and_then(|fn_id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+        })
+        .is_some_and(|t| {
+            !matches!(
+                t.strategy,
+                crate::ir::ProofStrategy::Induction { .. }
+                    | crate::ir::ProofStrategy::SimpOverLemmas(_)
+                    | crate::ir::ProofStrategy::BackendDispatch
+                    | crate::ir::ProofStrategy::Sorry
+            )
+        });
+    let singleton_const_rhs = !ir_strategy_closes_const_rhs
+        && crate::codegen::common::all_givens_are_singletons(law)
+        && crate::codegen::common::law_rhs_is_independent_of_givens(law);
+    let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
+    if singleton_const_rhs || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified)
+    {
+        return None;
+    }
+    let fn_name = aver_name_to_lean(&vb.fn_name);
+    let law_name = aver_name_to_lean(&law.name);
+    let spec_ref = canonical_spec_ref(&vb.fn_name, law, ctx);
+    let theorem_base = match &spec_ref {
+        Some(spec_ref) => format!(
+            "{}_eq_{}",
+            fn_name,
+            aver_name_to_lean(&spec_ref.spec_fn_name)
+        ),
+        None => format!("{}_law_{}", fn_name, law_name),
+    };
+    let law_lhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+        &law.lhs,
+        law,
+        |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
+        crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+    );
+    let law_rhs = crate::codegen::common::rewrite_effectful_calls_in_law(
+        &law.rhs,
+        law,
+        |n| ctx.fn_def_by_name(n, ctx.active_module_scope().as_deref()),
+        crate::codegen::common::OracleInjectionMode::LemmaBindingProjected,
+    );
+    // A refinement-lifted given would change the quantifier type (the theorem
+    // reads `∀ a : Natural, …`); such a statement isn't a plain rewrite rule
+    // over the carrier, so decline rather than mis-orient it.
+    for given in &law.givens {
+        if crate::codegen::common::refinement_lift_for_given(
+            &given.name,
+            &given.type_name,
+            &law_lhs,
+            &law_rhs,
+            ctx,
+        )
+        .is_some()
+        {
+            return None;
+        }
+    }
+    let lhs = emit_expr_legacy(&law_lhs, ctx, None);
+    let rhs = emit_expr_legacy(&law_rhs, ctx, None);
+    Some((theorem_base, format!("{lhs} = {rhs}")))
+}
+
 fn law_theorem_prop(
     law: &VerifyLaw,
     ctx: &CodegenContext,
