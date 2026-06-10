@@ -916,7 +916,10 @@ fn classify_law_strategy(
     // proof. Reflexive could also fire on `f(t) = f(t)` for `t: Tree`
     // but induction subsumes (one trivial case per variant) and is
     // the legacy chain's first pick. `when` clauses block induction
-    // — the case-split would lose the premise binding.
+    // — a non-closing `when` law would emit a 2-arm induction ladder
+    // (2 sorries) instead of the bounded sampled-domain fallback,
+    // regressing output cleanliness; a non-regressing when-aware
+    // induction path is a follow-up.
     if law.when.is_none()
         && let Some(param) = detect_induction_target(law, inputs)
     {
