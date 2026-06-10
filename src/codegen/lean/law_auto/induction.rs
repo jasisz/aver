@@ -651,6 +651,33 @@ fn emit_list_induction(
     let simp_list = simp_defs.into_iter().collect::<Vec<_>>().join(", ");
     let target_lean = &intro_names[target_idx];
 
+    // Generalizing-induction target: a Peano `given` the verified fn decrements
+    // SYNCHRONOUSLY with the list (the `n` of `take`/`drop`, which match `n`
+    // then recurse on `(z, tail)`). Inducting on the list alone gives a cons IH
+    // at the WRONG `n`; the proof needs `induction list generalizing n` so the
+    // IH is `∀ n, P n tail`, with `cases n` in each arm exposing the predecessor
+    // (closes the synchronous Nat+List family, e.g. `take n xs ++ drop n xs =
+    // xs`). The `induction X generalizing Y` + `cases Y` shape already proves the
+    // canonical-Peano `Sub`/`Le`/`Lt` bridges, so it is well-trodden.
+    let gen_given: Option<String> = ctx
+        .fn_def_by_name(&vb.fn_name, ctx.active_module_scope().as_deref())
+        .and_then(|fd| {
+            let lidx = crate::codegen::recursion::detect::single_list_structural_param_index(fd)?;
+            let decr = fd.params.iter().enumerate().find(|(i, (_, ty))| {
+                *i != lidx
+                    && (ty.trim() == "Nat"
+                        || crate::codegen::proof_recognize::peano_type_named(ctx, ty.trim())
+                            .is_some())
+                    && crate::codegen::recursion::detect::param_decremented_in_recursion(fd, *i)
+            })?;
+            let decr_name = &decr.1.0;
+            // Map that fn param to the law given of the same name → its intro.
+            law.givens
+                .iter()
+                .position(|g| &g.name == decr_name)
+                .map(|gi| intro_names[gi].clone())
+        });
+
     // `simp only` set for the split fallback below. `List.cons_append`
     // ((a::l) ++ l' = a :: (l ++ l')) lets the appended list peel a cons in
     // lockstep with the recursing fn; guard against an empty `simp_list` so we
@@ -732,7 +759,30 @@ fn emit_list_induction(
     // committed pin OR an eligible earlier sibling law (`fast_simp` carries
     // both). With neither, the emit is byte-identical to the pre-feedback
     // ladder.
-    if fast_simp.is_empty() {
+    if let Some(gv) = gen_given.as_ref().filter(|_| fast_simp.is_empty()) {
+        // Generalizing induction (synchronous Nat+List family). Each arm
+        // `cases <gen> <;> (ladder)` splits the generalized Peano var so the
+        // cons IH (`∀ n, P n tail`) applies at the predecessor; the ladder is
+        // the same sound first|simp|omega|split|sorry chain, distributed over
+        // both zero/succ goals. nil also needs the split (`take n []` only
+        // reduces once `n` is a concrete constructor).
+        let ladder = |s: &str| -> String {
+            format!(
+                "first | ({s} [{d}]; done) | ({s} [{d}]; omega) | (simp only [{sp}]; split <;> simp_all [{d}] <;> omega) | sorry",
+                d = simp_list,
+                sp = split_set
+            )
+        };
+        proof_lines.push(format!(
+            "  induction {} generalizing {} with",
+            target_lean, gv
+        ));
+        proof_lines.push(format!("  | nil => cases {gv} <;> ({})", ladder("simp")));
+        proof_lines.push(format!(
+            "  | cons head tail ih => cases {gv} <;> ({})",
+            ladder("simp_all")
+        ));
+    } else if fast_simp.is_empty() {
         let (nil_arm, cons_arm) = mk_arms(&simp_list, &split_set, None, true);
         proof_lines.push(format!("  induction {} with", target_lean));
         proof_lines.push(format!("  {nil_arm}"));

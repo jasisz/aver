@@ -4347,3 +4347,32 @@ fn part_c_arm_injection_closes_in_arm_helpers_when_lake_is_available() {
     check_universal(&count_rev, "count-rev");
     check_universal(&length_rev, "length-rev");
 }
+
+/// Leaf-reach: the Lean backend auto-proves a GENERALIZING-induction law —
+/// `take n xs ++ drop n xs = xs`, where `take`/`drop` recurse synchronously on
+/// the Nat `n` AND the list `xs`. Single-variable `induction xs` leaves the
+/// cons IH at the wrong `n`; the backend now emits `induction xs generalizing
+/// n with … cases n` so the IH (`∀ n, P n tail`) applies at the predecessor.
+/// No helper law, no decomposition — the bare auto-prover closes it. (TIP
+/// isaplanner prop_01, a union-OPEN frontier shape nothing closed before.)
+#[test]
+fn lean_proves_generalizing_induction_take_drop_when_lake_is_available() {
+    assert_proof_builds("proof-corpus/tip/isaplanner/prop_01.av", "aver-gen-takedrop");
+}
+
+/// Leaf-reach: a user fn named `max` (colliding with Lean 4's Max-typeclass
+/// `max`) is emitted as `max'`, so the proof can reference the user's
+/// recursion instead of the typeclass form. Before the escape the generated
+/// Lean failed to build (ambiguous/typeclass `max`); now it builds clean —
+/// proven by `assert_proof_builds` (which fails if lake errors) with the law
+/// honestly falling to one `sorry` (max-associativity is a 3-var induction the
+/// bare prover leaves open; the point is the file BUILDS, unblocking the
+/// decomposition loop on the max/min family). TIP isaplanner prop_22.
+#[test]
+fn lean_escapes_user_max_min_collision_when_lake_is_available() {
+    assert_proof_builds_with_sorry_budget(
+        "proof-corpus/tip/isaplanner/prop_22.av",
+        "aver-max-escape",
+        1,
+    );
+}

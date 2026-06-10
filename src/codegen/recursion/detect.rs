@@ -723,6 +723,31 @@ pub(crate) fn single_list_structural_param_index(fd: &FnDef) -> Option<usize> {
         })
 }
 
+/// `true` iff every recursive self-call of `fd` passes, at `param_index`, a
+/// bare local that is NOT the param itself — i.e. the param is consumed in the
+/// recursion (the `z` of `match p { S(z) -> recurse(z, ...) }`). Used to spot a
+/// Peano param a list-recursive fn decrements SYNCHRONOUSLY with the list
+/// (`take`/`drop`), which must then be GENERALIZED in the induction or the cons
+/// IH lands at the wrong predecessor. Conservative: a non-local arg (`p - 1`)
+/// yields `false`, so this fires only on the clean succ-binder shape.
+pub(crate) fn param_decremented_in_recursion(fd: &FnDef, param_index: usize) -> bool {
+    let calls: Vec<(String, Vec<&Spanned<Expr>>)> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .collect();
+    if calls.is_empty() {
+        return false;
+    }
+    let Some((pname, _)) = fd.params.get(param_index) else {
+        return false;
+    };
+    calls.iter().all(|(_, args)| {
+        args.get(param_index)
+            .and_then(|a| local_name_of(a))
+            .is_some_and(|id| id != pname)
+    })
+}
+
 pub(crate) fn is_ident(expr: &Spanned<Expr>, name: &str) -> bool {
     local_name_of(expr).is_some_and(|id| id == name)
 }
