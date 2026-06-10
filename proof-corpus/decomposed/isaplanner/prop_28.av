@@ -1,0 +1,33 @@
+module Prop28
+    intent =
+        "TIP isaplanner prop_28: elem x (xs ++ [x])."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn eqNat(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> match y
+            Nat.Z -> true
+            Nat.S(z) -> false
+        Nat.S(x2) -> match y
+            Nat.Z -> false
+            Nat.S(y2) -> eqNat(x2, y2)
+
+fn elem(x: Nat, y: List<Nat>) -> Bool
+    match y
+        [] -> false
+        [z, ..xs] -> match eqNat(x, z)
+            true -> true
+            false -> elem(x, xs)
+
+verify eqNat law eqNatRefl
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    eqNat(x, x) => true
+
+verify elem law elemAppendSelf
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    elem(x, List.concat(xs, [x])) => true

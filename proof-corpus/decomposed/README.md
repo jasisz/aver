@@ -38,18 +38,26 @@ Problems)**, `github.com/tip-org/benchmarks`, BSD-3-Clause — see
 `../tip/PROVENANCE.md` and `../tip/LICENSE.TIP`. The helper laws are our
 authorship; the surrounding program is the upstream-derived task verbatim.
 
-## Contents (4)
+## Contents (10)
 
 | file | target | bare-`tip/` status | what the decomposition added |
 |------|--------|--------------------|------------------------------|
 | `isaplanner/prop_03.av` | `count n xs ≤ count n (xs++ys)` | OPEN (frontier) | a cone-local count-monotonicity helper |
-| `prod/prop_25.av` | `even(length(x++y)) = even(length y + length x)` | OPEN (frontier) | length-homomorphism + `plus` commutativity |
-| `prod/prop_03.av` | `length(x++y) = plus(length y)(length x)` | Dafny-only → also Lean-genuine | the two "right" laws of `plus` |
+| `isaplanner/prop_04.av` | `S(count n xs) = count n (n::xs)` | OPEN (frontier) | `eqNat n n = true` (reflexivity) + count-cons |
+| `isaplanner/prop_20.av` | `length(sort xs) = length xs` | OPEN (frontier) | `insort` preserves length |
+| `isaplanner/prop_28.av` | `elem x (xs ++ [x])` | OPEN (frontier) | `eqNat x x = true` + elem-append |
+| `isaplanner/prop_29.av` | `elem x (ins1 x xs)` | OPEN (frontier) | `eqNat x x = true` + elem-insert |
+| `isaplanner/prop_30.av` | `elem x (insert x xs)` | OPEN (frontier) | `eqNat x x = true` + elem-insert |
+| `isaplanner/prop_38.av` | `count n (xs ++ [n]) = S(count n xs)` | OPEN (frontier) | `eqNat n n = true` + count-snoc |
 | `isaplanner/prop_75.av` | `count n [x] + count n xs = count n (x::xs)` | Dafny-only → also Lean-genuine | count-homomorphism + `plus` commutativity |
+| `prod/prop_03.av` | `length(x++y) = plus(length y)(length x)` | Dafny-only → also Lean-genuine | the two "right" laws of `plus` |
+| `prod/prop_25.av` | `even(length(x++y)) = even(length y + length x)` | OPEN (frontier) | length-homomorphism + `plus` commutativity |
 
-Two of the four (`isaplanner/prop_03`, `prod/prop_25`) move the **union
-frontier** — the unaided engine (auto-mode, `--discover`, and single-shot
-Dafny/Z3) closes none of them. The other two upgrade a Dafny-only (Z3-automated)
-task to a kernel-checked Lean proof. Each leaf helper bottoms out in something
-Aver's auto-prover discharges on its own (structural induction / homomorphism /
-the canonical-Peano bridge) — the loop is exactly as strong as that leaf reach.
+Eight of the ten move the **union frontier** — the unaided engine (auto-mode,
+`--discover`, and single-shot Dafny/Z3) closes none of them. The other two
+upgrade a Dafny-only (Z3-automated) task to a kernel-checked Lean proof. Every
+helper is a CANONICAL lemma (reflexivity, a homomorphism, a length/count
+preservation, the right-laws of `plus`) — textbook decompositions, not exotic
+tricks — and each bottoms out in something Aver's auto-prover discharges on its
+own (structural induction / homomorphism / the canonical-Peano bridge). The
+loop is exactly as strong as that leaf reach.
