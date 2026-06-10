@@ -4259,3 +4259,85 @@ fn decomposed_tip_tasks_stay_universal_when_lake_is_available() {
         let _ = std::fs::remove_dir_all(&out);
     }
 }
+
+/// część C — ARM injection of Forward sibling laws. Some laws need a helper
+/// applied INSIDE the induction cons-arm, not just at the top-level fast path:
+/// `count n xs = count n (rev xs)` only closes if the count-homomorphism
+/// rewrites `count n (rev t ++ [h])` within the arm. część A (fast-path only)
+/// leaves these open; część C adds a second ladder whose arms carry the
+/// Forward siblings (Reversed stay fast-path-only — loop safety). Two checks:
+///
+/// 1. count-rev closes when a count-homomorphism helper precedes it (the
+///    homo is used in-arm; it also INTRODUCES `plus`, exercising the
+///    subject-sharing cone relaxation — `plus` is outside count-rev's cone but
+///    the helper shares the subject `count`);
+/// 2. length-rev closes via a CHAIN — length-homo, then a length-rev-invariant
+///    whose OWN cons-arm needs the length-homo sibling, then the target.
+///
+/// Both are union-OPEN frontier TIP shapes (isaplanner/prop_52, prod/prop_06)
+/// that the manual experiment (#449) could NOT close before część C.
+#[test]
+fn part_c_arm_injection_closes_in_arm_helpers_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping część C test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let nat = "type Nat\n    Z\n    S(Nat)\n\n";
+    let plus = "fn plus(x: Nat, y: Nat) -> Nat\n    match x\n        Nat.Z -> y\n        Nat.S(z) -> Nat.S(plus(z, y))\n\n";
+
+    let count_rev = format!(
+        "module M\n    intent = \"count-rev via in-arm homo\"\n    effects []\n\n{nat}\
+         fn eqNat(x: Nat, y: Nat) -> Bool\n    match x\n        Nat.Z -> match y\n            Nat.Z -> true\n            Nat.S(z) -> false\n        Nat.S(x2) -> match y\n            Nat.Z -> false\n            Nat.S(y2) -> eqNat(x2, y2)\n\n\
+         fn count(x: Nat, y: List<Nat>) -> Nat\n    match y\n        [] -> Nat.Z\n        [z, ..ys] -> match eqNat(x, z)\n            true -> Nat.S(count(x, ys))\n            false -> count(x, ys)\n\n{plus}\
+         fn rev(x: List<Nat>) -> List<Nat>\n    match x\n        [] -> []\n        [y, ..xs] -> List.concat(rev(xs), [y])\n\n\
+         verify count law countHomo\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z)]\n    given xs: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z), Nat.Z]]\n    given ys: List<Nat> = [[Nat.Z], [Nat.S(Nat.Z)]]\n    count(n, List.concat(xs, ys)) => plus(count(n, xs), count(n, ys))\n\n\
+         verify count law countRev\n    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]\n    given xs: List<Nat> = [[], [Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.Z]]\n    count(n, xs) => count(n, rev(xs))\n"
+    );
+
+    let length_rev = format!(
+        "module M\n    intent = \"length-rev via chain\"\n    effects []\n\n{nat}\
+         fn length(xs: List<Int>) -> Nat\n    match xs\n        [] -> Nat.Z\n        [y, ..ys] -> Nat.S(length(ys))\n\n{plus}\
+         fn append(x: List<Int>, y: List<Int>) -> List<Int>\n    match x\n        [] -> y\n        [z, ..xs] -> List.concat([z], append(xs, y))\n\n\
+         fn rev(x: List<Int>) -> List<Int>\n    match x\n        [] -> []\n        [y, ..ys] -> append(rev(ys), [y])\n\n\
+         verify length law lengthHomo\n    given x: List<Int> = [[1], [2, 3]]\n    given y: List<Int> = [[4], [5, 6]]\n    length(append(x, y)) => plus(length(x), length(y))\n\n\
+         verify length law lengthRevInv\n    given x: List<Int> = [[], [1], [1, 2, 3]]\n    length(rev(x)) => length(x)\n\n\
+         verify length law revAppendLength\n    given x: List<Int> = [[], [1], [1, 2, 3]]\n    given y: List<Int> = [[], [2], [4, 5]]\n    length(rev(append(x, y))) => plus(length(x), length(y))\n"
+    );
+
+    let check_universal = |source: &str, label: &str| {
+        let src = temp_output_dir(&format!("aver-partc-{label}-src"));
+        std::fs::create_dir_all(&src).expect("src dir");
+        std::fs::write(src.join("m.av"), source).expect("write");
+        let out = temp_output_dir(&format!("aver-partc-{label}-out"));
+        let run = Command::new(aver_bin)
+            .arg("proof")
+            .arg(src.join("m.av"))
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(&out)
+            .arg("--check")
+            .arg("--check-json")
+            .output()
+            .expect("aver proof ran");
+        let json = run
+            .stdout
+            .split(|&b| b == b'\n')
+            .rev()
+            .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+            .unwrap_or_else(|| panic!("{label}: no JSON:\n{}", format_output(&run)));
+        let summary: serde_json::Value =
+            serde_json::from_str(json).unwrap_or_else(|e| panic!("{label}: bad JSON ({e})"));
+        assert_eq!(
+            summary["universal"].as_bool(),
+            Some(true),
+            "{label}: część C must close this in-arm-helper law universal:true\n{}",
+            format_output(&run)
+        );
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&out);
+    };
+    check_universal(&count_rev, "count-rev");
+    check_universal(&length_rev, "length-rev");
+}

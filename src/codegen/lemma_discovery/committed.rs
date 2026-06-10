@@ -205,11 +205,27 @@ pub enum SimpDirection {
 /// ladder needs peeled, and loops against the fn's own def unfold.
 pub fn simp_orientation(text: &str, program_fns: &BTreeSet<String>) -> Option<SimpDirection> {
     let stmt = statement_body(text)?;
-    if program_fns.contains(&head_token(stmt)) {
+    let rhs = split_after_top_eq(stmt);
+    // A Forward rule is usable only if it does not GROW the term — if the RHS
+    // textually contains the whole LHS (`dbl x = idNat (dbl x)`), rewriting
+    // LHS→RHS re-exposes the LHS and `simp` never terminates (a maxHeartbeats
+    // BUILD error `first` cannot catch). The `simp_entries` loop-exclusion
+    // only drops forward/reversed PAIRS, not a single self-growing forward
+    // rule — so reject it here. The shrinking REVERSED direction (RHS→LHS) is
+    // still safe and is tried next.
+    let lhs = rhs.map(|r| {
+        let end = stmt.len() - r.len() - 1; // strip the `=` between lhs and rhs
+        stmt[..end].trim()
+    });
+    let forward_grows = matches!((lhs, rhs), (Some(l), Some(r)) if !l.is_empty() && r.contains(l));
+    if program_fns.contains(&head_token(stmt)) && !forward_grows {
         return Some(SimpDirection::Forward);
     }
-    let rhs = split_after_top_eq(stmt)?;
-    if program_fns.contains(&head_token(rhs)) {
+    let rhs = rhs?;
+    // Symmetric guard for the reversed direction: a self-growing reversed rule
+    // (LHS contains the RHS) would loop the other way.
+    let reversed_grows = matches!(lhs, Some(l) if !rhs.trim().is_empty() && l.contains(rhs.trim()));
+    if program_fns.contains(&head_token(rhs)) && !reversed_grows {
         return Some(SimpDirection::Reversed);
     }
     None
@@ -670,6 +686,29 @@ verify count law countPlusConcat
             simp_orientation(
                 "theorem t5 (x0 : List Nat) : ((x0 ++ x0) ++ x0) = (x0 ++ (x0 ++ x0)) := by\n  simp",
                 &fns
+            ),
+            None
+        );
+        // SELF-GROWING forward rule (`dbl x = idNat (dbl x)`, RHS contains the
+        // whole LHS): rewriting LHS→RHS never terminates, so Forward is
+        // forbidden — but the shrinking REVERSED direction (RHS head `idNat` is
+        // a program fn, LHS does not contain the RHS) is safe.
+        let dfns: BTreeSet<String> = ["dbl", "idNat"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            simp_orientation(
+                "theorem t6 (x : Nat) : dbl x = idNat (dbl x) := by\n  simp",
+                &dfns
+            ),
+            Some(SimpDirection::Reversed)
+        );
+        // A reflexive equation (`loopy x = loopy x`) grows in BOTH directions
+        // (each side contains the other), so neither direction is a usable
+        // rewrite — dropped.
+        let efns: BTreeSet<String> = ["loopy"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            simp_orientation(
+                "theorem t7 (x : Nat) : loopy x = loopy x := by\n  rfl",
+                &efns
             ),
             None
         );
