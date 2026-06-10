@@ -4447,3 +4447,104 @@ fn lean_proves_accumulator_generalizing_qrev_when_lake_is_available() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// LUKA 2: generalizing induction and sibling-lemma injection must COMBINE. The
+/// `dropRevLen` law's verified fn (`drop`) threads a Peano param (`n`) while
+/// recursing on a list, so it needs `induction xs generalizing n`; AND it needs
+/// the forward-homomorphism siblings (`lenAppend`, `lenRev`) rewriting inside
+/// the induction arms. Before the fix these were mutually exclusive (the
+/// `gen_given` branch was gated on `fast_simp.is_empty()`), so a law needing
+/// both fell to plain `induction` and left a `sorry`. The arm simp set carries
+/// Forward siblings only (loop-excluded via `simp_entries`) — no `←` unfold
+/// rules — so no `maxHeartbeats` simp loop.
+#[test]
+fn lean_proves_generalizing_induction_with_siblings_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping gen+siblings test: `lake` not available");
+        return;
+    }
+    let source = r#"module GenSiblings
+    intent = "generalizing induction + forward-sibling arm injection combined"
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn len(xs: List<Int>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(len(ys))
+
+fn drop(n: Nat, xs: List<Int>) -> List<Int>
+    match n
+        Nat.Z -> xs
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+fn minus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(z) -> match y
+            Nat.Z -> x
+            Nat.S(x2) -> minus(z, x2)
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+fn rev(xs: List<Int>) -> List<Int>
+    match xs
+        [] -> []
+        [y, ..ys] -> List.concat(rev(ys), [y])
+
+verify len law lenAppend
+    given a: List<Int> = [[1], [1, 2, 3]]
+    given b: List<Int> = [[7], [8, 9]]
+    len(List.concat(a, b)) => plus(len(a), len(b))
+
+verify len law lenRev
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    len(rev(xs)) => len(xs)
+
+verify drop law dropRevLen
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given ys: List<Int> = [[2], [3, 4]]
+    len(List.concat(rev(drop(n, xs)), ys)) => plus(minus(len(xs), n), len(ys))
+"#;
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-gensib-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-gensib-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "generalizing induction + forward-sibling arm injection must combine to \
+         close dropRevLen (the gen-vs-sibling mutual-exclusion gap)\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
