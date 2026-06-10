@@ -275,6 +275,58 @@ theorem has_set_other [DecidableEq α] (m : List (α × β)) (k key : α) (v : �
   rw [AverMap.has_eq_isSome_get, AverMap.has_eq_isSome_get]
   simp [AverMap.get_set_other, h]"#;
 
+// General-key (DIFFERENT-key) Map lemmas. `get_set_other`/`has_set_other`
+// above carry the *query-key-differs-from-set-key* hypothesis (`key ≠ k`);
+// these are the symmetric / general-key forms a map-fold-homomorphism law's
+// cons different-key branch needs: `get_set_ne` keyed on `set k ≠ query k'`
+// (mirrors `get_set_go_self`'s induction + by_cases), and `has_set` with NO
+// key restriction (membership after a set is "queried key = set key, OR was
+// already present" — mirrors `any_set_go_self`, closing with `ac_rfl`/bool
+// algebra). Both are kernel-clean from the AverMap defs (`#print axioms ⊆
+// {propext, Quot.sound}`). `get_set_ne` is conditional — it only rewrites when
+// `simp` can discharge the `k ≠ k'` side-goal from a fact in context.
+const AVER_MAP_PRELUDE_GET_SET_NE: &str = r#"private theorem get_set_go_ne [DecidableEq α] (k k' : α) (v : β) (h : k ≠ k') :
+    ∀ (m : List (α × β)), AverMap.get (AverMap.set.go k v m) k' = AverMap.get m k' := by
+  have hne : k' ≠ k := fun he => h he.symm
+  intro m
+  induction m with
+  | nil =>
+      simp [AverMap.set.go, AverMap.get, hne]
+  | cons p tl ih =>
+      cases p with
+      | mk a b =>
+          by_cases hk : k = a
+          · have hk' : k' ≠ a := by simpa [hk] using hne
+            simp [AverMap.set.go, AverMap.get, hk, hk', hne]
+          · by_cases hk' : k' = a
+            · simp [AverMap.set.go, AverMap.get, hk, hk']
+            · simp [AverMap.set.go, AverMap.get, hk, hk', ih]
+
+theorem get_set_ne [DecidableEq α] (m : List (α × β)) (k k' : α) (v : β) (h : k ≠ k') :
+    AverMap.get (AverMap.set m k v) k' = AverMap.get m k' := by
+  simpa [AverMap.set] using get_set_go_ne k k' v h m"#;
+
+const AVER_MAP_PRELUDE_HAS_SET: &str = r#"private theorem any_set_go [DecidableEq α] (w k : α) (v : β) :
+    ∀ (m : List (α × β)),
+      List.any (AverMap.set.go w v m) (fun p => decide (k = p.1))
+        = (decide (k = w) || List.any m (fun p => decide (k = p.1))) := by
+  intro m
+  induction m with
+  | nil =>
+      simp [AverMap.set.go, List.any]
+  | cons p tl ih =>
+      cases p with
+      | mk a b =>
+          by_cases hw : w = a
+          · subst hw
+            simp [AverMap.set.go, List.any]
+          · simp [AverMap.set.go, List.any, hw, ih]
+            by_cases hk : k = a <;> simp [hk] <;> ac_rfl
+
+theorem has_set [DecidableEq α] (m : List (α × β)) (w k : α) (v : β) :
+    AverMap.has (AverMap.set m w v) k = (decide (k = w) || AverMap.has m k) := by
+  simpa [AverMap.has, AverMap.set] using any_set_go w k v m"#;
+
 const AVER_MAP_PRELUDE_END: &str = r#"end AverMap"#;
 
 const LEAN_PRELUDE_AVER_LIST: &str = r#"namespace AverList
@@ -1160,6 +1212,20 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
     parts.join("\n\n")
 }
 
+/// Whether `body` references the general-key `AverMap.has_set` lemma —
+/// distinct from `AverMap.has_set_self` / `AverMap.has_set_other`, of which it
+/// is a prefix. Matched only when the next char after `has_set` is not an
+/// identifier continuation, so the `_self`/`_other` siblings don't trigger it.
+fn mentions_has_set(body: &str) -> bool {
+    const NEEDLE: &str = "AverMap.has_set";
+    body.match_indices(NEEDLE).any(|(idx, _)| {
+        body[idx + NEEDLE.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+    })
+}
+
 fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     let mut parts = vec![AVER_MAP_PRELUDE_BASE.to_string()];
 
@@ -1169,6 +1235,10 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
         || body.contains("AverMap.get_set_other")
         || body.contains("AverMap.has_set_other");
     let needs_has_set_other = include_all_helpers || body.contains("AverMap.has_set_other");
+    // `get_set_ne` (general different-key get) and `has_set` (general-key
+    // membership-after-set) — the map-fold-homomorphism cons different-key arm.
+    let needs_get_set_ne = include_all_helpers || body.contains("AverMap.get_set_ne");
+    let needs_has_set = include_all_helpers || mentions_has_set(body);
 
     if needs_has_set_self {
         parts.push(AVER_MAP_PRELUDE_HAS_SET_SELF.to_string());
@@ -1181,6 +1251,12 @@ fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
     }
     if needs_has_set_other {
         parts.push(AVER_MAP_PRELUDE_HAS_SET_OTHER.to_string());
+    }
+    if needs_get_set_ne {
+        parts.push(AVER_MAP_PRELUDE_GET_SET_NE.to_string());
+    }
+    if needs_has_set {
+        parts.push(AVER_MAP_PRELUDE_HAS_SET.to_string());
     }
 
     parts.push(AVER_MAP_PRELUDE_END.to_string());

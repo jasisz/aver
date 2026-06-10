@@ -4517,6 +4517,51 @@ verify sumSafe law commutative
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// A map-counting homomorphism — `(Map.get (countWords ws) w).getD 0 =
+/// countWord ws w` and `Map.has (countWords ws) w = containsWord ws w` — closes
+/// kernel-clean. The cons different-key branch needs the general-key Map prelude
+/// lemmas `AverMap.get_set_ne` / `AverMap.has_set` (added to AverCommon) injected
+/// into the induction arm; AverCommon previously shipped only the self-key
+/// lemmas, so these stayed `sorry`. Runs the real `examples/data/map.av`
+/// (single-module) — both `countWords` laws must be genuine universals.
+#[test]
+fn lean_proves_map_fold_homomorphism_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping map-fold test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-mapfold-out");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/data/map.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "map-counting homomorphism laws must close via the general-key Map prelude \
+         lemmas (get_set_ne / has_set)\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A LinearArithmetic law over a fn using `Int.max`/`Int.min` must close. Two
 /// bugs blocked it: (1) `Int.max` (lowercase leaf) leaked into the unfold set as
 /// the non-existent constant `Int.max` → `unknown constant` compile error;
