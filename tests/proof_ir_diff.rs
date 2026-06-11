@@ -1740,3 +1740,157 @@ fn finite_domain_cases_not_pinned_when_domain_product_exceeds_16() {
         within.strategy
     );
 }
+
+#[test]
+fn simp_over_prelude_lemmas_pinned_for_nonrecursive_builtin_roundtrip_law() {
+    // A builtin-roundtrip law over a non-recursive String fn — no
+    // earlier detector owns it (LinearArithmetic rejects String
+    // params, EnumConstantFold needs a constructor-pinned ADT param
+    // and a scalar return, FiniteDomainCases needs a closed-domain
+    // given), so it used to fall to BackendDispatch + bare `sorry`.
+    // The canonical real-corpus shape is `examples/data/json.av`
+    // `finishString.plainSegmentRoundtrip`. The pin must carry the
+    // subject-first unfold list and the registry keys (note the
+    // synthetic `String.concat` marker for the string `+`).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn keepPrefix(s: String, n: Int) -> String\n\
+         \x20   String.slice(s, 0, n)\n\
+         \n\
+         verify keepPrefix law appendRoundtrip\n\
+         \x20   given s: String = [\"\", \"ab\"]\n\
+         \x20   keepPrefix(s + \"!\", String.len(s)) => s\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "keepPrefix", "appendRoundtrip")
+        .expect("keepPrefix::appendRoundtrip law theorem missing from ProofIR");
+    let aver::ir::ProofStrategy::SimpOverPreludeLemmas {
+        ref unfold_fns,
+        ref fuel_fns,
+        ref builtins,
+    } = theorem.strategy
+    else {
+        panic!(
+            "builtin-roundtrip law must pin SimpOverPreludeLemmas, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(unfold_fns, &vec!["keepPrefix".to_string()]);
+    assert!(fuel_fns.is_empty(), "no recursive seed: {:?}", fuel_fns);
+    assert_eq!(
+        builtins,
+        &vec![
+            "String.concat".to_string(),
+            "String.len".to_string(),
+            "String.slice".to_string()
+        ],
+        "registry keys must cover the cone's builtins + the string-`+` marker"
+    );
+}
+
+#[test]
+fn simp_over_prelude_lemmas_pinned_for_fuel_fn_with_constructor_headed_arg() {
+    // The lhs calls a RECURSIVE (fuel-emitted, SizeOfStructural) fn
+    // with a constructor-headed arg whose variant has only scalar
+    // fields — the ADT measure is constant on `Tree.Leaf(n)` for free
+    // `n`, so the fuel computes and the fn lands in `fuel_fns`
+    // (json.av's `toString(Json.JsonInt(n))` shape).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         type Tree\n\
+         \x20   Leaf(Int)\n\
+         \x20   Node(Tree, Tree)\n\
+         \n\
+         fn render(t: Tree) -> String\n\
+         \x20   match t\n\
+         \x20       Tree.Leaf(n) -> String.fromInt(n)\n\
+         \x20       Tree.Node(l, r) -> render(l) + render(r)\n\
+         \n\
+         verify render law leafRoundtrip\n\
+         \x20   given n: Int = [1, 42]\n\
+         \x20   render(Tree.Leaf(n)) => String.fromInt(n)\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "render", "leafRoundtrip")
+        .expect("render::leafRoundtrip law theorem missing from ProofIR");
+    let aver::ir::ProofStrategy::SimpOverPreludeLemmas {
+        ref unfold_fns,
+        ref fuel_fns,
+        ref builtins,
+    } = theorem.strategy
+    else {
+        panic!(
+            "ctor-headed fuel-fn law must pin SimpOverPreludeLemmas, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert!(
+        unfold_fns.is_empty(),
+        "no non-recursive cone: {:?}",
+        unfold_fns
+    );
+    assert_eq!(fuel_fns, &vec!["render".to_string()]);
+    assert!(
+        builtins.contains(&"String.fromInt".to_string()),
+        "fuel-fn BODY builtins must feed the registry keys, got: {:?}",
+        builtins
+    );
+}
+
+#[test]
+fn simp_over_prelude_lemmas_not_pinned_for_when_law() {
+    // `when` premises are out of scope — the simp set has no premise
+    // handling, and the detector must mirror the no-when gates of the
+    // sibling fallbacks (EnumConstantFold / FiniteDomainCases).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn keepPrefix(s: String, n: Int) -> String\n\
+         \x20   String.slice(s, 0, n)\n\
+         \n\
+         verify keepPrefix law guardedRoundtrip\n\
+         \x20   given s: String = [\"\", \"ab\"]\n\
+         \x20   when String.len(s) >= 0\n\
+         \x20   keepPrefix(s + \"!\", String.len(s)) => s\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "keepPrefix", "guardedRoundtrip")
+        .expect("keepPrefix::guardedRoundtrip law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
+        ),
+        "when-law must NOT pin SimpOverPreludeLemmas, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn simp_over_prelude_lemmas_not_pinned_for_recursive_seed_with_open_args() {
+    // The lhs calls a recursive fn with a FREE Int given — the fuel
+    // value (`natAbs n + 1`) stays symbolic, simp can't drive the
+    // `__fuel` equations, so the detector must decline (the law keeps
+    // today's bare-sorry honesty instead of a doomed simp attempt).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn countDown(n: Int) -> Int\n\
+         \x20   match n <= 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> countDown(n - 1)\n\
+         \n\
+         verify countDown law alwaysZero\n\
+         \x20   given n: Int = [0, 3]\n\
+         \x20   countDown(n) => 0\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "countDown", "alwaysZero")
+        .expect("countDown::alwaysZero law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
+        ),
+        "open-arg recursive seed must NOT pin SimpOverPreludeLemmas, got: {:?}",
+        theorem.strategy
+    );
+}

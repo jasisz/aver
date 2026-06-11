@@ -567,6 +567,79 @@ pub fn emit_verify_law_forall_auto_proof(
                 replaces_theorem: false,
             })
         })
+        .or_else(|| {
+            // IR-pinned `SimpOverPreludeLemmas` — DELIBERATELY the last
+            // rung, after every legacy ad-hoc fallback above: it must
+            // fire only where the chain used to return `None` and the
+            // caller emitted a bare-`sorry` universal. The simp set is
+            // kept minimal (cone + fuel + registry hits + the single
+            // baked-in `Int.add_sub_cancel` rewrite the archived
+            // hand-proofs needed) — a fat set risks a simp LOOP, and a
+            // maxHeartbeats blow-up is a build error `first` cannot
+            // catch. `done` forces closure: simp succeeding but
+            // leaving a residual goal must fall to the honest `sorry`,
+            // never surface as an "unsolved goals" build error.
+            emit_simp_over_prelude_lemmas_law(vb, law, ctx, &proof_intro_names)
+        })
+}
+
+/// Render the `SimpOverPreludeLemmas` rung:
+/// `intro <givens>; first | (simp [<set>]; done) | sorry`.
+///
+/// Simp-set assembly, in order: unfold fns (subject first — source
+/// names via `aver_name_to_lean`), then per fuel fn the wrapper name +
+/// `<fn>__fuel` + measure helpers (probed from the actual proof-mode
+/// emission by `toplevel::law_fuel_simp_names` — a fuel fn that
+/// graduated to native `termination_by` contributes its wrapper name
+/// only, never a non-existent `__fuel` constant), then the prelude
+/// spec lemmas the registry maps from the cone's builtin calls
+/// (`lean::prelude_spec_lemmas_for_builtins` — the same names whose
+/// mention makes the demand-driven prelude ship the lemma texts), then
+/// `Int.add_sub_cancel`.
+fn emit_simp_over_prelude_lemmas_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    proof_intro_names: &[String],
+) -> Option<AutoProof> {
+    let Some(crate::ir::ProofStrategy::SimpOverPreludeLemmas {
+        unfold_fns,
+        fuel_fns,
+        builtins,
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+    else {
+        return None;
+    };
+    let mut simp_set: Vec<String> = Vec::new();
+    let push_unique = |set: &mut Vec<String>, name: String| {
+        if !set.contains(&name) {
+            set.push(name);
+        }
+    };
+    for f in &unfold_fns {
+        push_unique(&mut simp_set, aver_name_to_lean(f));
+    }
+    for f in &fuel_fns {
+        push_unique(&mut simp_set, aver_name_to_lean(f));
+        for name in super::toplevel::law_fuel_simp_names(f, ctx) {
+            push_unique(&mut simp_set, name);
+        }
+    }
+    for lemma in super::prelude_spec_lemmas_for_builtins(&builtins) {
+        push_unique(&mut simp_set, lemma);
+    }
+    push_unique(&mut simp_set, "Int.add_sub_cancel".to_string());
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines: intro_then(
+            proof_intro_names,
+            vec![format!(
+                "first | (simp [{}]; done) | sorry",
+                simp_set.join(", ")
+            )],
+        ),
+        replaces_theorem: false,
+    })
 }
 
 /// Try `simp [fn_names...] ; omega` for laws on Int-domain functions.
