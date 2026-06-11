@@ -20,6 +20,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 - **Bounded proof checks now compare against actual program results, and any model panic in a proof is a hard check error.** Lean exports pin each `verify` example and law sample to the value the program actually computed (instead of model-vs-model equations that could certify vacuously when the exported model panics and quietly evaluates to a default value — fuel exhaustion and partial builtins like `Char.toCode` on an empty string share that failure mode), and `aver proof --check` fails — with a please-report-this-bug message and a `model_panicked` field in `--check-json` — whenever the build output shows the model panicked while evaluating a sample.
 - **Tuple-carrying functions get correct termination fuel in Lean exports** — deeply nested values (e.g. JSON object entries) no longer make the exported model disagree with the running program.
 - **wasm-gc: `String.split`/`String.join` used inside string interpolation now compile correctly.**
+- **`aver verify` output labels `law` blocks as `law`** — they were printed as `<fn> spec <name>` (a relic of the pre-rename keyword) in both the block listing and failure diagnostics.
 - Example corpus honesty: laws that were really single-example checks (red-black tree, `order_total` floats, oracle-pinned file-store) are now plain `verify` blocks or trace checks.
 
 ## 0.24.1 — 2026-06-06

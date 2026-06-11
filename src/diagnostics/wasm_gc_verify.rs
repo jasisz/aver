@@ -605,6 +605,7 @@ fn run_verify_cases_in_wasmtime(
 
         results.push(VerifyResult {
             fn_name: plan.block.fn_name.clone(),
+            is_law: matches!(&plan.block.kind, crate::ast::VerifyKind::Law(_)),
             block_label: plan.block.fn_name.clone(),
             passed,
             failed,
