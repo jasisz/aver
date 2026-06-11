@@ -793,6 +793,55 @@ pub enum ProofStrategy {
         /// `prelude_spec_lemmas_for_builtins`.
         builtins: Vec<String>,
     },
+    /// Decimal-Int parse/serialize roundtrip over the canonical
+    /// single-scanner decimal parser shape: the law states
+    /// `parse(ser(C(n)), 0) = Ok(C(n), String.len(ser(C(n))))` for an
+    /// unconstrained `given n: Int`, where `parse` dispatches the head
+    /// char (`"-"` → sign path, `"0"` → leading-zero scan, `_` → digit
+    /// path), both paths funnel into ONE recognized fuelized
+    /// string-position scanner (`proof_recognize::detect_string_pos_scan`
+    /// — the same gate that makes the Lean backend synthesize the
+    /// scanner's `<fn>__fuel_scan` companion lemma), and the cone
+    /// bottoms out in `String.fromInt` / `Int.fromString`.
+    ///
+    /// The detector validates the ENTIRE canonical shape (arm literals,
+    /// arm order, scanner pins, finish-fn slice + `Int.fromString`
+    /// leaf), so the Lean emission can render the fixed
+    /// sign-split proof skeleton ported from the verified json hand
+    /// proof: serializer reduces by `rfl` (ADT-measure fuel),
+    /// `rcases Int.ofNat | Int.negSucc`, head-char dispatch via
+    /// `String.mk`-form `rfl`, `split` + `digitChar` contradiction
+    /// lemmas, the synthesized scan lemma, and `Int.fromString_fromInt`
+    /// at the `finish_int_fn` leaf. The whole emission is wrapped in
+    /// `first | (… ; done) | sorry` — a non-closing case degrades to a
+    /// caught honest `sorry`, never a build error, and `native_decide`
+    /// never appears. Dafny treats the pin as `BackendDispatch`
+    /// (exports byte-identical).
+    ///
+    /// Demonstrated by `examples/data/json.av`
+    /// `parseNumber.fromIntRoundtrip` — the first universal close
+    /// through the fuel-unfolding barrier on a string whose length is
+    /// symbolic.
+    IntDecimalRoundtrip {
+        /// Subject parser fn (`parseNumber`). Source names throughout.
+        parse_fn: String,
+        /// `"-"`-arm continuation (`parseNumberSign`).
+        neg_fn: String,
+        /// Wildcard-arm digit dispatcher (`startNumberDigits`).
+        pos_fn: String,
+        /// Sign path's digit dispatcher (`startSignDigit`).
+        sign_fn: String,
+        /// The recognized fuelized scanner (`scanIntTail`).
+        scanner_fn: String,
+        /// The scanner's char-class predicate (`isDigit`).
+        predicate_fn: String,
+        /// Scanner exit continuation (`finishNumber`).
+        finish_fn: String,
+        /// Int leaf — slices + `Int.fromString` (`finishInt`).
+        finish_int_fn: String,
+        /// Serializer the law's lhs feeds the parser (`toString`).
+        serializer_fn: String,
+    },
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,

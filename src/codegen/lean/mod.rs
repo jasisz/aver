@@ -202,6 +202,62 @@ theorem String.slice_append_prefix (t u : String) :
   show String.mk ((t.data ++ u.data).take t.data.length) = t
   rw [List.take_left]"#;
 
+/// `String.charAt` at an in-bounds non-negative position computes to
+/// the indexed char. Bridges the prelude's `charAt` to `s.data` getElem
+/// form so synthesized scan lemmas (`<fn>__fuel_scan`) can dispatch a
+/// symbolic head char. Proof ported verbatim from the verified json
+/// hand proof.
+const LEAN_PRELUDE_STRING_CHARAT_EQ_OF_LT: &str = r#"/-- `String.charAt` at an in-bounds non-negative position is the indexed char. -/
+theorem String.charAt_eq_of_lt (s : String) (pos : Int) (h0 : 0 ≤ pos) (h : pos.toNat < s.data.length) :
+    String.charAt s pos = some (Char.toString (s.data[pos.toNat])) := by
+  have hn : ¬ pos < 0 := by omega
+  simp [String.charAt, String.toList, hn, List.getElem?_eq_getElem, h]"#;
+
+/// `String.charAt` past the end is `none` — the scan lemma's exit case.
+/// Proof ported verbatim from the verified json hand proof.
+const LEAN_PRELUDE_STRING_CHARAT_NONE_OF_GE: &str = r#"/-- `String.charAt` at/past the end of the string is `none`. -/
+theorem String.charAt_none_of_ge (s : String) (pos : Int) (h0 : 0 ≤ pos) (h : s.data.length ≤ pos.toNat) :
+    String.charAt s pos = none := by
+  have hn : ¬ pos < 0 := by omega
+  simp [String.charAt, String.toList, hn, List.getElem?_eq_none, h]"#;
+
+/// Decimal-digit facts over the `NumericParse` prelude — reopened
+/// `AverDigits` namespace, demand-driven like the String spec lemmas.
+/// `natDigits_head_ne_zero` (a canonical decimal render never starts
+/// with '0' for a nonzero Nat) plus the `digitChar` `Char.toString`
+/// disequalities kill the `"-"` / `"0"` dispatch arms on a SYMBOLIC
+/// head char in `IntDecimalRoundtrip` emissions. Proofs ported verbatim
+/// from the verified json hand proof.
+const LEAN_PRELUDE_NUMERIC_PARSE_HEAD_NE_ZERO: &str = r#"namespace AverDigits
+theorem natDigits_head_ne_zero : ∀ (m : Nat), m ≠ 0 → ∀ d ds, natDigits m = d :: ds → d ≠ 0 := by
+  intro m hm d ds hds
+  by_cases h : m < 10
+  · rw [natDigits.eq_1] at hds
+    simp [h] at hds
+    rcases hds with ⟨h1, h2⟩
+    omega
+  · rw [natDigits.eq_1] at hds
+    simp [h] at hds
+    rcases hh : natDigits (m / 10) with _ | ⟨d', ds'⟩
+    · exact absurd hh (natDigits_nonempty _)
+    · rw [hh, List.cons_append] at hds
+      injection hds with h1 h2
+      rw [← h1]
+      exact natDigits_head_ne_zero (m / 10) (by omega) d' ds' hh
+end AverDigits"#;
+
+const LEAN_PRELUDE_NUMERIC_PARSE_TOSTRING_NE: &str = r#"namespace AverDigits
+theorem digitChar_toString_ne_minus : ∀ d : Nat, d < 10 → Char.toString (digitChar d) ≠ "-" := by
+  intro d h
+  rcases d with _|_|_|_|_|_|_|_|_|_|d
+  all_goals first | decide | omega
+
+theorem digitChar_toString_ne_zero : ∀ d : Nat, d < 10 → d ≠ 0 → Char.toString (digitChar d) ≠ "0" := by
+  intro d h hne
+  rcases d with _|_|_|_|_|_|_|_|_|_|d
+  all_goals first | decide | omega
+end AverDigits"#;
+
 /// Static registry: prelude builtin(s) → prelude spec lemma names.
 /// Single source of truth, living next to the lemma texts it indexes —
 /// the `SimpOverPreludeLemmas` detector records the builtin call names
@@ -1261,7 +1317,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
             "StringHelpers" => {
                 parts.push(generate_string_helpers_prelude(body, include_all_helpers))
             }
-            "NumericParse" => parts.push(LEAN_PRELUDE_NUMERIC_PARSE.to_string()),
+            "NumericParse" => parts.push(generate_numeric_parse_prelude(body, include_all_helpers)),
             "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(body, include_all_helpers)),
@@ -1318,6 +1374,31 @@ fn generate_string_helpers_prelude(body: &str, include_all_helpers: bool) -> Str
     }
     if include_all_helpers || body.contains("String.slice_append_prefix") {
         parts.push(LEAN_PRELUDE_STRING_SLICE_APPEND_PREFIX.to_string());
+    }
+    if include_all_helpers || body.contains("String.charAt_eq_of_lt") {
+        parts.push(LEAN_PRELUDE_STRING_CHARAT_EQ_OF_LT.to_string());
+    }
+    if include_all_helpers || body.contains("String.charAt_none_of_ge") {
+        parts.push(LEAN_PRELUDE_STRING_CHARAT_NONE_OF_GE.to_string());
+    }
+    parts.join("\n\n")
+}
+
+/// `NumericParse` section: base `AverDigits` + demand-driven decimal-
+/// digit spec lemmas (reopened namespace). Same inclusion pattern as
+/// [`generate_string_helpers_prelude`] — a lemma ships only when the
+/// emitted body (which includes law tactic text and synthesized scan
+/// lemmas) mentions its name.
+fn generate_numeric_parse_prelude(body: &str, include_all_helpers: bool) -> String {
+    let mut parts = vec![LEAN_PRELUDE_NUMERIC_PARSE.to_string()];
+    if include_all_helpers || body.contains("AverDigits.natDigits_head_ne_zero") {
+        parts.push(LEAN_PRELUDE_NUMERIC_PARSE_HEAD_NE_ZERO.to_string());
+    }
+    if include_all_helpers
+        || body.contains("AverDigits.digitChar_toString_ne_minus")
+        || body.contains("AverDigits.digitChar_toString_ne_zero")
+    {
+        parts.push(LEAN_PRELUDE_NUMERIC_PARSE_TOSTRING_NE.to_string());
     }
     parts.join("\n\n")
 }
@@ -1698,7 +1779,7 @@ fn build_common_lean(union_body: &str) -> String {
             "BranchPath" => parts.push(LEAN_PRELUDE_BRANCH_PATH.to_string()),
             "AverList" => parts.push(LEAN_PRELUDE_AVER_LIST.to_string()),
             "StringHelpers" => parts.push(generate_string_helpers_prelude(union_body, false)),
-            "NumericParse" => parts.push(LEAN_PRELUDE_NUMERIC_PARSE.to_string()),
+            "NumericParse" => parts.push(generate_numeric_parse_prelude(union_body, false)),
             "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
             "AverMap" => parts.push(generate_map_prelude(union_body, false)),
@@ -3608,6 +3689,74 @@ verify mirror law involutive
         assert!(lean.contains("def down (n : Int) : Int :="));
         assert!(lean.contains("if h_dom : n ≥ 0 then down__aux n h_dom"));
         assert!(!lean.contains("def down__fuel"));
+    }
+
+    /// Shared module body for the scan-lemma gate probes: `isDigit` is
+    /// the canonical single-String-param Bool predicate.
+    const SCAN_GATE_PRELUDE: &str = r#"module ScanGate
+    intent = "scan-lemma synthesis gate probes"
+    effects []
+
+fn isDigit(c: String) -> Bool
+    code = Char.toCode(c)
+    match code >= 48
+        true -> code <= 57
+        false -> false
+"#;
+
+    fn lean_for_scan_gate(scanner: &str) -> String {
+        let source = format!("{SCAN_GATE_PRELUDE}\n{scanner}");
+        let mut ctx = ctx_from_source(&source, "scan_gate");
+        let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);
+        out.files
+            .iter()
+            .map(|(_, content)| content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn scan_lemma_emitted_for_canonical_pos_returning_scanner() {
+        // Positive control for the gates below: EXIT mentions `pos`, so
+        // the `<fn>__fuel_scan` companion is synthesized.
+        let lean = lean_for_scan_gate(
+            r#"fn scanEnd(s: String, pos: Int) -> Int
+    match String.charAt(s, pos)
+        Option.None -> pos
+        Option.Some(c) -> match isDigit(c)
+            true -> scanEnd(s, pos + 1)
+            false -> 0 - 1
+"#,
+        );
+        assert!(
+            lean.contains("scanEnd__fuel_scan"),
+            "expected the scan companion lemma for the canonical shape, got:\n{lean}"
+        );
+    }
+
+    #[test]
+    fn scan_lemma_not_emitted_for_pos_free_exit_scanner() {
+        // EXIT without any `pos` occurrence (a constant-exit validator):
+        // the lemma template's `rw [hpos]` would have no work to do and
+        // FAIL — a build error in the export. The recognizer must
+        // decline so nothing is synthesized.
+        let lean = lean_for_scan_gate(
+            r#"fn scanAll(s: String, pos: Int) -> Bool
+    match String.charAt(s, pos)
+        Option.None -> true
+        Option.Some(c) -> match isDigit(c)
+            true -> scanAll(s, pos + 1)
+            false -> false
+"#,
+        );
+        assert!(
+            !lean.contains("__fuel_scan"),
+            "pos-free EXIT must not get a scan lemma, got:\n{lean}"
+        );
+        assert!(
+            lean.contains("def scanAll__fuel"),
+            "the scanner itself still gets its fuel emission, got:\n{lean}"
+        );
     }
 
     #[test]

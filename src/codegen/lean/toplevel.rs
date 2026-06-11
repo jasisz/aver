@@ -766,11 +766,157 @@ fn emit_fuelized_string_pos_fn(fd: &FnDef, ctx: &CodegenContext) -> String {
         emit_fuel_helper_def(&helper_name, &params, &ret_type, &body, ""),
         vec![String::new()],
         emit_string_pos_wrapper(fd, &helper_name, 1),
+        emit_string_pos_scan_lemma(fd, &helper_name, ctx)
+            .map(|lemma| vec![String::new(), lemma])
+            .unwrap_or_default(),
     ]
     .into_iter()
     .flatten()
     .collect::<Vec<_>>()
     .join("\n")
+}
+
+/// Companion theorem for a fuelized string-position SCANNER — the
+/// general crack in the fuel-unfolding barrier (#125 family): when the
+/// body matches the canonical shape `match String.charAt s pos with |
+/// none => EXIT | some c => if P c then SELF(s, pos+1, …) else OTHER`
+/// (recognized by `proof_recognize::detect_string_pos_scan`), emit
+///
+/// ```text
+/// theorem <fn>__fuel_scan : ∀ fuel s pos <carried>,
+///   0 ≤ pos → pos.toNat ≤ s.data.length →
+///   s.data.length - pos.toNat < fuel →
+///   (∀ ch ∈ s.data.drop pos.toNat, P (Char.toString ch) = true) →
+///   <fn>__fuel fuel s pos <args@pins> = EXIT[pos := ↑s.data.length]
+/// ```
+///
+/// proved by a FIXED fuel-induction template (`String.charAt_eq_of_lt`
+/// / `String.charAt_none_of_ge` + `List.drop_eq_getElem_cons` + omega —
+/// ported verbatim from the verified json hand proof). Universal-law
+/// emissions (`IntDecimalRoundtrip`) rewrite through this lemma to run
+/// a symbolic all-`P` suffix to the end of the string.
+///
+/// CONSERVATIVELY SHAPE-GATED: when the body does not match the exact
+/// recognizer shape, NOTHING is emitted — every emission must be
+/// provable by the uniform template BY CONSTRUCTION of the gate (a
+/// synthesized lemma that fails to prove would be a build error in the
+/// export). The predicate must also resolve to a pure single-`String`-
+/// param `Bool` fn (the lemma cites it by name as a hypothesis key; it
+/// is never unfolded).
+fn emit_string_pos_scan_lemma(
+    fd: &FnDef,
+    helper_name: &str,
+    ctx: &CodegenContext,
+) -> Option<String> {
+    let shape = crate::codegen::proof_recognize::detect_string_pos_scan(fd)?;
+    let scope = ctx.active_module_scope();
+    let pred_fd = ctx
+        .fn_def_by_name(&shape.predicate_fn, scope.as_deref())
+        .or_else(|| ctx.fn_def_by_name(&shape.predicate_fn, None))?;
+    if !crate::codegen::proof_recognize::scan_predicate_fn_ok(pred_fd) {
+        return None;
+    }
+
+    let s = aver_name_to_lean(&fd.params[0].0);
+    let pos = aver_name_to_lean(&fd.params[1].0);
+    let pred = aver_name_to_lean(&shape.predicate_fn);
+    let lemma_name = format!("{helper_name}_scan");
+
+    // Trailing args: carried params stay variables (quantified), pinned
+    // params bake their Bool literal into statement + calc steps.
+    let mut carried_binders: Vec<String> = Vec::new();
+    let mut carried_names: Vec<String> = Vec::new();
+    let mut trailing_args: Vec<String> = Vec::new();
+    for (i, pin) in shape.param_pins.iter().enumerate() {
+        let (name, ty) = &fd.params[i + 2];
+        match pin {
+            None => {
+                let lean = aver_name_to_lean(name);
+                carried_binders.push(format!(" ({} : {})", lean, type_annotation_to_lean(ty)));
+                carried_names.push(lean.clone());
+                trailing_args.push(lean);
+            }
+            Some(b) => trailing_args.push(b.to_string()),
+        }
+    }
+    let args = trailing_args
+        .iter()
+        .map(|a| format!(" {a}"))
+        .collect::<String>();
+    let carried_binder_text: String = carried_binders.concat();
+    let carried_intro = carried_names
+        .iter()
+        .map(|n| format!("{n} "))
+        .collect::<String>();
+
+    // EXIT[pos := ↑s.data.length, pinned := literal]: substitute at the
+    // AST level (a unique marker stands in for the length cast, which
+    // has no Aver-AST form), render through the SAME expr emitter the
+    // body used, then swap the marker for the cast.
+    const LEN_MARKER: &str = "AVERSCANLEN";
+    let mut subst: std::collections::HashMap<String, crate::ast::Expr> =
+        std::collections::HashMap::new();
+    subst.insert(
+        fd.params[1].0.clone(),
+        crate::ast::Expr::Ident(LEN_MARKER.to_string()),
+    );
+    for (i, pin) in shape.param_pins.iter().enumerate() {
+        if let Some(b) = pin {
+            subst.insert(
+                fd.params[i + 2].0.clone(),
+                crate::ast::Expr::Literal(crate::ast::Literal::Bool(*b)),
+            );
+        }
+    }
+    let exit_subst =
+        crate::codegen::proof_recognize::substitute_idents_in_expr(&shape.exit_expr, &subst);
+    let exit = emit_expr_legacy(&exit_subst, ctx, None)
+        .replace('\n', " ")
+        .replace(LEN_MARKER, &format!("(({s}.data.length : Int))"));
+
+    Some(format!(
+        r#"/-- Auto-synthesized scan lemma: an all-`{pred}` suffix scan runs to the
+    end of the string. Companion to the `{helper_name}` fuel def; proved by
+    the fixed fuel-induction template. -/
+theorem {lemma_name} :
+    ∀ (fuel : Nat) ({s} : String) ({pos} : Int){carried_binder_text},
+      0 ≤ {pos} → {pos}.toNat ≤ {s}.data.length →
+      {s}.data.length - {pos}.toNat < fuel →
+      (∀ ch ∈ {s}.data.drop {pos}.toNat, {pred} (Char.toString ch) = true) →
+      {helper_name} fuel {s} {pos}{args} = {exit} := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    intro {s} {pos} {carried_intro}h0 h1 h2 h3
+    omega
+  | succ fuel ih =>
+    intro {s} {pos} {carried_intro}h0 h1 h2 h3
+    by_cases hlt : {pos}.toNat < {s}.data.length
+    · have hch := String.charAt_eq_of_lt {s} {pos} h0 hlt
+      have hdrop := List.drop_eq_getElem_cons (l := {s}.data) (n := {pos}.toNat) hlt
+      have hdig : {pred} (Char.toString ({s}.data[{pos}.toNat])) = true := by
+        apply h3
+        rw [hdrop]
+        exact List.mem_cons_self _ _
+      have hstep : ∀ ch ∈ {s}.data.drop (({pos} + 1).toNat), {pred} (Char.toString ch) = true := by
+        intro ch hc
+        apply h3
+        rw [hdrop]
+        refine List.mem_cons_of_mem _ ?_
+        have he : ({pos} + 1).toNat = {pos}.toNat + 1 := by omega
+        rw [he] at hc
+        exact hc
+      have hrec := ih {s} ({pos} + 1) {carried_intro}(by omega) (by omega) (by omega) hstep
+      calc {helper_name} (fuel + 1) {s} {pos}{args}
+          = {helper_name} fuel {s} ({pos} + 1){args} := by
+            simp only [{helper_name}, hch, hdig]
+            simp
+        _ = {exit} := hrec
+    · have hpos : {pos} = ({s}.data.length : Int) := by omega
+      have hch := String.charAt_none_of_ge {s} {pos} h0 (by omega)
+      simp only [{helper_name}, hch]
+      rw [hpos]"#
+    ))
 }
 
 fn strip_match_eq_binders(body: String) -> String {
@@ -2687,6 +2833,12 @@ fn emit_verify_law_block(
                 // checked_domain cover the point) instead of gaining
                 // a universal that would land as a caught sorry.
                 | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
+                // IntDecimalRoundtrip shares the same honest-sorry
+                // floor (`first | (…; done) | sorry`); its detector
+                // also requires a given-dependent rhs, so the
+                // singleton-const-rhs skip can't apply — listed for
+                // the same conservatism.
+                | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
         )
     });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs

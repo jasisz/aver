@@ -1454,6 +1454,12 @@ pub fn emit_verify_law(
                     // so Dafny treats the pin as `BackendDispatch` and
                     // its exports stay byte-identical.
                     | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
+                    // Same guard for the decimal-Int roundtrip strategy:
+                    // Lean-only (its skeleton cites the synthesized
+                    // `__fuel_scan` lemma and Lean prelude names), so
+                    // Dafny treats the pin as `BackendDispatch` and its
+                    // exports stay byte-identical.
+                    | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
             )
         });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs

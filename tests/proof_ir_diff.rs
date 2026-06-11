@@ -1894,3 +1894,185 @@ fn simp_over_prelude_lemmas_not_pinned_for_recursive_seed_with_open_args() {
         theorem.strategy
     );
 }
+
+/// Canonical decimal-parser source for the `IntDecimalRoundtrip`
+/// detector tests — a minimal standalone replica of the
+/// `examples/data/json.av` number-parsing family (head-char dispatch,
+/// sign path, one fuelized digit scanner, slice + `Int.fromString`
+/// leaf, `C(x) -> String.fromInt(x)` serializer arm).
+const DECIMAL_ROUNDTRIP_SRC: &str = r#"module DecimalRt
+    intent = "decimal int render/parse roundtrip"
+    effects []
+
+type Num
+    NumInt(Int)
+
+type ParseOut
+    Got(Num, Int)
+    Bad(String, Int)
+
+fn render(v: Num) -> String
+    match v
+        Num.NumInt(n) -> String.fromInt(n)
+
+fn isDigit(c: String) -> Bool
+    code = Char.toCode(c)
+    match code >= 48
+        true -> code <= 57
+        false -> false
+
+fn finishInt(num: String, pos: Int) -> ParseOut
+    match Int.fromString(num)
+        Result.Ok(n) -> ParseOut.Got(Num.NumInt(n), pos)
+        Result.Err(_) -> ParseOut.Bad("bad int", pos)
+
+fn finishNumber(s: String, start: Int, endPos: Int, asFloat: Bool) -> ParseOut
+    num = String.slice(s, start, endPos)
+    match asFloat
+        true -> ParseOut.Bad("float unsupported", endPos)
+        false -> finishInt(num, endPos)
+
+fn scanIntTail(s: String, pos: Int, start: Int, leadingZero: Bool) -> ParseOut
+    match String.charAt(s, pos)
+        Option.None -> finishNumber(s, start, pos, false)
+        Option.Some(c) -> match isDigit(c)
+            true -> match leadingZero
+                true -> ParseOut.Bad("leading zero", pos)
+                false -> scanIntTail(s, pos + 1, start, false)
+            false -> ParseOut.Bad("trailing", pos)
+
+fn startDigits(s: String, start: Int, c: String) -> ParseOut
+    match isDigit(c)
+        true -> scanIntTail(s, start + 1, start, false)
+        false -> ParseOut.Bad("expected digit", start)
+
+fn signDigit(s: String, pos: Int, start: Int, c: String) -> ParseOut
+    match isDigit(c)
+        true -> scanIntTail(s, pos + 1, start, false)
+        false -> ParseOut.Bad("expected digit", pos)
+
+fn parseSign(s: String, pos: Int, start: Int) -> ParseOut
+    match String.charAt(s, pos)
+        Option.None -> ParseOut.Bad("expected digit", pos)
+        Option.Some(c) -> match c
+            "0" -> scanIntTail(s, pos + 1, start, true)
+            _ -> signDigit(s, pos, start, c)
+
+fn parseNum(s: String, start: Int) -> ParseOut
+    match String.charAt(s, start)
+        Option.None -> ParseOut.Bad("empty", start)
+        Option.Some(c) -> match c
+            "-" -> parseSign(s, start + 1, start)
+            "0" -> scanIntTail(s, start + 1, start, true)
+            _ -> startDigits(s, start, c)
+
+verify parseNum law fromIntRoundtrip
+    given n: Int = [-7, 0, 42, 2500]
+    parseNum(render(Num.NumInt(n)), 0) => ParseOut.Got(Num.NumInt(n), String.len(render(Num.NumInt(n))))
+"#;
+
+#[test]
+fn int_decimal_roundtrip_pinned_for_canonical_decimal_parser() {
+    // The full canonical decimal-parser shape (json.av's
+    // `parseNumber.fromIntRoundtrip` family) must pin
+    // `IntDecimalRoundtrip` with every cone fn captured — the Lean
+    // emission renders the fixed sign-split skeleton from these names
+    // and cites the scanner's synthesized `__fuel_scan` lemma.
+    let ctx = build_ctx(DECIMAL_ROUNDTRIP_SRC);
+    let theorem = law_theorem(&ctx, "parseNum", "fromIntRoundtrip")
+        .expect("parseNum::fromIntRoundtrip law theorem missing from ProofIR");
+    let aver::ir::ProofStrategy::IntDecimalRoundtrip {
+        ref parse_fn,
+        ref neg_fn,
+        ref pos_fn,
+        ref sign_fn,
+        ref scanner_fn,
+        ref predicate_fn,
+        ref finish_fn,
+        ref finish_int_fn,
+        ref serializer_fn,
+    } = theorem.strategy
+    else {
+        panic!(
+            "canonical decimal parser must pin IntDecimalRoundtrip, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(parse_fn, "parseNum");
+    assert_eq!(neg_fn, "parseSign");
+    assert_eq!(pos_fn, "startDigits");
+    assert_eq!(sign_fn, "signDigit");
+    assert_eq!(scanner_fn, "scanIntTail");
+    assert_eq!(predicate_fn, "isDigit");
+    assert_eq!(finish_fn, "finishNumber");
+    assert_eq!(finish_int_fn, "finishInt");
+    assert_eq!(serializer_fn, "render");
+}
+
+#[test]
+fn int_decimal_roundtrip_not_pinned_for_when_law() {
+    // `when` premises are out of scope — the fixed proof skeleton has
+    // no premise handling (mirrors the no-when gates of the sibling
+    // fallbacks).
+    let src = DECIMAL_ROUNDTRIP_SRC.replace(
+        "    given n: Int = [-7, 0, 42, 2500]\n",
+        "    given n: Int = [0, 42, 2500]\n    when n >= 0\n",
+    );
+    let ctx = build_ctx(&src);
+    let theorem = law_theorem(&ctx, "parseNum", "fromIntRoundtrip")
+        .expect("parseNum::fromIntRoundtrip law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::IntDecimalRoundtrip { .. }
+        ),
+        "when-law must NOT pin IntDecimalRoundtrip, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn int_decimal_roundtrip_not_pinned_when_head_dispatch_arms_deviate() {
+    // Arm order is load-bearing for the emission's `split` bullets —
+    // a parser with the "0" arm before the "-" arm must not pin (it
+    // falls through to the prelude-simp rung's honest floor instead).
+    let src = DECIMAL_ROUNDTRIP_SRC.replace(
+        "            \"-\" -> parseSign(s, start + 1, start)\n            \"0\" -> scanIntTail(s, start + 1, start, true)\n",
+        "            \"0\" -> scanIntTail(s, start + 1, start, true)\n            \"-\" -> parseSign(s, start + 1, start)\n",
+    );
+    assert_ne!(src, DECIMAL_ROUNDTRIP_SRC, "mutation must apply");
+    let ctx = build_ctx(&src);
+    let theorem = law_theorem(&ctx, "parseNum", "fromIntRoundtrip")
+        .expect("parseNum::fromIntRoundtrip law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::IntDecimalRoundtrip { .. }
+        ),
+        "flipped dispatch arms must NOT pin IntDecimalRoundtrip, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn int_decimal_roundtrip_not_pinned_when_scanner_exit_deviates() {
+    // The scanner's none-arm EXIT must be the canonical
+    // `finish(s, start, pos, false)` continuation; an early-error exit
+    // breaks the `hfin` leaf, so the detector must decline.
+    let src = DECIMAL_ROUNDTRIP_SRC.replace(
+        "        Option.None -> finishNumber(s, start, pos, false)\n",
+        "        Option.None -> ParseOut.Bad(\"eof\", pos)\n",
+    );
+    assert_ne!(src, DECIMAL_ROUNDTRIP_SRC, "mutation must apply");
+    let ctx = build_ctx(&src);
+    let theorem = law_theorem(&ctx, "parseNum", "fromIntRoundtrip")
+        .expect("parseNum::fromIntRoundtrip law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::IntDecimalRoundtrip { .. }
+        ),
+        "non-finish scanner exit must NOT pin IntDecimalRoundtrip, got: {:?}",
+        theorem.strategy
+    );
+}
