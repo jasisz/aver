@@ -1398,6 +1398,15 @@ pub(crate) fn emit_mir_numeric_binop(
         (Some(ValType::F64), BinOp::Gt) => Instruction::F64Gt,
         (Some(ValType::F64), BinOp::Lte) => Instruction::F64Le,
         (Some(ValType::F64), BinOp::Gte) => Instruction::F64Ge,
+        // `i32`-represented operands — `Bool` (or a single-field record
+        // newtype over Bool, unwrapped by `wasm_type_of`). The checker
+        // admits only `==` / `!=` on Bool (ordering requires Int /
+        // Float / String), so equality is the only i32 row needed.
+        // Without it Bool `==` fell into the i64 catch-all below and
+        // the module failed validation ("expected i64, found i32") —
+        // the shape every `verify ... => true` case synthesizes.
+        (Some(ValType::I32), BinOp::Eq) => Instruction::I32Eq,
+        (Some(ValType::I32), BinOp::Neq) => Instruction::I32Ne,
         (_, BinOp::Add) => Instruction::I64Add,
         (_, BinOp::Sub) => Instruction::I64Sub,
         (_, BinOp::Mul) => Instruction::I64Mul,
