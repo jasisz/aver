@@ -1441,6 +1441,14 @@ pub fn emit_verify_law(
                     // Dafny's behaviour is unchanged from before the
                     // Lean-only strategy existed.
                     | crate::ir::ProofStrategy::EnumConstantFold { .. }
+                    // Same guard for the finite-domain-cases strategy:
+                    // it is Lean-only (exhaustive `cases` enumeration),
+                    // Dafny keeps its pre-strategy behaviour — the
+                    // default fuel-bumped lemma where it can, the
+                    // singleton-domain / fuel-bounded sample-only gates
+                    // where it can't. Byte-identical to before the
+                    // strategy existed.
+                    | crate::ir::ProofStrategy::FiniteDomainCases { .. }
             )
         });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs

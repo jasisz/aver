@@ -207,6 +207,36 @@ pub fn emit_verify_law_forall_auto_proof(
         });
     }
 
+    // IR-pinned `FiniteDomainCases` — every given ranges over a closed
+    // finite domain (Bool or an all-fieldless user enum, ≤ 16 total
+    // combinations), so exhaustive `cases` enumeration yields one
+    // closed ground goal per combination. Fuel-wrapped callees compute
+    // through (constant-measure constructor args), which is why the
+    // detector has no call-shape / recursion gate. Per-leaf cascade:
+    // `rfl` first (the workhorse — kernel defeq computes ground
+    // terms), then `decide` (kernel-rechecked; can be weak on derived
+    // DecidableEq over nested ADTs), then the iron guard — an HONEST
+    // `sorry`. A non-closing leaf must surface as a caught sorry,
+    // NEVER a build error and NEVER `native_decide` (which would
+    // inject `Lean.ofReduceBool` and silently kill `universal:true`).
+    if let Some(crate::ir::ProofStrategy::FiniteDomainCases { ref givens }) =
+        law_strategy_for(ctx, &vb.fn_name, &law.name)
+    {
+        let cascade = givens
+            .iter()
+            .map(|g| format!("cases {}", aver_name_to_lean(g)))
+            .collect::<Vec<_>>()
+            .join(" <;> ");
+        return Some(AutoProof {
+            support_lines: Vec::new(),
+            proof_lines: intro_then(
+                &proof_intro_names,
+                vec![format!("{cascade} <;> (first | rfl | decide | sorry)")],
+            ),
+            replaces_theorem: false,
+        });
+    }
+
     // IR-pinned `LinearIntSpecEquivalence` — Step 40: lowerer
     // validated substituted bodies are pure linear arithmetic over
     // Int givens. Backend emits `change <impl> = <spec> ; omega`.

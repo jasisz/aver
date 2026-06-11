@@ -255,6 +255,16 @@ pub fn collect_contextual_helper_law_hints(
             let VerifyKind::Law(law) = &vb.kind else {
                 return None;
             };
+            // A law whose every given ranges over a closed finite
+            // domain closes by exhaustive `cases` enumeration
+            // (`ProofStrategy::FiniteDomainCases`) — the per-leaf
+            // ground goals compute straight through helper fns, fuel
+            // wrappers included, so the auto-proof does NOT stop at
+            // helper boundaries and the ladder hint would be stale
+            // advice.
+            if law.when.is_none() && law_givens_are_closed_finite_domain(law, items) {
+                return None;
+            }
             contextual_helper_law_hint_for_block(
                 vb,
                 law,
@@ -264,6 +274,47 @@ pub fn collect_contextual_helper_law_hints(
             )
         })
         .collect()
+}
+
+/// True when `law` has at least one given and EVERY given ranges over
+/// a closed finite domain — `Bool` (size 2) or a user-declared enum
+/// whose constructors are ALL fieldless (size = constructor count) —
+/// with the product of domain sizes ≤ 16. AST-level mirror of the
+/// `ProofStrategy::FiniteDomainCases` detector in
+/// `codegen::proof_lower` (kept in sync by the json.av
+/// helper-law-ladder checker test); the caller must also mirror the
+/// detector's `law.when.is_none()` gate — when-laws never get the
+/// strategy, so their hints must not be suppressed. Such a law's
+/// universal theorem is closed by exhaustive `cases` enumeration, not
+/// by the helper-law ladder.
+fn law_givens_are_closed_finite_domain(law: &VerifyLaw, items: &[TopLevel]) -> bool {
+    if law.givens.is_empty() {
+        return false;
+    }
+    let mut domain_product: usize = 1;
+    for given in &law.givens {
+        let size = if given.type_name == "Bool" {
+            2
+        } else {
+            let fieldless_enum_size = items.iter().find_map(|item| match item {
+                TopLevel::TypeDef(crate::ast::TypeDef::Sum { name, variants, .. })
+                    if *name == given.type_name && variants.iter().all(|v| v.fields.is_empty()) =>
+                {
+                    Some(variants.len())
+                }
+                _ => None,
+            });
+            match fieldless_enum_size {
+                Some(n) => n,
+                None => return false,
+            }
+        };
+        domain_product = match domain_product.checked_mul(size) {
+            Some(p) if p <= 16 => p,
+            _ => return false,
+        };
+    }
+    true
 }
 
 pub fn contextual_helper_law_message(hint: &ContextualHelperLawHint) -> String {
