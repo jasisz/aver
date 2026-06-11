@@ -5597,14 +5597,16 @@ fn run_proof_check(
     // law, and neither backend charges that fn-level trust to the budget.)
     let error_budget_v = error_budget.unwrap_or(0);
     let sorry_budget_v = sorry_budget.unwrap_or(0);
-    // Lean only: fuel-exhaustion panic lines in the captured build output.
-    // The fuel wrappers panic on exhaustion, but Lean's `panic!` RETURNS the
-    // type's `default` instead of aborting — under `native_decide` both sides
-    // of a model-vs-model sample equation then reduce to `default` and the
-    // kernel certifies a vacuous (possibly false) equality with lake exit 0
-    // and zero sorries. The panic line is the only trace, so ANY hit is a
-    // hard check failure (see `count_fuel_exhaustion_panics`).
-    let mut fuel_exhausted_hits = 0usize;
+    // Lean only: model panic lines in the captured build output. The emitted
+    // exports panic only at compiler-generated sites (fuel-wrapper
+    // exhaustion, partial prelude builtins like `Char.toCode` on an empty
+    // string), and Lean's `panic!` RETURNS the type's `default` instead of
+    // aborting — under `native_decide` both sides of a model-vs-model sample
+    // equation then reduce to `default` and the kernel certifies a vacuous
+    // (possibly false) equality with lake exit 0 and zero sorries. The panic
+    // line is the only trace, so ANY hit is a hard check failure (see
+    // `count_model_panic_lines`).
+    let mut model_panic_hits = 0usize;
     let (errors, sorries, axioms, omitted, budget, passed) = match backend {
         super::cli::ProofBackend::Dafny => {
             let errors = match parse_dafny_error_count(&stdout) {
@@ -5647,24 +5649,24 @@ fn run_proof_check(
         }
         super::cli::ProofBackend::Lean => {
             let sorries = count_lean_sorries(&stderr) + count_lean_sorries(&stdout);
-            fuel_exhausted_hits = lean_codegen::count_fuel_exhaustion_panics(&stdout)
-                + lean_codegen::count_fuel_exhaustion_panics(&stderr);
+            model_panic_hits = lean_codegen::count_model_panic_lines(&stdout)
+                + lean_codegen::count_model_panic_lines(&stderr);
             let passed =
-                output.status.success() && sorries <= sorry_budget_v && fuel_exhausted_hits == 0;
+                output.status.success() && sorries <= sorry_budget_v && model_panic_hits == 0;
             (None, Some(sorries), None, None, sorry_budget_v, passed)
         }
     };
 
-    if fuel_exhausted_hits > 0 {
+    if model_panic_hits > 0 {
         eprintln!(
             "{}",
             format!(
-                "--check: the Lean model exhausted fuel while evaluating a bounded sample \
-                 ({} \"{}\" panic line(s) in the build output) — the exported model may \
+                "--check: the Lean model panicked while evaluating a bounded sample \
+                 ({} \"{}\" line(s) in the build output) — the exported model may \
                  disagree with the program, so its sample equations prove nothing; this is \
                  an Aver bug, please report it",
-                fuel_exhausted_hits,
-                lean_codegen::PROOF_FUEL_EXHAUSTED_MSG
+                model_panic_hits,
+                lean_codegen::LEAN_PANIC_LINE_MARKER.trim_end()
             )
             .red()
         );
@@ -5682,7 +5684,7 @@ fn run_proof_check(
     let universal: Option<bool> = match backend {
         super::cli::ProofBackend::Lean => Some(
             output.status.success()
-                && fuel_exhausted_hits == 0
+                && model_panic_hits == 0
                 && lean_universal_proof(output_dir, sorries.unwrap_or(0)),
         ),
         super::cli::ProofBackend::Dafny => None,
@@ -5708,11 +5710,14 @@ fn run_proof_check(
             obj.insert("universal".into(), u.into());
         }
         if matches!(backend, super::cli::ProofBackend::Lean) {
-            // Additive field — existing consumers (proof-corpus/run.sh, the
-            // proof_spec gating tests) key on passed/universal/sorries and
-            // ignore unknown fields. `true` means the check FAILED with the
-            // compiler-model bug above regardless of budgets.
-            obj.insert("fuel_exhausted".into(), (fuel_exhausted_hits > 0).into());
+            // Renamed from the short-lived `fuel_exhausted` (0.25.0-unreleased
+            // only; no consumer outside this repo's tests reads it —
+            // proof-corpus/run.sh and the proof_spec gating tests key on
+            // passed/universal/sorries) now that the gate scans for ANY model
+            // panic line, not just the fuel-exhaustion marker. `true` means
+            // the check FAILED with the compiler-model bug above regardless
+            // of budgets.
+            obj.insert("model_panicked".into(), (model_panic_hits > 0).into());
         }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
