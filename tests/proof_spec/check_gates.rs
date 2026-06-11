@@ -395,3 +395,129 @@ fn proof_lean_bounded_when_law_proof_is_not_credited_universal() {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_check_dafny_declines_unrecognized_recursion_instead_of_guessing() {
+    // Recursion outside every recognized `decreases` pattern — the
+    // doubling/halving exponent walk on a rational num/den pair
+    // (tests/fixtures/expo_outside_subset.av). The emitter used to
+    // GUESS `decreases num` + synthesize `requires num >= 0` on the
+    // first Int param: two "decreases clause might not decrease"
+    // errors on a correct function plus a "function precondition could
+    // not be proved" error at every total caller. The honest export
+    // declines: the fn emits as an opaque `function {:axiom}`, callers
+    // stay wellformed, sample asserts are suppressed (nothing about an
+    // opaque value is provable), and the law is charged as omitted —
+    // 0 errors, 0 axiom-attributed lemmas, 1 omitted universal.
+    if Command::new("dafny").arg("--version").output().is_err() {
+        eprintln!("skipping dafny unrecognized-recursion decline test: `dafny` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-expo-outside-subset-out");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/expo_outside_subset.av")
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["errors"].as_u64(),
+            summary["axioms"].as_u64(),
+            summary["omitted"].as_u64(),
+        ),
+        (Some(0), Some(0), Some(1)),
+        "unrecognized recursion must decline to an omitted law, never error \
+         on a guessed measure\n{}",
+        format_output(&run)
+    );
+    let dfy = std::fs::read_to_string(out.join("ExpoOutsideSubset.dfy"))
+        .expect("read emitted ExpoOutsideSubset.dfy");
+    assert!(
+        dfy.contains("function {:axiom} expo("),
+        "expo must emit as an opaque axiom declaration; got:\n{dfy}"
+    );
+    assert!(
+        !dfy.contains("requires num >= 0"),
+        "no synthesized precondition may poison expo's callers; got:\n{dfy}"
+    );
+    assert!(
+        dfy.contains("// Sample assertions for expo.upperBound omitted"),
+        "samples over the opaque fn must be suppressed with a marker; got:\n{dfy}"
+    );
+    assert!(
+        dfy.contains("decreases if j >= 0 then j else 0"),
+        "the recognized countdown pattern (pow2) must keep its real decreases; got:\n{dfy}"
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
+fn proof_check_lean_chunked_checked_domain_builds_and_keeps_universal_credit() {
+    // A 512-cell given-domain product (tests/fixtures/large_domain_law
+    // .av) used to emit ONE 512-conjunct `_checked_domain` theorem:
+    // `Decidable`-instance synthesis recurses once per nested ∧, blows
+    // the elaborator's `maxRecDepth`, and the whole file fails to build
+    // — the caught-sorry floor dies for every law in the file. The
+    // emitter now chunks past the 36-conjunct edge into
+    // `_checked_domain_part<N>` theorems. Both halves matter here:
+    // `passed` proves the file builds again, `universal` proves the
+    // part-theorems are excluded from the `#print axioms` audit (they
+    // are `native_decide` cross-checks; counting them would strip the
+    // genuinely-closed universal of its credit).
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean chunked-domain test: `lake` not available");
+        return;
+    }
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let out = temp_output_dir("aver-large-domain-out");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/large_domain_law.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        (
+            summary["passed"].as_bool(),
+            summary["sorries"].as_u64(),
+            summary["universal"].as_bool(),
+        ),
+        (Some(true), Some(0), Some(true)),
+        "the chunked large-domain export must build with zero sorries and keep \
+         universal credit on the main law theorem\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}

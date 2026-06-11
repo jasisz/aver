@@ -434,6 +434,25 @@ pub(super) fn detect_simp_omega_unfold(
         }
     }
 
+    // Builtin-namespace wall (tests/fixtures/result_default_cone.av):
+    // calls like `Result.withDefault` collect exactly like cross-module
+    // user calls (uppercase head, lowercase leaf) but resolve to NO
+    // user def — the rendered `simp only [...]` would cite a Lean
+    // constant that does not exist in the emitted file
+    // (`Result.withDefault` is not the prelude's `Except.withDefault`),
+    // an `unknown identifier` BUILD ERROR that takes the whole file's
+    // caught-sorry floor down with it. And even with the name mapped,
+    // the lowered builtin shape (zero-guarded `Except`/`Option`
+    // matches) sits outside omega's theory, so the tactic still fails.
+    // Decline; the law degrades to the honest fallback paths (the
+    // prelude-simp `first | simp | sorry` rung or the sampled sorry).
+    if fn_names
+        .iter()
+        .any(|n| inputs.find_fn_def_by_call_name(n).is_none())
+    {
+        return None;
+    }
+
     // Self-recursion rejection — `unfold fn` only does one step, so
     // a recursive body leaves a stale `fn` in the goal that simp
     // can't close. Check against the narrow self-only set; calling

@@ -173,6 +173,50 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
         });
     }
 
+    // Self-recursive singletons whose termination no recognized
+    // `decreases` pattern justifies (doubling/halving recursion on a
+    // rational num/den pair — tests/fixtures/expo_outside_subset.av):
+    // guessing a measure emits a function whose own `decreases` fails
+    // verification AND a synthesized `requires p >= 0` that breaks
+    // every total caller. Route them to the opaque `{:axiom}` form —
+    // callers stay wellformed, and laws over them are reported as
+    // omitted/unproven instead of erroring. Kept in a SEPARATE set
+    // from `axiom_fn_ids` so the law/sample machinery for the
+    // pre-existing axiom population (mutual-SCC fallback, `?`-lowering
+    // failures) is untouched; this set only (a) switches the fn's own
+    // emission to `{:axiom}` and (b) suppresses sample asserts that
+    // could never be proved against an opaque body.
+    let mut termination_axiom_ids: HashSet<crate::ir::FnId> = HashSet::new();
+    {
+        let all_pure_fns: Vec<&FnDef> = ctx
+            .items
+            .iter()
+            .filter_map(|it| {
+                if let TopLevel::FnDef(fd) = it {
+                    Some(fd)
+                } else {
+                    None
+                }
+            })
+            .chain(ctx.modules.iter().flat_map(|m| m.fn_defs.iter()))
+            .filter(|fd| fd.effects.is_empty() && fd.name != "main")
+            .collect();
+        for fd in all_pure_fns {
+            let Some(id) = crate::codegen::common::fn_id_for_decl(ctx, fd) else {
+                continue;
+            };
+            if fuel_emitted.contains(&id)
+                || native_emitted.contains(&id)
+                || axiom_fn_ids.contains(&id)
+            {
+                continue;
+            }
+            if toplevel::termination_guess_unjustified(fd) {
+                termination_axiom_ids.insert(id);
+            }
+        }
+    }
+
     let needs_axiom_for_error_prop = |fd: &FnDef| -> bool {
         body_uses_error_prop(&fd.body)
             && crate::types::checker::effect_lifting::lower_pure_question_bang_fn(fd)
@@ -188,7 +232,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             toplevel::emit_fn_def_axiom(fd, ctx)
         } else if id_in(&fuel_emitted, fd) || id_in(&native_emitted, fd) {
             String::new()
-        } else if id_in(&axiom_fn_ids, fd) {
+        } else if id_in(&axiom_fn_ids, fd) || id_in(&termination_axiom_ids, fd) {
             toplevel::emit_fn_def_axiom(fd, ctx)
         } else {
             toplevel::emit_fn_def(fd, ctx)
@@ -376,6 +420,12 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             // from opaque so per-sample bodies on the native path
             // skip the fuel-magnitude cutoff.
             let native_transitive = toplevel::transitive_opaque_closure(ctx, &native_emitted);
+            // Truly opaque `{:axiom}` fns from the termination-decline
+            // path (and their transitive callers): nothing about their
+            // value is provable, so sample asserts/lemmas over them
+            // could only fail. Suppressed with a marker comment below.
+            let termination_opaque =
+                toplevel::transitive_opaque_closure(ctx, &termination_axiom_ids);
             if !vb.cases.is_empty()
                 && let Some(code) = toplevel::emit_law_samples(
                     vb,
@@ -385,6 +435,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                     &opaque_fns,
                     &fuel_emitted,
                     &native_transitive,
+                    &termination_opaque,
                 )
             {
                 entry_sections.push(code);
@@ -395,6 +446,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
                 ctx,
                 &opaque_fns,
                 &native_transitive,
+                &termination_opaque,
                 &suffix,
             ));
         }

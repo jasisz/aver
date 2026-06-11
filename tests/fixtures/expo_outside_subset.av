@@ -1,0 +1,40 @@
+module ExpoOutsideSubset
+    intent =
+        "Binary exponent of a positive rational num/den by doubling/halving recursion — outside every termination pattern the proof exporters recognize. The Dafny exporter must decline honestly (opaque axiom fn, samples and universal lemma reported as omitted) instead of guessing a decreases clause that fails verification and synthesizing a requires that breaks total callers."
+    effects []
+
+fn pow2(j: Int) -> Int
+    ? "2 to the power j for j >= 0; 1 for negative j."
+    match j <= 0
+        true -> 1
+        false -> 2 * pow2(j - 1)
+
+fn expo(num: Int, den: Int) -> Int
+    ? "Exponent e of the rational num/den; 0 when either input is not positive."
+    match Bool.or(num <= 0, den <= 0)
+        true -> 0
+        false -> match num < den
+            true -> expo(2 * num, den) - 1
+            false -> match num < 2 * den
+                true -> 0
+                false -> expo(num, 2 * den) + 1
+
+fn shiftExpo(num: Int, den: Int) -> Int
+    ? "Exponent shifted by one binade; a total caller of expo."
+    expo(num, den) + 1
+
+verify expo
+    expo(1, 1) => 0
+    expo(3, 2) => 0
+    expo(4, 1) => 2
+    expo(1, 4) => -2
+
+verify shiftExpo
+    shiftExpo(1, 1) => 1
+
+verify expo law upperBound
+    given num: Int = [1, 2, 3]
+    given den: Int = [1, 2]
+    given j: Int = 0..3
+    when Bool.and(Bool.and(num > 0, den > 0), num < den * pow2(j))
+    expo(num, den) < j => true
