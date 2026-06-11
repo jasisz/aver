@@ -5665,9 +5665,33 @@ fn count_lean_sorries(s: &str) -> usize {
 /// universal claim. We collect the main law theorems (`*_law_*` / `*_eq_*`,
 /// excluding the `_checked_domain` and `_sample_N` bounded cross-checks
 /// built off the same base) and run `#print axioms` on each against the
-/// freshly built environment. The law is universal iff EVERY main theorem
-/// is `ofReduceBool`-free — and at least one exists, and there are no
-/// sorries.
+/// freshly built environment. The law is universal iff EVERY participating
+/// theorem is `ofReduceBool`-free — and at least one exists, and there are
+/// no sorries.
+///
+/// Axiom-cleanliness alone is NOT enough: the theorem's STATEMENT must also
+/// be the law's genuine `∀`-claim. A `when`-law over non-refinement-lifted
+/// givens is emitted with sampled-domain disjunction premises prepended
+/// (`a = 0 ∨ a = 1 ∨ … ->`), so even a real-tactic, axiom-clean proof of it
+/// only establishes the law on the finite sample domain. Whether those
+/// premises were prepended is knowable only at the statement-construction
+/// site, so the emitter records a per-theorem class marker in the `.lean`
+/// source (`-- aver:law-class <name> universal|bounded-domain`, see
+/// `lean::LAW_CLASS_MARKER_PREFIX`) and this checker consumes it — it never
+/// re-derives the class from names or by parsing statements:
+///   - `bounded-domain`-classed theorems are EXCLUDED from universal
+///     crediting (their axiom profile no longer matters here; sorries still
+///     count file-wide via the `sorries` gate above);
+///   - universal credit requires at least one emitted law theorem
+///     explicitly classed `universal` — a dir with law theorems but no
+///     markers (stale/foreign export not produced by this emitter) FAILS
+///     CLOSED to `false` instead of reverting to name heuristics. The
+///     `--check` flow always runs on a fresh emission (`cmd_proof` emits,
+///     then calls `run_proof_check`, the only caller), so the channel is
+///     present in practice;
+///   - a name-matched theorem WITHOUT a marker (auxiliary `*_eq_*`-shaped
+///     helper lemmas some strategies emit) stays in the axiom check —
+///     conservative: it can only withhold credit, never grant it.
 ///
 /// A task whose universal theorem was dropped entirely (`skip_universal`:
 /// const-RHS singleton or a fuel-bounded recursive callee — the Lean analog
@@ -5689,8 +5713,10 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
     if roots.is_empty() {
         return false;
     }
-    // Collect the main universal law theorems across the emitted sources.
+    // Collect the main universal law theorems across the emitted sources,
+    // plus the emitter's per-theorem statement-class markers.
     let mut law_thms: Vec<String> = Vec::new();
+    let mut classes: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -5712,6 +5738,13 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
                     continue;
                 }
                 for line in contents.lines() {
+                    if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
+                        let mut parts = rest.split_whitespace();
+                        if let (Some(thm), Some(class)) = (parts.next(), parts.next()) {
+                            classes.insert(thm.to_string(), class.to_string());
+                        }
+                        continue;
+                    }
                     if let Some(rest) = line.strip_prefix("theorem ") {
                         let thm = rest
                             .split_whitespace()
@@ -5731,6 +5764,24 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
     }
     law_thms.sort();
     law_thms.dedup();
+    // Consume the statement-class channel (see the doc comment above):
+    // bounded-domain theorems leave the crediting set; at least one
+    // explicitly universal-classed theorem must remain or the dir earns no
+    // universal credit (fail-closed when the channel is absent).
+    let mut universal_class_present = false;
+    law_thms.retain(|thm| match classes.get(thm).map(String::as_str) {
+        Some(lean_codegen::LAW_CLASS_BOUNDED_DOMAIN) => false,
+        Some(lean_codegen::LAW_CLASS_UNIVERSAL) => {
+            universal_class_present = true;
+            true
+        }
+        // Unmarked (or unknown class tag): keep it in the axiom check —
+        // conservative — but it cannot by itself earn universal credit.
+        _ => true,
+    });
+    if !universal_class_present {
+        return false;
+    }
     // Throwaway checker: print each main law theorem's axiom dependency
     // against the already-built environment.
     let mut src = String::new();

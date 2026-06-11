@@ -2996,7 +2996,7 @@ fn emit_verify_law_block(
             ctx,
             &theorem_base,
         ));
-        let theorem_prop = law_theorem_prop(
+        let (theorem_prop, bounded_domain) = law_theorem_prop(
             law,
             ctx,
             &lhs_template,
@@ -3004,6 +3004,25 @@ fn emit_verify_law_block(
             when_template.as_deref(),
             &lifted_vars,
         );
+        // Statement-class marker — the channel `aver proof --check`'s
+        // `universal` metric keys on (see `LAW_CLASS_MARKER_PREFIX`).
+        // Recorded HERE because this is where the statement was built:
+        // `bounded_domain` says whether sampled-domain disjunction
+        // premises bound the claim to the finite sample domain. For a
+        // `replaces_theorem` auto-proof the strategy emits its own
+        // (universal-form) statement; keeping this class for it is
+        // conservative — a mislabel can only withhold credit, never
+        // grant it.
+        lines.push(format!(
+            "{}{} {}",
+            super::LAW_CLASS_MARKER_PREFIX,
+            theorem_base,
+            if bounded_domain {
+                super::LAW_CLASS_BOUNDED_DOMAIN
+            } else {
+                super::LAW_CLASS_UNIVERSAL
+            }
+        ));
         // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs
         // ASTs. For effectful laws the theorem statement has been
         // rewritten to target the lifted fn (BranchPath.root() + oracle
@@ -3300,6 +3319,16 @@ pub(crate) fn law_as_lemma_statement(
     Some((theorem_base, format!("{lhs} = {rhs}")))
 }
 
+/// Build the law theorem's statement body. Returns `(prop, bounded_domain)`:
+/// `bounded_domain` is `true` iff sampled-domain disjunction premises
+/// (`a = 0 ∨ a = 1 ∨ …`) were prepended — the statement then only claims the
+/// law over the finite sample domain, NOT universally. This flag is the
+/// single source of truth for the `-- aver:law-class` marker the caller
+/// emits (see `LAW_CLASS_MARKER_PREFIX`): the checker's `universal` metric
+/// keys on it instead of re-deriving the class from names or statements.
+/// A `when`-premise alone (`… = true ->`) does NOT bound the statement —
+/// it is a conditional but still universally quantified claim (the
+/// refinement-lifted case, where every given's domain premise is dropped).
 fn law_theorem_prop(
     law: &VerifyLaw,
     ctx: &CodegenContext,
@@ -3307,7 +3336,7 @@ fn law_theorem_prop(
     rhs_template: &str,
     when_template: Option<&str>,
     lifted_vars: &std::collections::HashMap<String, String>,
-) -> String {
+) -> (String, bool) {
     let mut premises = Vec::new();
     let when_redundant_with_lifts = law
         .when
@@ -3330,6 +3359,7 @@ fn law_theorem_prop(
             }
         }));
     }
+    let bounded_domain = !premises.is_empty();
     // `when` drop is only sound when the predicate is syntactically
     // equivalent (via commutator-relaxed compare) to the conjunction
     // of lifted givens' refinement invariants — otherwise stronger /
@@ -3343,11 +3373,12 @@ fn law_theorem_prop(
         premises.push(format!("{when_expr} = true"));
     }
     let conclusion = format!("{lhs_template} = {rhs_template}");
-    if premises.is_empty() {
+    let prop = if premises.is_empty() {
         conclusion
     } else {
         format!("{} -> {}", premises.join(" -> "), conclusion)
-    }
+    };
+    (prop, bounded_domain)
 }
 
 fn law_given_domain_to_lean(domain: &VerifyGivenDomain, ctx: &CodegenContext) -> String {

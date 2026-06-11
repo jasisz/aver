@@ -2,6 +2,13 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.24.2 (unreleased)
+
+### Fixed
+
+- **`aver proof --check` reports `universal: true` only for genuinely universal theorems.** A law with a `when` premise over plain (non-refinement) givens exports a domain-bounded statement; previously, if tactics happened to prove that bounded statement, the law could be credited as universal. The emitted Lean now carries an explicit per-theorem statement class and the checker credits only universal-class theorems — bounded `when`-law checks still pass, they just no longer count as proven-for-all-inputs.
+- **Functions over tuples get correct termination fuel in Lean proofs.** Types spelled `Tuple<...>` were missed by the proof exporter's measure synthesis, so deeply nested tuple-carrying values (e.g. JSON object entries) could exhaust fuel and make the exported model disagree with the program at depth. Both tuple spellings now share one deep-measure path.
+
 ## 0.24.1 — 2026-06-06
 
 Patch release on top of "Divide" — a correctness fix in the optimizer and broader `aver check` hints.

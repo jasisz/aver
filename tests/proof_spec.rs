@@ -1349,6 +1349,82 @@ fn proof_lean_vacuous_when_premise_law_builds_and_passes() {
 }
 
 #[test]
+fn proof_lean_bounded_when_law_proof_is_not_credited_universal() {
+    // The false-credit probe for the `universal` metric. A `when`-law over a
+    // non-refinement-lifted Int given is emitted with sampled-domain
+    // disjunction premises prepended (`a = 0 ∨ a = 1 ∨ … ->`), so its
+    // theorem is BOUNDED — it claims the law only on the finite sample
+    // domain. This exact shape is one the LinearArithmetic `h_when` path
+    // proves with real tactics (`intro a h_a h_when; simp_all`-style), so the
+    // proof is axiom-clean: before the statement-class channel
+    // (`-- aver:law-class`, emitted by `law_theorem_prop`'s caller and
+    // consumed by `lean_universal_proof`), the file FALSELY flipped
+    // `universal: true`. The honest summary is: passed (the bounded claim IS
+    // proven), zero sorries, but NO universal credit. Reverting only the
+    // classification change (emitter marker + checker consumption) makes
+    // this test fail with `universal: true` — the false credit.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lean bounded-when universal-credit test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-lean-bounded-when-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    let av = src.join("clamp.av");
+    std::fs::write(
+        &av,
+        "module ClampFloor\n\n\
+         fn clampFloor(a: Int) -> Int\n    ? \"Clamps negative values to zero.\"\n\
+         \x20   match a >= 0\n        true -> a\n        false -> 0\n\n\
+         verify clampFloor law identityOnNonNegative\n\
+         \x20   given a: Int = [0, 1, 7, 42]\n\
+         \x20   when a >= 0\n\
+         \x20   clampFloor(a) => a\n",
+    )
+    .expect("write clamp.av");
+    let out = temp_output_dir("aver-lean-bounded-when-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(&av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "the bounded `when`-law claim itself must still prove and pass\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "the bounded `when`-law proof must be sorry-free\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(false),
+        "a bounded-statement law proof must NOT be credited universal\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_export_builds_grok_s_language_when_lake_is_available() {
     assert_proof_builds("examples/core/grok_s_language.av", "aver-proof-grok");
 }
