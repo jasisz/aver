@@ -76,6 +76,28 @@ closest research context for Aver's design choices.
   target for `aver proof --backend dafny`.
   https://doi.org/10.1007/978-3-642-17511-4_20
 
+## Proof Method Lineage
+
+- Matt Kaufmann, Panagiotis Manolios, and J Strother Moore, **Computer-Aided
+  Reasoning: An Approach** (Kluwer Academic Publishers, 2000). The home of
+  "The Method": steering a deterministic prover by stating lemmas in the same
+  executable language as the code — never by writing tactics — plus three
+  decades of rewrite-rule discipline (rule orientation, loop-stoppers, free
+  variables in hypotheses). Aver's law-driven auto-prover independently
+  reconverged on this terrain; the ACL2 literature is the closest map of its
+  failure modes. Aver differs in trust model: proofs land as kernel-checked
+  Lean certificates rather than relying on a trusted prover, and every lemma
+  is a runnable test before it is a theorem.
+  https://doi.org/10.1007/978-1-4615-4449-4
+
+- Warren A. Hunt Jr., Matt Kaufmann, J Strother Moore, and Anna Slobodová,
+  **Industrial Hardware and Software Verification with ACL2** (Philosophical
+  Transactions of the Royal Society A 375, 2017). The industrial track record
+  of the lemma-driven method, from the AMD K5 floating-point division proof
+  onward. Aver does not target hardware; the shared surface is the workflow
+  economics of a prover steered by source-language lemmas.
+  https://doi.org/10.1098/rsta.2015.0399
+
 ## Not Currently Claimed
 
 Aver is also broadly adjacent to monads, property-based testing, model checking,

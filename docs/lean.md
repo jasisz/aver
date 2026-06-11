@@ -112,21 +112,31 @@ In short:
 
 If Aver cannot auto-prove the universal law shape in `--verify-mode auto`, the universal theorem body lands as `sorry` with an explanatory inline comment, and the per-sample + `_checked_domain` theorems still emit alongside as kernel-checked evidence. The proof obligation stays visible (and Lean will reject `lake build` until the user replaces the `sorry`), but the file compiles, so the case-level evidence remains useful even before someone closes the universal.
 
-Conservative auto-proofs currently cover:
-- reflexive law shape (`lhs` and `rhs` syntactically identical) → `rfl`
-- commutative law on simple `Int` binary wrappers (`a + b`, `a * b`)
-- associative law on same wrapper shape (`f(f(a,b),c) = f(a,f(b,c))`)
-- identity law on same wrapper shape (`f(a,0)=a`, `f(0,a)=a`, `f(a,1)=a`, `f(1,a)=a`)
-- direct structural induction on recursive sum types whose recursive fields are bare self-references, not container-wrapped occurrences
-- canonical implementation-vs-spec laws when the backend can discharge them structurally
-- canonical implementation-vs-spec laws that become definitionally equal after conservative `simp`-style identity cleanup (for example `x * x` vs `x * x + 0`)
-- canonical implementation-vs-spec laws for second-order linear `Int` recurrences with a pair-state tail-recursive worker
-- canonical implementation-vs-spec laws over linear `Int` arithmetic, proved via `change ...` and `omega`
+See [How the auto-prover decides](#how-the-auto-prover-decides) for the recognizer families currently covered.
 
 The generated Lean prelude also includes one-character separator lemmas such as
 `AverString.split` over `String.join(_, sep) ++ sep` for separator-free parts.
 Those helper lemmas support exported code, but they are not themselves a claim
 that delimiter-based parser/render laws are universally auto-proved.
+
+## How the auto-prover decides
+
+There is no proof search and no AI at proof time. Each `verify law` runs through a fixed, deterministic decision tree of shape recognizers; the first recognizer that matches pins a strategy, and each strategy emits a fixed tactic script. The Lean kernel — not the recognizer — is the judge: a law is credited `universal: true` only when its theorem's `#print axioms` stays inside `{propext, Classical.choice, Quot.sound}` (in particular `native_decide` proofs never count — they trust the compiler's evaluator via `Lean.ofReduceBool`). A strategy that does not close degrades to a caught `sorry`, never a false proof.
+
+The recognizer families, roughly in routing order:
+
+- **syntactic algebra** — reflexive, commutative / associative / identity / anti-commutative wrapper shapes over `Int` operators.
+- **spec equivalence** — implementation-vs-spec laws closed structurally, by conservative `simp` cleanup, or by `omega` over linear `Int` arithmetic (including second-order recurrences with a pair-state tail-recursive worker, and `Int.max`/`Int.min` shapes).
+- **induction** — structural induction on list/ADT givens, with generalizing variants (`induction xs generalizing n`) for accumulator-threaded and both-arguments-peeling shapes, and arm-level injection of bridge and sibling lemmas.
+- **Map laws** — shipped `Map` lemmas (self-key and general-key) plus a map-fold homomorphism recognizer.
+- **ground enumeration** — laws over fixed enum/ADT constructor arguments, and laws whose every given ranges over a finite domain (`Bool`, fieldless enums): exhaustive `cases` plus `rfl`/`decide`, which computes straight through fuel wrappers on closed values.
+- **builtin facts** — laws whose call cone bottoms out in builtins close by `simp` over the cone plus prelude spec lemmas the compiler ships (for example `Int.fromString_fromInt` and `String.slice` facts).
+- **synthesized lemmas about your functions** — when a function matches a conservative shape gate (for example the canonical string-position scanner), the compiler synthesizes and kernel-proves a companion lemma about it and uses it in higher strategies such as the decimal render/parse roundtrip. When the gate does not match, nothing is emitted.
+- **fallback** — bounded evidence only: per-sample and `_checked_domain` theorems via `native_decide`, plus the universal theorem with an honest `sorry`. `when`-laws get a guarded-domain enumeration instead; their bounded statements carry an explicit statement class and are never credited as universal.
+
+When the recipes run out, the escalation path is more Aver, not Lean: split the hard law into helper laws — each one is a runnable test in milliseconds — and once proven, earlier laws in the same file become rewrite ammunition for the laws below them. The opt-in, experimental `aver proof --discover` mode additionally conjectures and kernel-proves helper lemmas automatically.
+
+Termination is part of the same honesty story: structural recursion over your own types and recognized well-founded shapes (for example quicksort's mutual recursion) emit genuine total definitions; the remaining recursive shapes are emitted fuel-wrapped, with the fuel budget derived from a synthesized size measure of the call-site arguments.
 
 ## Proof mode
 
