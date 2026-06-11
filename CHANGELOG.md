@@ -16,6 +16,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ### Fixed
 
+- **Bounded proof checks now compare against actual program results, and fuel exhaustion in proofs is a hard check error.** Lean exports pin each `verify` example and law sample to the value the program actually computed (instead of model-vs-model equations that could certify vacuously when the exported model runs out of fuel), and `aver proof --check` fails — with a please-report-this-bug message and a `fuel_exhausted` field in `--check-json` — whenever the build output shows the model exhausted fuel while evaluating a sample.
 - **Tuple-carrying functions get correct termination fuel in Lean exports** — deeply nested values (e.g. JSON object entries) no longer make the exported model disagree with the running program.
 - **wasm-gc: `String.split`/`String.join` used inside string interpolation now compile correctly.**
 - Example corpus honesty: laws that were really single-example checks (red-black tree, `order_total` floats, oracle-pinned file-store) are now plain `verify` blocks or trace checks.

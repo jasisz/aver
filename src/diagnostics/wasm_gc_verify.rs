@@ -530,6 +530,7 @@ fn run_verify_cases_in_wasmtime(
                                 law_context: None,
                                 from_hostile,
                                 hostile_profile: None,
+                                expected_value: None,
                             });
                             continue;
                         }
@@ -547,6 +548,7 @@ fn run_verify_cases_in_wasmtime(
                             law_context: None,
                             from_hostile,
                             hostile_profile: None,
+                            expected_value: None,
                         });
                         continue;
                     }
@@ -597,6 +599,7 @@ fn run_verify_cases_in_wasmtime(
                 law_context: None,
                 from_hostile,
                 hostile_profile: None,
+                expected_value: None,
             });
         }
 

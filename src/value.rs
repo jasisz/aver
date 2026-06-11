@@ -485,6 +485,20 @@ pub fn aver_repr(val: &Value) -> String {
     }
 }
 
+/// `aver_repr` with top-level strings QUOTED — the source-literal form.
+///
+/// `aver_repr` renders a top-level `Value::Str` bare (display-style), which
+/// cannot round-trip through the parser. Proof export literalizes VM
+/// ground-truth values back into Aver expressions (`aver proof`'s
+/// model-vs-ground-truth bounded checks), so it needs the quoted form
+/// everywhere. NOTE: strings are not escape-rendered (no `\"` / `\\`
+/// handling) — callers must skip values whose strings contain characters the
+/// lexer would misread (quotes, backslashes, interpolation braces); see
+/// `value_strings_are_literal_safe` in `src/main/commands.rs`.
+pub fn aver_repr_literal(val: &Value) -> String {
+    aver_repr_inner(val)
+}
+
 /// Like `aver_repr` but strings get quoted — used inside constructors and lists.
 fn aver_repr_inner(val: &Value) -> String {
     if let Some(items) = list_view(val) {

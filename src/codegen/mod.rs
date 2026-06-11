@@ -287,6 +287,18 @@ pub struct CodegenContext {
     /// `simp`s over its name (`ProofStrategy::SimpOverLemmas`). Empty unless
     /// the CLI wired it — discovery feedback is strictly opt-in.
     pub discovered_lemmas: Vec<crate::codegen::lemma_discovery::CommittedLemma>,
+    /// VM-computed ground-truth values for verify cases, keyed by
+    /// `(common::verify_block_counter_key(vb), global_case_index)` →
+    /// `aver_repr_literal` rendering of the case's expected (right-side)
+    /// value. Set by the CLI on `aver proof --backend lean` from a Declared-
+    /// mode `aver verify` run over the entry items; empty everywhere else.
+    /// The Lean emitter literalizes the expected side of bounded sample
+    /// checks from this table (model-vs-ground-truth) so that fuel
+    /// exhaustion — where `panic!` returns `default` and a model-vs-model
+    /// equation becomes vacuously true under `native_decide` — cannot
+    /// kernel-certify a false equation. Entries exist only for cases that
+    /// PASSED `aver verify`; failing/skipped cases keep the source RHS.
+    pub sample_expected: std::collections::HashMap<(String, usize), String>,
 }
 
 /// Output files from a codegen backend.
@@ -574,6 +586,7 @@ pub fn build_context(
         resolved_program,
         mir_program,
         discovered_lemmas: Vec::new(),
+        sample_expected: std::collections::HashMap::new(),
     };
     // ProofIR no longer populated here. Pipeline owns the lowerings
     // (`PipelineStage::RefinementLower`, `PipelineStage::ContractLower`);

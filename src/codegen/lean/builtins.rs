@@ -222,6 +222,7 @@ mod tests {
             program_shape: None,
             mir_program: None,
             discovered_lemmas: Vec::new(),
+            sample_expected: std::collections::HashMap::new(),
         }
     }
 
