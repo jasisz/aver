@@ -5690,6 +5690,17 @@ fn run_proof_check(
         super::cli::ProofBackend::Dafny => None,
     };
 
+    // When-universal quarantine lane (Lean only): run the SEPARATE,
+    // failure-tolerated per-law lane builds and the per-declaration
+    // `#print axioms` crediting probes. Strictly ADDITIVE — it runs
+    // after every counted metric above is already computed, and
+    // nothing it does (including hard lane build failures) can touch
+    // `sorries`/`passed`/`universal` or the process exit decision.
+    let when_universal: Option<(usize, usize)> = match backend {
+        super::cli::ProofBackend::Lean => Some(run_when_universal_lane(output_dir)),
+        super::cli::ProofBackend::Dafny => None,
+    };
+
     if check_json {
         let mut obj = serde_json::Map::new();
         obj.insert("backend".into(), backend_tag.into());
@@ -5708,6 +5719,12 @@ fn run_proof_check(
         }
         if let Some(u) = universal {
             obj.insert("universal".into(), u.into());
+        }
+        if let Some((credited, _)) = when_universal {
+            // ADDITIVE field: count of `when`-laws whose quarantine-lane
+            // twin earned per-declaration universal credit. The file-level
+            // `universal` flag above keeps its counted-build semantics.
+            obj.insert("when_universal".into(), credited.into());
         }
         if matches!(backend, super::cli::ProofBackend::Lean) {
             // Renamed from the short-lived `fuel_exhausted` (0.25.0-unreleased
@@ -5731,6 +5748,18 @@ fn run_proof_check(
         // diagnostics; we already parsed counts above.
         print!("{}", stdout);
         eprint!("{}", stderr);
+        if let Some((credited, total)) = when_universal
+            && total > 0
+        {
+            println!(
+                "{}",
+                format!(
+                    "--check: when-universal lane — {credited}/{total} conditional law(s) \
+                     proven universally (see when_universal_laws.json)"
+                )
+                .blue()
+            );
+        }
         let (metric, budget_desc) = match backend {
             super::cli::ProofBackend::Dafny => (
                 format!(
@@ -6040,6 +6069,152 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
     }
 }
 
+/// Detail artifact for the when-universal quarantine lane, written to
+/// the proof output dir by `run_when_universal_lane`.
+const WHEN_UNIVERSAL_DETAIL_FILE: &str = "when_universal_laws.json";
+
+/// Run the when-universal quarantine lane checks (see
+/// `lean::universal_lane`): for every law listed in the emitted lane
+/// index (`_aver_universal_lane.json`), (1) `lake build <lane-lib>` as
+/// a SEPARATE, failure-TOLERATED invocation — a hard failure
+/// (elaboration error, maxHeartbeats, anything) is absorbed at the
+/// process boundary and means only "this law stays bounded"; (2) a
+/// per-declaration crediting probe: `import <module>` + `#print
+/// axioms <theorem>` against the freshly built lane module. Credit
+/// requires the declaration to exist, the import to elaborate, and
+/// the axiom set to stay within {propext, Classical.choice,
+/// Quot.sound} — NEVER an invocation exit code alone.
+///
+/// Returns `(credited, total)` and writes the per-law detail artifact
+/// (`when_universal_laws.json`). No lane index → `(0, 0)` and any
+/// stale detail artifact is removed. Counted metrics are computed
+/// BEFORE this runs and are mathematically out of its reach.
+fn run_when_universal_lane(dir: &str) -> (usize, usize) {
+    use std::process::Command;
+    let manifest_path =
+        std::path::Path::new(dir).join(lean_codegen::universal_lane::LANE_MANIFEST_FILE);
+    let detail_path = std::path::Path::new(dir).join(WHEN_UNIVERSAL_DETAIL_FILE);
+    let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
+        let _ = std::fs::remove_file(&detail_path);
+        return (0, 0);
+    };
+    let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        let _ = std::fs::remove_file(&detail_path);
+        return (0, 0);
+    };
+    let laws = manifest["laws"].as_array().cloned().unwrap_or_default();
+    let mut details: Vec<serde_json::Value> = Vec::new();
+    let mut credited = 0usize;
+    let mut total = 0usize;
+    for law in &laws {
+        let (Some(label), Some(theorem), Some(module)) = (
+            law["law"].as_str(),
+            law["theorem"].as_str(),
+            law["module"].as_str(),
+        ) else {
+            continue;
+        };
+        total += 1;
+        // (1) Failure-tolerated build of this law's own non-default lib
+        // (lib name == module name). Its exit code is deliberately NOT
+        // a crediting signal; a failed build just leaves the module
+        // un-importable, which the probe below reports as no-credit.
+        let _ = Command::new("lake")
+            .args(["build", module])
+            .current_dir(dir)
+            .output();
+        // (2) Per-declaration evidence.
+        let (universal, evidence) = lane_probe_declaration(dir, module, theorem);
+        if universal {
+            credited += 1;
+        }
+        details.push(serde_json::json!({
+            "law": label,
+            "theorem": theorem,
+            "module": module,
+            "universal": universal,
+            "evidence": evidence,
+        }));
+    }
+    let _ = std::fs::write(
+        &detail_path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "when_universal": credited,
+            "laws": details,
+        }))
+        .unwrap_or_else(|_| "{}".to_string()),
+    );
+    (credited, total)
+}
+
+/// Per-declaration crediting probe for one lane law: `import
+/// <module>` + `#print axioms <theorem>` via `lake env lean`. Returns
+/// `(credited, evidence)` where evidence is the `#print axioms`
+/// output line (quoted verbatim into the detail artifact). Fail-closed
+/// on every error path — a missing module, missing declaration, or
+/// unparseable output earns no credit.
+fn lane_probe_declaration(dir: &str, module: &str, theorem: &str) -> (bool, String) {
+    use std::process::Command;
+    let src = format!("import {module}\n#print axioms {theorem}\n");
+    let probe = std::path::Path::new(dir).join("_aver_lane_axcheck.lean");
+    if std::fs::write(&probe, &src).is_err() {
+        return (false, "probe write failed".to_string());
+    }
+    let out = Command::new("lake")
+        .args(["env", "lean", "_aver_lane_axcheck.lean"])
+        .current_dir(dir)
+        .output();
+    let _ = std::fs::remove_file(&probe);
+    match out {
+        Ok(o) => {
+            let combined = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            let credited = o.status.success() && lane_credit_from_probe(&combined, theorem);
+            let evidence = combined
+                .lines()
+                .find(|l| l.contains(&format!("'{theorem}'")))
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    let tail: Vec<&str> = combined.lines().take(3).collect();
+                    format!(
+                        "no #print axioms line for '{theorem}': {}",
+                        tail.join(" | ")
+                    )
+                });
+            (credited, evidence)
+        }
+        Err(e) => (false, format!("probe spawn failed: {e}")),
+    }
+}
+
+/// Parse the crediting decision out of a `#print axioms` probe output
+/// for `theorem`. The declaration must be PRESENT (its own result
+/// line exists) and its axiom set must stay within the whitelist —
+/// `sorryAx` (a sorry-floored proof) and `Lean.ofReduceBool`
+/// (`native_decide`) are rejected explicitly on top of the whitelist.
+/// Anything else — error output, missing line, unknown constant —
+/// earns no credit. Pure parser, unit-tested directly.
+fn lane_credit_from_probe(output: &str, theorem: &str) -> bool {
+    let needle = format!("'{theorem}'");
+    for line in output.lines() {
+        if !line.contains(&needle) {
+            continue;
+        }
+        if line.contains("does not depend on any axioms") {
+            return true;
+        }
+        if line.contains("depends on axioms:") {
+            return lean_axiom_lines_whitelisted(line)
+                && !line.contains("Lean.ofReduceBool")
+                && !line.contains("sorryAx");
+        }
+    }
+    false
+}
+
 /// `true` iff every `#print axioms` result line in `output` reports only the
 /// core logical axioms (`propext`, `Classical.choice`, `Quot.sound`). Lines
 /// not matching the `depends on axioms: […]` shape are ignored — the caller's
@@ -6158,7 +6333,62 @@ fn cmd_proof_lean(
         }
     };
 
-    let output = lean_codegen::transpile_for_proof_mode(ctx, verify_mode);
+    let mut output = lean_codegen::transpile_for_proof_mode(ctx, verify_mode);
+
+    // When-universal quarantine lane (see `lean::universal_lane`):
+    // ADDITIVE twin theorems for recognized scalar-sign `when`-laws,
+    // hosted in non-default per-law `lean_lib`s under
+    // `universal_lane/`. The counted default build, every budget pin
+    // and the manifest emission are untouched by construction — the
+    // lane only appends files and trailing lakefile entries.
+    // `AVER_PROOF_NO_UNIVERSAL_LANE` (test hook) disables the lane
+    // entirely; `AVER_PROOF_LANE_SABOTAGE=<label-substring>` (test
+    // hook) injects a failing tactic into the matching law's module —
+    // the executable iron-guard check.
+    let lane = if matches!(verify_mode, lean_codegen::VerifyEmitMode::NativeDecide)
+        && std::env::var("AVER_PROOF_NO_UNIVERSAL_LANE").is_err()
+    {
+        let entry_name = format!("{}.lean", aver::codegen::common::entry_basename(ctx));
+        let entry_content = output
+            .files
+            .iter()
+            .find(|(name, _)| *name == entry_name)
+            .map(|(_, content)| content.clone())
+            .unwrap_or_default();
+        let sabotage = std::env::var("AVER_PROOF_LANE_SABOTAGE").ok();
+        lean_codegen::universal_lane::generate(ctx, &entry_content, sabotage.as_deref())
+    } else {
+        Vec::new()
+    };
+    if lane.is_empty() {
+        // Lane disabled or nothing recognized: retire any stale lane
+        // index from a previous emission so `--check` can never credit
+        // outdated modules.
+        let _ = std::fs::remove_file(
+            Path::new(output_dir).join(lean_codegen::universal_lane::LANE_MANIFEST_FILE),
+        );
+    } else {
+        for (name, content) in &mut output.files {
+            if name == "lakefile.lean" {
+                *content = lean_codegen::universal_lane::lakefile_with_lane_libs(content, &lane);
+            }
+        }
+        output.files.push((
+            lean_codegen::universal_lane::LANE_MANIFEST_FILE.to_string(),
+            lean_codegen::universal_lane::lane_manifest_json(&lane),
+        ));
+        for law in &lane {
+            output.files.push((
+                format!(
+                    "{}/{}.lean",
+                    lean_codegen::universal_lane::LANE_SUBDIR,
+                    law.module
+                ),
+                law.content.clone(),
+            ));
+        }
+    }
+
     let build_hint = format!("cd {} && lake build", output_dir);
     write_codegen_output(file, output_dir, "Lean 4", &build_hint, &output);
 }
@@ -6476,6 +6706,38 @@ mod tests {
         assert!(super::lean_axiom_lines_whitelisted(none));
         assert!(!super::lean_axiom_lines_whitelisted(foreign));
         assert!(!super::lean_axiom_lines_whitelisted(native));
+    }
+
+    #[test]
+    fn lane_credit_keys_on_per_declaration_evidence() {
+        // When-universal quarantine lane crediting: the decision is a
+        // pure parse over the `#print axioms` probe output, keyed to
+        // ONE declaration — never an invocation exit code. Each
+        // negative below is a distinct no-credit class.
+        let thm = "foo_law_bar_universal";
+        // Credited: declaration present + whitelisted axioms.
+        let clean =
+            "'foo_law_bar_universal' depends on axioms: [propext, Classical.choice, Quot.sound]";
+        assert!(super::lane_credit_from_probe(clean, thm));
+        let axiom_free = "'foo_law_bar_universal' does not depend on any axioms";
+        assert!(super::lane_credit_from_probe(axiom_free, thm));
+        // No credit: missing declaration (probe errored — there is no
+        // result line for the theorem at all).
+        let missing = "error: unknown constant 'someOtherName'";
+        assert!(!super::lane_credit_from_probe(missing, thm));
+        // No credit: sorry-floored proof (sorryAx in the dependency set).
+        let sorried = "'foo_law_bar_universal' depends on axioms: [propext, sorryAx]";
+        assert!(!super::lane_credit_from_probe(sorried, thm));
+        // No credit: native_decide (Lean.ofReduceBool).
+        let native = "'foo_law_bar_universal' depends on axioms: [propext, Lean.ofReduceBool]";
+        assert!(!super::lane_credit_from_probe(native, thm));
+        // No credit: any axiom outside the whitelist.
+        let extra = "'foo_law_bar_universal' depends on axioms: [propext, smuggledAxiom]";
+        assert!(!super::lane_credit_from_probe(extra, thm));
+        // No credit: a DIFFERENT declaration's clean line cannot pay
+        // for ours (per-declaration, not per-invocation).
+        let other = "'other_thm' depends on axioms: [propext]";
+        assert!(!super::lane_credit_from_probe(other, thm));
     }
 
     #[test]

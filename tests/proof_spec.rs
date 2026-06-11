@@ -405,6 +405,251 @@ fn proof_dafny_verifies_quicksort_when_dafny_is_available() {
     assert_dafny_verifies_with_budgets("examples/data/quicksort.av", "aver-dafny-quicksort", 9, 3);
 }
 
+/// Run `aver proof <file> --backend lean --check --check-json` with
+/// optional extra env vars; returns the parsed JSON summary line plus
+/// the raw output for diagnostics. Shared by the when-universal
+/// quarantine-lane tests, which need several runs against the SAME
+/// output dir (lake's content-addressed cache keeps re-runs cheap).
+fn run_lean_check_json(
+    example_path: &str,
+    output_dir: &std::path::Path,
+    sorry_budget: usize,
+    envs: &[(&str, &str)],
+) -> (serde_json::Value, std::process::Output) {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let mut cmd = Command::new(aver_bin);
+    cmd.current_dir(&repo_root)
+        .arg("proof")
+        .arg(example_path)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(output_dir)
+        .arg("--check")
+        .arg("--check-json")
+        .arg("--sorry-budget")
+        .arg(sorry_budget.to_string());
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let run = cmd
+        .output()
+        .expect("expected `aver proof --check --check-json` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)))
+        .to_string();
+    let summary: serde_json::Value =
+        serde_json::from_str(&json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    (summary, run)
+}
+
+/// The COUNTED summary — everything the budget pins and run.sh
+/// consumers key on — with the lane's additive field stripped, for
+/// byte-level comparison across lane-on / lane-sabotaged / lane-off
+/// runs. The iron guard's observable form: the lane may only ever
+/// append, never perturb.
+fn counted_summary(summary: &serde_json::Value) -> serde_json::Value {
+    let mut obj = summary.as_object().cloned().unwrap_or_default();
+    obj.remove("when_universal");
+    serde_json::Value::Object(obj)
+}
+
+/// Generality pin for the when-universal quarantine lane: a synthetic
+/// decimal scanner (fresh names — `tests/fixtures/when_lane_sign.av`)
+/// with a `when v > 0` sign law closes universally in the lane
+/// (`when_universal >= 1`), proving the recognizer keys on structure,
+/// not on the json corpus's identifiers.
+#[test]
+fn proof_when_universal_lane_closes_synthetic_sign_law() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping when-universal lane test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-when-lane-synth");
+    let (summary, run) =
+        run_lean_check_json("tests/fixtures/when_lane_sign.av", &output_dir, 0, &[]);
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "synthetic lane fixture must stay sorry-free in the counted build.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(summary["passed"].as_bool(), Some(true));
+    assert!(
+        summary["when_universal"].as_u64().unwrap_or(0) >= 1,
+        "the synthetic sign when-law must close universally in the lane \
+         (when_universal >= 1).\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// End-to-end pin of the when-universal quarantine lane on the json
+/// corpus — the validating cargo of the lane chunk, plus the iron
+/// guard made executable:
+/// 1. normal run: the five scalar-sign when-laws earn per-declaration
+///    universal credit (`when_universal == 5`), the per-law detail
+///    artifact lists their axiom evidence, the lane modules carry NO
+///    `sorry` token, and the COUNTED summary is byte-identical to
+///    today (sorries == 2 exact, passed, file-level universal:false);
+/// 2. SABOTAGE run (one lane proof deliberately broken via the
+///    `AVER_PROOF_LANE_SABOTAGE` test hook): the counted summary is
+///    untouched, the broken law reports bounded (no credit), every
+///    neighbor keeps its credit — `when_universal == 4`;
+/// 3. REVERT run (`AVER_PROOF_NO_UNIVERSAL_LANE`): the lane vanishes
+///    (`when_universal == 0`, no lane index, no stale credit), counted
+///    summary again identical.
+#[test]
+fn proof_when_universal_lane_json_end_to_end() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping when-universal lane test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-when-lane-json");
+
+    // ---- run 1: normal -------------------------------------------------
+    let (normal, run) = run_lean_check_json("examples/data/json.av", &output_dir, 2, &[]);
+    assert_eq!(
+        normal["sorries"].as_u64(),
+        Some(2),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(normal["passed"].as_bool(), Some(true));
+    assert_eq!(
+        normal["universal"].as_bool(),
+        Some(false),
+        "file-level `universal` keeps counted-build semantics (json has 2 \
+         permanent caught sorries); lane credit is per-law via when_universal"
+    );
+    assert_eq!(
+        normal["when_universal"].as_u64(),
+        Some(5),
+        "the five scalar-sign when-laws (dispatchNumberOrErr.fromIntRoundtrip, \
+         startNumberDigits.fromPositiveIntRoundtrip, parseNumberSign.\
+         fromNegativeIntRoundtrip, startSignDigit.negativeDigitRoundtrip, \
+         scanIntTail.fromCanonicalIntTail) must all close in the lane.\n{}",
+        format_output(&run)
+    );
+    // Per-law detail artifact: exact set, all credited, evidence quoted.
+    let detail: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json"))
+            .expect("when_universal_laws.json must be written"),
+    )
+    .expect("detail artifact must parse");
+    let laws = detail["laws"].as_array().expect("laws array");
+    let mut labels: Vec<&str> = laws.iter().filter_map(|l| l["law"].as_str()).collect();
+    labels.sort_unstable();
+    assert_eq!(
+        labels,
+        vec![
+            "dispatchNumberOrErr.fromIntRoundtrip",
+            "parseNumberSign.fromNegativeIntRoundtrip",
+            "scanIntTail.fromCanonicalIntTail",
+            "startNumberDigits.fromPositiveIntRoundtrip",
+            "startSignDigit.negativeDigitRoundtrip",
+        ],
+        "exact lane law set (exact in both directions, like the budgets)"
+    );
+    for law in laws {
+        assert_eq!(
+            law["universal"].as_bool(),
+            Some(true),
+            "law {} lost lane credit: {}",
+            law["law"],
+            law["evidence"]
+        );
+        let evidence = law["evidence"].as_str().unwrap_or("");
+        assert!(
+            evidence.contains("depends on axioms: [propext, Classical.choice, Quot.sound]"),
+            "per-declaration #print axioms evidence must be quoted: {evidence}"
+        );
+    }
+    // L2 of the iron guard: zero sorry tokens anywhere in the lane.
+    let lane_index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("_aver_universal_lane.json"))
+            .expect("lane index must be written"),
+    )
+    .expect("lane index must parse");
+    for law in lane_index["laws"].as_array().expect("laws") {
+        let module = law["module"].as_str().expect("module");
+        let content = std::fs::read_to_string(
+            output_dir
+                .join("universal_lane")
+                .join(format!("{module}.lean")),
+        )
+        .expect("lane module file must exist");
+        assert!(
+            !content.contains("sorry"),
+            "no_sorry_token_in_universal_module violated by {module}"
+        );
+    }
+
+    // ---- run 2: sabotage -------------------------------------------------
+    let (sabotaged, run2) = run_lean_check_json(
+        "examples/data/json.av",
+        &output_dir,
+        2,
+        &[("AVER_PROOF_LANE_SABOTAGE", "startSignDigit")],
+    );
+    assert_eq!(
+        counted_summary(&sabotaged),
+        counted_summary(&normal),
+        "a hard lane failure must leave the counted summary byte-identical.\n{}",
+        format_output(&run2)
+    );
+    assert_eq!(
+        sabotaged["when_universal"].as_u64(),
+        Some(4),
+        "exactly the sabotaged law loses credit.\n{}",
+        format_output(&run2)
+    );
+    let detail2: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json")).expect("artifact"),
+    )
+    .expect("detail artifact must parse");
+    for law in detail2["laws"].as_array().expect("laws") {
+        let expected = law["law"].as_str() != Some("startSignDigit.negativeDigitRoundtrip");
+        assert_eq!(
+            law["universal"].as_bool(),
+            Some(expected),
+            "sabotage must not leak into neighbors: {} -> {}",
+            law["law"],
+            law["evidence"]
+        );
+    }
+
+    // ---- run 3: revert (lane disabled) ------------------------------------
+    let (reverted, run3) = run_lean_check_json(
+        "examples/data/json.av",
+        &output_dir,
+        2,
+        &[("AVER_PROOF_NO_UNIVERSAL_LANE", "1")],
+    );
+    assert_eq!(
+        counted_summary(&reverted),
+        counted_summary(&normal),
+        "lane-off counted summary must be byte-identical.\n{}",
+        format_output(&run3)
+    );
+    assert_eq!(
+        reverted["when_universal"].as_u64(),
+        Some(0),
+        "lane disabled -> when_universal drops to 0"
+    );
+    assert!(
+        !output_dir.join("_aver_universal_lane.json").exists(),
+        "stale lane index must be retired when the lane is disabled"
+    );
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
 #[test]
 fn proof_export_builds_json_when_lake_is_available() {
     // 13 sampled-domain laws (parseString / parseLiteral / escape

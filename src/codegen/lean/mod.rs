@@ -12,6 +12,7 @@ mod sample_literal;
 mod shared;
 mod toplevel;
 mod types;
+pub mod universal_lane;
 
 // Re-exports for the lemma-discovery pass (`codegen::lemma_discovery`), which
 // renders discovered candidate lemmas to Lean theorem text using the SAME
@@ -5252,5 +5253,66 @@ verify weird law weirdSpec
         assert!(lean.contains("parseNotes (s!\"{String.intercalate \"\\n\" (serializeLines notes)}\\n\") = Except.ok notes"));
         assert!(lean.contains("theorem serializeLine_law_lineRoundtrip_sample_1 :"));
         assert!(lean.contains("theorem serializeLines_law_notesRoundtrip_sample_1 :"));
+    }
+
+    /// When-universal quarantine lane, render level (no lake): the
+    /// synthetic sign fixture's `when v > 0` law gets exactly one lane
+    /// twin in the TRUE universal form (no sampled-domain
+    /// disjunctions), with zero `sorry` tokens, the `universal`
+    /// law-class marker, and lakefile entries strictly APPENDED after
+    /// the default target. The sabotage hook must change the module's
+    /// content hash so a stale `.olean` can never pay for the broken
+    /// proof.
+    #[test]
+    fn universal_lane_renders_sign_segment_twin() {
+        let src = include_str!("../../../tests/fixtures/when_lane_sign.av");
+        let ctx = ctx_from_source(src, "ScanLane");
+        let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None);
+        assert_eq!(
+            lane.len(),
+            1,
+            "exactly the pos-segment sign law is recognized"
+        );
+        let law = &lane[0];
+        assert_eq!(law.label, "startDigits.positiveTokenRoundtrip");
+        assert_eq!(
+            law.theorem,
+            "startDigits_law_positiveTokenRoundtrip_universal"
+        );
+        // L2 of the iron guard: no sorry carrier in the lane grammar.
+        assert!(!law.content.contains("sorry"));
+        // M0 law-class marker, classed universal.
+        assert!(law.content.contains(
+            "-- aver:law-class startDigits_law_positiveTokenRoundtrip_universal universal"
+        ));
+        // TRUE universal statement: when-premise kept, sampled-domain
+        // disjunctions gone.
+        assert!(law.content.contains("(v > 0) = true ->"));
+        assert!(!law.content.contains("v = 1 ∨"));
+        // Hashed module name + non-default lakefile libs appended after
+        // the default target (first `roots :=` line stays the default's).
+        assert!(
+            law.module
+                .starts_with("U_startDigits_law_positiveTokenRoundtrip_")
+        );
+        let lakefile = super::generate_lakefile_with_roots("ScanLane", &["AverCommon".to_string()]);
+        let patched = super::universal_lane::lakefile_with_lane_libs(&lakefile, &lane);
+        assert!(patched.starts_with(&lakefile));
+        assert!(patched.contains(&format!("lean_lib «{}»", law.module)));
+        // Sabotage hook: failing tactic injected, content hash (and so
+        // the module name) changes.
+        let sabotaged =
+            super::universal_lane::generate(&ctx, "entry-content-seed", Some("startDigits"));
+        assert_eq!(sabotaged.len(), 1);
+        assert!(
+            sabotaged[0]
+                .content
+                .contains("averLaneSabotageInjectedByTest")
+        );
+        assert_ne!(sabotaged[0].module, law.module);
+        // A non-matching sabotage label leaves the module untouched.
+        let unmatched =
+            super::universal_lane::generate(&ctx, "entry-content-seed", Some("noSuchLaw"));
+        assert_eq!(unmatched[0].module, law.module);
     }
 }
