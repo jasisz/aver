@@ -650,6 +650,184 @@ fn proof_when_universal_lane_json_end_to_end() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
+/// Bridge-premise family, hard floor: TIP isaplanner prop_85 (zip-rev
+/// under the relational premise `natEq(len(xs), len(ys))`) closes
+/// GENUINELY through the quarantine lane — `when_universal == 1` keyed
+/// on per-declaration `#print axioms` evidence within the kernel
+/// whitelist — while the COUNTED summary stays byte-identical to
+/// main's (passed, 0 sorries, file-level universal:false). A sabotage
+/// run pins the iron guard on this family too.
+#[test]
+fn proof_when_universal_lane_closes_tip_prop_85() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping when-universal lane test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-when-lane-prop85");
+    let (normal, run) = run_lean_check_json(
+        "proof-corpus/tip/isaplanner/prop_85.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        normal["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(normal["passed"].as_bool(), Some(true));
+    assert_eq!(
+        normal["universal"].as_bool(),
+        Some(false),
+        "file-level `universal` keeps counted-build semantics; the lane \
+         credit is per-law via when_universal"
+    );
+    assert_eq!(
+        normal["when_universal"].as_u64(),
+        Some(1),
+        "prop_85's zip.zipRev must close universally in the lane.\n{}",
+        format_output(&run)
+    );
+    // Per-law detail artifact: kernel-genuine evidence, quoted.
+    let detail: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json"))
+            .expect("when_universal_laws.json must be written"),
+    )
+    .expect("detail artifact must parse");
+    let laws = detail["laws"].as_array().expect("laws array");
+    assert_eq!(laws.len(), 1);
+    assert_eq!(laws[0]["law"].as_str(), Some("zip.zipRev"));
+    assert_eq!(laws[0]["universal"].as_bool(), Some(true));
+    assert_eq!(
+        laws[0]["evidence"].as_str(),
+        Some("'zip_law_zipRev_universal' depends on axioms: [propext, Quot.sound]"),
+        "per-declaration #print axioms evidence must be quoted verbatim"
+    );
+    // L2 of the iron guard: zero sorry tokens in the lane module — the
+    // snoc-distribution aux lemma is rendered from the validated
+    // template, never emitted as a hole.
+    let lane_index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("_aver_universal_lane.json"))
+            .expect("lane index must be written"),
+    )
+    .expect("lane index must parse");
+    for law in lane_index["laws"].as_array().expect("laws") {
+        let module = law["module"].as_str().expect("module");
+        let content = std::fs::read_to_string(
+            output_dir
+                .join("universal_lane")
+                .join(format!("{module}.lean")),
+        )
+        .expect("lane module file must exist");
+        assert!(
+            !content.contains("sorry"),
+            "no_sorry_token_in_universal_module violated by {module}"
+        );
+        assert!(
+            content.contains("_snoc"),
+            "the snoc-distribution aux lemma must be emitted as a lane-local lemma"
+        );
+    }
+    // Sabotage: the broken lane proof costs exactly "prop_85 stays
+    // bounded" — counted summary byte-identical, no credit.
+    let (sabotaged, run2) = run_lean_check_json(
+        "proof-corpus/tip/isaplanner/prop_85.av",
+        &output_dir,
+        0,
+        &[("AVER_PROOF_LANE_SABOTAGE", "zipRev")],
+    );
+    assert_eq!(
+        counted_summary(&sabotaged),
+        counted_summary(&normal),
+        "a hard lane failure must leave the counted summary byte-identical.\n{}",
+        format_output(&run2)
+    );
+    assert_eq!(sabotaged["when_universal"].as_u64(), Some(0));
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Generality pin for the bridge-premise family: the fresh-named
+/// fixture (`tests/fixtures/when_lane_bridge.av`) closes BOTH its
+/// bridge-shaped when-laws end-to-end — the zip-rev figure under
+/// `likeNat(bulk(xs), bulk(ys))` and the count-insert figure under the
+/// negated `unlikeNat(p, q)` — proving the recognizer keys on the
+/// premise's structure, not on the proof-corpus identifiers. The
+/// sabotage run additionally pins neighbor isolation on a two-law
+/// lane file: the broken law reports bounded, its neighbor keeps
+/// credit, the counted summary is untouched.
+#[test]
+fn proof_when_universal_lane_closes_synthetic_bridge_laws() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping when-universal lane test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-when-lane-bridge");
+    let (normal, run) =
+        run_lean_check_json("tests/fixtures/when_lane_bridge.av", &output_dir, 0, &[]);
+    assert_eq!(
+        normal["sorries"].as_u64(),
+        Some(0),
+        "the bridge fixture must stay sorry-free in the counted build.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(normal["passed"].as_bool(), Some(true));
+    assert_eq!(
+        normal["when_universal"].as_u64(),
+        Some(2),
+        "both fresh-named bridge laws must close in the lane.\n{}",
+        format_output(&run)
+    );
+    let detail: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json")).expect("artifact"),
+    )
+    .expect("detail artifact must parse");
+    let mut labels: Vec<&str> = detail["laws"]
+        .as_array()
+        .expect("laws")
+        .iter()
+        .filter_map(|l| l["law"].as_str())
+        .collect();
+    labels.sort_unstable();
+    assert_eq!(
+        labels,
+        vec!["duoUp.duoFlip", "tallyUp.tallyWedgeNeq"],
+        "exact lane law set (exact in both directions, like the budgets)"
+    );
+
+    // Sabotage one bridge law: neighbors keep credit, counted untouched.
+    let (sabotaged, run2) = run_lean_check_json(
+        "tests/fixtures/when_lane_bridge.av",
+        &output_dir,
+        0,
+        &[("AVER_PROOF_LANE_SABOTAGE", "duoFlip")],
+    );
+    assert_eq!(
+        counted_summary(&sabotaged),
+        counted_summary(&normal),
+        "a hard lane failure must leave the counted summary byte-identical.\n{}",
+        format_output(&run2)
+    );
+    assert_eq!(sabotaged["when_universal"].as_u64(), Some(1));
+    let detail2: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json")).expect("artifact"),
+    )
+    .expect("detail artifact must parse");
+    for law in detail2["laws"].as_array().expect("laws") {
+        let expected = law["law"].as_str() != Some("duoUp.duoFlip");
+        assert_eq!(
+            law["universal"].as_bool(),
+            Some(expected),
+            "sabotage must not leak into neighbors: {} -> {}",
+            law["law"],
+            law["evidence"]
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
 #[test]
 fn proof_export_builds_json_when_lake_is_available() {
     // 13 sampled-domain laws (parseString / parseLiteral / escape
