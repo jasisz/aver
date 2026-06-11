@@ -183,6 +183,15 @@ fn type_measure_expr(
                 value_expr
             ));
         }
+        if let Some((key_type, value_type)) =
+            entries_measure_tuple_item(inner.trim(), recursive_types)
+        {
+            return Some(format!(
+                "{} {}",
+                measure_entries_fn_name(&value_type, &key_type),
+                value_expr
+            ));
+        }
         let item_measure = type_measure_expr(inner, "item", recursive_types, self_type)
             .unwrap_or_else(|| "1".to_string());
         return Some(format!(
@@ -249,43 +258,140 @@ fn type_measure_expr(
         }
     }
 
+    // `Tuple<A, B>` is the canonical tuple spelling; the parenthesized
+    // `(A, B)` arm below is the legacy one. Both route through
+    // `tuple_parts_measure` so the two spellings stay behaviorally
+    // identical.
+    if let Some(inner) = unwrap_generic(trimmed, "Tuple<")
+        && let Some(measure) = tuple_parts_measure(
+            &split_top_level(inner, ','),
+            value_expr,
+            recursive_types,
+            self_type,
+        )
+    {
+        return Some(measure);
+    }
+
     if trimmed.starts_with('(') && trimmed.ends_with(')') {
         let inner = &trimmed[1..trimmed.len() - 1];
-        let parts = split_top_level(inner, ',');
-        if !parts.is_empty() {
-            let measures: Vec<String> = parts
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, part)| {
-                    type_measure_expr(
-                        part,
-                        &format!("{}.{}", value_expr, idx + 1),
-                        recursive_types,
-                        self_type,
-                    )
-                })
-                .collect();
-            if !measures.is_empty() {
-                return Some(format!("({}) + 1", measures.join(" + ")));
-            }
+        if let Some(measure) = tuple_parts_measure(
+            &split_top_level(inner, ','),
+            value_expr,
+            recursive_types,
+            self_type,
+        ) {
+            return Some(measure);
         }
     }
 
     None
 }
 
-fn recursive_map_key_types(type_refs: &[String], value_type: &str) -> Vec<String> {
+/// Per-part measure for a tuple type's components — the shared body of
+/// the `Tuple<...>` arm and the legacy parenthesized `(A, B)` arm of
+/// [`type_measure_expr`]. Parts that carry no measure (scalars) are
+/// skipped; recursive parts get their deep `averMeasure*` term. Lean
+/// renders an N-tuple as a right-nested `Prod`, so part `i` of `n`
+/// projects as `.2`*i followed by `.1` (the last part is `.2`*(n-1)):
+/// `.1`/`.2` for pairs, `.1`/`.2.1`/`.2.2` for triples.
+///
+/// FUEL-WRAPPER CONTEXT ONLY (`self_type = None`): there every cited
+/// `averMeasure*` is a fully-defined closed call, so a reference under
+/// an `AverMeasure.list`/`.option` lambda elaborates fine. Inside a
+/// type's OWN measure def (`self_type = Some`) the same term is
+/// recursion through a higher-order argument — Lean cannot show
+/// termination for `averMeasureT item.2` under `AverMeasure.list
+/// (fun item => ...)` — so measure defs keep the old behavior (tuple
+/// parts skipped) except for the entries-list reuse, which routes the
+/// recursion through a structural `match` in the mutual block instead
+/// (see [`entries_measure_tuple_item`]).
+fn tuple_parts_measure(
+    parts: &[String],
+    value_expr: &str,
+    recursive_types: &HashSet<String>,
+    self_type: Option<&str>,
+) -> Option<String> {
+    if self_type.is_some() {
+        return None;
+    }
+    let measures: Vec<String> = parts
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, part)| {
+            let projection = if idx + 1 == parts.len() {
+                ".2".repeat(idx)
+            } else {
+                format!("{}.1", ".2".repeat(idx))
+            };
+            type_measure_expr(
+                part,
+                &format!("{value_expr}{projection}"),
+                recursive_types,
+                self_type,
+            )
+        })
+        .collect();
+    (!measures.is_empty()).then(|| format!("({}) + 1", measures.join(" + ")))
+}
+
+/// Recognize a `Tuple<K, V>` list-item type where `V` is a recursive
+/// ADT and `K` carries no measure of its own (`String`, `Int`, ...) —
+/// the `List<Tuple<K, V>>` spelling of an entries list. In Lean both
+/// that spelling and `Map<K, V>` render as `List (K × V)` (the map via
+/// `AverMap.entries`), so both reuse the one dedicated deep entries
+/// measure `averMeasure<V>Entries_<K>`: fuel bounds — and any lemmas
+/// later synthesized over them — agree across the two spellings.
+/// Returns `(key_type, value_type)` when the reuse applies. Keys that
+/// DO carry a measure fall back to the generic per-part tuple item
+/// measure (the entries measure ignores keys, which would under-count
+/// their depth). The same predicate gates the emission side
+/// ([`recursive_map_key_types`]) so a chosen entries measure is always
+/// actually defined.
+fn entries_measure_tuple_item(
+    item_type: &str,
+    recursive_types: &HashSet<String>,
+) -> Option<(String, String)> {
+    let inner = unwrap_generic(item_type, "Tuple<")?;
+    let args = split_top_level(inner, ',');
+    if args.len() != 2 {
+        return None;
+    }
+    let key_type = args[0].trim();
+    let value_type = args[1].trim();
+    (recursive_types.contains(value_type)
+        && type_measure_expr(key_type, "key", recursive_types, None).is_none())
+    .then(|| (key_type.to_string(), value_type.to_string()))
+}
+
+/// Key types whose dedicated entries measure
+/// (`averMeasure<value_type>Entries_<key>`) must be emitted alongside
+/// `value_type`'s measure: one per `Map<K, value_type>` ref plus one
+/// per `List<Tuple<K, value_type>>` ref (the two spellings of an
+/// entries list — see [`entries_measure_tuple_item`], which gates the
+/// reference side with the same predicate).
+fn recursive_map_key_types(
+    type_refs: &[String],
+    value_type: &str,
+    recursive_types: &HashSet<String>,
+) -> Vec<String> {
     let mut key_types = Vec::new();
     for type_ref in type_refs {
-        let Some(inner) = unwrap_generic(type_ref.trim(), "Map<") else {
-            continue;
+        let trimmed = type_ref.trim();
+        let key_type = if let Some(inner) = unwrap_generic(trimmed, "Map<") {
+            let args = split_top_level(inner, ',');
+            (args.len() == 2 && args[1].trim() == value_type).then(|| args[0].trim().to_string())
+        } else if let Some(inner) = unwrap_generic(trimmed, "List<") {
+            entries_measure_tuple_item(inner.trim(), recursive_types)
+                .filter(|(_, value)| value == value_type)
+                .map(|(key, _)| key)
+        } else {
+            None
         };
-        let args = split_top_level(inner, ',');
-        if args.len() == 2 && args[1].trim() == value_type {
-            let key_type = args[0].trim().to_string();
-            if !key_types.contains(&key_type) {
-                key_types.push(key_type);
-            }
+        if let Some(key_type) = key_type
+            && !key_types.contains(&key_type)
+        {
+            key_types.push(key_type);
         }
     }
     key_types
@@ -295,6 +401,7 @@ fn emit_recursive_sum_measure(
     name: &str,
     variants: &[TypeVariant],
     recursive_types: &HashSet<String>,
+    sig_type_refs: &[String],
 ) -> String {
     let mut lines = vec!["mutual".to_string()];
     lines.push(format!(
@@ -344,11 +451,16 @@ fn emit_recursive_sum_measure(
         measure_fn_name(name),
         measure_list_fn_name(name)
     ));
+    // Entries-list refs can sit in the ADT's own fields OR only in fn
+    // signatures (`fn f(entries: List<Tuple<String, T>>)` over a `T`
+    // whose fields never spell the list) — scan both so every entries
+    // measure `type_measure_expr` can choose is actually defined.
     let field_types: Vec<String> = variants
         .iter()
         .flat_map(|variant| variant.fields.iter().cloned())
+        .chain(sig_type_refs.iter().cloned())
         .collect();
-    for key_type in recursive_map_key_types(&field_types, name) {
+    for key_type in recursive_map_key_types(&field_types, name, recursive_types) {
         lines.push(format!(
             "  def {} (items : List ({} × {})) : Nat :=",
             measure_entries_fn_name(name, &key_type),
@@ -371,6 +483,7 @@ fn emit_recursive_product_measure(
     name: &str,
     fields: &[(String, String)],
     recursive_types: &HashSet<String>,
+    sig_type_refs: &[String],
 ) -> String {
     let field_measures: Vec<String> = fields
         .iter()
@@ -409,8 +522,12 @@ fn emit_recursive_product_measure(
             measure_list_fn_name(name)
         ),
     ];
-    let field_types: Vec<String> = fields.iter().map(|(_, ty)| ty.clone()).collect();
-    for key_type in recursive_map_key_types(&field_types, name) {
+    let field_types: Vec<String> = fields
+        .iter()
+        .map(|(_, ty)| ty.clone())
+        .chain(sig_type_refs.iter().cloned())
+        .collect();
+    for key_type in recursive_map_key_types(&field_types, name, recursive_types) {
         lines.push(format!(
             "  def {} (items : List ({} × {})) : Nat :=",
             measure_entries_fn_name(name, &key_type),
@@ -429,13 +546,17 @@ fn emit_recursive_product_measure(
     lines.join("\n")
 }
 
-pub fn emit_recursive_measure(td: &TypeDef, recursive_types: &HashSet<String>) -> Option<String> {
+pub fn emit_recursive_measure(
+    td: &TypeDef,
+    recursive_types: &HashSet<String>,
+    sig_type_refs: &[String],
+) -> Option<String> {
     match td {
-        TypeDef::Sum { name, variants, .. } if is_recursive_type(name, variants) => {
-            Some(emit_recursive_sum_measure(name, variants, recursive_types))
-        }
+        TypeDef::Sum { name, variants, .. } if is_recursive_type(name, variants) => Some(
+            emit_recursive_sum_measure(name, variants, recursive_types, sig_type_refs),
+        ),
         TypeDef::Product { name, fields, .. } if is_recursive_product(name, fields) => Some(
-            emit_recursive_product_measure(name, fields, recursive_types),
+            emit_recursive_product_measure(name, fields, recursive_types, sig_type_refs),
         ),
         _ => None,
     }

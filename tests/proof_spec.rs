@@ -4910,6 +4910,99 @@ verify parseNum law fromIntRoundtrip
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// A recursive ADT carried through `Tuple<...>`-typed params must get DEEP
+/// ADT-measure fuel, not constant fuel. `type_measure_expr` had arms for
+/// `List<` / `Option<` / `Map<` / `Result<` and the legacy parenthesized
+/// `(A, B)` tuple spelling — but not for the `Tuple<A, B>` spelling Aver
+/// type names actually use. Consequence (found on `examples/data/json.av`,
+/// kernel-checked): a fn over `Tuple<String, Json>` got CONSTANT fuel and a
+/// fn over `List<Tuple<String, Json>>` got the shallow spine measure
+/// `AverMeasure.list (fun item => 1)`, so at nesting depth 5 the emitted
+/// Lean model exhausted fuel and returned `default` — a WRONG model,
+/// invisible to shallow samples. This test mirrors the Json object shape
+/// (recursive ADT whose constructor carries `List<Tuple<String, T>>`) with
+/// a depth-5 verify sample: with the `Tuple<` measure arm in place the
+/// sample's `native_decide` computes the real value (`passed: true`); with
+/// the arm reverted the wrapper's constant fuel exhausts mid-recursion and
+/// the deep case evaluates to `default` → lake build error → `passed: false`.
+#[test]
+fn lean_deep_tuple_entries_get_adt_measure_fuel_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping deep-tuple-entries test: `lake` not available");
+        return;
+    }
+    let source = r#"module DeepEntries
+    intent = "a recursive ADT carrying List<Tuple<String, T>> probed past constant fuel"
+    effects []
+
+type Tree
+    TreeLeaf(Int)
+    TreeNode(List<Tuple<String, Tree>>)
+
+fn renderTree(t: Tree) -> String
+    ? "Render a tree."
+    match t
+        Tree.TreeLeaf(n) -> String.fromInt(n)
+        Tree.TreeNode(entries) -> "(" + renderEntries(entries) + ")"
+
+fn renderEntries(entries: List<Tuple<String, Tree>>) -> String
+    ? "Render an entry list."
+    match entries
+        [] -> ""
+        [entry, ..tail] -> renderEntriesTail(entryString(entry), tail)
+
+fn renderEntriesTail(acc: String, rest: List<Tuple<String, Tree>>) -> String
+    ? "Render remaining entries onto an accumulator."
+    match rest
+        [] -> acc
+        [entry, ..tail] -> renderEntriesTail(acc + "," + entryString(entry), tail)
+
+fn entryString(entry: Tuple<String, Tree>) -> String
+    ? "Render one entry."
+    match entry
+        (key, value) -> key + ":" + renderTree(value)
+
+verify entryString
+    entryString(("a", Tree.TreeLeaf(1))) => "a:1"
+    entryString(("a", Tree.TreeNode([("b", Tree.TreeNode([("c", Tree.TreeNode([("d", Tree.TreeNode([("e", Tree.TreeNode([("f", Tree.TreeLeaf(1))]))]))]))]))]))) => "a:(b:(c:(d:(e:(f:1)))))"
+
+verify renderEntries
+    renderEntries([]) => ""
+    renderEntries([("a", Tree.TreeNode([("b", Tree.TreeNode([("c", Tree.TreeNode([("d", Tree.TreeNode([("e", Tree.TreeLeaf(2))]))]))]))]))]) => "a:(b:(c:(d:(e:2))))"
+"#;
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-deepentries-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-deepentries-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "depth-5 entries through Tuple-typed params must compute (deep ADT-measure fuel), not exhaust constant fuel into `default`\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
 /// A LinearArithmetic law over a fn using `Int.max`/`Int.min` must close. Two
 /// bugs blocked it: (1) `Int.max` (lowercase leaf) leaked into the unfold set as
 /// the non-existent constant `Int.max` → `unknown constant` compile error;
