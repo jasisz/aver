@@ -478,6 +478,106 @@ fn fuel_helper_name(name: &str) -> String {
     crate::codegen::recursion::fuel_helper_name(name)
 }
 
+/// Simp-set names for a fuel-emitted fn cited by the
+/// `SimpOverPreludeLemmas` law rung: `<name>__fuel` plus the measure
+/// helper names (`averMeasure*` / `averStringPosFuel`) the wrapper's
+/// fuel expression references. Rather than re-deriving the
+/// plan→emission mapping (which `recognize_lex_list_wf_scc` can flip
+/// per-SCC to native `termination_by`, no `__fuel` def at all), this
+/// PROBES the proof-mode emission itself: re-emit the fn's SCC group
+/// through the exact dispatch `transpile_unified` uses and scan the
+/// text. Returns `[]` when the emission carries no `def <name>__fuel`
+/// — citing a non-existent constant in `simp [...]` would be a hard
+/// `unknown constant` build error, the one failure mode the rung's
+/// `first | … | sorry` floor cannot catch. Cost: one re-emit of one
+/// SCC per fuel-citing law (string building only, no side effects).
+/// Assumes proof-mode emission — every production Lean export goes
+/// through `transpile_for_proof_mode`.
+pub(super) fn law_fuel_simp_names(fn_name: &str, ctx: &CodegenContext) -> Vec<String> {
+    // Locate the fn's owning scope (entry first, then dep modules) and
+    // the pure-fn population of that scope — the same component
+    // universe `transpile_unified` routes.
+    let scopes: Vec<(Option<String>, Vec<&crate::ast::FnDef>)> =
+        std::iter::once((None, ctx.fn_defs.iter().collect::<Vec<_>>()))
+            .chain(
+                ctx.modules
+                    .iter()
+                    .map(|m| (Some(m.prefix.clone()), m.fn_defs.iter().collect())),
+            )
+            .collect();
+    for (scope, fns) in scopes {
+        let pure: Vec<&crate::ast::FnDef> = fns.into_iter().filter(|fd| is_pure_fn(fd)).collect();
+        if !pure.iter().any(|fd| fd.name == fn_name) {
+            continue;
+        }
+        let comps = crate::call_graph::ordered_fn_components(&pure, &ctx.module_prefixes);
+        let Some(comp) = comps
+            .into_iter()
+            .find(|c| c.iter().any(|fd| fd.name == fn_name))
+        else {
+            return Vec::new();
+        };
+        let emitted = ctx.with_module_scope(scope.as_deref(), || {
+            if comp.len() > 1 {
+                let all_supported = comp
+                    .iter()
+                    .all(|fd| crate::codegen::common::fn_contract_exists_for_fn(ctx, fd));
+                if all_supported {
+                    emit_mutual_group_proof(&comp, ctx)
+                } else {
+                    emit_mutual_group(&comp, ctx)
+                }
+            } else if let Some(fd) = comp.first() {
+                if crate::codegen::common::fn_contract_exists_for_fn(ctx, fd) {
+                    emit_fn_def_proof(fd, ctx).unwrap_or_default()
+                } else {
+                    emit_fn_def(fd, &std::collections::HashSet::from([fd.name.clone()]), ctx)
+                        .unwrap_or_default()
+                }
+            } else {
+                String::new()
+            }
+        });
+        let fuel = fuel_helper_name(fn_name);
+        if !emitted.contains(&format!("def {fuel}")) {
+            return Vec::new();
+        }
+        let mut names = vec![fuel];
+        names.extend(scan_measure_helper_names(&emitted));
+        return names;
+    }
+    Vec::new()
+}
+
+/// Harvest measure-helper identifiers (`averMeasure*`,
+/// `averStringPosFuel`) from emitted Lean text. These are the names a
+/// fuel wrapper's initial-fuel expression references; the
+/// `SimpOverPreludeLemmas` rung needs them in its simp set so the fuel
+/// value computes to a `Nat` literal before the `__fuel` equations
+/// fire. Sorted + deduped for deterministic emit.
+fn scan_measure_helper_names(text: &str) -> Vec<String> {
+    let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for prefix in ["averMeasure", "averStringPosFuel"] {
+        for (idx, _) in text.match_indices(prefix) {
+            // Reject mid-identifier hits (`xaverMeasure`).
+            if idx > 0
+                && text[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || c == '_')
+            {
+                continue;
+            }
+            let rest = &text[idx..];
+            let end = rest
+                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .unwrap_or(rest.len());
+            found.insert(rest[..end].to_string());
+        }
+    }
+    found.into_iter().collect()
+}
+
 fn emit_fn_param_names(params: &[(String, String)]) -> String {
     params
         .iter()
@@ -2580,6 +2680,13 @@ fn emit_verify_law_block(
                 | crate::ir::ProofStrategy::SimpOverLemmas(_)
                 | crate::ir::ProofStrategy::BackendDispatch
                 | crate::ir::ProofStrategy::Sorry
+                // SimpOverPreludeLemmas is a best-effort rung with an
+                // honest `sorry` floor — it does NOT promise to close
+                // a constant-RHS shape, so a singleton-given +
+                // constant-RHS law keeps today's skip (sample +
+                // checked_domain cover the point) instead of gaining
+                // a universal that would land as a caught sorry.
+                | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
         )
     });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs

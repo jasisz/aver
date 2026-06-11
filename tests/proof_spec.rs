@@ -426,7 +426,20 @@ fn proof_export_builds_json_when_lake_is_available() {
     // laws (`parseEscape.escapeCodeRoundtrip`,
     // `escapeJsonChar.encodesEscapeCode`) close axiom-free via the
     // same strategy and add no sorries.
-    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 7);
+    // SimpOverPreludeLemmas: 7 → 3 — `finishInt.fromCanonicalInt`,
+    // `finishNumber.fromCanonicalIntSlice`,
+    // `afterIntChar.terminatedIntRoundtrip` and
+    // `finishString.plainSegmentRoundtrip` now close genuinely via
+    // the String prelude spec lemmas (`String.add_eq_append`,
+    // `String.slice_full` / `String.slice_append_prefix`,
+    // `String.intercalate_singleton`) + `Int.fromString_fromInt`
+    // (#print axioms ⊆ [propext, Classical.choice, Quot.sound]). The
+    // remaining 3 are `escapeJsonString.parseStringRoundtrip`,
+    // `parseStringChunk.escapedStringRoundtrip` and
+    // `parseNumber.fromIntRoundtrip` — their cones stop at fuel fns
+    // with open string-position measures (`parseStringChunk`,
+    // `scanIntTail`), where the rung honestly falls to `sorry`.
+    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 3);
 }
 
 #[test]
@@ -4701,6 +4714,68 @@ verify shade law neverEmpty
         summary["universal"].as_bool(),
         Some(true),
         "a closed finite-domain law must close kernel-clean via exhaustive cases\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A no-when builtin-roundtrip law over a non-recursive String fn must close
+/// via the `SimpOverPreludeLemmas` strategy: the rung emits `intro …; first |
+/// (simp [<cone>, <registry lemmas>, Int.add_sub_cancel]; done) | sorry`, where
+/// the registry maps the cone's builtins (`String.slice`, the string-`+`
+/// marker) to the prelude spec lemmas (`String.add_eq_append`,
+/// `String.slice_full` / `String.slice_append_prefix`) that the demand-driven
+/// prelude then ships. No earlier detector owns the shape (LinearArithmetic
+/// rejects String params, EnumConstantFold needs a ctor-pinned ADT + scalar
+/// return, FiniteDomainCases needs a closed-domain given), so it used to fall
+/// to BackendDispatch + bare `sorry`. (Found on real `examples/data/json.av`:
+/// `finishString.plainSegmentRoundtrip` and the `finishInt` / `finishNumber` /
+/// `afterIntChar` canonical-Int roundtrips.)
+#[test]
+fn lean_proves_simp_over_prelude_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping simp-over-prelude test: `lake` not available");
+        return;
+    }
+    let source = r#"module PreludeSimp
+    intent = "a builtin-roundtrip law closing via prelude spec lemmas"
+    effects []
+
+fn keepPrefix(s: String, n: Int) -> String
+    String.slice(s, 0, n)
+
+verify keepPrefix law appendRoundtrip
+    given s: String = ["", "ab", "xyz"]
+    keepPrefix(s + "!", String.len(s)) => s
+"#;
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-preludesimp-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-preludesimp-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "a builtin-roundtrip law must close kernel-clean via the prelude spec lemmas\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);

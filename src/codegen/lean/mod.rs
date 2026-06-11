@@ -153,6 +153,84 @@ const LEAN_PRELUDE_OPTION_TO_EXCEPT: &str = r#"def Option.toExcept (o : Option �
 
 const LEAN_PRELUDE_STRING_HADD: &str = r#"instance : HAdd String String String := ⟨String.append⟩"#;
 
+// ---- String prelude spec lemmas -------------------------------------
+//
+// Demand-driven (mirrors the AverMap lemma family): each lemma ships
+// only when the emitted body mentions its name — which happens exactly
+// when the `SimpOverPreludeLemmas` law rung cites it. None carries
+// `@[simp]`: the rung references them explicitly in its `simp [...]`
+// set, and a global simp attribute would silently change simp behavior
+// for every other proof in the corpus (the archived hand-proofs that
+// motivated these lemmas close with the explicit spelling too).
+
+/// `s + t = s ++ t` — normalizes the custom `HAdd String` instance
+/// (above) so `++`-keyed lemmas (`String.slice_append_prefix`, core
+/// `List.append` simp set) fire on goals spelled with `+`. Ships in
+/// the `StringHadd` helper section because it is a statement *about*
+/// that instance and needs nothing else in scope.
+const LEAN_PRELUDE_STRING_ADD_EQ_APPEND: &str = r#"/-- The custom `HAdd String` instance is definitionally `++`. -/
+theorem String.add_eq_append (s t : String) : s + t = s ++ t := rfl"#;
+
+/// `String.intercalate sep [x] = x` — the singleton-join collapse
+/// (`String.join(List.concat([], [seg]), sep)` shapes). Pure `rfl`
+/// over core `String.intercalate`; ships with `StringHadd` (any
+/// String-mentioning body) because it does not depend on the
+/// `StringHelpers` defs.
+const LEAN_PRELUDE_STRING_INTERCALATE_SINGLETON: &str = r#"/-- Intercalating a singleton list is the element itself. -/
+theorem String.intercalate_singleton (sep x : String) : String.intercalate sep [x] = x := rfl"#;
+
+/// `String.slice s 0 s.length = s` — full-range slice identity.
+/// Depends on the `String.slice` def in the `StringHelpers` section.
+const LEAN_PRELUDE_STRING_SLICE_FULL: &str = r#"/-- Full-string slice identity: slicing [0, s.length) is the identity. -/
+theorem String.slice_full (s : String) : String.slice s 0 (s.length : Int) = s := by
+  have h0 : ¬ ((0 : Int) < 0) := by omega
+  have h1 : ¬ ((s.length : Int) < 0) := by omega
+  simp only [String.slice, if_neg h0, if_neg h1]
+  show String.mk (s.toList.take s.length) = s
+  cases s with
+  | mk data =>
+      show String.mk (data.take data.length) = String.mk data
+      rw [List.take_length]"#;
+
+/// `String.slice (t ++ u) 0 t.length = t` — prefix recovery from an
+/// appended string. One lemma covers the `+` spelling too once
+/// `String.add_eq_append` is in the same simp set (deliberate dedup —
+/// no second `+`-keyed spelling is shipped).
+const LEAN_PRELUDE_STRING_SLICE_APPEND_PREFIX: &str = r#"/-- Slicing [0, t.length) out of `t ++ u` recovers the prefix `t`. -/
+theorem String.slice_append_prefix (t u : String) :
+    String.slice (t ++ u) 0 (t.length : Int) = t := by
+  show String.mk ((t.data ++ u.data).take t.data.length) = t
+  rw [List.take_left]"#;
+
+/// Static registry: prelude builtin(s) → prelude spec lemma names.
+/// Single source of truth, living next to the lemma texts it indexes —
+/// the `SimpOverPreludeLemmas` detector records the builtin call names
+/// it saw in a law's cone, and this fn maps them to the lemma names the
+/// rung's `simp [...]` set cites (which in turn makes the demand-driven
+/// prelude inclusion above ship the texts). Keys are Aver source-level
+/// builtin names; `String.concat` is the detector's synthetic marker
+/// for string `+`. The (`Int.fromString`, `String.fromInt`) PAIR maps
+/// to the roundtrip lemma `Int.fromString_fromInt` (always shipped with
+/// the `NumericParse` prelude section).
+pub(crate) fn prelude_spec_lemmas_for_builtins(builtins: &[String]) -> Vec<String> {
+    let has = |name: &str| builtins.iter().any(|b| b == name);
+    let mut lemmas: Vec<String> = Vec::new();
+    if builtins.iter().any(|b| b.starts_with("String.")) {
+        lemmas.push("String.add_eq_append".to_string());
+    }
+    if has("String.slice") {
+        lemmas.push("String.slice_full".to_string());
+        lemmas.push("String.slice_append_prefix".to_string());
+    }
+    if has("String.join") {
+        lemmas.push("String.intercalate_singleton".to_string());
+    }
+    if has("Int.fromString") && has("String.fromInt") {
+        lemmas.push("Int.fromString_fromInt".to_string());
+    }
+    lemmas
+}
+
 /// Oracle v1: BranchPath mirrors the Aver-source opaque builtin. The
 /// dewey-decimal string under the hood is not user-observable — users
 /// construct paths through `.root`, `.child`, `.parse`.
@@ -1180,7 +1258,9 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
         match helper.key {
             "BranchPath" => parts.push(LEAN_PRELUDE_BRANCH_PATH.to_string()),
             "AverList" => parts.push(LEAN_PRELUDE_AVER_LIST.to_string()),
-            "StringHelpers" => parts.push(LEAN_PRELUDE_STRING_HELPERS.to_string()),
+            "StringHelpers" => {
+                parts.push(generate_string_helpers_prelude(body, include_all_helpers))
+            }
             "NumericParse" => parts.push(LEAN_PRELUDE_NUMERIC_PARSE.to_string()),
             "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
@@ -1195,7 +1275,7 @@ fn generate_prelude_for_body(body: &str, include_all_helpers: bool) -> String {
                 LEAN_PRELUDE_EXCEPT_NS.to_string(),
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
-            "StringHadd" => parts.push(LEAN_PRELUDE_STRING_HADD.to_string()),
+            "StringHadd" => parts.push(generate_string_hadd_prelude(body, include_all_helpers)),
             // Dafny-side datatype declarations — Lean has Result/Option
             // natively (`Except`/`Option`) and BranchPath ships as part
             // of the BranchPath helper key, so all four are no-ops here.
@@ -1224,6 +1304,38 @@ fn mentions_has_set(body: &str) -> bool {
             .next()
             .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
     })
+}
+
+/// `StringHelpers` section: base defs + demand-driven `String.slice`
+/// spec lemmas. Mirrors [`generate_map_prelude`]'s inclusion pattern —
+/// a lemma ships only when the body (which includes law tactic text)
+/// mentions its name, so corpora that never cite it get byte-identical
+/// output.
+fn generate_string_helpers_prelude(body: &str, include_all_helpers: bool) -> String {
+    let mut parts = vec![LEAN_PRELUDE_STRING_HELPERS.to_string()];
+    if include_all_helpers || body.contains("String.slice_full") {
+        parts.push(LEAN_PRELUDE_STRING_SLICE_FULL.to_string());
+    }
+    if include_all_helpers || body.contains("String.slice_append_prefix") {
+        parts.push(LEAN_PRELUDE_STRING_SLICE_APPEND_PREFIX.to_string());
+    }
+    parts.join("\n\n")
+}
+
+/// `StringHadd` section: the `HAdd String` instance + demand-driven
+/// spec lemmas that need nothing from `StringHelpers`
+/// (`String.add_eq_append` is about the instance itself;
+/// `String.intercalate_singleton` is over core `String.intercalate`).
+/// Same inclusion pattern as [`generate_map_prelude`].
+fn generate_string_hadd_prelude(body: &str, include_all_helpers: bool) -> String {
+    let mut parts = vec![LEAN_PRELUDE_STRING_HADD.to_string()];
+    if include_all_helpers || body.contains("String.add_eq_append") {
+        parts.push(LEAN_PRELUDE_STRING_ADD_EQ_APPEND.to_string());
+    }
+    if include_all_helpers || body.contains("String.intercalate_singleton") {
+        parts.push(LEAN_PRELUDE_STRING_INTERCALATE_SINGLETON.to_string());
+    }
+    parts.join("\n\n")
 }
 
 fn generate_map_prelude(body: &str, include_all_helpers: bool) -> String {
@@ -1585,7 +1697,7 @@ fn build_common_lean(union_body: &str) -> String {
         match helper.key {
             "BranchPath" => parts.push(LEAN_PRELUDE_BRANCH_PATH.to_string()),
             "AverList" => parts.push(LEAN_PRELUDE_AVER_LIST.to_string()),
-            "StringHelpers" => parts.push(LEAN_PRELUDE_STRING_HELPERS.to_string()),
+            "StringHelpers" => parts.push(generate_string_helpers_prelude(union_body, false)),
             "NumericParse" => parts.push(LEAN_PRELUDE_NUMERIC_PARSE.to_string()),
             "CharByte" => parts.push(LEAN_PRELUDE_CHAR_BYTE.to_string()),
             "AverMeasure" => parts.push(LEAN_PRELUDE_AVER_MEASURE.to_string()),
@@ -1600,7 +1712,7 @@ fn build_common_lean(union_body: &str) -> String {
                 LEAN_PRELUDE_EXCEPT_NS.to_string(),
                 LEAN_PRELUDE_OPTION_TO_EXCEPT.to_string(),
             ]),
-            "StringHadd" => parts.push(LEAN_PRELUDE_STRING_HADD.to_string()),
+            "StringHadd" => parts.push(generate_string_hadd_prelude(union_body, false)),
             "ResultDatatype" | "OptionDatatype" | "OptionToResult" | "BranchPathDatatype" => {}
             other => panic!(
                 "Lean backend has no implementation for builtin helper key '{}'. \

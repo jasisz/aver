@@ -739,6 +739,60 @@ pub enum ProofStrategy {
         /// `cases` targets. Source names; backends translate.
         givens: Vec<String>,
     },
+    /// Builtin-roundtrip simp over the prelude's spec-lemma registry —
+    /// the last typed fallback before `BackendDispatch`, and the only
+    /// strategy the Lean backend renders AFTER its legacy ad-hoc chain
+    /// (so it fires precisely where the sampled-sorry fallback used to
+    /// emit a bare-`sorry` universal). A no-when law whose lhs call cone
+    /// reduces to builtin String/Int operations once the user fns
+    /// unfold: the Lean emit is `intro <givens>; first | (simp [<unfold
+    /// set>, <registry lemmas>, Int.add_sub_cancel]; done) | sorry`. The
+    /// `done` + `first | … | sorry` alternation is the honest floor — a
+    /// simp that fails OR leaves a residual goal degrades to a caught
+    /// `sorry`, NEVER a build error and NEVER `native_decide`.
+    /// Motivating shapes: `examples/data/json.av`
+    /// `finishInt.fromCanonicalInt` (closes via
+    /// `Int.fromString_fromInt`), `finishNumber.fromCanonicalIntSlice` /
+    /// `afterIntChar.terminatedIntRoundtrip` (slice-prefix lemmas
+    /// through the `toString` fuel wrapper) and
+    /// `finishString.plainSegmentRoundtrip` (`String.slice_append_prefix`
+    /// + `String.intercalate_singleton`).
+    ///
+    /// Deliberately a NEW variant and not a reuse of
+    /// [`ProofStrategy::SimpOverLemmas`]: that variant is the discovery
+    /// feedback loop's re-pin channel (`lemma_discovery::committed`
+    /// re-pins an `Induction` law when committed *discovered* lemma
+    /// texts are in scope, and the backend routes it through the
+    /// induction emit with embedded lemma bodies). This strategy carries
+    /// no lemma texts and never inducts — it names *static prelude*
+    /// lemmas that the Lean emitter ships demand-driven (see
+    /// `lean::prelude_spec_lemmas_for_builtins`, the single source of
+    /// truth for the builtin → lemma-name registry). Keeping the two
+    /// apart means neither the discovery CLI nor `committed.rs` ever
+    /// has to reason about this variant.
+    SimpOverPreludeLemmas {
+        /// Ordered fn unfold list — law subject fn first, then the
+        /// transitively-reached NON-recursive callees (sorted).
+        /// Source names; backends translate.
+        unfold_fns: Vec<String>,
+        /// Recursive (fuel-emitted) fns called DIRECTLY in the law lhs
+        /// with measure-closed args (constructor-headed over
+        /// scalar-only payloads, or literals) — the fuel value
+        /// computes to a Nat literal, so simp drives the `__fuel`
+        /// equations through. The Lean emitter expands each name to
+        /// wrapper + `<name>__fuel` + its measure-helper names.
+        /// Recursive fns reached only transitively (inside cone
+        /// bodies) are NOT listed: they stay opaque — usually dead
+        /// branches under the law's pinned literal args, and if live
+        /// the simp falls to the honest caught `sorry`.
+        fuel_fns: Vec<String>,
+        /// Builtin call names observed in the law sides + cone bodies
+        /// (sorted; includes the synthetic `String.concat` marker for
+        /// string `+`). Registry keys — the Lean emitter maps them to
+        /// prelude spec lemma names via
+        /// `prelude_spec_lemmas_for_builtins`.
+        builtins: Vec<String>,
+    },
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,

@@ -1449,6 +1449,11 @@ pub fn emit_verify_law(
                     // where it can't. Byte-identical to before the
                     // strategy existed.
                     | crate::ir::ProofStrategy::FiniteDomainCases { .. }
+                    // Same guard for the prelude-simp strategy: Lean-only
+                    // (its registry maps to Lean prelude lemma names),
+                    // so Dafny treats the pin as `BackendDispatch` and
+                    // its exports stay byte-identical.
+                    | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
             )
         });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs
