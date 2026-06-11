@@ -1,0 +1,102 @@
+module Rational
+    intent =
+        "Stage-0 probe for the K5 FDIV north star: exact rational arithmetic"
+        "in the Moore/Lynch/Kaufmann style. Non-normalizing record rationals"
+        "(no gcd, no recursion anywhere) with cross-multiplication equality."
+        "The algebraic law suite below is the measurement target: which ring"
+        "identities close universal-genuine on Lean / Dafny today."
+    effects []
+
+record Rat
+    num: Int
+    den: Int
+
+fn ratZero() -> Rat
+    ? "The rational zero, canonically 0/1."
+    Rat(num = 0, den = 1)
+
+fn ratOne() -> Rat
+    ? "The rational one, canonically 1/1."
+    Rat(num = 1, den = 1)
+
+fn ratAdd(a: Rat, b: Rat) -> Rat
+    ? "Non-normalizing rational addition: a/b + c/d = (ad + cb)/(bd)."
+    Rat(num = a.num * b.den + b.num * a.den, den = a.den * b.den)
+
+fn ratMul(a: Rat, b: Rat) -> Rat
+    ? "Non-normalizing rational multiplication: (ac)/(bd)."
+    Rat(num = a.num * b.num, den = a.den * b.den)
+
+fn ratNeg(a: Rat) -> Rat
+    ? "Rational negation: flips the numerator sign."
+    Rat(num = 0 - a.num, den = a.den)
+
+fn ratSub(a: Rat, b: Rat) -> Rat
+    ? "Non-normalizing rational subtraction: a/b - c/d = (ad - cb)/(bd)."
+    Rat(num = a.num * b.den - b.num * a.den, den = a.den * b.den)
+
+fn ratEq(a: Rat, b: Rat) -> Bool
+    ? "Cross-multiplication equality: a/b == c/d iff ad == cb."
+    a.num * b.den == b.num * a.den
+
+verify ratAdd
+    ratAdd(Rat(num = 1, den = 2), Rat(num = 1, den = 3)) => Rat(num = 5, den = 6)
+    ratAdd(Rat(num = -1, den = 2), Rat(num = 1, den = 2)) => Rat(num = 0, den = 4)
+
+verify ratMul
+    ratMul(Rat(num = 1, den = 2), Rat(num = 2, den = 3)) => Rat(num = 2, den = 6)
+    ratMul(Rat(num = -3, den = 4), Rat(num = 0, den = 1)) => Rat(num = 0, den = 4)
+
+verify ratEq
+    ratEq(Rat(num = 1, den = 2), Rat(num = 2, den = 4)) => true
+    ratEq(Rat(num = 1, den = 2), Rat(num = 2, den = 3)) => false
+    ratEq(Rat(num = -1, den = 2), Rat(num = 1, den = -2)) => true
+
+verify ratAdd law addCommutative
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 0, den = 1), Rat(num = 5, den = -3)]
+    given b: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 0, den = 1), Rat(num = 5, den = -3)]
+    ratEq(ratAdd(a, b), ratAdd(b, a)) => true
+
+verify ratAdd law addAssociative
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 5, den = -3)]
+    given b: Rat = [Rat(num = 0, den = 1), Rat(num = 2, den = 5), Rat(num = -1, den = 2)]
+    given c: Rat = [Rat(num = 1, den = 1), Rat(num = -2, den = -7), Rat(num = 3, den = 8)]
+    ratEq(ratAdd(ratAdd(a, b), c), ratAdd(a, ratAdd(b, c))) => true
+
+verify ratMul law mulCommutative
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 0, den = 1), Rat(num = 5, den = -3)]
+    given b: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 0, den = 1), Rat(num = 5, den = -3)]
+    ratEq(ratMul(a, b), ratMul(b, a)) => true
+
+verify ratMul law mulAssociative
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 5, den = -3)]
+    given b: Rat = [Rat(num = 0, den = 1), Rat(num = 2, den = 5), Rat(num = -1, den = 2)]
+    given c: Rat = [Rat(num = 1, den = 1), Rat(num = -2, den = -7), Rat(num = 3, den = 8)]
+    ratEq(ratMul(ratMul(a, b), c), ratMul(a, ratMul(b, c))) => true
+
+verify ratMul law distributesOverAdd
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 5, den = -3)]
+    given b: Rat = [Rat(num = 0, den = 1), Rat(num = 2, den = 5), Rat(num = -1, den = 2)]
+    given c: Rat = [Rat(num = 1, den = 1), Rat(num = -2, den = -7), Rat(num = 3, den = 8)]
+    ratEq(ratMul(a, ratAdd(b, c)), ratAdd(ratMul(a, b), ratMul(a, c))) => true
+
+verify ratAdd law addZeroIdentity
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 0, den = 1), Rat(num = 5, den = -3)]
+    ratEq(ratAdd(a, ratZero()), a) => true
+
+verify ratMul law mulOneIdentity
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 0, den = 1), Rat(num = 5, den = -3)]
+    ratEq(ratMul(a, ratOne()), a) => true
+
+verify ratMul law mulZeroAnnihilates
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 0, den = 1), Rat(num = 5, den = -3)]
+    ratEq(ratMul(a, ratZero()), ratZero()) => true
+
+verify ratNeg law negInvolution
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 0, den = 1), Rat(num = 5, den = -3)]
+    ratEq(ratNeg(ratNeg(a)), a) => true
+
+verify ratSub law subIsAddNeg
+    given a: Rat = [Rat(num = 1, den = 2), Rat(num = -3, den = 4), Rat(num = 5, den = -3)]
+    given b: Rat = [Rat(num = 0, den = 1), Rat(num = 2, den = 5), Rat(num = -1, den = 2)]
+    ratEq(ratSub(a, b), ratAdd(a, ratNeg(b))) => true

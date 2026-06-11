@@ -160,6 +160,35 @@ fn assert_dafny_verifies_with_budgets(
     expected_errors: usize,
     expected_axioms: usize,
 ) {
+    dafny_check_with_budgets(
+        example_path,
+        prefix,
+        expected_errors,
+        expected_axioms,
+        false,
+    );
+}
+
+/// `assert_dafny_verifies`, but additionally assert the check's own
+/// verdict: `passed == true` in the `--check-json` summary.
+///
+/// `passed` keys on the `dafny verify` EXIT STATUS — the only place
+/// prover TIMEOUTS surface. A timed-out obligation reports as exit 4
+/// with `0 errors` in the parsed verifier summary, so an errors/axioms
+/// budget assert alone stays green while the file no longer verifies.
+/// Use this for anchors whose regression mode is a timeout rather than
+/// an error-count drift.
+fn assert_dafny_verifies_and_passes(example_path: &str, prefix: &str) {
+    dafny_check_with_budgets(example_path, prefix, 0, 0, true);
+}
+
+fn dafny_check_with_budgets(
+    example_path: &str,
+    prefix: &str,
+    expected_errors: usize,
+    expected_axioms: usize,
+    require_passed: bool,
+) {
     if Command::new("dafny").arg("--version").output().is_err() {
         eprintln!("skipping dafny verify smoke test: `dafny` not available");
         return;
@@ -254,6 +283,19 @@ fn assert_dafny_verifies_with_budgets(
         actual_axioms,
         format_output(&run)
     );
+
+    if require_passed {
+        assert_eq!(
+            summary["passed"].as_bool(),
+            Some(true),
+            "{}: `--check` reports passed:false even though the error budget \
+             holds — `passed` keys on the dafny exit status, where prover \
+             timeouts surface (exit 4, 0 parsed errors). The file stopped \
+             verifying within the time limit.\n{}",
+            example_path,
+            format_output(&run)
+        );
+    }
 
     let _ = std::fs::remove_dir_all(&output_dir);
 }
@@ -457,6 +499,72 @@ fn counted_summary(summary: &serde_json::Value) -> serde_json::Value {
     let mut obj = summary.as_object().cloned().unwrap_or_default();
     obj.remove("when_universal");
     serde_json::Value::Object(obj)
+}
+
+/// Nonlinear-arithmetic wall (`tests/fixtures/nr_wall.av`):
+/// laws whose unfolded cone multiplies two VARIABLES (`x * x`,
+/// `(s*s - d*x)^2`) must DEGRADE to honest caught sorries, never to a
+/// failing tactic. Pre-fix this file produced three distinct build
+/// errors: `by_cases h_h_a : h_a ≥ 0` (case over a premise-HYPOTHESIS
+/// name — application type mismatch), `omega` failing on a nonlinear
+/// goal, and `_sample_N` theorems FALSE AS STATED (when-guard numerals
+/// elaborated as Nat, truncating subtraction). Post-fix the export
+/// builds GREEN: exactly 2 sorries (the two unguarded nonlinear
+/// universals — sqNonneg, nrNewErrNum≍nrOldErrSq), with every
+/// `when`-guarded law closed bounded over its declared domain and
+/// every emitted sample theorem true (Int-ascribed guards).
+#[test]
+fn proof_nonlinear_laws_degrade_to_honest_sorries() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping nonlinear-wall proof test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-nr-wall");
+    let (summary, run) = run_lean_check_json("tests/fixtures/nr_wall.av", &output_dir, 2, &[]);
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(2),
+        "nonlinear laws must land on exactly 2 honest caught sorries \
+         (a build error OR a different count is a regression).\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "the nonlinear-wall export must BUILD green — failing tactics \
+         (omega on var*var goals, by_cases over hypothesis names, \
+         Nat-truncated sample guards) are build errors, not sorries.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Dafny side of the nonlinear-wall fixture: `when`-law samples come
+/// from the UNFILTERED given cartesian product, so premise-violating
+/// combinations (square-monotonicity at e=1, b=0) were asserted
+/// unguarded and failed verification on a file whose universal lemmas
+/// Z3 fully proves. Post-fix the samples are checked under
+/// `if <instantiated premise> { … }` (mirroring Lean's `_sample_N`
+/// premise-as-hypothesis form) and the whole file verifies: 0 errors,
+/// 0 axioms, passed:true.
+#[test]
+fn proof_dafny_when_filtered_samples() {
+    assert_dafny_verifies_and_passes("tests/fixtures/nr_wall.av", "aver-dafny-nr-wall");
+}
+
+/// Rationals fixture (`tests/fixtures/rational_probe.av`):
+/// concrete-literal sample asserts over record arguments pushed Z3
+/// into symbolic fuel unfolding — 150 s+ timeouts (`dafny verify`
+/// exit 4) on a file whose universal lemmas verify in ~1 s, so the
+/// exit-status gate failed an otherwise-proven file. Post-fix each
+/// sample assert is seeded with the universal lemma instantiated at
+/// the sample values and the file verifies end-to-end in seconds.
+/// `passed` is asserted explicitly: a timeout leaves the parsed error
+/// count at 0 and surfaces ONLY in the exit status, so an errors-only
+/// assert cannot catch this regression.
+#[test]
+fn proof_dafny_rational_samples_no_timeout() {
+    assert_dafny_verifies_and_passes("tests/fixtures/rational_probe.av", "aver-dafny-rational");
 }
 
 /// Generality pin for the when-universal quarantine lane: a synthetic

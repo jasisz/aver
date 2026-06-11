@@ -568,6 +568,20 @@ pub fn emit_verify_law_forall_auto_proof(
                 lifted,
             }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
             {
+                // `when`-premise + wrapper-return: DECLINE. The
+                // sign-split `by_cases <;> simp` chain this arm
+                // renders cannot consume a `when` premise (the
+                // hypothesis is introduced but never used), and the
+                // pre-fix emission even cased over the introduced
+                // HYPOTHESIS names (`by_cases h_h_a : h_a >= 0` where
+                // `h_a : Prop`) — an application-type-mismatch BUILD
+                // ERROR, not a caught sorry. Falling through reaches
+                // `emit_guarded_domain_law`, which closes the bounded
+                // guarded statement by domain case-split +
+                // `native_decide`.
+                if wrapper_return && !lifted && law.when.is_some() {
+                    return None;
+                }
                 // Lifted laws use base intro names — the Subtype
                 // lift incorporates the `when` premise into the
                 // theorem's quantifier types, so the user-side
@@ -588,6 +602,7 @@ pub fn emit_verify_law_forall_auto_proof(
                         smart_guard.as_ref(),
                         lifted,
                         chosen_intro,
+                        &intro_names,
                         law.when.is_some(),
                         uses_max_min,
                         ctx,
@@ -695,6 +710,7 @@ fn emit_simp_omega_from_ir(
     smart_guard: Option<&crate::ir::SmartGuard>,
     lifted: bool,
     intro_names: &[String],
+    given_names: &[String],
     has_when: bool,
     uses_max_min: bool,
     ctx: &CodegenContext,
@@ -715,7 +731,14 @@ fn emit_simp_omega_from_ir(
             ],
         )
     } else if wrapper_return {
-        let by_cases_clauses: Vec<String> = intro_names
+        // Case ONLY over the law's actual Int-typed given variables —
+        // NEVER the introduced premise-hypothesis names. `intro_names`
+        // carries `h_a` / `h_when` for `when`-laws, and casing over
+        // those (`by_cases h_h_a : h_a >= 0` where `h_a : Prop`) is an
+        // application-type-mismatch build error. (The `when`+wrapper
+        // combination is declined before this arm is reached; the
+        // given-name restriction here is the structural guarantee.)
+        let by_cases_clauses: Vec<String> = given_names
             .iter()
             .map(|n| {
                 let predicate = match smart_guard {
@@ -733,7 +756,7 @@ fn emit_simp_omega_from_ir(
             })
             .collect();
         let by_cases_chain = by_cases_clauses.join(" <;> ");
-        let simp_hyps: Vec<String> = intro_names
+        let simp_hyps: Vec<String> = given_names
             .iter()
             .map(|n| format!("h_{n}"))
             .chain(["Int.add_comm".to_string(), "Int.mul_comm".to_string()])

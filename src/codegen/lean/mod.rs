@@ -2411,11 +2411,14 @@ verify pickGreater law ordered
         assert!(lean.contains(
             "theorem pickGreater_law_ordered : ∀ (a : Int) (b : Int), a = 1 ∨ a = 2 -> b = 1 ∨ b = 2 -> (a > b) = true -> pickGreater a b = a := by"
         ));
+        // Sample guards Int-ascribe their substituted numerals: a bare
+        // `(1 - 2 > 0)` premise would elaborate over Nat, where truncated
+        // subtraction can make the theorem FALSE AS STATED.
         assert!(lean.contains(
-            "theorem pickGreater_law_ordered_sample_1 : (1 > 1) = true -> pickGreater 1 1 = 1 := by"
+            "theorem pickGreater_law_ordered_sample_1 : ((1 : Int) > (1 : Int)) = true -> pickGreater 1 1 = 1 := by"
         ));
         assert!(lean.contains(
-            "theorem pickGreater_law_ordered_sample_4 : (2 > 2) = true -> pickGreater 2 2 = 2 := by"
+            "theorem pickGreater_law_ordered_sample_4 : ((2 : Int) > (2 : Int)) = true -> pickGreater 2 2 = 2 := by"
         ));
     }
 
