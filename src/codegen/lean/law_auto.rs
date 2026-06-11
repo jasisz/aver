@@ -2,6 +2,7 @@
 ///
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
+mod decimal;
 mod induction;
 mod sampled;
 mod shared;
@@ -235,6 +236,42 @@ pub fn emit_verify_law_forall_auto_proof(
             ),
             replaces_theorem: false,
         });
+    }
+
+    // IR-pinned `IntDecimalRoundtrip` — the lowerer validated the
+    // ENTIRE canonical decimal-parser shape (head-char dispatch arms,
+    // single recognized string-pos scanner with the synthesized
+    // `__fuel_scan` companion, slice + `Int.fromString` leaf), so the
+    // backend renders the fixed sign-split skeleton ported from the
+    // verified json hand proof. Wrapped in `first | (…; done) | sorry`
+    // — a non-closing case degrades to a caught honest sorry.
+    if let Some(crate::ir::ProofStrategy::IntDecimalRoundtrip {
+        ref parse_fn,
+        ref neg_fn,
+        ref pos_fn,
+        ref sign_fn,
+        ref scanner_fn,
+        ref predicate_fn,
+        ref finish_fn,
+        ref finish_int_fn,
+        ref serializer_fn,
+    }) = law_strategy_for(ctx, &vb.fn_name, &law.name)
+        && let Some(proof) = decimal::emit_int_decimal_roundtrip_law(
+            law,
+            ctx,
+            theorem_base,
+            parse_fn,
+            neg_fn,
+            pos_fn,
+            sign_fn,
+            scanner_fn,
+            predicate_fn,
+            finish_fn,
+            finish_int_fn,
+            serializer_fn,
+        )
+    {
+        return Some(proof);
     }
 
     // IR-pinned `LinearIntSpecEquivalence` — Step 40: lowerer

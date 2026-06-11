@@ -917,3 +917,489 @@ pub(crate) fn collect_nat_arith_ops_for_names(
         })
         .collect()
 }
+
+// ---- String-position scanner shape ----------------------------------
+
+/// Canonical fuelized string-position scanner shape:
+///
+/// ```text
+/// fn scan(s: String, pos: Int, carried..., pinned...) -> R
+///     match String.charAt(s, pos)
+///         Option.None -> EXIT
+///         Option.Some(c) -> match P(c)
+///             true -> SELF(s, pos + 1, carried..., <literal pins>)
+///             false -> OTHER
+/// ```
+///
+/// where the `true` arm may interpose Bool matches on PINNED params
+/// (params the unique self-call fixes to a Bool literal) on the path to
+/// the self-call — `scanIntTail`'s `match leadingZero` shape. The shape
+/// is what makes the synthesized `<fn>__fuel_scan` lemma provable by
+/// the fixed fuel-induction template: an all-`P` suffix scan runs to
+/// the end of the string and returns `EXIT[pos := s.data.length]`.
+///
+/// CONSERVATIVE BY CONSTRUCTION — every gate below exists so that the
+/// emitted companion lemma proves on every body the recognizer accepts
+/// (a synthesized lemma that fails to prove is a build error in the
+/// export, the worst failure mode):
+/// - params: `(String, Int, ...)`, none named like a template binder;
+/// - body: exactly the two-arm `String.charAt` match above;
+/// - dispatch: a two-arm `true`/`false` match on `P(c)` where `P` is a
+///   single-argument call on the scrutinee binder (no wildcard arms —
+///   the Lean emitter's Bool-match → `ite` lowering is only certain
+///   for explicit literal arms);
+/// - exactly ONE self-call in the whole body, in the `true` arm, with
+///   args `(s, pos + 1, ...)` where every trailing arg is the matching
+///   param ident (carried) or a Bool literal (pinned);
+/// - the `true` arm reduces to the self-call under the pins;
+/// - `EXIT` is built from substitution-safe forms only (idents,
+///   literals, calls, binops, constructors) so the lemma statement can
+///   render `EXIT[pos := s.data.length, pins]` exactly.
+#[derive(Clone, Debug)]
+pub(crate) struct StringPosScanShape {
+    /// Source name of the single-arg Bool predicate fn (`isDigit`).
+    pub predicate_fn: String,
+    /// For each param at index ≥ 2: `None` = carried through the
+    /// self-call unchanged, `Some(b)` = pinned to the Bool literal.
+    pub param_pins: Vec<Option<bool>>,
+    /// The `Option.None` arm's exit expression (substitution-safe).
+    pub exit_expr: Spanned<Expr>,
+}
+
+/// Names the synthesized scan-lemma template binds. A scanner whose
+/// params (or predicate/exit identifiers) collide would have the
+/// template shadow them — reject instead.
+const SCAN_TEMPLATE_RESERVED: &[&str] = &[
+    "fuel",
+    "ih",
+    "h0",
+    "h1",
+    "h2",
+    "h3",
+    "hch",
+    "hdrop",
+    "hdig",
+    "hstep",
+    "hrec",
+    "hlt",
+    "hpos",
+    "ch",
+    // The Lean emitter's textual end-of-string marker (`LEN_MARKER` in
+    // lean/toplevel.rs): an identifier with this literal name would be
+    // clobbered by the post-render replace.
+    "AVERSCANLEN",
+];
+
+/// Variable reference name: matches both pre-resolver `Ident` and the
+/// resolver's `Resolved { name, .. }` forms (FnDef bodies in a
+/// `CodegenContext` are post-resolver).
+fn ident_name(e: &Spanned<Expr>) -> Option<&str> {
+    match &e.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => Some(n.as_str()),
+        _ => None,
+    }
+}
+
+/// Recognize the canonical string-position scanner shape on a single
+/// fn definition. Pure AST walk; the caller separately validates the
+/// predicate fn via [`scan_predicate_fn_ok`] and that the fn actually
+/// got the string-pos fuel emission.
+pub(crate) fn detect_string_pos_scan(fd: &FnDef) -> Option<StringPosScanShape> {
+    let dotted = |e: &Spanned<Expr>| crate::codegen::common::expr_to_dotted_name(&e.node);
+
+    if fd.params.len() < 2 || fd.params[0].1 != "String" || fd.params[1].1 != "Int" {
+        return None;
+    }
+    if fd
+        .params
+        .iter()
+        .any(|(n, _)| SCAN_TEMPLATE_RESERVED.contains(&n.as_str()))
+    {
+        return None;
+    }
+    let s_name = fd.params[0].0.as_str();
+    let pos_name = fd.params[1].0.as_str();
+
+    // Body: a single charAt match (no leading bindings).
+    let [Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return None;
+    };
+    let Expr::FnCall(callee, args) = &subject.node else {
+        return None;
+    };
+    if dotted(callee).as_deref() != Some("String.charAt") || args.len() != 2 {
+        return None;
+    }
+    if ident_name(&args[0]) != Some(s_name) || ident_name(&args[1]) != Some(pos_name) {
+        return None;
+    }
+    if arms.len() != 2 {
+        return None;
+    }
+    let none_arm = arms.iter().find(
+        |a| matches!(&a.pattern, Pattern::Constructor(n, b) if n == "Option.None" && b.is_empty()),
+    )?;
+    let some_arm = arms.iter().find(
+        |a| matches!(&a.pattern, Pattern::Constructor(n, b) if n == "Option.Some" && b.len() == 1),
+    )?;
+    let Pattern::Constructor(_, some_binders) = &some_arm.pattern else {
+        return None;
+    };
+    let c_name = some_binders[0].as_str();
+
+    // Some arm: two-arm true/false match on `P(c)`.
+    let Expr::Match {
+        subject: pred_subject,
+        arms: pred_arms,
+    } = &some_arm.body.node
+    else {
+        return None;
+    };
+    let Expr::FnCall(pred_callee, pred_args) = &pred_subject.node else {
+        return None;
+    };
+    let predicate_fn = dotted(pred_callee)?;
+    if predicate_fn.contains('.') {
+        return None; // user fn only — builtins aren't re-emittable hypotheses
+    }
+    if SCAN_TEMPLATE_RESERVED.contains(&predicate_fn.as_str()) {
+        return None;
+    }
+    // A param sharing the predicate's name (or the fuel wrapper's)
+    // would shadow it inside the lemma's ∀-binder — reject.
+    let fuel_wrapper = format!("{}__fuel", fd.name);
+    if fd
+        .params
+        .iter()
+        .any(|(n, _)| *n == predicate_fn || *n == fuel_wrapper)
+    {
+        return None;
+    }
+    if pred_args.len() != 1 || ident_name(&pred_args[0]) != Some(c_name) {
+        return None;
+    }
+    if pred_arms.len() != 2 {
+        return None;
+    }
+    let true_arm = pred_arms.iter().find(|a| {
+        matches!(
+            &a.pattern,
+            Pattern::Literal(crate::ast::Literal::Bool(true))
+        )
+    })?;
+    pred_arms.iter().find(|a| {
+        matches!(
+            &a.pattern,
+            Pattern::Literal(crate::ast::Literal::Bool(false))
+        )
+    })?;
+
+    // Exactly one self-call in the whole body, and it lives in the true arm.
+    if count_calls_to(body, &fd.name) != 1 || count_calls_to(&true_arm.body, &fd.name) != 1 {
+        return None;
+    }
+    let self_args = find_self_call_args(&true_arm.body, &fd.name)?;
+    if self_args.len() != fd.params.len() {
+        return None;
+    }
+    if ident_name(&self_args[0]) != Some(s_name) {
+        return None;
+    }
+    let Expr::BinOp(crate::ast::BinOp::Add, l, r) = &self_args[1].node else {
+        return None;
+    };
+    if ident_name(l) != Some(pos_name)
+        || !matches!(&r.node, Expr::Literal(crate::ast::Literal::Int(1)))
+    {
+        return None;
+    }
+    let mut param_pins: Vec<Option<bool>> = Vec::new();
+    for (i, arg) in self_args.iter().enumerate().skip(2) {
+        match (&arg.node, ident_name(arg)) {
+            (_, Some(n)) if n == fd.params[i].0 => param_pins.push(None),
+            (Expr::Literal(crate::ast::Literal::Bool(b)), _) => param_pins.push(Some(*b)),
+            _ => return None,
+        }
+    }
+
+    // The true arm must reduce to the self-call under the pins.
+    if !reduces_to_self_call(&true_arm.body, fd, &param_pins) {
+        return None;
+    }
+
+    // EXIT: substitution-safe forms; identifiers limited to the
+    // scanner's own params (minus the Some-binder) and template-safe
+    // callee names.
+    let allowed: Vec<&str> = fd.params.iter().map(|(n, _)| n.as_str()).collect();
+    if !exit_expr_substitution_safe(&none_arm.body, &allowed) {
+        return None;
+    }
+    // The lemma template's conclusion rewrites `pos` occurrences in
+    // EXIT to the string length (`rw [hpos]` must have work to do); a
+    // pos-free EXIT leaves the goal already closed after `simp only`
+    // and the rewrite FAILS — a build error in the export, the exact
+    // failure mode this gate exists to prevent. Provable-by-construction
+    // therefore requires `pos` to occur in EXIT.
+    if !expr_mentions_ident(&none_arm.body, pos_name) {
+        return None;
+    }
+
+    Some(StringPosScanShape {
+        predicate_fn,
+        param_pins,
+        exit_expr: (*none_arm.body).clone(),
+    })
+}
+
+/// The predicate gate shared by the scan-lemma emission (Lean backend)
+/// and the `IntDecimalRoundtrip` law detector (`proof_lower`): a pure
+/// single-`String`-param fn returning `Bool`. The lemma never unfolds
+/// the predicate — it only needs the name to exist as an emitted def —
+/// so no recursion gate is needed.
+pub(crate) fn scan_predicate_fn_ok(fd: &FnDef) -> bool {
+    fd.effects.is_empty()
+        && fd.params.len() == 1
+        && fd.params[0].1 == "String"
+        && fd.return_type == "Bool"
+}
+
+fn count_calls_to(expr: &Spanned<Expr>, target: &str) -> usize {
+    let mut count = 0;
+    walk_calls(expr, &mut |name| {
+        if name == target {
+            count += 1;
+        }
+    });
+    count
+}
+
+fn walk_calls(expr: &Spanned<Expr>, on_call: &mut impl FnMut(&str)) {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            if let Some(name) = crate::codegen::common::expr_to_dotted_name(&callee.node) {
+                on_call(&name);
+            }
+            walk_calls(callee, on_call);
+            for a in args {
+                walk_calls(a, on_call);
+            }
+        }
+        Expr::TailCall(data) => {
+            on_call(&data.target);
+            for a in &data.args {
+                walk_calls(a, on_call);
+            }
+        }
+        Expr::BinOp(_, l, r) => {
+            walk_calls(l, on_call);
+            walk_calls(r, on_call);
+        }
+        Expr::Neg(inner) | Expr::ErrorProp(inner) | Expr::Attr(inner, _) => {
+            walk_calls(inner, on_call);
+        }
+        Expr::Match { subject, arms } => {
+            walk_calls(subject, on_call);
+            for arm in arms {
+                walk_calls(&arm.body, on_call);
+            }
+        }
+        Expr::Constructor(_, Some(inner)) => walk_calls(inner, on_call),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for i in items {
+                walk_calls(i, on_call);
+            }
+        }
+        Expr::MapLiteral(pairs) => {
+            for (k, v) in pairs {
+                walk_calls(k, on_call);
+                walk_calls(v, on_call);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                walk_calls(v, on_call);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            walk_calls(base, on_call);
+            for (_, v) in updates {
+                walk_calls(v, on_call);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let crate::ast::StrPart::Parsed(inner) = p {
+                    walk_calls(inner, on_call);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Args of the unique self-call (plain or tail-call form) inside `expr`.
+fn find_self_call_args<'a>(expr: &'a Spanned<Expr>, target: &str) -> Option<&'a [Spanned<Expr>]> {
+    match &expr.node {
+        Expr::FnCall(callee, args)
+            if crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref()
+                == Some(target) =>
+        {
+            Some(args)
+        }
+        Expr::TailCall(data) if data.target == target => Some(&data.args),
+        Expr::Match { arms, .. } => arms
+            .iter()
+            .find_map(|arm| find_self_call_args(&arm.body, target)),
+        _ => None,
+    }
+}
+
+/// True when `expr` IS the self-call, or is a two-arm Bool match on a
+/// PINNED param whose selected (pinned-literal) arm recursively reduces
+/// to the self-call. The Lean emitter lowers explicit-Bool-literal
+/// matches to `ite`, which the lemma template's trailing `simp`
+/// computes away once the pin substitutes the scrutinee.
+fn reduces_to_self_call(expr: &Spanned<Expr>, fd: &FnDef, pins: &[Option<bool>]) -> bool {
+    match &expr.node {
+        Expr::FnCall(callee, _)
+            if crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref()
+                == Some(fd.name.as_str()) =>
+        {
+            true
+        }
+        Expr::TailCall(data) if data.target == fd.name => true,
+        Expr::Match { subject, arms } => {
+            let Some(subj) = ident_name(subject) else {
+                return false;
+            };
+            let Some(idx) = fd.params.iter().position(|(n, _)| n.as_str() == subj) else {
+                return false;
+            };
+            if idx < 2 {
+                return false;
+            }
+            let Some(Some(pin)) = pins.get(idx - 2) else {
+                return false;
+            };
+            if arms.len() != 2 {
+                return false;
+            }
+            let selected = arms.iter().find(
+                |a| matches!(&a.pattern, Pattern::Literal(crate::ast::Literal::Bool(b)) if b == pin),
+            );
+            let other = arms.iter().any(
+                |a| matches!(&a.pattern, Pattern::Literal(crate::ast::Literal::Bool(b)) if b != pin),
+            );
+            match selected {
+                Some(arm) if other => reduces_to_self_call(&arm.body, fd, pins),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// EXIT gate: only forms [`substitute_idents_in_expr`] handles, with
+/// identifiers drawn from `allowed` (the scanner's params) and callee /
+/// constructor names outside the template-reserved set.
+/// True when `name` occurs as an identifier anywhere in an EXIT-gated
+/// expression (same form set as [`exit_expr_substitution_safe`]).
+fn expr_mentions_ident(expr: &Spanned<Expr>, name: &str) -> bool {
+    match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => n == name,
+        Expr::Neg(inner) | Expr::ErrorProp(inner) => expr_mentions_ident(inner, name),
+        Expr::BinOp(_, l, r) => expr_mentions_ident(l, name) || expr_mentions_ident(r, name),
+        Expr::FnCall(callee, args) => {
+            expr_mentions_ident(callee, name) || args.iter().any(|a| expr_mentions_ident(a, name))
+        }
+        Expr::Constructor(_, payload) => payload
+            .as_deref()
+            .is_some_and(|p| expr_mentions_ident(p, name)),
+        Expr::Tuple(items) | Expr::List(items) => {
+            items.iter().any(|i| expr_mentions_ident(i, name))
+        }
+        _ => false,
+    }
+}
+
+fn exit_expr_substitution_safe(expr: &Spanned<Expr>, allowed: &[&str]) -> bool {
+    match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => allowed.contains(&n.as_str()),
+        Expr::Literal(_) => true,
+        Expr::Neg(inner) | Expr::ErrorProp(inner) => exit_expr_substitution_safe(inner, allowed),
+        Expr::BinOp(_, l, r) => {
+            exit_expr_substitution_safe(l, allowed) && exit_expr_substitution_safe(r, allowed)
+        }
+        Expr::FnCall(callee, args) => {
+            let Some(name) = crate::codegen::common::expr_to_dotted_name(&callee.node) else {
+                return false;
+            };
+            !SCAN_TEMPLATE_RESERVED.contains(&name.as_str())
+                && args.iter().all(|a| exit_expr_substitution_safe(a, allowed))
+        }
+        Expr::Constructor(_, payload) => payload
+            .as_deref()
+            .is_none_or(|p| exit_expr_substitution_safe(p, allowed)),
+        Expr::Tuple(items) | Expr::List(items) => items
+            .iter()
+            .all(|i| exit_expr_substitution_safe(i, allowed)),
+        _ => false,
+    }
+}
+
+/// Substitute identifiers by name in an EXIT-gated expression. Total
+/// over the forms [`exit_expr_substitution_safe`] admits; other forms
+/// are returned unchanged (the gate guarantees they don't occur).
+pub(crate) fn substitute_idents_in_expr(
+    expr: &Spanned<Expr>,
+    subst: &std::collections::HashMap<String, Expr>,
+) -> Spanned<Expr> {
+    let node = match &expr.node {
+        Expr::Ident(n) | Expr::Resolved { name: n, .. } => match subst.get(n) {
+            Some(replacement) => replacement.clone(),
+            None => expr.node.clone(),
+        },
+        Expr::Neg(inner) => Expr::Neg(Box::new(substitute_idents_in_expr(inner, subst))),
+        Expr::ErrorProp(inner) => {
+            Expr::ErrorProp(Box::new(substitute_idents_in_expr(inner, subst)))
+        }
+        Expr::BinOp(op, l, r) => Expr::BinOp(
+            *op,
+            Box::new(substitute_idents_in_expr(l, subst)),
+            Box::new(substitute_idents_in_expr(r, subst)),
+        ),
+        Expr::FnCall(callee, args) => Expr::FnCall(
+            callee.clone(),
+            args.iter()
+                .map(|a| substitute_idents_in_expr(a, subst))
+                .collect(),
+        ),
+        Expr::Constructor(name, payload) => Expr::Constructor(
+            name.clone(),
+            payload
+                .as_ref()
+                .map(|p| Box::new(substitute_idents_in_expr(p, subst))),
+        ),
+        Expr::Tuple(items) => Expr::Tuple(
+            items
+                .iter()
+                .map(|i| substitute_idents_in_expr(i, subst))
+                .collect(),
+        ),
+        Expr::List(items) => Expr::List(
+            items
+                .iter()
+                .map(|i| substitute_idents_in_expr(i, subst))
+                .collect(),
+        ),
+        other => other.clone(),
+    };
+    Spanned {
+        node,
+        line: expr.line,
+        ty: std::sync::OnceLock::new(),
+    }
+}

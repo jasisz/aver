@@ -433,13 +433,20 @@ fn proof_export_builds_json_when_lake_is_available() {
     // the String prelude spec lemmas (`String.add_eq_append`,
     // `String.slice_full` / `String.slice_append_prefix`,
     // `String.intercalate_singleton`) + `Int.fromString_fromInt`
-    // (#print axioms ⊆ [propext, Classical.choice, Quot.sound]). The
-    // remaining 3 are `escapeJsonString.parseStringRoundtrip`,
-    // `parseStringChunk.escapedStringRoundtrip` and
-    // `parseNumber.fromIntRoundtrip` — their cones stop at fuel fns
-    // with open string-position measures (`parseStringChunk`,
-    // `scanIntTail`), where the rung honestly falls to `sorry`.
-    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 3);
+    // (#print axioms ⊆ [propext, Classical.choice, Quot.sound]).
+    // IntDecimalRoundtrip: 3 → 2 — `parseNumber.fromIntRoundtrip`
+    // now closes genuinely (#print axioms = [propext,
+    // Classical.choice, Quot.sound]): the synthesized
+    // `scanIntTail__fuel_scan` lemma runs the symbolic all-digit
+    // suffix through the fuel barrier, and the fixed sign-split
+    // skeleton (serializer `rfl`, `String.mk`-form head-char
+    // dispatch, `digitChar` disequalities, `Int.fromString_fromInt`
+    // leaf) closes both sign branches. The remaining 2 are exactly
+    // `escapeJsonString.parseStringRoundtrip` and
+    // `parseStringChunk.escapedStringRoundtrip` — the string-escape
+    // family, whose scanners thread accumulator chunks (not a
+    // single all-`P` suffix), outside the scan-lemma shape.
+    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 2);
 }
 
 #[test]
@@ -4776,6 +4783,127 @@ verify keepPrefix law appendRoundtrip
         summary["universal"].as_bool(),
         Some(true),
         "a builtin-roundtrip law must close kernel-clean via the prelude spec lemmas\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A no-when universal `parse(render(C(n)), 0) = Ok(C(n), len)` law over the
+/// canonical decimal parser must close GENUINELY via `IntDecimalRoundtrip`:
+/// the Lean backend synthesizes the scanner's `<fn>__fuel_scan` companion
+/// lemma at the fuel-def site (the general crack in the fuel-unfolding
+/// barrier — an all-digit suffix scan runs to the end of a SYMBOLIC string)
+/// and renders the fixed sign-split skeleton from the verified json hand
+/// proof (serializer `rfl` through ADT-measure fuel, `String.mk`-form
+/// head-char dispatch, `digitChar` `Char.toString` disequalities for the
+/// dead arms, `Int.fromString_fromInt` at the leaf). `universal:true` means
+/// every theorem closed with axioms ⊆ [propext, Classical.choice,
+/// Quot.sound] — no sorry, no native_decide. (Found on real
+/// `examples/data/json.av`: `parseNumber.fromIntRoundtrip`.)
+#[test]
+fn lean_proves_int_decimal_roundtrip_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping int-decimal-roundtrip test: `lake` not available");
+        return;
+    }
+    let source = r#"module DecimalRt
+    intent = "a decimal int render/parse roundtrip closing via IntDecimalRoundtrip"
+    effects []
+
+type Num
+    NumInt(Int)
+
+type ParseOut
+    Got(Num, Int)
+    Bad(String, Int)
+
+fn render(v: Num) -> String
+    match v
+        Num.NumInt(n) -> String.fromInt(n)
+
+fn isDigit(c: String) -> Bool
+    code = Char.toCode(c)
+    match code >= 48
+        true -> code <= 57
+        false -> false
+
+fn finishInt(num: String, pos: Int) -> ParseOut
+    match Int.fromString(num)
+        Result.Ok(n) -> ParseOut.Got(Num.NumInt(n), pos)
+        Result.Err(_) -> ParseOut.Bad("bad int", pos)
+
+fn finishNumber(s: String, start: Int, endPos: Int, asFloat: Bool) -> ParseOut
+    num = String.slice(s, start, endPos)
+    match asFloat
+        true -> ParseOut.Bad("float unsupported", endPos)
+        false -> finishInt(num, endPos)
+
+fn scanIntTail(s: String, pos: Int, start: Int, leadingZero: Bool) -> ParseOut
+    match String.charAt(s, pos)
+        Option.None -> finishNumber(s, start, pos, false)
+        Option.Some(c) -> match isDigit(c)
+            true -> match leadingZero
+                true -> ParseOut.Bad("leading zero", pos)
+                false -> scanIntTail(s, pos + 1, start, false)
+            false -> ParseOut.Bad("trailing", pos)
+
+fn startDigits(s: String, start: Int, c: String) -> ParseOut
+    match isDigit(c)
+        true -> scanIntTail(s, start + 1, start, false)
+        false -> ParseOut.Bad("expected digit", start)
+
+fn signDigit(s: String, pos: Int, start: Int, c: String) -> ParseOut
+    match isDigit(c)
+        true -> scanIntTail(s, pos + 1, start, false)
+        false -> ParseOut.Bad("expected digit", pos)
+
+fn parseSign(s: String, pos: Int, start: Int) -> ParseOut
+    match String.charAt(s, pos)
+        Option.None -> ParseOut.Bad("expected digit", pos)
+        Option.Some(c) -> match c
+            "0" -> scanIntTail(s, pos + 1, start, true)
+            _ -> signDigit(s, pos, start, c)
+
+fn parseNum(s: String, start: Int) -> ParseOut
+    match String.charAt(s, start)
+        Option.None -> ParseOut.Bad("empty", start)
+        Option.Some(c) -> match c
+            "-" -> parseSign(s, start + 1, start)
+            "0" -> scanIntTail(s, start + 1, start, true)
+            _ -> startDigits(s, start, c)
+
+verify parseNum law fromIntRoundtrip
+    given n: Int = [-7, 0, 42, 2500]
+    parseNum(render(Num.NumInt(n)), 0) => ParseOut.Got(Num.NumInt(n), String.len(render(Num.NumInt(n))))
+"#;
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-decimalrt-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-decimalrt-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "a canonical decimal roundtrip law must close kernel-clean via the synthesized scan lemma + sign-split skeleton\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);
