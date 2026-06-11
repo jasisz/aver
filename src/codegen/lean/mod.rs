@@ -24,6 +24,39 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{FnDef, Spanned, TopLevel, VerifyKind};
 use crate::codegen::{CodegenContext, ProjectOutput};
 
+/// Statement-class channel for emitted law theorems.
+///
+/// `aver proof --check`'s `universal` metric must know, per law theorem,
+/// whether the emitted STATEMENT is genuinely universal or bounded: for a
+/// `when`-law over non-refinement-lifted givens, `law_theorem_prop` prepends
+/// sampled-domain disjunction premises (`a = 0 ∨ a = 1 ∨ …`) — the theorem
+/// then only claims the law on the finite sample domain, even when it is
+/// proven by real tactics with a kernel-clean axiom profile. Refinement-lifted
+/// `when`-laws drop those premises (the Subtype carries the invariant) and
+/// stay genuinely universal.
+///
+/// Only the code that BUILDS the statement knows which premises it prepended,
+/// so the emitter records the class as one structured marker comment per
+/// emitted law theorem, preceding it in the generated `.lean` source
+/// (self-contained artifact — the classification travels with the export):
+///
+/// ```text
+/// -- aver:law-class <theorem_name> universal
+/// -- aver:law-class <theorem_name> bounded-domain
+/// ```
+///
+/// The checker (`lean_universal_proof` in the CLI) consumes these markers and
+/// must NEVER re-derive the class from theorem names or by re-parsing
+/// statements. A law theorem without a marker earns no universal credit
+/// (fail-closed for stale/foreign export dirs).
+pub const LAW_CLASS_MARKER_PREFIX: &str = "-- aver:law-class ";
+/// Marker class tag: no sampled-domain premises — the `∀`-statement is the
+/// law's genuine universal claim.
+pub const LAW_CLASS_UNIVERSAL: &str = "universal";
+/// Marker class tag: sampled-domain disjunction premises bound the statement
+/// to the finite sample domain.
+pub const LAW_CLASS_BOUNDED_DOMAIN: &str = "bounded-domain";
+
 /// How verify blocks should be emitted in generated Lean.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VerifyEmitMode {
