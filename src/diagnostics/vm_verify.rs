@@ -1567,6 +1567,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                 law_context,
                 from_hostile,
                 hostile_profile,
+                expected_value: None,
             });
             continue;
         }
@@ -1644,6 +1645,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         law_context,
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
+                        expected_value: None,
                     });
                     continue;
                 }
@@ -1661,6 +1663,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         law_context,
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
+                        expected_value: None,
                     });
                     continue;
                 }
@@ -1678,6 +1681,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         law_context,
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
+                        expected_value: None,
                     });
                     continue;
                 }
@@ -1695,6 +1699,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         law_context,
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
+                        expected_value: None,
                     });
                     continue;
                 }
@@ -1758,6 +1763,12 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         law_context,
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
+                        // Ground truth for proof export: on Pass, the
+                        // right side's VM value IS the case's expected
+                        // value (and equals the impl side). Lean emission
+                        // literalizes the expected side from it so bounded
+                        // sample checks compare model vs program result.
+                        expected_value: Some(right_val),
                     });
                 } else {
                     failed += 1;
@@ -1776,6 +1787,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                         law_context,
                         from_hostile,
                         hostile_profile: hostile_profile.clone(),
+                        expected_value: None,
                     });
                 }
             }
@@ -1792,6 +1804,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     law_context,
                     from_hostile,
                     hostile_profile: hostile_profile.clone(),
+                    expected_value: None,
                 });
             }
             (Err(e), _) | (_, Err(e)) => {
@@ -1807,6 +1820,7 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
                     law_context,
                     from_hostile,
                     hostile_profile: hostile_profile.clone(),
+                    expected_value: None,
                 });
             }
         }

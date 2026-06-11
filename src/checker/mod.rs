@@ -62,6 +62,14 @@ pub struct VerifyCaseResult {
     /// the diagnostic so the user sees which adversarial world broke the
     /// law: "Time.now/frozen + Random.int/min: assumed deadline > now".
     pub hostile_profile: Option<String>,
+    /// VM-computed ground-truth value of the case's EXPECTED (right) side,
+    /// recorded on `Pass` by the VM verify runner. Proof export consumes it
+    /// to literalize the expected side of bounded Lean checks
+    /// (model-vs-ground-truth instead of model-vs-model, which is vacuously
+    /// true when fuel exhaustion collapses both sides to `default`). `None`
+    /// for non-`Pass` outcomes and for runners that don't compute values
+    /// (wasm-gc differential verify).
+    pub expected_value: Option<crate::value::Value>,
 }
 
 #[derive(Debug, Clone)]

@@ -5238,3 +5238,325 @@ verify drop law dropRevLen
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// Shared probe source for the fuel-exhaustion soundness tests: a recursive
+/// Int countdown whose verify case routes BOTH sides through the model
+/// (`stepSum(20) => stepSumAcc(20)`) — the exact shape that goes vacuous when
+/// fuel exhaustion collapses both sides to `default` under `native_decide`.
+const FUEL_PROBE_AV: &str = "module FuelProbe\n\
+    \x20   intent = \"fuel-exhaustion soundness probe\"\n\
+    \n\
+    fn stepSum(n: Int) -> Int\n\
+    \x20   ? \"Sums 1..n by counting down.\"\n\
+    \x20   match n <= 0\n\
+    \x20       true  -> 0\n\
+    \x20       false -> n + stepSum(n - 1)\n\
+    \n\
+    fn stepSumAcc(n: Int) -> Int\n\
+    \x20   ? \"Sums 1..n, other association.\"\n\
+    \x20   match n <= 0\n\
+    \x20       true  -> 0\n\
+    \x20       false -> stepSumAcc(n - 1) + n\n\
+    \n\
+    verify stepSum\n\
+    \x20   stepSum(20) => stepSumAcc(20)\n";
+
+#[test]
+fn count_fuel_exhaustion_panics_matches_lake_panic_lines() {
+    // Unit check on the exact output shape the real toolchain produces (see
+    // the lake-gated test below, which pins this against a live build):
+    // lake prefixes the first panic with its info diagnostic, later panics
+    // print raw. Both carry the message; success lines don't.
+    let captured = "\u{2714} [2/4] Built AverCommon\n\
+        \u{2139} [3/4] Built FuelProbe\n\
+        info: ././././FuelProbe.lean:27:0: PANIC at stepSum__fuel FuelProbe:8:9: Aver proof fuel exhausted\n\
+        PANIC at stepSumAcc__fuel FuelProbe:19:9: Aver proof fuel exhausted\n\
+        Build completed successfully.\n";
+    assert_eq!(
+        aver::codegen::lean::count_fuel_exhaustion_panics(captured),
+        2
+    );
+    assert_eq!(
+        aver::codegen::lean::count_fuel_exhaustion_panics("Build completed successfully.\n"),
+        0
+    );
+}
+
+/// FIX A revert probe (no real `lake` needed — a PATH shim plays the
+/// false-green build): a `lake` that prints the fuel-exhaustion panic line
+/// yet exits 0 with zero sorries is EXACTLY what a vacuously-certified
+/// export looks like, and `aver proof --check` must fail hard on it. With
+/// the panic gate reverted this scenario exits 0 / `passed: true` (the
+/// false green this test exists to prevent).
+#[cfg(unix)]
+#[test]
+fn proof_check_charges_fuel_exhaustion_panic_as_hard_failure() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-fuel-gate-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    let av = src.join("probe.av");
+    std::fs::write(&av, FUEL_PROBE_AV).expect("write probe.av");
+
+    // PATH shim: a fake `lake` reproducing the captured false-green output
+    // (panic lines + exit 0). Prepended to PATH so it wins over any real
+    // lake; everything else aver needs is reached via absolute paths.
+    let shim_dir = temp_output_dir("aver-fuel-gate-shim");
+    std::fs::create_dir_all(&shim_dir).expect("create shim dir");
+    let shim = shim_dir.join("lake");
+    std::fs::write(
+        &shim,
+        "#!/bin/sh\n\
+         echo \"info: ./FuelProbe.lean:27:0: PANIC at stepSum__fuel FuelProbe:8:9: Aver proof fuel exhausted\"\n\
+         echo \"Build completed successfully.\"\n\
+         exit 0\n",
+    )
+    .expect("write lake shim");
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+        .expect("chmod lake shim");
+    let path_env = format!(
+        "{}:{}",
+        shim_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let out = temp_output_dir("aver-fuel-gate-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(&av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .env("PATH", &path_env)
+        .output()
+        .expect("expected `aver proof --check` to run");
+
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+
+    // The build "succeeded" (exit 0) with zero sorries — the OLD criteria
+    // would have passed. The panic line must flip the verdict.
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "shim scenario must be sorry-free (that's what makes it a false green)\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["fuel_exhausted"].as_bool(),
+        Some(true),
+        "--check-json must surface the fuel-exhaustion hit\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(false),
+        "a fuel-exhaustion panic in lake output must fail the check — \
+         the kernel-certified sample equations are vacuous\n{}",
+        format_output(&run)
+    );
+    assert!(
+        !run.status.success(),
+        "`aver proof --check` must exit non-zero on fuel exhaustion\n{}",
+        format_output(&run)
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("exhausted fuel") && stderr.contains("Aver bug"),
+        "the failure must be reported as a compiler-model bug\n{}",
+        format_output(&run)
+    );
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&shim_dir);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Pins the panic-marker contract against the REAL toolchain (lake-gated):
+/// post-edit a freshly emitted export to force fuel 0 on the wrappers (the
+/// /tmp/vac_probe/out2_vac recipe), build it, and assert that (a) lake still
+/// exits 0 — the false green is real, the OLD exit-code+sorry-count criteria
+/// would certify it — and (b) the emitted panic message appears in the
+/// captured output and the harness's scan function counts it, so the Fix A
+/// gate fails the check. Guards both directions: if Lean ever stops printing
+/// the panic line (or changes its shape), this fails loudly instead of the
+/// gate going silently blind.
+#[test]
+fn lake_build_false_greens_on_forced_fuel_exhaustion_and_scan_catches_it() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping fuel-exhaustion toolchain test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-fuel-toolchain-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    let av = src.join("probe.av");
+    std::fs::write(&av, FUEL_PROBE_AV).expect("write probe.av");
+
+    let out = temp_output_dir("aver-fuel-toolchain-out");
+    let emit = Command::new(aver_bin)
+        .arg("proof")
+        .arg(&av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    assert!(
+        emit.status.success(),
+        "emit failed:\n{}",
+        format_output(&emit)
+    );
+
+    // Force fuel 0 on the wrappers — the exhaustion scenario. Also strip the
+    // ground-truth literals Fix B pinned (`= 210` back to `= stepSumAcc 20`)
+    // so the export is the PRE-Fix-B model-vs-model shape: this test isolates
+    // the panic-line contract; Fix B's literalization is covered separately.
+    let entry = out.join("FuelProbe.lean");
+    let contents = std::fs::read_to_string(&entry).expect("read emitted entry");
+    let mutated = contents.replace("((Int.natAbs n) + 1)", "0").replace(
+        "example : stepSum 20 = 210",
+        "example : stepSum 20 = stepSumAcc 20",
+    );
+    assert_ne!(
+        contents, mutated,
+        "expected to find the fuel expression to zero out:\n{contents}"
+    );
+    std::fs::write(&entry, &mutated).expect("write mutated entry");
+
+    let build = Command::new("lake")
+        .arg("build")
+        .current_dir(&out)
+        .output()
+        .expect("expected `lake build` to run");
+    let captured = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // (a) The false green is real: exhausted fuel collapses both sides to
+    // `default`, the kernel certifies the vacuous equation, lake exits 0.
+    assert!(
+        build.status.success(),
+        "expected the model-vs-model export to false-green under fuel 0 \
+         (if this starts failing, Lean's panic semantics changed — re-evaluate \
+         the gate):\n{captured}"
+    );
+    // (b) The panic marker is in the captured output and the scan the
+    // `--check` harness uses counts it — the gate flips the verdict.
+    assert!(
+        aver::codegen::lean::count_fuel_exhaustion_panics(&captured) > 0,
+        "fuel-exhaustion panic line missing from lake output — the --check \
+         gate would go blind:\n{captured}"
+    );
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// FIX B revert probe: a `verify f` case whose expected side calls another
+/// user fn (`stepSum(20) => stepSumAcc(20)`) must be emitted with the
+/// VM-computed ground-truth literal on the expected side — `stepSum 20 = 210`
+/// — not as the model-vs-model `stepSum 20 = stepSumAcc 20` (which is
+/// vacuously provable when fuel exhaustion collapses both sides to
+/// `default`). With literalization reverted the emitted Lean contains the
+/// `stepSumAcc 20` call again and this test fails. The `--check` half
+/// (lake-gated) certifies literalization changed nothing about a correct
+/// model passing.
+#[test]
+fn proof_lean_verify_case_expected_side_is_literalized_from_vm_ground_truth() {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-fixb-literal-src");
+    std::fs::create_dir_all(&src).expect("create src dir");
+    let av = src.join("probe.av");
+    std::fs::write(&av, FUEL_PROBE_AV).expect("write probe.av");
+
+    let out = temp_output_dir("aver-fixb-literal-out");
+    let emit = Command::new(aver_bin)
+        .arg("proof")
+        .arg(&av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    assert!(
+        emit.status.success(),
+        "emit failed:\n{}",
+        format_output(&emit)
+    );
+
+    let entry = std::fs::read_to_string(out.join("FuelProbe.lean")).expect("read emitted entry");
+    assert!(
+        entry.contains("example : stepSum 20 = 210"),
+        "expected side must be the VM ground-truth literal (210), got:\n{entry}"
+    );
+    assert!(
+        !entry.contains("= stepSumAcc 20"),
+        "expected side must NOT remain a model call (vacuous under fuel \
+         exhaustion):\n{entry}"
+    );
+
+    // Lake-gated half: the literalized export still builds green and the
+    // check passes — literalization must not change what a correct model
+    // proves.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping literalization build half: `lake` not available");
+        let _ = std::fs::remove_dir_all(&src);
+        let _ = std::fs::remove_dir_all(&out);
+        return;
+    }
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(&av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("expected `aver proof --check` to run");
+    let json_line = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON line:\n{}", format_output(&run)));
+    let summary: serde_json::Value =
+        serde_json::from_str(json_line).unwrap_or_else(|e| panic!("bad JSON ({e}):\n{json_line}"));
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "literalized export must build green and pass --check\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "literalized export must be sorry-free\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["fuel_exhausted"].as_bool(),
+        Some(false),
+        "a healthy build must report no fuel exhaustion\n{}",
+        format_output(&run)
+    );
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

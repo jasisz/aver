@@ -1947,6 +1947,23 @@ pub fn entry_basename(ctx: &CodegenContext) -> String {
         })
 }
 
+/// Stable identity key for a verify block's case-index space, shared by the
+/// Lean emitter's per-block case counters and the CLI's VM ground-truth
+/// collection (`CodegenContext::sample_expected`).
+///
+/// Plain `verify <fn>` blocks share one index space per fn — the VM verify
+/// runner merges them (`checker::merge_verify_blocks`) and the Lean emitter
+/// continues the counter across blocks with the same key — while each
+/// `verify <fn> law <name>` block keeps its own space. Both sides MUST derive
+/// keys from this one function: index drift between them would associate a
+/// case with another case's ground-truth value.
+pub fn verify_block_counter_key(vb: &crate::ast::VerifyBlock) -> String {
+    match &vb.kind {
+        crate::ast::VerifyKind::Cases => format!("fn:{}", vb.fn_name),
+        crate::ast::VerifyKind::Law(law) => format!("law:{}::{}", vb.fn_name, law.name),
+    }
+}
+
 // Round-6 finding 3: the legacy `fn_owning_scope(ctx) ->
 // HashMap<String, String>` collided on bare names — two modules
 // declaring the same-named fn (`AAA.foo` + `BBB.foo`) lost one
@@ -2934,6 +2951,7 @@ mod tests {
             program_shape: None,
             mir_program: None,
             discovered_lemmas: Vec::new(),
+            sample_expected: std::collections::HashMap::new(),
         };
         ctx.proof_ir
             .refined_types

@@ -589,7 +589,18 @@ pub fn emit_recursive_decidable_eq(name: &str) -> String {
 }
 
 const STRING_POS_FUEL_VAR: &str = "fuel'";
-const PROOF_FUEL_EXHAUSTED: &str = "panic! \"Aver proof fuel exhausted\"";
+
+/// Panic message baked into every fuel wrapper's exhaustion arm. This is a
+/// SOUNDNESS marker, not just a diagnostic: Lean's `panic!` does NOT abort
+/// evaluation — it prints `PANIC at … <this message>` and returns the type's
+/// `default` value, so under `native_decide` an exhausted-fuel sample reduces
+/// both sides of a model-vs-model equation to `default` and the kernel
+/// certifies a vacuous (possibly FALSE) equality with `lake` still exiting 0.
+/// `aver proof --check` therefore scans captured lake output for this exact
+/// string ([`crate::codegen::lean::count_fuel_exhaustion_panics`]) and treats
+/// any hit as a hard check failure. Keep emission and scan keyed on this one
+/// constant so they can never drift apart.
+pub const PROOF_FUEL_EXHAUSTED_MSG: &str = "Aver proof fuel exhausted";
 
 fn fuel_helper_name(name: &str) -> String {
     // Use the shared helper so the name matches what the shared AST
@@ -752,7 +763,10 @@ fn emit_fuel_helper_def(
             helper_name, params, ret_type
         )],
         vec![format!("{outer_indent}  match fuel with")],
-        vec![format!("{outer_indent}  | 0 => {}", PROOF_FUEL_EXHAUSTED)],
+        vec![format!(
+            "{outer_indent}  | 0 => panic! \"{}\"",
+            PROOF_FUEL_EXHAUSTED_MSG
+        )],
         vec![format!("{outer_indent}  | {} + 1 =>", STRING_POS_FUEL_VAR)],
         indent_lines(body, &branch_indent),
     ]
@@ -2602,7 +2616,16 @@ pub fn emit_verify_block(
     let mut lines = Vec::new();
     for (idx, (left, right)) in vb.cases.iter().enumerate() {
         let left_str = emit_expr_legacy(left, ctx, None);
-        let right_str = emit_expr_legacy(right, ctx, None);
+        // Expected side: prefer the VM ground-truth literal over the source
+        // RHS. A source RHS that calls a user fn (`verify f: f(x) => g(x)`)
+        // routes BOTH sides through the model — vacuously true under fuel
+        // exhaustion (panic returns `default` for both). The literal pins
+        // the equation to the value the program actually computed. Cases
+        // without an entry (verify failed/skipped, Float-carrying value —
+        // decimal repr isn't bit-exact — or a shape that doesn't round-trip)
+        // keep the source RHS and rely on the `--check` panic gate.
+        let right_str = super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
+            .unwrap_or_else(|| emit_expr_legacy(right, ctx, None));
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 lines.push(format!(
@@ -3111,7 +3134,13 @@ fn emit_verify_law_block(
                     mode,
                 );
                 let left_str = emit_expr_legacy(&left_rw, ctx, None);
-                let right_str = emit_expr_legacy(&right_rw, ctx, None);
+                // Model-vs-ground-truth: same literalization as the per-case
+                // `_sample_N` theorems below (see the comment there); this
+                // arm is reached only for non-refinement-lifted laws, where
+                // the carrier-typed VM literal matches the statement type.
+                let right_str =
+                    super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
+                        .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None));
                 if let Some(guard) = law.sample_guards.get(idx) {
                     format!(
                         "({} = true -> {} = {})",
@@ -3180,7 +3209,24 @@ fn emit_verify_law_block(
             mode,
         );
         let left_str = emit_expr_legacy(&left_rw, ctx, None);
-        let right_str = emit_expr_legacy(&right_rw, ctx, None);
+        // Expected side from VM ground truth: the `_sample_N` theorem is
+        // `impl(sample) = spec(sample)` by construction — BOTH sides through
+        // the model, vacuously provable when fuel exhaustion collapses both
+        // to `default`. With a ground-truth entry it becomes
+        // `impl(sample) = <value the program computed>`, which is exactly the
+        // claim the sample is meant to pin. Refinement-lifted laws are
+        // excluded: their statements quantify over the refined subtype, and a
+        // carrier-typed literal would not elaborate — they keep the source
+        // spec side (the `--check` panic gate still covers them). Misses
+        // (failed/skipped at `aver verify`, Float-carrying values — decimal
+        // repr isn't bit-exact — or non-round-tripping shapes) fall back to
+        // the source spec side.
+        let right_str = if lifted_vars.is_empty() {
+            super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
+                .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None))
+        } else {
+            emit_expr_legacy(&right_rw, ctx, None)
+        };
         let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
             format!(
                 "{} = true -> {} = {}",

@@ -4877,7 +4877,7 @@ pub(super) fn cmd_proof(
     check_json: bool,
     discover: bool,
 ) {
-    let (mut ctx, _module_root) = build_codegen_context(
+    let (mut ctx, module_root) = build_codegen_context(
         file,
         project_name,
         module_root_override,
@@ -5093,6 +5093,20 @@ pub(super) fn cmd_proof(
 
     match backend {
         super::cli::ProofBackend::Lean => {
+            // Ground-truth literalization for bounded checks: run the same
+            // Declared-mode VM verify pass `aver verify` runs (the proof flow
+            // does NOT otherwise run it) and collect each passing case's
+            // expected-side value. The Lean emitter pins the expected side of
+            // `verify` examples and law samples to these literals — model vs
+            // program result instead of model vs model — so a model that
+            // diverges from the program (fuel exhaustion included) fails the
+            // build instead of kernel-certifying a vacuous equation. A failed
+            // or impossible verify run yields an empty table → unchanged
+            // emission. Lean-only: Dafny doesn't evaluate concrete examples
+            // (it proves laws symbolically — Z3 either discharges a sample
+            // lemma or reports an error; there is no panic-returns-default
+            // evaluation path to go vacuous through).
+            ctx.sample_expected = collect_verify_ground_truth(file, &module_root);
             cmd_proof_lean(file, output_dir, &mut ctx, verify_mode);
         }
         super::cli::ProofBackend::Dafny => {
@@ -5299,6 +5313,162 @@ fn lake_reverify_appended(
         .unwrap_or(false)
 }
 
+/// Run the Declared-mode VM verify pass over `file`'s entry items and build
+/// the ground-truth table for `CodegenContext::sample_expected`: for every
+/// case that PASSES, the VM-computed expected (right-side) value, rendered
+/// with `aver_repr_literal`, keyed by
+/// `(verify_block_counter_key, global_case_index)`.
+///
+/// The index space mirrors the Lean emitter exactly: per-key running
+/// counters over the merged blocks (plain `verify <fn>` blocks coalesce per
+/// fn in source order — `merge_verify_blocks` — matching the emitter's
+/// per-key counter continuation over unmerged items; law blocks each start
+/// at their own running offset, which also keeps duplicate same-named law
+/// blocks from cross-associating values).
+///
+/// Skips, by design:
+/// - trace blocks (runtime-only projections; the emitter doesn't literalize
+///   them either);
+/// - Float-carrying values — decimal `aver_repr` round-trip is not bit-exact,
+///   so a literalized Float could fail a CORRECT model; those cases keep the
+///   source RHS and rely on the `--check` fuel-panic gate;
+/// - values whose strings contain characters the lexer would misread when
+///   parsed back (`"`, `\`, interpolation braces, control chars).
+///
+/// Any failure (unreadable file, parse/typecheck error, VM error) returns an
+/// empty table — emission then behaves exactly as before this feature.
+fn collect_verify_ground_truth(file: &str, module_root: &str) -> HashMap<(String, usize), String> {
+    use aver::checker::{VerifyCaseOutcome, merge_verify_blocks};
+
+    let mut out = HashMap::new();
+    let Ok(source) = read_file(file) else {
+        return out;
+    };
+    let Ok(items) = parse_file(&source) else {
+        return out;
+    };
+    let merged = merge_verify_blocks(&items);
+    if merged.is_empty() {
+        return out;
+    }
+    let config = match load_runtime_policy(module_root) {
+        Ok(c) => c,
+        Err(_) => return out,
+    };
+    let results = match aver::diagnostics::vm_verify::run_verify_for_items_vm(
+        items,
+        config,
+        Some(module_root),
+        file,
+    ) {
+        Ok(r) => r,
+        Err(_) => return out,
+    };
+    // One result per merged block, in order — the runner builds its plans
+    // from the same `merge_verify_blocks` output. Anything else means the
+    // pairing below would be guesswork; return empty (fall back to source).
+    if results.len() != merged.len() {
+        return out;
+    }
+
+    let mut counters: HashMap<String, usize> = HashMap::new();
+    for (block, result) in merged.iter().zip(&results) {
+        let key = aver::codegen::common::verify_block_counter_key(block);
+        let base = *counters.get(&key).unwrap_or(&0);
+        counters.insert(key.clone(), base + block.cases.len());
+        if block.trace {
+            continue;
+        }
+        for cr in &result.case_results {
+            if !matches!(cr.outcome, VerifyCaseOutcome::Pass) {
+                continue;
+            }
+            let Some(value) = &cr.expected_value else {
+                continue;
+            };
+            if value_contains_float(value)
+                || value_contains_map(value)
+                || !value_strings_are_literal_safe(value)
+            {
+                continue;
+            }
+            out.insert(
+                (key.clone(), base + cr.case_index),
+                aver::value::aver_repr_literal(value),
+            );
+        }
+    }
+    out
+}
+
+/// Structural Float scan for ground-truth literalization: any embedded
+/// `Value::Float` disqualifies the value (its decimal repr does not
+/// round-trip bit-exactly through parse + Lean emission, so the literalized
+/// equation could fail on a CORRECT model).
+fn value_contains_float(value: &aver::value::Value) -> bool {
+    use aver::value::Value;
+    match value {
+        Value::Float(_) => true,
+        Value::Ok(v) | Value::Err(v) | Value::Some(v) => value_contains_float(v),
+        Value::List(items) => items.iter().any(value_contains_float),
+        Value::Tuple(items) => items.iter().any(value_contains_float),
+        Value::Vector(items) => items.iter().any(value_contains_float),
+        Value::Map(entries) => entries
+            .iter()
+            .any(|(k, v)| value_contains_float(k) || value_contains_float(v)),
+        Value::Variant { fields, .. } => fields.iter().any(value_contains_float),
+        Value::Record { fields, .. } => fields.iter().any(|(_, v)| value_contains_float(v)),
+        _ => false,
+    }
+}
+
+/// Structural Map scan for ground-truth literalization: any embedded
+/// `Value::Map` disqualifies the value. The repr renders maps sorted, but
+/// the emitted Lean `AverMap` carries entries in APPEND order — a
+/// literalized map equation would compare structurally and could fail on a
+/// CORRECT model whose insertion order differs from sort order. (Today the
+/// repr's `{k: v}` spelling also fails the parser — which expects
+/// `{k => v}` — so the fallback fires anyway; this gate makes the skip
+/// deliberate instead of accidental.)
+fn value_contains_map(value: &aver::value::Value) -> bool {
+    use aver::value::Value;
+    match value {
+        Value::Map(_) => true,
+        Value::Ok(v) | Value::Err(v) | Value::Some(v) => value_contains_map(v),
+        Value::List(items) => items.iter().any(value_contains_map),
+        Value::Tuple(items) => items.iter().any(value_contains_map),
+        Value::Vector(items) => items.iter().any(value_contains_map),
+        Value::Variant { fields, .. } => fields.iter().any(value_contains_map),
+        Value::Record { fields, .. } => fields.iter().any(|(_, v)| value_contains_map(v)),
+        _ => false,
+    }
+}
+
+/// Every embedded string must survive the repr → parse round-trip verbatim:
+/// `aver_repr_literal` does not escape-render, so quotes/backslashes would
+/// break or alter the literal and `{`/`}` would be lexed as interpolation.
+/// Non-ASCII is fine; control characters are not.
+fn value_strings_are_literal_safe(value: &aver::value::Value) -> bool {
+    use aver::value::Value;
+    match value {
+        Value::Str(s) => s
+            .chars()
+            .all(|c| !matches!(c, '"' | '\\' | '{' | '}') && !c.is_control()),
+        Value::Ok(v) | Value::Err(v) | Value::Some(v) => value_strings_are_literal_safe(v),
+        Value::List(items) => items.iter().all(value_strings_are_literal_safe),
+        Value::Tuple(items) => items.iter().all(value_strings_are_literal_safe),
+        Value::Vector(items) => items.iter().all(value_strings_are_literal_safe),
+        Value::Map(entries) => entries
+            .iter()
+            .all(|(k, v)| value_strings_are_literal_safe(k) && value_strings_are_literal_safe(v)),
+        Value::Variant { fields, .. } => fields.iter().all(value_strings_are_literal_safe),
+        Value::Record { fields, .. } => fields
+            .iter()
+            .all(|(_, v)| value_strings_are_literal_safe(v)),
+        _ => true,
+    }
+}
+
 /// `aver proof --check` harness: invoke the backend's verifier inside
 /// `output_dir`, require the verifier to exit cleanly, count errors +
 /// `assume {:axiom}` trust-escapes (Dafny) or residual `sorry`s (Lean),
@@ -5427,6 +5597,14 @@ fn run_proof_check(
     // law, and neither backend charges that fn-level trust to the budget.)
     let error_budget_v = error_budget.unwrap_or(0);
     let sorry_budget_v = sorry_budget.unwrap_or(0);
+    // Lean only: fuel-exhaustion panic lines in the captured build output.
+    // The fuel wrappers panic on exhaustion, but Lean's `panic!` RETURNS the
+    // type's `default` instead of aborting — under `native_decide` both sides
+    // of a model-vs-model sample equation then reduce to `default` and the
+    // kernel certifies a vacuous (possibly false) equality with lake exit 0
+    // and zero sorries. The panic line is the only trace, so ANY hit is a
+    // hard check failure (see `count_fuel_exhaustion_panics`).
+    let mut fuel_exhausted_hits = 0usize;
     let (errors, sorries, axioms, omitted, budget, passed) = match backend {
         super::cli::ProofBackend::Dafny => {
             let errors = match parse_dafny_error_count(&stdout) {
@@ -5469,10 +5647,28 @@ fn run_proof_check(
         }
         super::cli::ProofBackend::Lean => {
             let sorries = count_lean_sorries(&stderr) + count_lean_sorries(&stdout);
-            let passed = output.status.success() && sorries <= sorry_budget_v;
+            fuel_exhausted_hits = lean_codegen::count_fuel_exhaustion_panics(&stdout)
+                + lean_codegen::count_fuel_exhaustion_panics(&stderr);
+            let passed =
+                output.status.success() && sorries <= sorry_budget_v && fuel_exhausted_hits == 0;
             (None, Some(sorries), None, None, sorry_budget_v, passed)
         }
     };
+
+    if fuel_exhausted_hits > 0 {
+        eprintln!(
+            "{}",
+            format!(
+                "--check: the Lean model exhausted fuel while evaluating a bounded sample \
+                 ({} \"{}\" panic line(s) in the build output) — the exported model may \
+                 disagree with the program, so its sample equations prove nothing; this is \
+                 an Aver bug, please report it",
+                fuel_exhausted_hits,
+                lean_codegen::PROOF_FUEL_EXHAUSTED_MSG
+            )
+            .red()
+        );
+    }
 
     // Honest-coverage signal (Lean only): did the proof establish the law's
     // UNIVERSAL `∀`-claim by genuine kernel reasoning, or only by bounded
@@ -5484,9 +5680,11 @@ fn run_proof_check(
     // count. (Dafny already folds the analogous "universal lemma omitted"
     // degradation into its own `passed`, so it needs no separate field.)
     let universal: Option<bool> = match backend {
-        super::cli::ProofBackend::Lean => {
-            Some(output.status.success() && lean_universal_proof(output_dir, sorries.unwrap_or(0)))
-        }
+        super::cli::ProofBackend::Lean => Some(
+            output.status.success()
+                && fuel_exhausted_hits == 0
+                && lean_universal_proof(output_dir, sorries.unwrap_or(0)),
+        ),
         super::cli::ProofBackend::Dafny => None,
     };
 
@@ -5508,6 +5706,13 @@ fn run_proof_check(
         }
         if let Some(u) = universal {
             obj.insert("universal".into(), u.into());
+        }
+        if matches!(backend, super::cli::ProofBackend::Lean) {
+            // Additive field — existing consumers (proof-corpus/run.sh, the
+            // proof_spec gating tests) key on passed/universal/sorries and
+            // ignore unknown fields. `true` means the check FAILED with the
+            // compiler-model bug above regardless of budgets.
+            obj.insert("fuel_exhausted".into(), (fuel_exhausted_hits > 0).into());
         }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
@@ -6314,6 +6519,7 @@ mod tests {
             program_shape: None,
             mir_program: None,
             discovered_lemmas: Vec::new(),
+            sample_expected: std::collections::HashMap::new(),
         }
     }
 
