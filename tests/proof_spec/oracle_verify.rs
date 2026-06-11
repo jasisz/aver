@@ -1,0 +1,1472 @@
+use super::*;
+
+// ---------------------------------------------------------------------------
+// Oracle v1 — aver.toml mode rejection in aver proof
+// ---------------------------------------------------------------------------
+
+fn run_aver_proof_in_dir(dir: &PathBuf, source: &str, toml: &str) -> std::process::Output {
+    std::fs::write(dir.join("aver.toml"), toml).expect("write aver.toml");
+    std::fs::write(dir.join("program.av"), source).expect("write program.av");
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output_dir = dir.join("proof_out");
+    Command::new(aver_bin)
+        .current_dir(dir)
+        .arg("proof")
+        .arg("program.av")
+        .arg("--verify-mode")
+        .arg("auto")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("expected `aver proof` to run")
+}
+
+#[test]
+fn proof_rejects_cancel_independence_mode() {
+    let dir = temp_output_dir("aver-proof-cancel");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let output = run_aver_proof_in_dir(
+        &dir,
+        "module Prog\n    intent = \"test\"\n\nfn absVal(x: Int) -> Int\n    ? \"abs\"\n    match x < 0\n        true  -> 0 - x\n        false -> x\n",
+        "[independence]\nmode = \"cancel\"\n",
+    );
+    assert!(
+        !output.status.success(),
+        "aver proof should fail on cancel mode; {}",
+        format_output(&output)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("mode = \"cancel\"") || stderr.contains("complete mode"),
+        "expected cancel-mode rejection; got: {}",
+        stderr
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn proof_rejects_sequential_independence_mode() {
+    let dir = temp_output_dir("aver-proof-sequential");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let output = run_aver_proof_in_dir(
+        &dir,
+        "module Prog\n    intent = \"test\"\n\nfn absVal(x: Int) -> Int\n    ? \"abs\"\n    match x < 0\n        true  -> 0 - x\n        false -> x\n",
+        "[independence]\nmode = \"sequential\"\n",
+    );
+    assert!(
+        !output.status.success(),
+        "aver proof should fail on sequential mode; {}",
+        format_output(&output)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("sequential") && stderr.contains("complete mode"),
+        "expected sequential-mode rejection; got: {}",
+        stderr
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_runs_effectful_law_with_oracle_stub() {
+    // End-to-end: `aver verify` runs an effectful law whose given clause
+    // supplies an oracle stub. LHS evaluation of the effectful impl must
+    // see stub values (not real Random.int), so the law's equality check
+    // holds deterministically.
+    let dir = temp_output_dir("aver-verify-oracle");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always returns min\"\n\
+         \x20   min\n\
+         \n\
+         fn pickOne() -> Int\n\
+         \x20   ? \"sample one Random.int\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   Random.int(7, 99)\n\
+         \n\
+         fn pickOneSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Int\n\
+         \x20   ? \"one draw at the caller's path\"\n\
+         \x20   rnd(path, 0, 7, 99)\n\
+         \n\
+         verify pickOne law consistent\n\
+         \x20   given rnd: Random.int = [stubConst]\n\
+         \x20   pickOne() => pickOneSpec(BranchPath.Root, rnd)\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed with effectful-law + oracle stub; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_result_only_law_allows_output_effect_without_stub() {
+    // Regression: a result-only law on a fn whose effect list includes
+    // both an oracle-stubbed effect (Random.int) and an Output-only
+    // effect (Console.print) used to pass typecheck + proof export but
+    // fail at runtime verify with "Runtime effect violation: cannot
+    // call 'Console.print'". The VM's verify helper declares no
+    // effects, so the Output emission was ungated. Fix: the verify
+    // runner always enables trace collection (not just for trace
+    // blocks) so classified effects without stubs go through the
+    // usual suppression path.
+    let dir = temp_output_dir("aver-verify-output-without-stub");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn stubConst(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always min\"\n\
+         \x20   min\n\
+         \n\
+         fn noisyRoll() -> Int\n\
+         \x20   ? \"rolls and logs.\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   n = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled\")\n\
+         \x20   n\n\
+         \n\
+         verify noisyRoll law noisyRollSpec\n\
+         \x20   given rnd: Random.int = [stubConst]\n\
+         \x20   noisyRoll() => rnd(BranchPath.Root, 0, 1, 6)\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify must not report an effect violation for an \
+         Output effect (Console.print) in a result-only law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_runs_effectful_bang_group_law() {
+    // End-to-end: `aver verify` on an effectful law whose impl uses
+    // `(Random.int(1, 6), Random.int(1, 6))!` — a two-branch `!` group.
+    // The runtime should thread each branch's BranchPath.child(root, i)
+    // and reset the counter to 0 per branch, so the stub returns
+    // deterministic values that match the RHS spec.
+    let dir = temp_output_dir("aver-verify-bang-group");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        // Stub: returns the branch index of the path (0 or 1) as the
+        // random value. This makes each branch's oracle output distinct,
+        // so a correct path-threading implementation gives (0, 1) while
+        // an incorrect one (root path on both branches) would give (0, 0).
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn stubByBranch(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"return counter so each branch's call is distinguishable\"\n\
+         \x20   n\n\
+         \n\
+         fn pickPair() -> Tuple<Int, Int>\n\
+         \x20   ? \"two parallel draws\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   (Random.int(1, 6), Random.int(1, 6))!\n\
+         \n\
+         fn pickPairSpec(path: BranchPath, rnd: Fn(BranchPath, Int, Int, Int) -> Int) -> Tuple<Int, Int>\n\
+         \x20   ? \"two draws, each at its own branch\"\n\
+         \x20   (rnd(BranchPath.child(path, 0), 0, 1, 6), rnd(BranchPath.child(path, 1), 0, 1, 6))\n\
+         \n\
+         verify pickPair law consistent\n\
+         \x20   given rnd: Random.int = [stubByBranch]\n\
+         \x20   pickPair() => pickPairSpec(BranchPath.Root, rnd)\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on `!` group law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_cases_form_trace_with_result_projection() {
+    // End-to-end: trace-aware cases-form verify block with a given-
+    // bound oracle and `.result` projection. Closer to the shape a user
+    // actually wants to write for simple Oracle v1 laws.
+    let dir = temp_output_dir("aver-verify-result-projection");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4, nicely deterministic\"\n\
+         \x20   4\n\
+         \n\
+         fn pickOne() -> Int\n\
+         \x20   ? \"one roll\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   Random.int(1, 6)\n\
+         \n\
+         verify pickOne trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   pickOne().result => 4\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on cases-form trace with .result projection; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_contains_and_event_and_length_projections() {
+    // End-to-end: trace-aware verify exercising all three positional
+    // projections — `.trace.length()`, `.trace.event(k)`,
+    // `.trace.contains(event_lit)` — alongside `.result`. Matches the
+    // shape of the plan's Example 5 + user-requested form.
+    let dir = temp_output_dir("aver-verify-trace-projections");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   hello().result => 4\n\
+         \x20   hello().trace.length() => 2\n\
+         \x20   hello().trace.contains(Console.print(\"rolled 4\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on trace-projection law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_count_projection_matches_event_method() {
+    // 0.13 Limit nail #3: `.trace.count(M)` returns the number of trace
+    // events with method `M`. Argument shape mirrors `.contains` —
+    // either an effect-method reference or a call literal. The fn here
+    // calls Random.int twice and Console.print once; the count law
+    // distinguishes the two methods.
+    let dir = temp_output_dir("aver-verify-trace-count");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn rollPair() -> Int\n\
+         \x20   ? \"two rolls + a print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   a = Random.int(1, 6)\n\
+         \x20   b = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled\")\n\
+         \x20   a + b\n\
+         \n\
+         verify rollPair trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   rollPair().trace.count(Random.int) => 2\n\
+         \x20   rollPair().trace.count(Console.print) => 1\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed on trace.count law; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_local_bindings_substitute_into_cases() {
+    // Oracle v1: local bindings (`name = expr`) in a verify-trace block
+    // are syntactic aliases substituted into each case's LHS / RHS
+    // before helper generation. Here `expected = 4` is used as both the
+    // `.result` RHS and — via another binding — as a shared event
+    // literal referenced by `.contains`. If substitution is wired up,
+    // the law must pass exactly like the inlined form would.
+    let dir = temp_output_dir("aver-verify-local-bindings");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   expected = 4\n\
+         \x20   printed = Console.print(\"rolled 4\")\n\
+         \x20   hello().result => expected\n\
+         \x20   hello().trace.contains(printed) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed with local bindings in trace block; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_given_alias_callable_in_case_expressions() {
+    // Oracle v1: `given rnd: Random.int = [fairDie]` installs a VM
+    // stub that intercepts Random.int inside `hello()`. The same alias
+    // is also substituted syntactically into case LHS / RHS, so users
+    // can write `rnd(BranchPath.root, 0, 1, 6)` as a value expression
+    // — which becomes a direct call to `fairDie` after substitution.
+    let dir = temp_output_dir("aver-verify-given-alias");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn pickOne() -> Int\n\
+         \x20   ? \"one roll\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   Random.int(1, 6)\n\
+         \n\
+         verify pickOne trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   pickOne().result => rnd(BranchPath.Root, 0, 1, 6)\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+
+    assert!(
+        output.status.success(),
+        "aver verify failed when using given-alias as callable in case; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_suppresses_output_effects() {
+    // Oracle v1: under `verify fn trace`, output-dimension effects
+    // (Console.print / .error / .warn) are recorded as trace events
+    // but not actually dispatched to the host. Otherwise running
+    // `aver verify` on a fn that prints would leak its output into
+    // the terminal — noisy and confusing. The trace buffer still
+    // lets `.trace.contains(...)` / `.length()` assertions work.
+    let dir = temp_output_dir("aver-verify-trace-suppress-output");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn chatty() -> Int\n\
+         \x20   ? \"prints then returns\"\n\
+         \x20   ! [Console.print]\n\
+         \x20   Console.print(\"SENTINEL-LEAK\")\n\
+         \x20   42\n\
+         \n\
+         verify chatty trace\n\
+         \x20   chatty().result => 42\n\
+         \x20   chatty().trace.contains(Console.print(\"SENTINEL-LEAK\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "aver verify failed on chatty trace; {}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("SENTINEL-LEAK"),
+        "Console.print should be suppressed under verify trace, but SENTINEL-LEAK \
+         appeared in stdout: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_rejects_generative_effect_without_given_stub() {
+    // Oracle v1: under `verify fn trace`, every generative / gen+output
+    // effect the fn uses must have a `given` stub. Without one, the
+    // verify run would dispatch the real effect (e.g. live Random.int)
+    // and assertions would compare against non-deterministic output —
+    // a confusing failure. The check-time rejection points straight at
+    // the fix.
+    let dir = temp_output_dir("aver-verify-trace-missing-given");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn roll() -> Int\n\
+         \x20   ? \"rolls\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   Random.int(1, 6)\n\
+         \n\
+         verify roll trace\n\
+         \x20   roll().result => 4\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let check = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("check")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver check` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stderr),
+        String::from_utf8_lossy(&check.stdout)
+    );
+    assert!(
+        combined.contains("needs a `given` stub"),
+        "expected missing-given diagnostic, got: {}",
+        combined
+    );
+    assert!(
+        combined.contains("Random.int"),
+        "expected diagnostic to mention Random.int, got: {}",
+        combined
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_failure_shows_recorded_events() {
+    // Oracle v1: when a trace-projection assertion fails (e.g.
+    // `.trace.contains(X) => true` but X wasn't emitted), the failure
+    // message must append the actually-recorded events so the user can
+    // see which events fired and fix their assertion.
+    let dir = temp_output_dir("aver-verify-trace-failure-tail");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"different message\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   hello().trace.contains(Console.print(\"rolled 4\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        !output.status.success(),
+        "expected failure, got success; {}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("(trace:"),
+        "expected failure output to include recorded trace tail, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("different message"),
+        "expected failure output to list the actual emitted event, got: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_end_to_end_target_shape() {
+    // Oracle v1: the end-to-end shape a user writes for a small
+    // trace-aware verification — given binds an oracle alias, a local
+    // binding factors out the expected oracle value, `.result` checks
+    // the raw return, `.trace.contains(...)` checks an output-only
+    // event. This single test guards the whole Oracle v1 UX surface:
+    //   - `given rnd: Random.int = [fairDie]` (alias + VM stub)
+    //   - `expect = rnd(BranchPath.Root, 0, 1, 6)` (local + alias
+    //     substitution)
+    //   - `hello().result => expect` (local binding in case RHS)
+    //   - `hello().trace.contains(Console.print(...))` (output effect
+    //     suppressed at runtime, still present in the trace)
+    let dir = temp_output_dir("aver-verify-target-shape");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   expect = rnd(BranchPath.Root, 0, 1, 6)\n\
+         \x20   hello().result => expect\n\
+         \x20   hello().trace.contains(Console.print(\"rolled 4\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "end-to-end target-shape verify failed; {}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("2/2"),
+        "expected 2/2 cases passed, got: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_http_get_generative_output_end_to_end() {
+    // Oracle v1: Http.get is the first generative+output effect —
+    // stubbed response comes from the oracle, request body lands in
+    // the trace. This test exercises the full path: given-bound stub
+    // returning a non-trivial Result<HttpResponse, String>, with
+    // `.trace.contains(Http.get(...))` resolving the request event.
+    let dir = temp_output_dir("aver-verify-trace-http");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n\
+         \x20   ? \"deterministic fake fetch\"\n\
+         \x20   Result.Ok(HttpResponse(status = 200, body = \"hello\", headers = {}))\n\
+         \n\
+         fn fetch() -> Result<HttpResponse, String>\n\
+         \x20   ? \"fetches\"\n\
+         \x20   ! [Http.get]\n\
+         \x20   Http.get(\"https://x.test/y\")\n\
+         \n\
+         verify fetch trace\n\
+         \x20   given stub: Http.get = [fakeFetch]\n\
+         \x20   fetch().trace.contains(Http.get(\"https://x.test/y\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "Http.get verify-trace failed end-to-end; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_broader_oracle_effects_end_to_end() {
+    // Oracle v1 also covers line input, disk operation/result effects,
+    // output-only sleep, and one-shot TCP. This keeps the expanded
+    // classification wired through given stubs, trace event literals,
+    // and Result propagation.
+    let dir = temp_output_dir("aver-verify-trace-broader-effects");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fakeLine(path: BranchPath, n: Int) -> Result<String, String>\n\
+         \x20   ? \"deterministic console input\"\n\
+         \x20   Result.Ok(\"deploy\")\n\
+         \n\
+         fn fakeWrite(path: BranchPath, n: Int, file: String, content: String) -> Result<Unit, String>\n\
+         \x20   ? \"deterministic write\"\n\
+         \x20   Result.Ok(Unit)\n\
+         \n\
+         fn fakeSend(path: BranchPath, n: Int, host: String, port: Int, message: String) -> Result<String, String>\n\
+         \x20   ? \"deterministic one-shot tcp\"\n\
+         \x20   Result.Ok(\"ACK\")\n\
+         \n\
+         fn runAll() -> Result<String, String>\n\
+         \x20   ? \"uses broader classified effects\"\n\
+         \x20   ! [Console.readLine, Disk.writeText, Time.sleep, Tcp.send]\n\
+         \x20   cmd = Console.readLine()?\n\
+         \x20   _ = Disk.writeText(\"state.txt\", cmd)?\n\
+         \x20   Time.sleep(1)\n\
+         \x20   ack = Tcp.send(\"127.0.0.1\", 9, cmd)?\n\
+         \x20   Result.Ok(ack)\n\
+         \n\
+         verify runAll trace\n\
+         \x20   given line: Console.readLine = [fakeLine]\n\
+         \x20   given write: Disk.writeText = [fakeWrite]\n\
+         \x20   given send: Tcp.send = [fakeSend]\n\
+         \x20   runAll().result => Result.Ok(\"ACK\")\n\
+         \x20   runAll().trace.contains(Console.readLine()) => true\n\
+         \x20   runAll().trace.contains(Disk.writeText(\"state.txt\", \"deploy\")) => true\n\
+         \x20   runAll().trace.contains(Time.sleep(1)) => true\n\
+         \x20   runAll().trace.contains(Tcp.send(\"127.0.0.1\", 9, \"deploy\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "broader Oracle effects verify-trace failed end-to-end; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_contains_event_literal_with_interpolated_local() {
+    // Oracle v1: `.trace.contains(Console.print("rolled {expect}"))`
+    // with local binding `expect = 4` must elaborate to the event
+    // literal `Console.print("rolled 4")` after the parse-time ident
+    // substitution rewrites `{expect}` to `Literal(Int(4))`. This
+    // exercises `literal_expr_to_value`'s Parsed-segment support — the
+    // interpolated string resolves to a plain String arg so the event
+    // literal round-trips to the recorded `EffectEvent`.
+    let dir = temp_output_dir("aver-verify-trace-interp-local");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled {x}\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   expect = 4\n\
+         \x20   hello().result => expect\n\
+         \x20   hello().trace.contains(Console.print(\"rolled {expect}\")) => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "interpolated event literal failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_snapshot_stub_is_plain_capability_reader() {
+    // Oracle v1: snapshot effects (Args.get / Env.get) bind a plain
+    // capability reader — the stub signature mirrors the runtime
+    // signature with no leading (BranchPath, Int). Only generative /
+    // generative+output stubs thread path + counter. This matches the
+    // plan's "Snapshot effects → not branch-indexed" rule.
+    let dir = temp_output_dir("aver-verify-trace-snapshot");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn empty() -> List<String>\n\
+         \x20   ? \"fixed empty args\"\n\
+         \x20   []\n\
+         \n\
+         fn isEmpty() -> Bool\n\
+         \x20   ? \"no args\"\n\
+         \x20   ! [Args.get]\n\
+         \x20   args = Args.get()\n\
+         \x20   match args\n\
+         \x20       [] -> true\n\
+         \x20       _ -> false\n\
+         \n\
+         verify isEmpty trace\n\
+         \x20   given argv: Args.get = [empty]\n\
+         \x20   isEmpty().result => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "snapshot-dim verify failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_env_get_snapshot_with_args() {
+    // Oracle v1: Env.get is a snapshot effect with a String argument.
+    // The stub's runtime signature `String -> Option<String>` matches
+    // what the given-bound alias exposes — no BranchPath / counter
+    // threading since snapshot effects are deterministic and not
+    // branch-indexed.
+    let dir = temp_output_dir("aver-verify-trace-env-get");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn stubEnv(key: String) -> Option<String>\n\
+         \x20   ? \"key-aware env stub\"\n\
+         \x20   match key\n\
+         \x20       \"USER\" -> Option.Some(\"alice\")\n\
+         \x20       _ -> Option.None\n\
+         \n\
+         fn greeting() -> String\n\
+         \x20   ? \"greet\"\n\
+         \x20   ! [Env.get]\n\
+         \x20   match Env.get(\"USER\")\n\
+         \x20       Option.Some(u) -> \"hi {u}\"\n\
+         \x20       Option.None -> \"hi stranger\"\n\
+         \n\
+         verify greeting trace\n\
+         \x20   given env: Env.get = [stubEnv]\n\
+         \x20   greeting().result => \"hi alice\"\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "Env.get snapshot verify failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_rejects_stub_with_wrong_oracle_signature() {
+    // Oracle v1: each `given <name>: <Effect.method> = [stub]` must
+    // bind a stub whose inferred type matches the oracle signature for
+    // that effect. Most common footgun: copy-pasting a (BranchPath,
+    // Int)-prefixed generative stub into a snapshot `given` — at
+    // runtime those extra params get ignored and the verify produces
+    // bogus values. Now caught at check time.
+    let dir = temp_output_dir("aver-verify-trace-wrong-stub-sig");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn wrong(_p: BranchPath, _n: Int) -> List<String>\n\
+         \x20   ? \"wrong snapshot stub signature\"\n\
+         \x20   []\n\
+         \n\
+         fn isEmpty() -> Bool\n\
+         \x20   ? \"no args\"\n\
+         \x20   ! [Args.get]\n\
+         \x20   args = Args.get()\n\
+         \x20   match args\n\
+         \x20       [] -> true\n\
+         \x20       _ -> false\n\
+         \n\
+         verify isEmpty trace\n\
+         \x20   given argv: Args.get = [wrong]\n\
+         \x20   isEmpty().result => true\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let check = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("check")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver check` to run");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&check.stderr),
+        String::from_utf8_lossy(&check.stdout)
+    );
+    assert!(
+        combined.contains("expects a stub of type"),
+        "expected oracle-signature mismatch diagnostic, got: {}",
+        combined
+    );
+    assert!(
+        combined.contains("Args.get"),
+        "expected diagnostic to mention Args.get, got: {}",
+        combined
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_event_compares_to_full_effectevent_record() {
+    // Oracle v1: the `.trace.event(k)` projection returns an
+    // `Option<EffectEvent>`. With EffectEvent and Trace fields now
+    // registered at the typechecker level, users can compare against a
+    // full record literal `Option.Some(EffectEvent(method = ..., args
+    // = [...]))` and the assertion passes on structural equality.
+    let dir = temp_output_dir("aver-verify-trace-event-literal");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   hello().trace.event(1) => Option.Some(EffectEvent(method = \"Console.print\", args = [\"rolled 4\"], path = \"\"))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "EffectEvent record comparison failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_helper_boundary_filter_excludes_nested_emissions() {
+    // Oracle v1: helper-boundary filter — only emissions whose
+    // immediate caller fn_id matches the verified-fn root land in
+    // the trace. Debug prints that come from functions the verified
+    // fn calls internally (helpers) stay ghost — neither recorded
+    // into the trace nor leaked to the terminal.
+    let dir = temp_output_dir("aver-verify-trace-helper-boundary");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn helper(msg: String) -> Unit\n\
+         \x20   ? \"prints from helper\"\n\
+         \x20   ! [Console.print]\n\
+         \x20   Console.print(msg)\n\
+         \n\
+         fn top() -> Int\n\
+         \x20   ? \"direct + delegated print\"\n\
+         \x20   ! [Console.print]\n\
+         \x20   Console.print(\"direct\")\n\
+         \x20   helper(\"via-helper\")\n\
+         \x20   42\n\
+         \n\
+         verify top trace\n\
+         \x20   top().trace.length() => 1\n\
+         \x20   top().trace.contains(Console.print(\"direct\")) => true\n\
+         \x20   top().trace.contains(Console.print(\"via-helper\")) => false\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "helper-boundary filter case failed; {}",
+        format_output(&output)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("via-helper"),
+        "helper Console.print must be suppressed under trace collection, \
+         got leaked via-helper in stdout: {}",
+        stdout
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_group_navigation_filters_by_source_order() {
+    // Oracle v1: `.trace.group(N)` narrows the trace to emissions from
+    // the N-th `!`/`?!` group in source order (0-based). Subsequent
+    // `.length()` / `.event(k)` / `.contains(_)` operate on the
+    // filtered sub-trace. Group ids reset per verify-trace case so
+    // `.group(0)` points at the first group in every case.
+    let dir = temp_output_dir("aver-verify-trace-group-nav");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn parallelRolls() -> Int\n\
+         \x20   ? \"two rolls in parallel, sum\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   Console.print(\"pre\")\n\
+         \x20   pair = (Random.int(1, 6), Random.int(1, 6))!\n\
+         \x20   match pair\n\
+         \x20       (a, b) -> a + b\n\
+         \n\
+         verify parallelRolls trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   parallelRolls().trace.length() => 3\n\
+         \x20   parallelRolls().trace.group(0).length() => 2\n\
+         \x20   parallelRolls().trace.group(0).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6], path = \"0\"))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "trace.group(N) navigation failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_group_branch_navigation_narrows_to_single_branch() {
+    // Oracle v1: `.trace.group(N).branch(idx)` narrows the trace to
+    // emissions from branch `idx` of the N-th `!`/`?!` group. Branches
+    // are 0-based in both source and runtime; combined with `.group(N)`
+    // (also 0-based in source order) users can target any single cell
+    // of the branch-witness tree without knowing runtime ids.
+    let dir = temp_output_dir("aver-verify-trace-branch-nav");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn twoBranches() -> Int\n\
+         \x20   ? \"two rolls in parallel\"\n\
+         \x20   ! [Random.int]\n\
+         \x20   pair = (Random.int(1, 6), Random.int(7, 12))!\n\
+         \x20   match pair\n\
+         \x20       (a, b) -> a + b\n\
+         \n\
+         verify twoBranches trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   twoBranches().trace.group(0).branch(0).length() => 1\n\
+         \x20   twoBranches().trace.group(0).branch(1).length() => 1\n\
+         \x20   twoBranches().trace.group(0).branch(0).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6], path = \"0\"))\n\
+         \x20   twoBranches().trace.group(0).branch(1).event(0) => Option.Some(EffectEvent(method = \"Random.int\", args = [7, 12], path = \"1\"))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "group.branch navigation failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_event_path_field_points_at_structural_position() {
+    // Oracle v1: `EffectEvent.path` is the dewey-decimal string for
+    // the structural position where the event was emitted — empty
+    // at the sequential level (canonical `BranchPath.root`) and a
+    // dot-separated branch index inside groups. Bridges recording
+    // JSON coordinates and spec-side BranchPath without a separate
+    // `.path()` accessor method.
+    let dir = temp_output_dir("aver-verify-trace-event-path-field");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn withSeqAndGroup() -> Int\n\
+         \x20   ? \"seq roll plus a parallel pair\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   Console.print(\"seq\")\n\
+         \x20   pair = (Random.int(1, 6), Random.int(7, 12))!\n\
+         \x20   match pair\n\
+         \x20       (a, b) -> a + b\n\
+         \n\
+         verify withSeqAndGroup trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   withSeqAndGroup().trace.event(0) =>\n\
+         \x20       Option.Some(EffectEvent(method = \"Console.print\", args = [\"seq\"], path = \"\"))\n\
+         \x20   withSeqAndGroup().trace.group(0).branch(0).event(0) =>\n\
+         \x20       Option.Some(EffectEvent(method = \"Random.int\", args = [1, 6], path = \"0\"))\n\
+         \x20   withSeqAndGroup().trace.group(0).branch(1).event(0) =>\n\
+         \x20       Option.Some(EffectEvent(method = \"Random.int\", args = [7, 12], path = \"1\"))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "EffectEvent.path field assertion failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_case_rhs_wraps_to_indented_next_line() {
+    // Oracle v1: verify case RHS may wrap to an indented next line —
+    // long event-literal records (Http responses, nested records)
+    // don't fit on one line, and cramming them there makes the
+    // surface feel hostile. `A =>` followed by an indented
+    // expression parses the same as the single-line form.
+    let dir = temp_output_dir("aver-verify-trace-rhs-wrap");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fakeFetch(path: BranchPath, n: Int, url: String) -> Result<HttpResponse, String>\n\
+         \x20   ? \"deterministic\"\n\
+         \x20   Result.Ok(HttpResponse(status = 200, body = \"ok\", headers = {}))\n\
+         \n\
+         fn app() -> Result<HttpResponse, String>\n\
+         \x20   ? \"fetch one\"\n\
+         \x20   ! [Http.get]\n\
+         \x20   Http.get(\"https://example.test/api\")\n\
+         \n\
+         verify app trace\n\
+         \x20   given stub: Http.get = [fakeFetch]\n\
+         \x20   app().trace.event(0) =>\n\
+         \x20       Option.Some(EffectEvent(method = \"Http.get\", args = [\"https://example.test/api\"], path = \"\"))\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "multi-line case RHS failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn aver_verify_trace_projection_edge_cases_degrade_gracefully() {
+    // Oracle v1: out-of-range indices and missing methods return the
+    // natural empty / None values instead of erroring. Lets users
+    // phrase negative assertions (`.contains(X) => false`,
+    // `.event(k) => Option.None`) without special-casing what "X
+    // never happened" looks like.
+    let dir = temp_output_dir("aver-verify-trace-edge-cases");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    std::fs::write(
+        dir.join("aver.toml"),
+        "[independence]\nmode = \"complete\"\n",
+    )
+    .expect("write aver.toml");
+    std::fs::write(
+        dir.join("program.av"),
+        "module Prog\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn fairDie(path: BranchPath, n: Int, min: Int, max: Int) -> Int\n\
+         \x20   ? \"always 4\"\n\
+         \x20   4\n\
+         \n\
+         fn hello() -> Int\n\
+         \x20   ? \"roll + print\"\n\
+         \x20   ! [Random.int, Console.print]\n\
+         \x20   x = Random.int(1, 6)\n\
+         \x20   Console.print(\"rolled 4\")\n\
+         \x20   x\n\
+         \n\
+         verify hello trace\n\
+         \x20   given rnd: Random.int = [fairDie]\n\
+         \x20   hello().trace.group(99).length() => 0\n\
+         \x20   hello().trace.group(99).event(0) => Option.None\n\
+         \x20   hello().trace.contains(Console.error) => false\n\
+         \x20   hello().trace.event(99) => Option.None\n",
+    )
+    .expect("write program.av");
+
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output = Command::new(aver_bin)
+        .current_dir(&dir)
+        .arg("verify")
+        .arg("program.av")
+        .output()
+        .expect("expected `aver verify` to run");
+    assert!(
+        output.status.success(),
+        "trace projection edge cases failed; {}",
+        format_output(&output)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn proof_accepts_complete_independence_mode() {
+    let dir = temp_output_dir("aver-proof-complete");
+    std::fs::create_dir_all(&dir).expect("create temp dir");
+    let output = run_aver_proof_in_dir(
+        &dir,
+        "module Prog\n    intent = \"test\"\n\nfn absVal(x: Int) -> Int\n    ? \"abs\"\n    match x < 0\n        true  -> 0 - x\n        false -> x\n",
+        "[independence]\nmode = \"complete\"\n",
+    );
+    // Success here means aver proof at least started generating; it may fail
+    // later if lake isn't installed or for other reasons, but it must NOT
+    // fail with the independence-mode rejection.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("aver.toml has [independence] mode"),
+        "complete mode must not trigger the mode rejection; got: {}",
+        stderr
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

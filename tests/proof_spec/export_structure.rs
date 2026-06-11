@@ -1,0 +1,692 @@
+use super::*;
+
+#[test]
+fn proof_export_cross_module_recursive_fns_get_per_module_fn_contracts() {
+    // Round-5 audit follow-up: two dep modules each declaring a
+    // recursive `countdown(n: Int) -> Int` with the canonical
+    // IntCountdown shape used to emit `partial def` in both modules
+    // even though the standalone single-module export produced a
+    // proper fuel-encoded def. Two coupled gaps:
+    //   1. The proof-lower pipeline built `inputs.recursive_fns`
+    //      from entry's analyze only — module fns never reached the
+    //      IntCountdown classifier (entry has no countdown → empty
+    //      entry-recursive set).
+    //   2. `populate_fn_contracts` keyed `ir.fn_contracts` by bare
+    //      fn name, so even when both modules' contracts were
+    //      populated they collided on `"countdown"`.
+    // Round-5 plumbs union'd `recursive_fns` through pipeline AND
+    // keys `fn_contracts` by canonical `Module.fn`. Lookup-side
+    // helpers `find_fn_contract` / `fn_contract_exists` walk back
+    // to the canonical slot.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-cross-module-fn-contracts");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    std::fs::write(
+        root.join("CountdownA.av"),
+        "module CountdownA\n\
+         \x20   exposes [countdown]\n\
+         \x20   intent = \"Plain countdown.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn countdown(n: Int) -> Int\n\
+         \x20   ? \"Countdown to 0.\"\n\
+         \x20   match n <= 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> countdown(n - 1)\n",
+    )
+    .expect("write CountdownA.av");
+    std::fs::write(
+        root.join("CountdownB.av"),
+        "module CountdownB\n\
+         \x20   exposes [countdown]\n\
+         \x20   intent = \"Sum on countdown.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn countdown(n: Int) -> Int\n\
+         \x20   ? \"Countdown summing n.\"\n\
+         \x20   match n <= 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> n + countdown(n - 1)\n",
+    )
+    .expect("write CountdownB.av");
+    std::fs::write(
+        root.join("entry.av"),
+        "module Entry\n\
+         \x20   depends [CountdownA, CountdownB]\n\
+         \x20   intent = \"Touch both modules so each surfaces in proof IR.\"\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   0\n",
+    )
+    .expect("write entry.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let a_lean =
+        std::fs::read_to_string(out_dir.join("CountdownA.lean")).expect("read CountdownA.lean");
+    let b_lean =
+        std::fs::read_to_string(out_dir.join("CountdownB.lean")).expect("read CountdownB.lean");
+
+    assert!(
+        a_lean.contains("def countdown__fuel"),
+        "CountdownA.countdown must emit fuel-encoded def, not `partial def`:\n{a_lean}"
+    );
+    assert!(
+        b_lean.contains("def countdown__fuel"),
+        "CountdownB.countdown must emit fuel-encoded def, not `partial def`:\n{b_lean}"
+    );
+    assert!(
+        !a_lean.contains("partial def countdown"),
+        "CountdownA.lean must not regress to `partial def countdown`:\n{a_lean}"
+    );
+    assert!(
+        !b_lean.contains("partial def countdown"),
+        "CountdownB.lean must not regress to `partial def countdown`:\n{b_lean}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn proof_export_module_owned_native_guarded_resolves_correct_fn_id() {
+    // PR 12 Scope A finalization: the Lean native-guarded emit path
+    // (`emit_native_guarded_int_countdown_fn`) used to derive the
+    // recursive fn's `FnId` via `FnKey::entry(&fd.name)`. For any
+    // module-owned native-guarded recursive fn that would either
+    // panic on the missing entry slot, or silently target an
+    // entry-scope same-bare-name fn. After the followup commit the
+    // lookup goes through `fn_id_for_decl(ctx, fd)` — pointer-eq
+    // scope, the same path `ProofIR.fn_contracts` keys by.
+    //
+    // This test exercises the specific bug class: two same-bare
+    // `down(n: Int) -> Int` native-guarded fns, one in a dep module
+    // and one at entry. Both classify as `IntCountdownGuarded`, both
+    // emit `def down__aux`, and the rewriter pins each one's
+    // recursive call to its OWN `FnId` rather than crossing wires.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-module-native-guarded");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    // Worker.av: closed-world (not exposed) `down` countdown with a
+    // public `run` calling `down(n)` under a `n >= 0` guard so the
+    // classifier accepts it as IntCountdownGuarded.
+    std::fs::write(
+        root.join("Worker.av"),
+        "module Worker\n\
+         \x20   exposes [run]\n\
+         \x20   intent = \"Closed-world native-guarded countdown.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn down(n: Int) -> Int\n\
+         \x20   ? \"Countdown to 0.\"\n\
+         \x20   match n\n\
+         \x20       0 -> 1\n\
+         \x20       _ -> down(n - 1)\n\
+         \n\
+         fn run(n: Int) -> Int\n\
+         \x20   ? \"Public entry; guards n >= 0 before down.\"\n\
+         \x20   match n < 0\n\
+         \x20       true  -> 0\n\
+         \x20       false -> down(n)\n",
+    )
+    .expect("write Worker.av");
+    // Entry: same-bare `down` with the SAME body shape so both
+    // classify as IntCountdownGuarded. If the rewriter pinned by
+    // bare name the entry's `down__aux` would consume Worker.down's
+    // FnId (or vice versa) and the rewritten body would call the
+    // wrong target.
+    std::fs::write(
+        root.join("entry.av"),
+        "module Entry\n\
+         \x20   depends [Worker]\n\
+         \x20   intent = \"Same-bare-name native-guarded countdown alongside Worker.down.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn down(n: Int) -> Int\n\
+         \x20   ? \"Entry's own countdown — bare-name twin of Worker.down.\"\n\
+         \x20   match n\n\
+         \x20       0 -> 2\n\
+         \x20       _ -> down(n - 1)\n\
+         \n\
+         fn launch(n: Int) -> Int\n\
+         \x20   ? \"Guards n >= 0 before calling Entry.down.\"\n\
+         \x20   match n < 0\n\
+         \x20       true  -> 0\n\
+         \x20       false -> down(n)\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   launch(3) + Worker.run(5)\n",
+    )
+    .expect("write entry.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed (expected to succeed without FnKey::entry panic):\n{}",
+        format_output(&proof)
+    );
+
+    let worker_lean = std::fs::read_to_string(out_dir.join("Worker.lean"))
+        .expect("read Worker.lean (module-owned native-guarded emit must succeed)");
+    // Entry file basename is project-name-derived; the proof exporter
+    // capitalises the project name to produce a Lean module ident
+    // (`entry.av` → `Entry.lean`). macOS APFS is case-insensitive so a
+    // lowercase path would silently match locally — on Linux CI it
+    // does not, so look up the canonical capitalised form.
+    let entry_lean = std::fs::read_to_string(out_dir.join("Entry.lean")).expect("read Entry.lean");
+
+    // Both modules carry their OWN native-guarded aux def. If the
+    // rewriter targeted the wrong FnId only one would emit, or both
+    // would inline the same body.
+    assert!(
+        worker_lean.contains("def down__aux"),
+        "Worker.lean must contain its own native-guarded aux def:\n{worker_lean}"
+    );
+    assert!(
+        entry_lean.contains("def down__aux"),
+        "entry.lean must contain its own native-guarded aux def:\n{entry_lean}"
+    );
+    // The hard regression assertion: the rewritten body MUST contain
+    // the aux call carrying the `(by omega)` OMEGA_PROOF_SENTINEL
+    // tail. With the pre-fix bare-name `FnKey::entry("down")` lookup
+    // Worker.down's body would walk past every callsite (the entry
+    // FnId never matches Worker.down's resolved `ResolvedCallee::Fn`
+    // calls), so the recursive `down(n - 1)` stays unchanged and
+    // Lean's termination check loses the precondition handle. Pin
+    // both files: Worker AND entry produce the rewritten aux call.
+    assert!(
+        worker_lean.contains("down__aux (n - 1) (by omega)"),
+        "Worker.down__aux body must contain the rewritten recursive call \
+         `down__aux (n - 1) (by omega)` — the rewriter dropped it:\n{worker_lean}"
+    );
+    assert!(
+        entry_lean.contains("down__aux (n - 1) (by omega)"),
+        "entry.down__aux body must contain the rewritten recursive call \
+         `down__aux (n - 1) (by omega)` — the rewriter dropped it:\n{entry_lean}"
+    );
+    // Worker's base arm is `0 -> 1`; entry's is `0 -> 2`. If the
+    // rewriter cross-wired the targets the base literal would leak
+    // across files.
+    let worker_idx = worker_lean
+        .find("def down__aux")
+        .expect("down__aux present in Worker.lean");
+    let worker_aux = &worker_lean[worker_idx..];
+    assert!(
+        worker_aux.contains("then 1"),
+        "Worker.down__aux must keep its OWN base arm literal (1):\n{worker_aux}"
+    );
+    let entry_idx = entry_lean
+        .find("def down__aux")
+        .expect("down__aux present in entry.lean");
+    let entry_aux = &entry_lean[entry_idx..];
+    assert!(
+        entry_aux.contains("then 2"),
+        "entry.down__aux must keep its OWN base arm literal (2):\n{entry_aux}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn proof_export_cross_module_differentiated_recursion_shapes_emit_per_module() {
+    // Round-6 finding (audit of round 5): the prior test had both
+    // modules use the SAME recursion shape (IntCountdown), so even
+    // a buggy scope-naive lookup could "accidentally pass" by
+    // returning whichever module's identical contract walked first.
+    // This test wires module A's `walker(n)` as IntCountdown and
+    // module B's `walker(xs)` as ListStructural — different param
+    // types AND different fuel metrics. With scope-naive lookup
+    // (`find_fn_contract(ctx, "walker")` → first-walked module's
+    // contract) the second module's emit would either use the
+    // wrong shape or fall back to `partial def`. With pointer-eq
+    // scope resolution each module's `walker` lands its OWN
+    // classification.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-cross-module-shapes");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    std::fs::write(
+        root.join("WalkerA.av"),
+        "module WalkerA\n\
+         \x20   exposes [walker]\n\
+         \x20   intent = \"Int countdown shape.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn walker(n: Int) -> Int\n\
+         \x20   ? \"Countdown to 0.\"\n\
+         \x20   match n <= 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> walker(n - 1)\n",
+    )
+    .expect("write WalkerA.av");
+    std::fs::write(
+        root.join("WalkerB.av"),
+        "module WalkerB\n\
+         \x20   exposes [walker]\n\
+         \x20   intent = \"List structural shape.\"\n\
+         \x20   effects []\n\
+         \n\
+         fn walker(xs: List<Int>) -> Int\n\
+         \x20   ? \"Sum elements.\"\n\
+         \x20   match xs\n\
+         \x20       [] -> 0\n\
+         \x20       [x, ..rest] -> x + walker(rest)\n",
+    )
+    .expect("write WalkerB.av");
+    std::fs::write(
+        root.join("entry.av"),
+        "module Entry\n\
+         \x20   depends [WalkerA, WalkerB]\n\
+         \x20   intent = \"Touch both walker modules.\"\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   0\n",
+    )
+    .expect("write entry.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let a_lean = std::fs::read_to_string(out_dir.join("WalkerA.lean")).expect("read WalkerA.lean");
+    let b_lean = std::fs::read_to_string(out_dir.join("WalkerB.lean")).expect("read WalkerB.lean");
+
+    // WalkerA is IntCountdown → fuel-encoded `def walker__fuel
+    // (fuel : Nat) (n : Int) : Int`.
+    assert!(
+        a_lean.contains("def walker__fuel"),
+        "WalkerA.walker (IntCountdown) must emit fuel-encoded def:\n{a_lean}"
+    );
+    assert!(
+        a_lean.contains("(n : Int)"),
+        "WalkerA.walker fuel sig must carry Int param `n`:\n{a_lean}"
+    );
+
+    // WalkerB is ListStructural → backend may emit either a
+    // structural-recursion `def walker (xs : List Int)` or a
+    // fuel-encoded variant depending on classifier path. Either is
+    // fine; the wrong-shape failure mode would be either (a)
+    // landing the Int sig from WalkerA, or (b) emitting
+    // `partial def walker` because the scope-naive lookup hit the
+    // wrong contract and the emit fell through.
+    assert!(
+        b_lean.contains("walker") && (b_lean.contains("List Int") || b_lean.contains("(xs :")),
+        "WalkerB.walker must carry the List<Int> signature, not WalkerA's Int sig:\n{b_lean}"
+    );
+    assert!(
+        !b_lean.contains("partial def walker"),
+        "WalkerB.walker must not regress to `partial def` — scope-naive lookup \
+         leaked the wrong contract:\n{b_lean}"
+    );
+    // Defence: WalkerA must not pick up WalkerB's List signature.
+    assert!(
+        !a_lean.contains("List Int"),
+        "WalkerA.walker leaked WalkerB's List signature:\n{a_lean}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn proof_export_cross_module_refined_types_keep_distinct_predicates() {
+    // Review findings 2 + 3 (round 2): two modules each declaring a
+    // refined `Natural` (different predicates) must each carry its
+    // own predicate into the Lean / Dafny export. Pre-fix
+    // `populate_refined_types` keyed `refined_types` by bare name
+    // and called the unscoped `refinement_info_for` — both `A` and
+    // `B` ended up sharing whichever predicate walked first. The
+    // canonical-key + scoped-info path gives each module its own
+    // slot; `find_refined_type_scoped` then resolves bare lookups
+    // inside each module's emit pass to the local entry.
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let root = temp_output_dir("aver-proof-cross-module-refined");
+    std::fs::create_dir_all(&root).expect("create root");
+
+    std::fs::write(
+        root.join("AAA.av"),
+        "module AAA\n\
+         \x20   exposes [fromInt]\n\
+         \x20   exposes opaque [Natural]\n\
+         \x20   intent = \"Module AAA's Natural — non-negative.\"\n\
+         \x20   effects []\n\
+         \n\
+         record Natural\n\
+         \x20   value: Int\n\
+         \n\
+         fn fromInt(n: Int) -> Result<Natural, String>\n\
+         \x20   ? \"Smart constructor — non-negative.\"\n\
+         \x20   match n >= 0\n\
+         \x20       true  -> Result.Ok(Natural(value = n))\n\
+         \x20       false -> Result.Err(\"AAA: must be non-negative\")\n",
+    )
+    .expect("write AAA.av");
+
+    std::fs::write(
+        root.join("BBB.av"),
+        "module BBB\n\
+         \x20   exposes [fromInt]\n\
+         \x20   exposes opaque [Natural]\n\
+         \x20   intent = \"Module BBB's Natural — at least 10.\"\n\
+         \x20   effects []\n\
+         \n\
+         record Natural\n\
+         \x20   value: Int\n\
+         \n\
+         fn fromInt(n: Int) -> Result<Natural, String>\n\
+         \x20   ? \"Smart constructor — at least 10.\"\n\
+         \x20   match n >= 10\n\
+         \x20       true  -> Result.Ok(Natural(value = n))\n\
+         \x20       false -> Result.Err(\"BBB: must be >= 10\")\n",
+    )
+    .expect("write BBB.av");
+
+    std::fs::write(
+        root.join("entry.av"),
+        "module Entry\n\
+         \x20   depends [AAA, BBB]\n\
+         \x20   intent = \"Touches both Naturals so both surface in the proof IR.\"\n\
+         \n\
+         fn main() -> Int\n\
+         \x20   0\n",
+    )
+    .expect("write entry.av");
+
+    let out_dir = root.join("out");
+    let proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("-o")
+        .arg(&out_dir)
+        .output()
+        .expect("aver proof");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let aaa_lean = std::fs::read_to_string(out_dir.join("AAA.lean")).expect("read AAA.lean");
+    let bbb_lean = std::fs::read_to_string(out_dir.join("BBB.lean")).expect("read BBB.lean");
+
+    // AAA's Natural carries `>= 0`; BBB's carries `>= 10`. Each
+    // module's emit pass must resolve its own predicate, not the
+    // other's. Before the scope fix, populate kept only the first
+    // walked predicate under bare key `Natural` and both modules
+    // emitted the same subtype.
+    assert!(
+        aaa_lean.contains("abbrev Natural") && aaa_lean.contains(">= 0"),
+        "AAA.lean must abbrev Natural with `>= 0`; got:\n{aaa_lean}"
+    );
+    assert!(
+        bbb_lean.contains("abbrev Natural") && bbb_lean.contains(">= 10"),
+        "BBB.lean must abbrev Natural with `>= 10`; got:\n{bbb_lean}"
+    );
+    // Defense in depth: AAA's emit must not carry BBB's predicate
+    // or vice versa.
+    assert!(
+        !aaa_lean.contains(">= 10"),
+        "AAA.lean leaked BBB's predicate; got:\n{aaa_lean}"
+    );
+    assert!(
+        !bbb_lean.contains("n >= 0 "),
+        "BBB.lean leaked AAA's predicate; got:\n{bbb_lean}"
+    );
+
+    // Round-3 finding 1: the prior round only checked Lean. `pick_
+    // witness` was un-scoped and tried only `[0, 1, -1]` candidates,
+    // so `BBB.Natural`'s `n >= 10` got `witness = None` and Dafny
+    // silently fell back to `witness 0` — which violates the
+    // predicate. The scoped picker now (a) scopes the smart-ctor
+    // walk to the same module and (b) sweeps higher candidates.
+    let dafny_out = root.join("out-dafny");
+    let dafny_proof = Command::new(aver_bin)
+        .current_dir(&root)
+        .arg("proof")
+        .arg("entry.av")
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&dafny_out)
+        .output()
+        .expect("aver proof --backend dafny");
+    assert!(
+        dafny_proof.status.success(),
+        "`aver proof --backend dafny` failed:\n{}",
+        format_output(&dafny_proof)
+    );
+
+    let aaa_dfy = std::fs::read_to_string(dafny_out.join("AAA.dfy")).expect("read AAA.dfy");
+    let bbb_dfy = std::fs::read_to_string(dafny_out.join("BBB.dfy")).expect("read BBB.dfy");
+
+    assert!(
+        aaa_dfy.contains("type Natural") && aaa_dfy.contains("n >= 0"),
+        "AAA.dfy must declare `type Natural` with `n >= 0`; got:\n{aaa_dfy}"
+    );
+    assert!(
+        bbb_dfy.contains("type Natural") && bbb_dfy.contains("n >= 10"),
+        "BBB.dfy must declare `type Natural` with `n >= 10`; got:\n{bbb_dfy}"
+    );
+    let bbb_witness_line = bbb_dfy
+        .lines()
+        .find(|l| l.contains("type Natural"))
+        .expect("BBB.dfy must declare `type Natural`");
+    assert!(
+        !bbb_witness_line.contains("witness 0"),
+        "BBB.Natural with `n >= 10` must NOT fall back to `witness 0`; \
+         got line:\n{bbb_witness_line}"
+    );
+
+    // Round-4 finding 3: text checks aren't enough — the witness
+    // must actually satisfy the predicate or Dafny rejects the
+    // subset type at verify time. Run `dafny verify` on the
+    // generated project to catch unsound witnesses going forward.
+    // Skipped silently when dafny isn't on PATH (matches the
+    // pattern used by `assert_dafny_verifies`).
+    if Command::new("dafny").arg("--version").output().is_ok() {
+        let verify = Command::new("dafny")
+            .current_dir(&dafny_out)
+            .arg("verify")
+            .arg("Entry.dfy")
+            .output()
+            .expect("dafny verify");
+        assert!(
+            verify.status.success(),
+            "`dafny verify` rejected the cross-module refinement output \
+             — most likely a witness violates its predicate:\n{}",
+            format_output(&verify)
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn proof_export_lake_builds_red_black_tree_after_singleton_and_fuel_gates() {
+    // Issue #128: red_black_tree.av carried 44 lake errors after the
+    // #123 path-shadow / `.val` fixes. The diagnosis in the issue
+    // text (anonymous `{...}` constructor notation) didn't match the
+    // real output — match arms already used qualified positional
+    // syntax. The actual failure was two coupled emit shapes:
+    //
+    //   1. Laws with singleton-domain givens and a RHS that didn't
+    //      reference any given (`checkRight L V R = Tree.Black Empty
+    //      1 Empty`) emit a `∀ L V R, …` universal that's vacuous or
+    //      outright false. The `induction L with …` fallback chose
+    //      by the auto-proof matcher then failed to close.
+    //   2. Laws calling fuel-bounded fns that the proof-mode
+    //      classifier rejected (`size`, `toSorted`) emit
+    //      `induction t with …` against `__fuel`-wrapped helpers
+    //      whose recursive shape `simp` can't drive.
+    //
+    // Both gated at the universal emit step; sample / checked_domain
+    // lemmas remain (concrete inputs stay decidable). Lake build
+    // succeeds; `aver verify` runtime hits every declared case.
+    //
+    // Sorry budget 1 (was 2): the `detect.rs` resolved-subject fix (which lets
+    // Dafny/Z3 prove the Peano-fold homomorphism family) also admits
+    // `size` / `toSorted`'s structural recursion into the proof subset, so
+    // their two universals EMIT a `∀ … induction t with …` proof rather than
+    // gating to sample-only. On Lean those can't close on the ladder — the
+    // `__fuel`-wrapped recursion needs a fuel-saturation lemma the auto
+    // template lacks.
+    //
+    // The drop 2→1 is the discovery feedback loop, część A: `toSorted_law_
+    // sizePreserved` now closes its TACTIC BLOCK via the fast path `simp only
+    // [size_law_equalsSortedLen] <;> omega`, referencing the earlier sibling
+    // theorem — so it no longer emits its OWN `sorry`. This is a textual-count
+    // drop only, NOT a new genuine universal: `size_law_equalsSortedLen` still
+    // `sorry`s, so the consumer inherits `sorryAx` and the `universal` metric
+    // correctly stays false for both (verified via `#print axioms`). The
+    // honest coverage number is unchanged; only the weaker sorry-count metric
+    // moved. Z3 supplies the missing induction automatically, which is why the
+    // same laws DO prove on the Dafny backend.
+    assert_proof_builds_with_sorry_budget(
+        "examples/data/red_black_tree.av",
+        "aver-proof-red-black-tree",
+        1,
+    );
+}
+
+#[test]
+fn proof_export_gates_trace_projection_law_lhs_as_runtime_only() {
+    // Issue #127: a `verify fn trace law` whose LHS projects through
+    // `.trace.{event,group,branch}` references the runtime trace
+    // buffer, not the lifted fn's return. The lifted Lean / Dafny fn
+    // has no `.trace` field — emitting `fn().trace.event 0` as a
+    // theorem (universal or sample) produces invalid-field-notation
+    // errors. Backends now emit a `runtime-only` comment instead and
+    // skip the universal/sample theorem. The `aver verify` runtime
+    // path still exercises the law under its stubs.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let lean_dir = temp_output_dir("aver-proof-issue127-lean");
+    let proof = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/formal/hostile_order_axis.av")
+        .arg("-o")
+        .arg(&lean_dir)
+        .output()
+        .expect("expected `aver proof` to run");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let entry_text = std::fs::read_to_string(lean_dir.join("HostileOrderAxis.lean"))
+        .expect("read HostileOrderAxis.lean");
+
+    assert!(
+        entry_text.contains(
+            "-- verify law rollPair.firstEventOfFirstBranch: \
+             trace-projection LHS is runtime-only"
+        ),
+        "expected runtime-only gate marker for firstEventOfFirstBranch in \
+         entry Lean; got:\n{entry_text}"
+    );
+    assert!(
+        entry_text.contains(
+            "-- verify law rollPair.firstEventOfSecondBranch: \
+             trace-projection LHS is runtime-only"
+        ),
+        "expected runtime-only gate marker for firstEventOfSecondBranch in \
+         entry Lean; got:\n{entry_text}"
+    );
+    // Defense in depth: the universal/sample theorems must not slip
+    // back in — their LHS triggers Lean's invalid-field-notation
+    // diagnostic on the bare `(Int × Int)` return.
+    assert!(
+        !entry_text.contains("rollPair_law_firstEventOfFirstBranch"),
+        "universal theorem leaked through the trace-projection gate; \
+         got:\n{entry_text}"
+    );
+    assert!(
+        !entry_text.contains(").event 0"),
+        "trace projection chain leaked into elaborated Lean; got:\n{entry_text}"
+    );
+    assert!(
+        !entry_text.contains("EffectEvent"),
+        "EffectEvent literal leaked into elaborated Lean (gate should \
+         keep it out entirely); got:\n{entry_text}"
+    );
+
+    let _ = std::fs::remove_dir_all(&lean_dir);
+
+    let dafny_dir = temp_output_dir("aver-proof-issue127-dafny");
+    let proof = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/formal/hostile_order_axis.av")
+        .arg("--backend")
+        .arg("dafny")
+        .arg("-o")
+        .arg(&dafny_dir)
+        .output()
+        .expect("expected `aver proof --backend dafny` to run");
+    assert!(
+        proof.status.success(),
+        "`aver proof --backend dafny` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let dafny_entry = std::fs::read_to_string(dafny_dir.join("HostileOrderAxis.dfy"))
+        .expect("read HostileOrderAxis.dfy");
+
+    assert!(
+        dafny_entry.contains(
+            "// Law rollPair.firstEventOfFirstBranch: trace-projection LHS is runtime-only"
+        ),
+        "expected Dafny runtime-only gate marker; got:\n{dafny_entry}"
+    );
+    assert!(
+        !dafny_entry.contains("lemma {:fuel rollPair, 5} rollPair_firstEventOfFirstBranch"),
+        "universal lemma leaked through the trace-projection gate; got:\n{dafny_entry}"
+    );
+    assert!(
+        !dafny_entry.contains(".trace.group"),
+        "trace projection chain leaked into elaborated Dafny; got:\n{dafny_entry}"
+    );
+    assert!(
+        !dafny_entry.contains("EffectEvent"),
+        "EffectEvent literal leaked into elaborated Dafny (gate should \
+         keep it out entirely); got:\n{dafny_entry}"
+    );
+
+    let _ = std::fs::remove_dir_all(&dafny_dir);
+}
