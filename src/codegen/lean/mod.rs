@@ -1520,6 +1520,31 @@ fn transpile_unified(
         .collect();
     let recursive_names = recursive_pure_fn_names(ctx);
     let recursive_types = recursive_type_names(ctx);
+    // Pure-fn param types + every type def's field types feed the
+    // entries-measure emission scan: an entries-list spelling
+    // (`Map<K, T>` / `List<Tuple<K, T>>`) may appear only in fn
+    // signatures or in ANOTHER type's fields, never in `T`'s own
+    // fields, yet the chooser (`type_measure_expr`) would reference
+    // `averMeasure<T>Entries_<K>` for it all the same.
+    let measure_sig_type_refs: Vec<String> = pure_fns(ctx)
+        .iter()
+        .flat_map(|fd| fd.params.iter().map(|(_, ty)| ty.clone()))
+        .chain(
+            ctx.modules
+                .iter()
+                .flat_map(|m| m.type_defs.iter())
+                .chain(ctx.type_defs.iter())
+                .flat_map(|td| match td {
+                    crate::ast::TypeDef::Sum { variants, .. } => variants
+                        .iter()
+                        .flat_map(|v| v.fields.iter().cloned())
+                        .collect::<Vec<_>>(),
+                    crate::ast::TypeDef::Product { fields, .. } => {
+                        fields.iter().map(|(_, ty)| ty.clone()).collect()
+                    }
+                }),
+        )
+        .collect();
 
     // Pure fns are SCC-routed per scope (per dependent module + entry)
     // independently — shared `route_pure_components_per_scope` handles
@@ -1626,8 +1651,11 @@ fn transpile_unified(
                         toplevel::type_def_name(td),
                     ));
                     if matches!(emit_mode, LeanEmitMode::Proof)
-                        && let Some(measure) =
-                            toplevel::emit_recursive_measure(td, &recursive_types)
+                        && let Some(measure) = toplevel::emit_recursive_measure(
+                            td,
+                            &recursive_types,
+                            &measure_sig_type_refs,
+                        )
                     {
                         body_sections.push(measure);
                     }
@@ -1683,7 +1711,8 @@ fn transpile_unified(
                 toplevel::type_def_name(td),
             ));
             if matches!(emit_mode, LeanEmitMode::Proof)
-                && let Some(measure) = toplevel::emit_recursive_measure(td, &recursive_types)
+                && let Some(measure) =
+                    toplevel::emit_recursive_measure(td, &recursive_types, &measure_sig_type_refs)
             {
                 entry_body_sections.push(measure);
             }
