@@ -881,14 +881,18 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 /// 9. `FiniteDomainCases { givens }` — every given ranges over a
 ///    closed finite domain (Bool / fieldless enum, product ≤ 16);
 ///    closes by exhaustive `cases` enumeration.
-/// 10. `IntDecimalRoundtrip { … }` — canonical decimal-Int
+/// 10. `RingIdentity { unfold_fns }` — unconditional ring identity
+///     over Int-component records (cross-multiplication equality);
+///     runs before the prelude-simp rung, which would otherwise claim
+///     the shape and park it on a caught sorry.
+/// 11. `IntDecimalRoundtrip { … }` — canonical decimal-Int
 ///     parse/serialize roundtrip over a recognized string-pos scanner;
 ///     runs before the prelude-simp rung, which would otherwise claim
 ///     the shape and park it on a caught sorry.
-/// 11. `SimpOverPreludeLemmas { … }` — builtin-roundtrip shape; the
+/// 12. `SimpOverPreludeLemmas { … }` — builtin-roundtrip shape; the
 ///     Lean backend renders it AFTER its legacy chain, so it fires
 ///     exactly where the bare-`sorry` universal used to.
-/// 12. `BackendDispatch` — backend's ad-hoc chain decides.
+/// 13. `BackendDispatch` — backend's ad-hoc chain decides.
 ///
 /// (The induction/spec-equivalence/Map families detected between
 /// these rungs are documented at their detector sites below.)
@@ -1101,6 +1105,22 @@ fn classify_law_strategy(
     {
         return ProofStrategy::FiniteDomainCases { givens };
     }
+    // Unconditional ring identity over Int-component records — runs
+    // BEFORE the prelude-simp rung because that rung would otherwise
+    // claim the shape (record givens, non-recursive pure cone) and
+    // park it on a caught sorry: its minimal simp set has no AC-ring
+    // normalization, and the permutational package this strategy
+    // emits cannot be added there (it would loop or destroy the
+    // normal forms other strategies rely on). Every earlier rung has
+    // already declined: LinearArithmetic rejects non-Int record
+    // givens, EnumConstantFold needs constructor-literal-pinned
+    // params, FiniteDomainCases needs closed finite domains — so the
+    // pin cannot steal a law a cheaper strategy closes today.
+    if law.when.is_none()
+        && let Some(unfold_fns) = detect_ring_identity(law, fn_name, inputs)
+    {
+        return ProofStrategy::RingIdentity { unfold_fns };
+    }
     // Decimal-Int parse/serialize roundtrip — runs BEFORE the prelude-
     // simp rung because that rung would otherwise claim the shape (the
     // lhs cone is fuel-wrapped with measure-closed args) and park it on
@@ -1134,6 +1154,7 @@ mod induction;
 mod int_decimal_roundtrip;
 mod map_laws;
 mod refinement;
+mod ring;
 mod simp;
 mod spec_equivalence;
 mod wrapper_laws;
@@ -1145,6 +1166,7 @@ use induction::*;
 use int_decimal_roundtrip::*;
 use map_laws::*;
 use refinement::*;
+use ring::*;
 use simp::*;
 use spec_equivalence::*;
 use wrapper_laws::*;

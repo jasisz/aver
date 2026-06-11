@@ -842,6 +842,41 @@ pub enum ProofStrategy {
         /// Serializer the law's lhs feeds the parser (`toString`).
         serializer_fn: String,
     },
+    /// Unconditional ring identity over Int-component records — the
+    /// algebra-law family of an exact-rationals library (a record
+    /// with Int numerator/denominator fields, non-normalizing
+    /// arithmetic, equality by cross-multiplication): add/mul
+    /// commutativity and associativity, distributivity, neg/sub
+    /// normal forms, identity elements. The law has no `when`, every
+    /// given is `Int` or a record whose fields are ALL `Int` (at
+    /// least one such record given), and the claim's whole unfold
+    /// cone is non-recursive pure arithmetic — record constructions
+    /// / field projections, Int literals, `+`, `-`, `*`, unary
+    /// negation — with the equality bottoming out in Int `==`
+    /// (a Bool comparator fn applied at the law root, compared to
+    /// `true`) or direct value equality of two such arithmetic
+    /// expressions. Both sides are then polynomial identities:
+    /// distributing products over sums and AC-normalizing monomials
+    /// and sums makes the two sides' monomial multisets identical,
+    /// no coefficient collection needed.
+    ///
+    /// The Lean emit is `intro <givens>; first | (simp [<unfold
+    /// cone>, <fixed core AC-ring lemma package>]; done) | sorry` —
+    /// the honest caught-`sorry` floor; never `native_decide`, never
+    /// a build error. The package is SCOPED TO THIS STRATEGY's
+    /// emission: its permutational rewrites (`Int.mul_comm`,
+    /// `Int.add_comm`, …) loop or destroy the normal forms other
+    /// strategies' simp sets rely on, so they are never added to the
+    /// shared prelude registry. Dafny needs no special handling —
+    /// Z3 decides these nonlinear identities push-button — and
+    /// treats the pin like `BackendDispatch` (exports stay
+    /// byte-identical). Demonstrated by `examples/data/rational.av`.
+    RingIdentity {
+        /// Ordered fn unfold list — law subject fn first, then the
+        /// transitively-reached callees (sorted). Source names;
+        /// backends translate to their lemma vocabulary.
+        unfold_fns: Vec<String>,
+    },
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,

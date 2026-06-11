@@ -452,3 +452,65 @@ fn proof_export_builds_result_default_cone_when_lake_is_available() {
         1,
     );
 }
+
+#[test]
+fn proof_export_builds_rational_ring_laws_kernel_genuine_when_lake_is_available() {
+    // The exact-rationals algebra family (`examples/data/rational.av`):
+    // ten unconditional ring identities over the cross-multiplied
+    // Fraction record. Without the `RingIdentity` strategy these land
+    // on the prelude-simp rung, which closes only the identity-element
+    // family (zero/one neutral, zero absorbs, double negation) via the
+    // default simp set and parks the whole multi-variable nonlinear
+    // family — both commutativities, both associativities,
+    // distributivity, sub-equals-add-neg — on caught sorries (6 of
+    // 10). The strategy's fixed core AC-ring lemma package closes all
+    // ten kernel-genuine. Budgets exact in both directions:
+    // - `sorries == 0` — the revert signal (dropping the strategy
+    //   brings the 6 caught sorries back);
+    // - `universal == true` — keys on the #print-axioms audit
+    //   ([propext, Quot.sound] only), so a `native_decide` sneaking
+    //   into a law theorem fails here even at 0 sorries;
+    // - `when_universal == 0` — every law is unconditional (that is
+    //   the point of the non-normalizing representation), so the
+    //   quarantine lane must stay empty.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping rational ring-laws proof test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-rational-ring");
+    let (summary, run) = run_lean_check_json("examples/data/rational.av", &output_dir, 0, &[]);
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "all ten ring laws must close (a caught sorry means the AC-ring \
+         package stopped normalizing a law).\n{}",
+        format_output(&run)
+    );
+    assert_eq!(summary["passed"].as_bool(), Some(true));
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "ring laws must be kernel-genuine — #print-axioms within the \
+         whitelist, no native_decide, no Mathlib.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["when_universal"].as_u64(),
+        Some(0),
+        "no when-laws in the file; the quarantine lane must stay empty.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+#[test]
+fn proof_dafny_verifies_rational_ring_laws_when_dafny_is_available() {
+    // Z3 decides all ten nonlinear ring identities push-button — the
+    // `RingIdentity` strategy is Lean-only and Dafny treats the pin as
+    // `BackendDispatch`, so this pins the family's Dafny floor at
+    // 0 errors / 0 axioms. `passed` is asserted explicitly because
+    // this family's historical regression mode is a prover TIMEOUT on
+    // concrete-literal sample asserts (exit-status-only, 0 parsed
+    // errors), which an errors-only budget cannot catch.
+    assert_dafny_verifies_and_passes("examples/data/rational.av", "aver-dafny-rational-ring");
+}

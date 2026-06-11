@@ -1,0 +1,112 @@
+module Rational
+    intent =
+        "Exact rational numbers as plain data: an Int numerator over an Int"
+        "denominator, with no normalization anywhere -- no gcd, no sign fixing,"
+        "no recursion. Two fractions denote the same value exactly when they"
+        "cross-multiply to the same product, so every algebra law below is an"
+        "unconditional ring identity: it holds for every numerator and"
+        "denominator, zero and negatives included, with no `when` premise."
+    effects [Console]
+
+record Fraction
+    top: Int
+    bottom: Int
+
+fn zeroFraction() -> Fraction
+    ? "The fraction zero, written 0/1."
+    Fraction(top = 0, bottom = 1)
+
+fn oneFraction() -> Fraction
+    ? "The fraction one, written 1/1."
+    Fraction(top = 1, bottom = 1)
+
+fn plus(a: Fraction, b: Fraction) -> Fraction
+    ? "Fraction addition without normalization: a/b + c/d = (ad + cb)/(bd)."
+    Fraction(top = a.top * b.bottom + b.top * a.bottom, bottom = a.bottom * b.bottom)
+
+verify plus
+    plus(Fraction(top = 1, bottom = 2), Fraction(top = 1, bottom = 3)) => Fraction(top = 5, bottom = 6)
+    plus(Fraction(top = -1, bottom = 2), Fraction(top = 1, bottom = 2)) => Fraction(top = 0, bottom = 4)
+
+verify plus law commutative
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(plus(a, b), plus(b, a)) => true
+
+verify plus law associative
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
+    given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
+    sameValue(plus(plus(a, b), c), plus(a, plus(b, c))) => true
+
+verify plus law zeroIsNeutral
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(plus(a, zeroFraction()), a) => true
+
+fn times(a: Fraction, b: Fraction) -> Fraction
+    ? "Fraction multiplication without normalization: (ac)/(bd)."
+    Fraction(top = a.top * b.top, bottom = a.bottom * b.bottom)
+
+verify times
+    times(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 3)) => Fraction(top = 2, bottom = 6)
+    times(Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1)) => Fraction(top = 0, bottom = 4)
+
+verify times law commutative
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(times(a, b), times(b, a)) => true
+
+verify times law associative
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
+    given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
+    sameValue(times(times(a, b), c), times(a, times(b, c))) => true
+
+verify times law distributesOverPlus
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
+    given c: Fraction = [Fraction(top = 1, bottom = 1), Fraction(top = -2, bottom = -7), Fraction(top = 3, bottom = 8)]
+    sameValue(times(a, plus(b, c)), plus(times(a, b), times(a, c))) => true
+
+verify times law oneIsNeutral
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(times(a, oneFraction()), a) => true
+
+verify times law zeroAbsorbs
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(times(a, zeroFraction()), zeroFraction()) => true
+
+fn negate(a: Fraction) -> Fraction
+    ? "Fraction negation: flips the numerator sign, keeps the denominator."
+    Fraction(top = 0 - a.top, bottom = a.bottom)
+
+verify negate law involutive
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 0, bottom = 1), Fraction(top = 5, bottom = -3)]
+    sameValue(negate(negate(a)), a) => true
+
+fn minus(a: Fraction, b: Fraction) -> Fraction
+    ? "Fraction subtraction without normalization: a/b - c/d = (ad - cb)/(bd)."
+    Fraction(top = a.top * b.bottom - b.top * a.bottom, bottom = a.bottom * b.bottom)
+
+verify minus law equalsPlusNegate
+    given a: Fraction = [Fraction(top = 1, bottom = 2), Fraction(top = -3, bottom = 4), Fraction(top = 5, bottom = -3)]
+    given b: Fraction = [Fraction(top = 0, bottom = 1), Fraction(top = 2, bottom = 5), Fraction(top = -1, bottom = 2)]
+    sameValue(minus(a, b), plus(a, negate(b))) => true
+
+fn sameValue(a: Fraction, b: Fraction) -> Bool
+    ? "Cross-multiplication equality: a/b equals c/d exactly when ad == cb."
+    a.top * b.bottom == b.top * a.bottom
+
+verify sameValue
+    sameValue(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 4)) => true
+    sameValue(Fraction(top = 1, bottom = 2), Fraction(top = 2, bottom = 3)) => false
+    sameValue(Fraction(top = -1, bottom = 2), Fraction(top = 1, bottom = -2)) => true
+
+fn main()
+    ! [Console.print]
+    half = Fraction(top = 1, bottom = 2)
+    third = Fraction(top = 1, bottom = 3)
+    total = plus(half, third)
+    product = times(half, third)
+    Console.print("1/2 + 1/3 = {total.top}/{total.bottom}")
+    Console.print("1/2 * 1/3 = {product.top}/{product.bottom}")
