@@ -3028,6 +3028,7 @@ fn emit_verify_law_block(
             &rhs_template,
             when_template.as_deref(),
             &lifted_vars,
+            false,
         );
         // Statement-class marker — the channel `aver proof --check`'s
         // `universal` metric keys on (see `LAW_CLASS_MARKER_PREFIX`).
@@ -3377,13 +3378,21 @@ pub(crate) fn law_as_lemma_statement(
 /// A `when`-premise alone (`… = true ->`) does NOT bound the statement —
 /// it is a conditional but still universally quantified claim (the
 /// refinement-lifted case, where every given's domain premise is dropped).
-fn law_theorem_prop(
+///
+/// `omit_domain` is the when-universal quarantine lane's statement mode
+/// (see `lean::universal_lane`): the SAME builder renders the lane twin
+/// — `∀ givens, <when> = true -> claim` — by skipping the sampled-domain
+/// disjunctions entirely, so the twin's statement provably differs from
+/// the manifest theorem only by those premises (zero second renderer).
+/// The manifest pipeline always passes `false`.
+pub(super) fn law_theorem_prop(
     law: &VerifyLaw,
     ctx: &CodegenContext,
     lhs_template: &str,
     rhs_template: &str,
     when_template: Option<&str>,
     lifted_vars: &std::collections::HashMap<String, String>,
+    omit_domain: bool,
 ) -> (String, bool) {
     let mut premises = Vec::new();
     let when_redundant_with_lifts = law
@@ -3393,7 +3402,7 @@ fn law_theorem_prop(
             crate::codegen::common::when_is_redundant_with_refinement_lifts(w, lifted_vars, ctx)
         })
         .unwrap_or(false);
-    if law.when.is_some() {
+    if law.when.is_some() && !omit_domain {
         // Lifted vars are quantified over the refinement record
         // (`a : Natural`), not the carrier `Int`, so the disjunctive
         // domain premise (`a = 0 ∨ a = 1 ∨ …`) is type-mismatched
