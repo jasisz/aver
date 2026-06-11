@@ -2,12 +2,23 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.24.2 (unreleased)
+## 0.25.0 (unreleased)
+
+### Added
+
+- **The auto-prover closes far more laws on its own.** New strategies cover: laws whose givens range over finite domains (`Bool`, field-less enums), decimal render/parse roundtrips (the prover synthesizes the scanner lemmas it needs), laws that follow from built-in string/int facts (slicing, `Int.fromString`/`String.fromInt`), ground laws over fixed enum constructors, `Int.max`/`Int.min` arithmetic, general-key `Map` laws, and laws whose pipelines use `?`.
+- **Your proven laws now help prove your later laws.** A proved `verify ... law` becomes ammunition for the laws below it in the same file — decomposing a hard law into helper laws written in plain Aver is now a working proof strategy. An opt-in `aver proof --discover` mode additionally conjectures and kernel-proves helper lemmas automatically.
+- **Recursive functions over your own types prove termination structurally** — no more fuel wrappers blocking universal proofs for tree-shaped data, and mutual recursion (e.g. quicksort) gets genuine well-founded termination with auto-proved length lemmas.
+
+### Changed
+
+- **`aver proof --check` reports `universal: true` only for genuinely universal theorems.** Bounded `when`-law checks still pass — they just no longer count as proven-for-all-inputs.
 
 ### Fixed
 
-- **`aver proof --check` reports `universal: true` only for genuinely universal theorems.** A law with a `when` premise over plain (non-refinement) givens exports a domain-bounded statement; previously, if tactics happened to prove that bounded statement, the law could be credited as universal. The emitted Lean now carries an explicit per-theorem statement class and the checker credits only universal-class theorems — bounded `when`-law checks still pass, they just no longer count as proven-for-all-inputs.
-- **Functions over tuples get correct termination fuel in Lean proofs.** Types spelled `Tuple<...>` were missed by the proof exporter's measure synthesis, so deeply nested tuple-carrying values (e.g. JSON object entries) could exhaust fuel and make the exported model disagree with the program at depth. Both tuple spellings now share one deep-measure path.
+- **Tuple-carrying functions get correct termination fuel in Lean exports** — deeply nested values (e.g. JSON object entries) no longer make the exported model disagree with the running program.
+- **wasm-gc: `String.split`/`String.join` used inside string interpolation now compile correctly.**
+- Example corpus honesty: laws that were really single-example checks (red-black tree, `order_total` floats, oracle-pinned file-store) are now plain `verify` blocks or trace checks.
 
 ## 0.24.1 — 2026-06-06
 
