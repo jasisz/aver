@@ -5315,4 +5315,114 @@ verify weird law weirdSpec
             super::universal_lane::generate(&ctx, "entry-content-seed", Some("noSuchLaw"));
         assert_eq!(unmatched[0].module, law.module);
     }
+
+    /// When-universal quarantine lane, bridge-premise family, render
+    /// level (no lake): the fresh-named fixture's two bridge-shaped
+    /// when-laws (zip-rev under length equality, count-insert under a
+    /// negated equality) each get exactly one lane twin in the TRUE
+    /// universal form, with zero `sorry` tokens, the `universal`
+    /// law-class marker, and the probe-proven proof kit (use-side
+    /// inversion bridge, reintroduction bridge, snoc-distribution aux
+    /// lemma — never a sorry). The sabotage hook stays per-law.
+    #[test]
+    fn universal_lane_renders_bridge_premise_twins() {
+        let src = include_str!("../../../tests/fixtures/when_lane_bridge.av");
+        let ctx = ctx_from_source(src, "BridgeLane");
+        let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None);
+        let mut labels: Vec<&str> = lane.iter().map(|l| l.label.as_str()).collect();
+        labels.sort_unstable();
+        assert_eq!(
+            labels,
+            vec!["duoUp.duoFlip", "tallyUp.tallyWedgeNeq"],
+            "exactly the two bridge-premise figures are recognized (exact in both directions)"
+        );
+        let zip = lane.iter().find(|l| l.label == "duoUp.duoFlip").unwrap();
+        assert_eq!(zip.theorem, "duoUp_law_duoFlip_universal");
+        // L2 of the iron guard: no sorry carrier — in particular the
+        // snoc-distribution aux lemma is a rendered template, not a hole.
+        assert!(!zip.content.contains("sorry"));
+        assert!(
+            zip.content
+                .contains("private theorem duoUp_law_duoFlip_universal_snoc")
+        );
+        // The four probe mechanics are all present: use-side bridge,
+        // reintroduction bridge, premise stepping, vacuous discharge.
+        assert!(
+            zip.content
+                .contains("duoUp_law_duoFlip_universal_bridge_eq")
+        );
+        assert!(
+            zip.content
+                .contains("duoUp_law_duoFlip_universal_bridge_refl")
+        );
+        // M0 marker + TRUE universal statement (when kept, domains gone).
+        assert!(
+            zip.content
+                .contains("-- aver:law-class duoUp_law_duoFlip_universal universal")
+        );
+        assert!(
+            zip.content
+                .contains("likeNat (bulk xs) (bulk ys) = true ->")
+        );
+        assert!(!zip.content.contains("xs = [] ∨"));
+        let tally = lane
+            .iter()
+            .find(|l| l.label == "tallyUp.tallyWedgeNeq")
+            .unwrap();
+        assert!(!tally.content.contains("sorry"));
+        assert!(tally.content.contains("unlikeNat p q = true ->"));
+        // Sabotage stays per-law: only the matching module changes.
+        let sabotaged =
+            super::universal_lane::generate(&ctx, "entry-content-seed", Some("duoFlip"));
+        let zip_sab = sabotaged
+            .iter()
+            .find(|l| l.label == "duoUp.duoFlip")
+            .unwrap();
+        assert!(zip_sab.content.contains("averLaneSabotageInjectedByTest"));
+        assert_ne!(zip_sab.module, zip.module);
+        let tally_sab = sabotaged
+            .iter()
+            .find(|l| l.label == "tallyUp.tallyWedgeNeq")
+            .unwrap();
+        assert_eq!(tally_sab.module, tally.module);
+    }
+
+    /// ACL2 free-variables gate: a bridge premise whose variable is NOT
+    /// bound by the law's lhs (here `q` appears only in the rhs) makes
+    /// conditional rewriting guess — the lane must DECLINE, even though
+    /// every participating fn shape would otherwise match the
+    /// neq-count-insert figure.
+    #[test]
+    fn universal_lane_declines_free_variable_premise() {
+        let src = include_str!("../../../tests/fixtures/when_lane_bridge.av");
+        // Swap the count-insert law's sides: lhs `tallyUp(p, ws)` no
+        // longer binds the premise variable `q`.
+        let swapped = src.replace(
+            "    tallyUp(p, wedge(q, ws)) => tallyUp(p, ws)",
+            "    tallyUp(p, ws) => tallyUp(p, wedge(q, ws))",
+        );
+        assert_ne!(swapped, src);
+        let ctx = ctx_from_source(&swapped, "BridgeLane");
+        let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None);
+        assert!(
+            lane.iter().all(|l| l.label != "tallyUp.tallyWedgeNeq"),
+            "premise variable q unbound by the lhs must decline the law"
+        );
+    }
+
+    /// Non-recognized boolRel: a premise over a recursive Bool fn that
+    /// does NOT mirror Prop equality (here the `rankLe` ≤-shape) is not
+    /// a bridge — the lane must decline the law.
+    #[test]
+    fn universal_lane_declines_non_bridge_predicate() {
+        let src = include_str!("../../../tests/fixtures/when_lane_bridge.av");
+        let lessy = src.replace("    when unlikeNat(p, q)", "    when rankLe(p, q)");
+        assert_ne!(lessy, src);
+        let ctx = ctx_from_source(&lessy, "BridgeLane");
+        let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None);
+        assert!(
+            lane.iter().all(|l| l.label != "tallyUp.tallyWedgeNeq"),
+            "a non-equality recursive Bool premise (≤-shape) must decline the law"
+        );
+    }
 }

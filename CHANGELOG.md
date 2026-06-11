@@ -2,14 +2,16 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
-## 0.25.0 (unreleased)
+## 0.25.0 (unreleased) — "The Method"
+
+The release where the prover learned to be steered by lemmas — named after the proof methodology of ACL2's Kaufmann & Moore, whose 30-year-old terrain this release kept rediscovering.
 
 ### Added
 
 - **The auto-prover closes far more laws on its own.** New strategies cover: laws whose givens range over finite domains (`Bool`, field-less enums), decimal render/parse roundtrips (the prover synthesizes the scanner lemmas it needs), laws that follow from built-in string/int facts (slicing, `Int.fromString`/`String.fromInt`), ground laws over fixed enum constructors, `Int.max`/`Int.min` arithmetic, general-key `Map` laws, and laws whose pipelines use `?`.
 - **Your proven laws now help prove your later laws.** A proved `verify ... law` becomes ammunition for the laws below it in the same file — decomposing a hard law into helper laws written in plain Aver is now a working proof strategy. An opt-in `aver proof --discover` mode additionally conjectures and kernel-proves helper lemmas automatically.
 - **Recursive functions over your own types prove termination structurally** — no more fuel wrappers blocking universal proofs for tree-shaped data, and mutual recursion (e.g. quicksort) gets genuine well-founded termination with auto-proved length lemmas.
-- **Conditional `when` laws over integer sign premises (`when n > 0` / `n < 0` / `n >= 0`) can now be proven universally** — genuinely, for every integer satisfying the premise, not just the sampled domain. `aver proof --check` reports the per-law count as `when_universal` in `--check-json` (details in `when_universal_laws.json`); the proofs live in a quarantined side build, so existing budgets and the bounded checks are untouched.
+- **Conditional `when` laws over integer sign premises (`when n > 0` / `n < 0` / `n >= 0`) and over equality premises on Peano-shaped naturals (length equality `when natEq(len(xs), len(ys))`, element equality `when eqNat(x, y)`, and their negations) can now be proven universally** — genuinely, for every input satisfying the premise, not just the sampled domain. `aver proof --check` reports the per-law count as `when_universal` in `--check-json` (details in `when_universal_laws.json`); the proofs live in a quarantined side build, so existing budgets and the bounded checks are untouched.
 
 ### Changed
 
