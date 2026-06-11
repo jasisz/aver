@@ -79,23 +79,53 @@ pub use crate::codegen::recursion::{ProofModeIssue, RecursionPlan};
 
 pub use toplevel::PROOF_FUEL_EXHAUSTED_MSG;
 
-/// Count fuel-exhaustion panic hits in captured `lake build` output.
+/// The marker every Lean runtime panic prints into captured build output.
+/// Empirically pinned against real `lake build` transcripts (both panic
+/// sites below produce it):
 ///
-/// The fuel wrappers' exhaustion arm is `panic! "<PROOF_FUEL_EXHAUSTED_MSG>"`,
-/// and Lean's `panic!` does NOT abort: at `native_decide` evaluation time it
-/// prints `PANIC at <fn> <file>:<line>: <msg>` (to lake's captured output) and
-/// returns the result type's `default` value. When BOTH sides of a bounded
-/// sample route through the model (`verify f(x) => g(x)` cases, every
-/// `_sample_N` / `_checked_domain` theorem), exhausted fuel reduces both sides
-/// to `default` and the kernel certifies a vacuous — possibly FALSE — equation
-/// while `lake` exits 0 with zero sorries. The panic line in the build output
-/// is the only trace, so `aver proof --check` charges ANY hit as a hard
-/// failure. Counts matching LINES (one panic prints exactly one line; the
-/// same wrapper can fire on several theorems).
-pub fn count_fuel_exhaustion_panics(output: &str) -> usize {
+/// ```text
+/// info: ././././FuelProbe.lean:27:0: PANIC at stepSum__fuel FuelProbe:8:9: Aver proof fuel exhausted
+/// PANIC at stepSumAcc__fuel FuelProbe:19:9: Aver proof fuel exhausted
+/// info: ././././PanicProbe.lean:11:0: PANIC at Char.toCode AverCommon:11:12: Char.toCode: string is empty
+/// ```
+///
+/// (lake prefixes the first diagnostic of a build step with `info: <loc>:`,
+/// later ones print raw — both carry `PANIC at `.)
+pub const LEAN_PANIC_LINE_MARKER: &str = "PANIC at ";
+
+/// Count model panic lines in captured `lake build` output.
+///
+/// Lean's `panic!` does NOT abort: at `native_decide` evaluation time it
+/// prints `PANIC at <fn> <file>:<line>: <msg>` (to lake's captured output)
+/// and returns the result type's `default` value. When BOTH sides of a
+/// bounded sample route through the model (`verify f(x) => g(x)` cases,
+/// every `_sample_N` / `_checked_domain` theorem), a panicking evaluation
+/// reduces both sides to `default` and the kernel certifies a vacuous —
+/// possibly FALSE — equation while `lake` exits 0 with zero sorries. The
+/// panic line in the build output is the only trace, so `aver proof --check`
+/// charges ANY hit as a hard failure.
+///
+/// Scans for the generic `PANIC at ` line marker, not a per-site message:
+/// the emitted exports contain `panic!` only at compiler-generated sites —
+/// the fuel wrappers' exhaustion arm ([`PROOF_FUEL_EXHAUSTED_MSG`]) and
+/// partial prelude builtins (e.g. `Char.toCode` on an empty string) — and
+/// every one of them shares the same panic-returns-`default` vacuity vector.
+/// A green check has no legitimate panic, and the generic marker also
+/// catches panics raised inside Lean's own stdlib (e.g. a `get!` deep in a
+/// future prelude helper) that a per-message scan could never enumerate.
+/// Counts matching LINES (one panic prints exactly one line; the same site
+/// can fire on several theorems).
+///
+/// Known false-positive boundary, accepted: on an ALREADY-FAILING build, a
+/// native_decide error can echo the false proposition, and a user string
+/// literal containing `PANIC at ` inside it would inflate the count (and
+/// set `model_panicked`). The verdict stays correct — the build already
+/// failed on exit status — so a spurious match can only turn a red redder,
+/// never a green red.
+pub fn count_model_panic_lines(output: &str) -> usize {
     output
         .lines()
-        .filter(|l| l.contains(PROOF_FUEL_EXHAUSTED_MSG))
+        .filter(|l| l.contains(LEAN_PANIC_LINE_MARKER))
         .count()
 }
 

@@ -596,10 +596,12 @@ const STRING_POS_FUEL_VAR: &str = "fuel'";
 /// `default` value, so under `native_decide` an exhausted-fuel sample reduces
 /// both sides of a model-vs-model equation to `default` and the kernel
 /// certifies a vacuous (possibly FALSE) equality with `lake` still exiting 0.
-/// `aver proof --check` therefore scans captured lake output for this exact
-/// string ([`crate::codegen::lean::count_fuel_exhaustion_panics`]) and treats
-/// any hit as a hard check failure. Keep emission and scan keyed on this one
-/// constant so they can never drift apart.
+/// `aver proof --check` therefore scans captured lake output for panic lines
+/// ([`crate::codegen::lean::count_model_panic_lines`]) and treats any hit as
+/// a hard check failure. The scan keys on Lean's generic `PANIC at ` line
+/// marker — every prelude `panic!` site shares the vacuity vector, not just
+/// this one — so this constant is purely the emission message; changing it
+/// cannot blind the gate.
 pub const PROOF_FUEL_EXHAUSTED_MSG: &str = "Aver proof fuel exhausted";
 
 fn fuel_helper_name(name: &str) -> String {
