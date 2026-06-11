@@ -865,6 +865,88 @@ fn sample_within_closable_range(bindings: &[(String, Spanned<Expr>)]) -> bool {
     })
 }
 
+/// Can the sample method seed each assert with a call to the law's
+/// universal lemma instantiated at the sample values?
+///
+/// Probe finding (tests/fixtures/rational_probe.av): `{:fuel f, 5}`-
+/// attributed sample asserts over record-literal arguments push Z3 into SYMBOLIC
+/// unfolding instead of literal evaluation — 150 s+ timeouts on ground
+/// `4*1 - 0*(-3) == …` arithmetic while the universal lemma itself
+/// verifies in ~1 s, and the exit-status gate then fails the whole
+/// otherwise-proven file. Calling `<fn>_<law>(<sample values>)` right
+/// before the assert hands Z3 the instantiated `ensures` as a
+/// hypothesis, so the assert discharges by congruence instead of
+/// unfolding (measured: 150 s+ → <1 s). Soundness: if the universal
+/// lemma is wrong or unprovable, ITS error already fails the file —
+/// the seeded sample never turns a red file green.
+///
+/// `true` only when `emit_verify_law` will emit the DEFAULT universal
+/// lemma `{fn}_{law}{suffix}(givens…)` whose params are exactly the
+/// law's givens:
+/// - not the trace-projection marker (caller never reaches here),
+/// - not the "sample-only (universal lemma omitted)" marker
+///   (singleton-domain const-RHS / fuel-bounded fn),
+/// - not a special support stack (LinearRecurrence2 / ResultPipeline /
+///   WrapperOverRecursion — those lemmas have different signatures),
+/// - no refinement-lifted given (lemma param is the refined subset
+///   type; sample values are carrier literals),
+/// - no oracle-bounded given (lemma adds `requires Is…(oracle)`).
+fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+    // Mirror of the issue-#128 "universal lemma omitted" gate in
+    // `emit_verify_law` — keep in sync.
+    let vb_fn_id = ctx
+        .symbol_table
+        .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name));
+    let pinned_strategy = vb_fn_id.and_then(|fn_id| {
+        ctx.proof_ir
+            .law_theorems
+            .iter()
+            .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+            .map(|t| &t.strategy)
+    });
+    let ir_strategy_closes_const_rhs = pinned_strategy.is_some_and(|s| {
+        !matches!(
+            s,
+            crate::ir::ProofStrategy::Induction { .. }
+                | crate::ir::ProofStrategy::BackendDispatch
+                | crate::ir::ProofStrategy::Sorry
+                | crate::ir::ProofStrategy::EnumConstantFold { .. }
+                | crate::ir::ProofStrategy::FiniteDomainCases { .. }
+                | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
+                | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
+        )
+    });
+    let singleton_const_rhs = !ir_strategy_closes_const_rhs
+        && crate::codegen::common::all_givens_are_singletons(law)
+        && crate::codegen::common::law_rhs_is_independent_of_givens(law);
+    let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
+    if singleton_const_rhs || crate::codegen::common::law_calls_unclassified_fn(law, &unclassified)
+    {
+        return false;
+    }
+    if matches!(
+        pinned_strategy,
+        Some(
+            crate::ir::ProofStrategy::LinearRecurrence2SpecEquivalence { .. }
+                | crate::ir::ProofStrategy::ResultPipelineChain { .. }
+                | crate::ir::ProofStrategy::WrapperOverRecursion { .. }
+        )
+    ) {
+        return false;
+    }
+    law.givens.iter().all(|g| {
+        bounded_oracle_predicate_for(&g.type_name).is_none()
+            && crate::codegen::common::refinement_lift_for_given(
+                &g.name,
+                &g.type_name,
+                &law.lhs,
+                &law.rhs,
+                ctx,
+            )
+            .is_none()
+    })
+}
+
 /// Emit sample assertions from a law's domain expansion as a test method.
 /// These are concrete smoke tests (e.g. `assert fib(5) == fibSpec(5)`).
 /// Capped at [`MAX_LAW_SAMPLES`] to avoid Z3 timeouts on large domains.
@@ -1099,13 +1181,27 @@ pub fn emit_law_samples(
             } else {
                 format!("{{\n  assume {{:axiom}} {} == {};\n}}", l, r)
             };
+            // `when`-laws: guard the per-sample lemma with the
+            // instantiated premise (`requires`), mirroring Lean's
+            // `_sample_N` hypothesis form — a premise-violating
+            // combination from the unfiltered given product would
+            // otherwise state a FALSE `ensures` the `{}` body can
+            // never prove. The bounded-∀ universal's dispatch call
+            // satisfies the `requires` from its own `requires <when>`
+            // plus the case-split equalities.
+            let requires_guard = law
+                .sample_guards
+                .get(idx)
+                .map(|g| format!("  requires {}\n", emit_expr_legacy(g, ctx, None)))
+                .unwrap_or_default();
             lines.push(format!(
-                "lemma {} {}_{}{}__sample_{}()\n  ensures {} == {}\n{}",
+                "lemma {} {}_{}{}__sample_{}()\n{}  ensures {} == {}\n{}",
                 fuel_attrs,
                 fn_name,
                 law_name,
                 suffix,
                 idx + 1,
+                requires_guard,
                 l,
                 r,
                 body
@@ -1149,15 +1245,64 @@ pub fn emit_law_samples(
             "method {}test_{}_{}{}_samples() {{",
             fuel_prefix, fn_name, law_name, suffix
         ));
-        for (lhs_rw, rhs_rw) in &rewritten {
+        // Seed each sample assert with the universal lemma
+        // instantiated at the sample values (see
+        // `sample_seed_lemma_available`) — keeps Z3 on congruence
+        // instead of symbolic fuel unfolding, which timed out on
+        // ground record arithmetic.
+        // NB the universal lemma's name carries NO `suffix` (only the
+        // sample method / bounded per-sample lemma names do).
+        let seed_lemma =
+            sample_seed_lemma_available(vb, law, ctx).then(|| format!("{}_{}", fn_name, law_name));
+        for (idx, (lhs_rw, rhs_rw)) in rewritten.iter().enumerate() {
             let l = emit_expr_legacy(lhs_rw, ctx, None);
             let r = emit_expr_legacy(rhs_rw, ctx, None);
+            let seed_call = seed_lemma.as_ref().and_then(|lemma| {
+                let bindings = vb.case_givens.get(idx)?;
+                let args = law
+                    .givens
+                    .iter()
+                    .map(|g| {
+                        bindings
+                            .iter()
+                            .find(|(n, _)| n == &g.name)
+                            .map(|(_, v)| emit_expr_legacy(v, ctx, None))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(format!("{}({});", lemma, args.join(", ")))
+            });
             // `{:split_here}` tells Dafny to check the preceding assert as
             // its own VC — without it, Z3 accumulates hypothesis state
             // across all samples in the method and occasionally times out
             // on otherwise-trivial arithmetic (e.g. `sub(a, b) == 0 -
             // sub(b, a)` over 5 samples). Splitting isolates each sample.
-            lines.push(format!("  assert {{:split_here}} {} == {};", l, r));
+            //
+            // `when`-laws: the sample combination comes from the
+            // UNFILTERED given cartesian product, so a combination can
+            // violate the premise and make the bare assert FALSE on a
+            // law Z3 proves universally (probe: square-monotonicity
+            // asserted at e=1, b=0). Mirror Lean's `_sample_N` form —
+            // which instantiates the premise as a hypothesis
+            // (`<guard> = true -> lhs = rhs`) — by checking the sample
+            // under `if <guard> { … }`: asserted exactly where the
+            // premise holds, vacuous where it doesn't.
+            match law.sample_guards.get(idx) {
+                Some(guard) => {
+                    let g = emit_expr_legacy(guard, ctx, None);
+                    lines.push(format!("  if {} {{", g));
+                    if let Some(call) = &seed_call {
+                        lines.push(format!("    {}", call));
+                    }
+                    lines.push(format!("    assert {{:split_here}} {} == {};", l, r));
+                    lines.push("  }".to_string());
+                }
+                None => {
+                    if let Some(call) = &seed_call {
+                        lines.push(format!("  {}", call));
+                    }
+                    lines.push(format!("  assert {{:split_here}} {} == {};", l, r));
+                }
+            }
         }
         lines.push("}\n".to_string());
     }

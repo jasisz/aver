@@ -28,6 +28,90 @@ fn bounded_oracle_subtype_for(method: &str) -> Option<&'static str> {
     }
 }
 
+/// Render a per-sample instantiated `when` guard with every Int literal
+/// ascribed (`(4 : Int)`).
+///
+/// The guard is the parser's SUBSTITUTED premise: numeral literals stand
+/// where Int givens stood. A bare Lean numeral in a comparison elaborates
+/// as `Nat`, and with subtraction in the premise truncated `Nat`
+/// subtraction changes the proposition — e.g. the probe's
+/// `((((1 * 1) - 4) * ((1 * 1) - 4)) <= 4)` is TRUE over `Nat`
+/// (`1 - 4 = 0`) but FALSE over `Int` (`(-3) * (-3) = 9`), so the emitted
+/// `_sample_N` / `_checked_domain` theorem was FALSE AS STATED and
+/// `native_decide` failed the build on a law the VM verifies. Ascribing
+/// pins every literal to `Int` — the type the substituted given had.
+///
+/// Recurses through the operator shapes a premise is built from
+/// (comparisons, arithmetic, `&&`-conjunction of multiple `when`s,
+/// negation); anything else (fn calls, idents, record literals) falls
+/// back to `emit_expr`, where Lean already types the positions from
+/// signatures.
+pub(super) fn emit_sample_guard(guard: &Spanned<Expr>, ctx: &CodegenContext) -> String {
+    let active = ctx.active_module_scope();
+    let resolved = ctx.resolve_expr(guard, active.as_deref());
+    emit_sample_guard_resolved(&resolved, ctx)
+}
+
+fn emit_sample_guard_resolved(
+    expr: &Spanned<crate::ir::hir::ResolvedExpr>,
+    ctx: &CodegenContext,
+) -> String {
+    use crate::ir::hir::{ResolvedCallee, ResolvedExpr};
+    match &expr.node {
+        ResolvedExpr::Literal(Literal::Int(i)) => format!("({} : Int)", i),
+        ResolvedExpr::Neg(inner) => format!("(-{})", emit_sample_guard_resolved(inner, ctx)),
+        // Multiple `when` clauses parse into a `Bool.and` chain (and a
+        // negated premise into `Bool.not`) — recurse through the Bool
+        // combinators with the exact spellings `lean::builtins` uses so
+        // literals INSIDE the conjunction stay ascribed.
+        ResolvedExpr::Call(callee, args)
+            if matches!(callee, ResolvedCallee::Builtin(n) if n == "Bool.and")
+                && args.len() == 2 =>
+        {
+            format!(
+                "({} && {})",
+                emit_sample_guard_resolved(&args[0], ctx),
+                emit_sample_guard_resolved(&args[1], ctx)
+            )
+        }
+        ResolvedExpr::Call(callee, args)
+            if matches!(callee, ResolvedCallee::Builtin(n) if n == "Bool.or")
+                && args.len() == 2 =>
+        {
+            format!(
+                "({} || {})",
+                emit_sample_guard_resolved(&args[0], ctx),
+                emit_sample_guard_resolved(&args[1], ctx)
+            )
+        }
+        ResolvedExpr::Call(callee, args)
+            if matches!(callee, ResolvedCallee::Builtin(n) if n == "Bool.not")
+                && args.len() == 1 =>
+        {
+            format!("(!{})", emit_sample_guard_resolved(&args[0], ctx))
+        }
+        ResolvedExpr::BinOp(op, left, right) => {
+            let l = emit_sample_guard_resolved(left, ctx);
+            let r = emit_sample_guard_resolved(right, ctx);
+            // Operator spellings mirror `expr::emit_expr` exactly.
+            let op_str = match op {
+                BinOp::Add => "+",
+                BinOp::Sub => "-",
+                BinOp::Mul => "*",
+                BinOp::Div => "/",
+                BinOp::Eq => "==",
+                BinOp::Neq => "!=",
+                BinOp::Lt => "<",
+                BinOp::Gt => ">",
+                BinOp::Lte => "<=",
+                BinOp::Gte => ">=",
+            };
+            format!("({} {} {})", l, op_str, r)
+        }
+        _ => super::expr::emit_expr(expr, ctx),
+    }
+}
+
 pub fn emit_type_def(td: &TypeDef, ctx: &CodegenContext) -> String {
     emit_type_def_in_scope(td, ctx, None)
 }
@@ -3145,9 +3229,13 @@ fn emit_verify_law_block(
                     super::sample_literal::ground_truth_rhs(vb, ctx, case_index_start + idx)
                         .unwrap_or_else(|| emit_expr_legacy(&right_rw, ctx, None));
                 if let Some(guard) = law.sample_guards.get(idx) {
+                    // Int-ascribed guard rendering — see `emit_sample_guard`
+                    // (a bare numeral premise with subtraction elaborates as
+                    // truncated `Nat` arithmetic and can change the
+                    // proposition).
                     format!(
                         "({} = true -> {} = {})",
-                        emit_expr_legacy(guard, ctx, None),
+                        emit_sample_guard(guard, ctx),
                         left_str,
                         right_str
                     )
@@ -3170,9 +3258,25 @@ fn emit_verify_law_block(
                 // is cheaper than rewriting the emitter to fan the
                 // cases out into N separate theorems (the per-case
                 // `sample_N` theorems below already cover that view).
+                //
+                // GUARDED conjunctions additionally carry one premise
+                // implication + decide-coerced guard per conjunct, and
+                // elaboration of that chain can blow the default
+                // 200_000 `maxHeartbeats` once the given product grows
+                // past ~36 conjuncts (tests/fixtures/nr_wall.av's
+                // 36-conjunct mulLeTrans sits at the edge). Give big guarded
+                // conjunctions a per-THEOREM budget (scoped `in`, never
+                // file-wide) — an honestly-false conjunct still fails
+                // `native_decide` the same way, it just isn't
+                // misreported as a heartbeat timeout.
+                let heartbeats_budget = if law.when.is_some() && vb.cases.len() > 36 {
+                    "set_option maxHeartbeats 800000 in\n"
+                } else {
+                    ""
+                };
                 lines.push(format!(
-                    "set_option synthInstance.maxSize 4096 in\ntheorem {} : {} := by native_decide",
-                    domain_theorem_name, domain_prop
+                    "{}set_option synthInstance.maxSize 4096 in\ntheorem {} : {} := by native_decide",
+                    heartbeats_budget, domain_theorem_name, domain_prop
                 ));
             }
             VerifyEmitMode::Sorry => {
@@ -3231,9 +3335,12 @@ fn emit_verify_law_block(
             emit_expr_legacy(&right_rw, ctx, None)
         };
         let sample_prop = if let Some(guard) = law.sample_guards.get(idx) {
+            // Int-ascribed guard rendering — see `emit_sample_guard` (a bare
+            // numeral premise with subtraction elaborates as truncated `Nat`
+            // arithmetic and can make the theorem FALSE AS STATED).
             format!(
                 "{} = true -> {} = {}",
-                emit_expr_legacy(guard, ctx, None),
+                emit_sample_guard(guard, ctx),
                 left_str,
                 right_str
             )

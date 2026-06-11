@@ -2189,6 +2189,61 @@ fn is_constructor_literal(expr: &crate::ast::Expr) -> bool {
     }
 }
 
+/// True when `expr` is a compile-time Int constant: a literal, a negated
+/// constant, or constant arithmetic over constants.
+fn expr_is_const_int(expr: &Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::Literal(crate::ast::Literal::Int(_)) => true,
+        Expr::Neg(inner) => expr_is_const_int(inner),
+        Expr::BinOp(_, l, r) => expr_is_const_int(l) && expr_is_const_int(r),
+        _ => false,
+    }
+}
+
+/// True when the expression tree contains a product of two NON-constant
+/// operands (`x * y`, `x * x`, `(s*s - d*x) * (s*s - d*x)`) — nonlinear
+/// in the law's quantified variables once the cone is unfolded.
+/// `literal * var` does NOT count: omega keeps coefficient products in
+/// its linear theory, so those laws stay in scope.
+fn expr_has_var_product(expr: &Spanned<crate::ast::Expr>) -> bool {
+    use crate::ast::Expr;
+    match &expr.node {
+        Expr::BinOp(crate::ast::BinOp::Mul, l, r) => {
+            (!expr_is_const_int(l) && !expr_is_const_int(r))
+                || expr_has_var_product(l)
+                || expr_has_var_product(r)
+        }
+        Expr::BinOp(_, l, r) => expr_has_var_product(l) || expr_has_var_product(r),
+        Expr::Neg(inner) | Expr::Attr(inner, _) | Expr::ErrorProp(inner) => {
+            expr_has_var_product(inner)
+        }
+        Expr::FnCall(callee, args) => {
+            expr_has_var_product(callee) || args.iter().any(expr_has_var_product)
+        }
+        Expr::Match { subject, arms } => {
+            expr_has_var_product(subject) || arms.iter().any(|a| expr_has_var_product(&a.body))
+        }
+        Expr::Constructor(_, Some(inner)) => expr_has_var_product(inner),
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            items.iter().any(expr_has_var_product)
+        }
+        Expr::MapLiteral(entries) => entries
+            .iter()
+            .any(|(k, v)| expr_has_var_product(k) || expr_has_var_product(v)),
+        Expr::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| expr_has_var_product(e)),
+        Expr::RecordUpdate { base, updates, .. } => {
+            expr_has_var_product(base) || updates.iter().any(|(_, e)| expr_has_var_product(e))
+        }
+        Expr::InterpolatedStr(parts) => parts.iter().any(|p| match p {
+            crate::ast::StrPart::Parsed(inner) => expr_has_var_product(inner),
+            _ => false,
+        }),
+        Expr::TailCall(boxed) => boxed.args.iter().any(expr_has_var_product),
+        _ => false,
+    }
+}
+
 /// Internal scratch for the simp+omega detector. Carries the
 /// same fields as the IR variant but lives outside the IR enum so
 /// callers can build it incrementally before pinning.
@@ -2293,6 +2348,53 @@ fn detect_simp_omega_unfold(
         let ret = fd.return_type.as_str();
         if ret != "Int" && ret != "Float" {
             wrapper_return = true;
+        }
+    }
+
+    // Nonlinear-arithmetic wall (tests/fixtures/nr_wall.av): a product
+    // of two non-constant operands anywhere in the law sides, the `when`
+    // premise, or an unfold-cone body makes the rendered tactic a
+    // guaranteed BUILD ERROR instead of a caught sorry — `omega` has
+    // no nonlinear theory (it atomizes `x * y` and fails the goal),
+    // and the sign-split `by_cases <;> simp` wrapper chain leaves
+    // `0 ≤ x * x`-shaped goals unsolved. Decline so the law falls
+    // through to the honest paths (the prelude-simp
+    // `first | simp | sorry` rung or the bare sampled sorry).
+    // Scope guards, each load-bearing:
+    // - `literal * var` stays linear and IN scope (see
+    //   `expr_has_var_product`) — nothing currently closing regresses;
+    // - refinement-lifted laws keep the pin: their arm renders plain
+    //   `simp [Int.add_comm, Int.mul_comm]` (no omega), which closes
+    //   the commutativity-shaped product laws the refinement corpus
+    //   pins (e.g. Natural.mul commutative);
+    // - `when` + wrapper-return laws keep the pin: the Lean emitter
+    //   itself declines that combination (`law_auto` — the sign-split
+    //   chain cannot consume a `when` premise), routing to the
+    //   guarded-domain fallback, so the pin is never rendered as a
+    //   failing tactic.
+    if !(lifted || (wrapper_return && law.when.is_some())) {
+        let mut nonlinear = expr_has_var_product(&law.lhs) || expr_has_var_product(&law.rhs);
+        if let Some(when_expr) = &law.when {
+            nonlinear = nonlinear || expr_has_var_product(when_expr);
+        }
+        if !nonlinear {
+            for fd in iter_all_fn_defs(inputs) {
+                if !fn_names.contains(&fd.name) {
+                    continue;
+                }
+                let body_nonlinear = fd.body.stmts().iter().any(|stmt| match stmt {
+                    crate::ast::Stmt::Binding(_, _, e) | crate::ast::Stmt::Expr(e) => {
+                        expr_has_var_product(e)
+                    }
+                });
+                if body_nonlinear {
+                    nonlinear = true;
+                    break;
+                }
+            }
+        }
+        if nonlinear {
+            return None;
         }
     }
 
