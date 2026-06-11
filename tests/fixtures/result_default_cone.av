@@ -1,0 +1,20 @@
+module ResultDefaultCone
+    intent =
+        "Law whose unfold cone contains the Result.withDefault builtin. The Lean linear-arithmetic strategy must decline this cone (the builtin lowers to Except.withDefault — citing the Aver-side name in a simp set is an unknown-identifier build error, and the lowered Except match sits outside omega's theory), so the law degrades to an honest caught sorry and the file keeps building."
+    effects []
+
+fn half(a: Int) -> Int
+    ? "Half of a, rounding toward negative infinity; 0 fallback is unreachable."
+    Result.withDefault(Int.div(a, 2), 0)
+
+fn doubleThenHalf(a: Int) -> Int
+    ? "Doubles a and halves the result."
+    half(a + a)
+
+verify doubleThenHalf
+    doubleThenHalf(3) => 3
+    doubleThenHalf(0) => 0
+
+verify doubleThenHalf law identity
+    given a: Int = 0..8
+    doubleThenHalf(a) => a

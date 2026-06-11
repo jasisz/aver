@@ -6281,6 +6281,15 @@ fn is_main_law_theorem(name: &str) -> bool {
     if name.ends_with("_checked_domain") {
         return false;
     }
+    // Large given-domain products emit the checked-domain conjunction
+    // chunked into `_checked_domain_part<N>` theorems (one elaborator-
+    // sized piece each) — same bounded cross-check, same exclusion.
+    if let Some(idx) = name.rfind("_checked_domain_part") {
+        let tail = &name[idx + "_checked_domain_part".len()..];
+        if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+    }
     if let Some(idx) = name.rfind("_sample_") {
         let tail = &name[idx + "_sample_".len()..];
         if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) {

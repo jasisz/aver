@@ -433,3 +433,22 @@ fn proof_dafny_verifies_date_when_dafny_is_available() {
     // there's no range obligation to discharge in the caller.
     assert_dafny_verifies("examples/data/date.av", "aver-dafny-date");
 }
+
+#[test]
+fn proof_export_builds_result_default_cone_when_lake_is_available() {
+    // A law whose unfold cone contains the `Result.withDefault` builtin
+    // (tests/fixtures/result_default_cone.av): the linear-arithmetic
+    // strategy must DECLINE the cone. Its simp set used to cite the
+    // Aver-side name `Result.withDefault`, which does not exist in the
+    // emitted Lean (the builtin lowers to `Except.withDefault`) — an
+    // `unknown identifier` BUILD ERROR that destroyed the whole file's
+    // caught-sorry floor. And even name-mapped, the lowered zero-guarded
+    // `Except` match sits outside omega's theory, so the tactic could
+    // never close. Declined, the law degrades to the prelude-simp
+    // `first | simp | sorry` rung: budget exactly 1 honest caught sorry.
+    assert_proof_builds_with_sorry_budget(
+        "tests/fixtures/result_default_cone.av",
+        "aver-proof-result-default-cone",
+        1,
+    );
+}

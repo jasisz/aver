@@ -3195,7 +3195,7 @@ fn emit_verify_law_block(
     // below still get emitted as a granular cross-check.
     if !vb.cases.is_empty() && lifted_vars.is_empty() {
         let domain_theorem_name = format!("{}_checked_domain", theorem_base);
-        let domain_prop = vb
+        let domain_conjuncts: Vec<String> = vb
             .cases
             .iter()
             .enumerate()
@@ -3243,8 +3243,7 @@ fn emit_verify_law_block(
                     format!("({} = {})", left_str, right_str)
                 }
             })
-            .collect::<Vec<_>>()
-            .join(" ∧ ");
+            .collect::<Vec<_>>();
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 // `checked_domain` is one nested ∧-conjunction with N
@@ -3269,26 +3268,59 @@ fn emit_verify_law_block(
                 // file-wide) — an honestly-false conjunct still fails
                 // `native_decide` the same way, it just isn't
                 // misreported as a heartbeat timeout.
+                //
+                // Past that edge a second elaborator limit bites:
+                // `Decidable` instance synthesis recurses once per
+                // nested ∧, so a given product of a few hundred cases
+                // (e.g. 8×8×8 = 512 — tests/fixtures/large_domain_law
+                // .av) exceeds the default `maxRecDepth` and the WHOLE
+                // file fails to build — the caught-sorry floor
+                // guarantee dies with it. Chunk big conjunctions into
+                // `<name>_part<i>` theorems of at most
+                // CHECKED_DOMAIN_CHUNK conjuncts each; the union of
+                // the parts states exactly the original conjunction.
+                // Single-theorem emission is byte-identical up to the
+                // 36-conjunct edge (the corpus max), so existing
+                // exports do not move.
+                const CHECKED_DOMAIN_CHUNK: usize = 32;
                 let heartbeats_budget = if law.when.is_some() && vb.cases.len() > 36 {
                     "set_option maxHeartbeats 800000 in\n"
                 } else {
                     ""
                 };
-                lines.push(format!(
-                    "{}set_option synthInstance.maxSize 4096 in\ntheorem {} : {} := by native_decide",
-                    heartbeats_budget, domain_theorem_name, domain_prop
-                ));
+                if domain_conjuncts.len() > 36 {
+                    for (part_idx, chunk) in
+                        domain_conjuncts.chunks(CHECKED_DOMAIN_CHUNK).enumerate()
+                    {
+                        lines.push(format!(
+                            "{}set_option synthInstance.maxSize 4096 in\ntheorem {}_part{} : {} := by native_decide",
+                            heartbeats_budget,
+                            domain_theorem_name,
+                            part_idx + 1,
+                            chunk.join(" ∧ ")
+                        ));
+                    }
+                } else {
+                    lines.push(format!(
+                        "{}set_option synthInstance.maxSize 4096 in\ntheorem {} : {} := by native_decide",
+                        heartbeats_budget,
+                        domain_theorem_name,
+                        domain_conjuncts.join(" ∧ ")
+                    ));
+                }
             }
             VerifyEmitMode::Sorry => {
                 lines.push(format!(
                     "theorem {} : {} := by sorry",
-                    domain_theorem_name, domain_prop
+                    domain_theorem_name,
+                    domain_conjuncts.join(" ∧ ")
                 ));
             }
             VerifyEmitMode::TheoremSkeleton => {
                 lines.push(format!(
                     "theorem {} : {} := by",
-                    domain_theorem_name, domain_prop
+                    domain_theorem_name,
+                    domain_conjuncts.join(" ∧ ")
                 ));
                 lines.push("  sorry".to_string());
             }

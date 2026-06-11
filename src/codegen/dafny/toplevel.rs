@@ -660,9 +660,20 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
             });
         }
     }
-    // Countdown pattern: Int param, no collection to walk.
+    // Countdown pattern: Int param, no collection to walk. The pick is
+    // validated by the shared recursion classifier
+    // (`single_int_countdown_param_index`): every self-call must pass
+    // the chosen param as `p - k` (literal k >= 1) or match the
+    // negative-guarded ascent it folds into the same lane. The previous
+    // unvalidated "first Int param" pick GUESSED a measure for
+    // recursion outside every recognized pattern (doubling/halving on
+    // a rational num/den pair — tests/fixtures/expo_outside_subset.av),
+    // emitting a `decreases` Dafny rejects plus a synthesized
+    // `requires p >= 0` that poisons every total caller. With no
+    // validated pick this returns `None` and the caller routes the fn
+    // to the opaque `{:axiom}` form instead.
     //
-    // Two shapes to distinguish:
+    // Two shapes to distinguish for the validated param:
     // (a) Source handles the n<0 branch itself via `match n < 0 { true
     //     -> base; false -> … recur(n-1, …) }` — the recursive call
     //     never fires for negative n, so `decreases if n >= 0 then n
@@ -673,22 +684,115 @@ fn infer_decreases(fd: &FnDef) -> Option<DecreasesInfo> {
     //     (0 → 0 in the guarded decreases expr — doesn't decrease).
     //     Pin the termination argument with `requires n >= 0`; real
     //     callers already guard negative values.
-    for (pname, ptype) in &fd.params {
-        if ptype == "Int" {
-            let dname = aver_name_to_dafny(pname);
-            if fn_handles_negative_first(fd, pname) {
-                return Some(DecreasesInfo {
-                    expr: format!("if {} >= 0 then {} else 0", dname, dname),
-                    requires: vec![],
-                });
-            }
+    let validated_countdown_idx =
+        crate::codegen::recursion::detect::single_int_countdown_param_index(fd)
+            .or_else(|| div_shrink_param_index(fd));
+    if let Some(idx) = validated_countdown_idx
+        && let Some((pname, _)) = fd.params.get(idx)
+    {
+        let dname = aver_name_to_dafny(pname);
+        if fn_handles_negative_first(fd, pname) {
             return Some(DecreasesInfo {
-                expr: dname.clone(),
-                requires: vec![format!("{} >= 0", dname)],
+                expr: format!("if {} >= 0 then {} else 0", dname, dname),
+                requires: vec![],
             });
         }
+        return Some(DecreasesInfo {
+            expr: dname.clone(),
+            requires: vec![format!("{} >= 0", dname)],
+        });
     }
     None
+}
+
+/// First Int param that EVERY self-call shrinks by a literal-divisor
+/// floor division — `Result.withDefault(Int.div(p, k), d)` with a
+/// literal k >= 2 (the BigInt base-10⁹ digit peel,
+/// `examples/refinement/bigint`). Z3 discharges `decreases p` for this
+/// shape directly (`p / k < p` whenever the recursive branch implies
+/// `p >= 1`), so it keeps the same countdown emission as the
+/// classifier-validated pick instead of declining to an opaque axiom.
+/// Deliberately Dafny-LOCAL: the shared classifier
+/// (`single_int_countdown_param_index`) also feeds the Lean fuel
+/// encoding, where admitting this shape would silently change that
+/// backend's emission.
+fn div_shrink_param_index(fd: &FnDef) -> Option<usize> {
+    use crate::codegen::recursion::detect::{call_matches, collect_calls_from_body};
+    let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    if recursive_calls.is_empty() {
+        return None;
+    }
+    fd.params
+        .iter()
+        .enumerate()
+        .find_map(|(idx, (param_name, param_ty))| {
+            if param_ty != "Int" {
+                return None;
+            }
+            recursive_calls
+                .iter()
+                .all(|args| {
+                    args.get(idx)
+                        .copied()
+                        .is_some_and(|arg| is_literal_div_shrink(arg, param_name))
+                })
+                .then_some(idx)
+        })
+}
+
+/// `Result.withDefault(Int.div(p, k), _)` with literal `k >= 2`.
+fn is_literal_div_shrink(expr: &Spanned<Expr>, param_name: &str) -> bool {
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return false;
+    };
+    if crate::codegen::common::expr_to_dotted_name(&callee.node).as_deref()
+        != Some("Result.withDefault")
+        || args.len() != 2
+    {
+        return false;
+    }
+    let Expr::FnCall(div_callee, div_args) = &args[0].node else {
+        return false;
+    };
+    crate::codegen::common::expr_to_dotted_name(&div_callee.node).as_deref() == Some("Int.div")
+        && div_args.len() == 2
+        && matches!(
+            &div_args[0].node,
+            Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == param_name
+        )
+        && matches!(
+            &div_args[1].node,
+            Expr::Literal(crate::ast::Literal::Int(k)) if *k >= 2
+        )
+}
+
+/// True when a self-recursive fn's termination cannot be justified by
+/// any `decreases` pattern this emitter recognizes AND no parameter
+/// offers Dafny's default lexicographic measure a structural ordering
+/// to fall back on (recursive ADT / collection params keep the bare
+/// emission — Dafny proves structural walks natively). Such fns
+/// (doubling/halving recursion on a rational num/den pair, binade
+/// search by repeated halving) must emit as opaque `{:axiom}`
+/// declarations: a guessed measure produces a `decreases` error on a
+/// correct function, and a synthesized `requires` breaks every total
+/// caller's wellformedness.
+pub(super) fn termination_guess_unjustified(fd: &FnDef) -> bool {
+    if !body_has_recursive_call(fd.body.as_ref(), &fd.name) {
+        return false;
+    }
+    if infer_decreases(fd).is_some() {
+        return false;
+    }
+    fd.params.iter().all(|(_, t)| {
+        matches!(
+            t.as_str(),
+            "Int" | "Float" | "Bool" | "String" | "Char" | "Byte"
+        )
+    })
 }
 
 /// True when the Aver body opens with a guard that explicitly handles
@@ -950,6 +1054,7 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
 /// Emit sample assertions from a law's domain expansion as a test method.
 /// These are concrete smoke tests (e.g. `assert fib(5) == fibSpec(5)`).
 /// Capped at [`MAX_LAW_SAMPLES`] to avoid Z3 timeouts on large domains.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_law_samples(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -958,9 +1063,28 @@ pub fn emit_law_samples(
     opaque_fns: &std::collections::HashSet<crate::ir::FnId>,
     fuel_emitted: &std::collections::HashSet<crate::ir::FnId>,
     native_emitted: &std::collections::HashSet<crate::ir::FnId>,
+    termination_opaque: &std::collections::HashSet<crate::ir::FnId>,
 ) -> Option<String> {
     if vb.cases.is_empty() {
         return None;
+    }
+
+    // Laws reaching a fn whose recursion was declined to an opaque
+    // `{:axiom}` (termination outside every recognized `decreases`
+    // pattern — tests/fixtures/expo_outside_subset.av): the axiom has
+    // no body, so a sample assert/lemma about its value can never be
+    // proved — emitting one manufactures a guaranteed verification
+    // error on a law that may well hold. Report honestly instead;
+    // `aver verify` still exercises these cases at runtime.
+    if law_refs_opaque_fn(&law.lhs, ctx, termination_opaque)
+        || law_refs_opaque_fn(&law.rhs, ctx, termination_opaque)
+    {
+        return Some(format!(
+            "// Sample assertions for {}.{}{} omitted: the law reaches a recursive fn outside the proof subset (emitted as an opaque {{:axiom}}, nothing about its value is provable)",
+            aver_name_to_dafny(&vb.fn_name),
+            aver_name_to_dafny(&law.name),
+            suffix,
+        ));
     }
 
     // Issue #127: skip samples whose LHS projects through `.trace.*`.
@@ -1539,6 +1663,7 @@ pub fn emit_verify_law(
     ctx: &CodegenContext,
     opaque_fns: &std::collections::HashSet<crate::ir::FnId>,
     native_emitted: &std::collections::HashSet<crate::ir::FnId>,
+    termination_opaque: &std::collections::HashSet<crate::ir::FnId>,
     suffix: &str,
 ) -> String {
     let fn_name = aver_name_to_dafny(&vb.fn_name);
@@ -1551,6 +1676,23 @@ pub fn emit_verify_law(
     if crate::codegen::common::law_lhs_has_trace_projection(&law.lhs) {
         return format!(
             "// Law {}.{}{}: trace-projection LHS is runtime-only (see docs/oracle.md)",
+            fn_name, law_name, suffix,
+        );
+    }
+
+    // Laws whose cone reaches a fn emitted as an opaque `{:axiom}` by
+    // the termination-decline path (recursion outside every recognized
+    // `decreases` pattern — tests/fixtures/expo_outside_subset.av):
+    // the default empty-body lemma states an `ensures` about a value
+    // the verifier cannot unfold, a GUARANTEED error or timeout on a
+    // law that may well hold. Report it as an omitted universal
+    // instead — same honesty class as the fuel-bounded gate below,
+    // and `--check` charges it to the unproven budget.
+    if law_refs_opaque_fn(&law.lhs, ctx, termination_opaque)
+        || law_refs_opaque_fn(&law.rhs, ctx, termination_opaque)
+    {
+        return format!(
+            "// Law {}.{}{}: reaches a recursive fn outside the proof subset emitted as an opaque axiom (universal lemma omitted)",
             fn_name, law_name, suffix,
         );
     }

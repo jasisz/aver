@@ -1,0 +1,17 @@
+module LargeDomainLaw
+    intent =
+        "Law over a 512-cell given-domain product. The Lean exporter must chunk the checked-domain conjunction — a single 512-conjunct theorem exceeds the elaborator's recursion depth during Decidable-instance synthesis and the whole file fails to build."
+    effects []
+
+fn tripleSum(a: Int, b: Int, c: Int) -> Int
+    ? "Sum of the three arguments."
+    a + b + c
+
+verify tripleSum
+    tripleSum(1, 2, 3) => 6
+
+verify tripleSum law mirror
+    given a: Int = 0..7
+    given b: Int = 0..7
+    given c: Int = 0..7
+    tripleSum(a, b, c) => tripleSum(c, b, a)

@@ -690,3 +690,58 @@ fn proof_export_gates_trace_projection_law_lhs_as_runtime_only() {
 
     let _ = std::fs::remove_dir_all(&dafny_dir);
 }
+
+#[test]
+fn proof_export_lean_chunks_large_checked_domain_conjunction() {
+    // Emission-shape half of the large-domain fix (the live build/credit
+    // half lives in `check_gates`): a 512-cell given product must emit
+    // its checked-domain conjunction as `_checked_domain_part<N>`
+    // theorems of at most 32 conjuncts each — one 512-conjunct theorem
+    // exceeds the elaborator's recursion depth during `Decidable`
+    // synthesis and the whole file fails to build. Fast (no lake).
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out = temp_output_dir("aver-large-domain-shape-out");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/large_domain_law.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let lean = std::fs::read_to_string(out.join("LargeDomainLaw.lean"))
+        .expect("read emitted LargeDomainLaw.lean");
+    assert!(
+        !lean.contains("theorem tripleSum_law_mirror_checked_domain :"),
+        "512 conjuncts must not emit as a single checked-domain theorem; got:\n{}",
+        lean.lines().take(40).collect::<Vec<_>>().join("\n")
+    );
+    // 512 cases / 32-conjunct chunks = 16 part theorems, all proved.
+    for part in 1..=16 {
+        assert!(
+            lean.contains(&format!(
+                "theorem tripleSum_law_mirror_checked_domain_part{} :",
+                part
+            )),
+            "missing checked-domain part theorem {part}"
+        );
+    }
+    assert!(
+        !lean.contains("tripleSum_law_mirror_checked_domain_part17"),
+        "expected exactly 16 part theorems"
+    );
+    for line in lean.lines() {
+        if line.contains("_checked_domain_part") {
+            let conjuncts = line.matches(" ∧ ").count() + 1;
+            assert!(
+                conjuncts <= 32,
+                "part theorem exceeds the 32-conjunct chunk bound ({conjuncts}):\n{line}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}
