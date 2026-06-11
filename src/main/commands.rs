@@ -2274,6 +2274,7 @@ pub(super) fn cmd_verify(
     let mut all_file_results: Vec<VerifyFileResult> = Vec::new();
     let mut failed_files = Vec::new();
     let mut skipped_typecheck: Vec<String> = Vec::new();
+    let mut skipped_wasm_gc_backend: Vec<String> = Vec::new();
     let mut printed_any = false;
 
     for file in &inputs {
@@ -2297,7 +2298,18 @@ pub(super) fn cmd_verify(
             }
             Err(e) => {
                 eprintln!("{}: {}", display_check_path(file, &module_root).red(), e);
-                skipped_typecheck.push(display_check_path(file, &module_root));
+                // Bucket honestly: a wasm-gc backend error (compile /
+                // codegen failure, preflight reject, wasmtime setup) is
+                // NOT a source type error — `aver check` passes on such
+                // files, so pointing the user there would be a dead end.
+                // Backend errors carry a `wasm-gc` / `verify --wasm-gc`
+                // prefix (see `diagnostics::wasm_gc_verify`); everything
+                // else stays in the type-error bucket.
+                if e.starts_with("wasm-gc") || e.starts_with("verify --wasm-gc") {
+                    skipped_wasm_gc_backend.push(display_check_path(file, &module_root));
+                } else {
+                    skipped_typecheck.push(display_check_path(file, &module_root));
+                }
                 failed_files.push(file.clone());
             }
         }
@@ -2319,6 +2331,25 @@ pub(super) fn cmd_verify(
         println!(
             "{}",
             "hint: if these files use modules, pass --module-root <dir>".dimmed()
+        );
+    }
+
+    if !skipped_wasm_gc_backend.is_empty() && !json {
+        println!();
+        println!(
+            "{}",
+            format!(
+                "{} file(s) skipped — wasm-gc backend error (the source type-checks; see the message above):",
+                skipped_wasm_gc_backend.len()
+            )
+            .yellow()
+        );
+        for f in &skipped_wasm_gc_backend {
+            println!("  {}", f.dimmed());
+        }
+        println!(
+            "{}",
+            "hint: `aver verify` (VM) runs these blocks without the wasm-gc backend".dimmed()
         );
     }
 
