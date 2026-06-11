@@ -108,7 +108,7 @@ fn map_results_to_diagnostics(
     let mut blocks = Vec::with_capacity(results.len());
 
     for result in results {
-        let is_law = result.block_label.contains(" spec ");
+        let is_law = result.is_law;
         let (declared_passed, declared_failed, hostile_passed, hostile_failed) =
             split_hostile_counts(&result.case_results);
         let skipped_by_when = result

@@ -80,7 +80,10 @@ pub struct VerifyLawContext {
 
 pub struct VerifyResult {
     pub fn_name: String,
-    pub block_label: String, // "add" or "sort spec isSorted"
+    /// True for `verify ... law ...` blocks. Carried as a field so
+    /// consumers never derive law-ness from the rendered label string.
+    pub is_law: bool,
+    pub block_label: String, // "add" or "sort law isSorted"
     pub passed: usize,
     pub failed: usize,
     pub skipped: usize,

@@ -1838,11 +1838,12 @@ fn run_verify_vm(plan: &VmVerifyPlan, machine: &mut vm::VM) -> VerifyResult {
     }
 
     let block_label = match &block.kind {
-        VerifyKind::Law(law) => format!("{} spec {}", block.fn_name, law.name),
+        VerifyKind::Law(law) => format!("{} law {}", block.fn_name, law.name),
         VerifyKind::Cases => block.fn_name.clone(),
     };
     VerifyResult {
         fn_name: block.fn_name.clone(),
+        is_law: matches!(&block.kind, VerifyKind::Law(_)),
         block_label,
         passed,
         failed,
