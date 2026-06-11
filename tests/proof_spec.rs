@@ -420,7 +420,13 @@ fn proof_export_builds_json_when_lake_is_available() {
     // constant-RHS gate elides 4 universal-with-sorry shapes whose
     // ∀ form was vacuous (or false). Per-sample lemmas still cover
     // the declared domain.
-    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 8);
+    // FiniteDomainCases: 8 → 7 — `parseLiteral.boolRoundtrip` now
+    // closes genuinely (`intro b; cases b <;> rfl`-class cascade,
+    // #print axioms = [propext, Quot.sound]); the two new EscapeCode
+    // laws (`parseEscape.escapeCodeRoundtrip`,
+    // `escapeJsonChar.encodesEscapeCode`) close axiom-free via the
+    // same strategy and add no sorries.
+    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 7);
 }
 
 #[test]
@@ -431,7 +437,16 @@ fn proof_dafny_verifies_json_when_dafny_is_available() {
     // closing this cleanly is probably out of scope for a single
     // fix per issue #114, and would need a different proof
     // strategy entirely.
-    assert_dafny_verifies_with_budgets("examples/data/json.av", "aver-dafny-json", 89, 16);
+    // 89 → 91 errors / 16 → 17 axioms: pure corpus delta from the
+    // EscapeCode swap (the FiniteDomainCases strategy itself is
+    // Lean-only; Dafny treats it as BackendDispatch). The 4 deleted
+    // mislabeled dummy laws each had ONE failing parseEscape sample
+    // lemma (-4); `parseEscape.escapeCodeRoundtrip` adds 5 sample
+    // lemmas in the same Z3-can't-compute-parseEscape class (+5) and
+    // its universal becomes the standard fuel-bounded
+    // `assume {:axiom}` (+1 axiom); `escapeJsonChar.encodesEscapeCode`
+    // gets a real universal lemma attempt Z3 can't discharge (+1).
+    assert_dafny_verifies_with_budgets("examples/data/json.av", "aver-dafny-json", 91, 17);
 }
 
 #[test]
@@ -4619,6 +4634,73 @@ verify bonus law emptyZero
         summary["universal"].as_bool(),
         Some(true),
         "a ground enum/ADT constant-fold law must close kernel-clean\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// A no-when law whose every given ranges over a closed finite domain (here a
+/// fieldless 3-ctor enum) must close via the `FiniteDomainCases` strategy:
+/// `intro …; cases <given> <;> … <;> (first | rfl | decide | sorry)`. No earlier
+/// detector owns it — the given is a free quantified enum (EnumConstantFold's
+/// literal-pinning gate rejects it), the return is String (its scalar-return
+/// gate rejects it too), and the enum isn't recursive (no Induction target) —
+/// so it used to fall to BackendDispatch + `sorry`. (Found on real
+/// `examples/data/json.av`: `parseLiteral.boolRoundtrip` + the `EscapeCode`
+/// laws, which close genuinely with `cases … <;> rfl`.)
+#[test]
+fn lean_proves_finite_domain_cases_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping finite-domain-cases test: `lake` not available");
+        return;
+    }
+    let source = r#"module FiniteDomain
+    intent = "a no-when law quantified over a closed fieldless-enum domain"
+    effects []
+
+type Color
+    Red
+    Green
+    Blue
+
+fn shade(c: Color) -> String
+    match c
+        Color.Red -> "warm"
+        Color.Green -> "cool"
+        Color.Blue -> "cool"
+
+verify shade law neverEmpty
+    given c: Color = [Color.Red, Color.Green, Color.Blue]
+    shade(c) == "" => false
+"#;
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-finitedomain-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), source).expect("write");
+    let out = temp_output_dir("aver-finitedomain-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "a closed finite-domain law must close kernel-clean via exhaustive cases\n{}",
         format_output(&run)
     );
     let _ = std::fs::remove_dir_all(&src);

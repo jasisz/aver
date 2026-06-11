@@ -870,7 +870,15 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 ///    binds it to the inner binary fn at a constant.
 /// 7. `LinearArithmetic { unfold_fns, ... }` — catch-all when the
 ///    law reduces to linear arith after unfolding the call chain.
-/// 8. `BackendDispatch` — backend's ad-hoc chain decides.
+/// 8. `EnumConstantFold { unfold_fns }` — ground law over fixed
+///    enum/ADT constructor args, scalar return (#466).
+/// 9. `FiniteDomainCases { givens }` — every given ranges over a
+///    closed finite domain (Bool / fieldless enum, product ≤ 16);
+///    closes by exhaustive `cases` enumeration.
+/// 10. `BackendDispatch` — backend's ad-hoc chain decides.
+///
+/// (The induction/spec-equivalence/Map families detected between
+/// these rungs are documented at their detector sites below.)
 fn classify_law_strategy(
     law: &crate::ast::VerifyLaw,
     fn_name: &str,
@@ -1063,7 +1071,81 @@ fn classify_law_strategy(
     {
         return ProofStrategy::EnumConstantFold { unfold_fns };
     }
+    // Closed finite-domain enumeration — the final typed fallback
+    // before `BackendDispatch`. Fires when EVERY given ranges over a
+    // closed, small domain (Bool or an all-fieldless user enum, ≤ 16
+    // total combinations): exhaustive `cases` over the givens yields
+    // ground goals per leaf, so deliberately NO call-shape inspection,
+    // NO return-type gate and NO recursion gate — closed enumeration
+    // makes those irrelevant (fuel-wrapped callees compute through
+    // constant-measure constructor args). That is exactly why this is
+    // a NEW detector and not a relaxation of `EnumConstantFold`, whose
+    // literal-pinning / non-recursive / scalar-return gates are
+    // load-bearing for its simp cascade.
+    if law.when.is_none()
+        && let Some(givens) = detect_finite_domain_cases(law, inputs)
+    {
+        return ProofStrategy::FiniteDomainCases { givens };
+    }
     ProofStrategy::BackendDispatch
+}
+
+/// Closed finite-domain enumeration detector (the last typed fallback
+/// before `BackendDispatch`, after `detect_enum_constant_fold`). Fires
+/// iff the law has at least one given and EVERY given's type has a
+/// closed, small, enumerable domain:
+/// - `Bool` (domain size 2), or
+/// - a user-declared enum (`TypeDef::Sum`) whose constructors are ALL
+///   fieldless (domain size = constructor count),
+///
+/// with the product of domain sizes ≤ 16. Exhaustive `cases` over the
+/// givens then yields one closed ground goal per domain combination,
+/// which `rfl` / `decide` compute out — even through fuel wrappers
+/// (constant-measure constructor args compute through fuel) — so
+/// unlike `detect_enum_constant_fold` there is deliberately NO
+/// call-shape inspection, NO return-type gate and NO recursion gate.
+/// A leaf the cascade can't close degrades to an honest caught `sorry`
+/// in the Lean emit, never a false universal claim. Returns the given
+/// names in intro order (the Lean emitter's `cases` targets); `None`
+/// otherwise.
+fn detect_finite_domain_cases(
+    law: &crate::ast::VerifyLaw,
+    inputs: &ProofLowerInputs,
+) -> Option<Vec<String>> {
+    if law.givens.is_empty() {
+        return None;
+    }
+    let mut domain_product: usize = 1;
+    for given in &law.givens {
+        let size = finite_domain_size(&given.type_name, inputs)?;
+        domain_product = domain_product.checked_mul(size)?;
+        if domain_product > 16 {
+            return None;
+        }
+    }
+    Some(law.givens.iter().map(|g| g.name.clone()).collect())
+}
+
+/// Size of a type's closed enumerable domain: 2 for `Bool`, the
+/// constructor count for a user-declared enum whose constructors are
+/// ALL fieldless. `None` for everything else — open domains
+/// (`Int` / `String` / collections), payload-carrying ADTs (whose
+/// `cases` would introduce fresh free variables the per-leaf
+/// `rfl`/`decide` cascade can't compute out), records, and effect
+/// oracle types (`Random.int`, …) which `find_type_def` doesn't
+/// resolve.
+fn finite_domain_size(type_name: &str, inputs: &ProofLowerInputs) -> Option<usize> {
+    if type_name == "Bool" {
+        return Some(2);
+    }
+    match inputs.find_type_def(type_name)? {
+        crate::ast::TypeDef::Sum { variants, .. }
+            if variants.iter().all(|v| v.fields.is_empty()) =>
+        {
+            Some(variants.len())
+        }
+        _ => None,
+    }
 }
 
 /// Ground enum/ADT constant-fold detector (new fallback before

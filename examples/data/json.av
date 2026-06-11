@@ -670,21 +670,52 @@ verify parseEscape
     parseEscape("\\u0041\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("A"), 7)
     parseEscape("\\x\"", 1, 0, 0, []) => ParseResult.Err("Unknown escape: \\x", 1)
 
-verify parseEscape law escapedChunkRoundtrip
-    given dummy: Int = [0]
-    parseEscape("\\\"\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("\""), 3)
+type EscapeCode
+    Quote
+    Backslash
+    Newline
+    Tab
+    CarriageReturn
+    Backspace
+    FormFeed
 
-verify parseEscape law slashEscapeRoundtrip
-    given dummy: Int = [0]
-    parseEscape("\\\\\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("\\"), 3)
+fn escapeSeq(code: EscapeCode) -> String
+    ? "Two-character JSON escape sequence the encoder emits for each escapable character."
+    match code
+        EscapeCode.Quote -> "\\\""
+        EscapeCode.Backslash -> "\\\\"
+        EscapeCode.Newline -> "\\n"
+        EscapeCode.Tab -> "\\t"
+        EscapeCode.CarriageReturn -> "\\r"
+        EscapeCode.Backspace -> "\\b"
+        EscapeCode.FormFeed -> "\\f"
 
-verify parseEscape law newlineEscapeRoundtrip
-    given dummy: Int = [0]
-    parseEscape("\\n\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("\n"), 3)
+verify escapeSeq
+    escapeSeq(EscapeCode.Quote) => "\\\""
+    escapeSeq(EscapeCode.Newline) => "\\n"
 
-verify parseEscape law unicodeEscapeRoundtrip
-    given dummy: Int = [0]
-    parseEscape("\\u0041\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString("A"), 7)
+fn unescapedChar(code: EscapeCode) -> String
+    ? "The single character each escape code denotes."
+    match code
+        EscapeCode.Quote -> "\""
+        EscapeCode.Backslash -> "\\"
+        EscapeCode.Newline -> "\n"
+        EscapeCode.Tab -> "\t"
+        EscapeCode.CarriageReturn -> "\r"
+        EscapeCode.Backspace -> "\b"
+        EscapeCode.FormFeed -> "\f"
+
+verify unescapedChar
+    unescapedChar(EscapeCode.Quote) => "\""
+    unescapedChar(EscapeCode.Newline) => "\n"
+
+verify parseEscape law escapeCodeRoundtrip
+    given code: EscapeCode = [EscapeCode.Quote, EscapeCode.Backslash, EscapeCode.Newline, EscapeCode.Tab, EscapeCode.CarriageReturn, EscapeCode.Backspace, EscapeCode.FormFeed]
+    parseEscape(escapeSeq(code) + "\"", 1, 0, 0, []) => ParseResult.Ok(Json.JsonString(unescapedChar(code)), 3)
+
+verify escapeJsonChar law encodesEscapeCode
+    given code: EscapeCode = [EscapeCode.Quote, EscapeCode.Backslash, EscapeCode.Newline, EscapeCode.Tab, EscapeCode.CarriageReturn, EscapeCode.Backspace, EscapeCode.FormFeed]
+    escapeJsonChar(unescapedChar(code)) => escapeSeq(code)
 
 fn parseUnicode(s: String, pos: Int, escapePos: Int, chunks: List<String>) -> ParseResult
     ? "Parse \\uXXXX, including surrogate pairs."

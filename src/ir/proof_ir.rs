@@ -715,6 +715,30 @@ pub enum ProofStrategy {
         /// backends translate to their lemma vocabulary.
         unfold_fns: Vec<String>,
     },
+    /// Closed finite-domain enumeration over the law's givens. Every
+    /// given ranges over a closed, small domain — `Bool` or a
+    /// user-declared enum whose constructors are ALL fieldless — with
+    /// the product of domain sizes ≤ 16, so exhaustive `cases` over
+    /// the givens yields ground goals that compute out (`rfl` /
+    /// `decide`). Fuel-wrapped callees are NOT an obstacle:
+    /// constant-measure constructor args compute through fuel. The
+    /// detector deliberately has NO call-shape inspection, NO
+    /// return-type gate and NO recursion gate — closed enumeration
+    /// makes those irrelevant, which is why this is a NEW strategy and
+    /// not a relaxation of [`ProofStrategy::EnumConstantFold`], whose
+    /// literal-pinning / non-recursive / scalar-return gates are
+    /// load-bearing for its simp cascade. Motivating shapes:
+    /// `examples/data/json.av` `parseLiteral.boolRoundtrip` (closes
+    /// genuinely with `intro b; cases b <;> rfl`) and the `EscapeCode`
+    /// laws (`escapeJsonChar.encodesEscapeCode`,
+    /// `parseEscape.escapeCodeRoundtrip`). A non-closing leaf degrades
+    /// to an honest caught `sorry` — never a build error and never
+    /// `native_decide`.
+    FiniteDomainCases {
+        /// Law given names in intro order — the Lean emitter's
+        /// `cases` targets. Source names; backends translate.
+        givens: Vec<String>,
+    },
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,

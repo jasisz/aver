@@ -2563,7 +2563,7 @@ fn emit_verify_law_block(
     // constant-RHS shapes (Reflexive, Commutative, Associative,
     // MapUpdatePostcondition, …) stay in the keep-set; Induction
     // / BackendDispatch / Sorry don't.
-    let ir_strategy_closes_const_rhs = ctx
+    let pinned_law_strategy = ctx
         .symbol_table
         .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
         .and_then(|fn_id| {
@@ -2572,15 +2572,16 @@ fn emit_verify_law_block(
                 .iter()
                 .find(|t| t.fn_id == fn_id && t.law_name == law.name)
         })
-        .is_some_and(|t| {
-            !matches!(
-                t.strategy,
-                crate::ir::ProofStrategy::Induction { .. }
-                    | crate::ir::ProofStrategy::SimpOverLemmas(_)
-                    | crate::ir::ProofStrategy::BackendDispatch
-                    | crate::ir::ProofStrategy::Sorry
-            )
-        });
+        .map(|t| &t.strategy);
+    let ir_strategy_closes_const_rhs = pinned_law_strategy.is_some_and(|s| {
+        !matches!(
+            s,
+            crate::ir::ProofStrategy::Induction { .. }
+                | crate::ir::ProofStrategy::SimpOverLemmas(_)
+                | crate::ir::ProofStrategy::BackendDispatch
+                | crate::ir::ProofStrategy::Sorry
+        )
+    });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs
         && crate::codegen::common::all_givens_are_singletons(law)
         && crate::codegen::common::law_rhs_is_independent_of_givens(law);
@@ -2592,9 +2593,22 @@ fn emit_verify_law_block(
     // The expanded per-sample lemmas unfold fuel finitely (concrete
     // inputs) and stay decidable — skip the universal instead of
     // shipping `induction` tactics that don't close.
+    //
+    // EXCEPTION — `FiniteDomainCases`: closed enumeration defeats
+    // fuel. The strategy's `cases` cascade reduces the universal to
+    // ground goals over constant-measure constructor args, which
+    // compute straight through `<fn>__fuel` wrappers (`rfl`/`decide`
+    // evaluate them like the per-sample lemmas do). Skipping here
+    // would drop the very theorems the strategy exists to close
+    // (e.g. `parseEscape.escapeCodeRoundtrip`, whose `parseEscape`
+    // is fuel-bounded), so the fuel gate does not apply.
     let unclassified = crate::codegen::common::unclassified_fn_names(ctx);
     let calls_fuel_bounded = crate::codegen::common::law_calls_unclassified_fn(law, &unclassified);
-    let skip_universal = singleton_const_rhs || calls_fuel_bounded;
+    let pinned_finite_domain_cases = matches!(
+        pinned_law_strategy,
+        Some(crate::ir::ProofStrategy::FiniteDomainCases { .. })
+    );
+    let skip_universal = singleton_const_rhs || (calls_fuel_bounded && !pinned_finite_domain_cases);
     if !quant_params.is_empty() && !skip_universal {
         lines.extend(emit_verify_law_support_theorems(
             vb,

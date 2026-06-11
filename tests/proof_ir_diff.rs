@@ -1514,3 +1514,229 @@ fn enum_constant_fold_not_pinned_when_adt_param_unpinned() {
         theorem.strategy
     );
 }
+
+#[test]
+fn finite_domain_cases_pinned_for_bool_given_law() {
+    // A law whose only given is `Bool` — closed two-value domain, so
+    // exhaustive `cases` enumeration yields ground goals regardless of
+    // the verified fn's shape. The canonical real-corpus shape is
+    // `examples/data/json.av` `parseLiteral.boolRoundtrip` (closes
+    // genuinely with `intro b; cases b <;> rfl`). The fn here returns
+    // a String (EnumConstantFold's scalar-return gate rejects it) and
+    // the given is a free quantified variable (its literal-pinning
+    // gate rejects it too) — only FiniteDomainCases can own this law.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn tag(b: Bool) -> String\n\
+         \x20   match b\n\
+         \x20       true -> \"yes\"\n\
+         \x20       false -> \"no\"\n\
+         \n\
+         verify tag law nonEmpty\n\
+         \x20   given b: Bool = [true, false]\n\
+         \x20   tag(b) == \"\" => false\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "tag", "nonEmpty")
+        .expect("tag::nonEmpty law theorem missing from ProofIR");
+    let aver::ir::ProofStrategy::FiniteDomainCases { ref givens } = theorem.strategy else {
+        panic!(
+            "Bool-given law must pin FiniteDomainCases, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(
+        givens,
+        &vec!["b".to_string()],
+        "cases targets must be the given names in intro order"
+    );
+}
+
+#[test]
+fn finite_domain_cases_pinned_for_fieldless_enum_given_law() {
+    // A law quantified over a user-declared all-fieldless enum (3
+    // ctors → domain size 3 ≤ 16). The verified fn is RECURSIVE —
+    // FiniteDomainCases deliberately has no recursion gate (closed
+    // enumeration computes through fuel wrappers), which is exactly
+    // what distinguishes it from EnumConstantFold.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         type Color\n\
+         \x20   Red\n\
+         \x20   Green\n\
+         \x20   Blue\n\
+         \n\
+         fn spin(c: Color, n: Int) -> Int\n\
+         \x20   match n <= 0\n\
+         \x20       true -> 0\n\
+         \x20       false -> spin(c, n - 1)\n\
+         \n\
+         verify spin law drains\n\
+         \x20   given c: Color = [Color.Red, Color.Green, Color.Blue]\n\
+         \x20   spin(c, 2) => 0\n";
+    let ctx = build_ctx(src);
+    let theorem =
+        law_theorem(&ctx, "spin", "drains").expect("spin::drains law theorem missing from ProofIR");
+    let aver::ir::ProofStrategy::FiniteDomainCases { ref givens } = theorem.strategy else {
+        panic!(
+            "fieldless-enum-given law must pin FiniteDomainCases, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(givens, &vec!["c".to_string()]);
+}
+
+#[test]
+fn finite_domain_cases_not_pinned_for_int_given() {
+    // Int is an OPEN domain — `cases` can't enumerate it. The detector
+    // must decline even though another given is Bool: EVERY given must
+    // be finitely enumerable for the cascade to yield closed goals.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn pick(b: Bool, x: Int) -> String\n\
+         \x20   match b\n\
+         \x20       true -> \"yes\"\n\
+         \x20       false -> \"no\"\n\
+         \n\
+         verify pick law nonEmpty\n\
+         \x20   given b: Bool = [true, false]\n\
+         \x20   given x: Int = [0, 1]\n\
+         \x20   pick(b, x) == \"\" => false\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "pick", "nonEmpty")
+        .expect("pick::nonEmpty law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::FiniteDomainCases { .. }
+        ),
+        "law with an Int given must NOT pin FiniteDomainCases, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn finite_domain_cases_not_pinned_for_when_law() {
+    // `when` premises are out of scope: the cascade has no premise
+    // handling (the hypothesis would block the per-leaf `rfl`).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn tag(b: Bool) -> String\n\
+         \x20   match b\n\
+         \x20       true -> \"yes\"\n\
+         \x20       false -> \"no\"\n\
+         \n\
+         verify tag law yesWhenTrue\n\
+         \x20   given b: Bool = [true, false]\n\
+         \x20   when b\n\
+         \x20   tag(b) => \"yes\"\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "tag", "yesWhenTrue")
+        .expect("tag::yesWhenTrue law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::FiniteDomainCases { .. }
+        ),
+        "when-law must NOT pin FiniteDomainCases, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn finite_domain_cases_not_pinned_for_payload_enum_given() {
+    // An enum with a payload-carrying ctor is NOT a closed finite
+    // domain — `cases` on it introduces a fresh free variable
+    // (`Cell.Piece v`) the per-leaf `rfl`/`decide` cascade can't
+    // compute out. The detector must decline. (The law's lhs/rhs are
+    // deliberately NOT syntactically equal so `Reflexive` can't pin
+    // first and mask the payload gate under test.)
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         type Cell\n\
+         \x20   Empty\n\
+         \x20   Piece(Int)\n\
+         \n\
+         fn isEmpty(c: Cell) -> Bool\n\
+         \x20   match c\n\
+         \x20       Cell.Empty -> true\n\
+         \x20       Cell.Piece(_) -> false\n\
+         \n\
+         verify isEmpty law selfConsistent\n\
+         \x20   given c: Cell = [Cell.Empty, Cell.Piece(1)]\n\
+         \x20   isEmpty(c) == isEmpty(c) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "isEmpty", "selfConsistent")
+        .expect("isEmpty::selfConsistent law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::FiniteDomainCases { .. }
+        ),
+        "payload-enum given must NOT pin FiniteDomainCases, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn finite_domain_cases_not_pinned_when_domain_product_exceeds_16() {
+    // Domain-size budget: 3 Color givens (3^3 = 27 > 16) would emit a
+    // 27-leaf cascade — past the deliberate cap. The detector must
+    // decline; 2 givens of the same enum (3^2 = 9 ≤ 16) still fire
+    // (asserted as the in-budget control below).
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         type Color\n\
+         \x20   Red\n\
+         \x20   Green\n\
+         \x20   Blue\n\
+         \n\
+         fn same(a: Color, b: Color, c: Color) -> Bool\n\
+         \x20   match a\n\
+         \x20       Color.Red -> true\n\
+         \x20       Color.Green -> true\n\
+         \x20       Color.Blue -> true\n\
+         \n\
+         verify same law alwaysTrue\n\
+         \x20   given a: Color = [Color.Red, Color.Green, Color.Blue]\n\
+         \x20   given b: Color = [Color.Red, Color.Green, Color.Blue]\n\
+         \x20   given c: Color = [Color.Red, Color.Green, Color.Blue]\n\
+         \x20   same(a, b, c) => true\n\
+         \n\
+         fn pair(a: Color, b: Color) -> Bool\n\
+         \x20   match a\n\
+         \x20       Color.Red -> true\n\
+         \x20       Color.Green -> true\n\
+         \x20       Color.Blue -> true\n\
+         \n\
+         verify pair law alwaysTrue\n\
+         \x20   given a: Color = [Color.Red, Color.Green, Color.Blue]\n\
+         \x20   given b: Color = [Color.Red, Color.Green, Color.Blue]\n\
+         \x20   pair(a, b) => true\n";
+    let ctx = build_ctx(src);
+    let over = law_theorem(&ctx, "same", "alwaysTrue")
+        .expect("same::alwaysTrue law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            over.strategy,
+            aver::ir::ProofStrategy::FiniteDomainCases { .. }
+        ),
+        "domain product 27 > 16 must NOT pin FiniteDomainCases, got: {:?}",
+        over.strategy
+    );
+    let within = law_theorem(&ctx, "pair", "alwaysTrue")
+        .expect("pair::alwaysTrue law theorem missing from ProofIR");
+    assert!(
+        matches!(
+            within.strategy,
+            aver::ir::ProofStrategy::FiniteDomainCases { .. }
+        ),
+        "domain product 9 ≤ 16 control must pin FiniteDomainCases, got: {:?}",
+        within.strategy
+    );
+}
