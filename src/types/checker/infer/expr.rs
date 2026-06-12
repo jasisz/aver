@@ -256,6 +256,33 @@ impl TypeChecker {
                 _ => None,
             },
 
+            // Tuple literals adopt expected `Tuple<...>` element-wise. This
+            // gives generic constructors in tuple slots (for example
+            // `(Option.None, n)` under `Tuple<Option<Int>, Int>`) the same
+            // bidirectional context list elements already receive.
+            // Deliberately NOT `Expr::IndependentProduct`: `(...)!` elements
+            // must be function calls, and that shape check lives on the
+            // bottom-up path — adopting the expected type here would skip it.
+            Expr::Tuple(items) => match expected {
+                Type::Tuple(elems) if elems.len() == items.len() => {
+                    let mut out = Vec::with_capacity(items.len());
+                    for (idx, (item, elem_expected)) in items.iter().zip(elems.iter()).enumerate() {
+                        let item_ty = self.infer_type_with_expected(item, Some(elem_expected));
+                        if !self.compatible(&item_ty, elem_expected) {
+                            self.error(format!(
+                                "Tuple element {}: expected {}, got {}",
+                                idx + 1,
+                                elem_expected.display(),
+                                item_ty.display()
+                            ));
+                        }
+                        out.push(item_ty);
+                    }
+                    Some(Type::Tuple(out))
+                }
+                _ => None,
+            },
+
             // Empty map literal `{}` adopts expected `Map<K, V>`.
             Expr::MapLiteral(entries) if entries.is_empty() => match expected {
                 Type::Map(_, _) => Some(expected.clone()),

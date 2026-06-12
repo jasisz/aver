@@ -282,6 +282,92 @@ verify stash
     );
 }
 
+/// Tuple element with a bare `Option.None` in a match arm. The declared
+/// tuple return type must drive the Option payload type all the way down
+/// to the element expression.
+#[test]
+fn tuple_option_return_with_none_arm() {
+    assert_all_cases_pass(
+        r#"
+fn pack(n: Int) -> Tuple<Option<Int>, Int>
+    ? "Pair an option with its source."
+    match n > 0
+        true -> (Option.Some(n), n)
+        false -> (Option.None, n)
+
+fn firstOf(t: Tuple<Option<Int>, Int>) -> Option<Int>
+    ? "First element."
+    match t
+        (a, b) -> a
+
+verify firstOf
+    firstOf(pack(3)) => Option.Some(3)
+    firstOf(pack(-1)) => Option.None
+"#,
+        2,
+    );
+}
+
+/// Tuple-shaped verify RHS with two `Result.Ok(...)` constructors. The
+/// LHS tuple type supplies each `Result`'s error type on the expected side.
+#[test]
+fn tuple_result_expected_side_ok_constructors() {
+    assert_all_cases_pass(
+        r#"
+fn both(a: Int, b: Int) -> Tuple<Result<Int, String>, Result<Int, String>>
+    ? "Divide both ways."
+    (Int.div(a, b), Int.div(b, a))
+
+verify both
+    both(4, 2) => (Result.Ok(2), Result.Ok(0))
+"#,
+        1,
+    );
+}
+
+/// Direct tuple-return body with `Option.None` as the first element. This
+/// was a checker-level false error before tuple expected-type propagation.
+#[test]
+fn direct_tuple_return_with_none_element() {
+    assert_all_cases_pass(
+        r#"
+fn packNone(n: Int) -> Tuple<Option<Int>, Int>
+    ? "Always pair none with n."
+    (Option.None, n)
+
+fn firstOf(t: Tuple<Option<Int>, Int>) -> Option<Int>
+    ? "First element."
+    match t
+        (a, b) -> a
+
+verify firstOf
+    firstOf(packNone(5)) => Option.None
+"#,
+        1,
+    );
+}
+
+/// Control — tuple element whose payload fixes `T` bottom-up.
+#[test]
+fn tuple_option_some_only_control() {
+    assert_all_cases_pass(
+        r#"
+fn packSome(n: Int) -> Tuple<Option<Int>, Int>
+    ? "Always pair some n with n."
+    (Option.Some(n), n)
+
+fn firstOf(t: Tuple<Option<Int>, Int>) -> Option<Int>
+    ? "First element."
+    match t
+        (a, b) -> a
+
+verify firstOf
+    firstOf(packSome(5)) => Option.Some(5)
+"#,
+        1,
+    );
+}
+
 /// Control — `Result.Err` verify cases plus `!=` against `Option.None`
 /// and None-on-left equality in fn bodies. All green before the
 /// second-wave fixes; pinned so the generalized verify-RHS propagation
