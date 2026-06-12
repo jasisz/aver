@@ -8,6 +8,7 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 - **Conditional laws proven universally now export a ready-to-use plain-logic form** — alongside the universal proof of a `when`-law, the Lean export derives a companion statement of the same fact with its premises and conclusion stated as ordinary propositions, so a later proof can cite it directly without re-deriving the boolean-to-proposition bridges.
 - **A universally-proven `when`-law can build on earlier ones** — the Lean export can have one law's side proof reuse an earlier law's, and editing the earlier law now re-checks every law that depends on it (no stale results survive an upstream change).
+- **Proofs of conditional laws can now build on earlier proven laws in the same file** — when a later `when`-law's claim contains the shape of an earlier proven `when`-law's conclusion and carries all of its premises, the Lean export proves the later law universally by applying the earlier one, and the proof report shows the dependency. A law missing one of the premises simply keeps its sampled-domain check — nothing fails. First proof family on board: floored division is stable across a finer-grid cell (`a / (b*d) = w / d` when `w*b < a < (w+1)*b`).
 
 ### Fixed
 

@@ -1,0 +1,55 @@
+module FloorLane
+    intent =
+        "When-universal lane fixture: a conditional floor-stability law proves universally in"
+        "the side build, and a later conditional law's proof consumes it — the consumer's lane"
+        "module imports the helper's and applies its plain-logic companion. A third law missing"
+        "one premise conjunct shows the honest decline (no side module, bounded credit only)."
+    effects []
+
+fn binFloor(value: Int, span: Int) -> Int
+    ? "Floor of value/span: Aver Int.div is Euclidean, which is floor for positive spans."
+    match Int.div(value, span)
+        Result.Ok(q) -> q
+        Result.Err(msg) -> 0
+
+verify binFloor
+    binFloor(7, 2) => 3
+    binFloor(-7, 2) => -4
+    binFloor(64, 3) => 21
+    binFloor(5, 0) => 0
+
+verify binFloor law cellStable
+    given v: Int = [13, 15]
+    given s: Int = [4]
+    given cell: Int = [3]
+    given scale: Int = [2]
+    when Bool.and(s > 0, Bool.and(scale > 0, Bool.and(cell * s < v, v < (cell + 1) * s)))
+    binFloor(v, s * scale) == binFloor(cell, scale) => true
+
+fn coarseAgree(pn: Int, ps: Int, qn: Int, qs: Int, scale: Int) -> Bool
+    ? "Both ratios pn/ps and qn/qs floored on the scale-times coarser grid agree."
+    binFloor(pn, ps * scale) == binFloor(qn, qs * scale)
+
+verify coarseAgree
+    coarseAgree(13, 4, 25, 8, 2) => true
+    coarseAgree(13, 4, 60, 8, 2) => false
+
+verify coarseAgree law sharedCell
+    given xn: Int = [13, 15]
+    given xs: Int = [4]
+    given yn: Int = [25, 30]
+    given ys: Int = [8]
+    given cell: Int = [3]
+    given scale: Int = [2]
+    when Bool.and(xs > 0, Bool.and(ys > 0, Bool.and(scale > 0, Bool.and(cell * xs < xn, Bool.and(xn < (cell + 1) * xs, Bool.and(cell * ys < yn, yn < (cell + 1) * ys))))))
+    coarseAgree(xn, xs, yn, ys, scale) => true
+
+verify coarseAgree law sharedCellUnguarded
+    given xn: Int = [13, 15]
+    given xs: Int = [4]
+    given yn: Int = [25, 30]
+    given ys: Int = [8]
+    given cell: Int = [3]
+    given scale: Int = [2]
+    when Bool.and(xs > 0, Bool.and(ys > 0, Bool.and(cell * xs < xn, Bool.and(xn < (cell + 1) * xs, Bool.and(cell * ys < yn, yn < (cell + 1) * ys)))))
+    coarseAgree(xn, xs, yn, ys, scale) => true
