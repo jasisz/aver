@@ -116,6 +116,7 @@ pub(super) enum BuiltinName {
     StringEndsWith,
     StringFromBool,
     StringCharAt,
+    CharToCode,
     CharFromCode,
     StringChars,
     /// `Byte.fromHex(s) -> Result<Int, String>`. Parses a 2-char hex
@@ -162,6 +163,7 @@ impl BuiltinName {
             "String.endsWith" => Some(Self::StringEndsWith),
             "String.fromBool" => Some(Self::StringFromBool),
             "String.charAt" => Some(Self::StringCharAt),
+            "Char.toCode" => Some(Self::CharToCode),
             "Char.fromCode" => Some(Self::CharFromCode),
             "String.chars" => Some(Self::StringChars),
             "Byte.fromHex" => Some(Self::ByteFromHex),
@@ -191,6 +193,7 @@ impl BuiltinName {
             Self::StringEndsWith => "String.endsWith",
             Self::StringFromBool => "String.fromBool",
             Self::StringCharAt => "String.charAt",
+            Self::CharToCode => "Char.toCode",
             Self::CharFromCode => "Char.fromCode",
             Self::StringChars => "String.chars",
             Self::ByteFromHex => "Byte.fromHex",
@@ -221,6 +224,7 @@ impl BuiltinName {
             Self::StringEndsWith => Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?]),
             Self::StringFromBool => Ok(vec![ValType::I32]),
             Self::StringCharAt => Ok(vec![string_ref_ty(registry)?, ValType::I64]),
+            Self::CharToCode => Ok(vec![string_ref_ty(registry)?]),
             Self::CharFromCode => Ok(vec![ValType::I64]),
             Self::StringChars => Ok(vec![string_ref_ty(registry)?]),
             Self::ByteFromHex => Ok(vec![string_ref_ty(registry)?]),
@@ -251,6 +255,7 @@ impl BuiltinName {
             Self::StringCompare => Ok(vec![ValType::I32]),
             Self::StringFromBool => Ok(vec![string_ref_ty(registry)?]),
             Self::StringEndsWith => Ok(vec![ValType::I32]),
+            Self::CharToCode => Ok(vec![ValType::I64]),
             Self::StringCharAt | Self::CharFromCode => {
                 Ok(vec![option_ref_ty(registry, "Option<String>")?])
             }
@@ -285,6 +290,7 @@ impl BuiltinName {
             Self::StringEndsWith => emit_string_ends_with(registry),
             Self::StringFromBool => emit_string_from_bool(registry),
             Self::StringCharAt => emit_string_char_at(registry),
+            Self::CharToCode => emit_char_to_code(registry),
             Self::CharFromCode => emit_char_from_code(registry),
             Self::StringChars => emit_string_chars(registry),
             Self::ByteFromHex => emit_byte_from_hex(registry),
@@ -2336,6 +2342,168 @@ fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError>
             i32.const 1
             local.get $out
             struct.new $option_string)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `Char.toCode(s: String) -> Int`. Aver represents a Char as a one-scalar
+/// String, so decode the first UTF-8 scalar instead of returning byte zero.
+/// Empty strings trap, matching the old wasm-gc hard-failure behavior for
+/// invalid Char values.
+fn emit_char_to_code(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "Char.toCode: String slot not registered".into(),
+        ))?;
+    let pre_string = wat_helper::padding_types(string_idx);
+    let wat = format!(
+        r#"
+        (module
+          {pre_string}
+          (type $string (array (mut i8)))
+          (func (export "helper") (param $s (ref null $string)) (result i64)
+            (local $n i32)
+            (local $b0 i32)
+            (local $b1 i32)
+            (local $b2 i32)
+            (local $b3 i32)
+            (local $clen i32)
+            (local $code i32)
+
+            local.get $s
+            array.len
+            local.set $n
+
+            local.get $n
+            i32.eqz
+            (if (then unreachable))
+
+            local.get $s
+            i32.const 0
+            array.get_u $string
+            local.set $b0
+
+            ;; UTF-8 length from the lead byte. Treat stray continuation bytes
+            ;; as length 1, like String.charAt's defensive scanner.
+            i32.const 1
+            local.set $clen
+            local.get $b0
+            i32.const 0xC0
+            i32.ge_u
+            (if (then i32.const 2 local.set $clen))
+            local.get $b0
+            i32.const 0xE0
+            i32.ge_u
+            (if (then i32.const 3 local.set $clen))
+            local.get $b0
+            i32.const 0xF0
+            i32.ge_u
+            (if (then i32.const 4 local.set $clen))
+
+            ;; Clamp malformed truncated tails to the bytes that exist.
+            local.get $clen
+            local.get $n
+            i32.gt_u
+            (if (then local.get $n local.set $clen))
+
+            local.get $clen
+            i32.const 1
+            i32.eq
+            (if
+              (then
+                local.get $b0
+                local.set $code)
+              (else
+                local.get $clen
+                i32.const 2
+                i32.eq
+                (if
+                  (then
+                    local.get $s
+                    i32.const 1
+                    array.get_u $string
+                    local.set $b1
+                    local.get $b0
+                    i32.const 0x1F
+                    i32.and
+                    i32.const 6
+                    i32.shl
+                    local.get $b1
+                    i32.const 0x3F
+                    i32.and
+                    i32.or
+                    local.set $code)
+                  (else
+                    local.get $clen
+                    i32.const 3
+                    i32.eq
+                    (if
+                      (then
+                        local.get $s
+                        i32.const 1
+                        array.get_u $string
+                        local.set $b1
+                        local.get $s
+                        i32.const 2
+                        array.get_u $string
+                        local.set $b2
+                        local.get $b0
+                        i32.const 0x0F
+                        i32.and
+                        i32.const 12
+                        i32.shl
+                        local.get $b1
+                        i32.const 0x3F
+                        i32.and
+                        i32.const 6
+                        i32.shl
+                        i32.or
+                        local.get $b2
+                        i32.const 0x3F
+                        i32.and
+                        i32.or
+                        local.set $code)
+                      (else
+                        local.get $s
+                        i32.const 1
+                        array.get_u $string
+                        local.set $b1
+                        local.get $s
+                        i32.const 2
+                        array.get_u $string
+                        local.set $b2
+                        local.get $s
+                        i32.const 3
+                        array.get_u $string
+                        local.set $b3
+                        local.get $b0
+                        i32.const 0x07
+                        i32.and
+                        i32.const 18
+                        i32.shl
+                        local.get $b1
+                        i32.const 0x3F
+                        i32.and
+                        i32.const 12
+                        i32.shl
+                        i32.or
+                        local.get $b2
+                        i32.const 0x3F
+                        i32.and
+                        i32.const 6
+                        i32.shl
+                        i32.or
+                        local.get $b3
+                        i32.const 0x3F
+                        i32.and
+                        i32.or
+                        local.set $code))))))
+
+            local.get $code
+            i64.extend_i32_u)
         )
     "#
     );

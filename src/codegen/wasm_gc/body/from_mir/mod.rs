@@ -39,7 +39,7 @@
 //! - [`records`] — `RecordCreate` / `RecordUpdate`.
 //! - [`collections`] — `List` literals.
 //! - [`builtins`] — the custom-inline `Float` / `Int` / `Bool` scalar
-//!   ops, `Char.toCode`, the custom-inline `String` ops (`length` /
+//!   ops, the custom-inline `String` ops (`length` /
 //!   `split` / `join`), the `List` / `Vector` / `Map`
 //!   families, the
 //!   fused `Option.withDefault(Vector.get(v, i), <literal>)` /

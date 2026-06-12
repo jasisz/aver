@@ -161,3 +161,35 @@ verify charsOf
         3,
     );
 }
+
+/// `Char.toCode` decodes the first Unicode scalar value of the Char string,
+/// not the first UTF-8 byte. Pair it with `Char.fromCode` to pin the roundtrip.
+#[test]
+fn char_to_code_decodes_scalar_values() {
+    assert_all_pass_on_both(
+        r#"
+fn codeOf(c: String) -> Int
+    ? "Unicode scalar code of c."
+    Char.toCode(c)
+
+fn roundTrip(c: String) -> String
+    ? "Encode the decoded code point again."
+    match Char.fromCode(Char.toCode(c))
+        Option.Some(out) -> out
+        Option.None -> ""
+
+verify codeOf
+    codeOf("a") => 97
+    codeOf("ż") => 380
+    codeOf("…") => 8230
+    codeOf("😀") => 128512
+
+verify roundTrip
+    roundTrip("a") => "a"
+    roundTrip("ż") => "ż"
+    roundTrip("…") => "…"
+    roundTrip("😀") => "😀"
+"#,
+        8,
+    );
+}

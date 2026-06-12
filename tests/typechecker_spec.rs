@@ -3509,3 +3509,25 @@ fn main() -> Unit
         "expected no cascading 'got Invalid' errors after Iron — A4, got: {errs:?}"
     );
 }
+
+#[test]
+fn independent_product_rejects_non_call_elements_even_under_expected_tuple() {
+    // `(...)!` elements must be function calls. The expected-type path for
+    // tuple literals (a `Tuple<...>` return annotation drives each element)
+    // must not adopt independent products, or this validation is skipped.
+    let src = "fn pair(n: Int) -> Tuple<Int, Int>\n    ? \"Pairs.\"\n    (1, n)!\n";
+    let errs = errors(src);
+    assert!(
+        errs.iter()
+            .any(|m| m.contains("Independent product element must be a function call")),
+        "expected the non-call `(...)!` element to be rejected, got: {errs:?}"
+    );
+}
+
+#[test]
+fn plain_tuple_literal_accepts_expected_tuple_elements() {
+    // Positive control for the test above: the same shape WITHOUT `!` is an
+    // ordinary tuple literal and must type-check via the expected-type path.
+    let src = "fn pair(n: Int) -> Tuple<Int, Int>\n    ? \"Pairs.\"\n    (1, n)\n";
+    assert_no_errors(src);
+}

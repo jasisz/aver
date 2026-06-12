@@ -1,5 +1,5 @@
 //! Built-in call lowering: the custom-inline `Float` / `Int` / `Bool`
-//! scalar ops, `Char.toCode`, the custom-inline `String` ops
+//! scalar ops, the custom-inline `String` ops
 //! (`length` / `split` / `join`), the `List` / `Vector`
 //! / `Map` families, the fused `Option.withDefault(Vector.get,
 //! <literal>)` / `Option.withDefault(Vector.set, v)` /
@@ -94,7 +94,7 @@ pub(crate) fn emit_mir_wasip2_effect(
 /// (builtins.rs): builtins that lower to a fixed inline wasm sequence
 /// rather than a `fn_map.builtins`-keyed helper call, so a plain
 /// `fn_map.builtins.get(dotted)` lookup misses them. Covers the native
-/// scalar `Float` / `Int` / `Bool` ops, `Char.toCode`, and the `String`
+/// scalar `Float` / `Int` / `Bool` ops and the `String`
 /// ops whose helper is keyed under a *different* name than the surface
 /// builtin — `String.length` dispatches to the
 /// `String.len` helper, and `String.split` / `String.join` to the
@@ -214,21 +214,6 @@ pub(crate) fn emit_mir_native_scalar_builtin(
         "Bool.not" if args.len() == 1 => {
             arg!(0);
             func.instruction(&Instruction::I32Eqz);
-        }
-        // `Char.toCode(s) -> Int` — first byte of the 1-char string
-        // (`array.get_u 0` + widen). Aver `Char` is a single-byte
-        // `String`. Mirror of `emit_dotted_builtin`'s arm.
-        "Char.toCode" if args.len() == 1 => {
-            let s_idx = ctx
-                .registry
-                .string_array_type_idx
-                .ok_or(WasmGcError::Validation(
-                    "Char.toCode requires the String slot allocated".into(),
-                ))?;
-            arg!(0);
-            func.instruction(&Instruction::I32Const(0));
-            func.instruction(&Instruction::ArrayGetU(s_idx));
-            func.instruction(&Instruction::I64ExtendI32U);
         }
         // Alias spelling for `String.len` (scalar count) — the helper
         // is keyed under `String.len`, not the surface name.
