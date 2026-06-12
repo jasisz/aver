@@ -1,0 +1,231 @@
+module StickyTypo
+    intent =
+        "The 1996 AMD K5 FDIV paper (Moore, Lynch, Kaufmann) prints a definition"
+        "of sticky rounding (section 5.2) that contradicts the paper's own"
+        "Lemma 7.3.2 (Sticky Plus, p. 21). The form used by the ACL2 RTL proof"
+        "lineage (truncate to n-1 bits, force the last bit) satisfies the lemma."
+        "Exact rational arithmetic, no floats: x = num/den with den > 0."
+    exposes [stickyPlusPaper, stickyPlusRtl, lemmaHypotheses]
+    effects []
+
+record Rat
+    num: Int
+    den: Int
+
+fn rat(n: Int, d: Int) -> Rat
+    ? "Build a rational; demo invariant: d > 0."
+    Rat(num = n, den = d)
+
+fn ratEq(a: Rat, b: Rat) -> Bool
+    ? "Exact equality by cross-multiplication."
+    a.num * b.den == b.num * a.den
+
+verify ratEq
+    ratEq(rat(4, 3), rat(8, 6)) => true
+    ratEq(rat(4, 3), rat(11, 8)) => false
+
+fn ratAdd(a: Rat, b: Rat) -> Rat
+    ? "Exact sum."
+    rat(a.num * b.den + b.num * a.den, a.den * b.den)
+
+verify ratAdd
+    ratAdd(rat(1, 1), rat(1, 3)) => rat(4, 3)
+
+fn ratMul(a: Rat, b: Rat) -> Rat
+    ? "Exact product."
+    rat(a.num * b.num, a.den * b.den)
+
+verify ratMul
+    ratMul(rat(4, 3), rat(1, 4)) => rat(4, 12)
+
+fn twoPow(k: Int) -> Int
+    ? "2^k for k >= 0."
+    match k <= 0
+        true -> 1
+        false -> 2 * twoPow(k - 1)
+
+verify twoPow
+    twoPow(4) => 16
+
+fn pow2(e: Int) -> Rat
+    ? "2^e as an exact rational, e of any sign."
+    match e >= 0
+        true -> rat(twoPow(e), 1)
+        false -> rat(1, twoPow(0 - e))
+
+verify pow2
+    pow2(-2) => rat(1, 4)
+
+fn floorQ(a: Int, b: Int) -> Int
+    ? "floor(a/b) for b > 0 (Euclidean division is flooring there)."
+    match Int.div(a, b)
+        Result.Ok(q) -> q
+        Result.Err(msg) -> 0
+
+verify floorQ
+    floorQ(16, 3) => 5
+
+fn ratFloor(x: Rat) -> Int
+    ? "Largest integer <= x."
+    floorQ(x.num, x.den)
+
+fn isOdd(k: Int) -> Bool
+    ? "Parity of a nonnegative integer."
+    match Int.mod(k, 2)
+        Result.Ok(r) -> r == 1
+        Result.Err(msg) -> false
+
+verify isOdd
+    isOdd(5) => true
+
+fn expo(x: Rat) -> Int
+    ? "The e with 2^e <= x < 2^(e+1), for x > 0 (paper section 5.1)."
+    match x.num >= 2 * x.den
+        true -> 1 + expo(rat(x.num, 2 * x.den))
+        false -> match x.num < x.den
+            true -> expo(rat(2 * x.num, x.den)) - 1
+            false -> 0
+
+verify expo
+    expo(rat(1, 3)) => -2
+
+fn signif(x: Rat) -> Rat
+    ? "The significand s with x = s * 2^expo(x), 1 <= s < 2."
+    ratMul(x, pow2(0 - expo(x)))
+
+verify signif
+    signif(rat(1, 3)) => rat(4, 3)
+
+fn truncn(s: Rat, n: Int) -> Rat
+    ? "floor(s * 2^(n-1)) / 2^(n-1) - paper p. 11."
+    rat(ratFloor(ratMul(s, pow2(n - 1))), twoPow(n - 1))
+
+verify truncn
+    truncn(rat(4, 3), 5) => rat(21, 16)
+
+fn bitn(s: Rat, n: Int) -> Int
+    ? "1 when floor(s * 2^(-n)) is odd, else 0 - paper p. 13."
+    match isOdd(ratFloor(ratMul(s, pow2(0 - n))))
+        true -> 1
+        false -> 0
+
+verify bitn
+    bitn(rat(4, 3), -4) => 1
+
+fn awayn(s: Rat, n: Int) -> Rat
+    ? "Round away: s if exact in n bits, else truncn(s,n) + 2^(1-n) - paper p. 13."
+    match ratEq(truncn(s, n), s)
+        true -> s
+        false -> ratAdd(truncn(s, n), pow2(1 - n))
+
+verify awayn
+    awayn(rat(4, 3), 2) => rat(6, 4)
+
+fn stickynPaper(s: Rat, n: Int) -> Rat
+    ? "Sticky AS PRINTED in section 5.2: keep s unchanged when the last"
+      "kept bit is already 1."
+    match ratEq(truncn(s, n), s)
+        true -> s
+        false -> match bitn(s, 1 - n) == 1
+            true -> s
+            false -> awayn(s, n)
+
+verify stickynPaper
+    stickynPaper(rat(4, 3), 3) => rat(4, 3)
+
+fn stickynRtl(s: Rat, n: Int) -> Rat
+    ? "Sticky as in the ACL2 RTL lineage (Russinoff): truncate to n-1 bits,"
+      "then force the last bit to 1."
+    match ratEq(truncn(s, n - 1), s)
+        true -> s
+        false -> ratAdd(truncn(s, n - 1), pow2(1 - n))
+
+verify stickynRtl
+    stickynRtl(rat(4, 3), 3) => rat(10, 8)
+
+fn stickyPaper(x: Rat, n: Int) -> Rat
+    ? "Printed-form sticky of a positive rational at n bits."
+    ratMul(stickynPaper(signif(x), n), pow2(expo(x)))
+
+fn stickyRtl(x: Rat, n: Int) -> Rat
+    ? "RTL-form sticky of a positive rational at n bits."
+    ratMul(stickynRtl(signif(x), n), pow2(expo(x)))
+
+fn truncFull(x: Rat, n: Int) -> Rat
+    ? "trunc(x, n) of a positive rational - paper p. 11."
+    ratMul(truncn(signif(x), n), pow2(expo(x)))
+
+fn lemmaHypotheses(xn: Int, xd: Int, yn: Int, yd: Int, n: Int, k: Int) -> Bool
+    ? "All four printed hypotheses of Lemma 7.3.2: x fits in n bits,"
+      "1 + e_y < e_x, k > 0, and n + e_y - e_x < k."
+    x = rat(xn, xd)
+    y = rat(yn, yd)
+    fits = ratEq(truncFull(x, n), x)
+    gap = 1 + expo(y) < expo(x)
+    kPos = k > 0
+    kBig = n + expo(y) - expo(x) < k
+    Bool.and(Bool.and(fits, gap), Bool.and(kPos, kBig))
+
+verify lemmaHypotheses
+    lemmaHypotheses(1, 1, 1, 3, 3, 2) => true
+
+fn stickyPlusPaper(xn: Int, xd: Int, yn: Int, yd: Int, n: Int, k: Int) -> Bool
+    ? "Lemma 7.3.2 conclusion under the PRINTED definition:"
+      "sticky(x+y, n) == sticky(x + sticky(y,k), n)."
+    x = rat(xn, xd)
+    y = rat(yn, yd)
+    ratEq(stickyPaper(ratAdd(x, y), n), stickyPaper(ratAdd(x, stickyPaper(y, k)), n))
+
+verify stickyPlusPaper law asPrintedIn1996
+    given xn: Int = 1..3
+    given xd: Int = 1..2
+    given yn: Int = 1..8
+    given yd: Int = 1..16
+    given n: Int = 2..3
+    given k: Int = 2..3
+    when pre(xn, xd, yn, yd, n, k)
+    stickyPlusPaper(xn, xd, yn, yd, n, k) => true
+
+fn stickyPlusRtl(xn: Int, xd: Int, yn: Int, yd: Int, n: Int, k: Int) -> Bool
+    ? "Lemma 7.3.2 conclusion under the RTL definition."
+    x = rat(xn, xd)
+    y = rat(yn, yd)
+    ratEq(stickyRtl(ratAdd(x, y), n), stickyRtl(ratAdd(x, stickyRtl(y, k)), n))
+
+verify stickyPlusRtl law asInTheAcl2Sources
+    given xn: Int = 1..3
+    given xd: Int = 1..2
+    given yn: Int = 1..8
+    given yd: Int = 1..16
+    given n: Int = 2..3
+    given k: Int = 2..3
+    when pre(xn, xd, yn, yd, n, k)
+    stickyPlusRtl(xn, xd, yn, yd, n, k) => true
+
+fn smallPositive(v: Int) -> Bool
+    ? "Guard: strictly positive and small."
+    Bool.and(v > 0, v <= 64)
+
+verify smallPositive
+    smallPositive(64) => true
+    smallPositive(0) => false
+
+fn boundsOk(xn: Int, xd: Int, yn: Int, yd: Int, n: Int, k: Int) -> Bool
+    ? "Anti-hostile fence: all inputs strictly positive and small, so the"
+      "recursions (twoPow, expo) and cross-multiplications stay in range."
+    nums = Bool.and(Bool.and(smallPositive(xn), smallPositive(xd)), Bool.and(smallPositive(yn), smallPositive(yd)))
+    sizes = Bool.and(Bool.and(n > 0, n <= 4), Bool.and(k > 0, k <= 4))
+    Bool.and(nums, sizes)
+
+verify boundsOk
+    boundsOk(1, 1, 1, 3, 3, 2) => true
+
+fn pre(xn: Int, xd: Int, yn: Int, yd: Int, n: Int, k: Int) -> Bool
+    ? "Law premise: bounds first (short-circuit), then the four printed"
+      "hypotheses of Lemma 7.3.2."
+    match boundsOk(xn, xd, yn, yd, n, k)
+        true -> lemmaHypotheses(xn, xd, yn, yd, n, k)
+        false -> false
+
+verify pre
+    pre(1, 1, 1, 3, 3, 2) => true
