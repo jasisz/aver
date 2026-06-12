@@ -68,6 +68,31 @@
 //! unbound by the conclusion's match side would make conditional
 //! rewriting guess, so such laws decline instead.
 //!
+//! FAMILY 3 — coarse-floor stability (`floor.rs`): the law states that
+//! a floored quotient is unchanged while the numerator stays inside an
+//! open cell of a finer grid (`when b>0 ∧ d>0 ∧ w*b<a ∧ a<(w+1)*b`,
+//! claim `f(a, b*d) == f(w, d)` over an `Int.div`-with-0-default
+//! wrapper). Rendered from a hand-validated arithmetic core; exactly
+//! this shape is recognized, everything else declines.
+//!
+//! CONSUMPTION (`consume.rs`): a when-law with NO recognized family of
+//! its own may still prove by CONSUMING a source-earlier lane-proved
+//! when-law: the helper's conclusion-LHS shape is matched into the
+//! consumer's proof cone, the substitution is completed against the
+//! premises, and EVERY helper premise conjunct under the substitution
+//! must already be one of the consumer's premise conjuncts (the
+//! premise-subset rule) — otherwise the consumer declines at zero
+//! cost. The consumer's module imports the helper's module (the
+//! [`with_lane_imports`] machinery) and applies the helper's
+//! plain-logic companion via explicit `have` — never a
+//! `first | exact <companion>` alternative, which is the measured
+//! silent-absorption shape: it can succeed against a broken companion
+//! and carry its axioms into a green build. Fail-closed: a helper that
+//! did not prove is never emitted, so the consumer's import fails its
+//! tolerated build (both stay bounded), and the consumer's credit
+//! keys on its OWN `#print axioms` line where any absorbed axiom
+//! surfaces.
+//!
 //! Paid-for landmines from the hand-proof probe, baked into the
 //! rendered tactic text:
 //! - the rendered premise is decide-coerced (`(n > 0) = true`) —
@@ -94,10 +119,14 @@ use crate::ast::TopLevel;
 use crate::codegen::CodegenContext;
 
 mod bridge;
+mod consume;
+mod floor;
 mod shared;
 mod sign;
 
 use bridge::{classify_bridge_law, render_bridge_law};
+use consume::{HelperView, classify_consumption, render_consumption};
+use floor::{classify_floor_law, render_floor_law};
 use sign::{classify_lane_law, collect_pins, render_lane_law};
 
 /// Subdirectory (relative to the proof output dir) holding lane
@@ -133,19 +162,20 @@ pub struct LaneLawFile {
     /// `.olean` under an old name is unreachable.
     pub module: String,
     /// Module names of the SOURCE-EARLIER lane helpers this module
-    /// imports — the dependency edges the lane manifest records. Empty
-    /// until a consumption figure (CH-3) populates it; the import
-    /// machinery itself ([`with_lane_imports`]) is built here.
+    /// imports — the dependency edges the lane manifest records.
+    /// Populated when this law's proof consumes an earlier lane law
+    /// (`consume.rs`), via [`with_lane_imports`].
     pub imports: Vec<String>,
     /// Full `.lean` source. Contains NO `sorry` token.
     pub content: String,
 }
 
-/// One lane law the collision guard refused to emit: its twin or
-/// companion name clashed with a theorem already emitted (a manifest
-/// theorem, or an earlier lane law's twin/companion). Surfaced in the
-/// lane detail artifact as an honest note rather than letting the
-/// tolerated build fail and silently withhold a neighbor's credit.
+/// One lane law the collision guard refused to emit: a name its module
+/// declares (twin, companion, or an aux lemma) clashed with a theorem
+/// already emitted (a manifest theorem, or any declaration of an
+/// earlier lane module). Surfaced in the lane detail artifact as an
+/// honest note rather than letting the tolerated build fail and
+/// silently withhold a neighbor's credit.
 pub struct OmittedLaw {
     /// `fn.law` label for surfacing.
     pub label: String,
@@ -172,11 +202,13 @@ pub struct LaneOutput {
 /// proof that one broken lane proof cannot touch budgets or
 /// neighbors.
 ///
-/// COLLISION GUARD: before a lane module is emitted, its twin
-/// (`…_universal`) and companion (`…_prop`) names are checked against
-/// the names already in play — the counted-build manifest theorems
-/// (parsed from `entry_content`) and every earlier lane law's twin and
-/// companion. A clash (e.g. a sibling law literally named
+/// COLLISION GUARD: before a lane module is emitted, every name it
+/// declares — its twin (`…_universal`), its companion (`…_prop`), and
+/// any aux lemma in its content — is checked against the names already
+/// in play: the counted-build manifest theorems (parsed from
+/// `entry_content`) and every declaration of every earlier lane
+/// module (in guard scope because consumption imports lane modules
+/// into one another). A clash (e.g. a sibling law literally named
 /// `<law>_universal` or `<law>_prop`) would make the tolerated build
 /// fail and SILENTLY withhold a neighbor's credit; instead the
 /// colliding law is honestly OMITTED (no module, no credit attempt) and
@@ -186,10 +218,11 @@ pub struct LaneOutput {
 /// `chain` is a TEST-ONLY hook (`AVER_PROOF_LANE_CHAIN`): with it set,
 /// each emitted lane law imports every SOURCE-EARLIER emitted lane law
 /// ([`with_lane_imports`]), wiring a real lane-to-lane dependency graph
-/// against live `lake`. No emitter path drives imports yet (the
-/// consumption figure is CH-3); the hook lets the two-module-chain
-/// sabotage and stale-`.olean`-retirement gates exercise the
-/// machinery end to end.
+/// against live `lake` regardless of recognition. The production path
+/// that drives imports is consumption (`consume.rs`): a consumer
+/// imports exactly its helper's module. The hook keeps the
+/// two-module-chain sabotage and stale-`.olean`-retirement gates
+/// exercising the machinery independently of any recognizer.
 pub fn generate(
     ctx: &CodegenContext,
     entry_content: &str,
@@ -199,11 +232,16 @@ pub fn generate(
     let pins = collect_pins(ctx);
     let entry_root = crate::codegen::common::entry_basename(ctx);
     // Names already emitted into the counted build (manifest theorems)
-    // seed the guard; each emitted lane law then adds its twin and
-    // companion before the next law is checked.
+    // seed the guard; each emitted lane law then adds EVERY declaration
+    // its module carries (twin, companion, aux lemmas) before the next
+    // law is checked — consumption wires lane-to-lane imports, so a
+    // later module's namespace now sees earlier modules' declarations.
     let mut emitted_names = manifest_theorem_names(entry_content);
     let mut out: Vec<LaneLawFile> = Vec::new();
     let mut omitted = Vec::new();
+    // Source-earlier emitted when-laws, viewable as helpers by the
+    // consumption figure (index into `out` + the law's AST).
+    let mut helper_records: Vec<(usize, &crate::ast::VerifyLaw)> = Vec::new();
     for item in &ctx.items {
         let TopLevel::Verify(vb) = item else { continue };
         let crate::ast::VerifyKind::Law(law) = &vb.kind else {
@@ -242,9 +280,51 @@ pub fn generate(
                 sabotage_this,
             );
         }
+        if candidate.is_none()
+            && let Some(plan) = classify_floor_law(vb, law, ctx)
+        {
+            candidate = render_floor_law(
+                vb,
+                law,
+                ctx,
+                &plan,
+                &entry_root,
+                entry_content,
+                sabotage_this,
+            );
+        }
+        // No family of its own: try CONSUMING a source-earlier lane
+        // law (premise-subset matcher). The plan remembers which
+        // helper module to import.
+        let mut consumed_helper: Option<usize> = None;
+        if candidate.is_none() {
+            let helpers: Vec<HelperView> = helper_records
+                .iter()
+                .map(|(file, h_law)| HelperView {
+                    file: *file,
+                    companion: out[*file].companion.clone(),
+                    law: h_law,
+                })
+                .collect();
+            if let Some(plan) = classify_consumption(vb, law, ctx, &helpers) {
+                candidate = render_consumption(
+                    vb,
+                    law,
+                    ctx,
+                    &plan,
+                    &entry_root,
+                    entry_content,
+                    sabotage_this,
+                );
+                if candidate.is_some() {
+                    consumed_helper = Some(plan.helper_file);
+                }
+            }
+        }
         let Some(file) = candidate else { continue };
-        // Collision guard: refuse to emit if either emitted name clashes
-        // with an existing manifest or earlier emitted theorem name.
+        // Collision guard: refuse to emit if any name this module
+        // declares clashes with an existing manifest or earlier
+        // emitted lane declaration name.
         if let Some(collides) = collides_with(&file, &emitted_names) {
             omitted.push(OmittedLaw {
                 label: file.label.clone(),
@@ -258,12 +338,23 @@ pub fn generate(
             });
             continue;
         }
+        for name in manifest_theorem_names(&file.content) {
+            emitted_names.insert(name);
+        }
         emitted_names.insert(file.theorem.clone());
         emitted_names.insert(file.companion.clone());
-        // Test hook: wire this law to import every source-earlier
-        // emitted lane law, exercising the import + hash-folding
-        // machinery against live lake.
-        let file = if chain && !out.is_empty() {
+        // Wire the dependency edge: a consumer imports its helper's
+        // module and folds the helper's content into its hash. The
+        // `chain` test hook (`AVER_PROOF_LANE_CHAIN`) instead wires
+        // every law to import every source-earlier law.
+        let file = if let Some(h) = consumed_helper {
+            let helper = &out[h];
+            with_lane_imports(
+                &file,
+                &[(helper.module.clone(), helper.content.clone())],
+                entry_content,
+            )
+        } else if chain && !out.is_empty() {
             let helpers: Vec<(String, String)> = out
                 .iter()
                 .map(|h| (h.module.clone(), h.content.clone()))
@@ -273,6 +364,7 @@ pub fn generate(
             file
         };
         out.push(file);
+        helper_records.push((out.len() - 1, law));
     }
     LaneOutput {
         files: out,
@@ -280,8 +372,11 @@ pub fn generate(
     }
 }
 
-/// Twin or companion name that clashes with an already-emitted theorem
-/// name, if any. Both are checked (the review measured both hazards).
+/// First name the candidate module declares (twin, companion, or any
+/// aux lemma in its content) that clashes with an already-emitted
+/// theorem name, if any. Aux lemmas are in scope because consumption
+/// imports lane modules into one another — a clash anywhere in the
+/// module would fail a tolerated build and silently strip credit.
 fn collides_with(
     file: &LaneLawFile,
     emitted: &std::collections::HashSet<String>,
@@ -292,20 +387,47 @@ fn collides_with(
     if emitted.contains(&file.companion) {
         return Some(file.companion.clone());
     }
-    None
+    let mut declared: Vec<String> = manifest_theorem_names(&file.content).into_iter().collect();
+    declared.sort_unstable();
+    declared.into_iter().find(|name| emitted.contains(name))
 }
 
 /// Theorem names emitted into the counted build, parsed from the
 /// manifest entry `.lean` — every `theorem <name>` / `private theorem
-/// <name>` declaration. This is the ground truth the collision guard
-/// ranges over (a sibling law named `<law>_universal` / `<law>_prop`
-/// surfaces here as a `<fn>_law_<law>_universal` / `…_prop` manifest
-/// theorem, the exact name a neighbor's lane twin/companion would
-/// claim).
+/// <name>` declaration, including those behind a leading attribute
+/// block (`@[simp] theorem <name>`). This is the ground truth the
+/// collision guard ranges over (a sibling law named `<law>_universal`
+/// / `<law>_prop` surfaces here as a `<fn>_law_<law>_universal` /
+/// `…_prop` manifest theorem, the exact name a neighbor's lane
+/// twin/companion would claim). Also applied to emitted lane module
+/// content, so aux lemma names join the guarded set.
 fn manifest_theorem_names(entry_content: &str) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for line in entry_content.lines() {
-        let trimmed = line.trim_start();
+        let mut trimmed = line.trim_start();
+        // Strip a leading attribute block: `@[simp] theorem foo` (the
+        // parser would otherwise miss the declaration entirely).
+        if let Some(rest) = trimmed.strip_prefix("@[") {
+            let mut depth = 1usize;
+            let mut end = None;
+            for (i, c) in rest.char_indices() {
+                match c {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            match end {
+                Some(i) => trimmed = rest[i + 1..].trim_start(),
+                None => continue,
+            }
+        }
         let rest = trimmed
             .strip_prefix("theorem ")
             .or_else(|| trimmed.strip_prefix("private theorem "));
@@ -329,9 +451,9 @@ fn manifest_theorem_names(entry_content: &str) -> std::collections::HashSet<Stri
 /// consumer module, retiring stale `.olean`s. The dependency edges are
 /// recorded on [`LaneLawFile::imports`].
 ///
-/// This is the lane-imports MACHINERY. Nothing in the emitter drives it
-/// yet (the consumption figure is CH-3); it is exercised by tests and
-/// stands ready for that figure to call. `helpers` is the list of
+/// This is the lane-imports MACHINERY, driven by consumption
+/// (`consume.rs` — a consumer imports its helper's module) and by the
+/// `AVER_PROOF_LANE_CHAIN` test hook. `helpers` is the list of
 /// `(module, content)` of the lane modules to import; `entry_content`
 /// is the same manifest seed `generate` folds in, so the consumer hash
 /// stays a pure function of (its own text, its helpers' text, the

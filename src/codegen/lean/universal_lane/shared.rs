@@ -48,6 +48,33 @@ pub(super) fn ctor_of(e: &Spanned<Expr>) -> Option<(String, Vec<&Spanned<Expr>>)
     }
 }
 
+/// Split a `when` predicate into its conjuncts along a RIGHT-NESTED
+/// `Bool.and` spine: `Bool.and(p, Bool.and(q, r))` → `[p, q, r]`.
+/// Returns `None` when a LEFT arm is itself a conjunction — a flat
+/// `obtain ⟨h0, …, hN⟩` pattern only destructures right-nested `And`,
+/// so emitting against a left-nested spine would be a guaranteed
+/// tolerated-build failure; declining keeps the zero-cost contract.
+pub(super) fn when_conjuncts(when: &Spanned<Expr>) -> Option<Vec<&Spanned<Expr>>> {
+    fn walk<'a>(e: &'a Spanned<Expr>, out: &mut Vec<&'a Spanned<Expr>>) -> bool {
+        if let Some((callee, args)) = call_of(e)
+            && callee == "Bool.and"
+            && args.len() == 2
+        {
+            let left_is_and =
+                call_of(&args[0]).is_some_and(|(c, a)| c == "Bool.and" && a.len() == 2);
+            if left_is_and {
+                return false;
+            }
+            out.push(&args[0]);
+            return walk(&args[1], out);
+        }
+        out.push(e);
+        true
+    }
+    let mut out = Vec::new();
+    walk(when, &mut out).then_some(out)
+}
+
 /// Flatten a `when` predicate into the consumer-facing PROP premises of
 /// the derived corollary. The lane twin carries the premise at the Bool
 /// seam (`<when> = true`); the corollary normalizes it so a downstream

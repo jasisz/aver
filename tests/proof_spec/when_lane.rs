@@ -1,5 +1,50 @@
 use super::*;
 
+/// Tripwire against the silent-absorption proof shape: emitted lane
+/// text must never apply a lane-law twin or companion through a
+/// `first | exact …` alternative. That shape was measured to succeed
+/// against a broken companion and carry its axioms into a green build;
+/// lane proofs reference other lane laws ONLY via explicit
+/// `have … := <companion> …` applications. Scans every module listed
+/// in the lane index of `output_dir`.
+fn assert_lane_never_first_exact_lane_theorem(output_dir: &std::path::Path) {
+    let Ok(raw) = std::fs::read_to_string(output_dir.join("_aver_universal_lane.json")) else {
+        return; // no lane emitted — nothing to scan
+    };
+    let index: serde_json::Value = serde_json::from_str(&raw).expect("lane index must parse");
+    let laws = index["laws"].as_array().cloned().unwrap_or_default();
+    let mut lane_names: Vec<String> = Vec::new();
+    for law in &laws {
+        let theorem = law["theorem"].as_str().expect("theorem name");
+        lane_names.push(theorem.to_string());
+        if let Some(base) = theorem.strip_suffix("_universal") {
+            lane_names.push(format!("{base}_prop"));
+        }
+    }
+    for law in &laws {
+        let module = law["module"].as_str().expect("module name");
+        let content = std::fs::read_to_string(
+            output_dir
+                .join("universal_lane")
+                .join(format!("{module}.lean")),
+        )
+        .expect("lane module file must exist");
+        for line in content.lines() {
+            let in_alternative = line.trim_start().starts_with('|') || line.contains("first");
+            if !in_alternative {
+                continue;
+            }
+            for name in &lane_names {
+                assert!(
+                    !line.contains(&format!("exact {name}")),
+                    "lane module {module} applies lane theorem {name} inside a \
+                     `first`/`|` alternative — the silent-absorption shape: {line}"
+                );
+            }
+        }
+    }
+}
+
 /// Nonlinear-arithmetic wall (`tests/fixtures/nr_wall.av`):
 /// laws whose unfolded cone multiplies two VARIABLES (`x * x`,
 /// `(s*s - d*x)^2`) must DEGRADE to honest caught sorries, never to a
@@ -101,6 +146,7 @@ fn proof_when_universal_lane_closes_synthetic_sign_law() {
          (when_universal >= 1).\n{}",
         format_output(&run)
     );
+    assert_lane_never_first_exact_lane_theorem(&output_dir);
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
@@ -220,6 +266,7 @@ fn proof_when_universal_lane_json_end_to_end() {
             "no_sorry_token_in_universal_module violated by {module}"
         );
     }
+    assert_lane_never_first_exact_lane_theorem(&output_dir);
 
     // ---- run 2: sabotage -------------------------------------------------
     let (sabotaged, run2) = run_lean_check_json(
@@ -360,6 +407,7 @@ fn proof_when_universal_lane_closes_tip_prop_85() {
             "the snoc-distribution aux lemma must be emitted as a lane-local lemma"
         );
     }
+    assert_lane_never_first_exact_lane_theorem(&output_dir);
     // Sabotage: the broken lane proof costs exactly "prop_85 stays
     // bounded" — counted summary byte-identical, no credit.
     let (sabotaged, run2) = run_lean_check_json(
@@ -426,6 +474,7 @@ fn proof_when_universal_lane_closes_synthetic_bridge_laws() {
         vec!["duoUp.duoFlip", "tallyUp.tallyWedgeNeq"],
         "exact lane law set (exact in both directions, like the budgets)"
     );
+    assert_lane_never_first_exact_lane_theorem(&output_dir);
 
     // Sabotage one bridge law: neighbors keep credit, counted untouched.
     let (sabotaged, run2) = run_lean_check_json(
@@ -682,6 +731,238 @@ fn proof_when_universal_lane_stale_olean_retirement() {
     let _ = std::fs::remove_file(&edited_path);
     let _ = std::fs::remove_dir_all(&out_a);
     let _ = std::fs::remove_dir_all(&out_b);
+}
+
+/// Lane consumption, pure generation (no lake): on the floor fixture
+/// (`tests/fixtures/when_lane_floor.av`) the emitter
+/// 1. proves the conditional floor-stability HELPER law in the lane;
+/// 2. recognizes the later `sharedCell` law as a CONSUMER — the
+///    helper's conclusion shape matches both sides of its proof cone
+///    and every helper premise conjunct maps onto one of the
+///    consumer's (the premise-subset rule) — and emits a module that
+///    imports the helper's and applies its companion via explicit
+///    `have` at both instantiations;
+/// 3. DECLINES the `sharedCellUnguarded` variant, which is missing the
+///    helper's `scale > 0` conjunct: no lane module, no failing build,
+///    not even an omission note — recognition simply does not fire.
+#[test]
+fn proof_when_universal_lane_floor_consumption_emission() {
+    use std::path::PathBuf;
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let output_dir = temp_output_dir("aver-proof-floor-emit");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/when_lane_floor.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&output_dir)
+        .output()
+        .expect("aver proof must run");
+    assert!(run.status.success(), "{}", format_output(&run));
+
+    let index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("_aver_universal_lane.json"))
+            .expect("lane index must be written"),
+    )
+    .expect("lane index must parse");
+    let laws = index["laws"].as_array().expect("laws");
+    let labels: Vec<&str> = laws.iter().filter_map(|l| l["law"].as_str()).collect();
+    assert_eq!(
+        labels,
+        vec!["binFloor.cellStable", "coarseAgree.sharedCell"],
+        "exactly the helper and the consumer emit; the premise-dropping \
+         variant declines (exact in both directions)"
+    );
+    assert!(
+        index["omitted"].as_array().is_some_and(|o| o.is_empty()),
+        "a declined consumer is not an omission note — recognition simply does not fire"
+    );
+    let helper = &laws[0];
+    let consumer = &laws[1];
+    assert!(
+        helper["imports"].as_array().is_some_and(|a| a.is_empty()),
+        "the helper imports no lane module"
+    );
+    assert_eq!(
+        consumer["imports"][0].as_str(),
+        helper["module"].as_str(),
+        "the lane index records the consumer -> helper dependency edge"
+    );
+
+    // The consumer module: imports the helper, applies its companion
+    // via explicit `have` at BOTH instantiations, and carries no sorry.
+    let consumer_src = std::fs::read_to_string(
+        output_dir
+            .join("universal_lane")
+            .join(format!("{}.lean", consumer["module"].as_str().unwrap())),
+    )
+    .expect("consumer lane module must exist");
+    assert!(
+        consumer_src.contains(&format!("import {}", helper["module"].as_str().unwrap())),
+        "the consumer module imports the helper module"
+    );
+    assert!(
+        consumer_src.contains("have hh0 := binFloor_law_cellStable_prop xn xs cell scale")
+            && consumer_src.contains("have hh1 := binFloor_law_cellStable_prop yn ys cell scale"),
+        "the helper companion is applied via explicit `have` at both matched \
+         instantiations:\n{consumer_src}"
+    );
+    let helper_src = std::fs::read_to_string(
+        output_dir
+            .join("universal_lane")
+            .join(format!("{}.lean", helper["module"].as_str().unwrap())),
+    )
+    .expect("helper lane module must exist");
+    for (name, content) in [("consumer", &consumer_src), ("helper", &helper_src)] {
+        assert!(
+            !content.contains("sorry"),
+            "no_sorry_token_in_universal_module violated by the {name} module"
+        );
+    }
+    assert_lane_never_first_exact_lane_theorem(&output_dir);
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Lane consumption end-to-end against live lake — a conditional law's
+/// universal proof BUILDS ON an earlier proven conditional law of the
+/// same file, both credited kernel-clean by the plain
+/// `aver proof --check` pipeline (no test hooks):
+/// 1. normal run: helper AND consumer earn per-declaration universal
+///    credit (`when_universal == 2`, axiom evidence within the kernel
+///    whitelist), while the premise-dropping variant stays bounded;
+/// 2. SABOTAGE the helper: its tolerated build fails, and the consumer
+///    — which imports the helper's module — fails WITH it in the same
+///    run (`when_universal == 0`). No credited declaration can carry a
+///    broken helper: the consumer's own `#print axioms` line is the
+///    crediting evidence, and an absorbed axiom (sorryAx included)
+///    surfaces there by axiom transitivity;
+/// 3. SABOTAGE only the consumer: the upstream helper keeps its credit
+///    (`when_universal == 1`) — the dependency edge does not leak
+///    backwards.
+/// The counted summary is byte-identical across all three runs.
+#[test]
+fn proof_when_universal_lane_floor_consumption_end_to_end() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping lane consumption test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-floor-e2e");
+
+    // ---- run 1: normal -------------------------------------------------
+    let (normal, run) =
+        run_lean_check_json("tests/fixtures/when_lane_floor.av", &output_dir, 0, &[]);
+    assert_eq!(
+        normal["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(normal["passed"].as_bool(), Some(true));
+    assert_eq!(
+        normal["when_universal"].as_u64(),
+        Some(2),
+        "helper and consumer both close universally in the lane.\n{}",
+        format_output(&run)
+    );
+    let detail: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json"))
+            .expect("when_universal_laws.json must be written"),
+    )
+    .expect("detail artifact must parse");
+    let laws = detail["laws"].as_array().expect("laws array");
+    let labels: Vec<&str> = laws.iter().filter_map(|l| l["law"].as_str()).collect();
+    assert_eq!(
+        labels,
+        vec!["binFloor.cellStable", "coarseAgree.sharedCell"]
+    );
+    for law in laws {
+        assert_eq!(
+            law["universal"].as_bool(),
+            Some(true),
+            "law {} lost lane credit: {}",
+            law["law"],
+            law["evidence"]
+        );
+        assert_eq!(
+            law["evidence"].as_str(),
+            Some(
+                format!(
+                    "'{}' depends on axioms: [propext, Quot.sound]",
+                    law["theorem"].as_str().unwrap()
+                )
+                .as_str()
+            ),
+            "per-declaration #print axioms evidence must be quoted verbatim"
+        );
+    }
+    assert_lane_never_first_exact_lane_theorem(&output_dir);
+
+    // ---- run 2: sabotage the HELPER -> the consumer falls with it -----
+    let (sab_helper, run2) = run_lean_check_json(
+        "tests/fixtures/when_lane_floor.av",
+        &output_dir,
+        0,
+        &[("AVER_PROOF_LANE_SABOTAGE", "cellStable")],
+    );
+    assert_eq!(
+        counted_summary(&sab_helper),
+        counted_summary(&normal),
+        "a broken helper cannot perturb the counted summary.\n{}",
+        format_output(&run2)
+    );
+    assert_eq!(
+        sab_helper["when_universal"].as_u64(),
+        Some(0),
+        "a consumer must lose credit in the SAME run its helper breaks.\n{}",
+        format_output(&run2)
+    );
+    let detail2: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json")).expect("artifact"),
+    )
+    .expect("detail artifact must parse");
+    for law in detail2["laws"].as_array().expect("laws") {
+        assert_eq!(
+            law["universal"].as_bool(),
+            Some(false),
+            "no declaration may stay credited above a broken helper: {} -> {}",
+            law["law"],
+            law["evidence"]
+        );
+        assert!(
+            !law["evidence"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("sorryAx"),
+            "the audit must never see sorryAx on a credited declaration: {}",
+            law["evidence"]
+        );
+    }
+
+    // ---- run 3: sabotage only the CONSUMER -> helper survives ----------
+    let (sab_consumer, run3) = run_lean_check_json(
+        "tests/fixtures/when_lane_floor.av",
+        &output_dir,
+        0,
+        &[("AVER_PROOF_LANE_SABOTAGE", "sharedCell")],
+    );
+    assert_eq!(
+        counted_summary(&sab_consumer),
+        counted_summary(&normal),
+        "a broken consumer cannot perturb the counted summary.\n{}",
+        format_output(&run3)
+    );
+    assert_eq!(
+        sab_consumer["when_universal"].as_u64(),
+        Some(1),
+        "the upstream helper keeps its credit when only the consumer breaks.\n{}",
+        format_output(&run3)
+    );
+
+    let _ = std::fs::remove_dir_all(&output_dir);
 }
 
 /// CH-2 collision guard, live: a sibling law literally named
