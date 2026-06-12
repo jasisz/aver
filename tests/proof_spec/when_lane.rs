@@ -458,3 +458,296 @@ fn proof_when_universal_lane_closes_synthetic_bridge_laws() {
 
     let _ = std::fs::remove_dir_all(&output_dir);
 }
+
+/// CH-2 two-module chain (lane imports + hash folding), live: with the
+/// `AVER_PROOF_LANE_CHAIN` hook the later bridge law (`tallyWedgeNeq`,
+/// the CONSUMER) imports the earlier one (`duoFlip`, the HELPER) — a
+/// real lane-to-lane dependency graph against live lake.
+/// 1. normal chain: BOTH laws credit (`when_universal == 2`); the lane
+///    index records the dependency edge (`tallyWedgeNeq.imports` =
+///    [duoFlip's module]); the counted summary is byte-identical to the
+///    edgeless run.
+/// 2. SABOTAGE the HELPER (`duoFlip`): its tolerated build fails AND so
+///    does the consumer's — the consumer imports the un-built helper —
+///    so BOTH lose credit (`when_universal == 0`); counted summary
+///    untouched.
+/// 3. SABOTAGE only the CONSUMER (`tallyWedgeNeq`): the helper is
+///    upstream of the failure and keeps its credit
+///    (`when_universal == 1`) — the edge does not leak the other way.
+#[test]
+fn proof_when_universal_lane_two_module_chain() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping when-universal lane chain test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-when-lane-chain");
+
+    // ---- run 1: normal chain ------------------------------------------
+    let (normal, run) = run_lean_check_json(
+        "tests/fixtures/when_lane_bridge.av",
+        &output_dir,
+        0,
+        &[("AVER_PROOF_LANE_CHAIN", "1")],
+    );
+    assert_eq!(
+        normal["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(normal["passed"].as_bool(), Some(true));
+    assert_eq!(
+        normal["when_universal"].as_u64(),
+        Some(2),
+        "both laws of the chain credit (the consumer's import of the helper does not \
+         break its own proof).\n{}",
+        format_output(&run)
+    );
+    // The dependency edge is recorded in the lane index.
+    let lane_index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("_aver_universal_lane.json"))
+            .expect("lane index must be written"),
+    )
+    .expect("lane index must parse");
+    let laws = lane_index["laws"].as_array().expect("laws");
+    let helper = laws
+        .iter()
+        .find(|l| l["law"].as_str() == Some("duoUp.duoFlip"))
+        .expect("helper law in the lane index");
+    let consumer = laws
+        .iter()
+        .find(|l| l["law"].as_str() == Some("tallyUp.tallyWedgeNeq"))
+        .expect("consumer law in the lane index");
+    assert!(
+        helper["imports"].as_array().is_some_and(|a| a.is_empty()),
+        "the source-earlier helper imports nothing"
+    );
+    assert_eq!(
+        consumer["imports"].as_array().map(|a| a.len()),
+        Some(1),
+        "the consumer records exactly one dependency edge"
+    );
+    assert_eq!(
+        consumer["imports"][0].as_str(),
+        helper["module"].as_str(),
+        "the edge points at the helper's module"
+    );
+    // The consumer module file actually imports the helper module.
+    let consumer_module = consumer["module"].as_str().expect("consumer module");
+    let consumer_src = std::fs::read_to_string(
+        output_dir
+            .join("universal_lane")
+            .join(format!("{consumer_module}.lean")),
+    )
+    .expect("consumer module file");
+    assert!(
+        consumer_src.contains(&format!("import {}", helper["module"].as_str().unwrap())),
+        "the consumer module imports the helper module"
+    );
+
+    // ---- run 2: sabotage the HELPER -> both fail ----------------------
+    let (sab_helper, run2) = run_lean_check_json(
+        "tests/fixtures/when_lane_bridge.av",
+        &output_dir,
+        0,
+        &[
+            ("AVER_PROOF_LANE_CHAIN", "1"),
+            ("AVER_PROOF_LANE_SABOTAGE", "duoFlip"),
+        ],
+    );
+    assert_eq!(
+        counted_summary(&sab_helper),
+        counted_summary(&normal),
+        "a helper failure cannot perturb the counted summary.\n{}",
+        format_output(&run2)
+    );
+    assert_eq!(
+        sab_helper["when_universal"].as_u64(),
+        Some(0),
+        "sabotaging the helper fails BOTH the helper and the consumer (which imports \
+         it) — no credit survives the chain.\n{}",
+        format_output(&run2)
+    );
+
+    // ---- run 3: sabotage only the CONSUMER -> helper survives ---------
+    let (sab_consumer, run3) = run_lean_check_json(
+        "tests/fixtures/when_lane_bridge.av",
+        &output_dir,
+        0,
+        &[
+            ("AVER_PROOF_LANE_CHAIN", "1"),
+            ("AVER_PROOF_LANE_SABOTAGE", "tallyWedgeNeq"),
+        ],
+    );
+    assert_eq!(
+        counted_summary(&sab_consumer),
+        counted_summary(&normal),
+        "a consumer failure cannot perturb the counted summary.\n{}",
+        format_output(&run3)
+    );
+    assert_eq!(
+        sab_consumer["when_universal"].as_u64(),
+        Some(1),
+        "sabotaging only the consumer leaves the upstream helper credited — the \
+         dependency edge does not leak the other way.\n{}",
+        format_output(&run3)
+    );
+    let detail3: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json")).expect("artifact"),
+    )
+    .expect("detail artifact must parse");
+    for law in detail3["laws"].as_array().expect("laws") {
+        let expected = law["law"].as_str() == Some("duoUp.duoFlip");
+        assert_eq!(
+            law["universal"].as_bool(),
+            Some(expected),
+            "only the helper keeps credit when the consumer is sabotaged: {} -> {}",
+            law["law"],
+            law["evidence"]
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// CH-2 stale-`.olean` retirement: editing a helper law in the source
+/// changes the helper's lane CONTENT, which folds into the importing
+/// consumer's module hash — so the consumer's module NAME changes. No
+/// pre-existing `.olean` under the old consumer name can satisfy the
+/// probe, closing the masquerade window across the import chain. Pure
+/// generation (no lake): asserts on the lane index the emitter writes.
+#[test]
+fn proof_when_universal_lane_stale_olean_retirement() {
+    use std::path::PathBuf;
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let fixture = repo_root.join("tests/fixtures/when_lane_bridge.av");
+    let original = std::fs::read_to_string(&fixture).expect("read bridge fixture");
+
+    // Generate the chain once, record the consumer's module name.
+    let consumer_module = |src_path: &std::path::Path, out: &std::path::Path| -> String {
+        let run = Command::new(aver_bin)
+            .current_dir(&repo_root)
+            .arg("proof")
+            .arg(src_path)
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(out)
+            .env("AVER_PROOF_LANE_CHAIN", "1")
+            .output()
+            .expect("aver proof must run");
+        assert!(run.status.success(), "{}", format_output(&run));
+        let index: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out.join("_aver_universal_lane.json"))
+                .expect("lane index must be written"),
+        )
+        .expect("lane index parses");
+        index["laws"]
+            .as_array()
+            .expect("laws")
+            .iter()
+            .find(|l| l["law"].as_str() == Some("tallyUp.tallyWedgeNeq"))
+            .expect("consumer law")["module"]
+            .as_str()
+            .expect("consumer module")
+            .to_string()
+    };
+
+    let out_a = temp_output_dir("aver-proof-stale-a");
+    let module_before = consumer_module(&fixture, &out_a);
+
+    // Edit the HELPER law in a fresh copy of the source: rename it. The
+    // helper's lane module is re-derived (new name + content), and the
+    // consumer imports it and folds its content — both feed the
+    // consumer's hash, so the consumer's module name must move. (Still a
+    // recognized bridge law; only its name changed.)
+    let edited = original.replace(
+        "verify duoUp law duoFlip\n",
+        "verify duoUp law duoFlipEdited\n",
+    );
+    assert_ne!(edited, original, "the helper-edit substitution must apply");
+    let edited_path = temp_output_dir("aver-stale-src").with_extension("av");
+    std::fs::write(&edited_path, &edited).expect("write edited fixture");
+
+    let out_b = temp_output_dir("aver-proof-stale-b");
+    let module_after = consumer_module(&edited_path, &out_b);
+
+    assert_ne!(
+        module_before, module_after,
+        "editing the helper law RENAMES the consumer module (hash folding) — a stale \
+         `.olean` under the old consumer name can never pay for the changed helper"
+    );
+
+    let _ = std::fs::remove_file(&edited_path);
+    let _ = std::fs::remove_dir_all(&out_a);
+    let _ = std::fs::remove_dir_all(&out_b);
+}
+
+/// CH-2 collision guard, live: a sibling law literally named
+/// `duoFlip_universal` emits the counted-build theorem name
+/// (`duoUp_law_duoFlip_universal`) that the `duoFlip` lane TWIN would
+/// claim. The guard HONESTLY OMITS `duoUp.duoFlip` — no lane module, no
+/// credit attempt, an explicit note in the detail artifact — so the
+/// clash never fails a tolerated build. The NEIGHBOR
+/// (`tallyUp.tallyWedgeNeq`) keeps its credit (`when_universal == 1`);
+/// before the guard the clash would fail the colliding law's tolerated
+/// build and silently strip its credit with no note. The counted
+/// summary is byte-identical to the no-clash bridge fixture's.
+#[test]
+fn proof_when_universal_lane_collision_guard_omits_clash_keeps_neighbor() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping when-universal lane collision test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-when-lane-collision");
+    let (summary, run) =
+        run_lean_check_json("tests/fixtures/when_lane_collision.av", &output_dir, 0, &[]);
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(summary["passed"].as_bool(), Some(true));
+    assert_eq!(
+        summary["when_universal"].as_u64(),
+        Some(1),
+        "the colliding law is omitted; the neighbor keeps its credit — exactly one \
+         lane law survives.\n{}",
+        format_output(&run)
+    );
+
+    let detail: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json"))
+            .expect("when_universal_laws.json must be written"),
+    )
+    .expect("detail artifact must parse");
+    // The neighbor is credited.
+    let laws = detail["laws"].as_array().expect("laws array");
+    assert_eq!(laws.len(), 1, "exactly the neighbor stays in the lane");
+    assert_eq!(laws[0]["law"].as_str(), Some("tallyUp.tallyWedgeNeq"));
+    assert_eq!(
+        laws[0]["universal"].as_bool(),
+        Some(true),
+        "the neighbor keeps its credit (the red baseline: it would silently lose it): {}",
+        laws[0]["evidence"]
+    );
+    // The colliding law is an HONEST omission, naming the clash.
+    let omitted = detail["omitted"].as_array().expect("omitted array");
+    assert_eq!(omitted.len(), 1, "exactly the colliding law is omitted");
+    assert_eq!(omitted[0]["law"].as_str(), Some("duoUp.duoFlip"));
+    assert_eq!(
+        omitted[0]["collides"].as_str(),
+        Some("duoUp_law_duoFlip_universal"),
+        "the omission names the exact clashing theorem"
+    );
+    assert!(
+        omitted[0]["note"]
+            .as_str()
+            .is_some_and(|n| n.contains("skipped") && n.contains("clash")),
+        "the omission carries an honest, surfaced note"
+    );
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}

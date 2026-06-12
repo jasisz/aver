@@ -7,9 +7,11 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 ### Added
 
 - **Conditional laws proven universally now export a ready-to-use plain-logic form** — alongside the universal proof of a `when`-law, the Lean export derives a companion statement of the same fact with its premises and conclusion stated as ordinary propositions, so a later proof can cite it directly without re-deriving the boolean-to-proposition bridges.
+- **A universally-proven `when`-law can build on earlier ones** — the Lean export can have one law's side proof reuse an earlier law's, and editing the earlier law now re-checks every law that depends on it (no stale results survive an upstream change).
 
 ### Fixed
 
+- **A law whose generated name clashes with another theorem in the same proof is skipped with a clear note** instead of silently costing a neighboring law its universal credit. The clash is reported in the per-law proof report rather than failing quietly.
 - **wasm-gc strings count characters, not bytes** — `String.len`, `String.charAt`, `String.slice`, and `String.chars` now use Unicode character (scalar) counts and indices, matching the VM and the documentation on every multi-byte string. `String.byteLength` still counts UTF-8 bytes. `examples/data/json.av` passes `aver verify --wasm-gc` in full, including its emoji cases.
 - **Comparing `Result` values no longer traps on wasm-gc** when one module wraps two different record types in `Result<…, String>` — `Result.Ok`/`Result.Err` now build the instantiation the type checker resolved at the site instead of guessing from the payload type. `examples/core/order_total.av` passes `aver verify --wasm-gc` in full.
 - **`aver audit` counts every check error in its total and exit code** — `error[verify-rhs]` (a verify case calling the function under test on the right side of `=>`) was printed but excluded from both, so a file with only such errors audited green.

@@ -1,0 +1,152 @@
+module CollisionLane
+    intent =
+        "Collision-guard fixture for the proof_spec when-universal lane. A sibling law literally"
+        "named `duoFlip_universal` emits the counted-build theorem name the `duoFlip` lane twin"
+        "would claim — the lane must honestly OMIT the clashing law and keep the NEIGHBOR"
+        "(`tallyWedgeNeq`) credited, never let the clash fail a tolerated build and silently strip"
+        "the neighbor's credit (the red baseline before the guard)."
+    exposes [duoUp, tallyUp]
+
+type Nat
+    Z
+    S(Nat)
+
+fn likeNat(a: Nat, b: Nat) -> Bool
+    ? "Recursive structural equality on Peano Nat — the premise bridge."
+    match a
+        Nat.Z -> match b
+            Nat.Z -> true
+            Nat.S(v) -> false
+        Nat.S(u) -> match b
+            Nat.Z -> false
+            Nat.S(v) -> likeNat(u, v)
+
+verify likeNat
+    likeNat(Nat.Z, Nat.Z) => true
+    likeNat(Nat.Z, Nat.S(Nat.Z)) => false
+    likeNat(Nat.S(Nat.Z), Nat.S(Nat.Z)) => true
+
+fn unlikeNat(a: Nat, b: Nat) -> Bool
+    ? "Negated bridge: the 2-arm not-wrapper over likeNat."
+    match likeNat(a, b)
+        true -> false
+        false -> true
+
+verify unlikeNat
+    unlikeNat(Nat.Z, Nat.Z) => false
+    unlikeNat(Nat.Z, Nat.S(Nat.Z)) => true
+
+fn bulk(xs: List<Int>) -> Nat
+    ? "List length as a Peano measure."
+    match xs
+        [] -> Nat.Z
+        [v, ..vs] -> Nat.S(bulk(vs))
+
+verify bulk
+    bulk([]) => Nat.Z
+    bulk([4]) => Nat.S(Nat.Z)
+
+fn weld(xs: List<Int>, ys: List<Int>) -> List<Int>
+    ? "Append two Int lists."
+    match xs
+        [] -> ys
+        [v, ..vs] -> List.concat([v], weld(vs, ys))
+
+verify weld
+    weld([], [1]) => [1]
+    weld([1], [2]) => [1, 2]
+
+fn weldDuo(xs: List<Tuple<Int, Int>>, ys: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    ? "Append two pair lists."
+    match xs
+        [] -> ys
+        [v, ..vs] -> List.concat([v], weldDuo(vs, ys))
+
+verify weldDuo
+    weldDuo([], [(1, 2)]) => [(1, 2)]
+
+fn tumble(xs: List<Int>) -> List<Int>
+    ? "Reverse an Int list via weld."
+    match xs
+        [] -> []
+        [v, ..vs] -> weld(tumble(vs), [v])
+
+verify tumble
+    tumble([]) => []
+    tumble([1, 2]) => [2, 1]
+
+fn tumbleDuo(xs: List<Tuple<Int, Int>>) -> List<Tuple<Int, Int>>
+    ? "Reverse a pair list via weldDuo."
+    match xs
+        [] -> []
+        [v, ..vs] -> weldDuo(tumbleDuo(vs), [v])
+
+verify tumbleDuo
+    tumbleDuo([(1, 2), (3, 4)]) => [(3, 4), (1, 2)]
+
+fn duoUp(xs: List<Int>, ys: List<Int>) -> List<Tuple<Int, Int>>
+    ? "Zip two Int lists into pairs."
+    match xs
+        [] -> []
+        [v, ..vs] -> match ys
+            [] -> []
+            [w, ..wss] -> List.concat([(v, w)], duoUp(vs, wss))
+
+verify duoUp
+    duoUp([], []) => []
+    duoUp([1], [4]) => [(1, 4)]
+    duoUp([1, 2], [4, 5]) => [(1, 4), (2, 5)]
+
+verify duoUp law duoFlip
+    given xs: List<Int> = [[], [1], [1, 2], [1, 2, 3]]
+    given ys: List<Int> = [[], [4], [4, 5], [4, 5, 6]]
+    when likeNat(bulk(xs), bulk(ys))
+    duoUp(tumble(xs), tumble(ys)) => tumbleDuo(duoUp(xs, ys))
+
+verify duoUp law duoFlip_universal
+    given xs: List<Int> = [[], [1], [1, 2]]
+    duoUp(xs, []) => []
+
+fn rankLe(a: Nat, b: Nat) -> Bool
+    ? "Peano less-or-equal — the insert dispatch."
+    match a
+        Nat.Z -> true
+        Nat.S(u) -> match b
+            Nat.Z -> false
+            Nat.S(v) -> rankLe(u, v)
+
+verify rankLe
+    rankLe(Nat.Z, Nat.S(Nat.Z)) => true
+    rankLe(Nat.S(Nat.Z), Nat.Z) => false
+
+fn wedge(a: Nat, xs: List<Nat>) -> List<Nat>
+    ? "Ordered insert into a Nat list."
+    match xs
+        [] -> [a]
+        [v, ..vs] -> match rankLe(a, v)
+            true -> List.concat([a], xs)
+            false -> List.concat([v], wedge(a, vs))
+
+verify wedge
+    wedge(Nat.Z, []) => [Nat.Z]
+    wedge(Nat.Z, [Nat.S(Nat.Z)]) => [Nat.Z, Nat.S(Nat.Z)]
+
+fn tallyUp(a: Nat, xs: List<Nat>) -> Nat
+    ? "Count occurrences of a in the list."
+    match xs
+        [] -> Nat.Z
+        [v, ..vs] -> match likeNat(a, v)
+            true -> Nat.S(tallyUp(a, vs))
+            false -> tallyUp(a, vs)
+
+verify tallyUp
+    tallyUp(Nat.Z, []) => Nat.Z
+    tallyUp(Nat.Z, [Nat.Z]) => Nat.S(Nat.Z)
+    tallyUp(Nat.Z, [Nat.S(Nat.Z)]) => Nat.Z
+
+verify tallyUp law tallyWedgeNeq
+    given p: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given q: Nat = [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.S(Nat.Z))]
+    given ws: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z]]
+    when unlikeNat(p, q)
+    tallyUp(p, wedge(q, ws)) => tallyUp(p, ws)

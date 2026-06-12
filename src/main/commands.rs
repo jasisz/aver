@@ -6269,6 +6269,11 @@ fn run_when_universal_lane(dir: &str) -> (usize, usize) {
         return (0, 0);
     };
     let laws = manifest["laws"].as_array().cloned().unwrap_or_default();
+    // Laws the collision guard honestly omitted: surfaced verbatim into
+    // the detail artifact so a withheld law is a visible note, never a
+    // silent gap (an unguarded clash would fail a tolerated build and
+    // strip a neighbor's credit instead).
+    let omitted = manifest["omitted"].as_array().cloned().unwrap_or_default();
     let mut details: Vec<serde_json::Value> = Vec::new();
     let mut credited = 0usize;
     let mut total = 0usize;
@@ -6307,6 +6312,7 @@ fn run_when_universal_lane(dir: &str) -> (usize, usize) {
         serde_json::to_string_pretty(&serde_json::json!({
             "when_universal": credited,
             "laws": details,
+            "omitted": omitted,
         }))
         .unwrap_or_else(|_| "{}".to_string()),
     );
@@ -6531,28 +6537,33 @@ fn cmd_proof_lean(
             .map(|(_, content)| content.clone())
             .unwrap_or_default();
         let sabotage = std::env::var("AVER_PROOF_LANE_SABOTAGE").ok();
-        lean_codegen::universal_lane::generate(ctx, &entry_content, sabotage.as_deref())
+        let chain = std::env::var("AVER_PROOF_LANE_CHAIN").is_ok();
+        lean_codegen::universal_lane::generate(ctx, &entry_content, sabotage.as_deref(), chain)
     } else {
-        Vec::new()
+        lean_codegen::universal_lane::LaneOutput {
+            files: Vec::new(),
+            omitted: Vec::new(),
+        }
     };
-    if lane.is_empty() {
-        // Lane disabled or nothing recognized: retire any stale lane
-        // index from a previous emission so `--check` can never credit
-        // outdated modules.
+    if lane.files.is_empty() && lane.omitted.is_empty() {
+        // Lane disabled or nothing recognized (and nothing omitted):
+        // retire any stale lane index from a previous emission so
+        // `--check` can never credit outdated modules.
         let _ = std::fs::remove_file(
             Path::new(output_dir).join(lean_codegen::universal_lane::LANE_MANIFEST_FILE),
         );
     } else {
         for (name, content) in &mut output.files {
             if name == "lakefile.lean" {
-                *content = lean_codegen::universal_lane::lakefile_with_lane_libs(content, &lane);
+                *content =
+                    lean_codegen::universal_lane::lakefile_with_lane_libs(content, &lane.files);
             }
         }
         output.files.push((
             lean_codegen::universal_lane::LANE_MANIFEST_FILE.to_string(),
             lean_codegen::universal_lane::lane_manifest_json(&lane),
         ));
-        for law in &lane {
+        for law in &lane.files {
             output.files.push((
                 format!(
                     "{}/{}.lean",
