@@ -83,6 +83,46 @@ fn proof_nonlinear_laws_degrade_to_honest_sorries() {
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 
+/// Wide single-given domain (`tests/fixtures/wide_domain_law.av`):
+/// a conditional law whose one given spans `0..299` makes
+/// `law_theorem_prop` prepend a 300-way `a = v0 ∨ … ∨ a = v299`
+/// disjunction. Unpartitioned, that statement blows Lean's default
+/// `maxRecDepth` during elaboration (the scout bisected the wall at 252
+/// values) and the WHOLE file fails to build — every law in it loses its
+/// caught-sorry floor. Partitioning the domain into `_partN` theorems
+/// keeps each part's disjunction below the wall, so the file builds green
+/// and the check passes. Live lake.
+#[test]
+fn proof_wide_domain_law_partitions_and_builds_green() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping wide-domain proof test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-wide-domain");
+    let (summary, run) =
+        run_lean_check_json("tests/fixtures/wide_domain_law.av", &output_dir, 0, &[]);
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "the wide-domain export must BUILD green — without partitioning the \
+         300-way disjunction exceeds maxRecDepth and the whole file fails.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "the partitioned bounded law closes its sample/checked-domain checks.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["bounded_laws"].as_u64(),
+        Some(1),
+        "the partitioned `_partN` theorems fold to ONE bounded law in the audit.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
 /// Dafny side of the nonlinear-wall fixture: `when`-law samples come
 /// from the UNFILTERED given cartesian product, so premise-violating
 /// combinations (square-monotonicity at e=1, b=0) were asserted
@@ -423,6 +463,145 @@ fn proof_when_universal_lane_closes_tip_prop_85() {
         format_output(&run2)
     );
     assert_eq!(sabotaged["when_universal"].as_u64(), Some(0));
+
+    let _ = std::fs::remove_dir_all(&output_dir);
+}
+
+/// Real floor-grid corpus task: the helper law (`floorQ.cellFloorStable`)
+/// proves floor stability inside one finer cell, and the later consumer
+/// law (`coarseFloorEq.sharedCellFloor`) consumes it at both sides of a
+/// coarser-cell equality. Mirrors the prop_85 / floor-fixture template:
+/// `when_universal == 2` exactly, the consumer -> helper `imports` edge
+/// read from the lane index, and both sabotage legs (helper break drops
+/// BOTH to 0 with a byte-identical counted summary; consumer break leaves
+/// the helper credited at 1). The pin uses only the JSON summary/detail
+/// outputs and never depends on a generated lane module hash.
+#[test]
+fn proof_when_universal_lane_closes_cell_floor_grid() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping when-universal lane test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-cell-floor-grid");
+    let (normal, run) = run_lean_check_json(
+        "proof-corpus/handwritten/cell_floor_grid.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        normal["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(normal["passed"].as_bool(), Some(true));
+    assert_eq!(
+        normal["universal"].as_bool(),
+        Some(false),
+        "file-level `universal` keeps counted-build semantics; the lane \
+         credit is per-law via when_universal"
+    );
+    assert_eq!(
+        normal["when_universal"].as_u64(),
+        Some(2),
+        "both floor-grid laws must close universally in the lane.\n{}",
+        format_output(&run)
+    );
+
+    let detail: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("when_universal_laws.json"))
+            .expect("when_universal_laws.json must be written"),
+    )
+    .expect("detail artifact must parse");
+    let laws = detail["laws"].as_array().expect("laws array");
+    let labels: Vec<&str> = laws.iter().filter_map(|l| l["law"].as_str()).collect();
+    assert_eq!(
+        labels,
+        vec!["floorQ.cellFloorStable", "coarseFloorEq.sharedCellFloor"],
+        "exact floor-grid lane law set"
+    );
+    for law in laws {
+        assert_eq!(
+            law["universal"].as_bool(),
+            Some(true),
+            "law {} lost lane credit: {}",
+            law["law"],
+            law["evidence"]
+        );
+        assert_eq!(
+            law["evidence"].as_str(),
+            Some(
+                format!(
+                    "'{}' depends on axioms: [propext, Quot.sound]",
+                    law["theorem"].as_str().unwrap()
+                )
+                .as_str()
+            ),
+            "per-declaration #print axioms evidence must be quoted verbatim"
+        );
+    }
+    assert_lane_never_first_exact_lane_theorem(&output_dir);
+
+    // The lane index records the consumer -> helper dependency edge. Read
+    // the module names from the index; never hardcode a folded hash.
+    let lane_index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(output_dir.join("_aver_universal_lane.json"))
+            .expect("lane index must be written"),
+    )
+    .expect("lane index must parse");
+    let lane_laws = lane_index["laws"].as_array().expect("lane laws");
+    let helper = &lane_laws[0];
+    let consumer = &lane_laws[1];
+    assert!(
+        helper["imports"].as_array().is_some_and(|a| a.is_empty()),
+        "the source-earlier helper imports no lane module"
+    );
+    assert_eq!(
+        consumer["imports"][0].as_str(),
+        helper["module"].as_str(),
+        "the lane index records the consumer -> helper dependency edge"
+    );
+
+    // ---- sabotage the HELPER -> the consumer falls with it -------------
+    let (sab_helper, run_h) = run_lean_check_json(
+        "proof-corpus/handwritten/cell_floor_grid.av",
+        &output_dir,
+        0,
+        &[("AVER_PROOF_LANE_SABOTAGE", "cellFloorStable")],
+    );
+    assert_eq!(
+        counted_summary(&sab_helper),
+        counted_summary(&normal),
+        "a broken helper cannot perturb the counted summary.\n{}",
+        format_output(&run_h)
+    );
+    assert_eq!(
+        sab_helper["when_universal"].as_u64(),
+        Some(0),
+        "the consumer must lose credit in the SAME run its helper breaks.\n{}",
+        format_output(&run_h)
+    );
+
+    // ---- sabotage only the CONSUMER -> helper survives -----------------
+    let (sab_consumer, run_c) = run_lean_check_json(
+        "proof-corpus/handwritten/cell_floor_grid.av",
+        &output_dir,
+        0,
+        &[("AVER_PROOF_LANE_SABOTAGE", "sharedCellFloor")],
+    );
+    assert_eq!(
+        counted_summary(&sab_consumer),
+        counted_summary(&normal),
+        "a broken consumer cannot perturb the counted summary.\n{}",
+        format_output(&run_c)
+    );
+    assert_eq!(
+        sab_consumer["when_universal"].as_u64(),
+        Some(1),
+        "the upstream helper keeps its credit when only the consumer breaks.\n{}",
+        format_output(&run_c)
+    );
 
     let _ = std::fs::remove_dir_all(&output_dir);
 }

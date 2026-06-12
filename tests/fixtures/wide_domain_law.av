@@ -1,0 +1,21 @@
+module WideDomainLaw
+    intent =
+        "A conditional law whose single given spans a wide integer range (0..299). The"
+        "generated bounded-domain theorem's premise is a 300-way disjunction, which Lean"
+        "cannot elaborate as one theorem (the whole file fails with `maximum recursion"
+        "depth`). Partitioning the domain into `_partN` theorems keeps the file building."
+    effects []
+
+fn scaledProduct(a: Int, b: Int) -> Int
+    ? "Plain product of two integers; nonlinear in both arguments so no lane recognizer fires."
+    a * b
+
+verify scaledProduct
+    scaledProduct(3, 4) => 12
+    scaledProduct(0, 7) => 0
+
+verify scaledProduct law wideNonneg
+    given a: Int = 0..299
+    given b: Int = [1, 2]
+    when Bool.and(a >= 0, b > 0)
+    scaledProduct(a, b) >= 0 => true

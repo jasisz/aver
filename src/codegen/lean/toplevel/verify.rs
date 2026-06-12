@@ -6,6 +6,10 @@ use crate::ast::*;
 use crate::codegen::CodegenContext;
 use crate::verify_law::canonical_spec_ref;
 
+const BOUNDED_LAW_DOMAIN_VALUE_EDGE: usize = 128;
+const BOUNDED_LAW_DOMAIN_CASE_EDGE: usize = 512;
+const LAW_SAMPLE_CAP: usize = 512;
+
 /// Emit a Lean 4 type definition from an Aver TypeDef.
 /// Subtype helper-type names that the oracle_subtypes module emits at
 /// the top of every artifact. Returned name matches the
@@ -545,14 +549,14 @@ fn emit_verify_law_block(
             ctx,
             &theorem_base,
         ));
-        let (theorem_prop, bounded_domain) = law_theorem_prop(
+        let theorem_parts = law_theorem_parts(
             law,
             ctx,
+            &theorem_base,
             &lhs_template,
             &rhs_template,
             when_template.as_deref(),
             &lifted_vars,
-            false,
         );
         // Statement-class marker — the channel `aver proof --check`'s
         // `universal` metric keys on (see `LAW_CLASS_MARKER_PREFIX`).
@@ -578,7 +582,7 @@ fn emit_verify_law_block(
             "{}{} {}",
             super::LAW_CLASS_MARKER_PREFIX,
             theorem_base,
-            if bounded_domain && !floor_window_universal {
+            if theorem_parts.iter().any(|part| part.bounded_domain) && !floor_window_universal {
                 super::LAW_CLASS_BOUNDED_DOMAIN
             } else {
                 super::LAW_CLASS_UNIVERSAL
@@ -606,32 +610,94 @@ fn emit_verify_law_block(
         // shape and pins the strategy; emit_simp_omega_from_ir
         // skips by_cases when lifted=true. Step 30 retired this
         // separate code path so all laws go through one dispatch.)
-        if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
-            vb,
-            &law_for_auto_proof,
-            ctx,
-            verify_mode,
-            &theorem_base,
-            &quant_params,
-            &theorem_prop,
-        ) {
+        if floor_window_universal
+            && let Some(auto_proof) = emit_verify_law_forall_auto_proof(
+                vb,
+                &law_for_auto_proof,
+                ctx,
+                verify_mode,
+                &theorem_base,
+                &quant_params,
+                &theorem_parts[0].prop,
+            )
+        {
             lines.extend(auto_proof.support_lines);
             if !auto_proof.replaces_theorem {
                 lines.push(format!(
                     "theorem {} : ∀ {}, {} := by",
-                    theorem_base, quant_params, theorem_prop
+                    theorem_base, quant_params, theorem_parts[0].prop
                 ));
             }
             lines.extend(auto_proof.proof_lines);
         } else {
-            lines.push(format!(
-                "theorem {} : ∀ {}, {} := by",
-                theorem_base, quant_params, theorem_prop
-            ));
-            lines.push(
-                "  -- verify law is sampled; universal proof must be provided manually".to_string(),
-            );
-            lines.push("  sorry".to_string());
+            // Support lines (e.g. shared `{theorem_base}_digit_pred` private
+            // theorems) are keyed on the shared `theorem_base`, so every part's
+            // proof references the SAME names. Collect them across all parts,
+            // dedup identical lines preserving order, and emit once before the
+            // parts — emitting per-first-part only would drop later parts' refs
+            // and emitting per-part would redeclare the shared names.
+            let mut part_bodies: Vec<Vec<String>> = Vec::with_capacity(theorem_parts.len());
+            let mut support_lines: Vec<String> = Vec::new();
+            // Past the chunk edge a single part can still hold ~512 rcases
+            // leaves; give the partitioned theorems the same per-theorem
+            // heartbeats budget the `_checked_domain` parts use (scoped `in`,
+            // never file-wide). A single (unpartitioned) theorem keeps its
+            // byte-identical pre-chunking header.
+            let partitioned = theorem_parts.len() > 1;
+            for part in &theorem_parts {
+                let law_for_part = crate::ast::VerifyLaw {
+                    givens: part.law.givens.clone(),
+                    ..law_for_auto_proof.clone()
+                };
+                let mut body: Vec<String> = Vec::new();
+                let header_prefix = if partitioned {
+                    "set_option maxHeartbeats 800000 in\n"
+                } else {
+                    ""
+                };
+                if let Some(auto_proof) = emit_verify_law_forall_auto_proof(
+                    vb,
+                    &law_for_part,
+                    ctx,
+                    verify_mode,
+                    &theorem_base,
+                    &quant_params,
+                    &part.prop,
+                ) {
+                    if auto_proof.replaces_theorem {
+                        // The strategy emitted a part-specific theorem statement
+                        // inside its support lines; it is not shared across parts
+                        // and must stay in this part's body.
+                        body.extend(auto_proof.support_lines);
+                    } else {
+                        for line in auto_proof.support_lines {
+                            if !support_lines.contains(&line) {
+                                support_lines.push(line);
+                            }
+                        }
+                        body.push(format!(
+                            "{}theorem {} : ∀ {}, {} := by",
+                            header_prefix, part.name, quant_params, part.prop
+                        ));
+                    }
+                    body.extend(auto_proof.proof_lines);
+                } else {
+                    body.push(format!(
+                        "{}theorem {} : ∀ {}, {} := by",
+                        header_prefix, part.name, quant_params, part.prop
+                    ));
+                    body.push(
+                        "  -- verify law is sampled; universal proof must be provided manually"
+                            .to_string(),
+                    );
+                    body.push("  sorry".to_string());
+                }
+                part_bodies.push(body);
+            }
+            lines.extend(support_lines);
+            for body in part_bodies {
+                lines.extend(body);
+            }
         }
     }
 
@@ -784,7 +850,16 @@ fn emit_verify_law_block(
         }
     }
 
-    for (idx, (left, right)) in vb.cases.iter().enumerate() {
+    let sample_indices = sample_indices(vb.cases.len());
+    if sample_indices.len() < vb.cases.len() {
+        lines.push(format!(
+            "-- aver:samples-capped {}/{}",
+            sample_indices.len(),
+            vb.cases.len()
+        ));
+    }
+    for idx in sample_indices {
+        let (left, right) = &vb.cases[idx];
         let theorem_name = format!("{}_sample_{}", theorem_base, case_index_start + idx + 1);
         // Oracle v1: inject the case-specific stub value so a domain
         // like `given stub: E = [a, b]` produces two sample theorems —
@@ -962,6 +1037,143 @@ pub(crate) fn law_as_lemma_statement(
     let lhs = emit_expr_legacy(&law_lhs, ctx, None);
     let rhs = emit_expr_legacy(&law_rhs, ctx, None);
     Some((theorem_base, format!("{lhs} = {rhs}")))
+}
+
+#[derive(Clone)]
+struct LawTheoremPart {
+    name: String,
+    prop: String,
+    bounded_domain: bool,
+    law: VerifyLaw,
+}
+
+fn sample_indices(total: usize) -> Vec<usize> {
+    if total <= LAW_SAMPLE_CAP || LAW_SAMPLE_CAP == 0 {
+        return (0..total).collect();
+    }
+    if LAW_SAMPLE_CAP == 1 {
+        return vec![0];
+    }
+    (0..LAW_SAMPLE_CAP)
+        .map(|i| i * (total - 1) / (LAW_SAMPLE_CAP - 1))
+        .collect()
+}
+
+fn emitted_domain_values(
+    law: &VerifyLaw,
+    lifted_vars: &std::collections::HashMap<String, String>,
+) -> Vec<Option<Vec<Spanned<Expr>>>> {
+    law.givens
+        .iter()
+        .map(|given| {
+            (!lifted_vars.contains_key(&given.name)).then(|| law_given_domain_values(&given.domain))
+        })
+        .collect()
+}
+
+fn bounded_law_slice(
+    domain_values: &[Option<Vec<Spanned<Expr>>>],
+) -> Option<(usize, usize, Vec<Spanned<Expr>>)> {
+    let mut total_cases = 1usize;
+    let mut largest: Option<(usize, Vec<Spanned<Expr>>)> = None;
+    for (idx, values) in domain_values.iter().enumerate() {
+        let Some(values) = values else { continue };
+        total_cases = total_cases.saturating_mul(values.len());
+        if largest
+            .as_ref()
+            .is_none_or(|(_, current)| values.len() > current.len())
+        {
+            largest = Some((idx, values.clone()));
+        }
+    }
+    let (idx, values) = largest?;
+    if values.is_empty() {
+        return None;
+    }
+    let other_cases = (total_cases / values.len()).max(1);
+    let chunk_by_value = if values.len() > BOUNDED_LAW_DOMAIN_VALUE_EDGE {
+        BOUNDED_LAW_DOMAIN_VALUE_EDGE
+    } else if total_cases > BOUNDED_LAW_DOMAIN_CASE_EDGE {
+        (BOUNDED_LAW_DOMAIN_CASE_EDGE / other_cases).max(1)
+    } else {
+        values.len()
+    };
+    (chunk_by_value < values.len()).then_some((idx, chunk_by_value, values))
+}
+
+fn law_with_sliced_domain(
+    law: &VerifyLaw,
+    given_idx: usize,
+    values: &[Spanned<Expr>],
+) -> VerifyLaw {
+    let mut part = law.clone();
+    part.givens[given_idx].domain = VerifyGivenDomain::Explicit(values.to_vec());
+    part
+}
+
+fn law_theorem_parts(
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    theorem_base: &str,
+    lhs_template: &str,
+    rhs_template: &str,
+    when_template: Option<&str>,
+    lifted_vars: &std::collections::HashMap<String, String>,
+) -> Vec<LawTheoremPart> {
+    let (prop, bounded_domain) = law_theorem_prop(
+        law,
+        ctx,
+        lhs_template,
+        rhs_template,
+        when_template,
+        lifted_vars,
+        false,
+    );
+    let single = || {
+        vec![LawTheoremPart {
+            name: theorem_base.to_string(),
+            prop: prop.clone(),
+            bounded_domain,
+            law: law.clone(),
+        }]
+    };
+    if !bounded_domain {
+        return single();
+    }
+    let domain_values = emitted_domain_values(law, lifted_vars);
+    let Some((given_idx, chunk_size, values)) = bounded_law_slice(&domain_values) else {
+        return single();
+    };
+    values
+        .chunks(chunk_size)
+        .enumerate()
+        .map(|(part_idx, chunk)| {
+            let part_law = law_with_sliced_domain(law, given_idx, chunk);
+            let (part_prop, part_bounded) = law_theorem_prop(
+                &part_law,
+                ctx,
+                lhs_template,
+                rhs_template,
+                when_template,
+                lifted_vars,
+                false,
+            );
+            LawTheoremPart {
+                // Manifest-vs-manifest collision hazard: a `<base>_part<N>`
+                // chunk name can in principle collide with a sibling law
+                // literally named `<base>_part<N>`. This is fail-closed today —
+                // the file-level collision guard (universal_lane) demotes a
+                // duplicated theorem name, and the audit keys `bounded_laws` on
+                // each part's class marker (direct-lookup-first), so a real law
+                // named `<base>_partN` is never folded onto a phantom base. A
+                // proactive name-uniqueness guard at emission is deferred.
+                name: format!("{}_part{}", theorem_base, part_idx + 1),
+                prop: part_prop,
+                bounded_domain: part_bounded,
+                law: part_law,
+            }
+        })
+        .collect()
 }
 
 /// Build the law theorem's statement body. Returns `(prop, bounded_domain)`:

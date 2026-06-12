@@ -535,3 +535,48 @@ fn proof_dafny_verifies_rational_ring_laws_when_dafny_is_available() {
     // errors), which an errors-only budget cannot catch.
     assert_dafny_verifies_and_passes("examples/data/rational.av", "aver-dafny-rational-ring");
 }
+
+/// Audit miscount guard: two DISTINCT conditional laws on the same
+/// function legally named `part1` and `part2` emit theorems
+/// (`scaledProduct_law_part1`, `scaledProduct_law_part2`) whose names
+/// collide with the `<base>_part<N>` chunk-partition naming. Each carries
+/// its OWN `-- aver:law-class … bounded-domain` marker, so the audit must
+/// key its `bounded_laws` dedup on each theorem's own class (direct lookup
+/// first) and count TWO — never fold them onto one phantom base by name
+/// alone. Both laws stay bounded (nonlinear `a * b`, no lane recognizer),
+/// so the file is a clean `bounded_laws == 2` probe.
+#[test]
+fn proof_bounded_laws_counts_distinct_part_named_laws_separately() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping bounded-laws miscount test: `lake` not available");
+        return;
+    }
+    let output_dir = temp_output_dir("aver-proof-bounded-part-named");
+    let (summary, run) = run_lean_check_json(
+        "tests/fixtures/bounded_part_named_laws.av",
+        &output_dir,
+        0,
+        &[],
+    );
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "{}",
+        format_output(&run)
+    );
+    assert_eq!(summary["passed"].as_bool(), Some(true));
+    assert_eq!(
+        summary["when_universal"].as_u64(),
+        Some(0),
+        "both laws stay bounded; no lane recognizer fires.\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["bounded_laws"].as_u64(),
+        Some(2),
+        "two distinct `part1`/`part2` laws must count as TWO bounded laws — \
+         folding them onto one base by name miscounts legal input.\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&output_dir);
+}

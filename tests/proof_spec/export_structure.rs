@@ -812,6 +812,43 @@ fn proof_export_lean_chunks_large_checked_domain_in_every_verify_mode() {
 }
 
 #[test]
+fn proof_export_lean_at_edge_domain_is_byte_identical_to_baseline() {
+    // No-movement guarantee for the bounded-law partitioning: a fixture
+    // whose largest given (8 values) is below the 128-value edge and
+    // whose case product (8x8x8 = 512) sits exactly at the 512-case edge
+    // must emit byte-for-byte the same `LargeDomainLaw.lean` the
+    // pre-partitioning emitter did. The golden snapshot
+    // (`tests/fixtures/large_domain_law.baseline.lean`) was captured from
+    // the unpatched binary; any drift means the partitioning moved an
+    // at/below-edge export. Fast (no lake).
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out = temp_output_dir("aver-large-domain-byte-identity");
+    let run = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("tests/fixtures/large_domain_law.av")
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("expected `aver proof` to run");
+    assert!(run.status.success(), "{}", format_output(&run));
+    let emitted =
+        std::fs::read_to_string(out.join("LargeDomainLaw.lean")).expect("read emitted Lean");
+    let baseline =
+        std::fs::read_to_string(repo_root.join("tests/fixtures/large_domain_law.baseline.lean"))
+            .expect("read baseline golden Lean");
+    assert_eq!(
+        emitted, baseline,
+        "at/below-edge export must stay byte-identical to the pre-partitioning \
+         baseline; the partitioning must not move sub-edge emission"
+    );
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+#[test]
 fn proof_export_rational_ring_laws_carry_ac_ring_package() {
     // Prover-free pin of the `RingIdentity` emission on the
     // exact-rationals corpus example: every one of the ten law
