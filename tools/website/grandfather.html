@@ -143,7 +143,7 @@
             font-family: var(--font-mono);
             font-size: 0.74rem;
             line-height: 1.6;
-            color: #e4e8ee;
+            color: #f2f5f9;
             /* real-terminal feel: long lines scroll horizontally, never wrap */
             white-space: pre;
         }
@@ -178,6 +178,8 @@
         .grandfather-page .terminal .t-dim { color: #98a1ad; }
         .grandfather-page .terminal .t-sum { color: #e3b341; font-weight: 600; }
         .grandfather-page .terminal .t-cmd { color: #79c0ff; font-weight: 600; }
+        .grandfather-page .terminal .t-num { color: #ffffff; font-weight: 600; }
+        .grandfather-page .terminal .t-more { color: #ffffff; font-style: italic; }
         .grandfather-page .terminal-small pre {
             max-height: none;
             font-size: 0.82rem;
@@ -243,9 +245,9 @@
 
         <figure class="terminal terminal-small">
             <pre><code><span class="t-cmd">$ python3 -c "print(4195835 / 3145727)"</span>
-1.333<span class="t-ok">820449136241</span>
+<span class="t-num">1.333</span><span class="t-ok">820449136241</span>
 <span class="t-dim"># the flawed Pentium FDIV returned:</span>
-1.333<span class="t-fail">739068902037589</span></code></pre>
+<span class="t-num">1.333</span><span class="t-fail">739068902037589</span></code></pre>
         </figure>
 
         <p>Intel claimed the bug was not that serious, pretty rare (it required a specific combination of numbers) and regular users won't even notice it. But it was there, crystal clear in the shipped silicon in millions of households, universities and companies. It was a huge PR problem for Intel, they finally offered a free replacement. The whole thing cost them almost half a billion dollars at the time. Interestingly there were also software level patches, which were totally consuming the speedup from the new algorithm.</p>
@@ -313,7 +315,7 @@ Verify: sticky_typo.av
 <span class="t-dim">  187 |     stickyPlusPaper(xn, xd, yn, yd, n, k) =&gt; true</span>
 <span class="t-dim">      |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  verify-mismatch</span>
 
-  ... and 297 more (use --verbose to see all)
+<span class="t-more">  ... and 297 more (use --verbose to see all)</span>
 <span class="t-ok">  ✓ stickyPlusRtl law asInTheAcl2Sources      1504/3072</span>
 <span class="t-ok">  ✓ smallPositive      2/2</span>
 <span class="t-ok">  ✓ boundsOk      1/1</span>
