@@ -187,6 +187,22 @@
         .grandfather-page .terminal .t-cmd { color: #79c0ff; font-weight: 600; }
         .grandfather-page .terminal .t-num { color: #ffffff; font-weight: 600; }
         .grandfather-page .terminal .t-more { color: #ffffff; font-style: italic; }
+        .grandfather-page .update-box {
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+            border-radius: 8px;
+            padding: 0.9rem 1.1rem 0.1rem;
+            margin: 1.4rem 0;
+            background: color-mix(in srgb, var(--accent) 4%, transparent);
+        }
+        .grandfather-page .update-box .update-label {
+            color: var(--accent);
+            font-family: var(--font-mono);
+            font-size: 0.74rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 0.4rem;
+        }
         .grandfather-page .terminal-small pre {
             max-height: none;
             font-size: 0.82rem;
@@ -346,6 +362,12 @@ aver verify sticky_typo.av  1,40s user 0,08s system 96% cpu 1,541 total</code></
         </figure>
 
         <p>The bug is subtle, hiding in one of the arms, not obvious if you check on some examples in your head. The printed version returns the untouched s when the last kept bit happens to be 1 - so it's not even a rounding operation, it just leaks the infinite tail through. The ACL2 sources truncate to n-1 bits and force the last bit instead. That's the whole difference, and it survived 30 years in print.</p>
+
+        <div class="update-box">
+            <div class="update-label">Update</div>
+            <p>I got my hands on the version published in IEEE Transactions on Computers (Sept 1998) which is behind a paywall and there the definition is fixed: the first branch returns <code>truncn(s, i)</code> instead of the bare <code>s</code>. One token. So this was caught before the journal print. The freely available March 1996 draft (the one linked from the author's own pages) still carries the original branch.</p>
+        </div>
+
 
         <h2>The moral</h2>
         <p>You can't trust the prose or the spec if you can't run it. And this was the funniest and nerdiest thing that happened to me, period.</p>
