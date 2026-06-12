@@ -510,6 +510,17 @@ fn proof_export_builds_rational_ring_laws_kernel_genuine_when_lake_is_available(
         "no when-laws in the file; the quarantine lane must stay empty.\n{}",
         format_output(&run)
     );
+    assert_eq!(
+        (
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(10), Some(0)),
+        "explicit law counts: all ten ring laws certified universal, no \
+         bounded-domain degradation — same markers and #print-axioms audit \
+         the `universal` bool keys on.\n{}",
+        format_output(&run)
+    );
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 

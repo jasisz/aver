@@ -134,7 +134,7 @@ fn display_type_for_expected(ty: &Type) -> String {
 /// NOT be passed as expected into arg inference, otherwise the
 /// recogniser stamps the arg with the bare Var-bearing type and
 /// breaks downstream backends. Same for `Type::Invalid` recovery nodes.
-fn type_is_fully_concrete(ty: &Type) -> bool {
+pub(in crate::types::checker) fn type_is_fully_concrete(ty: &Type) -> bool {
     match ty {
         Type::Var(_) | Type::Invalid => false,
         Type::Int | Type::Float | Type::Str | Type::Bool | Type::Unit | Type::Named { .. } => true,
@@ -147,6 +147,24 @@ fn type_is_fully_concrete(ty: &Type) -> bool {
         Type::Fn(params, ret, _) => {
             params.iter().all(type_is_fully_concrete) && type_is_fully_concrete(ret)
         }
+    }
+}
+
+/// Recogniser for a bare `Option.None` expression — the one constructor
+/// with no payload to fix its `T`. Plain inference stamps it
+/// `Option<Var("T")>`, which backends keyed on the stamp (the wasm-gc
+/// instantiation registry in particular) cannot resolve to a concrete
+/// slot. All three surface shapes the checker accepts are covered:
+/// `None`, `Option.None` (attr access) and `Option.None()` (zero-arg
+/// call) — the same set `try_infer_with_expected` special-cases.
+pub(in crate::types::checker) fn is_bare_none_expr(expr: &Expr) -> bool {
+    match expr {
+        Expr::Constructor(name, None) => name == "None",
+        Expr::Attr(obj, field) => {
+            field == "None" && matches!(&obj.node, Expr::Ident(n) if n == "Option")
+        }
+        Expr::FnCall(callee, args) if args.is_empty() => is_bare_none_expr(&callee.node),
+        _ => false,
     }
 }
 
@@ -731,8 +749,37 @@ impl TypeChecker {
             }
 
             Expr::BinOp(op, left, right) => {
-                let lt = self.infer_type(left);
-                let rt = self.infer_type(right);
+                // Bidirectional equality: a bare `Option.None` on one side
+                // of `==` / `!=` has no payload to fix its `T`, so plain
+                // inference stamps it `Option<T>` — and the stamp is
+                // set-once, so the imprecision is permanent. The wasm-gc
+                // backend then fails to resolve the `Option<T>`
+                // instantiation slot (the verify runner synthesizes exactly
+                // this shape: `__verify_X_check() -> Bool` with body
+                // `f(args) == Option.None`). Infer the concrete side first
+                // and propagate its type into the bare-None side; when both
+                // sides are bare (or the concrete side isn't fully
+                // concrete) fall back to the plain left-then-right order.
+                let bare_none_eq = matches!(op, BinOp::Eq | BinOp::Neq);
+                let l_bare = bare_none_eq && is_bare_none_expr(&left.node);
+                let r_bare = bare_none_eq && is_bare_none_expr(&right.node);
+                let (lt, rt) = if l_bare && !r_bare {
+                    let rt = self.infer_type(right);
+                    let lt = if type_is_fully_concrete(&rt) {
+                        self.infer_type_with_expected(left, Some(&rt))
+                    } else {
+                        self.infer_type(left)
+                    };
+                    (lt, rt)
+                } else {
+                    let lt = self.infer_type(left);
+                    let rt = if r_bare && !l_bare && type_is_fully_concrete(&lt) {
+                        self.infer_type_with_expected(right, Some(&lt))
+                    } else {
+                        self.infer_type(right)
+                    };
+                    (lt, rt)
+                };
                 let line = if expr.line > 0 {
                     expr.line
                 } else {

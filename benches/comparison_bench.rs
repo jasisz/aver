@@ -201,7 +201,8 @@ fn run_vm(source: &str) {
     let symbols = aver::ir::SymbolTable::build(&items, &[]);
     let resolved = aver::ir::hir::resolve_program(&symbols, &items);
     let (code, globals) =
-        vm::compile_program(&resolved, &symbols, &mut arena, None).expect("compile error");
+        vm::compile_program_with_mir_fallback(&resolved, &symbols, &mut arena, None)
+            .expect("compile error");
     let mut machine = vm::VM::new(code, globals, arena);
     let _ = machine.run().expect("VM error");
 }

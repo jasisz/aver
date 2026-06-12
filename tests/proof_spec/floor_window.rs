@@ -228,6 +228,16 @@ fn proof_floor_window_lean_closes_kernel_genuine() {
          kernel-genuine (axioms within the whitelist).\n{}",
         format_output(&run)
     );
+    assert_eq!(
+        (
+            summary["universal_laws"].as_u64(),
+            summary["bounded_laws"].as_u64(),
+        ),
+        (Some(4), Some(0)),
+        "explicit law counts: exactly the four universal-classed law \
+         theorems certified, none degraded to bounded-domain.\n{}",
+        format_output(&run)
+    );
     let _ = std::fs::remove_dir_all(&output_dir);
 }
 

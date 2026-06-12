@@ -155,6 +155,18 @@ fn proof_when_universal_lane_json_end_to_end() {
          scanIntTail.fromCanonicalIntTail) must all close in the lane.\n{}",
         format_output(&run)
     );
+    assert_eq!(
+        (
+            normal["universal_laws"].as_u64(),
+            normal["bounded_laws"].as_u64(),
+        ),
+        (Some(10), Some(19)),
+        "explicit law counts from the counted build: ten law theorems \
+         certified universal, nineteen classed bounded-domain (the guarded \
+         when-law enumerations) — exact in both directions like the \
+         budgets.\n{}",
+        format_output(&run)
+    );
     // Per-law detail artifact: exact set, all credited, evidence quoted.
     let detail: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(output_dir.join("when_universal_laws.json"))

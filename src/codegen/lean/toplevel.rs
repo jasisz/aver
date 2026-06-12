@@ -3343,6 +3343,31 @@ fn emit_verify_law_block(
                 }
             })
             .collect::<Vec<_>>();
+        // Mode-independent chunking decision. The `maxRecDepth` wall the
+        // NativeDecide comment below describes is NOT specific to
+        // `Decidable`-instance synthesis: plain elaboration of the nested-∧
+        // STATEMENT recurses once per conjunct too, so a 512-conjunct
+        // theorem fails the build identically under `--verify-mode sorry`
+        // and `--verify-mode theorem-skeleton` (the proof body is never
+        // reached). Every mode therefore emits the same `<name>_part<i>`
+        // partition past the 36-conjunct edge; at or below the edge the
+        // single-theorem emission is byte-identical to the pre-chunking
+        // output in every mode.
+        const CHECKED_DOMAIN_CHUNK: usize = 32;
+        let checked_domain_statements: Vec<(String, String)> = if domain_conjuncts.len() > 36 {
+            domain_conjuncts
+                .chunks(CHECKED_DOMAIN_CHUNK)
+                .enumerate()
+                .map(|(part_idx, chunk)| {
+                    (
+                        format!("{}_part{}", domain_theorem_name, part_idx + 1),
+                        chunk.join(" ∧ "),
+                    )
+                })
+                .collect()
+        } else {
+            vec![(domain_theorem_name.clone(), domain_conjuncts.join(" ∧ "))]
+        };
         match verify_mode {
             VerifyEmitMode::NativeDecide => {
                 // `checked_domain` is one nested ∧-conjunction with N
@@ -3381,47 +3406,28 @@ fn emit_verify_law_block(
                 // Single-theorem emission is byte-identical up to the
                 // 36-conjunct edge (the corpus max), so existing
                 // exports do not move.
-                const CHECKED_DOMAIN_CHUNK: usize = 32;
                 let heartbeats_budget = if law.when.is_some() && vb.cases.len() > 36 {
                     "set_option maxHeartbeats 800000 in\n"
                 } else {
                     ""
                 };
-                if domain_conjuncts.len() > 36 {
-                    for (part_idx, chunk) in
-                        domain_conjuncts.chunks(CHECKED_DOMAIN_CHUNK).enumerate()
-                    {
-                        lines.push(format!(
-                            "{}set_option synthInstance.maxSize 4096 in\ntheorem {}_part{} : {} := by native_decide",
-                            heartbeats_budget,
-                            domain_theorem_name,
-                            part_idx + 1,
-                            chunk.join(" ∧ ")
-                        ));
-                    }
-                } else {
+                for (part_name, part_prop) in &checked_domain_statements {
                     lines.push(format!(
                         "{}set_option synthInstance.maxSize 4096 in\ntheorem {} : {} := by native_decide",
-                        heartbeats_budget,
-                        domain_theorem_name,
-                        domain_conjuncts.join(" ∧ ")
+                        heartbeats_budget, part_name, part_prop
                     ));
                 }
             }
             VerifyEmitMode::Sorry => {
-                lines.push(format!(
-                    "theorem {} : {} := by sorry",
-                    domain_theorem_name,
-                    domain_conjuncts.join(" ∧ ")
-                ));
+                for (part_name, part_prop) in &checked_domain_statements {
+                    lines.push(format!("theorem {} : {} := by sorry", part_name, part_prop));
+                }
             }
             VerifyEmitMode::TheoremSkeleton => {
-                lines.push(format!(
-                    "theorem {} : {} := by",
-                    domain_theorem_name,
-                    domain_conjuncts.join(" ∧ ")
-                ));
-                lines.push("  sorry".to_string());
+                for (part_name, part_prop) in &checked_domain_statements {
+                    lines.push(format!("theorem {} : {} := by", part_name, part_prop));
+                    lines.push("  sorry".to_string());
+                }
             }
         }
     }

@@ -548,9 +548,25 @@ impl TypeChecker {
                             ),
                         );
                     }
-                    let _ = self.infer_type(left);
+                    let left_ty = self.infer_type(left);
                     self.check_effects_in_expr(left, &caller, &inherited_effects);
-                    let _ = self.infer_type(right);
+                    // Bidirectional: a bare `Option.None` on the expected
+                    // side has no payload to fix its `T`, so plain
+                    // inference stamps it `Option<T>` — and the stamp is
+                    // set-once, so the imprecision survives into every
+                    // backend that clones this expression (the wasm-gc
+                    // verify runner's synthesized `__verify_X_check`
+                    // helpers in particular, which then cannot resolve
+                    // the `Option<T>` instantiation slot). The LHS calls
+                    // the verified fn, so its inferred type is exactly
+                    // the expected type for the RHS.
+                    if super::infer::is_bare_none_expr(&right.node)
+                        && super::infer::type_is_fully_concrete(&left_ty)
+                    {
+                        let _ = self.infer_type_with_expected(right, Some(&left_ty));
+                    } else {
+                        let _ = self.infer_type(right);
+                    }
                     self.check_effects_in_expr(right, &caller, &inherited_effects);
                     if let crate::ast::VerifyKind::Law(law) = &vb.kind
                         && let Some(sample_guard) = law.sample_guards.get(idx)
