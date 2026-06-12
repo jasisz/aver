@@ -1067,11 +1067,17 @@ impl TypeRegistry {
     }
 
     pub(super) fn option_type_idx(&self, canonical: &str) -> Option<u32> {
-        if let Some(idx) = self.option_types.get(canonical).copied() {
+        // Registry keys are whitespace-free (the collectors strip),
+        // but emit-time lookups arrive from `Type::display`, which
+        // separates type args with `", "` — `Option<Tuple<Int, Int>>`
+        // must find the `Option<Tuple<Int,Int>>` slot. Same
+        // normalisation `list_type_idx` applies.
+        let normalized = normalize_compound(canonical);
+        if let Some(idx) = self.option_types.get(&normalized).copied() {
             return Some(idx);
         }
-        let bare = strip_inner_dotted_prefixes(canonical);
-        if bare != canonical {
+        let bare = strip_inner_dotted_prefixes(&normalized);
+        if bare != normalized {
             self.option_types.get(&bare).copied()
         } else {
             None

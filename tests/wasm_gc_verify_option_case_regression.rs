@@ -164,3 +164,164 @@ verify wrap
         1,
     );
 }
+
+// --- Generic-instantiation shapes (second wave). The four shapes
+// below type-check and pass VM verify but failed wasm-gc compilation,
+// for two distinct reasons:
+//
+//   * The Option-constructor emitter treated an Option-typed `Some`
+//     payload as the FULL `Option<T>` canonical instead of wrapping
+//     it (`Option.Some(Option.None)` under `Option<Option<Int>>`
+//     resolved the `Option<Int>` slot and failed wasm validation),
+//     and looked instantiations up by the raw `Type::display` string,
+//     whose `", "` separator never matches the whitespace-free
+//     registry keys (`Option<Tuple<Int, Int>>` vs
+//     `Option<Tuple<Int,Int>>`).
+//   * `check_verify_blocks` propagated the LHS type into the RHS only
+//     for a BARE `Option.None` — a `Option.None` nested inside
+//     `Option.Some(…)`, a list literal element, or a `Map.set` value
+//     argument still plain-inferred and permanently stamped
+//     `Option<T>` (set-once), which no backend can resolve to a slot.
+
+/// Nested Option: `Option.Some(Option.None)` under
+/// `Option<Option<Int>>`, in both the fn body (match arms) and the
+/// verify RHS. Red without the constructor-canonical fix (fn body) and
+/// without the verify-RHS expected-type propagation (verify case).
+#[test]
+fn nested_option_some_of_none() {
+    assert_all_cases_pass(
+        r#"
+fn wrapInner(n: Int) -> Option<Option<Int>>
+    ? "Inner none for zero."
+    match n == 0
+        true -> Option.Some(Option.None)
+        false -> Option.Some(Option.Some(n))
+
+verify wrapInner
+    wrapInner(0) => Option.Some(Option.None)
+    wrapInner(2) => Option.Some(Option.Some(2))
+"#,
+        2,
+    );
+}
+
+/// Fully concrete compound payload: `Option<Tuple<Int, Int>>` with a
+/// `=> Option.None` case. Red without whitespace normalisation of the
+/// Option canonical — the type was registered (whitespace-free) but
+/// the emit-time lookup key came from `Type::display` with `", "`.
+#[test]
+fn option_tuple_payload_with_none_case() {
+    assert_all_cases_pass(
+        r#"
+fn pair(n: Int) -> Option<Tuple<Int, Int>>
+    ? "Pair for positive."
+    match n > 0
+        true -> Option.Some((n, n))
+        false -> Option.None
+
+verify pair
+    pair(2) => Option.Some((2, 2))
+    pair(0) => Option.None
+"#,
+        2,
+    );
+}
+
+/// List literal with an `Option.None` element on the verify RHS. The
+/// fn body compiled (tail position gets the return type as expected);
+/// the verify RHS plain-inferred and stamped `List<Option<T>>`. Red
+/// without the verify-RHS expected-type propagation.
+#[test]
+fn list_of_option_literal_with_none_element() {
+    assert_all_cases_pass(
+        r#"
+fn firstTwo(n: Int) -> List<Option<Int>>
+    ? "List with a none and a some."
+    [Option.None, Option.Some(n)]
+
+verify firstTwo
+    firstTwo(1) => [Option.None, Option.Some(1)]
+"#,
+        1,
+    );
+}
+
+/// Single-element variant — no concrete sibling element to unify with,
+/// so the expected type is the only source of `T`.
+#[test]
+fn list_of_option_literal_only_none() {
+    assert_all_cases_pass(
+        r#"
+fn onlyNone(n: Int) -> List<Option<Int>>
+    ? "Singleton none list."
+    [Option.None]
+
+verify onlyNone
+    onlyNone(1) => [Option.None]
+"#,
+        1,
+    );
+}
+
+/// `Option.None` as a `Map.set` VALUE argument on the verify RHS —
+/// plain inference stamped the whole RHS `Map<String, Option<T>>` and
+/// the backend could not lower `Option<T>`. Red without the verify-RHS
+/// expected-type propagation.
+#[test]
+fn map_set_with_none_value_argument() {
+    assert_all_cases_pass(
+        r#"
+fn stash(m: Map<String, Option<Int>>) -> Map<String, Option<Int>>
+    ? "Stores a none value under k."
+    Map.set(m, "k", Option.None)
+
+verify stash
+    stash({}) => Map.set({}, "k", Option.None)
+"#,
+        1,
+    );
+}
+
+/// Control — `Result.Err` verify cases plus `!=` against `Option.None`
+/// and None-on-left equality in fn bodies. All green before the
+/// second-wave fixes; pinned so the generalized verify-RHS propagation
+/// cannot regress them.
+#[test]
+fn result_err_and_none_comparison_controls() {
+    assert_all_cases_pass(
+        r#"
+fn tag(n: Int) -> Result<Int, String>
+    ? "Ok for positive, error otherwise."
+    match n > 0
+        true -> Result.Ok(n)
+        false -> Result.Err("neg")
+
+fn pick(n: Int) -> Option<Int>
+    ? "None for zero, some n otherwise."
+    match n == 0
+        true -> Option.None
+        false -> Option.Some(n)
+
+fn hasValue(n: Int) -> Bool
+    ? "Whether pick returns a value."
+    pick(n) != Option.None
+
+fn noneOnLeft(n: Int) -> Bool
+    ? "None compared from the left."
+    Option.None == pick(n)
+
+verify tag
+    tag(3) => Result.Ok(3)
+    tag(-1) => Result.Err("neg")
+
+verify hasValue
+    hasValue(0) => false
+    hasValue(2) => true
+
+verify noneOnLeft
+    noneOnLeft(0) => true
+    noneOnLeft(2) => false
+"#,
+        6,
+    );
+}

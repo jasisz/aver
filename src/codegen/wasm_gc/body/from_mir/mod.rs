@@ -664,14 +664,23 @@ pub(crate) fn emit_mir_expr(
                     emit_mir_option_constructor(func, Some(&con.args[0]), None, slots, ctx)?
                 }
                 MirCtor::Builtin(BuiltinCtor::OptionNone) => {
-                    // Read T from the constructor's stamped type, mirror
-                    // of the `ResolvedExpr` arm's hint derivation.
+                    // Read T from the constructor's stamped type. The
+                    // hint contract is the *element* type `T` (the
+                    // constructor wraps it in `Option<…>` itself), so
+                    // the return-type fallback strips the wrapper too
+                    // when it is an Option.
                     let stamped = aver_type_canonical(expr, ctx.return_type, ctx.registry);
                     let hint: String = stamped
                         .strip_prefix("Option<")
                         .and_then(|s| s.strip_suffix('>'))
                         .map(|inner| inner.to_string())
-                        .unwrap_or_else(|| ctx.return_type.to_string());
+                        .unwrap_or_else(|| {
+                            let ret = normalize_compound(ctx.return_type);
+                            ret.strip_prefix("Option<")
+                                .and_then(|s| s.strip_suffix('>'))
+                                .map(|inner| inner.to_string())
+                                .unwrap_or(ret)
+                        });
                     emit_mir_option_constructor(func, None, Some(&hint), slots, ctx)?
                 }
                 MirCtor::Builtin(BuiltinCtor::ResultOk) => {
