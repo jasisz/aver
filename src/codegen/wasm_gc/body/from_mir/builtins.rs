@@ -1,6 +1,6 @@
 //! Built-in call lowering: the custom-inline `Float` / `Int` / `Bool`
 //! scalar ops, `Char.toCode`, the custom-inline `String` ops
-//! (`length` / `byteLength` / `split` / `join`), the `List` / `Vector`
+//! (`length` / `split` / `join`), the `List` / `Vector`
 //! / `Map` families, the fused `Option.withDefault(Vector.get,
 //! <literal>)` / `Option.withDefault(Vector.set, v)` /
 //! `Result.withDefault(Int.mod, default)`, and the numeric `BinOp`
@@ -96,7 +96,7 @@ pub(crate) fn emit_mir_wasip2_effect(
 /// `fn_map.builtins.get(dotted)` lookup misses them. Covers the native
 /// scalar `Float` / `Int` / `Bool` ops, `Char.toCode`, and the `String`
 /// ops whose helper is keyed under a *different* name than the surface
-/// builtin — `String.length` / `String.byteLength` dispatch to the
+/// builtin — `String.length` dispatches to the
 /// `String.len` helper, and `String.split` / `String.join` to the
 /// singleton `string_split_ops`. Each recurses `emit_mir_expr` on its
 /// args — the byte-identical analogue of the oracle's `emit_expr`.
@@ -230,16 +230,18 @@ pub(crate) fn emit_mir_native_scalar_builtin(
             func.instruction(&Instruction::ArrayGetU(s_idx));
             func.instruction(&Instruction::I64ExtendI32U);
         }
-        // Both surface spellings dispatch to the one `String.len`
-        // helper (keyed under `String.len`, not the surface name).
-        "String.length" | "String.byteLength" if args.len() == 1 => {
+        // Alias spelling for `String.len` (scalar count) — the helper
+        // is keyed under `String.len`, not the surface name.
+        // `String.byteLength` has its own helper (keyed by surface
+        // name) and rides the generic `fn_map.builtins` path.
+        "String.length" if args.len() == 1 => {
             let len_idx =
                 ctx.fn_map
                     .builtins
                     .get("String.len")
                     .copied()
                     .ok_or(WasmGcError::Validation(
-                        "String.length / byteLength require the String.len builtin".into(),
+                        "String.length requires the String.len builtin".into(),
                     ))?;
             arg!(0);
             func.instruction(&Instruction::Call(len_idx));

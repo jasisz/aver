@@ -46,6 +46,20 @@ jobs:
           PROPTEST_CASES: '2000'
         run: cargo test --workspace
 
+      - name: Check shipped examples
+        # Gate the shipped example corpus: a merge that breaks an
+        # example under `aver check` must fail CI, not ship silently.
+        # `cargo test --workspace` above already compiled the debug
+        # `aver` binary (the CLI integration tests run it via
+        # CARGO_BIN_EXE_aver), so `cargo run` here is a cache hit, not
+        # a rebuild. Only `examples/core` and `examples/data` are
+        # gated — `examples/diagnostics` contains deliberately broken
+        # files (lint/error demos) and stays ungated. Bare exit codes:
+        # each command's status fails the step directly, no pipes.
+        run: |
+          cargo run --bin aver -- check examples/core
+          cargo run --bin aver -- check examples/data
+
   wasm:
     name: WASM
     runs-on: ubuntu-latest
