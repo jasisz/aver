@@ -167,6 +167,46 @@ The current proof export supports:
 - mutual recursion SCC with ranked `String + pos` progress
 - mutual recursion SCC with ranked structural descent over recursive parameters (emitted as native `mutual ... termination_by ... end` block when every SCC member has a `List`/`Vector` sizeOf measure; fuel-encoded otherwise)
 
+## Checking an export (`--check` / `--check-json`)
+
+`aver proof file.av --backend lean -o out/ --check` builds the export with
+`lake` and gates on the result; `--check-json` prints one machine-readable
+summary line. Fields of the Lean summary:
+
+- `passed` — the build succeeded within the budgets (a bounded
+  verify-on-domain still passes; this is deliberately the lenient gate)
+- `sorries` — residual `sorry` count across the build output
+  (`--sorry-budget N` tolerates up to N)
+- `universal` — `true` only when EVERY law theorem in the export is
+  kernel-genuine: its `#print axioms` stays inside
+  `{propext, Classical.choice, Quot.sound}` (so `native_decide` and
+  `sorry` never count), at least one theorem is explicitly classed
+  universal, and the file has no sorries
+- `universal_laws` — how many law theorems classed universal passed that
+  same per-theorem axiom whitelist. On a file with sorries the axiom
+  audit does not run at all, so this reports `0` — pin it together with
+  `sorries == 0`, not instead of it
+- `bounded_laws` — how many law theorems the emitter classed
+  bounded-domain (stated only over the finite sample grid, e.g. guarded
+  `when`-law enumerations); these never earn universal credit
+
+Note: a law the emitter declines entirely (no theorem emitted — e.g. a
+shape outside every strategy) appears in NEITHER counter; the counters
+count emitted law THEOREMS, not `verify ... law` blocks in the source.
+- `when_universal` — `when`-laws whose quarantine-lane twin earned
+  per-declaration universal credit (see `when_universal_laws.json` in
+  the output dir); additive, never moves the counted fields above
+- `model_panicked` — the compiler-model panicked while evaluating a
+  bounded sample; the check fails regardless of budgets
+- `budget` — the active sorry budget
+
+`universal_laws` and `bounded_laws` are sourced from the same per-theorem
+statement-class markers and the same `#print axioms` audit the `universal`
+bool keys on. A robust CI budget pins all four together:
+`sorries == X`, `universal == true`, `universal_laws == N`,
+`bounded_laws == M` (plus `when_universal == K` if the file has
+quarantine-lane upgrades).
+
 ## Refinement records (refinement-via-opaque)
 
 An Aver `record X { v: Int }` paired with a validating smart constructor

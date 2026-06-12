@@ -5732,14 +5732,21 @@ fn run_proof_check(
     // `universal` field instead for an honest "what Aver kernel-proves"
     // count. (Dafny already folds the analogous "universal lemma omitted"
     // degradation into its own `passed`, so it needs no separate field.)
-    let universal: Option<bool> = match backend {
-        super::cli::ProofBackend::Lean => Some(
-            output.status.success()
-                && model_panic_hits == 0
-                && lean_universal_proof(output_dir, sorries.unwrap_or(0)),
-        ),
+    let lean_law_audit: Option<LeanLawAudit> = match backend {
+        super::cli::ProofBackend::Lean => {
+            // Same short-circuit the bool always had: a failed counted
+            // build (or a model panic) earns no audit run at all — the
+            // probe would otherwise `#print axioms` against a stale or
+            // partial environment.
+            if output.status.success() && model_panic_hits == 0 {
+                Some(lean_universal_audit(output_dir, sorries.unwrap_or(0)))
+            } else {
+                Some(LeanLawAudit::FAIL_CLOSED)
+            }
+        }
         super::cli::ProofBackend::Dafny => None,
     };
+    let universal: Option<bool> = lean_law_audit.as_ref().map(|a| a.universal);
 
     // When-universal quarantine lane (Lean only): run the SEPARATE,
     // failure-tolerated per-law lane builds and the per-declaration
@@ -5770,6 +5777,14 @@ fn run_proof_check(
         }
         if let Some(u) = universal {
             obj.insert("universal".into(), u.into());
+        }
+        if let Some(audit) = &lean_law_audit {
+            // ADDITIVE law-count fields, sourced from the same class
+            // markers and `#print axioms` audit the `universal` bool
+            // keys on (computed in the counted build, BEFORE the
+            // when-universal lane runs — lane state cannot move them).
+            obj.insert("universal_laws".into(), audit.universal_laws.into());
+            obj.insert("bounded_laws".into(), audit.bounded_laws.into());
         }
         if let Some((credited, _)) = when_universal {
             // ADDITIVE field: count of `when`-laws whose quarantine-lane
@@ -5938,6 +5953,33 @@ fn count_lean_sorries(s: &str) -> usize {
         .count()
 }
 
+/// Result of the Lean law-theorem audit (`lean_universal_audit`): the
+/// file-level `universal` verdict plus the two additive law-count fields
+/// surfaced in `--check-json`.
+struct LeanLawAudit {
+    /// EXACTLY the old `lean_universal_proof` bool: every law theorem in
+    /// the crediting set is kernel-clean, at least one is explicitly
+    /// classed universal, and the file has no sorries.
+    universal: bool,
+    /// Law theorems classed `universal` whose own `#print axioms` line
+    /// passed the kernel-axiom whitelist.
+    universal_laws: usize,
+    /// Law theorems classed `bounded-domain` by the emitter's statement-
+    /// class marker.
+    bounded_laws: usize,
+}
+
+impl LeanLawAudit {
+    /// Zero-credit verdict for paths where no classification evidence is
+    /// readable at all (no lakefile roots, no law theorems, failed counted
+    /// build) — the same fail-closed bias the bool always had.
+    const FAIL_CLOSED: LeanLawAudit = LeanLawAudit {
+        universal: false,
+        universal_laws: 0,
+        bounded_laws: 0,
+    };
+}
+
 /// Honest-coverage distinguisher for the Lean backend: did the emitted
 /// proof establish the law's UNIVERSAL `∀`-claim by genuine kernel
 /// reasoning, or only by bounded `native_decide` enumeration over the
@@ -5991,17 +6033,27 @@ fn count_lean_sorries(s: &str) -> usize {
 /// Conservative on any failure (missing `lake`, import error, non-zero
 /// exit): returns `false`. A false "not-universal" only lowers the coverage
 /// number, never inflates it — the right bias for an honest metric.
-fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
+///
+/// Besides the file-level `universal` bool the audit returns two ADDITIVE
+/// counts sourced from the SAME class markers and the SAME `#print axioms`
+/// probe output (no new trust surface):
+///   - `universal_laws`: law theorems classed `universal` whose own probe
+///     line stays within the kernel-axiom whitelist;
+///   - `bounded_laws`: law theorems classed `bounded-domain` (a pure
+///     classification count — no certificate involved).
+///
+/// The bool's semantics are untouched: `universal` remains the
+/// all-or-nothing verdict over the whole crediting set (universal-classed
+/// AND unmarked theorems), computed from the exact same expression as
+/// before the counts existed.
+fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     use std::process::Command;
-    if sorries > 0 {
-        return false;
-    }
     // Import every root from the lakefile so unqualified law-theorem names
     // resolve. The law theorems live at top level in the entry root;
     // importing all roots is robust without identifying which is the entry.
     let roots = lean_lakefile_roots(dir);
     if roots.is_empty() {
-        return false;
+        return LeanLawAudit::FAIL_CLOSED;
     }
     // Collect the main universal law theorems across the emitted sources,
     // plus the emitter's per-theorem statement-class markers.
@@ -6050,19 +6102,39 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
         }
     }
     if law_thms.is_empty() {
-        return false;
+        return LeanLawAudit::FAIL_CLOSED;
     }
     law_thms.sort();
     law_thms.dedup();
+    // Class COUNTS, read off the same markers the crediting set below
+    // keys on. `bounded_laws` is a pure classification count (the
+    // emitter decided at statement-construction time that the theorem
+    // only states the law on the finite sample domain) — it needs no
+    // kernel certificate, so it survives every downstream gate.
+    let bounded_laws = law_thms
+        .iter()
+        .filter(|t| {
+            classes.get(*t).map(String::as_str) == Some(lean_codegen::LAW_CLASS_BOUNDED_DOMAIN)
+        })
+        .count();
+    if sorries > 0 {
+        return LeanLawAudit {
+            universal: false,
+            universal_laws: 0,
+            bounded_laws,
+        };
+    }
     // Consume the statement-class channel (see the doc comment above):
     // bounded-domain theorems leave the crediting set; at least one
     // explicitly universal-classed theorem must remain or the dir earns no
     // universal credit (fail-closed when the channel is absent).
     let mut universal_class_present = false;
+    let mut universal_classed: Vec<String> = Vec::new();
     law_thms.retain(|thm| match classes.get(thm).map(String::as_str) {
         Some(lean_codegen::LAW_CLASS_BOUNDED_DOMAIN) => false,
         Some(lean_codegen::LAW_CLASS_UNIVERSAL) => {
             universal_class_present = true;
+            universal_classed.push(thm.clone());
             true
         }
         // Unmarked (or unknown class tag): keep it in the axiom check —
@@ -6070,7 +6142,11 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
         _ => true,
     });
     if !universal_class_present {
-        return false;
+        return LeanLawAudit {
+            universal: false,
+            universal_laws: 0,
+            bounded_laws,
+        };
     }
     // Throwaway checker: print each main law theorem's axiom dependency
     // against the already-built environment.
@@ -6087,7 +6163,11 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
     }
     let checker = std::path::Path::new(dir).join("_aver_axcheck.lean");
     if std::fs::write(&checker, &src).is_err() {
-        return false;
+        return LeanLawAudit {
+            universal: false,
+            universal_laws: 0,
+            bounded_laws,
+        };
     }
     let out = Command::new("lake")
         .args(["env", "lean", "_aver_axcheck.lean"])
@@ -6111,12 +6191,39 @@ fn lean_universal_proof(dir: &str, sorries: usize) -> bool {
             // output format is `'name' depends on axioms: [a, b]` (or `does
             // not depend on any axioms`); the two blacklist probes stay as a
             // belt-and-suspenders floor against output-format drift.
-            o.status.success()
+            let universal = o.status.success()
                 && lean_axiom_lines_whitelisted(&combined)
                 && !combined.contains("Lean.ofReduceBool")
-                && !combined.contains("sorryAx")
+                && !combined.contains("sorryAx");
+            // Per-theorem attribution over the SAME probe output: a
+            // universal-classed theorem is counted iff its own `#print
+            // axioms` line stays within the kernel whitelist (the same
+            // per-declaration parser the when-universal lane credits
+            // with). When `universal` is true above, every line passed,
+            // so `universal_laws` equals the universal-classed count —
+            // the file-level bool keeps EXACTLY its all-or-nothing
+            // semantics, the count just shows how many theorems the
+            // certificate covers (and, on a degraded file, how many
+            // survived).
+            let universal_laws = if o.status.success() {
+                universal_classed
+                    .iter()
+                    .filter(|t| lane_credit_from_probe(&combined, t))
+                    .count()
+            } else {
+                0
+            };
+            LeanLawAudit {
+                universal,
+                universal_laws,
+                bounded_laws,
+            }
         }
-        Err(_) => false,
+        Err(_) => LeanLawAudit {
+            universal: false,
+            universal_laws: 0,
+            bounded_laws,
+        },
     }
 }
 

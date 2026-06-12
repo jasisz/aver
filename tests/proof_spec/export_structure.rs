@@ -747,6 +747,71 @@ fn proof_export_lean_chunks_large_checked_domain_conjunction() {
 }
 
 #[test]
+fn proof_export_lean_chunks_large_checked_domain_in_every_verify_mode() {
+    // Mode-parameterized twin of the chunking pin above. The
+    // `maxRecDepth` wall is NOT specific to `native_decide`'s
+    // `Decidable` synthesis: plain elaboration of the nested-∧
+    // STATEMENT recurses once per conjunct, so a 512-conjunct theorem
+    // fails the build identically under `--verify-mode sorry` and
+    // `--verify-mode theorem-skeleton` (the proof body is never
+    // reached). Every mode must emit the same 16-part partition, each
+    // part carrying the mode's own proof shape. Fast (no lake; the
+    // sorry / theorem-skeleton exports were lake-verified by hand when
+    // the chunking was extended).
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // (mode flag, the proof shape every part theorem must carry)
+    let modes: [(Option<&str>, &str); 3] = [
+        (None, ":= by native_decide"),
+        (Some("sorry"), ":= by sorry"),
+        (Some("theorem-skeleton"), ":= by\n  sorry"),
+    ];
+    for (mode, proof_shape) in modes {
+        let out = temp_output_dir("aver-large-domain-mode-shape-out");
+        let mut cmd = Command::new(aver_bin);
+        cmd.current_dir(&repo_root)
+            .arg("proof")
+            .arg("tests/fixtures/large_domain_law.av")
+            .arg("--backend")
+            .arg("lean")
+            .arg("-o")
+            .arg(&out);
+        if let Some(mode) = mode {
+            cmd.arg("--verify-mode").arg(mode);
+        }
+        let run = cmd.output().expect("expected `aver proof` to run");
+        assert!(
+            run.status.success(),
+            "mode {mode:?}: {}",
+            format_output(&run)
+        );
+        let lean = std::fs::read_to_string(out.join("LargeDomainLaw.lean"))
+            .expect("read emitted LargeDomainLaw.lean");
+        assert!(
+            !lean.contains("theorem tripleSum_law_mirror_checked_domain :"),
+            "mode {mode:?}: 512 conjuncts must not emit as a single \
+             checked-domain theorem"
+        );
+        for part in 1..=16 {
+            let header = format!("theorem tripleSum_law_mirror_checked_domain_part{part} :");
+            let Some(at) = lean.find(&header) else {
+                panic!("mode {mode:?}: missing checked-domain part theorem {part}");
+            };
+            assert!(
+                lean[at..at + 16_384.min(lean.len() - at)].contains(proof_shape),
+                "mode {mode:?}: part theorem {part} must carry the mode's \
+                 proof shape `{proof_shape}`"
+            );
+        }
+        assert!(
+            !lean.contains("tripleSum_law_mirror_checked_domain_part17"),
+            "mode {mode:?}: expected exactly 16 part theorems"
+        );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+}
+
+#[test]
 fn proof_export_rational_ring_laws_carry_ac_ring_package() {
     // Prover-free pin of the `RingIdentity` emission on the
     // exact-rationals corpus example: every one of the ten law
