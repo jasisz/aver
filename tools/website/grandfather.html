@@ -59,14 +59,14 @@
             letter-spacing: -0.01em;
         }
         .grandfather-section p {
-            color: var(--muted);
+            color: var(--text);
             line-height: 1.7;
             margin-bottom: 0.9rem;
             font-size: 0.98rem;
             overflow-wrap: anywhere; /* bare-URL link text must not force horizontal scroll on phones */
         }
         .grandfather-section ol {
-            color: var(--muted);
+            color: var(--text);
             line-height: 1.7;
             font-size: 0.98rem;
             margin: 0 0 0.9rem 1.4rem;
@@ -238,7 +238,7 @@
             <li>Everything has to be one grammar (no verifier/prover language leaking into the source)</li>
             <li>Compiler needs to be deterministic for proving</li>
         </ol>
-        <p>This means that compiler doesn't need to be "smart" as to have LLM in there, but has to have a number of good strategies, a way to reuse lemmas and combine them for more complicated induction. I was grinding hard to somehow "make it work" and then... I found out that there is a lineage I was not aware of and big chunk of my problems is already solved. Here comes the story of Aver finding its grandfather <strong>ACL2</strong> and how it turned out.</p>
+        <p>This means that the compiler doesn't need to be "smart" as in having an LLM in there, but has to have a number of good strategies, a way to reuse lemmas and combine them for more complicated induction. I was grinding hard to somehow "make it work" and then... I found out that there is a lineage I was not aware of and a big chunk of my problems was already solved. Here comes the story of Aver finding its grandfather <strong>ACL2</strong> and how it turned out.</p>
 
         <h2>History</h2>
         <p>In 1994 a mathematician Thomas R. <strong>Nicely</strong> found <a href="https://en.wikipedia.org/wiki/Pentium_FDIV_bug">a bug in early Intel Pentium processors</a>. In a nutshell - Intel wanted a faster division and used a SRT algorithm, and this algorithm needs a lookup table. They ended up producing chips with 5 values mismatched in that table (0 instead of +2). The error was cumulative because of the nature of the algorithm, you could even see it easily by just using Windows Calculator and dividing 4,195,835 by 3,145,727 (the most famous combination):</p>
@@ -251,7 +251,7 @@
         </figure>
 
         <p>Intel claimed the bug was not that serious, pretty rare (it required a specific combination of numbers) and regular users won't even notice it. But it was there, crystal clear in the shipped silicon in millions of households, universities and companies. It was a huge PR problem for Intel, they finally offered a free replacement. The whole thing cost them almost half a billion dollars at the time. Interestingly there were also software level patches, which were totally consuming the speedup from the new algorithm. For the record: I was 8 at the time, dreaming about my first PC - the Celeron I would eventually get didn't even exist yet.</p>
-        <p>AMD was developing its K5 processor at the time, and they certainly didn't want to have a bug like that. They hired Computational Logic Inc. - <strong>Moore</strong> and <strong>Kaufmann</strong>'s shop - (<strong>Lynch</strong> was from AMD side) to... prove the algorithm for them. It was a huge thing at the time, and they already had ACL2 almost ready for that task. ACL2 stands for <em>A Computational Logic for Applicative Common Lisp</em>. Applicative Common Lisp was their stripped out version of Common Lisp without side-effects and total first-order logic functions. ACL2 added automated theorem prover on top of that with ability to feed it with user provided theorems. Which is something I've only figured out fully less than a week ago in Aver - that my "laws" are already shaped to support such a function. Here comes the more complicated part, how to incorporate them? How to structure them for induction? And all the hard questions... ACL2 already tried to tackle! They called it <a href="https://www.cs.utexas.edu/~moore/acl2/manuals/current/manual/?topic=ACL2____THE-METHOD"><strong>The Method</strong></a> and to be honest this is my gold-mine now. Not in a sense that everything can be copied to Aver, but I can see they solved similar problems, which feels - well - kind of refreshing! Similar designs and similar problems, how not to love that?</p>
+        <p>AMD was developing its K5 processor at the time, and they certainly didn't want to have a bug like that. They hired Computational Logic Inc. - <strong>Moore</strong> and <strong>Kaufmann</strong>'s shop - (<strong>Lynch</strong> was from AMD side) to... prove the algorithm for them. It was a huge thing at the time, and they already had ACL2 almost ready for that task. ACL2 stands for <em>A Computational Logic for Applicative Common Lisp</em>. Applicative Common Lisp was their stripped out version of Common Lisp without side-effects and total first-order logic functions. ACL2 added automated theorem prover on top of that with the ability to feed it user-provided theorems. Which is something I've only figured out fully less than a week ago in Aver - that my "laws" are already shaped to support such a function. Here comes the more complicated part, how to incorporate them? How to structure them for induction? And all the hard questions... ACL2 already tried to tackle! They called it <a href="https://www.cs.utexas.edu/~moore/acl2/manuals/current/manual/?topic=ACL2____THE-METHOD"><strong>The Method</strong></a> and to be honest this is my gold-mine now. Not in a sense that everything can be copied to Aver, but I can see they solved similar problems, which feels - well - kind of refreshing! Similar designs and similar problems, how not to love that?</p>
         <p>And a K5 verification was a huge success at the time, one of the biggest industrial proofs done back then - over 1600 definitions and lemmas, and the whole proof replayed in two hours. They published <a href="https://www.cs.utexas.edu/users/moore/publications/divide_paper.pdf">paper about it in 1996</a>. And the lineage kept going - in 1999 <strong>Russinoff</strong> caught two real bugs in K7's FPU multiplier with the same toolchain, before the silicon was made.</p>
 
         <p>This is the entire algorithm by the way - all 32 lines of it (see those <code>[sticky 64]</code> annotations near the end? remember them):</p>
@@ -262,7 +262,7 @@
         </figure>
 
         <h2>Aver trying to honor ACL2</h2>
-        <p>When I found out about this I immediately decided to call the next Aver release (focused on proving side of the language) "<strong>The Method</strong>". And I thought about the fun way to celebrate that - I will tell the agent to replicate the original paper in Aver. I was sure it won't be fully proved in Lean or Dafny yet, I am still on my way through <strong>The Method</strong> and other problems (maybe 0.26? 0.27?), but it still sounded like something I definitely have to do.</p>
+        <p>When I found out about this I immediately decided to call the next Aver release (focused on proving side of the language) "<strong>The Method</strong>". And I thought about a fun way to celebrate that - I'd tell the agent to replicate the original paper in Aver. I was sure it won't be fully proved in Lean or Dafny yet, I am still on my way through <strong>The Method</strong> and other problems (maybe 0.26? 0.27?), but it still sounded like something I definitely have to do.</p>
         <p>And the funniest and most trivia-worthy thing happened. Agent OCR-ed all the algorithms, lemmas from paper and faithfully transcribed the definitions to Aver (<a href="https://averlang.dev/playground/?example=sticky-1996">try it in the playground</a>). And before you ask - the paper's own worked examples pass against my transcription, so the transcription is faithful. I ran aver verify (which is just the deterministic tests over given domain, nothing fancy, not even the probing part yet) and... it fails. The sticky algorithm for division (one they call "singularly difficult to prove" in the paper) just fails, the simplest way to reproduce is to take x = 1 and y = 1/3 at 3 bits of precision: the paper's Lemma 7.3.2 says both sides must be equal, but the printed definition gives 4/3 on the left and 11/8 on the right.</p>
 
         <figure class="terminal">
@@ -326,7 +326,7 @@ aver verify sticky_typo.av  1,40s user 0,08s system 96% cpu 1,541 total</code></
             <figcaption><em>aver verify</em> on the transcribed definitions &mdash; text, not a screenshot: select away</figcaption>
         </figure>
 
-        <p>I'm like "that is impossible". But it is there, numbers staring at me, the counterexamples, not one or two, 300 counterexamples (out of a 3,072-case grid) for the paper published 30 years ago. I go for the search, I find the later implementations in Lisp, the Russinoff in main ACL2 repo (<a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/lib1/round.lisp">round.lisp from the 1996-98 AMD library</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/support/sticky.lisp">the same definition standalone</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel11/lib/round.lisp">and its modern descendant</a>) and the definition is different! There is a bug in the paper's presentation, I am sure they proved the right thing, but when they translated that to the paper's math notation they had a bug in there.</p>
+        <p>I'm like "that is impossible". But it is there, numbers staring at me, the counterexamples, not one or two, 300 counterexamples (out of a 3,072-case grid) for the paper published 30 years ago. I go searching, I find the later implementations in Lisp, the Russinoff in main ACL2 repo (<a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/lib1/round.lisp">round.lisp from the 1996-98 AMD library</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel1/support/sticky.lisp">the same definition standalone</a>, <a href="https://github.com/acl2/acl2/blob/master/books/rtl/rel11/lib/round.lisp">and its modern descendant</a>) and the definition is different! There is a bug in the paper's presentation, I am sure they proved the right thing, but when they translated that to the paper's math notation they had a bug in there.</p>
 
         <figure class="paper-scan">
             <img src="img/paper-p13-stickyn-as-printed.png" alt="Scan of the 1996 paper, page 13: the stickyn definition as printed, with the branch 'if truncn(s, n) = s or bitn(s, 1 - n) = 1'" width="3719" height="1250">
@@ -338,7 +338,7 @@ aver verify sticky_typo.av  1,40s user 0,08s system 96% cpu 1,541 total</code></
             <figcaption>Lemma 7.3.2 "Sticky Plus", p. 21</figcaption>
         </figure>
 
-        <p>The bug is subtle hiding there in one of the arms, not obvious if you check on some examples in your head. The printed version returns the untouched s when the last kept bit happens to be 1 - so it's not even a rounding operation, it just leaks the infinite tail through. The ACL2 sources truncate to n-1 bits and force the last bit instead. That's the whole difference, and it survived 30 years of readers.</p>
+        <p>The bug is subtle, hiding in one of the arms, not obvious if you check on some examples in your head. The printed version returns the untouched s when the last kept bit happens to be 1 - so it's not even a rounding operation, it just leaks the infinite tail through. The ACL2 sources truncate to n-1 bits and force the last bit instead. That's the whole difference, and it survived 30 years in print.</p>
 
         <h2>The moral</h2>
         <p>You can't trust the prose or the spec if you can't run it. And this was the funniest and nerdiest thing that happened to me, period.</p>
