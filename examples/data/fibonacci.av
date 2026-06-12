@@ -197,6 +197,11 @@ fn showListIntInner(xs: List<Int>) -> String
             [] -> "{head}"
             _  -> "{head}, {showListIntInner(tail)}"
 
+verify showListIntInner
+    showListIntInner([]) => ""
+    showListIntInner([7]) => "7"
+    showListIntInner([0, 1, 1, 2]) => "0, 1, 1, 2"
+
 fn showListInt(xs: List<Int>) -> String
     ? "Render List<Int> as `[1, 2, 3]`."
     "[{showListIntInner(xs)}]"
@@ -247,6 +252,11 @@ fn showGolden(r: Result<Float, String>) -> String
     match r
         Result.Ok(x)    -> "Ok({x})"
         Result.Err(msg) -> "Err(\"{msg}\")"
+
+verify showGolden
+    showGolden(Result.Err("Need n >= 1")) => "Err(\"Need n >= 1\")"
+    String.startsWith(showGolden(Result.Ok(1.5)), "Ok(") => true
+    String.endsWith(showGolden(Result.Ok(1.5)), ")") => true
 
 fn main() -> Unit
     ! [Console.print]

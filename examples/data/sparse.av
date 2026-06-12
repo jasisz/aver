@@ -21,11 +21,21 @@ fn repeat0(n: Int) -> List<Int>
         true -> []
         false -> List.concat(repeat0(n - 1), [0])
 
+verify repeat0
+    repeat0(0) => []
+    repeat0(-2) => []
+    repeat0(3) => [0, 0, 0]
+
 fn expandTok(t: Token) -> List<Int>
     ? "Expand one token back to the Int run it stands for."
     match t
         Token.Zeros(n) -> repeat0(n)
         Token.Lit(x) -> [x]
+
+verify expandTok
+    expandTok(Token.Lit(7)) => [7]
+    expandTok(Token.Zeros(2)) => [0, 0]
+    expandTok(Token.Zeros(0)) => []
 
 fn decodeSparse(toks: List<Token>) -> List<Int>
     ? "Decompress a token list by concatenating each token's expansion."
@@ -43,6 +53,11 @@ fn flushSparse(acc: SparseAcc) -> List<Token>
         true -> acc.out
         false -> List.concat(acc.out, [Token.Zeros(acc.pending)])
 
+verify flushSparse
+    flushSparse(SparseAcc(out = [], pending = 0)) => []
+    flushSparse(SparseAcc(out = [Token.Lit(5)], pending = 0)) => [Token.Lit(5)]
+    flushSparse(SparseAcc(out = [Token.Lit(5)], pending = 2)) => [Token.Lit(5), Token.Zeros(2)]
+
 fn sparseStep(acc: SparseAcc, x: Int) -> SparseAcc
     ? "Fold step: grow the pending zero-run, or flush it and emit a literal."
     match x == 0
@@ -58,6 +73,11 @@ fn sparseLoop(xs: List<Int>, acc: SparseAcc) -> List<Token>
     match xs
         [] -> flushSparse(acc)
         [x, ..rest] -> sparseLoop(rest, sparseStep(acc, x))
+
+verify sparseLoop
+    sparseLoop([], SparseAcc(out = [], pending = 0)) => []
+    sparseLoop([5, 0, 0, 7], SparseAcc(out = [], pending = 0)) => [Token.Lit(5), Token.Zeros(2), Token.Lit(7)]
+    sparseLoop([0, 9], SparseAcc(out = [Token.Lit(5)], pending = 1)) => [Token.Lit(5), Token.Zeros(2), Token.Lit(9)]
 
 fn encodeSparse(xs: List<Int>) -> List<Token>
     ? "Compresses runs of zero in an Int list."

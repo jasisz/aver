@@ -18,6 +18,11 @@ fn showListIntInner(xs: List<Int>) -> String
             [] -> "{head}"
             _  -> "{head}, {showListIntInner(tail)}"
 
+verify showListIntInner
+    showListIntInner([]) => ""
+    showListIntInner([7]) => "7"
+    showListIntInner([1, 2, 3]) => "1, 2, 3"
+
 fn showListString(xs: List<String>) -> String
     ? "Render a List<String> as `[\"a\", \"b\"]`. String elements quoted to disambiguate from bare identifiers."
     "[{showListStringInner(xs)}]"
@@ -29,6 +34,11 @@ fn showListStringInner(xs: List<String>) -> String
         [head, ..tail] -> match tail
             [] -> "\"{head}\""
             _  -> "\"{head}\", {showListStringInner(tail)}"
+
+verify showListStringInner
+    showListStringInner([]) => ""
+    showListStringInner(["a"]) => "\"a\""
+    showListStringInner(["a", "b"]) => "\"a\", \"b\""
 
 fn main() -> Unit
     ! [Console.print]

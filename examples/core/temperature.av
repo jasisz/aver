@@ -106,6 +106,11 @@ fn showKelvin(r: Result<Float, String>) -> String
         Result.Ok(k)    -> "K({k})"
         Result.Err(msg) -> "Err(\"{msg}\")"
 
+verify showKelvin
+    showKelvin(Result.Err("Below absolute zero")) => "Err(\"Below absolute zero\")"
+    String.startsWith(showKelvin(Result.Ok(273.15)), "K(") => true
+    String.endsWith(showKelvin(Result.Ok(273.15)), ")") => true
+
 fn showListFloatInner(xs: List<Float>) -> String
     ? "Comma-separated body of a List<Float> render."
     match xs
@@ -113,6 +118,11 @@ fn showListFloatInner(xs: List<Float>) -> String
         [head, ..tail] -> match tail
             [] -> "{head}"
             _  -> "{head}, {showListFloatInner(tail)}"
+
+verify showListFloatInner
+    showListFloatInner([]) => ""
+    String.contains(showListFloatInner([1.5]), ", ") => false
+    String.contains(showListFloatInner([0.0, -10.0]), ", ") => true
 
 fn showListFloat(xs: List<Float>) -> String
     ? "Render List<Float> as `[1.0, 2.0]`."
