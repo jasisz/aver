@@ -712,6 +712,25 @@ fn fuel_helper_name(name: &str) -> String {
 /// Assumes proof-mode emission — every production Lean export goes
 /// through `transpile_for_proof_mode`.
 pub(super) fn law_fuel_simp_names(fn_name: &str, ctx: &CodegenContext) -> Vec<String> {
+    let Some(emitted) = probe_fn_scc_emission(fn_name, ctx) else {
+        return Vec::new();
+    };
+    let fuel = fuel_helper_name(fn_name);
+    if !emitted.contains(&format!("def {fuel}")) {
+        return Vec::new();
+    }
+    let mut names = vec![fuel];
+    names.extend(scan_measure_helper_names(&emitted));
+    names
+}
+
+/// Re-emit the SCC group that owns `fn_name` through the exact
+/// dispatch `transpile_unified` uses and return the emitted text.
+/// Shared probe for [`law_fuel_simp_names`] and
+/// [`law_string_pos_rank`] — see the former's doc for why probing the
+/// emission beats re-deriving the plan→emission mapping. `None` when
+/// the fn isn't a pure fn of any scope.
+fn probe_fn_scc_emission(fn_name: &str, ctx: &CodegenContext) -> Option<String> {
     // Locate the fn's owning scope (entry first, then dep modules) and
     // the pure-fn population of that scope — the same component
     // universe `transpile_unified` routes.
@@ -729,12 +748,9 @@ pub(super) fn law_fuel_simp_names(fn_name: &str, ctx: &CodegenContext) -> Vec<St
             continue;
         }
         let comps = crate::call_graph::ordered_fn_components(&pure, &ctx.module_prefixes);
-        let Some(comp) = comps
+        let comp = comps
             .into_iter()
-            .find(|c| c.iter().any(|fd| fd.name == fn_name))
-        else {
-            return Vec::new();
-        };
+            .find(|c| c.iter().any(|fd| fd.name == fn_name))?;
         let emitted = ctx.with_module_scope(scope.as_deref(), || {
             if comp.len() > 1 {
                 let all_supported = comp
@@ -756,15 +772,31 @@ pub(super) fn law_fuel_simp_names(fn_name: &str, ctx: &CodegenContext) -> Vec<St
                 String::new()
             }
         });
-        let fuel = fuel_helper_name(fn_name);
-        if !emitted.contains(&format!("def {fuel}")) {
-            return Vec::new();
-        }
-        let mut names = vec![fuel];
-        names.extend(scan_measure_helper_names(&emitted));
-        return names;
+        return Some(emitted);
     }
-    Vec::new()
+    None
+}
+
+/// The `averStringPosFuel` rank literal of `fn_name`'s emitted fuel
+/// wrapper (`def <fn> … := <fn>__fuel (averStringPosFuel s pos RANK)
+/// …`), probed from the actual proof-mode emission so the
+/// `StringEscapeRoundtrip` skeleton's `show`-line quotes the exact
+/// fuel expression the wrapper carries. `None` when the fn isn't
+/// fuel-emitted with a string-pos wrapper — the renderer declines
+/// rather than quoting a fuel expression that doesn't exist.
+pub(super) fn law_string_pos_rank(fn_name: &str, ctx: &CodegenContext) -> Option<usize> {
+    let emitted = probe_fn_scc_emission(fn_name, ctx)?;
+    let fuel = fuel_helper_name(fn_name);
+    if !emitted.contains(&format!("def {fuel}")) {
+        return None;
+    }
+    let marker = format!("{fuel} (averStringPosFuel ");
+    let idx = emitted.find(&marker)?;
+    let rest = &emitted[idx + marker.len()..];
+    let mut tokens = rest.split_whitespace();
+    let _string_arg = tokens.next()?;
+    let _pos_arg = tokens.next()?;
+    tokens.next()?.trim_end_matches(')').parse::<usize>().ok()
 }
 
 /// Harvest measure-helper identifiers (`averMeasure*`,
@@ -3121,6 +3153,10 @@ fn emit_verify_law_block(
                 // singleton-const-rhs skip can't apply — listed for
                 // the same conservatism.
                 | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
+                // StringEscapeRoundtrip: same honest-sorry floor and
+                // same given-dependent-rhs detector gate — listed for
+                // the same conservatism.
+                | crate::ir::ProofStrategy::StringEscapeRoundtrip(_)
         )
     });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs

@@ -8,6 +8,7 @@ mod induction;
 mod sampled;
 mod shared;
 mod spec;
+mod suffix_roundtrip;
 
 use super::VerifyEmitMode;
 use super::expr::aver_name_to_lean;
@@ -285,6 +286,23 @@ pub fn emit_verify_law_forall_auto_proof(
             finish_int_fn,
             serializer_fn,
         )
+    {
+        return Some(proof);
+    }
+
+    // IR-pinned `StringEscapeRoundtrip` — the lowerer validated the
+    // ENTIRE escaped-string roundtrip pair (scanner SCC arm shapes,
+    // producer classifier table aligned with the consumer's escape
+    // dispatcher, control-escape prefix, threshold agreement), so the
+    // backend renders the suffix-invariant proof skeleton ported from
+    // the verified json hand proof. Every synthesized lemma and the
+    // law proof itself carry `first | (…; done) | sorry` floors — a
+    // non-closing template degrades to caught honest sorries, never a
+    // build error.
+    if let Some(crate::ir::ProofStrategy::StringEscapeRoundtrip(ref pin)) =
+        law_strategy_for(ctx, &vb.fn_name, &law.name)
+        && let Some(proof) =
+            suffix_roundtrip::emit_string_escape_roundtrip_law(law, ctx, theorem_base, pin)
     {
         return Some(proof);
     }
