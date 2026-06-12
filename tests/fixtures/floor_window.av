@@ -1,0 +1,108 @@
+module FloorWindow
+    intent =
+        "Floor-division window laws: a binary exponent found by repeated"
+        "floor halving, the scaled significand of an integer ratio, and"
+        "the power-of-two windows that contain significands and their"
+        "products."
+    effects []
+
+fn twoPow(n: Int) -> Int
+    ? "2^n for n >= 0; 1 for n <= 0."
+    match n <= 0
+        true -> 1
+        false -> 2 * twoPow(n - 1)
+
+verify twoPow
+    twoPow(0) => 1
+    twoPow(3) => 8
+
+verify twoPow law positive
+    given n: Int = [-2, 0, 1, 5]
+    twoPow(n) >= 1 => true
+
+verify twoPow law sumSplits
+    given m: Int = [0, 1, 3]
+    given n: Int = [0, 2, 4]
+    when m >= 0
+    when n >= 0
+    twoPow(m + n) => twoPow(m) * twoPow(n)
+
+fn halve(a: Int) -> Int
+    ? "Floor half of a; total because the divisor is the literal 2."
+    Result.withDefault(Int.div(a, 2), 0)
+
+verify halve
+    halve(9) => 4
+    halve(8) => 4
+
+fn widthExp(a: Int, b: Int) -> Int
+    ? "Binary exponent of the ratio a/b for a >= b >= 1: the e with"
+      "twoPow(e) * b <= a < twoPow(e + 1) * b. Returns 0 off-domain."
+    match b < 1
+        true -> 0
+        false -> match a < 2 * b
+            true -> 0
+            false -> 1 + widthExp(halve(a), b)
+
+verify widthExp
+    widthExp(1, 1) => 0
+    widthExp(5, 2) => 1
+    widthExp(12, 1) => 3
+
+fn windowSig(a: Int, b: Int, n: Int) -> Int
+    ? "Scaled significand of the ratio a/b at width n: the floor of"
+      "(a/b) * twoPow(n - 1 - e) with e the binary exponent of a/b."
+    e = widthExp(a, b)
+    s = n - 1 - e
+    match s >= 0
+        true -> Result.withDefault(Int.div(a * twoPow(s), b), 0)
+        false -> Result.withDefault(Int.div(a, b * twoPow(0 - s)), 0)
+
+verify windowSig
+    windowSig(5, 2, 2) => 2
+    windowSig(7, 2, 2) => 3
+    windowSig(1, 1, 1) => 1
+
+verify windowSig law sigWindow
+    given a: Int = [1, 2, 5, 7]
+    given b: Int = [1, 2, 4]
+    given n: Int = [1, 2, 3]
+    when b >= 1
+    when a >= b
+    when n >= 1
+    inWindow(a, b, n) => true
+
+fn inWindow(a: Int, b: Int, n: Int) -> Bool
+    ? "The width-n significand of a/b lies in its power-of-two window:"
+      "twoPow(n - 1) <= windowSig(a, b, n) < twoPow(n)."
+    j = windowSig(a, b, n)
+    Bool.and(twoPow(n - 1) <= j, j < twoPow(n))
+
+verify inWindow
+    inWindow(5, 2, 2) => true
+    inWindow(15, 4, 4) => true
+
+fn fitsWidth(j: Int, m: Int) -> Bool
+    ? "j is an m-bit value in normal position: twoPow(m - 1) <= j < twoPow(m)."
+    Bool.and(twoPow(m - 1) <= j, j < twoPow(m))
+
+verify fitsWidth
+    fitsWidth(1, 1) => true
+    fitsWidth(5, 3) => true
+
+fn widthsAdd(j: Int, k: Int, m: Int, n: Int) -> Bool
+    ? "The product of an m-bit and an n-bit value fits the m+n-bit window."
+    Bool.and(twoPow(m + n - 2) <= j * k, j * k < twoPow(m + n))
+
+verify widthsAdd
+    widthsAdd(1, 1, 1, 1) => true
+    widthsAdd(3, 5, 2, 3) => true
+
+verify widthsAdd law productWindow
+    given j: Int = [1, 3]
+    given k: Int = [1, 5, 7]
+    given m: Int = [1, 2]
+    given n: Int = [1, 3]
+    when fitsWidth(j, m)
+    when fitsWidth(k, n)
+    widthsAdd(j, k, m, n) => true

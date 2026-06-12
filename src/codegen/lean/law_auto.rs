@@ -3,6 +3,7 @@
 /// This module is intentionally isolated from `toplevel.rs` so all heuristic
 /// matching and proof-shape logic lives in one place.
 mod decimal;
+mod floor_window;
 mod induction;
 mod sampled;
 mod shared;
@@ -95,6 +96,20 @@ pub fn emit_verify_law_forall_auto_proof(
         theorem_prop,
         &discovered,
     ) {
+        return Some(proof);
+    }
+    // IR-pinned `FloorDivWindow` — the floor-division window family.
+    // The renderer emits a self-contained support stack (power
+    // algebra by functional induction, the binary-exponent window
+    // characterization, the core ediv bridges) plus the law theorem
+    // in TRUE universal form, so it replaces the bounded statement
+    // entirely (`replaces_theorem`). The caller's law-class marker
+    // recognizes the pin and classes the statement `universal`;
+    // crediting stays fail-closed behind the `#print axioms`
+    // whitelist.
+    if let Some(proof) =
+        floor_window::emit_floor_window_law(vb, law, ctx, theorem_base, quant_params)
+    {
         return Some(proof);
     }
     // IR-pinned strategies. The lowerer's decision wins over the

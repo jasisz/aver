@@ -211,7 +211,7 @@ fn transpile_unified(ctx: &CodegenContext) -> ProjectOutput {
             {
                 continue;
             }
-            if toplevel::termination_guess_unjustified(fd) {
+            if toplevel::termination_guess_unjustified(fd, ctx) {
                 termination_axiom_ids.insert(id);
             }
         }

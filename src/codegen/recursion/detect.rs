@@ -515,6 +515,302 @@ pub(crate) fn single_int_countdown_param_index(fd: &FnDef) -> Option<usize> {
         })
 }
 
+/// **syntax-discovery-only**: recognize a floor-division shrink of
+/// `param_name` — `Result.withDefault(Int.div(p, k), <int literal>)`
+/// with literal `k >= 2`, either inlined or through a unary wrapper
+/// fn whose single-expression body is exactly that shape over its own
+/// parameter. Returns `(divisor, helper_fn)`.
+pub(crate) fn floor_div_shrink_of(
+    expr: &Spanned<Expr>,
+    param_name: &str,
+    inputs: &ProofLowerInputs,
+) -> Option<(i64, Option<String>)> {
+    if let Some(divisor) = inline_floor_div_shrink(expr, param_name) {
+        return Some((divisor, None));
+    }
+    // Wrapper form: `h(p)` where `h` is a pure unary Int fn whose
+    // body is the inlined shape over its own param. The call must be
+    // a bare (same-scope) name so both backends can cite it directly.
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    let name = expr_to_dotted_name(callee)?;
+    if name.contains('.') || args.len() != 1 || !is_ident(&args[0], param_name) {
+        return None;
+    }
+    let fd = inputs.find_fn_def_by_call_name(&name)?;
+    if !fd.effects.is_empty() || fd.name != name {
+        return None;
+    }
+    let [(helper_param, helper_ty)] = fd.params.as_slice() else {
+        return None;
+    };
+    if helper_ty != "Int" || fd.return_type != "Int" {
+        return None;
+    }
+    let [crate::ast::Stmt::Expr(body)] = fd.body.stmts() else {
+        return None;
+    };
+    let divisor = inline_floor_div_shrink(body, helper_param)?;
+    Some((divisor, Some(fd.name.clone())))
+}
+
+/// `Result.withDefault(Int.div(p, k), <int literal>)` with literal
+/// `k >= 2` — the inlined floor-division shrink shape.
+fn inline_floor_div_shrink(expr: &Spanned<Expr>, param_name: &str) -> Option<i64> {
+    let Expr::FnCall(callee, args) = &expr.node else {
+        return None;
+    };
+    if expr_to_dotted_name(callee).as_deref() != Some("Result.withDefault") || args.len() != 2 {
+        return None;
+    }
+    if !matches!(&args[1].node, Expr::Literal(crate::ast::Literal::Int(_))) {
+        return None;
+    }
+    let Expr::FnCall(div_callee, div_args) = &args[0].node else {
+        return None;
+    };
+    if expr_to_dotted_name(div_callee).as_deref() != Some("Int.div") || div_args.len() != 2 {
+        return None;
+    }
+    if !is_ident(&div_args[0], param_name) {
+        return None;
+    }
+    match &div_args[1].node {
+        Expr::Literal(crate::ast::Literal::Int(k)) if *k >= 2 => Some(*k),
+        _ => None,
+    }
+}
+
+/// Collect, for every self-call of `fd`, the chain of enclosing
+/// `match <bool> { true/false -> … }` guards in positive form
+/// (false-arm guards flipped via `flip_comparison_binop`;
+/// unflippable ones dropped — a SOUND under-approximation, since the
+/// caller only ever needs "do the collected guards imply the
+/// shrink", and fewer facts can only make it decline).
+pub(crate) fn collect_self_call_guard_chains(fd: &FnDef) -> Vec<Vec<Spanned<Expr>>> {
+    let mut out = Vec::new();
+    for stmt in fd.body.stmts() {
+        match stmt {
+            Stmt::Binding(_, _, expr) | Stmt::Expr(expr) => {
+                walk_self_call_guards(expr, &fd.name, &[], &mut out);
+            }
+        }
+    }
+    out
+}
+
+fn walk_self_call_guards(
+    expr: &Spanned<Expr>,
+    fn_name: &str,
+    enclosing: &[Spanned<Expr>],
+    out: &mut Vec<Vec<Spanned<Expr>>>,
+) {
+    match &expr.node {
+        Expr::FnCall(callee, args) => {
+            if let Some(name) = expr_to_dotted_name(callee)
+                && call_matches(&name, fn_name)
+            {
+                out.push(enclosing.to_vec());
+            }
+            walk_self_call_guards(callee, fn_name, enclosing, out);
+            for arg in args {
+                walk_self_call_guards(arg, fn_name, enclosing, out);
+            }
+        }
+        Expr::TailCall(boxed) => {
+            if boxed.target == fn_name {
+                out.push(enclosing.to_vec());
+            }
+            for arg in &boxed.args {
+                walk_self_call_guards(arg, fn_name, enclosing, out);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            for arm in arms {
+                let mut new_guards: Vec<Spanned<Expr>> = enclosing.to_vec();
+                match &arm.pattern {
+                    Pattern::Literal(crate::ast::Literal::Bool(true)) => {
+                        new_guards.push((**subject).clone());
+                    }
+                    Pattern::Literal(crate::ast::Literal::Bool(false)) => {
+                        if let Some(flipped) =
+                            crate::codegen::recursion::flip_comparison_binop(subject)
+                        {
+                            new_guards.push(flipped);
+                        }
+                    }
+                    _ => {}
+                }
+                walk_self_call_guards(&arm.body, fn_name, &new_guards, out);
+            }
+            walk_self_call_guards(subject, fn_name, enclosing, out);
+        }
+        Expr::BinOp(_, l, r) => {
+            walk_self_call_guards(l, fn_name, enclosing, out);
+            walk_self_call_guards(r, fn_name, enclosing, out);
+        }
+        Expr::Attr(inner, _) | Expr::Neg(inner) | Expr::ErrorProp(inner) => {
+            walk_self_call_guards(inner, fn_name, enclosing, out);
+        }
+        Expr::Constructor(_, arg) => {
+            if let Some(inner) = arg {
+                walk_self_call_guards(inner, fn_name, enclosing, out);
+            }
+        }
+        Expr::InterpolatedStr(parts) => {
+            for p in parts {
+                if let crate::ast::StrPart::Parsed(inner) = p {
+                    walk_self_call_guards(inner, fn_name, enclosing, out);
+                }
+            }
+        }
+        Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+            for item in items {
+                walk_self_call_guards(item, fn_name, enclosing, out);
+            }
+        }
+        Expr::MapLiteral(entries) => {
+            for (k, v) in entries {
+                walk_self_call_guards(k, fn_name, enclosing, out);
+                walk_self_call_guards(v, fn_name, enclosing, out);
+            }
+        }
+        Expr::RecordCreate { fields, .. } => {
+            for (_, v) in fields {
+                walk_self_call_guards(v, fn_name, enclosing, out);
+            }
+        }
+        Expr::RecordUpdate { base, updates, .. } => {
+            walk_self_call_guards(base, fn_name, enclosing, out);
+            for (_, v) in updates {
+                walk_self_call_guards(v, fn_name, enclosing, out);
+            }
+        }
+        Expr::Literal(_) | Expr::Ident(_) | Expr::Resolved { .. } => {}
+    }
+}
+
+/// Does the (positive-form) guard chain imply `param >= 1`? Two
+/// syntactic certificate shapes, both purely linear:
+///
+/// - DIRECT: a clause bounding the param below by a positive literal
+///   (`p >= L` with `L >= 1`, `p > L` with `L >= 0`, or the flipped
+///   literal-first spellings).
+/// - SCALED: a clause `p >= c * q` (or `p >= q * c` / `p >= q`) with
+///   literal `c >= 1`, where the chain also DIRECTLY bounds `q >= 1`
+///   — the binary-exponent shape (`¬(b < 1)` and `¬(a < 2 * b)`
+///   together give `a >= 2 * b >= 2`).
+///
+/// Anything else declines — the caller never guesses a measure.
+pub(crate) fn guards_imply_param_ge_one(guards: &[Spanned<Expr>], param_name: &str) -> bool {
+    if guards
+        .iter()
+        .any(|g| guard_bounds_ident_ge_one(g, param_name))
+    {
+        return true;
+    }
+    guards.iter().any(|g| {
+        let Expr::BinOp(BinOp::Gte, left, right) = &g.node else {
+            return false;
+        };
+        if !is_ident(left, param_name) {
+            return false;
+        }
+        let scaled_var: Option<&str> = match &right.node {
+            Expr::Ident(q) => Some(q.as_str()),
+            Expr::Resolved { name: q, .. } => Some(q.as_str()),
+            Expr::BinOp(BinOp::Mul, l, r) => match (&l.node, &r.node) {
+                (Expr::Literal(crate::ast::Literal::Int(c)), _) if *c >= 1 => local_name_of(r),
+                (_, Expr::Literal(crate::ast::Literal::Int(c))) if *c >= 1 => local_name_of(l),
+                _ => None,
+            },
+            _ => None,
+        };
+        scaled_var.is_some_and(|q| guards.iter().any(|h| guard_bounds_ident_ge_one(h, q)))
+    })
+}
+
+/// One clause of the DIRECT certificate: `name >= L` (L >= 1),
+/// `name > L` (L >= 0), `L <= name` (L >= 1), `L < name` (L >= 0).
+fn guard_bounds_ident_ge_one(guard: &Spanned<Expr>, name: &str) -> bool {
+    let Expr::BinOp(op, left, right) = &guard.node else {
+        return false;
+    };
+    let lit = |e: &Spanned<Expr>| -> Option<i64> {
+        match &e.node {
+            Expr::Literal(crate::ast::Literal::Int(v)) => Some(*v),
+            _ => None,
+        }
+    };
+    match op {
+        BinOp::Gte => is_ident(left, name) && lit(right).is_some_and(|l| l >= 1),
+        BinOp::Gt => is_ident(left, name) && lit(right).is_some_and(|l| l >= 0),
+        BinOp::Lte => is_ident(right, name) && lit(left).is_some_and(|l| l >= 1),
+        BinOp::Lt => is_ident(right, name) && lit(left).is_some_and(|l| l >= 0),
+        _ => false,
+    }
+}
+
+/// Classifier for [`RecursionPlan::IntFloorDivCountdown`]: a single
+/// `Int` param that EVERY self-call shrinks by the same
+/// literal-divisor floor division (see [`floor_div_shrink_of`]),
+/// with every self-call site's guard chain implying the param is
+/// `>= 1` (see [`guards_imply_param_ge_one`]) so the shrink is a
+/// genuine strict decrease. Returns
+/// `(param_index, divisor, helper_fn)`.
+pub(crate) fn single_int_floor_div_countdown(
+    fd: &FnDef,
+    inputs: &ProofLowerInputs,
+) -> Option<(usize, i64, Option<String>)> {
+    let recursive_calls: Vec<Vec<&Spanned<Expr>>> = collect_calls_from_body(fd.body.as_ref())
+        .into_iter()
+        .filter(|(name, _)| call_matches(name, &fd.name))
+        .map(|(_, args)| args)
+        .collect();
+    if recursive_calls.is_empty() {
+        return None;
+    }
+
+    let (param_index, divisor, helper_fn) =
+        fd.params
+            .iter()
+            .enumerate()
+            .find_map(|(idx, (param_name, param_ty))| {
+                if param_ty != "Int" {
+                    return None;
+                }
+                let mut shrink: Option<(i64, Option<String>)> = None;
+                for args in &recursive_calls {
+                    let arg = args.get(idx).copied()?;
+                    let this = floor_div_shrink_of(arg, param_name, inputs)?;
+                    match &shrink {
+                        None => shrink = Some(this),
+                        Some(prev) if *prev == this => {}
+                        Some(_) => return None,
+                    }
+                }
+                shrink.map(|(divisor, helper)| (idx, divisor, helper))
+            })?;
+
+    // Guard validation: every self-call site must sit under a guard
+    // chain that implies the shrinking param is >= 1. The chains come
+    // back one per self-call in body-walk order; a missing or
+    // too-weak chain declines the whole plan — never guess.
+    let (param_name, _) = fd.params.get(param_index)?;
+    let chains = collect_self_call_guard_chains(fd);
+    if chains.len() != recursive_calls.len() || chains.is_empty() {
+        return None;
+    }
+    if !chains
+        .iter()
+        .all(|chain| guards_imply_param_ge_one(chain, param_name))
+    {
+        return None;
+    }
+    Some((param_index, divisor, helper_fn))
+}
+
 pub(crate) fn has_negative_guarded_ascent(fd: &FnDef, param_name: &str) -> bool {
     let Some(tail) = fd.body.tail_expr() else {
         return false;
@@ -1789,6 +2085,23 @@ pub fn analyze_plans_in_scope(
             } else {
                 plans.insert(fd.name.clone(), RecursionPlan::IntCountdown { param_index });
             }
+        } else if let Some((param_index, divisor, helper_fn)) =
+            single_int_floor_div_countdown(fd, inputs)
+        {
+            // Floor-division countdown — every self-call shrinks an
+            // Int param by `Result.withDefault(Int.div(p, k), d)`
+            // (literal k >= 2, possibly through a unary wrapper fn)
+            // and the guard chain at every self-call site implies
+            // `p >= 1`. Both side-conditions are validated above;
+            // backends emit a native well-founded def.
+            plans.insert(
+                fd.name.clone(),
+                RecursionPlan::IntFloorDivCountdown {
+                    param_index,
+                    divisor,
+                    helper_fn,
+                },
+            );
         } else if supports_single_sizeof_structural(fd, inputs) {
             plans.insert(fd.name.clone(), RecursionPlan::SizeOfStructural);
         } else if let Some(param_index) = single_list_structural_param_index(fd) {
@@ -1802,7 +2115,7 @@ pub fn analyze_plans_in_scope(
             issues.push(ProofModeIssue {
                 line: fd.line,
                 message: format!(
-                    "recursive function '{}' is outside proof subset (currently supported: Int countdown, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)",
+                    "recursive function '{}' is outside proof subset (currently supported: Int countdown, guard-validated Int floor-division countdown by a literal divisor, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)",
                     fd.name
                 ),
             });

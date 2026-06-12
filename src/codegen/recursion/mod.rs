@@ -76,6 +76,26 @@ pub enum RecursionPlan {
         param_index: usize,
         bound: Spanned<Expr>,
     },
+    /// Single-fn recursion where an `Int` parameter shrinks by a
+    /// literal-divisor floor division at every self-call —
+    /// `Result.withDefault(Int.div(p, k), d)` with literal `k >= 2`,
+    /// either inlined at the call site or through a unary wrapper fn
+    /// (`half(p)`) whose body is exactly that expression. Validated,
+    /// never guessed: the classifier additionally proves that the
+    /// guard chain enclosing every self-call site implies `p >= 1`
+    /// (so `p / k < p` and `p.toNat` strictly decreases). Backends
+    /// emit a native well-founded def — Lean
+    /// `termination_by p.toNat` (kernel re-checks the measure),
+    /// Dafny `decreases if p >= 0 then p else 0` with no synthesized
+    /// `requires`.
+    IntFloorDivCountdown {
+        param_index: usize,
+        /// The literal divisor (>= 2).
+        divisor: i64,
+        /// `Some(name)` when the shrink goes through a unary wrapper
+        /// fn; `None` for the inlined form.
+        helper_fn: Option<String>,
+    },
     /// Affine second-order recurrence like `fib(n) = fib(n-1) + fib(n-2)`
     /// with `0 / 1` bases and an `n < 0` guard. Emitted through a
     /// private Nat helper (pair-state), not a fuel helper.
