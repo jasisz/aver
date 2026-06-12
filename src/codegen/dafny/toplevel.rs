@@ -1853,10 +1853,10 @@ fn emit_floor_window_support_stack(
                 "lemma {u}mul_mono_left(p: int, q: int, c: int)\n  requires p <= q && c >= 0\n  ensures c * p <= c * q\n{{ }}\n"
             ));
             s.push_str(&format!(
-                "lemma {u}div_lower(x: int, d: int, k: int)\n  requires d >= 1 && k * d <= x\n  ensures k <= x / d\n{{\n  assert x == d * (x / d) + x % d;\n  if k > x / d {{\n    {u}mul_mono(k, x / d + 1, d);\n    assert false;\n  }}\n}}\n"
+                "lemma {{:vcs_split_on_every_assert}} {u}div_lower(x: int, d: int, k: int)\n  requires d >= 1 && k * d <= x\n  ensures k <= x / d\n{{\n  assert x == d * (x / d) + x % d;\n  if k > x / d {{\n    {u}mul_mono(k, x / d + 1, d);\n    assert false;\n  }}\n}}\n"
             ));
             s.push_str(&format!(
-                "lemma {u}div_upper(x: int, d: int, k: int)\n  requires d >= 1 && x < k * d\n  ensures x / d < k\n{{\n  assert x == d * (x / d) + x % d;\n  if x / d >= k {{\n    {u}mul_mono(k, x / d, d);\n    assert false;\n  }}\n}}\n"
+                "lemma {{:vcs_split_on_every_assert}} {u}div_upper(x: int, d: int, k: int)\n  requires d >= 1 && x < k * d\n  ensures x / d < k\n{{\n  assert x == d * (x / d) + x % d;\n  if x / d >= k {{\n    {u}mul_mono(k, x / d, d);\n    assert false;\n  }}\n}}\n"
             ));
             s.push_str(&format!(
                 "lemma {u}div_window(x: int, d: int, lo: int, hi: int)\n  requires d >= 1 && lo * d <= x && x < hi * d\n  ensures lo <= x / d < hi\n{{\n  {u}div_lower(x, d, lo);\n  {u}div_upper(x, d, hi);\n}}\n"
@@ -1865,13 +1865,13 @@ fn emit_floor_window_support_stack(
                 "lemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\n"
             ));
             s.push_str(&format!(
-                "lemma {u}pow_add(m: int, n: int)\n  requires m >= 0 && n >= 0\n  ensures {pow}(m + n) == {pow}(m) * {pow}(n)\n{{\n  if m > 0 {{\n    {u}pow_add(m - 1, n);\n  }}\n}}\n"
+                "lemma {{:vcs_split_on_every_assert}} {u}pow_add(m: int, n: int)\n  requires m >= 0 && n >= 0\n  ensures {pow}(m + n) == {pow}(m) * {pow}(n)\n{{\n  if m > 0 {{\n    {u}pow_add(m - 1, n);\n  }}\n}}\n"
             ));
             s.push_str(&format!(
                 "lemma {u}exp_nonneg(a: int, b: int)\n  ensures {exp}(a, b) >= 0\n  decreases if a >= 0 then a else 0\n{{ }}\n"
             ));
             s.push_str(&format!(
-                "lemma {u}exp_window(a: int, b: int)\n  requires b >= 1 && a >= b\n  ensures {pow}({exp}(a, b)) * b <= a < {pow}({exp}(a, b) + 1) * b\n  decreases a\n{{\n  if a >= 2 * b {{\n    {u}exp_window({halve}(a), b);\n    {u}exp_nonneg({halve}(a), b);\n    assert 2 * (a / 2) <= a;\n    assert a <= 2 * (a / 2) + 1;\n  }}\n}}\n"
+                "lemma {{:vcs_split_on_every_assert}} {u}exp_window(a: int, b: int)\n  requires b >= 1 && a >= b\n  ensures {pow}({exp}(a, b)) * b <= a < {pow}({exp}(a, b) + 1) * b\n  decreases a\n{{\n  if a >= 2 * b {{\n    {u}exp_window({halve}(a), b);\n    {u}exp_nonneg({halve}(a), b);\n    assert 2 * (a / 2) <= a;\n    assert a <= 2 * (a / 2) + 1;\n  }}\n}}\n"
             ));
             // `{:vcs_split_on_every_assert}` on the two branch lemmas
             // is measured-necessary: their hint chains mix the
@@ -1886,7 +1886,7 @@ fn emit_floor_window_support_stack(
                 "lemma {{:vcs_split_on_every_assert}} {u}sig_neg(a: int, b: int, n: int, e: int, s: int)\n  requires b >= 1 && n >= 1 && e >= 0 && s == n - 1 - e && s < 0\n  requires {pow}(0 - s) >= 1\n  requires {pow}(e) * b <= a && a < {pow}(e + 1) * b\n  ensures {pow}(n - 1) <= a / (b * {pow}(0 - s)) < {pow}(n)\n{{\n  {u}pow_pos(0 - s);\n  {u}pow_add(n - 1, 0 - s);\n  assert {pow}(e) == {pow}(n - 1) * {pow}(0 - s);\n  {u}pow_add(n, 0 - s);\n  assert {pow}(e + 1) == {pow}(n) * {pow}(0 - s);\n  assert {pow}(n - 1) * (b * {pow}(0 - s)) == ({pow}(n - 1) * {pow}(0 - s)) * b;\n  assert {pow}(n) * (b * {pow}(0 - s)) == ({pow}(n) * {pow}(0 - s)) * b;\n  {u}div_window(a, b * {pow}(0 - s), {pow}(n - 1), {pow}(n));\n}}\n"
             ));
             s.push_str(&format!(
-                "// Law: {fn_name}.{law_name}\nlemma {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n{{\n  {u}exp_window({ga}, {gb});\n  {u}exp_nonneg({ga}, {gb});\n  var e := {exp}({ga}, {gb});\n  var s := {gn} - 1 - e;\n  if s >= 0 {{\n    {u}sig_pos({ga}, {gb}, {gn}, e, s);\n  }} else {{\n    {u}pow_pos(0 - s);\n    {u}sig_neg({ga}, {gb}, {gn}, e, s);\n  }}\n  assert {pow}({gn} - 1) <= {sig}({ga}, {gb}, {gn}) < {pow}({gn});\n}}\n"
+                "// Law: {fn_name}.{law_name}\nlemma {{:vcs_split_on_every_assert}} {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n{{\n  {u}exp_window({ga}, {gb});\n  {u}exp_nonneg({ga}, {gb});\n  var e := {exp}({ga}, {gb});\n  var s := {gn} - 1 - e;\n  if s >= 0 {{\n    {u}sig_pos({ga}, {gb}, {gn}, e, s);\n  }} else {{\n    {u}pow_pos(0 - s);\n    {u}sig_neg({ga}, {gb}, {gn}, e, s);\n  }}\n  assert {pow}({gn} - 1) <= {sig}({ga}, {gb}, {gn}) < {pow}({gn});\n}}\n"
             ));
             s
         }
@@ -1907,10 +1907,10 @@ fn emit_floor_window_support_stack(
                 "lemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\n"
             ));
             s.push_str(&format!(
-                "lemma {u}pow_add(m: int, n: int)\n  requires m >= 0 && n >= 0\n  ensures {pow}(m + n) == {pow}(m) * {pow}(n)\n{{\n  if m > 0 {{\n    {u}pow_add(m - 1, n);\n  }}\n}}\n"
+                "lemma {{:vcs_split_on_every_assert}} {u}pow_add(m: int, n: int)\n  requires m >= 0 && n >= 0\n  ensures {pow}(m + n) == {pow}(m) * {pow}(n)\n{{\n  if m > 0 {{\n    {u}pow_add(m - 1, n);\n  }}\n}}\n"
             ));
             s.push_str(&format!(
-                "// Law: {fn_name}.{law_name}\nlemma {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n{{\n  {u}pow_pos({gm} - 1);\n  {u}pow_pos({gn} - 1);\n  if {gm} <= 0 {{\n    assert {pow}({gm}) == 1;\n    assert false;\n  }}\n  if {gn} <= 0 {{\n    assert {pow}({gn}) == 1;\n    assert false;\n  }}\n  {u}pow_add({gm} - 1, {gn} - 1);\n  assert {pow}({gm} + {gn} - 2) == {pow}({gm} - 1) * {pow}({gn} - 1);\n  {u}pow_add({gm}, {gn});\n  assert {pow}({gm} + {gn}) == {pow}({gm}) * {pow}({gn});\n  {u}mul_mono({pow}({gm} - 1), {gj}, {pow}({gn} - 1));\n  {u}mul_mono_left({pow}({gn} - 1), {gk}, {gj});\n  assert {gj} * {gk} + {gk} == ({gj} + 1) * {gk};\n  {u}mul_mono({gj} + 1, {pow}({gm}), {gk});\n  assert {pow}({gm}) * {gk} + {pow}({gm}) == {pow}({gm}) * ({gk} + 1);\n  {u}mul_mono_left({gk} + 1, {pow}({gn}), {pow}({gm}));\n}}\n"
+                "// Law: {fn_name}.{law_name}\nlemma {{:vcs_split_on_every_assert}} {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n{{\n  {u}pow_pos({gm} - 1);\n  {u}pow_pos({gn} - 1);\n  if {gm} <= 0 {{\n    assert {pow}({gm}) == 1;\n    assert false;\n  }}\n  if {gn} <= 0 {{\n    assert {pow}({gn}) == 1;\n    assert false;\n  }}\n  {u}pow_add({gm} - 1, {gn} - 1);\n  assert {pow}({gm} + {gn} - 2) == {pow}({gm} - 1) * {pow}({gn} - 1);\n  {u}pow_add({gm}, {gn});\n  assert {pow}({gm} + {gn}) == {pow}({gm}) * {pow}({gn});\n  {u}mul_mono({pow}({gm} - 1), {gj}, {pow}({gn} - 1));\n  {u}mul_mono_left({pow}({gn} - 1), {gk}, {gj});\n  assert {gj} * {gk} + {gk} == ({gj} + 1) * {gk};\n  {u}mul_mono({gj} + 1, {pow}({gm}), {gk});\n  assert {pow}({gm}) * {gk} + {pow}({gm}) == {pow}({gm}) * ({gk} + 1);\n  {u}mul_mono_left({gk} + 1, {pow}({gn}), {pow}({gm}));\n}}\n"
             ));
             s
         }
