@@ -183,12 +183,22 @@ fn proof_export_builds_json_when_lake_is_available() {
     // suffix through the fuel barrier, and the fixed sign-split
     // skeleton (serializer `rfl`, `String.mk`-form head-char
     // dispatch, `digitChar` disequalities, `Int.fromString_fromInt`
-    // leaf) closes both sign branches. The remaining 2 are exactly
-    // `escapeJsonString.parseStringRoundtrip` and
-    // `parseStringChunk.escapedStringRoundtrip` — the string-escape
-    // family, whose scanners thread accumulator chunks (not a
-    // single all-`P` suffix), outside the scan-lemma shape.
-    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 2);
+    // leaf) closes both sign branches.
+    // StringEscapeRoundtrip: 2 → 0 — the parser-workhorse pair
+    // (`escapeJsonString.parseStringRoundtrip` and
+    // `parseStringChunk.escapedStringRoundtrip`) now closes genuinely
+    // (#print axioms = [propext, Quot.sound]): the detector validates
+    // the escape producer/consumer pair end-to-end and the Lean
+    // backend renders the suffix-invariant skeleton ported from the
+    // verified hand proof — drop-form suffix cursor, accumulator
+    // homomorphism over the escape fold, one step lemma per consumer
+    // fuel arm, and a chunk invariant quantifying the carried scanner
+    // state (segmentStart, chunks), closed by per-char classification
+    // over the pinned escape table. The whole json example now builds
+    // sorry-free; every synthesized lemma carries a
+    // `first | (…; done) | sorry` floor, so a template regression
+    // surfaces HERE as a loud count drift, never a build error.
+    assert_proof_builds_with_sorry_budget("examples/data/json.av", "aver-proof-json", 0);
 }
 
 #[test]

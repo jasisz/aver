@@ -1113,3 +1113,345 @@ verify drop law dropRevLen
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// Shared fixture for the escaped-string roundtrip tests below: a
+/// log-field wire format structurally isomorphic to json's string
+/// escape family but with FRESH names everywhere, a different escape
+/// table (3 classifier pairs + tab via the control ladder vs json's
+/// 5 + 2), different terminator / escape-introducer / hex-letter
+/// chars (`;` / `%` / `x` vs `"` / `\` / `u`), an opening delimiter
+/// that differs from the terminator (`?`), a consumer-only escape arm
+/// the producer never emits (`%q`), and a smaller scanner SCC (6 fuel
+/// mutual members vs json's 9 — a different probed rank). Proves the
+/// `StringEscapeRoundtrip` recognizer keys on structure, not on the
+/// json corpus's identifiers or table.
+const FIELD_ESCAPE_FIXTURE: &str = r#"module FieldEsc
+    intent = "an escaped log-field render/parse roundtrip closing via StringEscapeRoundtrip"
+    effects []
+
+type FieldVal
+    FText(String)
+
+type FieldOut
+    Done(FieldVal, Int)
+    Fail(String, Int)
+
+fn escapeField(s: String) -> String
+    ? "Escape a field value for the ;-terminated wire format."
+    packField(String.chars(s), "")
+
+verify escapeField law fieldRoundtrip
+    given s: String = ["", "ok", "a;b", "x%y", "line\nz", "\t", "😀"]
+    unpackField("?" + escapeField(s) + ";", 1) => FieldOut.Done(FieldVal.FText(s), String.len(escapeField(s)) + 2)
+
+fn packField(chars: List<String>, acc: String) -> String
+    ? "Escape each char onto an accumulator."
+    match chars
+        [] -> acc
+        [c, ..rest] -> packField(rest, acc + packChar(c))
+
+fn packChar(c: String) -> String
+    ? "Two-char escapes for the wire format's reserved chars."
+    match c
+        ";" -> "%s"
+        "%" -> "%p"
+        "\n" -> "%n"
+        _ -> packLow(c)
+
+fn packLow(c: String) -> String
+    ? "Tab gets a two-char escape; other control chars go hex."
+    code = Char.toCode(c)
+    match code == 9
+        true -> "%t"
+        false -> match code < 32
+            true -> packHex(c, code)
+            false -> c
+
+fn packHex(c: String, code: Int) -> String
+    ? "Hex escape for a control char."
+    match Byte.toHex(code)
+        Result.Ok(hex) -> "%x00" + hex
+        Result.Err(_) -> c
+
+fn fieldHexVal(c: String) -> Option<Int>
+    ? "Hex digit value: 0-9, a-f. None for non-hex."
+    code = Char.toCode(c)
+    match code >= 48
+        true -> match code <= 57
+            true -> Option.Some(code - 48)
+            false -> fieldHexAlpha(code)
+        false -> Option.None
+
+fn fieldHexAlpha(code: Int) -> Option<Int>
+    ? "Lowercase hex letter value."
+    match code >= 97
+        true -> match code <= 102
+            true -> Option.Some(code - 87)
+            false -> Option.None
+        false -> Option.None
+
+fn unpackField(s: String, pos: Int) -> FieldOut
+    ? "Parse one ;-terminated field starting at pos."
+    unpackChunk(s, pos, pos, [])
+
+fn unpackChunk(s: String, pos: Int, segStart: Int, parts: List<String>) -> FieldOut
+    ? "Scan the field, collecting segment chunks."
+    match String.charAt(s, pos)
+        Option.None -> FieldOut.Fail("unterminated field", pos)
+        Option.Some(c) -> match c
+            ";" -> sealField(s, pos + 1, segStart, parts)
+            "%" -> unpackEscape(s, pos + 1, pos, segStart, parts)
+            _ -> guardChar(s, pos, segStart, parts, c)
+
+verify unpackChunk law packedFieldRoundtrip
+    given s: String = ["", "ok", "a;b"]
+    unpackChunk("?" + escapeField(s) + ";", 1, 1, []) => FieldOut.Done(FieldVal.FText(s), String.len(escapeField(s)) + 2)
+
+fn sealField(s: String, nextPos: Int, segStart: Int, parts: List<String>) -> FieldOut
+    ? "Flush the open segment and finish the field."
+    segment = String.slice(s, segStart, nextPos - 1)
+    all = String.join(List.concat(parts, [segment]), "")
+    FieldOut.Done(FieldVal.FText(all), nextPos)
+
+fn guardChar(s: String, pos: Int, segStart: Int, parts: List<String>, c: String) -> FieldOut
+    ? "Reject unescaped control chars; pass printable chars."
+    match Char.toCode(c) < 32
+        true -> FieldOut.Fail("unescaped control char", pos)
+        false -> unpackChunk(s, pos + 1, segStart, parts)
+
+fn unpackEscape(s: String, pos: Int, pctPos: Int, segStart: Int, parts: List<String>) -> FieldOut
+    ? "Decode one escape letter."
+    segment = String.slice(s, segStart, pctPos)
+    base = List.concat(parts, [segment])
+    match String.charAt(s, pos)
+        Option.None -> FieldOut.Fail("unterminated escape", pos)
+        Option.Some(c) -> match c
+            "s" -> unpackChunk(s, pos + 1, pos + 1, List.concat(base, [";"]))
+            "p" -> unpackChunk(s, pos + 1, pos + 1, List.concat(base, ["%"]))
+            "n" -> unpackChunk(s, pos + 1, pos + 1, List.concat(base, ["\n"]))
+            "t" -> unpackChunk(s, pos + 1, pos + 1, List.concat(base, ["\t"]))
+            "q" -> unpackChunk(s, pos + 1, pos + 1, List.concat(base, ["?"]))
+            "x" -> unpackHex(s, pos + 1, pos + 1, base)
+            _ -> FieldOut.Fail("unknown escape", pos)
+
+fn unpackHex(s: String, pos: Int, escapePos: Int, parts: List<String>) -> FieldOut
+    ? "Decode a %x00HH hex escape."
+    match readHexQuad(s, pos, 0, 0)
+        Option.None -> FieldOut.Fail("bad hex escape", escapePos)
+        Option.Some(cp) -> unpackCodePoint(s, pos + 4, escapePos, parts, cp)
+
+fn unpackCodePoint(s: String, pos: Int, escapePos: Int, parts: List<String>, cp: Int) -> FieldOut
+    ? "Reject surrogate halves; place anything else."
+    match highHalf(cp)
+        true -> FieldOut.Fail("surrogate", escapePos)
+        false -> match lowHalf(cp)
+            true -> FieldOut.Fail("surrogate", escapePos)
+            false -> placeCodePoint(s, pos, escapePos, parts, cp)
+
+fn highHalf(cp: Int) -> Bool
+    ? "High surrogate range check."
+    match cp >= 55296
+        true -> cp <= 56319
+        false -> false
+
+fn lowHalf(cp: Int) -> Bool
+    ? "Low surrogate range check."
+    match cp >= 56320
+        true -> cp <= 57343
+        false -> false
+
+fn placeCodePoint(s: String, pos: Int, escapePos: Int, parts: List<String>, cp: Int) -> FieldOut
+    ? "Flush the decoded char as its own chunk."
+    match Char.fromCode(cp)
+        Option.None -> FieldOut.Fail("bad code point", escapePos)
+        Option.Some(ch) -> unpackChunk(s, pos, pos, List.concat(parts, [ch]))
+
+fn readHexQuad(s: String, pos: Int, acc: Int, count: Int) -> Option<Int>
+    ? "Read exactly four hex digits."
+    match count == 4
+        true -> Option.Some(acc)
+        false -> match String.charAt(s, pos)
+            Option.None -> Option.None
+            Option.Some(c) -> match fieldHexVal(c)
+                Option.None -> Option.None
+                Option.Some(v) -> readHexQuad(s, pos + 1, acc * 16 + v, count + 1)
+"#;
+
+/// A no-when universal escaped-string roundtrip
+/// (`parse(<open> + escape(s) + <term>, 1) = Ok(StrCtor(s), len + 2)`)
+/// over the canonical segment-chunking scanner must close GENUINELY
+/// via `StringEscapeRoundtrip`: the detector validates the
+/// producer/consumer escape-table alignment end-to-end and the Lean
+/// backend renders the suffix-invariant skeleton from the verified
+/// json hand proof (drop-form suffix cursor, fold accumulator
+/// homomorphism, per-fuel-arm step lemmas, by_cases classification
+/// ladder). `universal:true` means every theorem closed with axioms
+/// ⊆ [propext, Classical.choice, Quot.sound] — no sorry, no
+/// native_decide. The fixture's fresh names, different escape table,
+/// distinct delimiters and smaller scanner SCC pin that the
+/// recognizer keys on structure, not the json corpus's identifiers.
+/// (Found on real `examples/data/json.av`:
+/// `escapeJsonString.parseStringRoundtrip` +
+/// `parseStringChunk.escapedStringRoundtrip` — the 2 → 0 budget
+/// flip.)
+#[test]
+fn lean_proves_string_escape_roundtrip_law_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping string-escape-roundtrip test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-fieldesc-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), FIELD_ESCAPE_FIXTURE).expect("write");
+    let out = temp_output_dir("aver-fieldesc-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .arg("--sorry-budget")
+        .arg("0")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(0),
+        "a fresh-named escaped-string roundtrip must close sorry-free\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["universal"].as_bool(),
+        Some(true),
+        "a fresh-named escaped-string roundtrip must close kernel-clean via the \
+         synthesized suffix-invariant skeleton (recognizer keys on structure, \
+         not json's identifiers)\n{}",
+        format_output(&run)
+    );
+    // The strategy itself must have fired (not some other route): the
+    // synthesized chunk invariant is the skeleton's signature lemma.
+    let lean = std::fs::read_to_string(out.join("FieldEsc.lean")).expect("FieldEsc.lean");
+    assert!(
+        lean.contains("_chunk_inv :"),
+        "the suffix-invariant skeleton must be the closing proof\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// Conservatism gate: a producer/consumer pair whose escape tables do
+/// NOT align (the consumer decodes the newline escape letter to a
+/// CARRIAGE RETURN) must decline the `StringEscapeRoundtrip` pin —
+/// the synthesized proof could never close, and an unprovable
+/// synthesized lemma stack is the worst failure mode. The export must
+/// contain NO suffix-invariant skeleton and the universal theorem
+/// falls back to the prior honest emission. No lake needed —
+/// generation-only.
+#[test]
+fn string_escape_roundtrip_declines_misaligned_escape_table() {
+    let misaligned = FIELD_ESCAPE_FIXTURE.replace(
+        r#""n" -> unpackChunk(s, pos + 1, pos + 1, List.concat(base, ["\n"]))"#,
+        r#""n" -> unpackChunk(s, pos + 1, pos + 1, List.concat(base, ["\r"]))"#,
+    );
+    assert_ne!(
+        misaligned, FIELD_ESCAPE_FIXTURE,
+        "fixture mutation must apply"
+    );
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-fieldesc-neg-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), misaligned).expect("write");
+    let out = temp_output_dir("aver-fieldesc-neg-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("aver proof ran");
+    let lean = std::fs::read_to_string(out.join("FieldEsc.lean")).unwrap_or_else(|e| {
+        panic!(
+            "FieldEsc.lean must be generated ({e})\n{}",
+            format_output(&run)
+        )
+    });
+    assert!(
+        !lean.contains("_chunk_inv :"),
+        "a misaligned escape table must DECLINE the synthesis (no invariant skeleton)\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}
+
+/// The honest floor, observed end-to-end: with the TEST-ONLY
+/// `AVER_PROOF_ESCAPE_SABOTAGE` hook breaking the control branch's
+/// tactic block in both laws' synthesized stacks, the branch theorems
+/// fall to their caught `sorry` floors — the build still SUCCEEDS
+/// (`passed:true` within the budget) and the sorry count surfaces the
+/// regression loudly (2, one per law). A template regression can
+/// degrade the budget pin but can never be a hard `lake build` error.
+/// (The revert-test norm: proves the floor catches, not just that the
+/// happy path closes.)
+#[test]
+fn lean_escape_roundtrip_template_regression_degrades_to_caught_sorry_when_lake_is_available() {
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping escape-sabotage test: `lake` not available");
+        return;
+    }
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let src = temp_output_dir("aver-fieldesc-sab-src");
+    std::fs::create_dir_all(&src).expect("src dir");
+    std::fs::write(src.join("m.av"), FIELD_ESCAPE_FIXTURE).expect("write");
+    let out = temp_output_dir("aver-fieldesc-sab-out");
+    let run = Command::new(aver_bin)
+        .arg("proof")
+        .arg(src.join("m.av"))
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out)
+        .arg("--check")
+        .arg("--check-json")
+        .arg("--sorry-budget")
+        .arg("2")
+        .env("AVER_PROOF_ESCAPE_SABOTAGE", "1")
+        .output()
+        .expect("aver proof ran");
+    let json = run
+        .stdout
+        .split(|&b| b == b'\n')
+        .rev()
+        .find_map(|l| std::str::from_utf8(l).ok().filter(|s| s.starts_with("{")))
+        .unwrap_or_else(|| panic!("no JSON:\n{}", format_output(&run)));
+    let summary: serde_json::Value = serde_json::from_str(json).expect("json");
+    assert_eq!(
+        summary["sorries"].as_u64(),
+        Some(2),
+        "a sabotaged branch template must fall to exactly one caught sorry per law\n{}",
+        format_output(&run)
+    );
+    assert_eq!(
+        summary["passed"].as_bool(),
+        Some(true),
+        "a sabotaged branch template must stay a CAUGHT sorry (build success), \
+         never a hard lake error\n{}",
+        format_output(&run)
+    );
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&out);
+}

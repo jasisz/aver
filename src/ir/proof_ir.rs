@@ -884,6 +884,38 @@ pub enum ProofStrategy {
         /// Serializer the law's lhs feeds the parser (`toString`).
         serializer_fn: String,
     },
+    /// String escape/parse roundtrip over the canonical
+    /// segment-chunking string scanner: the law states
+    /// `parse(<open> + escape(s) + <terminator>, 1) =
+    /// Ok(StrCtor(s), String.len(escape(s)) + 2)` for an unconstrained
+    /// `given s: String` (or the same claim entered at the scanner
+    /// itself with `pos = segmentStart = 1, chunks = []`). The
+    /// producer is a per-char classifier fold (two-char escape table +
+    /// hex control escapes + printable passthrough); the consumer is a
+    /// fuel mutual SCC (scan / escape-dispatch / validate / unicode
+    /// chain) whose per-arm shapes the detector validates EXACTLY —
+    /// see [`StringEscapeRoundtripPin`] for every captured name and
+    /// literal, and `proof_lower::string_escape_roundtrip` for the
+    /// gates.
+    ///
+    /// The Lean emission renders the suffix-invariant proof skeleton
+    /// ported from the verified json hand proof (kernel-checked on
+    /// Lean 4.15, #print axioms = [propext, Quot.sound]): a
+    /// drop-form suffix-cursor prelude, the producer fold's
+    /// accumulator homomorphism, one step lemma per consumer fuel
+    /// arm, and a chunk invariant with the carried scanner state
+    /// (segmentStart, chunks) universally quantified, closed by
+    /// per-char classification. Every synthesized lemma carries a
+    /// `first | (…; done) | sorry` floor — a template regression
+    /// degrades to caught honest sorries (loud budget red), never a
+    /// build error, and `native_decide` never appears. Dafny treats
+    /// the pin as `BackendDispatch` (exports byte-identical).
+    ///
+    /// Demonstrated by `examples/data/json.av`
+    /// `escapeJsonString.parseStringRoundtrip` and
+    /// `parseStringChunk.escapedStringRoundtrip` — the parser
+    /// workhorse pair that closes json's pinned Lean budget to 0.
+    StringEscapeRoundtrip(Box<StringEscapeRoundtripPin>),
     /// Unconditional ring identity over Int-component records — the
     /// algebra-law family of an exact-rationals library (a record
     /// with Int numerator/denominator fields, non-normalizing
@@ -979,6 +1011,100 @@ pub enum FloorWindowFigure {
         fits_fn: String,
         claim_fn: String,
     },
+}
+
+/// Parameter pack for [`ProofStrategy::StringEscapeRoundtrip`] —
+/// every fn name and literal the Lean renderer's suffix-invariant
+/// proof skeleton quotes. All fn names are source names (backends
+/// translate); all chars/codes are the SOURCE literals the detector
+/// read off the validated arm patterns, so the renderer can rebuild
+/// them as Lean literals without re-walking the AST.
+#[derive(Debug, Clone)]
+pub struct StringEscapeRoundtripPin {
+    /// The scanner SCC member the law enters (`parseStringChunk`).
+    /// Body: charAt dispatch over { terminator → finish, escape-char
+    /// → escape dispatch, default → validate }.
+    pub scan_fn: String,
+    /// Escape dispatcher (`parseEscape`): slices the open segment,
+    /// then maps escape letters to decoded chars / the unicode hop.
+    pub escape_fn: String,
+    /// Default-arm validator (`validateChar`): control chars error,
+    /// printable chars extend the open segment.
+    pub validate_fn: String,
+    /// Terminator continuation (`finishString`): slice + join + Ok.
+    pub finish_fn: String,
+    /// `\uXXXX` reader head (`parseUnicode`): readHex4 + codepoint.
+    pub unicode_fn: String,
+    /// Codepoint surrogate filter (`parseUnicodeCodePoint`).
+    pub codepoint_fn: String,
+    /// Decoded-codepoint continuation (`applyCodePoint`):
+    /// `Char.fromCode` + chunk flush back into the scanner.
+    pub apply_fn: String,
+    /// Four-hex-digit reader (`readHex4`), separately fueled on
+    /// `count` climbing to the literal bound 4.
+    pub read_hex_fn: String,
+    /// User hex-digit valuation (`hexVal : String -> Option<Int>`).
+    pub hex_val_fn: String,
+    /// High-surrogate guard (`isHighSurrogate`): `cp >= MIN && …`.
+    pub high_surrogate_fn: String,
+    /// Low-surrogate guard (`isLowSurrogate`).
+    pub low_surrogate_fn: String,
+    /// Producer wrapper (`escapeJsonString`): `fold(String.chars(s), "")`.
+    pub producer_fn: String,
+    /// Producer accumulator fold (`escapeJsonChars`).
+    pub fold_fn: String,
+    /// Per-char classifier (`escapeJsonChar`): two-char escape table
+    /// + default to the control classifier.
+    pub classifier_fn: String,
+    /// Control classifier (`escapeControlChar`): equality ladder +
+    /// `code < threshold → control escape` + printable passthrough.
+    pub control_fn: String,
+    /// Hex control escape (`controlCodeEscape`): `Byte.toHex` +
+    /// 4-char prefix.
+    pub control_escape_fn: String,
+    /// Success ctor of the law's rhs, source spelling
+    /// (`"ParseResult.Ok"`).
+    pub ok_ctor: String,
+    /// String-payload ctor inside the success ctor
+    /// (`"Json.JsonString"`).
+    pub str_ctor: String,
+    /// Scan terminator char (`'"'` — the finish arm's literal).
+    pub terminator: char,
+    /// Escape introducer char (`'\\'` — the escape arm's literal,
+    /// also the first char of every two-char escape output).
+    pub escape_char: char,
+    /// Hex-escape letter (`'u'` — second char of the control-escape
+    /// prefix, the consumer's unicode arm literal).
+    pub unicode_letter: char,
+    /// Two-char escape table, producer-derived and consumer-aligned.
+    pub pairs: Vec<EscapePairSpec>,
+    /// Control threshold (`32`): producer hex-escapes below it, the
+    /// consumer validator rejects below it. Gated `<= 256`.
+    pub control_threshold: i64,
+    /// `cp >= MIN` bound of the high-surrogate guard (`55296`).
+    pub high_surrogate_min: i64,
+    /// `cp >= MIN` bound of the low-surrogate guard (`56320`).
+    /// The Lean renderer probes the scanner SCC's emitted
+    /// `averStringPosFuel` rank itself (it must match the emission
+    /// byte-for-byte), so the rank is deliberately NOT pinned here.
+    pub low_surrogate_min: i64,
+}
+
+/// One two-char escape: the producer emits `[escape_char, letter]`
+/// for `decoded`; the consumer's escape dispatcher maps `letter`
+/// back to `decoded`.
+#[derive(Debug, Clone)]
+pub struct EscapePairSpec {
+    /// The unescaped source char (`'\n'`).
+    pub decoded: char,
+    /// The escape letter following the escape introducer (`'n'`).
+    pub letter: char,
+    /// `true` when the pair comes from the control classifier's
+    /// equality ladder (`code == 8 → "\\b"`), `false` for a
+    /// classifier literal arm (`"\n" → "\\n"`). Drives which
+    /// disequality form the chunk-invariant ladder cases on
+    /// (`c.toNat = K` vs `c = '<lit>'`).
+    pub from_control_ladder: bool,
 }
 
 /// Discriminator for [`ProofStrategy::MapUpdatePostcondition`].

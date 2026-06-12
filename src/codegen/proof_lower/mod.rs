@@ -1209,6 +1209,20 @@ fn classify_law_strategy(
     {
         return s;
     }
+    // Escaped-string parse/serialize roundtrip — the string-escape
+    // sibling of the decimal roundtrip above, and like it placed
+    // BEFORE the prelude-simp rung, which would otherwise claim the
+    // shape (fuel-wrapped lhs cone) and park it on a caught sorry.
+    // The detector validates the ENTIRE producer/consumer pair
+    // (classifier escape table aligned arm-by-arm with the consumer's
+    // escape dispatcher, control-escape prefix, threshold agreement,
+    // fuel contracts), so it cannot fire on any shape whose
+    // synthesized suffix-invariant proof would not close.
+    if law.when.is_none()
+        && let Some(s) = detect_string_escape_roundtrip(law, inputs, fn_contracts)
+    {
+        return s;
+    }
     // Floor-division window family — laws over a power-of-two fn, a
     // guard-validated floor-halving binary-exponent fn, and the
     // window predicates built from them. The detectors are
@@ -1247,6 +1261,7 @@ mod refinement;
 mod ring;
 mod simp;
 mod spec_equivalence;
+mod string_escape_roundtrip;
 mod wrapper_laws;
 
 pub(crate) use induction::LawProofCone;
@@ -1260,4 +1275,5 @@ use refinement::*;
 use ring::*;
 use simp::*;
 use spec_equivalence::*;
+use string_escape_roundtrip::*;
 use wrapper_laws::*;

@@ -1056,6 +1056,7 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
                 | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
                 | crate::ir::ProofStrategy::RingIdentity { .. }
                 | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
+                | crate::ir::ProofStrategy::StringEscapeRoundtrip(_)
         )
     });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs
@@ -2014,6 +2015,13 @@ pub fn emit_verify_law(
                     // Dafny treats the pin as `BackendDispatch` and its
                     // exports stay byte-identical.
                     | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
+                    // Same guard for the escaped-string roundtrip
+                    // strategy: Lean-only (its suffix-invariant
+                    // skeleton cites `__fuel` step lemmas and Lean
+                    // prelude names), so Dafny treats the pin as
+                    // `BackendDispatch` and its exports stay
+                    // byte-identical.
+                    | crate::ir::ProofStrategy::StringEscapeRoundtrip(_)
             )
         });
     let singleton_const_rhs = !ir_strategy_closes_const_rhs

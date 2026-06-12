@@ -111,7 +111,9 @@ fn proof_when_universal_lane_closes_synthetic_sign_law() {
 ///    universal credit (`when_universal == 5`), the per-law detail
 ///    artifact lists their axiom evidence, the lane modules carry NO
 ///    `sorry` token, and the COUNTED summary is byte-identical to
-///    today (sorries == 2 exact, passed, file-level universal:false);
+///    today (sorries == 0 exact since the escaped-string roundtrip
+///    pair closes via `StringEscapeRoundtrip`, passed, file-level
+///    universal:true);
 /// 2. SABOTAGE run (one lane proof deliberately broken via the
 ///    `AVER_PROOF_LANE_SABOTAGE` test hook): the counted summary is
 ///    untouched, the broken law reports bounded (no credit), every
@@ -128,19 +130,21 @@ fn proof_when_universal_lane_json_end_to_end() {
     let output_dir = temp_output_dir("aver-proof-when-lane-json");
 
     // ---- run 1: normal -------------------------------------------------
-    let (normal, run) = run_lean_check_json("examples/data/json.av", &output_dir, 2, &[]);
+    let (normal, run) = run_lean_check_json("examples/data/json.av", &output_dir, 0, &[]);
     assert_eq!(
         normal["sorries"].as_u64(),
-        Some(2),
+        Some(0),
         "{}",
         format_output(&run)
     );
     assert_eq!(normal["passed"].as_bool(), Some(true));
     assert_eq!(
         normal["universal"].as_bool(),
-        Some(false),
-        "file-level `universal` keeps counted-build semantics (json has 2 \
-         permanent caught sorries); lane credit is per-law via when_universal"
+        Some(true),
+        "file-level `universal` keeps counted-build semantics (json's manifest \
+         laws all close kernel-clean since the escaped-string roundtrip pair \
+         closes via StringEscapeRoundtrip); lane credit stays per-law via \
+         when_universal"
     );
     assert_eq!(
         normal["when_universal"].as_u64(),
@@ -209,7 +213,7 @@ fn proof_when_universal_lane_json_end_to_end() {
     let (sabotaged, run2) = run_lean_check_json(
         "examples/data/json.av",
         &output_dir,
-        2,
+        0,
         &[("AVER_PROOF_LANE_SABOTAGE", "startSignDigit")],
     );
     assert_eq!(
@@ -243,7 +247,7 @@ fn proof_when_universal_lane_json_end_to_end() {
     let (reverted, run3) = run_lean_check_json(
         "examples/data/json.av",
         &output_dir,
-        2,
+        0,
         &[("AVER_PROOF_NO_UNIVERSAL_LANE", "1")],
     );
     assert_eq!(
