@@ -12,6 +12,8 @@ mod dafny_inline;
 mod discover;
 #[path = "proof_spec/export_structure.rs"]
 mod export_structure;
+#[path = "proof_spec/floor_window.rs"]
+mod floor_window;
 #[path = "proof_spec/lean_kernel.rs"]
 mod lean_kernel;
 #[path = "proof_spec/lemmas.rs"]

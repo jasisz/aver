@@ -5183,7 +5183,7 @@ verify weird law weirdSpec
         let issues = proof_mode_issues(&ctx);
         assert_eq!(
             issues,
-            vec!["recursive function 'eval' is outside proof subset (currently supported: Int countdown, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)".to_string()]
+            vec!["recursive function 'eval' is outside proof subset (currently supported: Int countdown, guard-validated Int floor-division countdown by a literal divisor, second-order affine Int recurrences with pair-state worker, structural recursion on List/recursive ADTs, String+position, mutual Int countdown, mutual String+position, and ranked sizeOf recursion)".to_string()]
         );
 
         let out = transpile_for_proof_mode(&mut ctx, VerifyEmitMode::NativeDecide);

@@ -2343,6 +2343,53 @@ pub fn emit_fn_def_proof(fd: &FnDef, ctx: &CodegenContext) -> Option<String> {
         return Some(emit_fuelized_int_countdown_fn(fd, ctx, param_index));
     }
 
+    // WellFoundedToNat — native well-founded def on `param.toNat`.
+    // Two validated sources (see the contract docs): the
+    // guard-validated floor-division countdown (`floor_div: Some`)
+    // and the guarded subtractive countdown a floor-division window
+    // law graduated out of fuel (`floor_div: None`). The kernel
+    // re-checks the measure through `decreasing_by`: the branch
+    // hypotheses of the emitted if/else chain land in the decreasing
+    // goals' context, `simp [<wrapper>, Except.withDefault]` reduces
+    // the literal-divisor zero-guard, and `omega` (which understands
+    // `Int.toNat` and ediv by literals) closes the strict decrease.
+    if let Some(contract) = crate::codegen::common::find_fn_contract_for_fn(ctx, fd)
+        && let Some(crate::ir::RecursionContract::WellFoundedToNat { param, floor_div }) =
+            contract.recursion.as_ref()
+    {
+        let mut lines = Vec::new();
+        if let Some(desc) = &fd.desc {
+            lines.push(format!("/-- {} -/", sanitize_doc(desc)));
+        }
+        let fn_name = aver_name_to_lean(&fd.name);
+        let params = emit_fn_params(&fd.params);
+        let ret_type = if fd.return_type.is_empty() {
+            "Unit".to_string()
+        } else {
+            type_annotation_to_lean(&fd.return_type)
+        };
+        lines.push(format!("def {} {} : {} :=", fn_name, params, ret_type));
+        let lowered = lower_pure_question_bang_for_emit(fd);
+        let body = lowered
+            .as_ref()
+            .map(|lowered_fd| lowered_fd.body.as_ref())
+            .unwrap_or(fd.body.as_ref());
+        lines.push(emit_fn_body_for(fd, body, ctx));
+        lines.push(format!("termination_by {}.toNat", aver_name_to_lean(param)));
+        lines.push("decreasing_by".to_string());
+        match floor_div {
+            Some(shrink) => match &shrink.helper_fn {
+                Some(helper) => lines.push(format!(
+                    "  all_goals (simp [{}, Except.withDefault] <;> omega)",
+                    aver_name_to_lean(helper)
+                )),
+                None => lines.push("  all_goals (simp [Except.withDefault] <;> omega)".to_string()),
+            },
+            None => lines.push("  all_goals omega".to_string()),
+        }
+        return Some(lines.join("\n"));
+    }
+
     // IntCountdownGuarded now reads through ProofIR — the lowerer
     // populates `ctx.proof_ir.fn_contracts` with a `Native` contract
     // whose `precondition` + `body` carry everything the emit needs.
@@ -3127,12 +3174,23 @@ fn emit_verify_law_block(
         // `replaces_theorem` auto-proof the strategy emits its own
         // (universal-form) statement; keeping this class for it is
         // conservative — a mislabel can only withhold credit, never
-        // grant it.
+        // grant it. ONE exception flips the class the other way:
+        // `FloorDivWindow` replaces the bounded statement with the
+        // TRUE universal form `∀ givens, <when> = true -> claim`
+        // (validated emission — the rendered file contains no
+        // statement bounded by sampled domains for this law), so the
+        // marker says `universal`. Credit stays fail-closed: the
+        // `#print axioms` whitelist still decides, and a sorry'd or
+        // native_decide'd proof can never be credited.
+        let floor_window_universal = matches!(
+            pinned_law_strategy,
+            Some(crate::ir::ProofStrategy::FloorDivWindow { .. })
+        );
         lines.push(format!(
             "{}{} {}",
             super::LAW_CLASS_MARKER_PREFIX,
             theorem_base,
-            if bounded_domain {
+            if bounded_domain && !floor_window_universal {
                 super::LAW_CLASS_BOUNDED_DOMAIN
             } else {
                 super::LAW_CLASS_UNIVERSAL

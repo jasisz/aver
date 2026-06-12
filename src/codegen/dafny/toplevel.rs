@@ -315,7 +315,29 @@ pub fn emit_fn_def(fd: &FnDef, ctx: &CodegenContext) -> String {
         ret_type
     ));
 
-    if needs_decreases && let Some(info) = infer_decreases(fd) {
+    // Guard-validated floor-division countdown (shared classifier —
+    // `RecursionContract::WellFoundedToNat { floor_div: Some(_) }`):
+    // the classifier proved every self-call site's guard chain
+    // implies the shrinking param is >= 1, so the total guarded
+    // measure verifies WITHOUT a synthesized `requires` — total
+    // callers stay wellformed (a synthesized precondition on a
+    // recursive fn breaks every caller that can't prove it).
+    let floor_div_param = crate::codegen::common::find_fn_contract_for_fn(ctx, fd).and_then(
+        |contract| match &contract.recursion {
+            Some(crate::ir::RecursionContract::WellFoundedToNat {
+                param,
+                floor_div: Some(_),
+            }) => Some(param.clone()),
+            _ => None,
+        },
+    );
+    if needs_decreases && let Some(param) = floor_div_param {
+        let dname = aver_name_to_dafny(&param);
+        lines.push(format!(
+            "  decreases if {} >= 0 then {} else 0",
+            dname, dname
+        ));
+    } else if needs_decreases && let Some(info) = infer_decreases(fd) {
         for req in &info.requires {
             lines.push(format!("  requires {}", req));
         }
@@ -780,8 +802,23 @@ fn is_literal_div_shrink(expr: &Spanned<Expr>, param_name: &str) -> bool {
 /// declarations: a guessed measure produces a `decreases` error on a
 /// correct function, and a synthesized `requires` breaks every total
 /// caller's wellformedness.
-pub(super) fn termination_guess_unjustified(fd: &FnDef) -> bool {
+pub(super) fn termination_guess_unjustified(fd: &FnDef, ctx: &CodegenContext) -> bool {
     if !body_has_recursive_call(fd.body.as_ref(), &fd.name) {
+        return false;
+    }
+    // Guard-validated floor-division countdown — the shared
+    // classifier proved the measure, so the fn emits with a native
+    // total-guard `decreases` (see `emit_fn_def`) instead of
+    // declining to an opaque `{:axiom}`.
+    if crate::codegen::common::find_fn_contract_for_fn(ctx, fd).is_some_and(|contract| {
+        matches!(
+            &contract.recursion,
+            Some(crate::ir::RecursionContract::WellFoundedToNat {
+                floor_div: Some(_),
+                ..
+            })
+        )
+    }) {
         return false;
     }
     if infer_decreases(fd).is_some() {
@@ -1037,6 +1074,18 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
                 | crate::ir::ProofStrategy::WrapperOverRecursion { .. }
         )
     ) {
+        return false;
+    }
+    // Mirror of the floor-division omitted-universal gate in
+    // `emit_verify_law`: a law whose cone reaches a guard-validated
+    // floor-division countdown fn gets NO universal lemma unless its
+    // `FloorDivWindow` figure is pinned — seeding a sample with a
+    // call to a lemma that was never emitted would be a parse error.
+    if !matches!(
+        pinned_strategy,
+        Some(crate::ir::ProofStrategy::FloorDivWindow { .. })
+    ) && law_reaches_floor_div_fn(law, ctx)
+    {
         return false;
     }
     law.givens.iter().all(|g| {
@@ -1658,6 +1707,216 @@ fn emit_wrapper_over_recursion_support_stack(
     lines.join("\n")
 }
 
+/// True when the law's call cone (lhs + rhs, transitively expanded
+/// through fn bodies) reaches a fn carrying the guard-validated
+/// floor-division countdown contract
+/// (`RecursionContract::WellFoundedToNat { floor_div: Some(_) }`).
+/// Such a fn verifies its own termination natively, but a DEFAULT
+/// empty-body universal lemma over it still hands Z3 an unbounded
+/// symbolic unfolding — a guaranteed error or timeout on a law that
+/// may well hold — so `emit_verify_law` keeps the honest
+/// omitted-universal decline unless the law carries a
+/// `FloorDivWindow` strategy (whose support stack proves it).
+pub(super) fn law_reaches_floor_div_fn(law: &VerifyLaw, ctx: &CodegenContext) -> bool {
+    let mut cone = std::collections::BTreeSet::new();
+    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut cone);
+    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut cone);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let snapshot: Vec<String> = cone.iter().cloned().collect();
+        for name in snapshot {
+            if let Some(fd) = ctx.fn_def_by_name(&name, ctx.active_module_scope().as_deref()) {
+                let before = cone.len();
+                crate::codegen::proof_recognize::collect_called_fns_in_body(&fd.body, &mut cone);
+                if cone.len() != before {
+                    changed = true;
+                }
+            }
+        }
+    }
+    cone.iter().any(|name| {
+        crate::codegen::common::fn_id_for_dotted_name(ctx, name)
+            .and_then(|id| ctx.proof_ir.fn_contracts.get(&id))
+            .is_some_and(|contract| {
+                matches!(
+                    &contract.recursion,
+                    Some(crate::ir::RecursionContract::WellFoundedToNat {
+                        floor_div: Some(_),
+                        ..
+                    })
+                )
+            })
+    })
+}
+
+/// Render the `FloorDivWindow` support stack + main lemma for one
+/// pinned figure. The lemma text was validated end-to-end on the
+/// emitted artifact (`dafny verify`: everything PROVED, no `assume`,
+/// no `{:axiom}`):
+///
+/// - `PowPositive` / `PowSumSplit`: the lemma's own one-line
+///   self-call induction;
+/// - `SigWindow`: the division-window prelude (`div_lower` /
+///   `div_upper` / `div_window` from the Euclidean identity +
+///   multiplication monotonicity), the power algebra (`pow_pos`
+///   auto-induction, `pow_add` self-call induction), the
+///   binary-exponent window characterization (self-call on the
+///   halving + two literal-div hints), and per-branch significand
+///   lemmas that take the window as `requires` — the branch split is
+///   what keeps each VC small enough to verify in seconds (the
+///   monolithic form times out even fully hinted);
+/// - `ProductWindow`: power algebra + the four monotonicity
+///   instantiations + two ring-identity hint asserts.
+///
+/// Support lemma names are prefixed `<fn>_<law>__` so two figures in
+/// one file never collide.
+fn emit_floor_window_support_stack(
+    figure: &crate::ir::FloorWindowFigure,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    fn_name: &str,
+    law_name: &str,
+) -> String {
+    use crate::ir::FloorWindowFigure;
+    let d = aver_name_to_dafny;
+    let render = |e: &Spanned<Expr>| emit_expr_legacy(e, ctx, None);
+    let lhs = render(&law.lhs);
+    let rhs = render(&law.rhs);
+    let when = law.when.as_ref().map(render).unwrap_or_default();
+    let givens: Vec<String> = law.givens.iter().map(|g| d(&g.name)).collect();
+    let params: Vec<String> = givens.iter().map(|g| format!("{}: int", g)).collect();
+    let params = params.join(", ");
+
+    // Fuel attrs over the law's (transitive) fn cone — same shape as
+    // the default universal lemma so unfolding behaves identically.
+    let mut law_fns = std::collections::BTreeSet::new();
+    crate::codegen::proof_recognize::collect_called_fns(&law.lhs, &mut law_fns);
+    crate::codegen::proof_recognize::collect_called_fns(&law.rhs, &mut law_fns);
+    let mut transitive_fns = std::collections::BTreeSet::new();
+    for f in &law_fns {
+        if let Some(fd) = ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref()) {
+            crate::codegen::proof_recognize::collect_called_fns_in_body(
+                &fd.body,
+                &mut transitive_fns,
+            );
+        }
+    }
+    law_fns.extend(transitive_fns);
+    let fuel_attrs: String = law_fns
+        .iter()
+        .filter(|f| {
+            ctx.fn_def_by_name(f, ctx.active_module_scope().as_deref())
+                .is_some()
+        })
+        .map(|f| format!("{{:fuel {}, 5}}", aver_name_to_dafny(f)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let main_thm = format!("{}_{}", fn_name, law_name);
+    let u = format!("{}__", main_thm);
+
+    match figure {
+        FloorWindowFigure::PowPositive { pow_fn } => {
+            let g0 = &givens[0];
+            format!(
+                "// Law: {fn_name}.{law_name} — power-of-two positivity ({pow})\nlemma {fuel_attrs} {main_thm}({params})\n  ensures {lhs} == {rhs}\n  decreases if {g0} >= 0 then {g0} else 0\n{{\n  if {g0} > 0 {{\n    {main_thm}({g0} - 1);\n  }}\n}}\n",
+                pow = d(pow_fn),
+            )
+        }
+        FloorWindowFigure::PowSumSplit { pow_fn } => {
+            let (g0, g1) = (&givens[0], &givens[1]);
+            format!(
+                "// Law: {fn_name}.{law_name} — power-of-two sum homomorphism ({pow})\nlemma {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n  decreases {g0}\n{{\n  if {g0} > 0 {{\n    {main_thm}({g0} - 1, {g1});\n  }}\n}}\n",
+                pow = d(pow_fn),
+            )
+        }
+        FloorWindowFigure::SigWindow {
+            pow_fn,
+            halve_fn,
+            exp_fn,
+            sig_fn,
+            ..
+        } => {
+            let (ga, gb, gn) = (&givens[0], &givens[1], &givens[2]);
+            let pow = d(pow_fn);
+            let halve = d(halve_fn);
+            let exp = d(exp_fn);
+            let sig = d(sig_fn);
+            let mut s = String::new();
+            s.push_str(&format!(
+                "// Law: {fn_name}.{law_name} — floor-division window support stack\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}mul_mono(p: int, q: int, d: int)\n  requires p <= q && d >= 0\n  ensures p * d <= q * d\n{{ }}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}mul_mono_left(p: int, q: int, c: int)\n  requires p <= q && c >= 0\n  ensures c * p <= c * q\n{{ }}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}div_lower(x: int, d: int, k: int)\n  requires d >= 1 && k * d <= x\n  ensures k <= x / d\n{{\n  assert x == d * (x / d) + x % d;\n  if k > x / d {{\n    {u}mul_mono(k, x / d + 1, d);\n    assert false;\n  }}\n}}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}div_upper(x: int, d: int, k: int)\n  requires d >= 1 && x < k * d\n  ensures x / d < k\n{{\n  assert x == d * (x / d) + x % d;\n  if x / d >= k {{\n    {u}mul_mono(k, x / d, d);\n    assert false;\n  }}\n}}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}div_window(x: int, d: int, lo: int, hi: int)\n  requires d >= 1 && lo * d <= x && x < hi * d\n  ensures lo <= x / d < hi\n{{\n  {u}div_lower(x, d, lo);\n  {u}div_upper(x, d, hi);\n}}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}pow_add(m: int, n: int)\n  requires m >= 0 && n >= 0\n  ensures {pow}(m + n) == {pow}(m) * {pow}(n)\n{{\n  if m > 0 {{\n    {u}pow_add(m - 1, n);\n  }}\n}}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}exp_nonneg(a: int, b: int)\n  ensures {exp}(a, b) >= 0\n  decreases if a >= 0 then a else 0\n{{ }}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}exp_window(a: int, b: int)\n  requires b >= 1 && a >= b\n  ensures {pow}({exp}(a, b)) * b <= a < {pow}({exp}(a, b) + 1) * b\n  decreases a\n{{\n  if a >= 2 * b {{\n    {u}exp_window({halve}(a), b);\n    {u}exp_nonneg({halve}(a), b);\n    assert 2 * (a / 2) <= a;\n    assert a <= 2 * (a / 2) + 1;\n  }}\n}}\n"
+            ));
+            // `{:vcs_split_on_every_assert}` on the two branch lemmas
+            // is measured-necessary: their hint chains mix the
+            // nonlinear pow products with the division window, and the
+            // monolithic VC can time out (deterministically on some
+            // declaration orders) while the per-assert split verifies
+            // in seconds on every run.
+            s.push_str(&format!(
+                "lemma {{:vcs_split_on_every_assert}} {u}sig_pos(a: int, b: int, n: int, e: int, s: int)\n  requires b >= 1 && n >= 1 && e >= 0 && s == n - 1 - e && s >= 0\n  requires {pow}(e) * b <= a && a < {pow}(e + 1) * b\n  ensures {pow}(n - 1) <= (a * {pow}(s)) / b < {pow}(n)\n{{\n  {u}pow_pos(s);\n  {u}pow_add(e, s);\n  assert {pow}(n - 1) == {pow}(e) * {pow}(s);\n  {u}pow_add(e + 1, s);\n  assert {pow}(n) == {pow}(e + 1) * {pow}(s);\n  {u}mul_mono({pow}(e) * b, a, {pow}(s));\n  assert {pow}(e) * b * {pow}(s) == ({pow}(e) * {pow}(s)) * b;\n  assert {pow}(n - 1) * b <= a * {pow}(s);\n  {u}mul_mono(a, {pow}(e + 1) * b, {pow}(s));\n  assert {pow}(e + 1) * b * {pow}(s) == ({pow}(e + 1) * {pow}(s)) * b;\n  assert a * {pow}(s) < {pow}(n) * b;\n  {u}div_window(a * {pow}(s), b, {pow}(n - 1), {pow}(n));\n}}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {{:vcs_split_on_every_assert}} {u}sig_neg(a: int, b: int, n: int, e: int, s: int)\n  requires b >= 1 && n >= 1 && e >= 0 && s == n - 1 - e && s < 0\n  requires {pow}(0 - s) >= 1\n  requires {pow}(e) * b <= a && a < {pow}(e + 1) * b\n  ensures {pow}(n - 1) <= a / (b * {pow}(0 - s)) < {pow}(n)\n{{\n  {u}pow_pos(0 - s);\n  {u}pow_add(n - 1, 0 - s);\n  assert {pow}(e) == {pow}(n - 1) * {pow}(0 - s);\n  {u}pow_add(n, 0 - s);\n  assert {pow}(e + 1) == {pow}(n) * {pow}(0 - s);\n  assert {pow}(n - 1) * (b * {pow}(0 - s)) == ({pow}(n - 1) * {pow}(0 - s)) * b;\n  assert {pow}(n) * (b * {pow}(0 - s)) == ({pow}(n) * {pow}(0 - s)) * b;\n  {u}div_window(a, b * {pow}(0 - s), {pow}(n - 1), {pow}(n));\n}}\n"
+            ));
+            s.push_str(&format!(
+                "// Law: {fn_name}.{law_name}\nlemma {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n{{\n  {u}exp_window({ga}, {gb});\n  {u}exp_nonneg({ga}, {gb});\n  var e := {exp}({ga}, {gb});\n  var s := {gn} - 1 - e;\n  if s >= 0 {{\n    {u}sig_pos({ga}, {gb}, {gn}, e, s);\n  }} else {{\n    {u}pow_pos(0 - s);\n    {u}sig_neg({ga}, {gb}, {gn}, e, s);\n  }}\n  assert {pow}({gn} - 1) <= {sig}({ga}, {gb}, {gn}) < {pow}({gn});\n}}\n"
+            ));
+            s
+        }
+        FloorWindowFigure::ProductWindow { pow_fn, .. } => {
+            let (gj, gk, gm, gn) = (&givens[0], &givens[1], &givens[2], &givens[3]);
+            let pow = d(pow_fn);
+            let mut s = String::new();
+            s.push_str(&format!(
+                "// Law: {fn_name}.{law_name} — power-of-two window product support stack\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}mul_mono(p: int, q: int, d: int)\n  requires p <= q && d >= 0\n  ensures p * d <= q * d\n{{ }}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}mul_mono_left(p: int, q: int, c: int)\n  requires p <= q && c >= 0\n  ensures c * p <= c * q\n{{ }}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}pow_pos(n: int)\n  ensures {pow}(n) >= 1\n{{ }}\n"
+            ));
+            s.push_str(&format!(
+                "lemma {u}pow_add(m: int, n: int)\n  requires m >= 0 && n >= 0\n  ensures {pow}(m + n) == {pow}(m) * {pow}(n)\n{{\n  if m > 0 {{\n    {u}pow_add(m - 1, n);\n  }}\n}}\n"
+            ));
+            s.push_str(&format!(
+                "// Law: {fn_name}.{law_name}\nlemma {fuel_attrs} {main_thm}({params})\n  requires {when}\n  ensures {lhs} == {rhs}\n{{\n  {u}pow_pos({gm} - 1);\n  {u}pow_pos({gn} - 1);\n  if {gm} <= 0 {{\n    assert {pow}({gm}) == 1;\n    assert false;\n  }}\n  if {gn} <= 0 {{\n    assert {pow}({gn}) == 1;\n    assert false;\n  }}\n  {u}pow_add({gm} - 1, {gn} - 1);\n  assert {pow}({gm} + {gn} - 2) == {pow}({gm} - 1) * {pow}({gn} - 1);\n  {u}pow_add({gm}, {gn});\n  assert {pow}({gm} + {gn}) == {pow}({gm}) * {pow}({gn});\n  {u}mul_mono({pow}({gm} - 1), {gj}, {pow}({gn} - 1));\n  {u}mul_mono_left({pow}({gn} - 1), {gk}, {gj});\n  assert {gj} * {gk} + {gk} == ({gj} + 1) * {gk};\n  {u}mul_mono({gj} + 1, {pow}({gm}), {gk});\n  assert {pow}({gm}) * {gk} + {pow}({gm}) == {pow}({gm}) * ({gk} + 1);\n  {u}mul_mono_left({gk} + 1, {pow}({gn}), {pow}({gm}));\n}}\n"
+            ));
+            s
+        }
+    }
+}
+
 pub fn emit_verify_law(
     vb: &VerifyBlock,
     law: &VerifyLaw,
@@ -1776,6 +2035,59 @@ pub fn emit_verify_law(
         return format!(
             "// Law {}.{}{}: {}, sample-only (universal lemma omitted)",
             fn_name, law_name, suffix, reason,
+        );
+    }
+
+    // Floor-division window family. A law whose cone reaches a
+    // guard-validated floor-division countdown fn either carries a
+    // recognized `FloorDivWindow` figure — then its validated support
+    // stack (division-window prelude + power algebra + branch-split
+    // helper lemmas, all PROVED in the emitted file) closes the
+    // universal — or it stays an honestly omitted universal: the fn
+    // is in the proof subset now, but Z3 cannot close an arbitrary
+    // universal over its unbounded symbolic unfolding, and the
+    // default empty-body lemma would manufacture a guaranteed error
+    // on a law that may well hold.
+    let pinned_floor_window_figure = vb_fn_id
+        .and_then(|fn_id| {
+            ctx.proof_ir
+                .law_theorems
+                .iter()
+                .find(|t| t.fn_id == fn_id && t.law_name == law.name)
+        })
+        .and_then(|t| match &t.strategy {
+            crate::ir::ProofStrategy::FloorDivWindow { figure } => Some(figure.clone()),
+            _ => None,
+        });
+    if let Some(figure) = pinned_floor_window_figure {
+        return emit_floor_window_support_stack(&figure, law, ctx, &fn_name, &law_name);
+    }
+    // The omission applies only where the default path would state an
+    // OPEN universal with an empty body. The bounded-∀ form (mutual /
+    // opaque cone over all-literal-Int given domains — the same
+    // predicates the default path evaluates below) dispatches to
+    // per-sample lemmas instead and keeps working exactly as it did
+    // before this family existed, so it is excluded here.
+    let bounded_form_applies = {
+        let is_opaque_cone = law_refs_opaque_fn(&law.lhs, ctx, opaque_fns)
+            || law_refs_opaque_fn(&law.rhs, ctx, opaque_fns)
+            || law_refs_opaque_fn(&law.lhs, ctx, native_emitted)
+            || law_refs_opaque_fn(&law.rhs, ctx, native_emitted);
+        let all_literal_int_domains = !law.givens.is_empty()
+            && law.givens.iter().all(|g| {
+                g.type_name == "Int"
+                    && matches!(
+                        &g.domain,
+                        VerifyGivenDomain::Explicit(vs)
+                            if vs.iter().all(|v| literal_int_value(v).is_some())
+                    )
+            });
+        is_opaque_cone && all_literal_int_domains
+    };
+    if !bounded_form_applies && law_reaches_floor_div_fn(law, ctx) {
+        return format!(
+            "// Law {}.{}{}: reaches a floor-division recursion whose universal Z3 cannot close push-button, sample-only (universal lemma omitted)",
+            fn_name, law_name, suffix,
         );
     }
 

@@ -550,6 +550,36 @@ fn populate_fn_contracts_for_scope(
             continue;
         }
 
+        // IntFloorDivCountdown — guard-validated literal-divisor
+        // floor-division shrink. The classifier proved both
+        // side-conditions (every self-call shrinks the param through
+        // `Result.withDefault(Int.div(p, k), d)` with literal k >= 2,
+        // and every self-call site's guard chain implies `p >= 1`),
+        // so backends emit a native well-founded def on `p.toNat`.
+        if let RecursionPlan::IntFloorDivCountdown {
+            param_index,
+            divisor,
+            helper_fn,
+        } = plan
+        {
+            if let Some((param_name, _)) = fd.params.get(*param_index) {
+                ir.fn_contracts.insert(
+                    canonical_key,
+                    FnContract {
+                        source_name: fn_name.clone(),
+                        recursion: Some(RecursionContract::WellFoundedToNat {
+                            param: param_name.clone(),
+                            floor_div: Some(crate::ir::FloorDivShrink {
+                                divisor: *divisor,
+                                helper_fn: helper_fn.clone(),
+                            }),
+                        }),
+                    },
+                );
+            }
+            continue;
+        }
+
         // IntAscending — fuel formula `(bound - n).natAbs + 1`. The
         // bound stays as `Spanned<Expr>` so backends render it through
         // their own emitters (it can be a literal, a fn param, or a
@@ -857,6 +887,50 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             strategy,
         });
     }
+
+    // Demand-driven well-founded graduation for the floor-division
+    // window family: the figures' proof templates rest on the
+    // power-of-two fn's defining equations and functional-induction
+    // principle, which the fuel encoding destroys (the fuel arg on
+    // the recursive call differs from the callee's own measure, so
+    // nothing universal is provable through `__fuel`). Upgrade the
+    // cited pow fn's contract from `Fuel { NatAbsPlusOne }` to the
+    // native `WellFoundedToNat` form (`floor_div: None` — the guarded
+    // subtractive countdown whose `n <= 0` base guard puts `n >= 1`
+    // in the decreasing goal's context, so `omega` closes the
+    // measure bare). Scoped on purpose: a pow-shaped fn in a file
+    // with no recognized window law keeps its established fuel
+    // emission, so nothing outside the family moves.
+    let window_pow_fns: HashSet<String> = ir
+        .law_theorems
+        .iter()
+        .filter_map(|t| match &t.strategy {
+            crate::ir::ProofStrategy::FloorDivWindow { figure } => Some(match figure {
+                crate::ir::FloorWindowFigure::PowPositive { pow_fn } => pow_fn.clone(),
+                crate::ir::FloorWindowFigure::PowSumSplit { pow_fn } => pow_fn.clone(),
+                crate::ir::FloorWindowFigure::SigWindow { pow_fn, .. } => pow_fn.clone(),
+                crate::ir::FloorWindowFigure::ProductWindow { pow_fn, .. } => pow_fn.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    for pow_fn in window_pow_fns {
+        let Some(fn_id) = symbols.fn_id_of(&crate::ir::FnKey::entry(&pow_fn)) else {
+            continue;
+        };
+        let Some(contract) = ir.fn_contracts.get_mut(&fn_id) else {
+            continue;
+        };
+        if let Some(crate::ir::RecursionContract::Fuel {
+            fuel_metric: crate::ir::FuelMetric::NatAbsPlusOne { param },
+        }) = &contract.recursion
+        {
+            contract.recursion = Some(crate::ir::RecursionContract::WellFoundedToNat {
+                param: param.clone(),
+                floor_div: None,
+            });
+        }
+    }
 }
 
 /// Pick the strategy `LawLower` should pin on a `(fn, law)` pair.
@@ -1135,6 +1209,21 @@ fn classify_law_strategy(
     {
         return s;
     }
+    // Floor-division window family — laws over a power-of-two fn, a
+    // guard-validated floor-halving binary-exponent fn, and the
+    // window predicates built from them. The detectors are
+    // deliberately narrow (exactly the hand-validated figures —
+    // pow positivity, the pow sum homomorphism, the significand
+    // window, the product window) and key on structure plus the
+    // exponent fn's `WellFoundedToNat` contract, never on names.
+    // Runs after every cheaper rung declined: LinearArithmetic
+    // rejects the `Result.withDefault` cone and recursive callees,
+    // Induction needs a recursive-ADT given, EnumConstantFold /
+    // FiniteDomainCases need non-Int / closed domains — so the pin
+    // cannot steal a law another strategy closes today.
+    if let Some(figure) = detect_floor_window(law, fn_name, inputs, fn_contracts) {
+        return ProofStrategy::FloorDivWindow { figure };
+    }
     // Builtin-roundtrip simp over the prelude's spec-lemma registry —
     // the very last typed fallback. The Lean backend deliberately
     // renders this strategy AFTER its whole legacy ad-hoc chain (see
@@ -1150,6 +1239,7 @@ fn classify_law_strategy(
 }
 
 mod finite_domain;
+mod floor_window;
 mod induction;
 mod int_decimal_roundtrip;
 mod map_laws;
@@ -1162,6 +1252,7 @@ mod wrapper_laws;
 pub(crate) use induction::LawProofCone;
 
 use finite_domain::*;
+use floor_window::*;
 use induction::*;
 use int_decimal_roundtrip::*;
 use map_laws::*;

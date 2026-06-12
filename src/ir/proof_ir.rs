@@ -257,6 +257,48 @@ pub enum RecursionContract {
         /// preservation proofs that admit other literals.
         body: NativeIntCountdownBody,
     },
+    /// Well-founded native def on `param.toNat` — graduates a fn out
+    /// of the fuel/partial encoding so it stays kernel-transparent
+    /// (Lean: `termination_by param.toNat` + a `decreasing_by` the
+    /// kernel re-checks; Dafny: `decreases if param >= 0 then param
+    /// else 0` with NO synthesized `requires`, so total callers stay
+    /// wellformed). Two validated sources:
+    ///
+    /// - `floor_div: Some(..)` — every self-call shrinks `param` by a
+    ///   literal-divisor floor division
+    ///   (`Result.withDefault(Int.div(p, k), d)` with literal k >= 2,
+    ///   possibly through a unary wrapper fn), and the classifier
+    ///   verified the guard chain enclosing every self-call site
+    ///   implies `p >= 1` — so `p / k < p` and the measure strictly
+    ///   drops. Never guessed: a fn whose guards don't justify the
+    ///   shrink keeps its prior (partial/opaque) emission.
+    /// - `floor_div: None` — guard-protected subtractive countdown
+    ///   (`p - k`, literal k >= 1, guards imply `p >= 1`), graduated
+    ///   out of fuel on demand by the floor-division window law
+    ///   family, whose proof templates need the fn's defining
+    ///   equations and functional-induction principle.
+    WellFoundedToNat {
+        /// The decreasing Int parameter (source name).
+        param: String,
+        /// `Some` for the floor-division shrink; `None` for the
+        /// guarded subtractive countdown.
+        floor_div: Option<FloorDivShrink>,
+    },
+}
+
+/// Payload of [`RecursionContract::WellFoundedToNat`] for the
+/// floor-division shrink shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FloorDivShrink {
+    /// The literal divisor (>= 2).
+    pub divisor: i64,
+    /// `Some(name)` when the self-call shrinks through a unary
+    /// wrapper fn whose body is exactly
+    /// `Result.withDefault(Int.div(x, divisor), <int literal>)`;
+    /// `None` when the `Result.withDefault(Int.div(p, k), d)` call
+    /// is inlined at the self-call site. Lean's `decreasing_by`
+    /// unfolds the wrapper by name.
+    pub helper_fn: Option<String>,
 }
 
 /// Body decomposition for the `IntCountdown-literal-zero` native
@@ -877,6 +919,20 @@ pub enum ProofStrategy {
         /// backends translate to their lemma vocabulary.
         unfold_fns: Vec<String>,
     },
+    /// Floor-division window family — laws over a power-of-two fn
+    /// (`match n <= 0 { true -> 1; false -> 2 * pow(n - 1) }`), a
+    /// floor-halving binary-exponent fn (the
+    /// [`RecursionContract::WellFoundedToNat`] class with divisor 2),
+    /// and the scaled-significand / bit-width window predicates built
+    /// from them. Each [`FloorWindowFigure`] is a fully-validated
+    /// shape with a fixed proof template on both backends (Lean: the
+    /// core `Int.le_ediv_iff_mul_le` / `Int.ediv_lt_iff_lt_mul`
+    /// floor bridges + power algebra by functional induction; Dafny:
+    /// a proved division-window prelude + branch-split helper
+    /// lemmas). The recognizers are deliberately narrow — exactly the
+    /// hand-validated figures; everything else declines and keeps
+    /// the prior emission.
+    FloorDivWindow { figure: FloorWindowFigure },
     /// No automated strategy — emit with `sorry` (Lean) / `assume
     /// {:axiom}` (Dafny). User fills in manually.
     Sorry,
@@ -888,6 +944,41 @@ pub enum ProofStrategy {
     /// through to ad-hoc strategy chain"; pinned variants above
     /// short-circuit to a known emit.
     BackendDispatch,
+}
+
+/// The recognized figures of [`ProofStrategy::FloorDivWindow`]. All
+/// fn names are source names; backends translate. Every figure's
+/// quantifier names come from the law's givens (captured implicitly —
+/// backends render them through the law's own given list).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FloorWindowFigure {
+    /// `pow(n) >= 1 => true` with no premise — positivity of the
+    /// power-of-two fn, by functional induction.
+    PowPositive { pow_fn: String },
+    /// `when m >= 0; n >= 0 -> pow(m + n) == pow(m) * pow(n)` — the
+    /// power homomorphism, by functional induction on the first
+    /// exponent.
+    PowSumSplit { pow_fn: String },
+    /// `when b >= 1; a >= b; n >= 1 -> window(a, b, n) == true`
+    /// where `window` checks `pow(n-1) <= sig(a,b,n) < pow(n)`,
+    /// `sig` scales by `pow(n-1-e)` and floor-divides, and `e` is
+    /// the floor-halving binary exponent of a/b.
+    SigWindow {
+        pow_fn: String,
+        halve_fn: String,
+        exp_fn: String,
+        sig_fn: String,
+        window_fn: String,
+    },
+    /// `when fits(j, m); fits(k, n) -> claim(j, k, m, n) == true`
+    /// where `fits` is the `pow(m-1) <= j < pow(m)` window predicate
+    /// and `claim` states the product window
+    /// `pow(m+n-2) <= j*k < pow(m+n)`.
+    ProductWindow {
+        pow_fn: String,
+        fits_fn: String,
+        claim_fn: String,
+    },
 }
 
 /// Discriminator for [`ProofStrategy::MapUpdatePostcondition`].

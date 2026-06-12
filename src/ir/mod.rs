@@ -29,9 +29,10 @@ pub use pipeline::{
     PipelineStage, TypecheckMode,
 };
 pub use proof_ir::{
-    DecreaseProof, FnContract, FuelMetric, LawTheorem, MapUpdatePostconditionKind, Measure,
-    NativeIntCountdownBody, Predicate, PreservationProof, ProofIR, ProofStrategy, Quantifier,
-    QuantifierType, RecursionContract, RefinedTypeDecl, SmartGuard, UnclassifiedFn,
+    DecreaseProof, FloorDivShrink, FloorWindowFigure, FnContract, FuelMetric, LawTheorem,
+    MapUpdatePostconditionKind, Measure, NativeIntCountdownBody, Predicate, PreservationProof,
+    ProofIR, ProofStrategy, Quantifier, QuantifierType, RecursionContract, RefinedTypeDecl,
+    SmartGuard, UnclassifiedFn,
 };
 pub use symbol_table::{CtorEntry, FnEntry, ModuleEntry, SymbolTable, TypeEntry};
 
