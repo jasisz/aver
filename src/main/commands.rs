@@ -1578,12 +1578,20 @@ pub(super) fn cmd_audit(path: &str, module_root_override: Option<&str>, json: bo
             total_format_needed += 1;
         }
 
+        // Check errors = static-analysis errors (`Severity::Error`:
+        // parse errors, type errors, intent-checker errors such as
+        // `verify-rhs`). Verify EXECUTION failures carry
+        // `Severity::Fail` and are counted through `verify_summary`
+        // below, so excluding them here avoids double counting — but
+        // exclusion must key on the severity, not the slug. The old
+        // `!slug.starts_with("verify-")` filter also swallowed
+        // `error[verify-rhs]` (a static check error that happens to
+        // share the prefix), so a file whose only problems were
+        // verify-rhs errors audited as "0 check errors" with exit 0.
         let file_check_errors = report
             .diagnostics
             .iter()
-            .filter(|d| {
-                d.is_error() && d.slug != "verify-mismatch" && !d.slug.starts_with("verify-")
-            })
+            .filter(|d| matches!(d.severity, aver::diagnostics::Severity::Error))
             .count();
         let file_verify_failures = report
             .verify_summary

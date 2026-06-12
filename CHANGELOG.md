@@ -2,6 +2,18 @@
 
 All notable changes to Aver are documented here. Starting with 0.10.0, minor releases get a codename — short, evocative, and it tells you what the release was really about.
 
+## 0.25.1 (unreleased)
+
+### Fixed
+
+- **wasm-gc strings count characters, not bytes** — `String.len`, `String.charAt`, `String.slice`, and `String.chars` now use Unicode character (scalar) counts and indices, matching the VM and the documentation on every multi-byte string. `String.byteLength` still counts UTF-8 bytes. `examples/data/json.av` passes `aver verify --wasm-gc` in full, including its emoji cases.
+- **Comparing `Result` values no longer traps on wasm-gc** when one module wraps two different record types in `Result<…, String>` — `Result.Ok`/`Result.Err` now build the instantiation the type checker resolved at the site instead of guessing from the payload type. `examples/core/order_total.av` passes `aver verify --wasm-gc` in full.
+- **`aver audit` counts every check error in its total and exit code** — `error[verify-rhs]` (a verify case calling the function under test on the right side of `=>`) was printed but excluded from both, so a file with only such errors audited green.
+
+### Changed
+
+- **CI gates the shipped example corpus** — `examples/core` and `examples/data` must pass `aver check` on every pull request; a merge can no longer silently break a shipped example.
+
 ## 0.25.0 "The Method" — 2026-06-12
 
 The release where the prover learned to be steered by lemmas — named after the proof methodology of ACL2's Kaufmann & Moore, whose 30-year-old terrain this release kept rediscovering.

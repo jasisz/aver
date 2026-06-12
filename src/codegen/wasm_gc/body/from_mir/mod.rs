@@ -40,7 +40,7 @@
 //! - [`collections`] — `List` literals.
 //! - [`builtins`] — the custom-inline `Float` / `Int` / `Bool` scalar
 //!   ops, `Char.toCode`, the custom-inline `String` ops (`length` /
-//!   `byteLength` / `split` / `join`), the `List` / `Vector` / `Map`
+//!   `split` / `join`), the `List` / `Vector` / `Map`
 //!   families, the
 //!   fused `Option.withDefault(Vector.get(v, i), <literal>)` /
 //!   `Option.withDefault(Vector.set(v, i, x), v)` /
@@ -683,12 +683,22 @@ pub(crate) fn emit_mir_expr(
                         });
                     emit_mir_option_constructor(func, None, Some(&hint), slots, ctx)?
                 }
-                MirCtor::Builtin(BuiltinCtor::ResultOk) => {
-                    emit_mir_result_constructor(func, "Ok", con.args.first(), slots, ctx)?
-                }
-                MirCtor::Builtin(BuiltinCtor::ResultErr) => {
-                    emit_mir_result_constructor(func, "Err", con.args.first(), slots, ctx)?
-                }
+                MirCtor::Builtin(BuiltinCtor::ResultOk) => emit_mir_result_constructor(
+                    func,
+                    "Ok",
+                    con.args.first(),
+                    expr.ty(),
+                    slots,
+                    ctx,
+                )?,
+                MirCtor::Builtin(BuiltinCtor::ResultErr) => emit_mir_result_constructor(
+                    func,
+                    "Err",
+                    con.args.first(),
+                    expr.ty(),
+                    slots,
+                    ctx,
+                )?,
                 MirCtor::User(ctor_id) => {
                     let info = mir_user_variant_info(ctor_id, ctx)?;
                     emit_mir_constructor_with_args(func, info, &con.args, slots, ctx)?

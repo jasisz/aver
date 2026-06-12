@@ -74,7 +74,15 @@ use super::wat_helper;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum BuiltinName {
     StringFromInt,
+    /// `String.len(s) -> Int` — Unicode scalar value count, matching
+    /// the VM's `s.chars().count()` semantics (docs: "number of
+    /// characters"). One pass over the UTF-8 byte array counting
+    /// non-continuation bytes.
     StringLength,
+    /// `String.byteLength(s) -> Int` — UTF-8 byte count (`array.len`).
+    /// The VM's `s.len()` counterpart; distinct from `String.len`
+    /// whenever the string holds multi-byte characters.
+    StringByteLength,
     /// Variadic-by-array string concatenation: `(array (ref null $string))
     /// -> (ref null $string)`. Sums the per-part lengths once,
     /// allocates the result, copies each part. O(total_len) regardless
@@ -141,7 +149,8 @@ impl BuiltinName {
         match s {
             "String.fromInt" => Some(Self::StringFromInt),
             "String.fromFloat" => Some(Self::StringFromFloat),
-            "String.len" | "String.length" | "String.byteLength" => Some(Self::StringLength),
+            "String.len" | "String.length" => Some(Self::StringLength),
+            "String.byteLength" => Some(Self::StringByteLength),
             "String.startsWith" => Some(Self::StringStartsWith),
             "String.contains" => Some(Self::StringContains),
             "String.slice" => Some(Self::StringSlice),
@@ -166,6 +175,7 @@ impl BuiltinName {
         match self {
             Self::StringFromInt => "String.fromInt",
             Self::StringLength => "String.len",
+            Self::StringByteLength => "String.byteLength",
             Self::StringConcatN => "__wasmgc_concat_n",
             Self::StringStartsWith => "String.startsWith",
             Self::StringContains => "String.contains",
@@ -194,7 +204,7 @@ impl BuiltinName {
     pub(super) fn params(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::StringFromInt => Ok(vec![ValType::I64]),
-            Self::StringLength => Ok(vec![string_ref_ty(registry)?]),
+            Self::StringLength | Self::StringByteLength => Ok(vec![string_ref_ty(registry)?]),
             Self::StringConcatN => Ok(vec![string_array_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => {
                 Ok(vec![string_ref_ty(registry)?, string_ref_ty(registry)?])
@@ -227,7 +237,7 @@ impl BuiltinName {
     pub(super) fn results(self, registry: &TypeRegistry) -> Result<Vec<ValType>, WasmGcError> {
         match self {
             Self::StringFromInt => Ok(vec![string_ref_ty(registry)?]),
-            Self::StringLength => Ok(vec![ValType::I64]),
+            Self::StringLength | Self::StringByteLength => Ok(vec![ValType::I64]),
             Self::StringConcatN => Ok(vec![string_ref_ty(registry)?]),
             Self::StringStartsWith | Self::StringContains => Ok(vec![ValType::I32]),
             Self::StringSlice
@@ -259,6 +269,7 @@ impl BuiltinName {
         match self {
             Self::StringFromInt => emit_string_from_int(registry),
             Self::StringLength => emit_string_length(registry),
+            Self::StringByteLength => emit_string_byte_length(registry),
             Self::StringConcatN => emit_string_concat_n(registry),
             Self::StringStartsWith => emit_string_starts_with(registry),
             Self::StringContains => emit_string_contains(registry),
@@ -703,13 +714,69 @@ fn emit_string_concat_n(registry: &TypeRegistry) -> Result<Function, WasmGcError
     wat_helper::compile_wat_helper(&wat)
 }
 
-/// `String.length(s) -> Int`. Trivial wrapper over the wasm-gc
-/// `array.len` instruction; widened to i64 to match Aver's `Int`.
+/// `String.len(s) -> Int` — Unicode scalar value count, matching the
+/// VM's `s.chars().count()`. Strings are stored as UTF-8 `(array i8)`,
+/// so the scalar count equals the number of non-continuation bytes:
+/// one pass adding `(b & 0xC0) != 0x80` per byte. O(len) instead of
+/// the old O(1) `array.len` — the price of matching the documented
+/// "number of characters" semantics (`array.len` counted bytes, which
+/// diverged from the VM on any multi-byte character).
 fn emit_string_length(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
-            "String.length helper requires String slot to be allocated".into(),
+            "String.len helper requires String slot to be allocated".into(),
+        ))?;
+    let padding = wat_helper::padding_types(string_idx);
+    let wat = format!(
+        r#"
+        (module
+          {padding}
+          (type $string (array (mut i8)))
+          (func (export "helper") (param $s (ref null $string)) (result i64)
+            (local $i i32) (local $n i32) (local $count i32)
+            local.get $s
+            array.len
+            local.set $n
+            (block $done
+              (loop $scan
+                local.get $i
+                local.get $n
+                i32.ge_u
+                br_if $done
+
+                ;; count += (s[i] & 0xC0) != 0x80
+                local.get $count
+                local.get $s
+                local.get $i
+                array.get_u $string
+                i32.const 0xC0
+                i32.and
+                i32.const 0x80
+                i32.ne
+                i32.add
+                local.set $count
+
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $scan))
+            local.get $count
+            i64.extend_i32_u)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `String.byteLength(s) -> Int`. Trivial wrapper over the wasm-gc
+/// `array.len` instruction; widened to i64 to match Aver's `Int`.
+fn emit_string_byte_length(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "String.byteLength helper requires String slot to be allocated".into(),
         ))?;
     let padding = wat_helper::padding_types(string_idx);
     let wat = format!(
@@ -915,10 +982,14 @@ fn emit_string_contains(registry: &TypeRegistry) -> Result<Function, WasmGcError
     wat_helper::compile_wat_helper(&wat)
 }
 
-/// `String.slice(s, start, end) -> String`. Byte-indexed slice;
-/// clamps both ends to `[0, len(s)]` and `start..end`. Empty when
-/// `start >= end`. Same byte-based semantics as the wasm-gc
-/// `String.len` (both report bytes, not code points).
+/// `String.slice(s, start, end) -> String`. `start` / `end` are
+/// Unicode scalar indices, mirroring the VM's `aver_rt::string_slice`
+/// (negative ends clamp to 0; `start >= end` is empty; indices past
+/// the last character clamp to the end of the string). One pass over
+/// the UTF-8 byte array translates both scalar indices to byte
+/// offsets, then a single `array.copy` extracts the range. The old
+/// body treated the indices as byte offsets, which diverged from the
+/// VM on any multi-byte character and could slice characters in half.
 fn emit_string_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let (_, preamble) = string_module_preamble(registry)?;
     let wat = format!(
@@ -930,70 +1001,105 @@ fn emit_string_slice(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
                 (param $start64 i64)
                 (param $end64 i64)
                 (result (ref null $string))
-            (local $slen i32)
-            (local $start i32)
-            (local $end i32)
+            (local $n i32)
+            (local $start i64)
+            (local $end i64)
+            (local $b i32)
+            (local $k i64)
+            (local $start_byte i32)
+            (local $end_byte i32)
             (local $len i32)
             (local $out (ref null $string))
 
-            local.get $s array.len local.set $slen
+            local.get $s array.len local.set $n
 
-            ;; start = clamp(start64, 0, slen)
+            ;; start = max(start64, 0); end = max(end64, 0)
             local.get $start64
             i64.const 0
             i64.lt_s
-            (if (result i32)
-              (then i32.const 0)
-              (else
-                local.get $start64
-                local.get $slen
-                i64.extend_i32_u
-                i64.gt_s
-                (if (result i32)
-                  (then local.get $slen)
-                  (else local.get $start64 i32.wrap_i64))))
+            (if (result i64) (then i64.const 0) (else local.get $start64))
             local.set $start
-
             local.get $end64
             i64.const 0
             i64.lt_s
-            (if (result i32)
-              (then i32.const 0)
-              (else
-                local.get $end64
-                local.get $slen
-                i64.extend_i32_u
-                i64.gt_s
-                (if (result i32)
-                  (then local.get $slen)
-                  (else local.get $end64 i32.wrap_i64))))
+            (if (result i64) (then i64.const 0) (else local.get $end64))
             local.set $end
 
-            ;; len = max(0, end - start)
-            local.get $end
+            ;; start >= end → ""
             local.get $start
-            i32.le_s
-            (if (result i32)
-              (then i32.const 0)
-              (else
-                local.get $end
-                local.get $start
-                i32.sub))
-            local.set $len
+            local.get $end
+            i64.ge_s
+            (if (then i32.const 0 array.new_default $string return))
 
+            ;; walk scalars; -1 = byte offset not found yet
+            i32.const -1 local.set $start_byte
+            i32.const -1 local.set $end_byte
+            (block $done
+              (loop $scan
+                local.get $b
+                local.get $n
+                i32.ge_u
+                br_if $done
+
+                ;; k == start → start_byte = b
+                local.get $k
+                local.get $start
+                i64.eq
+                (if (then local.get $b local.set $start_byte))
+
+                ;; k == end → end_byte = b, stop
+                local.get $k
+                local.get $end
+                i64.eq
+                (if (then local.get $b local.set $end_byte br $done))
+
+                ;; b += UTF-8 length of the scalar starting at b
+                ;; (<0xC0 → 1, <0xE0 → 2, <0xF0 → 3, else 4)
+                local.get $b i32.const 1 i32.add local.set $len
+                local.get $s local.get $b array.get_u $string
+                i32.const 0xC0 i32.ge_u
+                (if (then local.get $b i32.const 2 i32.add local.set $len))
+                local.get $s local.get $b array.get_u $string
+                i32.const 0xE0 i32.ge_u
+                (if (then local.get $b i32.const 3 i32.add local.set $len))
+                local.get $s local.get $b array.get_u $string
+                i32.const 0xF0 i32.ge_u
+                (if (then local.get $b i32.const 4 i32.add local.set $len))
+                local.get $len local.set $b
+
+                local.get $k i64.const 1 i64.add local.set $k
+                br $scan))
+
+            ;; scalar index exactly at the end of the string
+            local.get $start_byte i32.const -1 i32.eq
+            local.get $k local.get $start i64.eq
+            i32.and
+            (if (then local.get $n local.set $start_byte))
+            local.get $end_byte i32.const -1 i32.eq
+            local.get $k local.get $end i64.eq
+            i32.and
+            (if (then local.get $n local.set $end_byte))
+
+            ;; unresolved (index past the end) → clamp to byte length
+            local.get $start_byte i32.const -1 i32.eq
+            (if (then local.get $n local.set $start_byte))
+            local.get $end_byte i32.const -1 i32.eq
+            (if (then local.get $n local.set $end_byte))
+
+            ;; start_byte >= end_byte → ""
+            local.get $start_byte
+            local.get $end_byte
+            i32.ge_s
+            (if (then i32.const 0 array.new_default $string return))
+
+            local.get $end_byte local.get $start_byte i32.sub local.set $len
             local.get $len
             array.new_default $string
             local.set $out
-
-            local.get $len
-            i32.eqz
-            (if (then local.get $out return))
-
-            ;; array.copy out[0..len] <- s[start..start+len]
             local.get $out
             i32.const 0
             local.get $s
-            local.get $start
+            local.get $start_byte
             local.get $len
             array.copy $string $string
 
@@ -2119,13 +2225,15 @@ fn emit_string_from_bool(registry: &TypeRegistry) -> Result<Function, WasmGcErro
     wat_helper::compile_wat_helper(&wat)
 }
 
-/// `String.charAt(s: String, i: Int) -> Option<String>`. Bounds-
-/// check `i`, return `Option.Some(<one-byte string>)` on hit or
-/// `Option.None` on out-of-range. Uses `wasm_encoder` directly
-/// (instead of WAT compile) since the helper needs to materialise
-/// an `Option<String>` struct, which needs a known type idx.
+/// `String.charAt(s: String, i: Int) -> Option<String>`. `i` is a
+/// Unicode scalar index (the VM's `s.chars().nth(i)`), NOT a byte
+/// index: scan the UTF-8 byte array scalar by scalar, and on hit
+/// return `Option.Some(<full character>)` — all 1–4 bytes of it.
+/// `Option.None` on a negative or past-the-end index. The old body
+/// indexed bytes and returned a single byte, which both diverged
+/// from the VM and tore multi-byte characters apart.
 fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
-    let s_idx = registry
+    let string_idx = registry
         .string_array_type_idx
         .ok_or(WasmGcError::Validation(
             "String.charAt: String slot not registered".into(),
@@ -2135,56 +2243,103 @@ fn emit_string_char_at(registry: &TypeRegistry) -> Result<Function, WasmGcError>
         .ok_or(WasmGcError::Validation(
             "String.charAt: Option<String> slot not registered".into(),
         ))?;
-    let string_ref = ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(s_idx),
-    });
-    let opt_ref = ValType::Ref(wasm_encoder::RefType {
-        nullable: true,
-        heap_type: wasm_encoder::HeapType::Concrete(opt_idx),
-    });
-    // params: 0=s, 1=i (i64). locals: 2=out, 3=i32_idx.
-    let mut f = Function::new([(1, string_ref), (1, ValType::I32)]);
-    let block_ty = wasm_encoder::BlockType::Result(opt_ref);
-    // i >= 0 ?
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I64Const(0));
-    f.instruction(&Instruction::I64GeS);
-    // i < s.len ?
-    f.instruction(&Instruction::LocalGet(1));
-    f.instruction(&Instruction::I32WrapI64);
-    f.instruction(&Instruction::LocalSet(3));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::ArrayLen);
-    f.instruction(&Instruction::I32LtU);
-    // and
-    f.instruction(&Instruction::I32And);
-    f.instruction(&Instruction::If(block_ty));
-    // in-range: build 1-byte string, return Some(it)
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::ArrayNewDefault(s_idx));
-    f.instruction(&Instruction::LocalSet(2));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::LocalGet(0));
-    f.instruction(&Instruction::LocalGet(3));
-    f.instruction(&Instruction::ArrayGetU(s_idx));
-    f.instruction(&Instruction::ArraySet(s_idx));
-    // Option layout: (mut i32 tag) (mut T value). tag=1 = Some.
-    f.instruction(&Instruction::I32Const(1));
-    f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::StructNew(opt_idx));
-    f.instruction(&Instruction::Else);
-    // OOB: tag=0, value=null
-    f.instruction(&Instruction::I32Const(0));
-    f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
-        s_idx,
-    )));
-    f.instruction(&Instruction::StructNew(opt_idx));
-    f.instruction(&Instruction::End);
-    f.instruction(&Instruction::End);
-    Ok(f)
+    if opt_idx <= string_idx {
+        return Err(WasmGcError::Validation(format!(
+            "String.charAt helper expects opt_idx > string_idx (got {opt_idx} vs {string_idx})"
+        )));
+    }
+    let pre_string = wat_helper::padding_types(string_idx);
+    let between = wat_helper::padding_types(opt_idx - string_idx - 1);
+    let wat = format!(
+        r#"
+        (module
+          {pre_string}
+          (type $string (array (mut i8)))
+          {between}
+          (type $option_string (struct (field $tag i32) (field $val (ref null $string))))
+          (func (export "helper")
+                (param $s (ref null $string))
+                (param $i i64)
+                (result (ref null $option_string))
+            (local $n i32)
+            (local $b i32)
+            (local $k i64)
+            (local $clen i32)
+            (local $out (ref null $string))
+
+            local.get $s array.len local.set $n
+
+            ;; negative index → None
+            local.get $i
+            i64.const 0
+            i64.lt_s
+            (if (then
+              i32.const 0
+              ref.null $string
+              struct.new $option_string
+              return))
+
+            (block $found
+              (loop $scan
+                ;; cursor past the last byte → index out of range → None
+                local.get $b
+                local.get $n
+                i32.ge_u
+                (if (then
+                  i32.const 0
+                  ref.null $string
+                  struct.new $option_string
+                  return))
+
+                ;; clen = UTF-8 length from the lead byte:
+                ;; <0xC0 → 1 (ASCII; stray continuation defends as 1),
+                ;; <0xE0 → 2, <0xF0 → 3, else 4
+                i32.const 1
+                local.set $clen
+                local.get $s local.get $b array.get_u $string
+                i32.const 0xC0 i32.ge_u
+                (if (then i32.const 2 local.set $clen))
+                local.get $s local.get $b array.get_u $string
+                i32.const 0xE0 i32.ge_u
+                (if (then i32.const 3 local.set $clen))
+                local.get $s local.get $b array.get_u $string
+                i32.const 0xF0 i32.ge_u
+                (if (then i32.const 4 local.set $clen))
+
+                ;; reached the target scalar?
+                local.get $k
+                local.get $i
+                i64.eq
+                br_if $found
+
+                local.get $b local.get $clen i32.add local.set $b
+                local.get $k i64.const 1 i64.add local.set $k
+                br $scan))
+
+            ;; clamp clen to the remaining bytes (truncated UTF-8 tail)
+            local.get $b local.get $clen i32.add
+            local.get $n
+            i32.gt_u
+            (if (then
+              local.get $n local.get $b i32.sub local.set $clen))
+
+            local.get $clen
+            array.new_default $string
+            local.set $out
+            local.get $out
+            i32.const 0
+            local.get $s
+            local.get $b
+            local.get $clen
+            array.copy $string $string
+
+            i32.const 1
+            local.get $out
+            struct.new $option_string)
+        )
+    "#
+    );
+    wat_helper::compile_wat_helper(&wat)
 }
 
 /// `Char.fromCode(code: Int) -> Option<String>`. Encodes a Unicode
@@ -2352,8 +2507,7 @@ fn emit_char_from_code(registry: &TypeRegistry) -> Result<Function, WasmGcError>
 
 /// `String.chars(s: String) -> List<String>`. Iterates `s` right-to-
 /// left building a cons list directly (no reverse pass). Each
-/// character is its own 1-byte string allocation — N allocations
-/// for an N-byte input. Same shape the legacy backend uses.
+/// Unicode scalar value is its own 1–4 byte string allocation.
 fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let s_idx = registry
         .string_array_type_idx
@@ -2373,13 +2527,27 @@ fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
         nullable: true,
         heap_type: wasm_encoder::HeapType::Concrete(list_idx),
     });
-    // params: 0=s. locals: 1=acc, 2=i, 3=cell.
-    let mut f = Function::new([(1, list_ref), (1, ValType::I32), (1, string_ref)]);
+    // Splits into Unicode scalar values (the VM's `s.chars()`), not
+    // single bytes. Reverse byte scan so the list cons-builds in
+    // source order without a final reverse pass: a byte with
+    // `(b & 0xC0) != 0x80` starts a character, and `end` tracks the
+    // exclusive end of the character being collected.
+    // params: 0=s. locals: 1=acc, 2=i, 3=cell, 4=end, 5=clen.
+    let mut f = Function::new([
+        (1, list_ref),
+        (1, ValType::I32),
+        (1, string_ref),
+        (2, ValType::I32),
+    ]);
     // acc = null
     f.instruction(&Instruction::RefNull(wasm_encoder::HeapType::Concrete(
         list_idx,
     )));
     f.instruction(&Instruction::LocalSet(1));
+    // end = s.len
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::ArrayLen);
+    f.instruction(&Instruction::LocalSet(4));
     // i = s.len - 1
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::ArrayLen);
@@ -2393,22 +2561,43 @@ fn emit_string_chars(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::I32LtS);
     f.instruction(&Instruction::BrIf(1));
-    // cell = array.new_default $string 1
-    f.instruction(&Instruction::I32Const(1));
+    // if (s[i] & 0xC0) != 0x80 — character start
+    f.instruction(&Instruction::LocalGet(0));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::ArrayGetU(s_idx));
+    f.instruction(&Instruction::I32Const(0xC0));
+    f.instruction(&Instruction::I32And);
+    f.instruction(&Instruction::I32Const(0x80));
+    f.instruction(&Instruction::I32Ne);
+    f.instruction(&Instruction::If(wasm_encoder::BlockType::Empty));
+    // clen = end - i
+    f.instruction(&Instruction::LocalGet(4));
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::I32Sub);
+    f.instruction(&Instruction::LocalSet(5));
+    // cell = array.new_default $string clen
+    f.instruction(&Instruction::LocalGet(5));
     f.instruction(&Instruction::ArrayNewDefault(s_idx));
     f.instruction(&Instruction::LocalSet(3));
-    // cell[0] = s[i]
+    // array.copy cell[0..clen] <- s[i..end]
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::I32Const(0));
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(2));
-    f.instruction(&Instruction::ArrayGetU(s_idx));
-    f.instruction(&Instruction::ArraySet(s_idx));
+    f.instruction(&Instruction::LocalGet(5));
+    f.instruction(&Instruction::ArrayCopy {
+        array_type_index_dst: s_idx,
+        array_type_index_src: s_idx,
+    });
     // acc = struct.new $list (cell, acc)
     f.instruction(&Instruction::LocalGet(3));
     f.instruction(&Instruction::LocalGet(1));
     f.instruction(&Instruction::StructNew(list_idx));
     f.instruction(&Instruction::LocalSet(1));
+    // end = i
+    f.instruction(&Instruction::LocalGet(2));
+    f.instruction(&Instruction::LocalSet(4));
+    f.instruction(&Instruction::End);
     // i--
     f.instruction(&Instruction::LocalGet(2));
     f.instruction(&Instruction::I32Const(1));

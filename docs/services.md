@@ -110,18 +110,18 @@ Source: `src/types/string.rs`
 
 | Function | Signature | Notes |
 |---|---|---|
-| `String.len` | `String -> Int` | |
-| `String.byteLength` | `String -> Int` | |
-| `String.charAt` | `(String, Int) -> Option<String>` | Single char or `Option.None` on out-of-bounds |
+| `String.len` | `String -> Int` | Number of characters (Unicode scalar values), on every backend |
+| `String.byteLength` | `String -> Int` | UTF-8 byte count |
+| `String.charAt` | `(String, Int) -> Option<String>` | Character at character index, or `Option.None` on out-of-bounds |
 | `String.startsWith` | `(String, String) -> Bool` | |
 | `String.endsWith` | `(String, String) -> Bool` | |
 | `String.contains` | `(String, String) -> Bool` | |
-| `String.slice` | `(String, Int, Int) -> String` | |
+| `String.slice` | `(String, Int, Int) -> String` | Character indices; out-of-range ends clamp |
 | `String.trim` | `String -> String` | |
 | `String.split` | `(String, String) -> List<String>` | |
 | `String.replace` | `(String, String, String) -> String` | |
 | `String.join` | `(List<String>, String) -> String` | |
-| `String.chars` | `String -> List<String>` | |
+| `String.chars` | `String -> List<String>` | Splits into characters (Unicode scalar values) |
 | `String.fromInt` | `Int -> String` | |
 | `String.fromFloat` | `Float -> String` | |
 | `String.fromBool` | `Bool -> String` | |

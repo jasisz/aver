@@ -85,15 +85,23 @@ pub(crate) fn emit_mir_option_constructor(
     Ok(Some(()))
 }
 
-/// Mirror of `emit_result_constructor` (emit.rs): resolve the
-/// `Result<T,E>` instantiation (single registered / by return type / by
-/// payload-type match), then `i32.const <tag>; <T-slot>; <E-slot>;
-/// struct.new $result`. A `Unit` payload position pushes the `i32`
-/// placeholder rather than the (no-value) `Unit`.
+/// Resolve the `Result<T,E>` instantiation (constructor's stamped type
+/// / single registered / by return type / by payload-type match), then
+/// `i32.const <tag>; <T-slot>; <E-slot>; struct.new $result`. A `Unit`
+/// payload position pushes the `i32` placeholder rather than the
+/// (no-value) `Unit`.
+///
+/// The stamped type comes first: payload-type matching is ambiguous
+/// whenever two instantiations share a position type (two records in
+/// one module each wrapped in `Result<RecordX, String>` — an
+/// `Result.Err("…")` payload `String` matches both, and picking the
+/// wrong one builds a struct the per-instantiation eq helper later
+/// `ref.cast`s to the other instantiation's heap type → runtime trap).
 pub(crate) fn emit_mir_result_constructor(
     func: &mut Function,
     variant: &str,
     payload: Option<&Spanned<MirExpr>>,
+    stamped_ty: Option<&crate::types::Type>,
     slots: &SlotTable,
     ctx: &EmitCtx<'_>,
 ) -> Result<Option<()>, WasmGcError> {
@@ -101,7 +109,18 @@ pub(crate) fn emit_mir_result_constructor(
         "Result.{variant} requires a payload"
     )))?;
     let payload_ty = aver_type_str_of(payload);
-    let canonical = if ctx.registry.result_order.len() == 1 {
+    // The type checker stamps the constructor node with the concrete
+    // `Result<T,E>` it unified at this site (e.g. the compared LHS's
+    // type inside a synthesized verify `==` check fn). Trust it when
+    // it names a registered instantiation; types containing `Unknown`
+    // or unregistered shapes fall through to the positional heuristics.
+    let stamped_canonical: Option<String> =
+        stamped_ty.map(|t| t.display().chars().filter(|c| !c.is_whitespace()).collect());
+    let canonical = if let Some(stamped) =
+        stamped_canonical.filter(|c| ctx.registry.result_type_idx(c).is_some())
+    {
+        stamped
+    } else if ctx.registry.result_order.len() == 1 {
         ctx.registry.result_order[0].clone()
     } else {
         let return_canonical: String = ctx
