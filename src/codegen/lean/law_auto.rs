@@ -620,6 +620,14 @@ pub fn emit_verify_law_forall_auto_proof(
             })
         })
         .or_else(|| {
+            // IR-pinned `RingIdentity` — rendered (like the prelude
+            // rung below) after every legacy ad-hoc fallback, so it
+            // fires only where the chain used to fall through. The
+            // emit carries the strategy-scoped AC-ring package; see
+            // `emit_ring_identity_law`.
+            emit_ring_identity_law(vb, law, ctx, &proof_intro_names)
+        })
+        .or_else(|| {
             // IR-pinned `SimpOverPreludeLemmas` — DELIBERATELY the last
             // rung, after every legacy ad-hoc fallback above: it must
             // fire only where the chain used to return `None` and the
@@ -633,6 +641,80 @@ pub fn emit_verify_law_forall_auto_proof(
             // never surface as an "unsolved goals" build error.
             emit_simp_over_prelude_lemmas_law(vb, law, ctx, &proof_intro_names)
         })
+}
+
+/// Fixed core AC-ring lemma package for the `RingIdentity` rung —
+/// `Init.Data.Int.Lemmas` names only (core + Std, NO Mathlib, no
+/// `ring` tactic). Mechanism: `Int.mul_add`/`Int.add_mul` fully
+/// distribute products over sums, the mul/add `comm`/`left_comm`/
+/// `assoc` triples AC-sort monomials and sums (simp's ordered
+/// rewriting terminates on permutational lemmas), and
+/// `Int.sub_eq_add_neg`/`Int.zero_sub`/`Int.neg_mul` push `-` into
+/// the same normal form. An unconditional ring identity then has
+/// identical monomial multisets on both sides — no coefficient
+/// collection needed — and the default simp set (`beq_iff_eq`,
+/// `Int.mul_one`, `Int.add_zero`, …) finishes.
+///
+/// SCOPED TO THIS RUNG ONLY: the permutational rewrites loop or
+/// destroy the normal forms other strategies' simp sets rely on, so
+/// they are never merged into the shared prelude registry
+/// (`prelude_spec_lemmas_for_builtins`) or any other strategy's set.
+///
+/// Known boundary (measured): identities that need coefficient
+/// collection (`t + t` vs `2 * t`) or cancellation
+/// (`x + (-x) = 0` nested inside products) stay outside — the
+/// `first | … | sorry` alternation degrades them to an honest
+/// caught sorry.
+const RING_NORMALIZATION_LEMMAS: [&str; 11] = [
+    "Int.mul_add",
+    "Int.add_mul",
+    "Int.mul_comm",
+    "Int.mul_left_comm",
+    "Int.mul_assoc",
+    "Int.add_comm",
+    "Int.add_left_comm",
+    "Int.add_assoc",
+    "Int.sub_eq_add_neg",
+    "Int.zero_sub",
+    "Int.neg_mul",
+];
+
+/// Render the `RingIdentity` rung:
+/// `intro <givens>; first | (simp [<cone>, <AC-ring package>]; done) | sorry`.
+///
+/// Simp-set assembly: the unfold cone (law subject first — source
+/// names via `aver_name_to_lean`; record-field projections unfold by
+/// themselves), then the fixed [`RING_NORMALIZATION_LEMMAS`] package.
+/// `done` forces closure — a simp that fails OR leaves a residual
+/// goal falls to the honest caught `sorry`, never an "unsolved
+/// goals" build error and never `native_decide`.
+fn emit_ring_identity_law(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    proof_intro_names: &[String],
+) -> Option<AutoProof> {
+    let Some(crate::ir::ProofStrategy::RingIdentity { unfold_fns }) =
+        law_strategy_for(ctx, &vb.fn_name, &law.name)
+    else {
+        return None;
+    };
+    let simp_set: Vec<String> = unfold_fns
+        .iter()
+        .map(|f| aver_name_to_lean(f))
+        .chain(RING_NORMALIZATION_LEMMAS.iter().map(|s| s.to_string()))
+        .collect();
+    Some(AutoProof {
+        support_lines: Vec::new(),
+        proof_lines: intro_then(
+            proof_intro_names,
+            vec![format!(
+                "first | (simp [{}]; done) | sorry",
+                simp_set.join(", ")
+            )],
+        ),
+        replaces_theorem: false,
+    })
 }
 
 /// Render the `SimpOverPreludeLemmas` rung:

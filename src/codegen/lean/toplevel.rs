@@ -3063,6 +3063,11 @@ fn emit_verify_law_block(
                 // checked_domain cover the point) instead of gaining
                 // a universal that would land as a caught sorry.
                 | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
+                // RingIdentity shares the prelude rung's honest-sorry
+                // floor (`first | (…; done) | sorry`) — it does NOT
+                // promise to close, so a singleton-given +
+                // constant-RHS law keeps today's skip.
+                | crate::ir::ProofStrategy::RingIdentity { .. }
                 // IntDecimalRoundtrip shares the same honest-sorry
                 // floor (`first | (…; done) | sorry`); its detector
                 // also requires a given-dependent rhs, so the

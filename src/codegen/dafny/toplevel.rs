@@ -1017,6 +1017,7 @@ fn sample_seed_lemma_available(vb: &VerifyBlock, law: &VerifyLaw, ctx: &CodegenC
                 | crate::ir::ProofStrategy::EnumConstantFold { .. }
                 | crate::ir::ProofStrategy::FiniteDomainCases { .. }
                 | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
+                | crate::ir::ProofStrategy::RingIdentity { .. }
                 | crate::ir::ProofStrategy::IntDecimalRoundtrip { .. }
         )
     });
@@ -1741,6 +1742,13 @@ pub fn emit_verify_law(
                     // so Dafny treats the pin as `BackendDispatch` and
                     // its exports stay byte-identical.
                     | crate::ir::ProofStrategy::SimpOverPreludeLemmas { .. }
+                    // Same guard for the ring-identity strategy: its
+                    // AC-ring lemma package is Lean vocabulary; Z3
+                    // already decides these nonlinear identities
+                    // push-button on the default universal lemma, so
+                    // Dafny treats the pin as `BackendDispatch` and
+                    // its exports stay byte-identical.
+                    | crate::ir::ProofStrategy::RingIdentity { .. }
                     // Same guard for the decimal-Int roundtrip strategy:
                     // Lean-only (its skeleton cites the synthesized
                     // `__fuel_scan` lemma and Lean prelude names), so

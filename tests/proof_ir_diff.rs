@@ -2076,3 +2076,172 @@ fn int_decimal_roundtrip_not_pinned_when_scanner_exit_deviates() {
         theorem.strategy
     );
 }
+
+/// Canonical synthetic source for the `RingIdentity` detector tests —
+/// a fresh-named cross-multiplied pair record (deliberately NOT the
+/// `examples/data/rational.av` identifiers: the recognizer must key
+/// on structure, never on names). `merge` is the non-normalizing
+/// addition, `crossEq` the cross-multiplication comparator.
+const RING_IDENTITY_SRC: &str = "module M\n\
+     \x20   intent = \"t\"\n\
+     \n\
+     record Pair\n\
+     \x20   lead: Int\n\
+     \x20   trail: Int\n\
+     \n\
+     fn merge(a: Pair, b: Pair) -> Pair\n\
+     \x20   Pair(lead = a.lead * b.trail + b.lead * a.trail, trail = a.trail * b.trail)\n\
+     \n\
+     fn crossEq(a: Pair, b: Pair) -> Bool\n\
+     \x20   a.lead * b.trail == b.lead * a.trail\n\
+     \n\
+     verify merge law commutes\n\
+     \x20   given a: Pair = [Pair(lead = 1, trail = 2), Pair(lead = -3, trail = 4)]\n\
+     \x20   given b: Pair = [Pair(lead = 0, trail = 1), Pair(lead = 5, trail = -3)]\n\
+     \x20   crossEq(merge(a, b), merge(b, a)) => true\n";
+
+#[test]
+fn ring_identity_pinned_for_record_cross_multiplication_law() {
+    // The canonical exact-rationals shape: record givens with all-Int
+    // fields, a pure {+,-,*} cone, equality by cross-multiplication
+    // (`comparator(...) = true`). Every earlier rung declines
+    // (LinearArithmetic rejects record givens, EnumConstantFold needs
+    // constructor-pinned params, FiniteDomainCases needs closed
+    // domains), so pre-strategy this fell to the prelude-simp rung's
+    // caught sorry. The pin must carry the subject-first unfold list.
+    let ctx = build_ctx(RING_IDENTITY_SRC);
+    let theorem = law_theorem(&ctx, "merge", "commutes")
+        .expect("merge::commutes law theorem missing from ProofIR");
+    let aver::ir::ProofStrategy::RingIdentity { ref unfold_fns } = theorem.strategy else {
+        panic!(
+            "record cross-multiplication law must pin RingIdentity, got: {:?}",
+            theorem.strategy
+        );
+    };
+    assert_eq!(
+        unfold_fns,
+        &vec!["merge".to_string(), "crossEq".to_string()],
+        "unfold list must be law subject first, then the sorted rest"
+    );
+}
+
+#[test]
+fn ring_identity_not_pinned_for_when_law() {
+    // `when` premises are out of scope — the AC-ring simp set has no
+    // premise handling; the detector mirrors the no-when gates of the
+    // sibling fallbacks (EnumConstantFold / FiniteDomainCases /
+    // SimpOverPreludeLemmas).
+    let src = RING_IDENTITY_SRC.replace(
+        "\x20   crossEq(merge(a, b), merge(b, a)) => true\n",
+        "\x20   when a.trail > 0\n\
+         \x20   crossEq(merge(a, b), merge(b, a)) => true\n",
+    );
+    assert_ne!(src, RING_IDENTITY_SRC, "mutation must apply");
+    let ctx = build_ctx(&src);
+    let theorem = law_theorem(&ctx, "merge", "commutes")
+        .expect("merge::commutes law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::RingIdentity { .. }
+        ),
+        "when-law must NOT pin RingIdentity, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn ring_identity_not_pinned_without_record_given() {
+    // All-Int-given polynomial identities stay OUT of the strategy's
+    // scope: the family is quarantined to the multi-component record
+    // carrier (cross-multiplication shape). An all-Int nonlinear
+    // identity keeps today's honest path (the nonlinear wall declines
+    // LinearArithmetic; the law lands on the prelude-simp rung /
+    // sampled fallback) — in particular identities needing
+    // coefficient collection (`t + t` vs `2 * t`), which the fixed
+    // AC package cannot close.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         fn polyLeft(d: Int, x: Int, s: Int) -> Int\n\
+         \x20   s * s * s * s - d * (x * (2 * s * s - d * x))\n\
+         \n\
+         fn polyRight(d: Int, x: Int, s: Int) -> Int\n\
+         \x20   (s * s - d * x) * (s * s - d * x)\n\
+         \n\
+         verify polyLeft law squares\n\
+         \x20   given d: Int = [1, 3]\n\
+         \x20   given x: Int = [-2, 0]\n\
+         \x20   given s: Int = [1, 2]\n\
+         \x20   polyLeft(d, x, s) => polyRight(d, x, s)\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "polyLeft", "squares")
+        .expect("polyLeft::squares law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::RingIdentity { .. }
+        ),
+        "all-Int-given law must NOT pin RingIdentity, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn ring_identity_not_pinned_for_order_comparison_cone() {
+    // The comparator's body must be one Int `==` over arithmetic —
+    // an order comparison (`>=`) is outside the ring alphabet (its
+    // closure needs sign reasoning, not AC normalization), so the
+    // detector must decline and leave the law on today's path.
+    let src = RING_IDENTITY_SRC.replace(
+        "\x20   a.lead * b.trail == b.lead * a.trail\n",
+        "\x20   a.lead * b.trail >= b.lead * a.trail\n",
+    );
+    assert_ne!(src, RING_IDENTITY_SRC, "mutation must apply");
+    let ctx = build_ctx(&src);
+    let theorem = law_theorem(&ctx, "merge", "commutes")
+        .expect("merge::commutes law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::RingIdentity { .. }
+        ),
+        "order-comparison cone must NOT pin RingIdentity, got: {:?}",
+        theorem.strategy
+    );
+}
+
+#[test]
+fn ring_identity_not_pinned_for_single_field_record_given() {
+    // Single-field records are the refinement-carrier shape (`record
+    // Natural { value: Int }` + smart constructor), owned by the
+    // LinearArithmetic lifted path and the Subtype/subset emit — the
+    // ring detector's ≥ 2-field gate must keep them out.
+    let src = "module M\n\
+         \x20   intent = \"t\"\n\
+         \n\
+         record Box\n\
+         \x20   value: Int\n\
+         \n\
+         fn boxAdd(a: Box, b: Box) -> Box\n\
+         \x20   Box(value = a.value + b.value)\n\
+         \n\
+         fn boxEq(a: Box, b: Box) -> Bool\n\
+         \x20   a.value == b.value\n\
+         \n\
+         verify boxAdd law commutes\n\
+         \x20   given a: Box = [Box(value = 1), Box(value = -3)]\n\
+         \x20   given b: Box = [Box(value = 0), Box(value = 5)]\n\
+         \x20   boxEq(boxAdd(a, b), boxAdd(b, a)) => true\n";
+    let ctx = build_ctx(src);
+    let theorem = law_theorem(&ctx, "boxAdd", "commutes")
+        .expect("boxAdd::commutes law theorem missing from ProofIR");
+    assert!(
+        !matches!(
+            theorem.strategy,
+            aver::ir::ProofStrategy::RingIdentity { .. }
+        ),
+        "single-field record given must NOT pin RingIdentity, got: {:?}",
+        theorem.strategy
+    );
+}

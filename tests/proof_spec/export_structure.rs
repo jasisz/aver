@@ -745,3 +745,58 @@ fn proof_export_lean_chunks_large_checked_domain_conjunction() {
     }
     let _ = std::fs::remove_dir_all(&out);
 }
+
+#[test]
+fn proof_export_rational_ring_laws_carry_ac_ring_package() {
+    // Prover-free pin of the `RingIdentity` emission on the
+    // exact-rationals corpus example: every one of the ten law
+    // theorems must render the strategy's `first | (simp [<cone>,
+    // <AC-ring package>]; done) | sorry` rung. Reverting the strategy
+    // drops the laws back to the prelude-simp rung (`Int.add_sub_cancel`
+    // set, no AC normalization), which this catches without lake; the
+    // live closure itself (0 sorries, kernel-genuine) is pinned by
+    // `builds::proof_export_builds_rational_ring_laws_kernel_genuine_*`.
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+
+    let lean_dir = temp_output_dir("aver-proof-rational-ring-export");
+    let proof = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("proof")
+        .arg("examples/data/rational.av")
+        .arg("-o")
+        .arg(&lean_dir)
+        .output()
+        .expect("expected `aver proof` to run");
+    assert!(
+        proof.status.success(),
+        "`aver proof` failed:\n{}",
+        format_output(&proof)
+    );
+
+    let entry_text =
+        std::fs::read_to_string(lean_dir.join("Rational.lean")).expect("read Rational.lean");
+
+    // One AC-normalizing tactic per law — the package's permutational
+    // core (`Int.mul_left_comm` / `Int.add_left_comm`) only ever
+    // appears in this strategy's emission, so the count is exact.
+    let package_tactics = entry_text.matches("Int.mul_left_comm").count();
+    assert_eq!(
+        package_tactics, 10,
+        "all ten ring laws must render the AC-ring package; got {package_tactics} in:\n{entry_text}"
+    );
+    assert_eq!(
+        entry_text.matches("Int.add_left_comm").count(),
+        10,
+        "the additive AC triple must ride along in every emission"
+    );
+    // The honest floor stays: the rung is `first | (simp …; done) | sorry`,
+    // never a bare tactic that could surface a build error.
+    assert_eq!(
+        entry_text.matches("first | (simp [").count(),
+        10,
+        "every ring law must keep the caught-sorry alternation"
+    );
+
+    let _ = std::fs::remove_dir_all(&lean_dir);
+}
