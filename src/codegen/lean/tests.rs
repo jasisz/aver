@@ -3327,7 +3327,7 @@ fn notepad_store_example_stays_inside_proof_subset() {
 fn universal_lane_renders_sign_segment_twin() {
     let src = include_str!("../../../tests/fixtures/when_lane_sign.av");
     let ctx = ctx_from_source(src, "ScanLane");
-    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None);
+    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None, false).files;
     assert_eq!(
         lane.len(),
         1,
@@ -3383,7 +3383,8 @@ fn universal_lane_renders_sign_segment_twin() {
     // Sabotage hook: failing tactic injected, content hash (and so
     // the module name) changes.
     let sabotaged =
-        super::universal_lane::generate(&ctx, "entry-content-seed", Some("startDigits"));
+        super::universal_lane::generate(&ctx, "entry-content-seed", Some("startDigits"), false)
+            .files;
     assert_eq!(sabotaged.len(), 1);
     assert!(
         sabotaged[0]
@@ -3392,7 +3393,8 @@ fn universal_lane_renders_sign_segment_twin() {
     );
     assert_ne!(sabotaged[0].module, law.module);
     // A non-matching sabotage label leaves the module untouched.
-    let unmatched = super::universal_lane::generate(&ctx, "entry-content-seed", Some("noSuchLaw"));
+    let unmatched =
+        super::universal_lane::generate(&ctx, "entry-content-seed", Some("noSuchLaw"), false).files;
     assert_eq!(unmatched[0].module, law.module);
 }
 
@@ -3408,7 +3410,7 @@ fn universal_lane_renders_sign_segment_twin() {
 fn universal_lane_renders_bridge_premise_twins() {
     let src = include_str!("../../../tests/fixtures/when_lane_bridge.av");
     let ctx = ctx_from_source(src, "BridgeLane");
-    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None);
+    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None, false).files;
     let mut labels: Vec<&str> = lane.iter().map(|l| l.label.as_str()).collect();
     labels.sort_unstable();
     assert_eq!(
@@ -3469,7 +3471,8 @@ fn universal_lane_renders_bridge_premise_twins() {
             .contains("theorem tallyUp_law_tallyWedgeNeq_prop : ∀ (p : Nat) (q : Nat) (ws : List Nat), unlikeNat p q = true ->")
     );
     // Sabotage stays per-law: only the matching module changes.
-    let sabotaged = super::universal_lane::generate(&ctx, "entry-content-seed", Some("duoFlip"));
+    let sabotaged =
+        super::universal_lane::generate(&ctx, "entry-content-seed", Some("duoFlip"), false).files;
     let zip_sab = sabotaged
         .iter()
         .find(|l| l.label == "duoUp.duoFlip")
@@ -3499,7 +3502,7 @@ fn universal_lane_declines_free_variable_premise() {
     );
     assert_ne!(swapped, src);
     let ctx = ctx_from_source(&swapped, "BridgeLane");
-    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None);
+    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None, false).files;
     assert!(
         lane.iter().all(|l| l.label != "tallyUp.tallyWedgeNeq"),
         "premise variable q unbound by the lhs must decline the law"
@@ -3515,9 +3518,171 @@ fn universal_lane_declines_non_bridge_predicate() {
     let lessy = src.replace("    when unlikeNat(p, q)", "    when rankLe(p, q)");
     assert_ne!(lessy, src);
     let ctx = ctx_from_source(&lessy, "BridgeLane");
-    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None);
+    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None, false).files;
     assert!(
         lane.iter().all(|l| l.label != "tallyUp.tallyWedgeNeq"),
         "a non-equality recursive Bool premise (≤-shape) must decline the law"
+    );
+}
+
+/// CH-2 lane-imports machinery (render level, no lake): a consumer
+/// lane module MAY import source-earlier lane helper modules. The
+/// helper imports are injected after the entry import, the dependency
+/// edges land on `LaneLawFile::imports`, and — crucially — the helper
+/// CONTENT folds into the consumer's module hash, so editing a helper
+/// RENAMES the consumer (stale-`.olean` retirement across the chain).
+#[test]
+fn universal_lane_imports_fold_helper_content_into_consumer_hash() {
+    let src = include_str!("../../../tests/fixtures/when_lane_sign.av");
+    let ctx = ctx_from_source(src, "ScanLane");
+    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None, false).files;
+    let base = &lane[0];
+    assert!(
+        base.imports.is_empty(),
+        "no imports until a figure drives one"
+    );
+    let original_module = base.module.clone();
+
+    // Treat the law as a consumer importing a (synthetic) earlier
+    // helper module. The machinery is import-content-agnostic.
+    let helper = (
+        "U_helperLaw_deadbeef".to_string(),
+        "helper content v1\n".to_string(),
+    );
+    let consumer = super::universal_lane::with_lane_imports(
+        base,
+        std::slice::from_ref(&helper),
+        "entry-content-seed",
+    );
+    assert_eq!(
+        consumer.imports,
+        vec!["U_helperLaw_deadbeef".to_string()],
+        "the dependency edge is recorded on the consumer"
+    );
+    assert!(
+        consumer.content.contains("import U_helperLaw_deadbeef"),
+        "the helper import is injected into the consumer module"
+    );
+    // The import lands AFTER the entry import (lake orders deps).
+    let entry_pos = consumer.content.find("import ScanLane").unwrap();
+    let helper_pos = consumer
+        .content
+        .find("import U_helperLaw_deadbeef")
+        .unwrap();
+    assert!(
+        entry_pos < helper_pos,
+        "helper import follows the entry import"
+    );
+    // Hash folding: a consumer with a helper has a DIFFERENT module name
+    // than the same module with no helper.
+    assert_ne!(
+        consumer.module, original_module,
+        "importing a helper folds its content into the consumer hash"
+    );
+
+    // Stale-olean retirement: edit the helper content -> the consumer
+    // module name changes, so no pre-existing `.olean` can satisfy it.
+    let helper_v2 = (
+        "U_helperLaw_deadbeef".to_string(),
+        "helper content v2 EDITED\n".to_string(),
+    );
+    let consumer_v2 =
+        super::universal_lane::with_lane_imports(base, &[helper_v2], "entry-content-seed");
+    assert_ne!(
+        consumer_v2.module, consumer.module,
+        "editing a helper's content RENAMES the consumer module (stale-olean retirement)"
+    );
+
+    // Empty helper list is a no-op: byte-identical module + content.
+    let noop = super::universal_lane::with_lane_imports(base, &[], "entry-content-seed");
+    assert_eq!(noop.module, original_module);
+    assert_eq!(noop.content, base.content);
+    assert!(noop.imports.is_empty());
+}
+
+/// CH-2 collision guard (render level, no lake): when a lane law's
+/// emitted twin (`…_universal`) name clashes with a theorem already in
+/// the counted-build manifest (the addendum's measured hazard: a
+/// sibling law literally named `<law>_universal`), the law is honestly
+/// OMITTED — no module, recorded as a note — and the NEIGHBOR keeps its
+/// module. Today, without the guard, the clash would fail the
+/// neighbor's tolerated build and silently strip its credit.
+#[test]
+fn universal_lane_collision_guard_omits_universal_clash_keeps_neighbor() {
+    let src = include_str!("../../../tests/fixtures/when_lane_bridge.av");
+    let ctx = ctx_from_source(src, "BridgeLane");
+    // Seed the manifest with a theorem name that EXACTLY equals the
+    // `duoUp.duoFlip` law's lane twin — the shape a sibling law named
+    // `duoFlip_universal` on `duoUp` would emit into the counted build.
+    let entry_content = "theorem duoUp_law_duoFlip_universal : True := trivial\n".to_string();
+    let lane = super::universal_lane::generate(&ctx, &entry_content, None, false);
+    // The colliding law is omitted: no module emitted for it.
+    assert!(
+        lane.files.iter().all(|l| l.label != "duoUp.duoFlip"),
+        "the colliding law must not be emitted as a lane module"
+    );
+    // The neighbor keeps its module and its credit path.
+    assert!(
+        lane.files
+            .iter()
+            .any(|l| l.label == "tallyUp.tallyWedgeNeq"),
+        "the neighbor law must keep its lane module (no silent credit loss)"
+    );
+    // The omission is an honest, surfaced note naming the clash.
+    let omit = lane
+        .omitted
+        .iter()
+        .find(|o| o.label == "duoUp.duoFlip")
+        .expect("the colliding law is recorded as an omission");
+    assert_eq!(omit.collides, "duoUp_law_duoFlip_universal");
+    assert!(omit.note.contains("skipped") && omit.note.contains("clash"));
+}
+
+/// CH-2 collision guard, companion (`…_prop`) hazard: the addendum
+/// measured BOTH names. A sibling law named `<law>_prop` collides with
+/// the neighbor's emitted companion form (CH-1) — the guard must catch
+/// that too and omit honestly, keeping the neighbor.
+#[test]
+fn universal_lane_collision_guard_omits_prop_clash_keeps_neighbor() {
+    let src = include_str!("../../../tests/fixtures/when_lane_bridge.av");
+    let ctx = ctx_from_source(src, "BridgeLane");
+    // Manifest seeded with the `duoUp.duoFlip` law's COMPANION name.
+    let entry_content = "theorem duoUp_law_duoFlip_prop : True := trivial\n".to_string();
+    let lane = super::universal_lane::generate(&ctx, &entry_content, None, false);
+    assert!(
+        lane.files.iter().all(|l| l.label != "duoUp.duoFlip"),
+        "a companion-name clash must omit the law too (both hazards measured)"
+    );
+    assert!(
+        lane.files
+            .iter()
+            .any(|l| l.label == "tallyUp.tallyWedgeNeq"),
+        "the neighbor keeps its module on a companion clash"
+    );
+    let omit = lane
+        .omitted
+        .iter()
+        .find(|o| o.label == "duoUp.duoFlip")
+        .expect("the companion-colliding law is recorded as an omission");
+    assert_eq!(omit.collides, "duoUp_law_duoFlip_prop");
+}
+
+/// CH-2 collision guard, earlier-lane clash: a law whose twin/companion
+/// name equals an EARLIER lane law's name is also omitted (the guard
+/// ranges over emitted lane names, not just the manifest). No manifest
+/// shape produces this today, so it is exercised directly: with the
+/// manifest clean, neither bridge law collides — both emit, neither is
+/// omitted (the negative control for the guard's seed set).
+#[test]
+fn universal_lane_collision_guard_clean_manifest_emits_both() {
+    let src = include_str!("../../../tests/fixtures/when_lane_bridge.av");
+    let ctx = ctx_from_source(src, "BridgeLane");
+    let lane = super::universal_lane::generate(&ctx, "entry-content-seed", None, false);
+    let mut labels: Vec<&str> = lane.files.iter().map(|l| l.label.as_str()).collect();
+    labels.sort_unstable();
+    assert_eq!(labels, vec!["duoUp.duoFlip", "tallyUp.tallyWedgeNeq"]);
+    assert!(
+        lane.omitted.is_empty(),
+        "a clean manifest collides with nothing — no omissions"
     );
 }

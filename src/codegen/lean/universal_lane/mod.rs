@@ -115,16 +115,52 @@ pub const LANE_MANIFEST_FILE: &str = "_aver_universal_lane.json";
 
 /// One emitted lane law: a single hashed Lean module hosting the
 /// universal twin theorem, exposed as its own non-default `lean_lib`.
+#[derive(Clone)]
 pub struct LaneLawFile {
     /// `fn.law` label for surfacing (`dispatchNumberOrErr.fromIntRoundtrip`).
     pub label: String,
     /// Twin theorem name (`<fn>_law_<law>_universal`).
     pub theorem: String,
+    /// Companion theorem name (`<fn>_law_<law>_prop`), derived in the
+    /// same module (CH-1). Carried alongside the twin so the collision
+    /// guard can range over BOTH emitted declaration names.
+    pub companion: String,
+    /// Base name (`<fn>_law_<law>`) the twin/companion share — kept so
+    /// the module hash can be re-derived after folding in helper
+    /// content (lane imports).
+    pub theorem_base: String,
     /// Module = file stem = lib name, content-hashed so a stale
     /// `.olean` under an old name is unreachable.
     pub module: String,
+    /// Module names of the SOURCE-EARLIER lane helpers this module
+    /// imports — the dependency edges the lane manifest records. Empty
+    /// until a consumption figure (CH-3) populates it; the import
+    /// machinery itself ([`with_lane_imports`]) is built here.
+    pub imports: Vec<String>,
     /// Full `.lean` source. Contains NO `sorry` token.
     pub content: String,
+}
+
+/// One lane law the collision guard refused to emit: its twin or
+/// companion name clashed with a theorem already emitted (a manifest
+/// theorem, or an earlier lane law's twin/companion). Surfaced in the
+/// lane detail artifact as an honest note rather than letting the
+/// tolerated build fail and silently withhold a neighbor's credit.
+pub struct OmittedLaw {
+    /// `fn.law` label for surfacing.
+    pub label: String,
+    /// The emitted name that collided (`<fn>_law_<law>_universal` or
+    /// `…_prop`).
+    pub collides: String,
+    /// Plain-language reason, written into the detail artifact.
+    pub note: String,
+}
+
+/// Result of generating the lane for an entry scope: the emitted lane
+/// modules plus the laws the collision guard honestly omitted.
+pub struct LaneOutput {
+    pub files: Vec<LaneLawFile>,
+    pub omitted: Vec<OmittedLaw>,
 }
 
 /// Generate the lane files for every recognized when-law in the
@@ -135,14 +171,39 @@ pub struct LaneLawFile {
 /// law gets a deliberately failing tactic injected — the executable
 /// proof that one broken lane proof cannot touch budgets or
 /// neighbors.
+///
+/// COLLISION GUARD: before a lane module is emitted, its twin
+/// (`…_universal`) and companion (`…_prop`) names are checked against
+/// the names already in play — the counted-build manifest theorems
+/// (parsed from `entry_content`) and every earlier lane law's twin and
+/// companion. A clash (e.g. a sibling law literally named
+/// `<law>_universal` or `<law>_prop`) would make the tolerated build
+/// fail and SILENTLY withhold a neighbor's credit; instead the
+/// colliding law is honestly OMITTED (no module, no credit attempt) and
+/// recorded in [`LaneOutput::omitted`] so the lane detail artifact can
+/// note it. The neighbor keeps its module and its credit.
+///
+/// `chain` is a TEST-ONLY hook (`AVER_PROOF_LANE_CHAIN`): with it set,
+/// each emitted lane law imports every SOURCE-EARLIER emitted lane law
+/// ([`with_lane_imports`]), wiring a real lane-to-lane dependency graph
+/// against live `lake`. No emitter path drives imports yet (the
+/// consumption figure is CH-3); the hook lets the two-module-chain
+/// sabotage and stale-`.olean`-retirement gates exercise the
+/// machinery end to end.
 pub fn generate(
     ctx: &CodegenContext,
     entry_content: &str,
     sabotage: Option<&str>,
-) -> Vec<LaneLawFile> {
+    chain: bool,
+) -> LaneOutput {
     let pins = collect_pins(ctx);
     let entry_root = crate::codegen::common::entry_basename(ctx);
-    let mut out = Vec::new();
+    // Names already emitted into the counted build (manifest theorems)
+    // seed the guard; each emitted lane law then adds its twin and
+    // companion before the next law is checked.
+    let mut emitted_names = manifest_theorem_names(entry_content);
+    let mut out: Vec<LaneLawFile> = Vec::new();
+    let mut omitted = Vec::new();
     for item in &ctx.items {
         let TopLevel::Verify(vb) = item else { continue };
         let crate::ast::VerifyKind::Law(law) = &vb.kind else {
@@ -150,13 +211,13 @@ pub fn generate(
         };
         let sabotage_this = sabotage
             .is_some_and(|s| format!("{}.{}", vb.fn_name, law.name).contains(s) && !s.is_empty());
-        // Family 1: scalar-sign over an IntDecimalRoundtrip pin.
-        let mut rendered = false;
+        // Render the candidate (first matching family wins).
+        let mut candidate: Option<LaneLawFile> = None;
         for pin in &pins {
             let Some(plan) = classify_lane_law(vb, law, ctx, pin) else {
                 continue;
             };
-            if let Some(file) = render_lane_law(
+            candidate = render_lane_law(
                 vb,
                 law,
                 ctx,
@@ -165,19 +226,13 @@ pub fn generate(
                 &entry_root,
                 entry_content,
                 sabotage_this,
-            ) {
-                out.push(file);
-                rendered = true;
-            }
+            );
             break; // first matching pin wins
         }
-        if rendered {
-            continue;
-        }
-        // Family 2: bridge-shaped premise (recursive Bool equality
-        // bridge over a canonical Peano type).
-        if let Some(plan) = classify_bridge_law(vb, law, ctx)
-            && let Some(file) = render_bridge_law(
+        if candidate.is_none()
+            && let Some(plan) = classify_bridge_law(vb, law, ctx)
+        {
+            candidate = render_bridge_law(
                 vb,
                 law,
                 ctx,
@@ -185,12 +240,152 @@ pub fn generate(
                 &entry_root,
                 entry_content,
                 sabotage_this,
-            )
-        {
-            out.push(file);
+            );
+        }
+        let Some(file) = candidate else { continue };
+        // Collision guard: refuse to emit if either emitted name clashes
+        // with an existing manifest or earlier emitted theorem name.
+        if let Some(collides) = collides_with(&file, &emitted_names) {
+            omitted.push(OmittedLaw {
+                label: file.label.clone(),
+                collides: collides.clone(),
+                note: format!(
+                    "the universal-proof theorem `{collides}` would reuse a name another \
+                     theorem in this proof already has; this law is skipped (no universal \
+                     credit) so the name clash cannot fail a side build and silently strip \
+                     a neighboring law of its credit"
+                ),
+            });
+            continue;
+        }
+        emitted_names.insert(file.theorem.clone());
+        emitted_names.insert(file.companion.clone());
+        // Test hook: wire this law to import every source-earlier
+        // emitted lane law, exercising the import + hash-folding
+        // machinery against live lake.
+        let file = if chain && !out.is_empty() {
+            let helpers: Vec<(String, String)> = out
+                .iter()
+                .map(|h| (h.module.clone(), h.content.clone()))
+                .collect();
+            with_lane_imports(&file, &helpers, entry_content)
+        } else {
+            file
+        };
+        out.push(file);
+    }
+    LaneOutput {
+        files: out,
+        omitted,
+    }
+}
+
+/// Twin or companion name that clashes with an already-emitted theorem
+/// name, if any. Both are checked (the review measured both hazards).
+fn collides_with(
+    file: &LaneLawFile,
+    emitted: &std::collections::HashSet<String>,
+) -> Option<String> {
+    if emitted.contains(&file.theorem) {
+        return Some(file.theorem.clone());
+    }
+    if emitted.contains(&file.companion) {
+        return Some(file.companion.clone());
+    }
+    None
+}
+
+/// Theorem names emitted into the counted build, parsed from the
+/// manifest entry `.lean` — every `theorem <name>` / `private theorem
+/// <name>` declaration. This is the ground truth the collision guard
+/// ranges over (a sibling law named `<law>_universal` / `<law>_prop`
+/// surfaces here as a `<fn>_law_<law>_universal` / `…_prop` manifest
+/// theorem, the exact name a neighbor's lane twin/companion would
+/// claim).
+fn manifest_theorem_names(entry_content: &str) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for line in entry_content.lines() {
+        let trimmed = line.trim_start();
+        let rest = trimmed
+            .strip_prefix("theorem ")
+            .or_else(|| trimmed.strip_prefix("private theorem "));
+        if let Some(rest) = rest {
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '\'')
+                .collect();
+            if !name.is_empty() {
+                names.insert(name);
+            }
         }
     }
-    out
+    names
+}
+
+/// Fold SOURCE-EARLIER lane helpers into a consumer lane module:
+/// inject an `import <module>` line per helper (right after the entry
+/// import) and re-derive the module hash so the helper CONTENT is part
+/// of the consumer's identity — editing a helper renames every
+/// consumer module, retiring stale `.olean`s. The dependency edges are
+/// recorded on [`LaneLawFile::imports`].
+///
+/// This is the lane-imports MACHINERY. Nothing in the emitter drives it
+/// yet (the consumption figure is CH-3); it is exercised by tests and
+/// stands ready for that figure to call. `helpers` is the list of
+/// `(module, content)` of the lane modules to import; `entry_content`
+/// is the same manifest seed `generate` folds in, so the consumer hash
+/// stays a pure function of (its own text, its helpers' text, the
+/// manifest).
+pub fn with_lane_imports(
+    file: &LaneLawFile,
+    helpers: &[(String, String)],
+    entry_content: &str,
+) -> LaneLawFile {
+    if helpers.is_empty() {
+        return file.clone();
+    }
+    // Insert the helper imports right after the LAST existing `import`
+    // line (the entry-root import the renderers always emit first), so
+    // lake resolves and orders the lane module graph automatically.
+    let import_block: String = helpers
+        .iter()
+        .map(|(module, _)| format!("import {module}\n"))
+        .collect();
+    let mut content = String::new();
+    let mut inserted = false;
+    let lines: Vec<&str> = file.content.lines().collect();
+    let last_import_idx = lines
+        .iter()
+        .rposition(|l| l.trim_start().starts_with("import "));
+    for (i, line) in lines.iter().enumerate() {
+        content.push_str(line);
+        content.push('\n');
+        if !inserted && Some(i) == last_import_idx {
+            content.push_str(&import_block);
+            inserted = true;
+        }
+    }
+    if !inserted {
+        // No existing import line (defensive): prepend the block.
+        content = format!("{import_block}{}", file.content);
+    }
+
+    // Re-derive the module id folding in every helper's content, so a
+    // changed helper retires the consumer's old module name.
+    let helper_contents: Vec<&str> = helpers.iter().map(|(_, c)| c.as_str()).collect();
+    let module = lane_module_id_with_deps(
+        &file.theorem_base,
+        &content,
+        entry_content,
+        &helper_contents,
+    );
+
+    LaneLawFile {
+        module,
+        imports: helpers.iter().map(|(m, _)| m.clone()).collect(),
+        content,
+        ..file.clone()
+    }
 }
 
 /// Append one non-default `lean_lib` per lane law to the generated
@@ -211,20 +406,39 @@ pub fn lakefile_with_lane_libs(lakefile: &str, lane: &[LaneLawFile]) -> String {
 }
 
 /// The machine-readable lane index (`LANE_MANIFEST_FILE` content).
-pub fn lane_manifest_json(lane: &[LaneLawFile]) -> String {
+/// Records the dependency edges (`imports`) so a consumer's
+/// failure-tolerated build can be ordered after its helpers and a
+/// reader can see the lane-to-lane graph; also carries the laws the
+/// collision guard honestly omitted (so `--check` can surface them in
+/// the detail artifact without re-deriving the clash).
+pub fn lane_manifest_json(lane: &LaneOutput) -> String {
     let laws: Vec<serde_json::Value> = lane
+        .files
         .iter()
         .map(|l| {
             serde_json::json!({
                 "law": l.label,
                 "theorem": l.theorem,
                 "module": l.module,
+                "imports": l.imports,
+            })
+        })
+        .collect();
+    let omitted: Vec<serde_json::Value> = lane
+        .omitted
+        .iter()
+        .map(|o| {
+            serde_json::json!({
+                "law": o.label,
+                "collides": o.collides,
+                "note": o.note,
             })
         })
         .collect();
     serde_json::to_string_pretty(&serde_json::json!({
         "version": 1,
         "laws": laws,
+        "omitted": omitted,
     }))
     .unwrap_or_else(|_| "{}".to_string())
 }
@@ -244,7 +458,28 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 /// so a stale `.olean` under an old name is unreachable after any
 /// change to either. Shared by both lane families.
 fn lane_module_id(theorem_base: &str, content: &str, entry_content: &str) -> String {
-    let hash = fnv1a64(content.as_bytes()) ^ fnv1a64(entry_content.as_bytes()).rotate_left(1);
+    lane_module_id_with_deps(theorem_base, content, entry_content, &[])
+}
+
+/// [`lane_module_id`] with imported-helper content folded in: each
+/// helper's content rotates into the hash so editing a helper changes
+/// every consumer module's name (stale-`.olean` retirement across the
+/// import chain). A consumer with no helpers hashes byte-identically to
+/// `lane_module_id` (the rotation reduces to the empty fold).
+fn lane_module_id_with_deps(
+    theorem_base: &str,
+    content: &str,
+    entry_content: &str,
+    helper_contents: &[&str],
+) -> String {
+    let mut hash = fnv1a64(content.as_bytes()) ^ fnv1a64(entry_content.as_bytes()).rotate_left(1);
+    for (i, helper) in helper_contents.iter().enumerate() {
+        // Rotate by a position-dependent amount so two helpers swapping
+        // order yield a different hash (the import order is meaningful
+        // to lake's elaboration); +2 keeps it distinct from the entry
+        // rotation above.
+        hash ^= fnv1a64(helper.as_bytes()).rotate_left((i as u32 + 2) % 64);
+    }
     let sanitized: String = theorem_base
         .chars()
         .map(|c| {

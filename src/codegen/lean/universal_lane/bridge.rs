@@ -1368,8 +1368,11 @@ induction {xs} with
     let module = lane_module_id(&theorem_base, &content, entry_content);
     Some(LaneLawFile {
         label: format!("{}.{}", vb.fn_name, law.name),
+        companion: format!("{theorem_base}_prop"),
         theorem,
+        theorem_base,
         module,
+        imports: Vec::new(),
         content,
     })
 }

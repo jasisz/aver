@@ -722,8 +722,11 @@ rw [harm]
 
     Some(LaneLawFile {
         label: format!("{}.{}", vb.fn_name, law.name),
+        companion: format!("{theorem_base}_prop"),
         theorem,
+        theorem_base,
         module,
+        imports: Vec::new(),
         content,
     })
 }
