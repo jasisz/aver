@@ -73,10 +73,10 @@ fn sumItems(items: List<Item>) -> Float
 verify sumItems
     sumItems([]) => 0.0
     sumItems([Item(price = 7.0, quantity = 4)]) => 7.0 * 4.0
-    sumItems([Item(price = 5.0, quantity = 3), Item(price = 7.0, quantity = 2)]) => sumItems([Item(price = 5.0, quantity = 3)]) + sumItems([Item(price = 7.0, quantity = 2)])
-    sumItems([Item(price = 5.0, quantity = 3), Item(price = 3.0, quantity = 4)]) => sumItems([Item(price = 5.0, quantity = 3)]) + sumItems([Item(price = 3.0, quantity = 4)])
-    sumItems([Item(price = 10.0, quantity = 1), Item(price = 7.0, quantity = 2)]) => sumItems([Item(price = 10.0, quantity = 1)]) + sumItems([Item(price = 7.0, quantity = 2)])
-    sumItems([Item(price = 10.0, quantity = 1), Item(price = 3.0, quantity = 4)]) => sumItems([Item(price = 10.0, quantity = 1)]) + sumItems([Item(price = 3.0, quantity = 4)])
+    sumItems([Item(price = 5.0, quantity = 3), Item(price = 7.0, quantity = 2)]) => 29.0
+    sumItems([Item(price = 5.0, quantity = 3), Item(price = 3.0, quantity = 4)]) => 27.0
+    sumItems([Item(price = 10.0, quantity = 1), Item(price = 7.0, quantity = 2)]) => 24.0
+    sumItems([Item(price = 10.0, quantity = 1), Item(price = 3.0, quantity = 4)]) => 22.0
 
 fn applyDiscount(subtotal: Float, d: Discount) -> Float
     ? "Reduces subtotal by the discount percentage."
@@ -110,12 +110,12 @@ verify applyTax
     applyTax(200.0, TaxRate(percent = 0.0)) >= 200.0 => true
     applyTax(200.0, TaxRate(percent = 10.0)) >= 200.0 => true
     applyTax(200.0, TaxRate(percent = 50.0)) >= 200.0 => true
-    applyTax(2.0 * 50.0, TaxRate(percent = 0.0)) => 2.0 * applyTax(50.0, TaxRate(percent = 0.0))
-    applyTax(2.0 * 50.0, TaxRate(percent = 10.0)) => 2.0 * applyTax(50.0, TaxRate(percent = 10.0))
-    applyTax(2.0 * 50.0, TaxRate(percent = 25.0)) => 2.0 * applyTax(50.0, TaxRate(percent = 25.0))
-    applyTax(2.0 * 100.0, TaxRate(percent = 0.0)) => 2.0 * applyTax(100.0, TaxRate(percent = 0.0))
-    applyTax(2.0 * 100.0, TaxRate(percent = 10.0)) => 2.0 * applyTax(100.0, TaxRate(percent = 10.0))
-    applyTax(2.0 * 100.0, TaxRate(percent = 25.0)) => 2.0 * applyTax(100.0, TaxRate(percent = 25.0))
+    applyTax(2.0 * 50.0, TaxRate(percent = 0.0)) => 100.0
+    applyTax(2.0 * 50.0, TaxRate(percent = 10.0)) => 110.0
+    applyTax(2.0 * 50.0, TaxRate(percent = 25.0)) => 125.0
+    applyTax(2.0 * 100.0, TaxRate(percent = 0.0)) => 200.0
+    applyTax(2.0 * 100.0, TaxRate(percent = 10.0)) => 220.0
+    applyTax(2.0 * 100.0, TaxRate(percent = 25.0)) => 250.0
 
 fn calculateTotal(items: List<Item>, d: Discount, t: TaxRate) -> Float
     ? "Sums items, applies discount, applies tax. Assumes valid Discount and TaxRate."
@@ -140,6 +140,11 @@ fn showDiscount(r: Result<Discount, String>) -> String
     match r
         Result.Ok(d)    -> "Discount({d.percent})"
         Result.Err(msg) -> "Err(\"{msg}\")"
+
+verify showDiscount
+    showDiscount(Result.Err("Discount cannot be negative")) => "Err(\"Discount cannot be negative\")"
+    showDiscount(mkDiscount(100.1)) => "Err(\"Discount cannot exceed 100%\")"
+    String.startsWith(showDiscount(Result.Ok(Discount(percent = 25.0))), "Discount(") => true
 
 fn main() -> Unit
     ! [Console.print]

@@ -99,6 +99,11 @@ fn showListIntInner(xs: List<Int>) -> String
             [] -> "{head}"
             _  -> "{head}, {showListIntInner(tail)}"
 
+verify showListIntInner
+    showListIntInner([]) => ""
+    showListIntInner([7]) => "7"
+    showListIntInner([1, 2, 3]) => "1, 2, 3"
+
 fn showListInt(xs: List<Int>) -> String
     ? "Render List<Int> as `[1, 2, 3]`."
     "[{showListIntInner(xs)}]"

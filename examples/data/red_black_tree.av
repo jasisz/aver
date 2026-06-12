@@ -401,6 +401,11 @@ fn showListIntInner(xs: List<Int>) -> String
       [] -> "{head}"
       _  -> "{head}, {showListIntInner(tail)}"
 
+verify showListIntInner
+  showListIntInner([]) => ""
+  showListIntInner([7]) => "7"
+  showListIntInner([1, 2, 3]) => "1, 2, 3"
+
 fn showListInt(xs: List<Int>) -> String
   ? "Render a List<Int> as `[1, 2, 3]`. Aver doesn't have map/Show; the helper sits at the call site."
   "[{showListIntInner(xs)}]"
