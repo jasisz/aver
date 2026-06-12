@@ -36,7 +36,14 @@ pub(crate) fn emit_mir_constructor_with_args(
 /// Mirror of `emit_option_constructor` (emit.rs): `Some(v)` →
 /// `i32.const 1; v; struct.new $option_T`; `None` →
 /// `i32.const 0; default<T>; struct.new $option_T`. `T` comes from the
-/// payload's stamped type (Some) or the caller's hint (None).
+/// payload's stamped type (Some) or the caller's hint (None). In both
+/// cases the input is the *element* type `T`, never the full
+/// `Option<T>` — a payload that is itself an Option
+/// (`Option.Some(Option.None)` under `Option<Option<Int>>`) must
+/// produce the OUTER canonical `Option<Option<Int>>`, not be mistaken
+/// for it. The canonical is whitespace-normalised so compound payloads
+/// (`Tuple<Int, Int>` stamps carry a space) match the registry keys,
+/// which are stored whitespace-free.
 pub(crate) fn emit_mir_option_constructor(
     func: &mut Function,
     payload: Option<&Spanned<MirExpr>>,
@@ -52,11 +59,7 @@ pub(crate) fn emit_mir_option_constructor(
             ))?
             .to_string(),
     };
-    let canonical = if t_aver.starts_with("Option<") {
-        t_aver.clone()
-    } else {
-        format!("Option<{t_aver}>")
-    };
+    let canonical = normalize_compound(&format!("Option<{t_aver}>"));
     let opt_idx = ctx
         .registry
         .option_type_idx(&canonical)
