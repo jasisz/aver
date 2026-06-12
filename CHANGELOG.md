@@ -4,6 +4,10 @@ All notable changes to Aver are documented here. Starting with 0.10.0, minor rel
 
 ## 0.25.1 (unreleased)
 
+### Added
+
+- **Conditional laws proven universally now export a ready-to-use plain-logic form** — alongside the universal proof of a `when`-law, the Lean export derives a companion statement of the same fact with its premises and conclusion stated as ordinary propositions, so a later proof can cite it directly without re-deriving the boolean-to-proposition bridges.
+
 ### Fixed
 
 - **wasm-gc strings count characters, not bytes** — `String.len`, `String.charAt`, `String.slice`, and `String.chars` now use Unicode character (scalar) counts and indices, matching the VM and the documentation on every multi-byte string. `String.byteLength` still counts UTF-8 bytes. `examples/data/json.av` passes `aver verify --wasm-gc` in full, including its emoji cases.
