@@ -1,0 +1,43 @@
+module CellFloorGrid
+    intent =
+        "Rounding-grid proof task: floor stability inside a finer cell, then agreement on"
+        "a coarser cell by reusing the earlier stability fact for both rationals."
+    effects []
+
+fn floorQ(a: Int, b: Int) -> Int
+    ? "Floor of a/b for b > 0: Aver Int.div is Euclidean, which is floor for positive divisors."
+    match Int.div(a, b)
+        Result.Ok(q) -> q
+        Result.Err(msg) -> 0
+
+verify floorQ
+    floorQ(7, 2) => 3
+    floorQ(-7, 2) => -4
+    floorQ(64, 3) => 21
+    floorQ(5, 0) => 0
+
+verify floorQ law cellFloorStable
+    given a: Int = [13, 15]
+    given b: Int = [4]
+    given w: Int = [3]
+    given d: Int = [2]
+    when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))
+    floorQ(a, b * d) == floorQ(w, d) => true
+
+fn coarseFloorEq(an: Int, ad: Int, bn: Int, bd: Int, d: Int) -> Bool
+    ? "Both rationals an/ad and bn/bd floored on the d-times coarser grid agree."
+    floorQ(an, ad * d) == floorQ(bn, bd * d)
+
+verify coarseFloorEq
+    coarseFloorEq(13, 4, 25, 8, 2) => true
+    coarseFloorEq(13, 4, 60, 8, 2) => false
+
+verify coarseFloorEq law sharedCellFloor
+    given an: Int = [13, 15]
+    given ad: Int = [4]
+    given bn: Int = [25, 30]
+    given bd: Int = [8]
+    given w: Int = [3]
+    given d: Int = [2]
+    when Bool.and(ad > 0, Bool.and(bd > 0, Bool.and(d > 0, Bool.and(w * ad < an, Bool.and(an < (w + 1) * ad, Bool.and(w * bd < bn, bn < (w + 1) * bd))))))
+    coarseFloorEq(an, ad, bn, bd, d) => true

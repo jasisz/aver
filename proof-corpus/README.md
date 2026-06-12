@@ -23,7 +23,8 @@ per-PR; coverage = a number from `run.sh`, informational.
   `github.com/tip-org/benchmarks`, BSD-3-Clause. See `tip/PROVENANCE.md` and
   `tip/LICENSE.TIP` (upstream license retained for attribution; the repo itself
   stays MIT).
-- `handwritten/` — license-clean canonical tasks we authored.
+- `handwritten/` — license-clean canonical tasks we authored, including
+  rounding-grid floor-stability tasks over finer and coarser cells.
 - `decomposed/` — OPEN `tip/` tasks closed by **LLM-written helper laws** via
   the discovery feedback loop (część A). A SEPARATE "loop reach" metric, NOT the
   baseline — `run.sh` excludes it so the coverage number stays "unaided on bare
@@ -84,6 +85,10 @@ the differentiated bet, and what the corpus should be mined for next: tasks wher
 discovery cracks a goal Z3 cannot. (The Lean-strategy gap vs Dafny is a TRUST
 play — kernel-certifying what Z3 already proves — not a reach play; it does not
 grow the union.)
+
+Since this measurement, a new handwritten task (`handwritten/cell_floor_grid.av`,
+the floor-grid floor-stability pair) was added; it enters future sweeps and is
+not reflected in the dated counts above.
 
 ## Adding tasks
 

@@ -6121,10 +6121,13 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     // kernel certificate, so it survives every downstream gate.
     let bounded_laws = law_thms
         .iter()
-        .filter(|t| {
-            classes.get(*t).map(String::as_str) == Some(lean_codegen::LAW_CLASS_BOUNDED_DOMAIN)
+        .filter_map(|t| {
+            let class = law_class_for_theorem(t, &classes)?;
+            (class == lean_codegen::LAW_CLASS_BOUNDED_DOMAIN)
+                .then(|| law_dedup_key(t, &classes).to_string())
         })
-        .count();
+        .collect::<std::collections::HashSet<_>>()
+        .len();
     if sorries > 0 {
         return LeanLawAudit {
             universal: false,
@@ -6138,7 +6141,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     // universal credit (fail-closed when the channel is absent).
     let mut universal_class_present = false;
     let mut universal_classed: Vec<String> = Vec::new();
-    law_thms.retain(|thm| match classes.get(thm).map(String::as_str) {
+    law_thms.retain(|thm| match law_class_for_theorem(thm, &classes) {
         Some(lean_codegen::LAW_CLASS_BOUNDED_DOMAIN) => false,
         Some(lean_codegen::LAW_CLASS_UNIVERSAL) => {
             universal_class_present = true;
@@ -6438,6 +6441,37 @@ fn is_main_law_theorem(name: &str) -> bool {
         }
     }
     true
+}
+
+fn law_class_for_theorem<'a>(
+    theorem: &str,
+    classes: &'a std::collections::HashMap<String, String>,
+) -> Option<&'a str> {
+    classes.get(theorem).map(String::as_str).or_else(|| {
+        law_class_base_name(theorem).and_then(|base| classes.get(base).map(String::as_str))
+    })
+}
+
+/// Counting key that collapses `<base>_part<N>` chunk declarations onto their
+/// base law, mirroring `law_class_for_theorem`'s direct-lookup-first logic: the
+/// base name is used ONLY when the part carries no class marker of its own (so
+/// its class was resolved via the base-name fallback). A theorem with its OWN
+/// `-- aver:law-class` marker is a distinct law even if it happens to be named
+/// `part1`/`part2`, so it keeps its own name as the key.
+fn law_dedup_key<'a>(
+    theorem: &'a str,
+    classes: &std::collections::HashMap<String, String>,
+) -> &'a str {
+    if classes.contains_key(theorem) {
+        return theorem;
+    }
+    law_class_base_name(theorem).unwrap_or(theorem)
+}
+
+fn law_class_base_name(theorem: &str) -> Option<&str> {
+    let idx = theorem.rfind("_part")?;
+    let tail = &theorem[idx + "_part".len()..];
+    (!tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit())).then_some(&theorem[..idx])
 }
 
 /// Parse the root modules out of a generated `lakefile.lean`

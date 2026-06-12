@@ -1,0 +1,27 @@
+module BoundedPartNamedLaws
+    intent =
+        "Two distinct conditional laws on the same function that are LEGALLY named"
+        "`part1` and `part2`. Their generated theorem names collide with the"
+        "`<base>_part<N>` chunk-partition naming, so the audit must count them as two"
+        "separate bounded-domain laws — never fold them onto one base by name alone."
+    effects []
+
+fn scaledProduct(a: Int, b: Int) -> Int
+    ? "Plain product of two integers; nonlinear in both arguments so no lane recognizer fires."
+    a * b
+
+verify scaledProduct
+    scaledProduct(3, 4) => 12
+    scaledProduct(-2, 5) => -10
+
+verify scaledProduct law part1
+    given a: Int = [1, 2]
+    given b: Int = [3, 4]
+    when Bool.and(a > 0, b > 0)
+    scaledProduct(a, b) >= 0 => true
+
+verify scaledProduct law part2
+    given a: Int = [-1, -2]
+    given b: Int = [-3, -4]
+    when Bool.and(a < 0, b < 0)
+    scaledProduct(a, b) >= 0 => true
