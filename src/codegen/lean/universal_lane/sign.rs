@@ -699,6 +699,19 @@ rw [harm]
         }
     }
 
+    // Prop-form corollary, derived from the twin above with the fixed
+    // Bool/Prop bridge tactic — same module, no separate credit.
+    content.push('\n');
+    let given_names: Vec<String> = law.givens.iter().map(|g| g.name.clone()).collect();
+    content.push_str(&super::shared::render_prop_corollary(
+        &theorem_base,
+        &quant_params,
+        &given_names,
+        law,
+        ctx,
+        &format!("{lhs_template} = {rhs_template}"),
+    ));
+
     // L2 of the iron guard: the lane grammar has no sorry carrier.
     debug_assert!(
         !content.contains("sorry"),

@@ -3351,6 +3351,25 @@ fn universal_lane_renders_sign_segment_twin() {
     // disjunctions gone.
     assert!(law.content.contains("(v > 0) = true ->"));
     assert!(!law.content.contains("v = 1 ∨"));
+    // Prop-form corollary derived from the twin, same module: the bare
+    // comparison premise is un-coerced to the Prop relation (no trailing
+    // `= true`), derived via the fixed bridge tactic. It is NOT a
+    // separate credited declaration — the surfaced `theorem` name and
+    // the lane index stay the `_universal` twin only.
+    assert!(
+        law.content.contains(
+            "theorem startDigits_law_positiveTokenRoundtrip_prop : ∀ (v : Int), (v > 0) ->"
+        )
+    );
+    assert!(
+        law.content
+            .contains("have hu := startDigits_law_positiveTokenRoundtrip_universal")
+    );
+    assert!(law.content.contains("simpa [beq_iff_eq] using hu"));
+    assert_eq!(
+        law.theorem, "startDigits_law_positiveTokenRoundtrip_universal",
+        "the surfaced/credited theorem stays the twin; the corollary is module-local"
+    );
     // Hashed module name + non-default lakefile libs appended after
     // the default target (first `roots :=` line stays the default's).
     assert!(
@@ -3426,12 +3445,29 @@ fn universal_lane_renders_bridge_premise_twins() {
             .contains("likeNat (bulk xs) (bulk ys) = true ->")
     );
     assert!(!zip.content.contains("xs = [] ∨"));
+    // Prop-form corollary, same module: the opaque Bool predicate
+    // premise stays at the Bool seam (`= true`), the conclusion lowered,
+    // derived from the twin. Not separately credited (theorem name and
+    // index stay the `_universal` twin).
+    assert!(
+        zip.content
+            .contains("theorem duoUp_law_duoFlip_prop : ∀ (xs : List Int) (ys : List Int), likeNat (bulk xs) (bulk ys) = true ->")
+    );
+    assert!(
+        zip.content
+            .contains("have hu := duoUp_law_duoFlip_universal")
+    );
     let tally = lane
         .iter()
         .find(|l| l.label == "tallyUp.tallyWedgeNeq")
         .unwrap();
     assert!(!tally.content.contains("sorry"));
     assert!(tally.content.contains("unlikeNat p q = true ->"));
+    assert!(
+        tally
+            .content
+            .contains("theorem tallyUp_law_tallyWedgeNeq_prop : ∀ (p : Nat) (q : Nat) (ws : List Nat), unlikeNat p q = true ->")
+    );
     // Sabotage stays per-law: only the matching module changes.
     let sabotaged = super::universal_lane::generate(&ctx, "entry-content-seed", Some("duoFlip"));
     let zip_sab = sabotaged
