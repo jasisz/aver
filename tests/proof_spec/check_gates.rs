@@ -521,3 +521,373 @@ fn proof_check_lean_chunked_checked_domain_builds_and_keeps_universal_credit() {
     );
     let _ = std::fs::remove_dir_all(&out);
 }
+
+// ---- THE RATCHET: end-to-end `aver proof --gate` (live lake) ----
+//
+// The pure comparator (`gate_manifest`) is unit-tested on fixtures in
+// `src/main/commands.rs`. These tests drive the FULL pipeline — emit Lean,
+// `lake build`, recompute the per-law manifest, diff against a committed
+// baseline — on the scout's `cell_floor_grid` task. The tier-PRODUCING half
+// needs live `lake` (the `#print axioms` probe is the ground truth), so each
+// test is guarded by the standard `lake --version` skip.
+
+/// The two-law base task (scout `base.av`): both laws prove UNIVERSALLY via
+/// the when-universal floor lane.
+const RATCHET_BASE_AV: &str = "module CellFloorGrid\n\
+    \x20   intent =\n\
+    \x20       \"Rounding-grid proof task.\"\n\
+    \x20   effects []\n\n\
+    fn floorQ(a: Int, b: Int) -> Int\n\
+    \x20   ? \"Floor of a/b for b > 0.\"\n\
+    \x20   match Int.div(a, b)\n\
+    \x20       Result.Ok(q) -> q\n\
+    \x20       Result.Err(msg) -> 0\n\n\
+    verify floorQ law cellFloorStable\n\
+    \x20   given a: Int = [13, 15]\n\
+    \x20   given b: Int = [4]\n\
+    \x20   given w: Int = [3]\n\
+    \x20   given d: Int = [2]\n\
+    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
+    \x20   floorQ(a, b * d) == floorQ(w, d) => true\n\n\
+    fn coarseFloorEq(an: Int, ad: Int, bn: Int, bd: Int, d: Int) -> Bool\n\
+    \x20   ? \"Both rationals floored on the coarser grid agree.\"\n\
+    \x20   floorQ(an, ad * d) == floorQ(bn, bd * d)\n\n\
+    verify coarseFloorEq law sharedCellFloor\n\
+    \x20   given an: Int = [13, 15]\n\
+    \x20   given ad: Int = [4]\n\
+    \x20   given bn: Int = [25, 30]\n\
+    \x20   given bd: Int = [8]\n\
+    \x20   given w: Int = [3]\n\
+    \x20   given d: Int = [2]\n\
+    \x20   when Bool.and(ad > 0, Bool.and(bd > 0, Bool.and(d > 0, Bool.and(w * ad < an, Bool.and(an < (w + 1) * ad, Bool.and(w * bd < bn, bn < (w + 1) * bd))))))\n\
+    \x20   coarseFloorEq(an, ad, bn, bd, d) => true\n";
+
+/// `base.av` with `sharedCellFloor` removed (scout `deleted.av`).
+const RATCHET_DELETED_AV: &str = "module CellFloorGrid\n\
+    \x20   intent =\n\
+    \x20       \"Rounding-grid proof task.\"\n\
+    \x20   effects []\n\n\
+    fn floorQ(a: Int, b: Int) -> Int\n\
+    \x20   ? \"Floor of a/b for b > 0.\"\n\
+    \x20   match Int.div(a, b)\n\
+    \x20       Result.Ok(q) -> q\n\
+    \x20       Result.Err(msg) -> 0\n\n\
+    verify floorQ law cellFloorStable\n\
+    \x20   given a: Int = [13, 15]\n\
+    \x20   given b: Int = [4]\n\
+    \x20   given w: Int = [3]\n\
+    \x20   given d: Int = [2]\n\
+    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
+    \x20   floorQ(a, b * d) == floorQ(w, d) => true\n\n\
+    fn coarseFloorEq(an: Int, ad: Int, bn: Int, bd: Int, d: Int) -> Bool\n\
+    \x20   ? \"Both rationals floored on the coarser grid agree.\"\n\
+    \x20   floorQ(an, ad * d) == floorQ(bn, bd * d)\n";
+
+/// `base.av` with `cellFloorStable`'s LHS weakened so it leaves the universal
+/// lane — both laws fall out of universal crediting and drop to bounded
+/// (scout `weakened.av`). This is the SUBTLE soundness case: a silent
+/// universal -> bounded slide the count-based gate keeps green.
+const RATCHET_WEAKENED_AV: &str = "module CellFloorGrid\n\
+    \x20   intent =\n\
+    \x20       \"Rounding-grid proof task.\"\n\
+    \x20   effects []\n\n\
+    fn floorQ(a: Int, b: Int) -> Int\n\
+    \x20   ? \"Floor of a/b for b > 0.\"\n\
+    \x20   match Int.div(a, b)\n\
+    \x20       Result.Ok(q) -> q\n\
+    \x20       Result.Err(msg) -> 0\n\n\
+    verify floorQ law cellFloorStable\n\
+    \x20   given a: Int = [13, 15]\n\
+    \x20   given b: Int = [4]\n\
+    \x20   given w: Int = [3]\n\
+    \x20   given d: Int = [2]\n\
+    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
+    \x20   floorQ(floorQ(a, b), d) == floorQ(w, d) => true\n\n\
+    fn coarseFloorEq(an: Int, ad: Int, bn: Int, bd: Int, d: Int) -> Bool\n\
+    \x20   ? \"Both rationals floored on the coarser grid agree.\"\n\
+    \x20   floorQ(an, ad * d) == floorQ(bn, bd * d)\n\n\
+    verify coarseFloorEq law sharedCellFloor\n\
+    \x20   given an: Int = [13, 15]\n\
+    \x20   given ad: Int = [4]\n\
+    \x20   given bn: Int = [25, 30]\n\
+    \x20   given bd: Int = [8]\n\
+    \x20   given w: Int = [3]\n\
+    \x20   given d: Int = [2]\n\
+    \x20   when Bool.and(ad > 0, Bool.and(bd > 0, Bool.and(d > 0, Bool.and(w * ad < an, Bool.and(an < (w + 1) * ad, Bool.and(w * bd < bn, bn < (w + 1) * bd))))))\n\
+    \x20   coarseFloorEq(an, ad, bn, bd, d) => true\n";
+
+/// Two distinct `verify floorQ law cellFloorStable` blocks sharing ONE
+/// `fn.law` identity — the MAJOR 3 collision. The manifest keys on `fn.law`,
+/// so without a guard the second block would collapse onto the first
+/// (strongest-tier-wins), hiding the weaker (second) duplicate. The ratchet
+/// must fail CLOSED (exit 2). The second block's claim is the weakened one.
+const RATCHET_DUP_LAW_AV: &str = "module CellFloorGrid\n\
+    \x20   intent =\n\
+    \x20       \"Rounding-grid proof task.\"\n\
+    \x20   effects []\n\n\
+    fn floorQ(a: Int, b: Int) -> Int\n\
+    \x20   ? \"Floor of a/b for b > 0.\"\n\
+    \x20   match Int.div(a, b)\n\
+    \x20       Result.Ok(q) -> q\n\
+    \x20       Result.Err(msg) -> 0\n\n\
+    verify floorQ law cellFloorStable\n\
+    \x20   given a: Int = [13, 15]\n\
+    \x20   given b: Int = [4]\n\
+    \x20   given w: Int = [3]\n\
+    \x20   given d: Int = [2]\n\
+    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
+    \x20   floorQ(a, b * d) == floorQ(w, d) => true\n\n\
+    verify floorQ law cellFloorStable\n\
+    \x20   given a: Int = [13, 15]\n\
+    \x20   given b: Int = [4]\n\
+    \x20   given w: Int = [3]\n\
+    \x20   given d: Int = [2]\n\
+    \x20   when Bool.and(b > 0, Bool.and(d > 0, Bool.and(w * b < a, a < (w + 1) * b)))\n\
+    \x20   floorQ(floorQ(a, b), d) == floorQ(w, d) => true\n";
+
+/// Write `src` to a fresh temp `.av`, run `aver proof --backend lean` with the
+/// given trailing args, and return `(exit_code, stderr)`. Exit code is read
+/// directly off the `Output` status — never through a pipe.
+fn ratchet_run(tag: &str, src: &str, extra: &[&std::ffi::OsStr]) -> (i32, String) {
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let dir = temp_output_dir(&format!("aver-ratchet-{tag}-src"));
+    std::fs::create_dir_all(&dir).expect("create src dir");
+    let av = dir.join("grid.av");
+    std::fs::write(&av, src).expect("write grid.av");
+    let out = temp_output_dir(&format!("aver-ratchet-{tag}-out"));
+    let mut cmd = Command::new(aver_bin);
+    cmd.arg("proof")
+        .arg(&av)
+        .arg("--backend")
+        .arg("lean")
+        .arg("-o")
+        .arg(&out);
+    cmd.args(extra);
+    let run = cmd.output().expect("expected `aver proof` to run");
+    let code = run.status.code().unwrap_or(-1);
+    let stderr = format_output(&run);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&out);
+    (code, stderr)
+}
+
+#[test]
+fn ratchet_gate_catches_deleted_law() {
+    // (a) A previously-proven law removed entirely. The count-based gate stays
+    // green (the count just drops); the ratchet FAILS and names the law.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping ratchet delete test: `lake` not available");
+        return;
+    }
+    let baseline = temp_output_dir("aver-ratchet-del-baseline").with_extension("json");
+    let (code, _) = ratchet_run(
+        "del-base",
+        RATCHET_BASE_AV,
+        &[
+            "--check".as_ref(),
+            "--write-baseline".as_ref(),
+            baseline.as_os_str(),
+        ],
+    );
+    assert_eq!(
+        code, 0,
+        "writing the baseline from the 2-law base must succeed"
+    );
+
+    let (code, stderr) = ratchet_run(
+        "del-gate",
+        RATCHET_DELETED_AV,
+        &["--check".as_ref(), "--gate".as_ref(), baseline.as_os_str()],
+    );
+    assert_eq!(
+        code, 1,
+        "deleting a proven law must FAIL the gate (exit 1)\n{stderr}"
+    );
+    assert!(
+        stderr.contains("coarseFloorEq.sharedCellFloor") && stderr.contains("MISSING"),
+        "the gate must name the deleted law as MISSING\n{stderr}"
+    );
+    let _ = std::fs::remove_file(&baseline);
+}
+
+#[test]
+fn ratchet_gate_catches_demoted_law() {
+    // (b) THE SOUNDNESS CASE: a law silently slides universal -> bounded. Both
+    // laws fall out of the universal lane; `passed`/`sorries`/exit stay green
+    // under the old count gate. The ratchet must FAIL and name the tier change.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping ratchet demote test: `lake` not available");
+        return;
+    }
+    let baseline = temp_output_dir("aver-ratchet-demote-baseline").with_extension("json");
+    let (code, _) = ratchet_run(
+        "demote-base",
+        RATCHET_BASE_AV,
+        &[
+            "--check".as_ref(),
+            "--write-baseline".as_ref(),
+            baseline.as_os_str(),
+        ],
+    );
+    assert_eq!(code, 0, "writing the baseline must succeed");
+
+    let (code, stderr) = ratchet_run(
+        "demote-gate",
+        RATCHET_WEAKENED_AV,
+        &["--check".as_ref(), "--gate".as_ref(), baseline.as_os_str()],
+    );
+    assert_eq!(
+        code, 1,
+        "a universal -> bounded demotion must FAIL the gate (exit 1)\n{stderr}"
+    );
+    assert!(
+        stderr.contains("floorQ.cellFloorStable") && stderr.contains("tier universal -> "),
+        "the gate must name the demoted law with its before/after tier\n{stderr}"
+    );
+    let _ = std::fs::remove_file(&baseline);
+}
+
+#[test]
+fn ratchet_regenerated_baseline_is_green() {
+    // (c) The ack path: after a legitimate change, `--write-baseline` regenerates
+    // the baseline; gating the changed file against the NEW baseline is GREEN.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping ratchet regenerate test: `lake` not available");
+        return;
+    }
+    let baseline = temp_output_dir("aver-ratchet-regen-baseline").with_extension("json");
+    // Regenerate the baseline FROM the weakened (changed) file — the human ack.
+    let (code, _) = ratchet_run(
+        "regen-write",
+        RATCHET_WEAKENED_AV,
+        &[
+            "--check".as_ref(),
+            "--write-baseline".as_ref(),
+            baseline.as_os_str(),
+        ],
+    );
+    assert_eq!(code, 0, "regenerating the baseline must succeed");
+
+    let (code, stderr) = ratchet_run(
+        "regen-gate",
+        RATCHET_WEAKENED_AV,
+        &["--check".as_ref(), "--gate".as_ref(), baseline.as_os_str()],
+    );
+    assert_eq!(
+        code, 0,
+        "gating against a freshly regenerated baseline must be GREEN (exit 0)\n{stderr}"
+    );
+    let _ = std::fs::remove_file(&baseline);
+}
+
+#[test]
+fn ratchet_added_law_is_green() {
+    // (d) Adding a law is allowed. Baseline from the 1-law deleted file; gating
+    // the 2-law base file (which ADDS `sharedCellFloor`) against it is GREEN —
+    // the new law is reported INFO, not a regression.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping ratchet add test: `lake` not available");
+        return;
+    }
+    let baseline = temp_output_dir("aver-ratchet-add-baseline").with_extension("json");
+    let (code, _) = ratchet_run(
+        "add-base",
+        RATCHET_DELETED_AV,
+        &[
+            "--check".as_ref(),
+            "--write-baseline".as_ref(),
+            baseline.as_os_str(),
+        ],
+    );
+    assert_eq!(code, 0, "writing the 1-law baseline must succeed");
+
+    let (code, stderr) = ratchet_run(
+        "add-gate",
+        RATCHET_BASE_AV,
+        &["--check".as_ref(), "--gate".as_ref(), baseline.as_os_str()],
+    );
+    assert_eq!(
+        code, 0,
+        "adding a new proven law must be GREEN (exit 0)\n{stderr}"
+    );
+    let _ = std::fs::remove_file(&baseline);
+}
+
+#[test]
+fn ratchet_duplicate_law_identity_fails_closed() {
+    // MAJOR 3: two `verify ... law` blocks share one `fn.law` identity. The
+    // manifest keys on `fn.law`, so they would otherwise collapse to one entry
+    // (strongest-tier-wins) and hide the weakened duplicate. The ratchet must
+    // fail CLOSED — a harness error (exit 2), naming the collision — rather
+    // than silently merge.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping ratchet duplicate-law test: `lake` not available");
+        return;
+    }
+    let baseline = temp_output_dir("aver-ratchet-dup-baseline").with_extension("json");
+    let (code, stderr) = ratchet_run(
+        "dup-write",
+        RATCHET_DUP_LAW_AV,
+        &[
+            "--check".as_ref(),
+            "--write-baseline".as_ref(),
+            baseline.as_os_str(),
+        ],
+    );
+    assert_eq!(
+        code, 2,
+        "a duplicate law identity must be a harness error (exit 2)\n{stderr}"
+    );
+    assert!(
+        stderr.contains("floorQ.cellFloorStable") && stderr.contains("duplicate law identity"),
+        "the harness error must name the colliding `fn.law` identity\n{stderr}"
+    );
+    let _ = std::fs::remove_file(&baseline);
+}
+
+#[test]
+fn ratchet_corrupt_baseline_fails_closed() {
+    // MAJOR 1: a corrupt/truncated baseline (here a per-law record with an
+    // unknown tier) must FAIL CLOSED — a harness error (exit 2), never a silent
+    // skip that un-ratchets the elided law. Write a real baseline, then corrupt
+    // one record's tier, then gate: the gate must refuse it.
+    if Command::new("lake").arg("--version").output().is_err() {
+        eprintln!("skipping ratchet corrupt-baseline test: `lake` not available");
+        return;
+    }
+    let baseline = temp_output_dir("aver-ratchet-corrupt-baseline").with_extension("json");
+    let (code, _) = ratchet_run(
+        "corrupt-write",
+        RATCHET_BASE_AV,
+        &[
+            "--check".as_ref(),
+            "--write-baseline".as_ref(),
+            baseline.as_os_str(),
+        ],
+    );
+    assert_eq!(code, 0, "writing the baseline must succeed");
+
+    // Corrupt one record's tier to an unknown value.
+    let raw = std::fs::read_to_string(&baseline).expect("read baseline");
+    let corrupted = raw.replacen("\"universal\"", "\"quantum\"", 1);
+    assert_ne!(
+        raw, corrupted,
+        "the baseline must contain a tier to corrupt"
+    );
+    std::fs::write(&baseline, &corrupted).expect("write corrupted baseline");
+
+    let (code, stderr) = ratchet_run(
+        "corrupt-gate",
+        RATCHET_BASE_AV,
+        &["--check".as_ref(), "--gate".as_ref(), baseline.as_os_str()],
+    );
+    assert_eq!(
+        code, 2,
+        "a corrupt baseline (unknown tier) must be a harness error (exit 2)\n{stderr}"
+    );
+    assert!(
+        stderr.contains("not a valid proof manifest") && stderr.contains("quantum"),
+        "the harness error must explain the corruption\n{stderr}"
+    );
+    let _ = std::fs::remove_file(&baseline);
+}
