@@ -578,15 +578,24 @@ fn emit_verify_law_block(
             pinned_law_strategy,
             Some(crate::ir::ProofStrategy::FloorDivWindow { .. })
         );
+        // The marker carries a THIRD field: the `fn.law` identity label
+        // (the SAME `format!("{fn}.{law}")` the when-universal lane keys on,
+        // `universal_lane::mod.rs`). The file-level audit reads it to key the
+        // per-law proof manifest on the stable, edit-robust identity instead
+        // of reverse-parsing the (mangled, `_law_`-ambiguous) theorem name.
+        // Additive: the marker parser consumes only the first two fields, so
+        // an older reader ignores it.
         lines.push(format!(
-            "{}{} {}",
+            "{}{} {} {}.{}",
             super::LAW_CLASS_MARKER_PREFIX,
             theorem_base,
             if theorem_parts.iter().any(|part| part.bounded_domain) && !floor_window_universal {
                 super::LAW_CLASS_BOUNDED_DOMAIN
             } else {
                 super::LAW_CLASS_UNIVERSAL
-            }
+            },
+            vb.fn_name,
+            law.name,
         ));
         // Oracle v1: the auto-proof matchers compare law.lhs / law.rhs
         // ASTs. For effectful laws the theorem statement has been

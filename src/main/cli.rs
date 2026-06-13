@@ -609,6 +609,35 @@ pub(super) enum Commands {
         /// failure.
         #[arg(long, requires = "check")]
         check_json: bool,
+        /// THE RATCHET. Compare the freshly recomputed per-law proof
+        /// manifest against this committed baseline and exit non-zero on
+        /// any regression: a previously-proven law that is removed, demoted
+        /// in tier (universal > bounded > sampled > failed), whose recorded
+        /// kernel-axiom set grew (any axiom present now but not in that law's
+        /// own baseline record — whitelisted or not), or whose backend
+        /// changed. New laws are allowed. Implies a verifier run; Lean-only
+        /// (Dafny emits no per-law identity). Exit 0 clean, 1 on regression,
+        /// 2 on harness failure (unreadable/corrupt baseline, duplicate law
+        /// identity, verifier absent).
+        ///
+        /// The baseline MUST be a committed, code-reviewed file in the repo.
+        /// CI runs `--gate <committed-baseline>`; it must NEVER run
+        /// `--write-baseline` (that would auto-ack any regression). Updating
+        /// the baseline is a deliberate human act whose effect is visible in
+        /// the git diff of the baseline file.
+        #[arg(long, conflicts_with = "write_baseline")]
+        gate: Option<String>,
+        /// Regenerate the `--gate` baseline at this path from the current
+        /// proof and exit. The ack path for a legitimate removal or
+        /// weakening: the change lands as a reviewable git diff. Implies a
+        /// verifier run; Lean-only.
+        ///
+        /// This is a HUMAN ACK path, not a CI step. The regenerated baseline
+        /// must be committed and code-reviewed; CI must NOT auto-regenerate it
+        /// (that would silently accept a weakening). A future CI job should run
+        /// `--gate` against the committed baseline only.
+        #[arg(long)]
+        write_baseline: Option<String>,
         /// Run the (expensive) lemma-discovery pass and print its report
         /// instead of generating a proof project. Discovery enumerates the
         /// auxiliary-lemma candidates each `verify ... law` needs over its

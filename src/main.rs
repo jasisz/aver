@@ -384,6 +384,8 @@ fn main() {
             error_budget,
             sorry_budget,
             check_json,
+            gate,
+            write_baseline,
             discover,
         } => {
             commands::cmd_proof(
@@ -397,6 +399,8 @@ fn main() {
                 *error_budget,
                 *sorry_budget,
                 *check_json,
+                gate.as_deref(),
+                write_baseline.as_deref(),
                 *discover,
             );
         }

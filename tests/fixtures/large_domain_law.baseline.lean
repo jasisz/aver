@@ -12,7 +12,7 @@ example : tripleSum 1 2 3 = 6 := by native_decide
 -- given a: Int = 0..7
 -- given b: Int = 0..7
 -- given c: Int = 0..7
--- aver:law-class tripleSum_law_mirror universal
+-- aver:law-class tripleSum_law_mirror universal tripleSum.mirror
 theorem tripleSum_law_mirror : ∀ (a : Int) (b : Int) (c : Int), tripleSum a b c = tripleSum c b a := by
   intro a b c
   simp only [tripleSum] <;> omega

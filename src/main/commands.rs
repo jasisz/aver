@@ -4934,6 +4934,8 @@ pub(super) fn cmd_proof(
     error_budget: Option<usize>,
     sorry_budget: Option<usize>,
     check_json: bool,
+    gate: Option<&str>,
+    write_baseline: Option<&str>,
     discover: bool,
 ) {
     let (mut ctx, module_root) = build_codegen_context(
@@ -5173,7 +5175,10 @@ pub(super) fn cmd_proof(
         }
     }
 
-    if check {
+    // `--gate` / `--write-baseline` imply a verifier run (they recompute the
+    // current manifest), so run the check harness when EITHER is set even
+    // without an explicit `--check`.
+    if check || gate.is_some() || write_baseline.is_some() {
         // For Dafny, hand the harness the real entry module filename so it
         // verifies the file that carries the verify-law lemmas (not an
         // arbitrary dependency module).
@@ -5184,6 +5189,11 @@ pub(super) fn cmd_proof(
             )),
             super::cli::ProofBackend::Lean => None,
         };
+        // Source-level duplicate `fn.law` identities. Detected here (where the
+        // parsed items are in hand) and handed to the ratchet so it can fail
+        // CLOSED rather than collapse two distinct law blocks into one manifest
+        // entry — see `duplicate_law_identities`.
+        let duplicate_laws = duplicate_law_identities(&ctx.items);
         run_proof_check(
             output_dir,
             backend,
@@ -5191,6 +5201,9 @@ pub(super) fn cmd_proof(
             sorry_budget,
             check_json,
             dafny_entry,
+            gate,
+            write_baseline,
+            &duplicate_laws,
         );
     }
 }
@@ -5540,6 +5553,7 @@ fn value_strings_are_literal_safe(value: &aver::value::Value) -> bool {
 /// With `--check-json`, prints a structured summary to stdout
 /// instead of streaming verifier output verbatim — same exit codes,
 /// for CI consumption.
+#[allow(clippy::too_many_arguments)]
 fn run_proof_check(
     output_dir: &str,
     backend: &super::cli::ProofBackend,
@@ -5547,6 +5561,23 @@ fn run_proof_check(
     sorry_budget: Option<usize>,
     check_json: bool,
     dafny_entry: Option<String>,
+    // The ratchet. `gate`: compare the freshly recomputed manifest against
+    // this committed baseline and FAIL on any regression (a baseline law that
+    // is MISSING, DEMOTED in tier, whose recorded axiom set grew — any axiom
+    // not already in that law's own baseline record, whitelisted or not — or
+    // whose backend changed). `write_baseline`: regenerate the baseline at
+    // this path (the human-ack path for a legitimate removal — the change
+    // becomes a reviewable git diff) and exit 0. The baseline is a committed,
+    // code-reviewed file; CI runs `--gate` against it, never
+    // `--write-baseline`. Both are Lean-only; on Dafny they are no-ops (no
+    // per-law manifest is produced — see `run_proof_check`'s manifest block).
+    gate: Option<&str>,
+    write_baseline: Option<&str>,
+    // Source-level `fn.law` identities declared by more than one `verify ...
+    // law` block (see `duplicate_law_identities`). The ratchet fails CLOSED
+    // (exit 2) on any duplicate before it can collapse two distinct law blocks
+    // into one manifest entry.
+    duplicate_laws: &[String],
 ) {
     use std::process::Command;
 
@@ -5762,9 +5793,24 @@ fn run_proof_check(
     // after every counted metric above is already computed, and
     // nothing it does (including hard lane build failures) can touch
     // `sorries`/`passed`/`universal` or the process exit decision.
-    let when_universal: Option<(usize, usize)> = match backend {
+    let when_universal: Option<(usize, usize, Vec<ManifestLaw>)> = match backend {
         super::cli::ProofBackend::Lean => Some(run_when_universal_lane(output_dir)),
         super::cli::ProofBackend::Dafny => None,
+    };
+
+    // Proof manifest (Lean only): compose the file-level audit's per-law
+    // records with the when-universal lane records (strongest tier wins per
+    // `fn.law` identity) into one byte-reproducible per-law table, written to
+    // `<out>/proof_manifest.json`. This is the artifact `--gate` diffs against
+    // a committed baseline; it reuses the SAME class markers + `#print axioms`
+    // verdicts already computed above (no extra lake invocation).
+    let manifest: Option<ProofManifest> = match (&lean_law_audit, &when_universal) {
+        (Some(audit), Some((_, _, lane_laws))) => {
+            let m = build_proof_manifest(&audit.laws, lane_laws);
+            write_proof_manifest(output_dir, &m);
+            Some(m)
+        }
+        _ => None,
     };
 
     if check_json {
@@ -5794,11 +5840,11 @@ fn run_proof_check(
             obj.insert("universal_laws".into(), audit.universal_laws.into());
             obj.insert("bounded_laws".into(), audit.bounded_laws.into());
         }
-        if let Some((credited, _)) = when_universal {
+        if let Some((credited, _, _)) = &when_universal {
             // ADDITIVE field: count of `when`-laws whose quarantine-lane
             // twin earned per-declaration universal credit. The file-level
             // `universal` flag above keeps its counted-build semantics.
-            obj.insert("when_universal".into(), credited.into());
+            obj.insert("when_universal".into(), (*credited).into());
         }
         if matches!(backend, super::cli::ProofBackend::Lean) {
             // Renamed from the short-lived `fuel_exhausted` (0.25.0-unreleased
@@ -5809,6 +5855,12 @@ fn run_proof_check(
             // the check FAILED with the compiler-model bug above regardless
             // of budgets.
             obj.insert("model_panicked".into(), (model_panic_hits > 0).into());
+        }
+        if manifest.is_some() {
+            // ADDITIVE path pointer: the per-law table lives in its own file
+            // (the gate's diff target), NOT inline in this summary line, so
+            // existing substring consumers of check-json are untouched.
+            obj.insert("manifest".into(), PROOF_MANIFEST_FILE.into());
         }
         obj.insert("budget".into(), budget.into());
         obj.insert("passed".into(), passed.into());
@@ -5822,8 +5874,8 @@ fn run_proof_check(
         // diagnostics; we already parsed counts above.
         print!("{}", stdout);
         eprint!("{}", stderr);
-        if let Some((credited, total)) = when_universal
-            && total > 0
+        if let Some((credited, total, _)) = &when_universal
+            && *total > 0
         {
             println!(
                 "{}",
@@ -5868,9 +5920,375 @@ fn run_proof_check(
         }
     }
 
+    // The ratchet: `--write-baseline` and `--gate`. Both need the per-law
+    // manifest, which only the Lean lane produces (Dafny has no per-law
+    // identity — scout Risk 3). Fold the gate verdict into ONE final exit so
+    // `--check` and `--gate` compose without a double-exit.
+    if write_baseline.is_some() || gate.is_some() {
+        // Fail CLOSED on duplicate source law identity. Two distinct `verify
+        // ... law` blocks sharing one `fn.law` key would collapse to a single
+        // manifest entry (strongest-tier-wins), hiding a weakened duplicate or
+        // reading a colliding rename as a benign merge — exactly the silent
+        // weakening the ratchet exists to catch. A collision is a harness error
+        // (exit 2), never a skip; the human must rename one of the laws.
+        if !duplicate_laws.is_empty() {
+            eprintln!(
+                "{}",
+                format!(
+                    "--gate: duplicate law identity {{{}}} — two `verify ... law` blocks share \
+                     one `fn.law` name. Rename one so each proven law has a distinct identity \
+                     in the manifest.",
+                    duplicate_laws.join(", ")
+                )
+                .red()
+            );
+            std::process::exit(2);
+        }
+        let Some(manifest) = &manifest else {
+            eprintln!(
+                "{}",
+                "--gate: no per-law manifest available (gate is Lean-only; Dafny emits no \
+                 per-law identity). Use --backend lean."
+                    .red()
+            );
+            std::process::exit(2);
+        };
+        // Ack path first: regenerate the baseline and exit 0. A
+        // legitimate removal/weakening becomes a reviewable git diff.
+        if let Some(path) = write_baseline {
+            match std::fs::write(path, proof_manifest_to_json(manifest)) {
+                Ok(()) => {
+                    println!(
+                        "{}",
+                        format!(
+                            "--write-baseline: wrote {} law(s) to {path}",
+                            manifest.laws.len()
+                        )
+                        .green()
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!("--write-baseline: write {path} failed: {e}").red()
+                    );
+                    std::process::exit(2);
+                }
+            }
+            // `--write-baseline` always exits 0 after writing — it is the ack,
+            // not a check. Honor any pre-existing `--check` failure first so a
+            // broken proof can't be silently baselined.
+            std::process::exit(if passed { 0 } else { 1 });
+        }
+        if let Some(baseline_path) = gate {
+            let raw = match std::fs::read_to_string(baseline_path) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!("--gate: cannot read baseline {baseline_path}: {e}").red()
+                    );
+                    std::process::exit(2);
+                }
+            };
+            let baseline = match parse_proof_manifest(&raw) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "--gate: baseline {baseline_path} is not a valid proof manifest: {e}"
+                        )
+                        .red()
+                    );
+                    std::process::exit(2);
+                }
+            };
+            let report = gate_manifest(&baseline, manifest);
+            for line in &report.lines {
+                if report.regressions == 0 {
+                    println!("{}", line.blue());
+                } else {
+                    eprintln!("{}", line.red());
+                }
+            }
+            if report.regressions > 0 {
+                std::process::exit(1);
+            }
+            // Gate clean — but a within-gate proof can still have failed the
+            // count `--check` (e.g. a NEW law sorry'd). Honor that.
+            std::process::exit(if passed { 0 } else { 1 });
+        }
+    }
+
     if !passed {
         std::process::exit(1);
     }
+}
+
+/// Manifest filename written to the proof output dir by `run_proof_check`.
+/// The committed baseline a `--gate` run diffs against is a copy of this
+/// file at a known path.
+const PROOF_MANIFEST_FILE: &str = "proof_manifest.json";
+
+/// Collect `fn.law` identities that are declared by MORE THAN ONE source
+/// `verify ... law` block. The manifest keys every law on this `fn.law`
+/// identity; two distinct source law blocks sharing one identity would
+/// otherwise collapse to a single manifest entry (strongest-tier-wins), which
+/// silently hides a weakened duplicate or reads a colliding rename as a benign
+/// merge. The ratchet must fail CLOSED on that ambiguity, so we detect it at
+/// the SOURCE level (two distinct law blocks) — NOT at the manifest merge,
+/// where the file-level audit and the when-universal lane legitimately emit one
+/// record EACH for the SAME law and are meant to merge. Returns the colliding
+/// identities sorted, so the harness-error message is deterministic.
+fn duplicate_law_identities(items: &[TopLevel]) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut dups: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for item in items {
+        if let TopLevel::Verify(vb) = item
+            && let VerifyKind::Law(law) = &vb.kind
+        {
+            let identity = format!("{}.{}", vb.fn_name, law.name);
+            if !seen.insert(identity.clone()) {
+                dups.insert(identity);
+            }
+        }
+    }
+    dups.into_iter().collect()
+}
+
+/// The whole per-law proof manifest: a backend tag and the per-law records,
+/// sorted by `fn.law` identity. Serialized deterministically (sorted keys,
+/// sorted axiom arrays) so the committed baseline is a clean, byte-reproducible
+/// git artifact.
+#[derive(Debug)]
+struct ProofManifest {
+    backend: String,
+    laws: Vec<ManifestLaw>,
+}
+
+/// Compose the file-level audit records with the when-universal lane records
+/// into one per-law manifest. Keyed on the `fn.law` identity; on a collision
+/// (a `when`-law that is BOTH file-level `bounded` and lane `universal`) the
+/// STRONGER tier wins, so a credited conditional law is recorded `universal`.
+/// Sorted by identity for byte-reproducibility.
+fn build_proof_manifest(file_laws: &[ManifestLaw], lane_laws: &[ManifestLaw]) -> ProofManifest {
+    let mut by_label: std::collections::BTreeMap<String, ManifestLaw> =
+        std::collections::BTreeMap::new();
+    for record in file_laws.iter().chain(lane_laws.iter()) {
+        manifest_keep_stronger(&mut by_label, record.clone());
+    }
+    ProofManifest {
+        backend: "lean".to_string(),
+        laws: by_label.into_values().collect(),
+    }
+}
+
+/// Serialize the manifest deterministically. `serde_json::Map` is a `BTreeMap`
+/// (no `preserve_order` feature) so object keys are already alphabetical;
+/// `laws` is sorted by identity HERE (defensively — `build_proof_manifest`
+/// already sorts, but a manifest built any other way still serializes
+/// byte-reproducibly) and each `axioms` array is sorted+deduped at
+/// construction, so the output is byte-reproducible across runs.
+fn proof_manifest_to_json(manifest: &ProofManifest) -> String {
+    let mut sorted: Vec<&ManifestLaw> = manifest.laws.iter().collect();
+    sorted.sort_by(|a, b| a.law.cmp(&b.law));
+    let laws: Vec<serde_json::Value> = sorted
+        .iter()
+        .map(|l| {
+            serde_json::json!({
+                "law": l.law,
+                "backend": l.backend,
+                "tier": l.tier.as_str(),
+                "axioms": l.axioms,
+                "theorem": l.theorem,
+            })
+        })
+        .collect();
+    serde_json::to_string_pretty(&serde_json::json!({
+        "version": 1,
+        "backend": manifest.backend,
+        "laws": laws,
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Write the manifest to `<dir>/proof_manifest.json`.
+fn write_proof_manifest(dir: &str, manifest: &ProofManifest) {
+    let path = std::path::Path::new(dir).join(PROOF_MANIFEST_FILE);
+    let _ = std::fs::write(path, proof_manifest_to_json(manifest));
+}
+
+/// Parse a committed baseline manifest. FAILS CLOSED: a malformed per-law
+/// record (missing `law`, missing/unknown `tier`) is a harness error
+/// (`Err`), NOT a silently dropped record. A corrupt or truncated baseline
+/// must never quietly un-ratchet the law it elided — the gate iterates the
+/// baseline law set, so a skipped record would silently stop enforcing that
+/// law. The informational `theorem` field staying absent is still tolerated.
+/// `Err(msg)` → the caller exits 2 (harness failure); `Ok` only on a fully
+/// well-formed manifest.
+fn parse_proof_manifest(raw: &str) -> Result<ProofManifest, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("not valid JSON: {e}"))?;
+    let arr = value["laws"]
+        .as_array()
+        .ok_or_else(|| "top-level `laws` is not an array".to_string())?;
+    let mut laws = Vec::new();
+    for (i, item) in arr.iter().enumerate() {
+        let law = item["law"]
+            .as_str()
+            .ok_or_else(|| format!("law record #{i} is missing a string `law` field"))?;
+        let tier_s = item["tier"]
+            .as_str()
+            .ok_or_else(|| format!("law `{law}` is missing a string `tier` field"))?;
+        let tier = LawTier::from_str(tier_s)
+            .ok_or_else(|| format!("law `{law}` has unknown tier `{tier_s}`"))?;
+        let axioms: Vec<String> = item["axioms"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        laws.push(ManifestLaw {
+            law: law.to_string(),
+            backend: item["backend"].as_str().unwrap_or("lean").to_string(),
+            tier,
+            axioms,
+            theorem: item["theorem"].as_str().unwrap_or("").to_string(),
+        });
+    }
+    Ok(ProofManifest {
+        backend: value["backend"].as_str().unwrap_or("lean").to_string(),
+        laws,
+    })
+}
+
+/// Result of comparing a current manifest against a committed baseline.
+struct GateReport {
+    /// Number of regressions found (missing / demoted / axiom-grew).
+    regressions: usize,
+    /// Human-readable report lines (one per regression, named, plus a
+    /// summary). On a clean gate the lines are an INFO summary only.
+    lines: Vec<String>,
+}
+
+/// THE RATCHET comparator (pure — unit-tested on recorded fixtures, no lake).
+///
+/// Iterate the BASELINE law set (Risk 5: keying on the baseline is the core
+/// invariant — a law that vanished from `current` MUST still be inspected, so
+/// a deletion is caught). For each baseline law, FAIL when one of:
+///
+/// - MISSING: absent from `current`.
+/// - DEMOTED: `current` tier rank is below the baseline tier rank (the order
+///   is universal, then bounded, then sampled, then failed). This is the
+///   subtle case the ratchet exists for — a silent slide from a universal to a
+///   bounded proof.
+/// - AXIOM SET GREW: `current.axioms` is NOT a subset of `baseline.axioms` for
+///   that law. EVERY axiom present now but absent from the law's OWN baseline
+///   record is a regression — whitelisted or not. The whitelist governs
+///   whether a law is *credited* universal in the first place (that decision
+///   already happened upstream in the audit / lane); the ratchet here compares
+///   each law against ITS OWN recorded axiom set, so a law that moves from
+///   `propext`-only to ALSO leaning on `Classical.choice` (or `Quot.sound`,
+///   `Lean.ofReduceBool`, `sorryAx`, …) is flagged even at an unchanged tier.
+///   A SHRINKING axiom set (a strict subset) is fine — that is strengthening.
+/// - BACKEND CHANGED: a baseline `lean` law that now records a different
+///   backend is a regression (the proof no longer holds under the backend it
+///   was certified by).
+///
+/// New laws in `current` but not `baseline` are OK (additions allowed),
+/// reported as INFO.
+fn gate_manifest(baseline: &ProofManifest, current: &ProofManifest) -> GateReport {
+    use std::collections::BTreeMap;
+    let current_by: BTreeMap<&str, &ManifestLaw> =
+        current.laws.iter().map(|l| (l.law.as_str(), l)).collect();
+    let baseline_by: BTreeMap<&str, &ManifestLaw> =
+        baseline.laws.iter().map(|l| (l.law.as_str(), l)).collect();
+
+    let mut lines = Vec::new();
+    let mut regressions = 0usize;
+
+    for bl in &baseline.laws {
+        match current_by.get(bl.law.as_str()) {
+            None => {
+                regressions += 1;
+                lines.push(format!(
+                    "--gate: REGRESSION {}: MISSING (was {})",
+                    bl.law,
+                    bl.tier.as_str()
+                ));
+            }
+            Some(cur) => {
+                if cur.tier.rank() < bl.tier.rank() {
+                    regressions += 1;
+                    lines.push(format!(
+                        "--gate: REGRESSION {}: tier {} -> {}",
+                        bl.law,
+                        bl.tier.as_str(),
+                        cur.tier.as_str()
+                    ));
+                }
+                // Backend must match: a law certified under one backend that
+                // now only records another backend is a regression (the
+                // certificate the baseline trusts is gone). Future-proofs the
+                // manifest for a second backend (Dafny) without re-opening the
+                // hole that a stored-but-unchecked `backend` field leaves.
+                if cur.backend != bl.backend {
+                    regressions += 1;
+                    lines.push(format!(
+                        "--gate: REGRESSION {}: backend {} -> {}",
+                        bl.law, bl.backend, cur.backend
+                    ));
+                }
+                // Axiom-set GROWTH = current axioms NOT a subset of the law's
+                // OWN baseline axioms. ANY axiom present now but not in the
+                // baseline record is a new trust dependency for THIS law —
+                // whitelisted or not. A new `Classical.choice`/`Quot.sound`/
+                // `propext` at an unchanged tier is still a regression here; the
+                // whitelist only decided whether the law was credited universal
+                // upstream, it does NOT excuse a law from growing its own
+                // recorded axiom set.
+                let grown: Vec<&String> = cur
+                    .axioms
+                    .iter()
+                    .filter(|a| !bl.axioms.contains(*a))
+                    .collect();
+                if !grown.is_empty() {
+                    regressions += 1;
+                    lines.push(format!(
+                        "--gate: REGRESSION {}: axioms grew {{{}}} -> {{{}}}",
+                        bl.law,
+                        bl.axioms.join(","),
+                        cur.axioms.join(",")
+                    ));
+                }
+            }
+        }
+    }
+
+    let new_laws: Vec<&str> = current
+        .laws
+        .iter()
+        .filter(|l| !baseline_by.contains_key(l.law.as_str()))
+        .map(|l| l.law.as_str())
+        .collect();
+
+    let new_desc = if new_laws.is_empty() {
+        "<none>".to_string()
+    } else {
+        new_laws.join(", ")
+    };
+    lines.push(format!(
+        "--gate: {} regression(s) vs baseline ({} baseline laws, {} current). New laws OK: {}",
+        regressions,
+        baseline.laws.len(),
+        current.laws.len(),
+        new_desc
+    ));
+
+    GateReport { regressions, lines }
 }
 
 /// Parse `Dafny program verifier finished with N verified, M errors`
@@ -5961,9 +6379,77 @@ fn count_lean_sorries(s: &str) -> usize {
         .count()
 }
 
+/// Tier of a single proven law, strongest → weakest. The proof manifest
+/// records this per law and the gate (`aver proof --gate`) FAILS when a
+/// baseline law's tier drops in this order (universal > bounded > sampled >
+/// failed). The numeric ranks are the comparison order; `Missing` (rank 0)
+/// is not a marker the emitter writes — it is the synthetic verdict the gate
+/// assigns to a baseline law that has vanished from the current manifest.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LawTier {
+    Universal,
+    Bounded,
+    Sampled,
+    Failed,
+    Missing,
+}
+
+impl LawTier {
+    /// Comparison rank: higher is stronger. A drop in rank is a regression.
+    fn rank(self) -> u8 {
+        match self {
+            LawTier::Universal => 4,
+            LawTier::Bounded => 3,
+            LawTier::Sampled => 2,
+            LawTier::Failed => 1,
+            LawTier::Missing => 0,
+        }
+    }
+
+    /// Stable manifest spelling. `Missing` has no on-disk spelling (the gate
+    /// never writes it), but it round-trips for symmetry.
+    fn as_str(self) -> &'static str {
+        match self {
+            LawTier::Universal => "universal",
+            LawTier::Bounded => "bounded",
+            LawTier::Sampled => "sampled",
+            LawTier::Failed => "failed",
+            LawTier::Missing => "missing",
+        }
+    }
+
+    fn from_str(s: &str) -> Option<LawTier> {
+        match s {
+            "universal" => Some(LawTier::Universal),
+            "bounded" => Some(LawTier::Bounded),
+            "sampled" => Some(LawTier::Sampled),
+            "failed" => Some(LawTier::Failed),
+            "missing" => Some(LawTier::Missing),
+            _ => None,
+        }
+    }
+}
+
+/// One per-law record in the proof manifest: stable `fn.law` identity, the
+/// backend that produced it, its verdict tier, and the sorted/deduped axiom
+/// set its `#print axioms` probe reported. `theorem` is informational (the
+/// emitted theorem name) and is NOT the identity.
+#[derive(Clone, Debug)]
+struct ManifestLaw {
+    /// `fn.law` identity (the same key the when-universal lane emits).
+    law: String,
+    backend: String,
+    tier: LawTier,
+    /// Sorted, deduped kernel axioms (empty = `does not depend on any axioms`).
+    axioms: Vec<String>,
+    /// Emitted theorem name — informational, never compared.
+    theorem: String,
+}
+
 /// Result of the Lean law-theorem audit (`lean_universal_audit`): the
 /// file-level `universal` verdict plus the two additive law-count fields
-/// surfaced in `--check-json`.
+/// surfaced in `--check-json`, and the per-law records the proof manifest
+/// is built from.
 struct LeanLawAudit {
     /// EXACTLY the old `lean_universal_proof` bool: every law theorem in
     /// the crediting set is kernel-clean, at least one is explicitly
@@ -5975,6 +6461,10 @@ struct LeanLawAudit {
     /// Law theorems classed `bounded-domain` by the emitter's statement-
     /// class marker.
     bounded_laws: usize,
+    /// Per-law manifest records (file-level audit half), keyed on the
+    /// `fn.law` identity read from the class marker. Composed with the
+    /// when-universal lane detail in `run_proof_check` to form the manifest.
+    laws: Vec<ManifestLaw>,
 }
 
 impl LeanLawAudit {
@@ -5985,6 +6475,7 @@ impl LeanLawAudit {
         universal: false,
         universal_laws: 0,
         bounded_laws: 0,
+        laws: Vec::new(),
     };
 }
 
@@ -6067,6 +6558,10 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     // plus the emitter's per-theorem statement-class markers.
     let mut law_thms: Vec<String> = Vec::new();
     let mut classes: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // `theorem -> fn.law` identity, read off the marker's third field. The
+    // label is the SAME identity the when-universal lane emits, so the proof
+    // manifest keys file-level and lane laws on one stable key.
+    let mut labels: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -6092,6 +6587,11 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                         let mut parts = rest.split_whitespace();
                         if let (Some(thm), Some(class)) = (parts.next(), parts.next()) {
                             classes.insert(thm.to_string(), class.to_string());
+                            // Third field (optional on older emissions): the
+                            // `fn.law` identity label for the manifest.
+                            if let Some(label) = parts.next() {
+                                labels.insert(thm.to_string(), label.to_string());
+                            }
                         }
                         continue;
                     }
@@ -6119,20 +6619,52 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
     // emitter decided at statement-construction time that the theorem
     // only states the law on the finite sample domain) — it needs no
     // kernel certificate, so it survives every downstream gate.
-    let bounded_laws = law_thms
+    let bounded_law_keys = law_thms
         .iter()
         .filter_map(|t| {
             let class = law_class_for_theorem(t, &classes)?;
             (class == lean_codegen::LAW_CLASS_BOUNDED_DOMAIN)
                 .then(|| law_dedup_key(t, &classes).to_string())
         })
-        .collect::<std::collections::HashSet<_>>()
-        .len();
+        .collect::<std::collections::HashSet<_>>();
+    let bounded_laws = bounded_law_keys.len();
+    // Per-law manifest records for the `bounded-domain`-classed laws: deduped
+    // by `fn.law` identity, tier `bounded`. These carry no kernel certificate
+    // (they're native_decide'd over the finite sample domain), so their axiom
+    // set is empty in the manifest. Computed BEFORE the `retain` below drops
+    // bounded theorems from `law_thms`, and reused (cloned) on every return
+    // path — the bounded set is the same regardless of how the universal half
+    // resolves.
+    let bounded_records: Vec<ManifestLaw> = {
+        let mut by_label: std::collections::BTreeMap<String, ManifestLaw> =
+            std::collections::BTreeMap::new();
+        for thm in &law_thms {
+            if !matches!(
+                law_class_for_theorem(thm, &classes),
+                Some(lean_codegen::LAW_CLASS_BOUNDED_DOMAIN)
+            ) {
+                continue;
+            }
+            let key = law_dedup_key(thm, &classes);
+            let label = manifest_label_for(key, &labels);
+            by_label
+                .entry(label.clone())
+                .or_insert_with(|| ManifestLaw {
+                    law: label,
+                    backend: "lean".to_string(),
+                    tier: LawTier::Bounded,
+                    axioms: Vec::new(),
+                    theorem: thm.clone(),
+                });
+        }
+        by_label.into_values().collect()
+    };
     if sorries > 0 {
         return LeanLawAudit {
             universal: false,
             universal_laws: 0,
             bounded_laws,
+            laws: bounded_records,
         };
     }
     // Consume the statement-class channel (see the doc comment above):
@@ -6157,6 +6689,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             universal: false,
             universal_laws: 0,
             bounded_laws,
+            laws: bounded_records,
         };
     }
     // Throwaway checker: print each main law theorem's axiom dependency
@@ -6178,6 +6711,7 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             universal: false,
             universal_laws: 0,
             bounded_laws,
+            laws: bounded_records,
         };
     }
     let out = Command::new("lake")
@@ -6224,17 +6758,79 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
             } else {
                 0
             };
+            // Per-law manifest records for the universal-classed laws, from
+            // the SAME probe output: tier `universal` iff the theorem's own
+            // `#print axioms` line stays within the kernel whitelist (the
+            // exact `lane_credit_from_probe` decision `universal_laws` counts),
+            // else `failed`. Axioms are the parsed, sorted set the gate diffs.
+            // Deduped by `fn.law` identity so chunked `_part<N>` theorems
+            // collapse onto one law (strongest-wins if they disagree).
+            let mut universal_records: std::collections::BTreeMap<String, ManifestLaw> =
+                std::collections::BTreeMap::new();
+            for thm in &universal_classed {
+                let key = law_dedup_key(thm, &classes);
+                let label = manifest_label_for(key, &labels);
+                let credited = o.status.success() && lane_credit_from_probe(&combined, thm);
+                let tier = if credited {
+                    LawTier::Universal
+                } else {
+                    LawTier::Failed
+                };
+                let axioms = axioms_for_theorem(&combined, thm).unwrap_or_default();
+                let record = ManifestLaw {
+                    law: label.clone(),
+                    backend: "lean".to_string(),
+                    tier,
+                    axioms,
+                    theorem: thm.clone(),
+                };
+                manifest_keep_stronger(&mut universal_records, record);
+            }
+            let mut laws = bounded_records;
+            laws.extend(universal_records.into_values());
+            laws.sort_by(|a, b| a.law.cmp(&b.law));
             LeanLawAudit {
                 universal,
                 universal_laws,
                 bounded_laws,
+                laws,
             }
         }
         Err(_) => LeanLawAudit {
             universal: false,
             universal_laws: 0,
             bounded_laws,
+            laws: bounded_records,
         },
+    }
+}
+
+/// Resolve the `fn.law` manifest identity for a law theorem. Prefers the
+/// label recorded in the class marker's third field (the SAME `fn.law` the
+/// when-universal lane emits); falls back to the theorem name itself only on
+/// an older emission that didn't carry the label (so the law still appears in
+/// the manifest under a stable-per-emission key rather than vanishing).
+fn manifest_label_for(theorem: &str, labels: &std::collections::HashMap<String, String>) -> String {
+    labels
+        .get(theorem)
+        .cloned()
+        .unwrap_or_else(|| theorem.to_string())
+}
+
+/// Insert `record` into `by_label`, keeping the STRONGER tier on a collision
+/// (two theorems mapping to one `fn.law` identity — e.g. chunked `_part<N>`
+/// pieces). Axioms follow the kept tier's record. A demotion can only be
+/// recorded by the gate, never hidden by a sibling chunk, so strongest-wins is
+/// the right merge for the per-law manifest.
+fn manifest_keep_stronger(
+    by_label: &mut std::collections::BTreeMap<String, ManifestLaw>,
+    record: ManifestLaw,
+) {
+    match by_label.get(&record.law) {
+        Some(existing) if existing.tier.rank() >= record.tier.rank() => {}
+        _ => {
+            by_label.insert(record.law.clone(), record);
+        }
     }
 }
 
@@ -6254,22 +6850,28 @@ const WHEN_UNIVERSAL_DETAIL_FILE: &str = "when_universal_laws.json";
 /// the axiom set to stay within {propext, Classical.choice,
 /// Quot.sound} — NEVER an invocation exit code alone.
 ///
-/// Returns `(credited, total)` and writes the per-law detail artifact
-/// (`when_universal_laws.json`). No lane index → `(0, 0)` and any
-/// stale detail artifact is removed. Counted metrics are computed
-/// BEFORE this runs and are mathematically out of its reach.
-fn run_when_universal_lane(dir: &str) -> (usize, usize) {
+/// Returns `(credited, total, manifest_laws)` and writes the per-law
+/// detail artifact (`when_universal_laws.json`). No lane index →
+/// `(0, 0, vec![])` and any stale detail artifact is removed. Counted
+/// metrics are computed BEFORE this runs and are mathematically out of
+/// its reach. The returned `manifest_laws` carry the per-law `fn.law`
+/// identity + tier (universal when credited, else failed) + parsed axiom
+/// set; `run_proof_check` merges them with the file-level audit records
+/// (strongest-wins) to form the proof manifest, so a credited `when`-law
+/// is recorded `universal` even though the file-level audit classed it
+/// `bounded`.
+fn run_when_universal_lane(dir: &str) -> (usize, usize, Vec<ManifestLaw>) {
     use std::process::Command;
     let manifest_path =
         std::path::Path::new(dir).join(lean_codegen::universal_lane::LANE_MANIFEST_FILE);
     let detail_path = std::path::Path::new(dir).join(WHEN_UNIVERSAL_DETAIL_FILE);
     let Ok(raw) = std::fs::read_to_string(&manifest_path) else {
         let _ = std::fs::remove_file(&detail_path);
-        return (0, 0);
+        return (0, 0, Vec::new());
     };
     let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&raw) else {
         let _ = std::fs::remove_file(&detail_path);
-        return (0, 0);
+        return (0, 0, Vec::new());
     };
     let laws = manifest["laws"].as_array().cloned().unwrap_or_default();
     // Laws the collision guard honestly omitted: surfaced verbatim into
@@ -6278,6 +6880,7 @@ fn run_when_universal_lane(dir: &str) -> (usize, usize) {
     // strip a neighbor's credit instead).
     let omitted = manifest["omitted"].as_array().cloned().unwrap_or_default();
     let mut details: Vec<serde_json::Value> = Vec::new();
+    let mut manifest_laws: Vec<ManifestLaw> = Vec::new();
     let mut credited = 0usize;
     let mut total = 0usize;
     for law in &laws {
@@ -6302,6 +6905,24 @@ fn run_when_universal_lane(dir: &str) -> (usize, usize) {
         if universal {
             credited += 1;
         }
+        // Manifest record for this lane law. A credited universal twin is
+        // tier `universal` with its parsed axiom set; an un-credited one is
+        // `failed` HERE — the merge in `run_proof_check` lets the file-level
+        // `bounded` classification (which this law also has) win, so the law
+        // is recorded at its true strongest tier `bounded`, never lost.
+        let tier = if universal {
+            LawTier::Universal
+        } else {
+            LawTier::Failed
+        };
+        let axioms = axioms_for_theorem(&evidence, theorem).unwrap_or_default();
+        manifest_laws.push(ManifestLaw {
+            law: label.to_string(),
+            backend: "lean".to_string(),
+            tier,
+            axioms,
+            theorem: theorem.to_string(),
+        });
         details.push(serde_json::json!({
             "law": label,
             "theorem": theorem,
@@ -6319,7 +6940,7 @@ fn run_when_universal_lane(dir: &str) -> (usize, usize) {
         }))
         .unwrap_or_else(|_| "{}".to_string()),
     );
-    (credited, total)
+    (credited, total, manifest_laws)
 }
 
 /// Per-declaration crediting probe for one lane law: `import
@@ -6388,6 +7009,41 @@ fn lane_credit_from_probe(output: &str, theorem: &str) -> bool {
         }
     }
     false
+}
+
+/// Parse the SORTED, DEDUPED axiom set a theorem depends on out of a
+/// `#print axioms` probe output. `Some(vec![])` = the declaration is present
+/// and `does not depend on any axioms`; `Some([a, b, …])` = it depends on the
+/// listed axioms; `None` = no result line for the theorem (missing / error).
+/// The manifest records this set per law so the gate can flag axiom-set GROWTH
+/// (a proof that newly leans on `Lean.ofReduceBool` / `sorryAx` / any axiom
+/// outside the recorded baseline set).
+fn axioms_for_theorem(output: &str, theorem: &str) -> Option<Vec<String>> {
+    let needle = format!("'{theorem}'");
+    for line in output.lines() {
+        if !line.contains(&needle) {
+            continue;
+        }
+        if line.contains("does not depend on any axioms") {
+            return Some(Vec::new());
+        }
+        if let Some(idx) = line.find("depends on axioms:") {
+            let list = line[idx + "depends on axioms:".len()..]
+                .trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']');
+            let mut axioms: Vec<String> = list
+                .split(',')
+                .map(str::trim)
+                .filter(|a| !a.is_empty())
+                .map(str::to_string)
+                .collect();
+            axioms.sort();
+            axioms.dedup();
+            return Some(axioms);
+        }
+    }
+    None
 }
 
 /// `true` iff every `#print axioms` result line in `output` reports only the
@@ -6926,6 +7582,401 @@ mod tests {
         assert!(super::lean_axiom_lines_whitelisted(none));
         assert!(!super::lean_axiom_lines_whitelisted(foreign));
         assert!(!super::lean_axiom_lines_whitelisted(native));
+    }
+
+    // ---- THE RATCHET: pure comparator + parser, fixture-driven (no lake) ----
+
+    fn law(name: &str, tier: super::LawTier, axioms: &[&str]) -> super::ManifestLaw {
+        super::ManifestLaw {
+            law: name.to_string(),
+            backend: "lean".to_string(),
+            tier,
+            axioms: axioms.iter().map(|a| a.to_string()).collect(),
+            theorem: format!("{}_thm", name.replace('.', "_")),
+        }
+    }
+
+    fn manifest(laws: Vec<super::ManifestLaw>) -> super::ProofManifest {
+        super::ProofManifest {
+            backend: "lean".to_string(),
+            laws,
+        }
+    }
+
+    #[test]
+    fn law_tier_rank_strict_order() {
+        use super::LawTier::*;
+        // The demote detector depends on this strict order; pin it.
+        assert!(Universal.rank() > Bounded.rank());
+        assert!(Bounded.rank() > Sampled.rank());
+        assert!(Sampled.rank() > Failed.rank());
+        assert!(Failed.rank() > Missing.rank());
+    }
+
+    #[test]
+    fn gate_deleted_law_fails_named_missing() {
+        // The founding-claim falsifier #1: a proven law removed entirely. The
+        // gate iterates the BASELINE set, so a vanished law is still inspected
+        // and reported MISSING (scout Risk 5 — the core invariant).
+        let base = manifest(vec![
+            law(
+                "floorQ.cellFloorStable",
+                super::LawTier::Universal,
+                &["Quot.sound", "propext"],
+            ),
+            law(
+                "coarseFloorEq.sharedCellFloor",
+                super::LawTier::Universal,
+                &["Quot.sound", "propext"],
+            ),
+        ]);
+        let cur = manifest(vec![law(
+            "floorQ.cellFloorStable",
+            super::LawTier::Universal,
+            &["Quot.sound", "propext"],
+        )]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 1, "missing law must be a regression");
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|l| l.contains("coarseFloorEq.sharedCellFloor")
+                    && l.contains("MISSING")
+                    && l.contains("was universal")),
+            "must name the missing law with its old tier: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_demoted_law_fails_with_tiers() {
+        // The SUBTLE soundness case the ratchet exists for: a law silently
+        // slides universal -> bounded. The count-based gate stays green; the
+        // ratchet must FAIL and name the tier change.
+        let base = manifest(vec![law(
+            "floorQ.cellFloorStable",
+            super::LawTier::Universal,
+            &["Quot.sound", "propext"],
+        )]);
+        let cur = manifest(vec![law(
+            "floorQ.cellFloorStable",
+            super::LawTier::Bounded,
+            &[],
+        )]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 1, "demotion must be a regression");
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|l| l.contains("floorQ.cellFloorStable")
+                    && l.contains("tier universal -> bounded")),
+            "must name the demoted law with before/after tiers: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_axiom_set_growth_fails() {
+        // A proof that newly leans on an axiom outside the recorded set (e.g.
+        // native_decide's `Lean.ofReduceBool`) is a trust regression even if
+        // the tier is unchanged.
+        let base = manifest(vec![law(
+            "f.law",
+            super::LawTier::Universal,
+            &["propext", "Quot.sound"],
+        )]);
+        let cur = manifest(vec![law(
+            "f.law",
+            super::LawTier::Universal,
+            &["Lean.ofReduceBool", "propext", "Quot.sound"],
+        )]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 1, "axiom growth must be a regression");
+        assert!(
+            report.lines.iter().any(|l| l.contains("f.law")
+                && l.contains("axioms grew")
+                && l.contains("Lean.ofReduceBool")),
+            "must name the law and the grown axiom: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_axiom_set_shrink_is_clean() {
+        // Dropping an axiom (strengthening) is NOT a regression.
+        let base = manifest(vec![law(
+            "f.law",
+            super::LawTier::Universal,
+            &["propext", "Quot.sound"],
+        )]);
+        let cur = manifest(vec![law("f.law", super::LawTier::Universal, &["propext"])]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 0, "a smaller axiom set is clean");
+    }
+
+    #[test]
+    fn gate_clean_when_baseline_preserved() {
+        // Identical manifest -> green, no regressions.
+        let base = manifest(vec![
+            law("a.one", super::LawTier::Universal, &["propext"]),
+            law("b.two", super::LawTier::Bounded, &[]),
+        ]);
+        let report = super::gate_manifest(&base, &base);
+        assert_eq!(report.regressions, 0);
+    }
+
+    #[test]
+    fn gate_new_law_is_allowed_and_reported() {
+        // Additions are OK (reported INFO, not a regression).
+        let base = manifest(vec![law("a.one", super::LawTier::Universal, &["propext"])]);
+        let cur = manifest(vec![
+            law("a.one", super::LawTier::Universal, &["propext"]),
+            law("c.three", super::LawTier::Universal, &["propext"]),
+        ]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 0, "a new law is not a regression");
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|l| l.contains("New laws OK: c.three")),
+            "new law must be reported as INFO: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_promotion_with_no_new_axioms_is_clean() {
+        // A pure tier promotion (bounded -> universal) that introduces NO new
+        // axiom is a strengthening, never a regression. The axiom set is a
+        // subset (here: equal, both empty), so the strict-subset axiom check
+        // passes and the higher tier is welcome.
+        let base = manifest(vec![law("f.law", super::LawTier::Bounded, &[])]);
+        let cur = manifest(vec![law("f.law", super::LawTier::Universal, &[])]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(report.regressions, 0);
+    }
+
+    #[test]
+    fn gate_promotion_that_adds_axioms_fails_until_rebaselined() {
+        // A promotion that GAINS axioms is NOT silently clean: the ratchet
+        // compares each law against its OWN baseline axiom set, so a bounded
+        // law recorded with no axioms that newly leans on `propext`/`Quot.sound`
+        // grows its set and FAILS — even though the tier strengthened. The
+        // honest path is to re-baseline (`--write-baseline`), which makes the
+        // new axioms a reviewable diff. This is the inverse of the old behavior,
+        // which locked whitelisted additions as clean and let new trust axioms
+        // slip in unnoticed.
+        let base = manifest(vec![law("f.law", super::LawTier::Bounded, &[])]);
+        let cur = manifest(vec![law(
+            "f.law",
+            super::LawTier::Universal,
+            &["propext", "Quot.sound"],
+        )]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(
+            report.regressions, 1,
+            "a promotion that adds axioms must FAIL until re-baselined"
+        );
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|l| l.contains("f.law") && l.contains("axioms grew")),
+            "must name the law and its grown axiom set: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_new_whitelisted_axiom_at_same_tier_fails() {
+        // BLOCKER fix: a law that gains a NEW WHITELISTED axiom
+        // (`Classical.choice`) at the SAME tier is a regression. The axiom check
+        // is a TRUE SUBSET check against the law's own baseline record — the
+        // whitelist does not excuse a law from growing its recorded axiom set.
+        // Under the old whitelist-exempt logic this slipped through clean.
+        let base = manifest(vec![law(
+            "f.law",
+            super::LawTier::Universal,
+            &["propext", "Quot.sound"],
+        )]);
+        let cur = manifest(vec![law(
+            "f.law",
+            super::LawTier::Universal,
+            &["Classical.choice", "propext", "Quot.sound"],
+        )]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(
+            report.regressions, 1,
+            "a new whitelisted axiom at the same tier must be a regression"
+        );
+        assert!(
+            report.lines.iter().any(|l| l.contains("f.law")
+                && l.contains("axioms grew")
+                && l.contains("Classical.choice")),
+            "must name the law and the new whitelisted axiom: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn gate_backend_change_fails() {
+        // MAJOR 2: a baseline law certified under one backend that now records a
+        // different backend is a regression (the certificate the baseline trusts
+        // is gone). The stored per-law `backend` field is ratcheted, not just
+        // tier + axioms.
+        let base = manifest(vec![law("f.law", super::LawTier::Universal, &["propext"])]);
+        let mut cur_law = law("f.law", super::LawTier::Universal, &["propext"]);
+        cur_law.backend = "dafny".to_string();
+        let cur = manifest(vec![cur_law]);
+        let report = super::gate_manifest(&base, &cur);
+        assert_eq!(
+            report.regressions, 1,
+            "a backend change must be a regression"
+        );
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|l| l.contains("f.law") && l.contains("backend lean -> dafny")),
+            "must name the law and the backend change: {:?}",
+            report.lines
+        );
+    }
+
+    #[test]
+    fn proof_manifest_json_roundtrips() {
+        // Serialize -> parse -> the per-law identity/tier/axioms survive, and
+        // the serialization is sorted (byte-reproducible baseline).
+        let m = manifest(vec![
+            law("b.two", super::LawTier::Bounded, &[]),
+            law(
+                "a.one",
+                super::LawTier::Universal,
+                &["Quot.sound", "propext"],
+            ),
+        ]);
+        let json = super::proof_manifest_to_json(&m);
+        // `laws` array is sorted by identity at construction; check `a.one`
+        // appears before `b.two` in the serialized text.
+        let a_pos = json.find("a.one").expect("a.one present");
+        let b_pos = json.find("b.two").expect("b.two present");
+        assert!(a_pos < b_pos, "laws must serialize sorted by identity");
+        let parsed = super::parse_proof_manifest(&json).expect("parses back");
+        assert_eq!(parsed.laws.len(), 2);
+        let a = parsed.laws.iter().find(|l| l.law == "a.one").unwrap();
+        assert_eq!(a.tier, super::LawTier::Universal);
+        assert_eq!(
+            a.axioms,
+            vec!["Quot.sound".to_string(), "propext".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_manifest_unknown_tier_fails_closed() {
+        // MAJOR 1 fix: a per-law record with an unknown tier is a harness error
+        // (the caller exits 2), NOT a silently dropped record. A corrupt or
+        // truncated baseline must never quietly un-ratchet the law it elided —
+        // the gate iterates the baseline law set, so a skipped record would
+        // silently stop enforcing that law. (Old behavior dropped it and still
+        // returned a partial manifest.)
+        let raw = r#"{"version":1,"backend":"lean","laws":[
+            {"law":"a.one","tier":"universal","axioms":["propext"]},
+            {"law":"b.bad","tier":"quantum","axioms":[]}
+        ]}"#;
+        let err = super::parse_proof_manifest(raw)
+            .expect_err("an unknown tier must fail the parse, not be skipped");
+        assert!(
+            err.contains("b.bad") && err.contains("quantum"),
+            "the error must name the offending law and its bad tier: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_missing_law_field_fails_closed() {
+        // A record missing its identity `law` field is also a harness error,
+        // never a silent skip.
+        let raw = r#"{"version":1,"backend":"lean","laws":[
+            {"tier":"universal","axioms":["propext"]}
+        ]}"#;
+        assert!(
+            super::parse_proof_manifest(raw).is_err(),
+            "a record missing `law` must fail the parse"
+        );
+    }
+
+    #[test]
+    fn parse_manifest_rejects_non_object() {
+        assert!(super::parse_proof_manifest("[]").is_err());
+        assert!(super::parse_proof_manifest("not json").is_err());
+    }
+
+    #[test]
+    fn axioms_for_theorem_parses_sorted_deduped() {
+        let out = "'f_law_x' depends on axioms: [propext, Quot.sound, propext]";
+        let got = super::axioms_for_theorem(out, "f_law_x").expect("present");
+        assert_eq!(got, vec!["Quot.sound".to_string(), "propext".to_string()]);
+        let none = "'f_law_x' does not depend on any axioms";
+        assert_eq!(super::axioms_for_theorem(none, "f_law_x"), Some(Vec::new()));
+        assert_eq!(super::axioms_for_theorem("unrelated", "f_law_x"), None);
+    }
+
+    /// Build a minimal `verify <fn> law <name>` top-level item for the
+    /// duplicate-identity detector.
+    fn law_block(fn_name: &str, law_name: &str) -> super::TopLevel {
+        use aver::ast::{Expr, Literal, Spanned, VerifyBlock, VerifyKind, VerifyLaw};
+        let t = || Spanned::bare(Expr::Literal(Literal::Bool(true)));
+        let vk = VerifyKind::Law(Box::new(VerifyLaw {
+            name: law_name.to_string(),
+            givens: vec![],
+            when: None,
+            lhs: t(),
+            rhs: t(),
+            sample_guards: vec![],
+        }));
+        super::TopLevel::Verify(VerifyBlock::new_unspanned(
+            fn_name.to_string(),
+            0,
+            vec![],
+            vk,
+        ))
+    }
+
+    #[test]
+    fn duplicate_law_identities_detected() {
+        // MAJOR 3: two distinct `verify ... law` blocks sharing one `fn.law`
+        // identity is a collision the ratchet must catch — the manifest keys on
+        // `fn.law`, so they would otherwise collapse to one entry and hide a
+        // weakened duplicate. The detector reports the collision; the caller
+        // fails CLOSED (exit 2).
+        let items = vec![
+            law_block("floorQ", "cellFloorStable"),
+            law_block("floorQ", "cellFloorStable"),
+            law_block("coarseFloorEq", "sharedCellFloor"),
+        ];
+        let dups = super::duplicate_law_identities(&items);
+        assert_eq!(
+            dups,
+            vec!["floorQ.cellFloorStable".to_string()],
+            "the one collision must be reported once, named by `fn.law` identity"
+        );
+    }
+
+    #[test]
+    fn distinct_law_identities_have_no_duplicates() {
+        // Distinct `fn.law` identities (including the same law name under a
+        // different fn) are not collisions.
+        let items = vec![
+            law_block("floorQ", "cellFloorStable"),
+            law_block("coarseFloorEq", "cellFloorStable"),
+            law_block("coarseFloorEq", "sharedCellFloor"),
+        ];
+        assert!(
+            super::duplicate_law_identities(&items).is_empty(),
+            "distinct identities must not be flagged"
+        );
     }
 
     #[test]
