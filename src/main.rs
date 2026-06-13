@@ -387,6 +387,8 @@ fn main() {
             gate,
             write_baseline,
             discover,
+            emit_laws,
+            emit_laws_to,
         } => {
             commands::cmd_proof(
                 file,
@@ -402,6 +404,8 @@ fn main() {
                 gate.as_deref(),
                 write_baseline.as_deref(),
                 *discover,
+                *emit_laws,
+                emit_laws_to.as_deref(),
             );
         }
     }

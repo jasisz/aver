@@ -4937,6 +4937,8 @@ pub(super) fn cmd_proof(
     gate: Option<&str>,
     write_baseline: Option<&str>,
     discover: bool,
+    emit_laws: bool,
+    emit_laws_to: Option<&str>,
 ) {
     let (mut ctx, module_root) = build_codegen_context(
         file,
@@ -4959,6 +4961,17 @@ pub(super) fn cmd_proof(
     // hash. On re-run with an unchanged surface we REPLAY — re-verify the
     // committed lemmas (the soundness guard) WITHOUT re-enumerating.
     if discover {
+        // `--emit-laws`: born-as-Aver discovery. Render each VM-survivor
+        // `Conjecture` as a legal `verify <fn> law`, keep the ones that pass the
+        // STRICT forward check, and write them to a sidecar `<file>.discovered.av`
+        // — so a discovered law flows through the same pipeline as a user law.
+        // Additive: the Lean `DiscoveredLemmas.lean` path is left untouched; this
+        // is a distinct output and returns early.
+        if emit_laws {
+            cmd_proof_emit_laws(&ctx, file, &module_root, emit_laws_to);
+            return;
+        }
+
         let lemmas_path = std::path::Path::new(output_dir).join("DiscoveredLemmas.lean");
         let surface_hash = {
             let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(&ctx);
@@ -5206,6 +5219,231 @@ pub(super) fn cmd_proof(
             &duplicate_laws,
         );
     }
+}
+
+/// `--discover --emit-laws`: born-as-Aver discovery. Enumerate + VM-filter the
+/// `Conjecture` family, render each survivor as a legal `verify <fn> law`,
+/// keep only the laws that pass the STRICT forward check (`aver verify`
+/// semantics — stricter than the 6-round sampler), and write them to a sidecar
+/// `<file>.discovered.av`. The user's source file is NEVER mutated.
+///
+/// The sidecar is the source verbatim + a provenance header + the rendered
+/// laws, so it is self-contained (cone fns / ADTs / module all in scope) and
+/// runs straight through `aver check` / `aver verify` / `aver proof … --gate`.
+fn cmd_proof_emit_laws(
+    ctx: &codegen::CodegenContext,
+    file: &str,
+    module_root: &str,
+    emit_laws_to: Option<&str>,
+) {
+    use std::collections::BTreeSet;
+
+    // Re-parse the source fresh: the strict-check runner wants un-resolved
+    // items (it runs its own tco/typecheck/resolve), and the sidecar wants the
+    // verbatim source text. `ctx.items` are post-pipeline (lowered), so we don't
+    // reuse them for either.
+    let source_text = match read_file(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}", e.red());
+            process::exit(1);
+        }
+    };
+    let source_items = match parse_source_items(&source_text) {
+        Ok(items) => items,
+        Err(e) => {
+            eprintln!("{}", format!("error: {e}").red());
+            process::exit(1);
+        }
+    };
+
+    // The user's own law names — dedup target so a discovered law never
+    // collides with (or cross-wires the SimpOverLemmas pool against) one.
+    let existing_law_names: BTreeSet<String> = source_items
+        .iter()
+        .filter_map(|item| match item {
+            TopLevel::Verify(vb) => match &vb.kind {
+                aver::ast::VerifyKind::Law(law) => Some(law.name.clone()),
+                aver::ast::VerifyKind::Cases => None,
+            },
+            _ => None,
+        })
+        .collect();
+
+    // Enumerate + VM-filter the Conjecture family (the 100%-expressible slice).
+    let inputs = aver::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let mut reports = aver::codegen::lemma_discovery::run_discovery(&inputs);
+    aver::codegen::lemma_discovery::vm_filter(&mut reports, &inputs);
+
+    let result = aver::codegen::lemma_discovery::emit_laws_for_reports(
+        &reports,
+        &inputs,
+        &source_items,
+        &existing_law_names,
+        Some(module_root),
+        file,
+    );
+
+    let sidecar_path = emit_laws_to
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(format!("{file}.discovered.av")));
+
+    // SOURCE-PROTECTION (the "never mutates source" contract MUST hold for the
+    // `--emit-laws-to` override path too): refuse to write if the target IS — or
+    // aliases (symlink / hardlink / `.`/`..` / case-variant, via `canonicalize`)
+    // — the entry source OR any input `.av` (its loaded dep modules). Fail
+    // CLOSED with a clear error; never clobber a hand-written program.
+    if let Some(conflict) = sidecar_alias_conflict(&sidecar_path, file, module_root, &source_items)
+    {
+        eprintln!(
+            "{}",
+            format!(
+                "error: --emit-laws-to {} would overwrite the input source `{}` \
+                 (the sidecar must be a NEW file; the source is never mutated)",
+                sidecar_path.display(),
+                conflict.display()
+            )
+            .red()
+        );
+        process::exit(1);
+    }
+
+    let content = aver::codegen::lemma_discovery::render_sidecar(
+        &source_text,
+        &result.emitted,
+        file,
+        &sidecar_path.display().to_string(),
+        env!("CARGO_PKG_VERSION"),
+    );
+
+    println!(
+        "born-as-Aver discovery: {} law(s) cleared the hostile-widened forward check, {} dropped",
+        result.emitted.len(),
+        result.dropped.len()
+    );
+    for law in &result.emitted {
+        println!("  ✓ verify {} law {}", law.subject_fn, law.name);
+    }
+    // Honesty: name every dropped candidate + reason (e.g. the spurious
+    // `flushAcc` commutativity the hostile check refutes, or an inconclusive
+    // Named-guard shape hostile can't breach), never silently.
+    for (cand, reason) in &result.dropped {
+        println!("  ✗ {cand}  [{reason}]");
+    }
+
+    // Atomic-ish write: write to a temp sibling, then rename over the target, so
+    // a concurrent run can't observe (or clobber) a half-written reviewed
+    // sidecar. Rename is atomic on the same filesystem.
+    if let Err(e) = write_sidecar_atomic(&sidecar_path, &content) {
+        eprintln!(
+            "{}",
+            format!(
+                "error: could not write sidecar {}: {e}",
+                sidecar_path.display()
+            )
+            .red()
+        );
+        process::exit(1);
+    }
+    println!(
+        "\nwrote sidecar → {0}\n  next: aver proof {0} --check   (add --gate <baseline> to ratchet)",
+        sidecar_path.display()
+    );
+}
+
+/// Return `Some(input_path)` iff `target` is, or aliases, the entry source
+/// `file` or any of its loaded dependency `.av` files — so the caller can refuse
+/// to overwrite a human-written program. Uses `canonicalize` (resolves symlinks,
+/// `.`/`..`, case-folding) for existing files and falls back to a lexical
+/// normalization for a target that does not exist yet (the common case: the
+/// sidecar is brand new).
+fn sidecar_alias_conflict(
+    target: &std::path::Path,
+    file: &str,
+    module_root: &str,
+    source_items: &[TopLevel],
+) -> Option<std::path::PathBuf> {
+    // The set of input files we must never overwrite: the entry source + every
+    // dep module `.av` resolved (transitively) from the same root.
+    let mut inputs: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(file)];
+    let mut seen = std::collections::HashSet::new();
+    let mut stack: Vec<String> = source_items
+        .iter()
+        .find_map(|i| match i {
+            TopLevel::Module(m) => Some(m.depends.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    while let Some(dep) = stack.pop() {
+        if !seen.insert(dep.clone()) {
+            continue;
+        }
+        if let Some(path) = aver::source::find_module_file(&dep, module_root) {
+            // Pull this dep's own `depends` so the protection is transitive.
+            if let Ok(text) = std::fs::read_to_string(&path)
+                && let Ok(items) = parse_source_items(&text)
+            {
+                for i in &items {
+                    if let TopLevel::Module(m) = i {
+                        stack.extend(m.depends.iter().cloned());
+                    }
+                }
+            }
+            inputs.push(path);
+        }
+    }
+    let target_key = canonical_key(target);
+    inputs
+        .into_iter()
+        .find(|input| canonical_key(input) == target_key)
+}
+
+/// A comparison key for path aliasing: the canonical path when the file exists
+/// (resolves symlinks / hardlink targets share an inode but distinct paths, so
+/// we ALSO compare canonical parent + file name), else a lexical normalization.
+/// Two paths that name the same on-disk file produce the same key.
+fn canonical_key(p: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(c) = p.canonicalize() {
+        return c;
+    }
+    // File doesn't exist yet: canonicalize the PARENT (which usually does) and
+    // re-attach the file name, so `dir/../dir/x.av` and `dir/x.av` collapse.
+    match (p.parent(), p.file_name()) {
+        (Some(parent), Some(name)) => {
+            let base = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
+            base.join(name)
+        }
+        _ => p.to_path_buf(),
+    }
+}
+
+/// Write `content` to `path` atomically: write a temp sibling first, then
+/// `rename` it over the target (atomic on the same filesystem). Falls back to a
+/// direct write only if a temp sibling can't be created.
+fn write_sidecar_atomic(path: &std::path::Path, content: &str) -> std::io::Result<()> {
+    let tmp = match path.file_name().and_then(|n| n.to_str()) {
+        Some(name) => path.with_file_name(format!(".{name}.tmp-{}", std::process::id())),
+        None => return std::fs::write(path, content),
+    };
+    std::fs::write(&tmp, content)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// Lex + parse a source string into its `TopLevel` items (no pipeline lowering).
+fn parse_source_items(source: &str) -> Result<Vec<TopLevel>, String> {
+    let mut lexer = aver::lexer::Lexer::new(source);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+    aver::parser::Parser::new(tokens)
+        .parse()
+        .map_err(|e| e.to_string())
 }
 
 /// Phase 2d of lemma discovery: attempt to kernel-prove the top-ranked

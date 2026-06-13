@@ -268,6 +268,7 @@ pub struct LawDiscovery {
 
 mod bricks;
 mod committed;
+mod emit_laws;
 mod enumerate;
 mod render;
 mod vm_filter;
@@ -277,6 +278,9 @@ pub use committed::{
     CommittedLemma, SimpDirection, apply_simp_over_lemma_pins, forbidden_token_in_lemma,
     mentioned_fns, parse_committed_lemmas, plan_simp_over_lemma_pins, simp_entries,
     simp_orientation,
+};
+pub use emit_laws::{
+    DISCOVERED_LAW_PREFIX, EmitLawsResult, EmittedLaw, emit_laws_for_reports, render_sidecar,
 };
 pub use enumerate::run_discovery;
 pub use render::{
