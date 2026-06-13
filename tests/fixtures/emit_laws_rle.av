@@ -1,0 +1,51 @@
+module EmitLawsRle
+    intent =
+        "Minimal RLE decode fixture for born-as-Aver discovery (`--emit-laws`)."
+        "A real `encode`/`decode` pair so the source roundtrip law is sound and"
+        "the discovered `decode` homomorphism `decode(a++b) = decode(a)++decode(b)`"
+        "falls out of the enumerator."
+
+record Run
+    char: String
+    count: Int
+
+fn repeat(c: String, n: Int) -> List<String>
+    ? "n copies of c (non-positive counts yield [])."
+    match n <= 0
+        true -> []
+        false -> List.concat(repeat(c, n - 1), [c])
+
+verify repeat
+    repeat("x", 0) => []
+    repeat("x", 2) => ["x", "x"]
+
+fn expandRun(r: Run) -> List<String>
+    ? "Expand one run back into repeated chars."
+    repeat(r.char, r.count)
+
+verify expandRun
+    expandRun(Run(char = "x", count = 2)) => ["x", "x"]
+
+fn decode(runs: List<Run>) -> List<String>
+    ? "Decompress run-length pairs back into a character list."
+    match runs
+        [] -> []
+        [run, ..rest] -> List.concat(expandRun(run), decode(rest))
+
+verify decode
+    decode([]) => []
+    decode([Run(char = "a", count = 2)]) => ["a", "a"]
+
+fn encode(xs: List<String>) -> List<Run>
+    ? "Compress a char list into singleton runs (one run per char), in order."
+    match xs
+        [] -> []
+        [c, ..rest] -> List.concat([Run(char = c, count = 1)], encode(rest))
+
+verify encode
+    encode([]) => []
+    encode(["a", "b"]) => [Run(char = "a", count = 1), Run(char = "b", count = 1)]
+
+verify encode law roundtrip
+    given xs: List<String> = [["a"], ["a", "b"]]
+    decode(encode(xs)) => xs
