@@ -42,6 +42,17 @@ pub struct ModuleInfo {
     pub type_defs: Vec<TypeDef>,
     /// Function definitions from the module (excluding `main`).
     pub fn_defs: Vec<FnDef>,
+    /// `verify … law` blocks of this dep module, in source order.
+    ///
+    /// Carried so the Lean proof backend can (a) emit each proven dep
+    /// law as a `<fn>_law_<name>` theorem inside `namespace M`, and
+    /// (b) admit it into a consumer law's lemma pool under the same
+    /// cone ∪ subject admissibility gate as in-file sibling laws — the
+    /// cross-file law pool. Only `VerifyKind::Law` blocks are kept;
+    /// plain example-style `verify` blocks in a dep are still dropped
+    /// (module-scoped sampling is a separate feature). Read ONLY by the
+    /// Lean proof emit / pool; inert for every other backend.
+    pub verify_laws: Vec<crate::ast::VerifyBlock>,
     /// IR-level analysis facts produced by the dep module's pipeline run
     /// (`analyze` stage). `None` for modules loaded via paths that skip
     /// the analyze stage (none in production today; left optional for
@@ -90,9 +101,49 @@ impl ModuleInfo {
             depends,
             type_defs,
             fn_defs,
+            verify_laws: collect_verify_laws(&loaded.items),
             analysis: None,
         }
     }
+}
+
+/// `verify … law` blocks from a module's top-level items, in source
+/// order. Plain example-style `verify` blocks (`VerifyKind::Example`)
+/// are excluded — only laws are lifted into a dep's [`ModuleInfo`] for
+/// the cross-file law pool.
+///
+/// VISIBILITY gate (cross-file law pool, fail-closed at admission): a
+/// law is lifted ONLY when its SUBJECT fn is EXPOSED by the module —
+/// the same rule [`crate::visibility::collect_module_exports`] /
+/// [`crate::visibility::SymbolRegistry::from_modules`] apply to fns. A
+/// law about a private helper (`_`-prefixed, or absent from a non-empty
+/// `exposes [...]` list) is a module-internal obligation: it is still
+/// proved in the module's OWN export, but it never enters a consumer's
+/// pool, is never emitted into a consumer's build, and is never lowered
+/// for a consumer. A consumer can only cite what its dependency makes
+/// public, exactly as it can only CALL exposed fns.
+pub fn collect_verify_laws(items: &[TopLevel]) -> Vec<crate::ast::VerifyBlock> {
+    use crate::ast::VerifyKind;
+    let module = crate::visibility::module_decl(items);
+    let exposes: Option<&[String]> = module.and_then(|m| {
+        if m.exposes.is_empty() {
+            None
+        } else {
+            Some(m.exposes.as_slice())
+        }
+    });
+    items
+        .iter()
+        .filter_map(|i| match i {
+            TopLevel::Verify(vb)
+                if matches!(vb.kind, VerifyKind::Law(_))
+                    && crate::visibility::is_exposed(&vb.fn_name, exposes) =>
+            {
+                Some(vb.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// Collected context from the Aver program, shared across all backends.
@@ -618,6 +669,26 @@ impl CodegenContext {
     /// the `RefCell` borrow.
     pub fn active_module_scope(&self) -> Option<String> {
         self.current_module_scope.borrow().clone()
+    }
+
+    /// Resolve a verify-law's target fn name to its [`FnId`] under the
+    /// active module scope: `FnKey::in_module(scope, name)` when a dep
+    /// module is in scope (cross-file law pool — the dep law's
+    /// `LawTheorem` is keyed by its dep-scope id), else
+    /// `FnKey::entry(name)`. The entry key is tried as a fallback so an
+    /// entry law emitted with a stale scope still resolves. Drives the
+    /// `proof_ir.law_theorems` strategy lookup so a dep law gets the
+    /// SAME auto-proof strategy an entry law of that shape would.
+    pub fn law_target_fn_id(&self, fn_name: &str) -> Option<crate::ir::FnId> {
+        if let Some(scope) = self.active_module_scope()
+            && let Some(id) = self
+                .symbol_table
+                .fn_id_of(&crate::ir::FnKey::in_module(scope, fn_name))
+        {
+            return Some(id);
+        }
+        self.symbol_table
+            .fn_id_of(&crate::ir::FnKey::entry(fn_name))
     }
 
     /// Identity-keyed lookup from a bare fn name + scope to the

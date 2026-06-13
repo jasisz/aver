@@ -17,6 +17,11 @@ use crate::codegen::CodegenContext;
 use crate::verify_law::{collect_missing_helper_law_hints, missing_helper_law_message};
 use sampled::emit_guarded_domain_law;
 
+/// Cross-file law pool — EMIT-side gate (re-exported for `transpile`):
+/// the `(module_prefix, theorem_base)` dep-law theorems some consumer law
+/// admits, so the emitter writes ONLY those into the build.
+pub(crate) use induction::admitted_dep_law_theorems;
+
 pub struct AutoProof {
     pub support_lines: Vec<String>,
     pub proof_lines: Vec<String>,
@@ -33,9 +38,10 @@ fn law_strategy_for(
     fn_name: &str,
     law_name: &str,
 ) -> Option<crate::ir::ProofStrategy> {
-    let fn_id = ctx
-        .symbol_table
-        .fn_id_of(&crate::ir::FnKey::entry(fn_name))?;
+    // Scope-aware: a dep module's law is keyed by its dep-scope `FnId`
+    // (cross-file law pool), so resolve `fn_name` through the active
+    // module scope rather than assuming entry.
+    let fn_id = ctx.law_target_fn_id(fn_name)?;
     ctx.proof_ir
         .law_theorems
         .iter()

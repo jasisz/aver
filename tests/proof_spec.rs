@@ -6,6 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod builds;
 #[path = "proof_spec/check_gates.rs"]
 mod check_gates;
+#[path = "proof_spec/cross_file.rs"]
+mod cross_file;
 #[path = "proof_spec/dafny_inline.rs"]
 mod dafny_inline;
 #[path = "proof_spec/discover.rs"]

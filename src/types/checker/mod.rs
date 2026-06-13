@@ -129,6 +129,9 @@ fn symbols_dep_modules_from_loaded(
                     _ => None,
                 })
                 .collect(),
+            // Symbol-table build only — the typechecker never reads
+            // verify_laws (it is a proof-emit-only field).
+            verify_laws: Vec::new(),
             analysis: None,
         })
         .collect()

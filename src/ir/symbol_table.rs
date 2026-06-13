@@ -409,6 +409,7 @@ mod tests {
             depends: Vec::new(),
             type_defs: types,
             fn_defs: fns,
+            verify_laws: Vec::new(),
             analysis: None,
         }
     }

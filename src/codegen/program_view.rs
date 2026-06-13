@@ -304,6 +304,7 @@ mod tests {
             depends: vec![],
             type_defs: vec![],
             fn_defs: fn_names.iter().map(|n| mk_fn(n)).collect(),
+            verify_laws: vec![],
             analysis: None,
         }
     }

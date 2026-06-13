@@ -339,6 +339,16 @@ pub(super) fn transpile_unified(
     let mut module_files: Vec<(String, String)> = Vec::new();
     let mut union_body = String::new();
 
+    // Cross-file law pool: the dep-law theorems some consumer law admits.
+    // Empty for single-file files (no dep modules) → the dep-law emit loop
+    // below is a no-op → byte-identical output. Computed once for every
+    // module's emit pass.
+    let admitted_dep_laws = if matches!(emit_mode, LeanEmitMode::Proof) {
+        super::law_auto::admitted_dep_law_theorems(ctx)
+    } else {
+        std::collections::HashSet::new()
+    };
+
     for module in &ctx.modules {
         let mut body_sections: Vec<String> = Vec::new();
         ctx.with_module_scope(Some(module.prefix.as_str()), || {
@@ -369,6 +379,53 @@ pub(super) fn transpile_unified(
         });
         if let Some(scope_sections) = pure_per_scope.by_scope.get(&module.prefix) {
             body_sections.extend(scope_sections.clone());
+        }
+        // Cross-file law pool — EMIT side: a dependency module's proven
+        // `verify … law` blocks become `<fn>_law_<name>` theorems INSIDE
+        // `namespace M`, so a consumer that imports + opens this module can
+        // cite `M.<fn>_law_<name>` as a lemma. Same emit path the entry uses
+        // (`emit_verify_block`), under this module's scope so the law's
+        // expressions resolve in the dep's namespace.
+        //
+        // FAIL-CLOSED (MAJOR 4): emit a dep law's theorem ONLY when some
+        // consumer law ADMITS it (`admitted_dep_law_theorems`, the SAME gate
+        // the CONSUME side runs). A dep law no consumer can cite is a
+        // complete no-op for the consumer — emitting it would add its
+        // `first | … | sorry` proof to the consumer's file-wide `sorry`
+        // count for zero benefit. The dep's OWN standalone export
+        // (`aver proof Lib.av`) still emits + proves all its laws, charging
+        // any sorry to the dep, not to a consumer that never leaned on it.
+        // Proof mode only; runtime/standard emits skip laws.
+        if matches!(emit_mode, LeanEmitMode::Proof) {
+            ctx.with_module_scope(Some(module.prefix.as_str()), || {
+                let mut dep_verify_counters: HashMap<String, usize> = HashMap::new();
+                for vb in &module.verify_laws {
+                    // Compute this law's theorem base under the dep scope and
+                    // emit only if it is in the admitted set. A law
+                    // `law_as_lemma_statement` declines (no universal theorem)
+                    // is never admitted, so it is skipped here too.
+                    let admitted = toplevel::law_as_lemma_statement(
+                        vb,
+                        match &vb.kind {
+                            crate::ast::VerifyKind::Law(l) => l,
+                            _ => continue,
+                        },
+                        ctx,
+                    )
+                    .map(|(base, _)| (module.prefix.clone(), base))
+                    .is_some_and(|key| admitted_dep_laws.contains(&key));
+                    if !admitted {
+                        continue;
+                    }
+                    let key = verify_counter_key(vb);
+                    let start_idx = *dep_verify_counters.get(&key).unwrap_or(&0);
+                    let (emitted, next_idx) =
+                        toplevel::emit_verify_block(vb, ctx, verify_mode, start_idx);
+                    dep_verify_counters.insert(key, next_idx);
+                    body_sections.push(emitted);
+                    body_sections.push(String::new());
+                }
+            });
         }
         let body = body_sections.join("\n");
         union_body.push_str(&body);
