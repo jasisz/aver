@@ -6582,7 +6582,22 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                 if name == "DiscoveredLemmas.lean" && contents.contains("-- cone-hash:") {
                     continue;
                 }
+                // Track `namespace … end` nesting so dep-module law theorems
+                // (emitted INSIDE `namespace M` by the cross-file law pool) are
+                // skipped here: the entry's own law theorems live at top level,
+                // and a consumer law's `#print axioms` already inherits the dep
+                // theorem's axiom footprint transitively. Probing the dep
+                // theorem directly by its bare (unqualified) name would fail to
+                // resolve and wrongly zero the metric. Single-file files have no
+                // namespaces, so this is a no-op there (byte-identical metric).
+                let mut namespace_depth = 0usize;
                 for line in contents.lines() {
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with("namespace ") {
+                        namespace_depth += 1;
+                    } else if trimmed == "end" || trimmed.starts_with("end ") {
+                        namespace_depth = namespace_depth.saturating_sub(1);
+                    }
                     if let Some(rest) = line.strip_prefix(lean_codegen::LAW_CLASS_MARKER_PREFIX) {
                         let mut parts = rest.split_whitespace();
                         if let (Some(thm), Some(class)) = (parts.next(), parts.next()) {
@@ -6593,6 +6608,9 @@ fn lean_universal_audit(dir: &str, sorries: usize) -> LeanLawAudit {
                                 labels.insert(thm.to_string(), label.to_string());
                             }
                         }
+                        continue;
+                    }
+                    if namespace_depth > 0 {
                         continue;
                     }
                     if let Some(rest) = line.strip_prefix("theorem ") {
@@ -7405,25 +7423,27 @@ fn load_module_recursive(
         process::exit(1);
     }
 
-    // Module-scoped `verify` blocks are not checked: only the ENTRY
-    // module's verify blocks become theorems / lemmas / samples. A
-    // `verify ... law` in a dependency module is silently dropped here
-    // (ModuleInfo carries no verify field), so it would never fail —
-    // a vacuous pass on every backend and the runtime sampler. Warn
-    // loudly so an unchecked dependency law isn't mistaken for a proven
-    // one. (Actually checking module-scoped verify is a separate, larger
-    // feature.)
-    let dep_verify_count = items
+    // `verify … law` blocks in a dependency module ARE carried now (the
+    // cross-file law pool): each proven dep law is emitted as a theorem
+    // in the dep's `.lean` and admitted into a consumer law's lemma pool
+    // under the same cone ∪ subject gate as in-file siblings. A dep law
+    // that does not itself prove emits only samples (no universal
+    // theorem), so it can never launder credit to a consumer. Plain
+    // example-style `verify` blocks in a dep are still NOT checked
+    // (module-scoped sampling is a separate, larger feature) — warn only
+    // for those so an unchecked dependency sample isn't mistaken for a
+    // proven one.
+    let dep_example_verify_count = items
         .iter()
-        .filter(|i| matches!(i, TopLevel::Verify(_)))
+        .filter(|i| matches!(i, TopLevel::Verify(vb) if !matches!(vb.kind, aver::ast::VerifyKind::Law(_))))
         .count();
-    if dep_verify_count > 0 {
+    if dep_example_verify_count > 0 {
         eprintln!(
             "{}",
             format!(
-                "warning: {dep_verify_count} verify block(s) in dependency module \
-                 '{name}' are NOT checked (module-scoped verify is not yet supported) — \
-                 move them to the entry module to prove or sample them"
+                "warning: {dep_example_verify_count} non-law verify block(s) in dependency \
+                 module '{name}' are NOT checked (module-scoped sampling is not yet supported) — \
+                 move them to the entry module to sample them"
             )
             .yellow()
         );
@@ -7541,6 +7561,7 @@ fn load_module_recursive(
         depends,
         type_defs,
         fn_defs,
+        verify_laws: aver::codegen::collect_verify_laws(&items),
         analysis: pipeline_result.analysis,
     });
 }

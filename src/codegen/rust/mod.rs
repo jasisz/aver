@@ -879,6 +879,7 @@ mod tests {
                     depends,
                     type_defs,
                     fn_defs,
+                    verify_laws: crate::codegen::collect_verify_laws(&lm.items),
                     analysis: None,
                 }
             })

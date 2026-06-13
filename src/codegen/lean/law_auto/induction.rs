@@ -300,6 +300,224 @@ fn program_fn_lean_names(ctx: &CodegenContext) -> BTreeSet<String> {
         .collect()
 }
 
+/// Map a cone fn to the lean name a DEP law's statement would render it
+/// as: dep-module fns are NAMESPACE-QUALIFIED (`Lib.qrev`), entry fns
+/// stay bare. The module is resolved by pointer-eq against
+/// `ctx.modules[i].fn_defs` (the cone holds borrows into those exact
+/// slices — the same technique `recursive_pure_fn_names` uses), so the
+/// cross-file gate compares QUALIFIED identity, not a bare-name collision.
+fn qualified_cone_name(fd: &crate::ast::FnDef, ctx: &CodegenContext) -> String {
+    let bare = aver_name_to_lean(&fd.name);
+    match ctx
+        .modules
+        .iter()
+        .find(|m| m.fn_defs.iter().any(|d| std::ptr::eq(d, fd)))
+    {
+        Some(m) => format!("{}.{}", m.prefix, bare),
+        None => bare,
+    }
+}
+
+/// Decide whether a dependency module's proven `verify … law` is
+/// admissible into a consumer law's pool — the CROSS-FILE half of the
+/// `earlier_law_lemmas` gate, factored out so the CONSUME side
+/// (`earlier_law_lemmas`) and the EMIT side (`admitted_dep_law_theorems`,
+/// which decides which dep-law theorems to emit at all) make the IDENTICAL
+/// decision. Returns the namespace-qualified theorem name + statement on
+/// admit, `None` on reject.
+///
+/// Admissibility — fail-closed at admission. VISIBILITY (gate 0) is enforced
+/// upstream in `collect_verify_laws`: a law about a non-exposed subject never
+/// reaches `module.verify_laws`, so this function only ever sees exposed laws.
+/// The two gates checked HERE:
+///   1. SHAPE — `law_as_lemma_statement` states it as a universal `∀`-rewrite
+///      (declines no-givens / when-premise / singleton-const-rhs / fuel-
+///      bounded — the shapes the dep export would NOT emit a universal
+///      theorem for, so a citation could never resolve).
+///   2. CONE — the law's statement, in QUALIFIED identity, sits inside the
+///      consumer law's proof cone (`mentions ⊆ qualified_scope`) OR mentions
+///      the consumer's subject and is a law about a cone fn. Qualified
+///      identity closes the bare-name-collision hole: a `Lib.qrev` mention
+///      matches only a cone that genuinely contains the dep module's real
+///      `Lib.qrev`, never an unrelated module's same-named fn.
+///
+/// The RESIDUAL (kernel closure) is downstream: whether the admitted dep
+/// law's `first | … | sorry` proof actually closes is decided by the Lean
+/// kernel at `lake build`, not by codegen. A cited dep law that falls to
+/// `sorry` taints the consumer's `#print axioms` (`sorryAx`) and flips
+/// `universal:false` — the same per-declaration crediting the in-file pool
+/// rides on. See `earlier_law_lemmas`' module note for why a true
+/// proven-only-at-codegen gate would need a two-phase lake build.
+#[allow(clippy::too_many_arguments)]
+fn dep_law_admissible(
+    dep_module: &crate::codegen::ModuleInfo,
+    dep_prev: &VerifyBlock,
+    dep_prev_law: &VerifyLaw,
+    qualified_scope: &BTreeSet<String>,
+    subject: &str,
+    dep_index: &std::collections::BTreeMap<String, String>,
+    ctx: &CodegenContext,
+) -> Option<(String, String)> {
+    let (bare_name, stmt) = ctx.with_module_scope(Some(dep_module.prefix.as_str()), || {
+        crate::codegen::lean::toplevel::law_as_lemma_statement(dep_prev, dep_prev_law, ctx)
+    })?;
+    // Namespace-qualified citation; the entry imports + opens the dep.
+    let name = format!("{}.{}", dep_module.prefix, bare_name);
+    let text = format!("theorem {name} : {stmt} := by");
+    let mentions = crate::codegen::lemma_discovery::mentioned_fns(&text, dep_index);
+    if mentions.is_empty() {
+        return None;
+    }
+    // QUALIFIED subject: the dep law's own subject fn rendered the way the
+    // qualified scope holds it (`Lib.qrev`), so the decomposition arm
+    // ("admit a law ABOUT a cone fn that mentions THIS subject") compares
+    // like for like instead of via a bare-name collision.
+    let prev_subject_qualified = format!(
+        "{}.{}",
+        dep_module.prefix,
+        aver_name_to_lean(&dep_prev.fn_name)
+    );
+    if mentions.is_subset(qualified_scope)
+        || (mentions.contains(subject) && qualified_scope.contains(&prev_subject_qualified))
+    {
+        Some((name, text))
+    } else {
+        None
+    }
+}
+
+/// Program-wide set of `(module_prefix, theorem_base)` dep-law theorems
+/// that SOME consumer law admits into its pool — the EMIT-side gate. A
+/// dep law is emitted into the build ONLY if it is in this set; an
+/// un-cited dep law is a complete no-op for the consumer (it contributes
+/// zero to the consumer's file-wide `sorry` count — MAJOR 4). Computed
+/// with the SAME `dep_law_admissible` gate the CONSUME side uses, over
+/// every consumer law: the entry's own `verify … law` blocks, plus each
+/// dep module's own laws acting as a consumer for laws in modules strictly
+/// earlier in the topological `ctx.modules` order.
+///
+/// Empty when there are no dep modules (single-file path) → no dep-law
+/// emission changes → byte-identical to the pre-feature output.
+pub(crate) fn admitted_dep_law_theorems(
+    ctx: &CodegenContext,
+) -> std::collections::HashSet<(String, String)> {
+    use crate::ast::{TopLevel, VerifyKind};
+    let mut admitted: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+    if ctx.modules.is_empty() {
+        return admitted;
+    }
+
+    // Each consumer law contributes the dep laws it admits. `consumer_idx`
+    // is the consumer's position in `ctx.modules` (`None` = entry, which may
+    // cite any dep); a module-scoped consumer may cite only modules STRICTLY
+    // earlier (the topological / acyclicity guard, mirrored from the
+    // CONSUME loop).
+    let consider = |consumer_scope: Option<&str>,
+                    consumer_vb: &VerifyBlock,
+                    consumer_law: &VerifyLaw,
+                    admitted: &mut std::collections::HashSet<(String, String)>| {
+        ctx.with_module_scope(consumer_scope, || {
+            let (qualified_scope, subject) =
+                consumer_law_qualified_scope(consumer_vb, consumer_law, ctx);
+            let consumer_idx =
+                consumer_scope.and_then(|s| ctx.modules.iter().position(|m| m.prefix == s));
+            for (module_idx, module) in ctx.modules.iter().enumerate() {
+                if let Some(c) = consumer_idx
+                    && module_idx >= c
+                {
+                    continue;
+                }
+                let dep_index = dep_membership_index(module, ctx);
+                for dep_prev in &module.verify_laws {
+                    let VerifyKind::Law(dep_prev_law) = &dep_prev.kind else {
+                        continue;
+                    };
+                    if let Some((name, _text)) = dep_law_admissible(
+                        module,
+                        dep_prev,
+                        dep_prev_law,
+                        &qualified_scope,
+                        &subject,
+                        &dep_index,
+                        ctx,
+                    ) {
+                        // `name` is `Module.<theorem_base>`; the EMIT side keys
+                        // on `(prefix, theorem_base)`.
+                        if let Some(base) = name.strip_prefix(&format!("{}.", module.prefix)) {
+                            admitted.insert((module.prefix.clone(), base.to_string()));
+                        }
+                    }
+                }
+            }
+        });
+    };
+
+    // Entry consumer laws.
+    for item in &ctx.items {
+        let TopLevel::Verify(vb) = item else { continue };
+        let VerifyKind::Law(law) = &vb.kind else {
+            continue;
+        };
+        consider(None, vb, law, &mut admitted);
+    }
+    // Module-scoped consumer laws (a dep that itself cites an earlier dep).
+    for module in &ctx.modules {
+        for vb in &module.verify_laws {
+            let VerifyKind::Law(law) = &vb.kind else {
+                continue;
+            };
+            consider(Some(module.prefix.as_str()), vb, law, &mut admitted);
+        }
+    }
+    admitted
+}
+
+/// Build the cross-file membership index for a dep module's laws: each
+/// pure fn of `module` mapped QUALIFIED → QUALIFIED (`Lib.qrev` →
+/// `Lib.qrev`), unioned with the entry/dep bare program index. Keyed on
+/// the qualified form because a dep law's statement renders dep fns
+/// namespace-qualified, so the gate compares qualified identity.
+fn dep_membership_index(
+    module: &crate::codegen::ModuleInfo,
+    ctx: &CodegenContext,
+) -> std::collections::BTreeMap<String, String> {
+    let mut idx: std::collections::BTreeMap<String, String> = program_fn_lean_names(ctx)
+        .into_iter()
+        .map(|l| (l.clone(), l))
+        .collect();
+    for fd in &module.fn_defs {
+        if crate::codegen::common::is_pure_fn(fd) {
+            let qualified = format!("{}.{}", module.prefix, aver_name_to_lean(&fd.name));
+            idx.insert(qualified.clone(), qualified);
+        }
+    }
+    idx
+}
+
+/// The QUALIFIED proof cone of a consumer law (+ its subject), the gate
+/// the cross-file admission compares against. Cone fns owned by a dep
+/// module render qualified (`Lib.qrev`); entry fns and the consumer's own
+/// subject stay bare. Same cone computation the in-file gate uses — only
+/// the rendering is qualified so a `Lib.qrev` mention can't be satisfied
+/// by an unrelated module's same-named fn.
+fn consumer_law_qualified_scope(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+) -> (BTreeSet<String>, String) {
+    let inputs = crate::codegen::proof_lower::ProofLowerInputs::from_ctx(ctx);
+    let cone = crate::codegen::proof_lower::LawProofCone::compute(law, &vb.fn_name, &inputs);
+    let mut scope: BTreeSet<String> = cone
+        .pure_fns()
+        .iter()
+        .map(|fd| qualified_cone_name(fd, ctx))
+        .collect();
+    let subject = aver_name_to_lean(&vb.fn_name);
+    scope.insert(subject.clone());
+    (scope, subject)
+}
+
 /// The discovery feedback loop, część A: earlier proved user `verify … law`
 /// blocks in the same file, usable as `simp` rewrite rules for THIS law.
 ///
@@ -384,6 +602,72 @@ fn earlier_law_lemmas(
             ));
         }
     }
+
+    // Cross-file law pool — CONSUME side: a dependency module's proven,
+    // EXPOSED laws join the pool under the SAME cone ∪ subject gate as
+    // in-file siblings, but compared in QUALIFIED identity (`Lib.qrev`),
+    // just over a wider source set. The module DAG is acyclic and
+    // `ctx.modules` is topologically ordered (every dep precedes its
+    // consumers), so a cross-file citation can only point backward — the
+    // analog of the in-file source-order `break` above. The dep law's
+    // statement is synthesized under the dep's module scope (so its
+    // expressions resolve in the dep namespace) and cited by its
+    // namespace-qualified name (`M.<fn>_law_<name>`), which the entry
+    // resolves via the `import M` + `open M` it already emits.
+    //
+    // FAIL-CLOSED AT ADMISSION — three gates, all enforced here / upstream:
+    //   - VISIBILITY: a private dep law never reaches `module.verify_laws`
+    //     (`collect_verify_laws` filters on the subject's `exposes`), so it
+    //     cannot enter any consumer's pool.
+    //   - SHAPE: `law_as_lemma_statement` declines laws it can't state
+    //     universally (no givens / when-premise / singleton-const-rhs /
+    //     fuel-bounded), so a citation could never point at a missing
+    //     universal theorem.
+    //   - CONE (QUALIFIED): a `Lib.qrev` mention matches only a cone that
+    //     genuinely contains the dep module's real `Lib.qrev`, never an
+    //     unrelated module's same-named fn — the bare-name-collision hole is
+    //     closed by `consumer_law_qualified_scope` + `dep_membership_index`.
+    // The RESIDUAL (whether the admitted dep law's `first | … | sorry`
+    // proof actually closes in the kernel) is decided downstream by `lake
+    // build`; a cited-but-non-closing dep law taints the consumer via
+    // `sorryAx` and flips `universal:false` (the same per-declaration
+    // crediting the in-file pool relies on). See `dep_law_admissible`.
+    //
+    // Only modules STRICTLY EARLIER in the DAG than the law being proven
+    // are eligible — the cross-file analog of the in-file source-order
+    // `break`, which makes a law citing ITSELF (structurally-recursive,
+    // termination-failing) impossible. An entry law (active scope `None`)
+    // may cite any dep.
+    let (qualified_scope, qualified_subject) = consumer_law_qualified_scope(vb, law, ctx);
+    let consumer_module_idx = ctx
+        .active_module_scope()
+        .and_then(|s| ctx.modules.iter().position(|m| m.prefix == s));
+    for (module_idx, module) in ctx.modules.iter().enumerate() {
+        if let Some(consumer_idx) = consumer_module_idx
+            && module_idx >= consumer_idx
+        {
+            continue;
+        }
+        let dep_index = dep_membership_index(module, ctx);
+        for prev in &module.verify_laws {
+            let VerifyKind::Law(prev_law) = &prev.kind else {
+                continue;
+            };
+            if let Some((name, text)) = dep_law_admissible(
+                module,
+                prev,
+                prev_law,
+                &qualified_scope,
+                &qualified_subject,
+                &dep_index,
+                ctx,
+            ) {
+                out.push(crate::codegen::lemma_discovery::CommittedLemma::reference(
+                    name, text,
+                ));
+            }
+        }
+    }
     out
 }
 
@@ -400,7 +684,21 @@ fn fastpath_simp_entries(
     committed_names: &[String],
     siblings: &[crate::codegen::lemma_discovery::CommittedLemma],
 ) -> Vec<String> {
-    let program_fns = program_fn_lean_names(ctx);
+    // The orientation / loop-exclusion analysis keys on whether a
+    // lemma's head is a program fn. A cross-file sibling's statement
+    // renders dep fns NAMESPACE-QUALIFIED (`Lib.qrev`), so the program-
+    // fn set must carry those qualified forms too or the dep lemma is
+    // silently classified `None` and dropped from the simp set. No dep
+    // modules → no qualified names added → byte-identical to the
+    // single-file path.
+    let mut program_fns = program_fn_lean_names(ctx);
+    for module in &ctx.modules {
+        for fd in &module.fn_defs {
+            if crate::codegen::common::is_pure_fn(fd) {
+                program_fns.insert(format!("{}.{}", module.prefix, aver_name_to_lean(&fd.name)));
+            }
+        }
+    }
     let mut pool: Vec<&crate::codegen::lemma_discovery::CommittedLemma> = ctx
         .discovered_lemmas
         .iter()

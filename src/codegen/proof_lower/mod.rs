@@ -809,14 +809,24 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
 
     let symbols = inputs.symbol_table;
 
+    // Verify-law blocks to lower, each tagged with the prefix of the
+    // dep module that owns it (`None` = entry). The entry's own verify
+    // blocks come from `entry_items`; dependency modules' proven laws
+    // come from `ModuleInfo.verify_laws` (the cross-file law pool — a
+    // dep law is lowered with the SAME strategy classification an entry
+    // law of that shape gets, so it auto-proves and can be cited by a
+    // consumer). The DAG invariant keeps the bare fn name unambiguous
+    // within each scope.
     let entry_verifies = inputs.entry_items.iter().filter_map(|item| match item {
-        TopLevel::Verify(vb) => Some(vb),
+        TopLevel::Verify(vb) => Some((None, vb)),
         _ => None,
     });
-    // Dep modules don't expose verify blocks today (ModuleInfo carries
-    // type_defs + fn_defs only), so the walk stays entry-side. When
-    // ModuleInfo gains a `verify_blocks` field, extend here.
-    for vb in entry_verifies {
+    let dep_verifies = inputs.dep_modules.iter().flat_map(|m| {
+        m.verify_laws
+            .iter()
+            .map(move |vb| (Some(m.prefix.as_str()), vb))
+    });
+    for (owning_prefix, vb) in entry_verifies.chain(dep_verifies) {
         let VerifyKind::Law(law) = &vb.kind else {
             continue;
         };
@@ -830,21 +840,28 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             })
             .collect();
 
+        // The fn this law targets, keyed by its owning scope. For an
+        // entry law the bare name resolves to an entry `FnId`; for a
+        // dep law it resolves through `FnKey::in_module(prefix, name)`.
+        // When the fn isn't in the symbol table (verify block targeting
+        // a fn that doesn't exist), skip the law silently — the
+        // typechecker / verify-driver surfaces the missing target
+        // elsewhere.
+        let target_key = match owning_prefix {
+            Some(prefix) => crate::ir::FnKey::in_module(prefix.to_string(), &vb.fn_name),
+            None => crate::ir::FnKey::entry(&vb.fn_name),
+        };
+        let Some(fn_id) = symbols.fn_id_of(&target_key) else {
+            continue;
+        };
+
         // Scope for resolving the law's expressions: derived from the
-        // target fn's owning module, NOT hardcoded to entry. Today
-        // laws-in-modules isn't shipped, so the lookup falls back to
-        // entry for every fn; once dep modules carry their own verify
-        // blocks (open follow-up), the same resolution path serves
-        // both. Avoids re-introducing the "scope=None means entry"
-        // assumption the rest of phase E worked to eliminate.
+        // target fn's owning module, NOT hardcoded to entry.
         let law_scope: Option<String> = symbols
-            .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
-            .or_else(|| {
-                inputs.dep_modules.iter().find_map(|m| {
-                    symbols.fn_id_of(&crate::ir::FnKey::in_module(m.prefix.clone(), &vb.fn_name))
-                })
-            })
-            .and_then(|id| symbols.fn_entry(id).key.scope_str().map(|s| s.to_string()));
+            .fn_entry(fn_id)
+            .key
+            .scope_str()
+            .map(|s| s.to_string());
         let law_scope_ref = law_scope.as_deref();
 
         let premises: Vec<Predicate> = match &law.when {
@@ -867,16 +884,6 @@ pub fn populate_law_theorems(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
             law_scope_ref,
         );
 
-        // Verify laws are entry-only per current model — see
-        // `LawTheorem.fn_id` doc. The bare `vb.fn_name` resolves
-        // through the symbol table to an entry-scope `FnId`; when
-        // the fn isn't in the symbol table (verify block targeting
-        // a fn that doesn't exist), skip the law silently — the
-        // typechecker / verify-driver surfaces the missing target
-        // elsewhere.
-        let Some(fn_id) = symbols.fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name)) else {
-            continue;
-        };
         ir.law_theorems.push(LawTheorem {
             fn_id,
             law_name: law.name.clone(),

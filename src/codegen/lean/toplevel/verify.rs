@@ -475,8 +475,7 @@ fn emit_verify_law_block(
     // MapUpdatePostcondition, …) stay in the keep-set; Induction
     // / BackendDispatch / Sorry don't.
     let pinned_law_strategy = ctx
-        .symbol_table
-        .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
+        .law_target_fn_id(&vb.fn_name)
         .and_then(|fn_id| {
             ctx.proof_ir
                 .law_theorems
@@ -979,8 +978,7 @@ pub(crate) fn law_as_lemma_statement(
         return None;
     }
     let ir_strategy_closes_const_rhs = ctx
-        .symbol_table
-        .fn_id_of(&crate::ir::FnKey::entry(&vb.fn_name))
+        .law_target_fn_id(&vb.fn_name)
         .and_then(|fn_id| {
             ctx.proof_ir
                 .law_theorems

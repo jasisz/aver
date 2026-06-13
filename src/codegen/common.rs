@@ -2811,6 +2811,7 @@ mod tests {
                 line: 1,
             }],
             fn_defs: Vec::new(),
+            verify_laws: Vec::new(),
             analysis: None,
         };
         let modules = vec![make_module("A"), make_module("B")];
@@ -2896,6 +2897,7 @@ mod tests {
                 line: 1,
             }],
             fn_defs: Vec::new(),
+            verify_laws: Vec::new(),
             analysis: None,
         };
 

@@ -348,6 +348,7 @@ pub fn loaded_to_module_info(loaded: &[LoadedModule]) -> Vec<crate::codegen::Mod
                 depends,
                 type_defs,
                 fn_defs,
+                verify_laws: crate::codegen::collect_verify_laws(&m.items),
                 analysis: pipeline_result.analysis,
             }
         })
@@ -466,6 +467,7 @@ fn load_module_recursive_for_compile(
         depends,
         type_defs,
         fn_defs,
+        verify_laws: crate::codegen::collect_verify_laws(&items),
         analysis: pipeline_result.analysis,
     });
     Ok(())
