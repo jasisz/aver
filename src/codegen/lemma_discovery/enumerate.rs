@@ -70,6 +70,7 @@ pub fn run_discovery(inputs: &ProofLowerInputs) -> Vec<LawDiscovery> {
                 skipped_large_cone,
                 vm_filtered: false,
                 candidates_refuted: 0,
+                refuted_witnesses: Vec::new(),
                 max_term_size: MAX_TERM_SIZE,
             },
             conjectures,

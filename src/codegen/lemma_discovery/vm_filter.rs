@@ -53,24 +53,32 @@ pub fn vm_filter(reports: &mut [LawDiscovery], inputs: &ProofLowerInputs) {
             .map(|b| sample_values(&b.ty, inputs, SAMPLE_DEPTH))
             .collect();
         let mut survivors = Vec::with_capacity(report.conjectures.len());
-        let mut refuted = 0usize;
+        let mut witnesses = Vec::new();
         for c in &report.conjectures {
-            if vm_refutes(c, &samples, &mut vm) {
-                refuted += 1;
+            if let Some(w) = vm_refutes(c, &report.binders, &samples, &mut vm) {
+                witnesses.push(w);
             } else {
                 survivors.push(c.clone());
             }
         }
         report.stats.vm_filtered = true;
-        report.stats.candidates_refuted = refuted;
+        report.stats.candidates_refuted = witnesses.len();
+        report.stats.refuted_witnesses = witnesses;
         report.conjectures = survivors;
     }
 }
 
-/// `true` iff some sample assignment makes the two sides evaluate to DIFFERENT
-/// values (both conclusive). Inconclusive samples (eval error / out-of-guard
-/// magnitude) are skipped, never counted as a refutation.
-fn vm_refutes(c: &Conjecture, samples: &[Vec<Value>], vm: &mut crate::vm::VM) -> bool {
+/// `Some(witness)` iff some sample assignment makes the two sides evaluate to
+/// DIFFERENT values (both conclusive) — the witness carries the concrete
+/// counterexample (per-binder values + both sides) built from data already in
+/// hand, no extra evaluation. Inconclusive samples (eval error / out-of-guard
+/// magnitude) are skipped, never counted as a refutation (`None`).
+fn vm_refutes(
+    c: &Conjecture,
+    binders: &[Binder],
+    samples: &[Vec<Value>],
+    vm: &mut crate::vm::VM,
+) -> Option<RefutedWitness> {
     for r in 0..VM_FILTER_ROUNDS {
         // Offset by binder index so two same-typed variables usually differ in
         // a round (needed to refute e.g. spurious commutativity and to give
@@ -96,10 +104,32 @@ fn vm_refutes(c: &Conjecture, samples: &[Vec<Value>], vm: &mut crate::vm::VM) ->
             continue;
         }
         if l != rhs {
-            return true;
+            // Counterexample found — surface it. `assignment` (per-binder
+            // value), `l` (LHS) and `rhs` (RHS) are already computed; we only
+            // format the values we already hold. Restrict the givens to the
+            // candidate's own free variables (the ones that actually bind its
+            // sides), in binder index order (stable/sorted).
+            let mut fvs = std::collections::BTreeSet::new();
+            c.lhs.free_vars(&mut fvs);
+            c.rhs.free_vars(&mut fvs);
+            let givens = fvs
+                .iter()
+                .filter_map(|&i| {
+                    assignment
+                        .get(i)
+                        .and_then(|v| v.as_ref())
+                        .map(|v| (binders[i].name.clone(), crate::value::aver_repr(v)))
+                })
+                .collect();
+            return Some(RefutedWitness {
+                candidate: c.render(binders),
+                givens,
+                lhs: crate::value::aver_repr(&l),
+                rhs: crate::value::aver_repr(&rhs),
+            });
         }
     }
-    false
+    None
 }
 
 /// Evaluate a term under a variable assignment on the VM. `None` = inconclusive

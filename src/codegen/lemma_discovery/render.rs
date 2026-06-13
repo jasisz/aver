@@ -306,6 +306,26 @@ pub fn render_report(reports: &[LawDiscovery]) -> String {
                 r.conjectures.len(),
                 r.stats.candidates_refuted
             ));
+            // Name *why* each candidate was dropped: the exact falsifying
+            // assignment + both sides' values (deterministic Vec order).
+            for w in r.stats.refuted_witnesses.iter().take(SAMPLE) {
+                let givens = w
+                    .givens
+                    .iter()
+                    .map(|(n, v)| format!("{n}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!(
+                    "      refuted {}: falsified at {}: LHS={} RHS={}\n",
+                    w.candidate, givens, w.lhs, w.rhs
+                ));
+            }
+            if r.stats.refuted_witnesses.len() > SAMPLE {
+                out.push_str(&format!(
+                    "      … and {} more refuted\n",
+                    r.stats.refuted_witnesses.len() - SAMPLE
+                ));
+            }
         }
         let shown = r.conjectures.len().min(SAMPLE);
         let label = if r.stats.vm_filtered {

@@ -201,6 +201,24 @@ impl Conjecture {
     }
 }
 
+/// A concrete sample assignment that refuted a candidate on the VM-filter —
+/// the exact counterexample (per-binder values + both sides' results) the
+/// filter found, carried so the `--discover` report can name *why* a candidate
+/// was dropped instead of only counting it. Built from data already in hand at
+/// the refutation point (no extra evaluation).
+#[derive(Debug, Clone)]
+pub struct RefutedWitness {
+    /// The refuted candidate, source-rendered (`c.render(&binders)`).
+    pub candidate: String,
+    /// The falsifying assignment: `(binder name, aver_repr(value))`, in binder
+    /// index order (so stable/sorted across reruns).
+    pub givens: Vec<(String, String)>,
+    /// The LHS value under that assignment (`aver_repr`).
+    pub lhs: String,
+    /// The RHS value under that assignment (`aver_repr`).
+    pub rhs: String,
+}
+
 /// Coverage / truncation accounting for one law's discovery run.
 #[derive(Debug, Clone)]
 pub struct DiscoveryStats {
@@ -217,6 +235,9 @@ pub struct DiscoveryStats {
     pub vm_filtered: bool,
     /// Candidates the VM-filter refuted (counterexample found on sample data).
     pub candidates_refuted: usize,
+    /// The concrete falsifying assignment for each refuted candidate, in
+    /// candidate-enumeration order (so deterministic across reruns).
+    pub refuted_witnesses: Vec<RefutedWitness>,
     pub max_term_size: usize,
 }
 
@@ -592,6 +613,86 @@ verify encode law roundtrip
             !r.conjectures.iter().any(is_self_concat_identity),
             "false self-concat identity survived the VM-filter"
         );
+    }
+
+    #[test]
+    fn vm_filter_records_witness_for_refuted_candidate() {
+        let r = &discover(SRC)[0];
+        // The VM-filter dropped candidates AND kept a witness for each, with the
+        // count and the witness Vec agreeing.
+        assert!(r.stats.vm_filtered, "VM-filter did not run");
+        assert!(
+            !r.stats.refuted_witnesses.is_empty(),
+            "no witness recorded for any refuted candidate"
+        );
+        assert_eq!(
+            r.stats.refuted_witnesses.len(),
+            r.stats.candidates_refuted,
+            "witness count must match candidates_refuted"
+        );
+        // The clearly-false `x == List.concat(x, x)` is refuted; find its
+        // witness and check it carries the EXACT falsifying assignment + values.
+        let w = r
+            .stats
+            .refuted_witnesses
+            .iter()
+            .find(|w| {
+                w.candidate.contains("List.concat") && {
+                    // The self-concat identity renders as `x == List.concat(x, x)`
+                    // (either orientation) — same binder on all three positions.
+                    let parts: Vec<&str> = w.candidate.split(" == ").collect();
+                    parts.len() == 2
+                        && (parts[0] == format!("List.concat({}, {})", parts[1], parts[1])
+                            || parts[1] == format!("List.concat({}, {})", parts[0], parts[0]))
+                }
+            })
+            .expect("self-concat identity must have a recorded witness");
+        // A single list binder, falsified at a concrete non-empty list value.
+        assert_eq!(
+            w.givens.len(),
+            1,
+            "self-concat has one free variable: {w:?}"
+        );
+        let (_, gv) = &w.givens[0];
+        assert!(
+            gv.starts_with('[') && gv != "[]",
+            "given must be a concrete non-empty list, got {gv}"
+        );
+        // The two sides genuinely differ (that's why it was refuted), and both
+        // are concrete `aver_repr`-formatted list values: LHS the binder value
+        // (1 element), RHS the self-concat (2 elements).
+        assert_ne!(w.lhs, w.rhs, "a refutation must have lhs != rhs: {w:?}");
+        assert_eq!(w.lhs, *gv, "self-concat LHS is the binder value: {w:?}");
+        assert!(
+            w.lhs.starts_with('[') && w.rhs.starts_with('['),
+            "both sides are list values: {w:?}"
+        );
+        // RHS is the appended list — strictly longer rendering than LHS.
+        assert!(
+            w.rhs.len() > w.lhs.len(),
+            "self-concat RHS is the longer list: {w:?}"
+        );
+
+        // Determinism: a second independent discovery run produces a
+        // byte-identical witness Vec (same order, given, LHS/RHS) — the
+        // sampled-domain enumeration is fixed-order.
+        let r2 = &discover(SRC)[0];
+        assert_eq!(
+            r.stats.refuted_witnesses.len(),
+            r2.stats.refuted_witnesses.len(),
+            "witness count differs across reruns"
+        );
+        for (a, b) in r
+            .stats
+            .refuted_witnesses
+            .iter()
+            .zip(r2.stats.refuted_witnesses.iter())
+        {
+            assert_eq!(a.candidate, b.candidate, "candidate differs across reruns");
+            assert_eq!(a.givens, b.givens, "givens differ across reruns");
+            assert_eq!(a.lhs, b.lhs, "lhs differs across reruns");
+            assert_eq!(a.rhs, b.rhs, "rhs differs across reruns");
+        }
     }
 
     #[test]
