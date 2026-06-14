@@ -306,7 +306,10 @@ fn http_server_type_impls() -> String {
 }
 
 fn terminal_type_impls() -> String {
-    r#"impl aver_replay::ReplayValue for aver_rt::TerminalSize {
+    // Targets the SURFACE `Terminal_Size` (AverInt fields), not the host
+    // `aver_rt::TerminalSize` (i64 fields) — the generated program only ever
+    // holds the surface record.
+    r#"impl aver_replay::ReplayValue for crate::Terminal_Size {
     fn to_replay_json(&self) -> serde_json::Value {
         let mut fields = serde_json::Map::new();
         fields.insert("width".to_string(), ReplayValue::to_replay_json(&self.width));
@@ -325,10 +328,10 @@ fn terminal_type_impls() -> String {
             "$record.fields",
         )?;
         Ok(Self {
-            width: <i64 as ReplayValue>::from_replay_json(
+            width: <aver_rt::AverInt as ReplayValue>::from_replay_json(
                 fields.get("width").ok_or_else(|| "$record Terminal.Size missing field 'width'".to_string())?,
             )?,
-            height: <i64 as ReplayValue>::from_replay_json(
+            height: <aver_rt::AverInt as ReplayValue>::from_replay_json(
                 fields.get("height").ok_or_else(|| "$record Terminal.Size missing field 'height'".to_string())?,
             )?,
         })
@@ -338,7 +341,9 @@ fn terminal_type_impls() -> String {
 }
 
 fn tcp_type_impls() -> String {
-    r#"impl aver_replay::ReplayValue for aver_rt::TcpConnection {
+    // Targets the SURFACE `Tcp_Connection` (AverInt port), not the host
+    // `aver_rt::TcpConnection` (i64 port).
+    r#"impl aver_replay::ReplayValue for crate::Tcp_Connection {
     fn to_replay_json(&self) -> serde_json::Value {
         let mut fields = serde_json::Map::new();
         fields.insert("id".to_string(), ReplayValue::to_replay_json(&self.id));
@@ -364,7 +369,7 @@ fn tcp_type_impls() -> String {
             host: <aver_rt::AverStr as ReplayValue>::from_replay_json(
                 fields.get("host").ok_or_else(|| "$record Tcp.Connection missing field 'host'".to_string())?,
             )?,
-            port: <i64 as ReplayValue>::from_replay_json(
+            port: <aver_rt::AverInt as ReplayValue>::from_replay_json(
                 fields.get("port").ok_or_else(|| "$record Tcp.Connection missing field 'port'".to_string())?,
             )?,
         })
@@ -768,6 +773,26 @@ const REPLAY_RUNTIME_TEMPLATE: &str = r#"pub mod aver_replay {
 
         fn from_replay_json(value: &ReplayJson) -> Result<Self, String> {
             value.as_i64().ok_or_else(|| "expected int".to_string())
+        }
+    }
+
+    impl ReplayValue for aver_rt::AverInt {
+        fn to_replay_json(&self) -> ReplayJson {
+            // Mirror the VM's replay encoding (`src/replay/json.rs`): an
+            // `Int` serializes as a JSON Number via `to_i64`, erroring on a
+            // value outside the 64-bit JSON range. Replay only captures
+            // effect arg / result values, which stay in i64 range.
+            let n = self
+                .to_i64()
+                .expect("cannot serialize an integer outside the 64-bit JSON range");
+            ReplayJson::Number(n.into())
+        }
+
+        fn from_replay_json(value: &ReplayJson) -> Result<Self, String> {
+            value
+                .as_i64()
+                .map(aver_rt::AverInt::from_i64)
+                .ok_or_else(|| "expected int".to_string())
         }
     }
 

@@ -747,16 +747,13 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             // don't reach here — they translate to `ResolvedPattern` and
             // emit through the shared `emit_pattern` / dispatch path.)
             match &lit.node {
-                // `checked_neg` guards `i64::MIN` — that value can't have
-                // come from a `Neg` fold (the fold itself uses
-                // `checked_neg`), so leave it bare rather than panic.
-                crate::ast::Literal::Int(i) if *i < 0 => match i.checked_neg() {
-                    Some(pos) => Some(format!(
-                        "(-{})",
-                        emit_literal(&crate::ast::Literal::Int(pos))
-                    )),
-                    None => Some(emit_literal(&lit.node)),
-                },
+                // A negative folded Int literal emits the already-signed
+                // value directly: `emit_literal` produces
+                // `AverInt::from_i64(-N)` (a `const fn`), and `AverInt` has
+                // no std `Neg`, so the old `(-{lit})` re-wrap would not
+                // compile. `from_i64` accepts `i64::MIN` verbatim, so no
+                // `checked_neg` guard is needed.
+                crate::ast::Literal::Int(_) => Some(emit_literal(&lit.node)),
                 crate::ast::Literal::Float(f) if f.is_sign_negative() => Some(format!(
                     "(-{})",
                     emit_literal(&crate::ast::Literal::Float(-f))
@@ -775,11 +772,60 @@ pub(super) fn emit_mir_expr(expr: &Spanned<MirExpr>, emit_ctx: &MirEmitCtx<'_>) 
             }
             Some(aver_name_to_rust(name))
         }
-        MirExpr::Neg(inner) => Some(format!("(-{})", emit_mir_expr(inner, emit_ctx)?)),
+        MirExpr::Neg(inner) => {
+            // `Int` negation is `AverInt::neg()` (non-wrapping; `-i64::MIN`
+            // promotes to `Big`). `Float` negation keeps the raw `-`. The
+            // const-fold pass usually collapses `Neg(Literal)` to a folded
+            // literal (handled in the `Literal` arm), so a real `Neg` here is
+            // over a non-literal operand carrying an `Int` stamp; an Int
+            // literal inner (no stamp) emits an `AverInt`, which also needs
+            // `.neg()` (there is no `-` on `AverInt`).
+            let inner_is_int = ty_is_int(inner.ty())
+                || matches!(
+                    &inner.node,
+                    MirExpr::Literal(l) if matches!(l.node, crate::ast::Literal::Int(_))
+                );
+            let code = emit_mir_expr(inner, emit_ctx)?;
+            if inner_is_int {
+                Some(format!("{}.neg()", code))
+            } else {
+                Some(format!("(-{})", code))
+            }
+        }
         MirExpr::BinOp(spanned_binop) => {
             let bop = &spanned_binop.node;
             let l = emit_mir_expr(&bop.lhs, emit_ctx)?;
             let r = emit_mir_expr(&bop.rhs, emit_ctx)?;
+            // `Int` arithmetic lowers to the non-wrapping `AverInt` methods
+            // (`+ - *` → `.add/.sub/.mul(&rhs)`, `/` → `.div_trunc(&rhs)`),
+            // since `AverInt` has no operator-trait impls. Comparisons stay
+            // raw operators (`AverInt` derives `PartialEq`/`PartialOrd`).
+            // Detected from the operand stamps: arithmetic over `Int`
+            // operands carries an `Int` stamp on both sides.
+            let int_arith = matches!(bop.op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
+                && (ty_is_int(bop.lhs.ty()) || ty_is_int(bop.rhs.ty()));
+            if int_arith {
+                let method = match bop.op {
+                    BinOp::Add => "add",
+                    BinOp::Sub => "sub",
+                    BinOp::Mul => "mul",
+                    // Raw `/` over `Int` is a type error in source (Int.div
+                    // is the builtin), so this is normally unreachable; if a
+                    // bare `Div` does reach here it takes the truncating
+                    // semantics of the `/` operator. `div_trunc` returns
+                    // `Option` (None only on zero divisor); a bare `/` over
+                    // ℤ otherwise can't fail, so `.expect` mirrors the
+                    // runtime trap a zero divisor would raise.
+                    BinOp::Div => {
+                        return Some(format!(
+                            "{}.div_trunc(&{}).expect(\"divide by zero\")",
+                            l, r
+                        ));
+                    }
+                    _ => unreachable!("int_arith only set for Add/Sub/Mul/Div"),
+                };
+                return Some(format!("{}.{}(&{})", l, method, r));
+            }
             let op_str = match bop.op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",
@@ -1782,13 +1828,23 @@ fn emit_mir_match_with(
     // None bucket on the coverage path, which is conservative + fine.)
     let codegen = emit_ctx.codegen?;
 
+    // An `Int`-literal pattern (top-level or nested in a tuple) cannot be a
+    // Rust `match` pattern — `AverInt` is not a literal. Such matches lower
+    // to an if/else-if equality-guard chain (`try_emit_int_literal_match`),
+    // mirroring the dispatch-table guard path. They must NOT take the
+    // borrow-by-reference path below: a guard `&AverInt == AverInt` does not
+    // typecheck. So the subject is always cloned by VALUE for these.
+    let any_int_literal_pattern = arms.iter().any(|arm| pattern_has_int_literal(&arm.pattern));
+
     // ── 2. Borrowed-param subject → match on the reference. ──
     // Mirror of `emit_match`'s `match_on_ref` special case: only when
-    // no arm has pattern bindings.
+    // no arm has pattern bindings AND no arm has an Int-literal subpattern.
     let no_bindings = arms
         .iter()
         .all(|arm| crate::ir::vars::resolved_pattern_bindings(&arm.pattern).is_empty());
-    let match_on_ref = no_bindings && mir_subject_is_borrowed_param(&m.subject.node, emit_ctx);
+    let match_on_ref = no_bindings
+        && !any_int_literal_pattern
+        && mir_subject_is_borrowed_param(&m.subject.node, emit_ctx);
     let subj = if match_on_ref {
         emit_mir_expr(&m.subject, emit_ctx)?
     } else {
@@ -1832,6 +1888,18 @@ fn emit_mir_match_with(
         return Some(emit_dispatch_table_match(subj, &arms, shape, body_for_arm));
     }
 
+    // ── 4b. Int-literal match → if/else-if equality-guard chain. ──
+    // Any match that reaches here with an Int-literal subpattern (a single
+    // top-level Int literal that didn't form a ≥2-entry dispatch table, or a
+    // tuple carrying Int literals) can't be a Rust `match` — `AverInt` is not
+    // a pattern literal. Lower it to guards instead. When such a pattern is
+    // present the generic `match` path below is NOT a valid fallback (it
+    // would emit `AverInt::from_i64(N)` as a pattern), so the guard emitter
+    // is REQUIRED to render; if it can't, return `None` (hard diagnostic).
+    if any_int_literal_pattern {
+        return try_emit_int_literal_match(&subj, &arms, &arm_bodies, codegen);
+    }
+
     // ── 5. Generic `match`. ──
     // Mirror of `emit_match`'s tail. `needs_as_str` is always `true`
     // in HIR (`subject_might_be_string` is a `true` stub), so the
@@ -1865,6 +1933,237 @@ fn emit_mir_match_with(
         match_expr,
         arm_strs.join(",\n")
     ))
+}
+
+/// Does this pattern contain an `Int`-literal subpattern (top-level or
+/// nested inside a tuple)? Such a pattern cannot become a Rust `match`
+/// arm — `AverInt` is not a literal — so it forces the equality-guard
+/// lowering in [`try_emit_int_literal_match`] and excludes the by-reference
+/// `match_on_ref` path (where the guard would compare `&AverInt`).
+fn pattern_has_int_literal(pat: &ResolvedPattern) -> bool {
+    match pat {
+        ResolvedPattern::Literal(crate::ast::Literal::Int(_)) => true,
+        ResolvedPattern::Tuple(pats) => pats.iter().any(pattern_has_int_literal),
+        _ => false,
+    }
+}
+
+/// Lower a match that carries `Int`-literal patterns into an if/else-if
+/// equality-guard chain (`AverInt: PartialEq`), since `AverInt` cannot be a
+/// Rust `match` pattern literal. Mirrors the dispatch-table guard path, but
+/// also handles a single Int-literal arm (too few for a dispatch table) and
+/// tuple subjects with Int-literal subpatterns.
+///
+/// `subj` is the already-emitted, by-VALUE subject expression. The supported
+/// arm shapes (after list / table / bool matches are peeled off upstream):
+/// top-level `Literal(Int)` / `Wildcard` / `Ident`, and `Tuple(..)` whose
+/// elements are `Literal(Int)` / `Wildcard` / `Ident` (or nested tuples of
+/// the same). Returns `None` for any other shape (e.g. a non-Int literal or
+/// a ctor mixed in) — the caller then emits a hard diagnostic.
+fn try_emit_int_literal_match(
+    subj: &str,
+    arms: &[ResolvedMatchArm],
+    arm_bodies: &[String],
+    codegen: &CodegenContext,
+) -> Option<String> {
+    // Bind the subject once so a non-trivial expr is evaluated a single time
+    // and the guards / bindings reference the temp.
+    let subject_name = "__int_match_subject";
+
+    // Collect every binding name used anywhere in the match, so the fresh
+    // tuple-element temporaries (`__litN`) can be chosen to never collide
+    // with a real pattern binding (hygiene — fix #4).
+    let mut used_names: HashSet<String> = HashSet::new();
+    for arm in arms {
+        for b in crate::ir::vars::resolved_pattern_bindings(&arm.pattern) {
+            used_names.insert(aver_name_to_rust(&b));
+        }
+    }
+    used_names.insert(subject_name.to_string());
+
+    // Pre-render the per-element tuple temp names, fresh + non-colliding.
+    // The same N temps serve every tuple arm (the subject is one tuple), so
+    // pick them once up front.
+    let tuple_arity = arms.iter().find_map(|arm| match &arm.pattern {
+        ResolvedPattern::Tuple(pats) => Some(pats.len()),
+        _ => None,
+    });
+    let tuple_temps: Vec<String> = match tuple_arity {
+        Some(n) => {
+            let mut temps = Vec::with_capacity(n);
+            let mut counter = 0usize;
+            for _ in 0..n {
+                let name = loop {
+                    let candidate = format!("__lit{}", counter);
+                    counter += 1;
+                    if !used_names.contains(&candidate) {
+                        break candidate;
+                    }
+                };
+                used_names.insert(name.clone());
+                temps.push(name);
+            }
+            temps
+        }
+        None => Vec::new(),
+    };
+
+    // For each arm, build (Option<condition>, bindings-prelude). A `None`
+    // condition is the catch-all (`else`). The last such arm closes the
+    // chain; any arm after it is dead but harmless.
+    enum ArmPlan {
+        Guard { cond: String, prelude: String },
+        Default { prelude: String },
+    }
+
+    let mut plans: Vec<(ArmPlan, &str)> = Vec::with_capacity(arms.len());
+    for (idx, arm) in arms.iter().enumerate() {
+        let body = arm_bodies[idx].as_str();
+        match &arm.pattern {
+            ResolvedPattern::Wildcard => {
+                plans.push((
+                    ArmPlan::Default {
+                        prelude: String::new(),
+                    },
+                    body,
+                ));
+            }
+            ResolvedPattern::Ident(name) => {
+                // Catch-all binding: bind the whole subject by value.
+                let rust = aver_name_to_rust(name);
+                let prelude = format!("let {} = {}.clone(); ", rust, subject_name);
+                plans.push((ArmPlan::Default { prelude }, body));
+            }
+            ResolvedPattern::Literal(crate::ast::Literal::Int(n)) => {
+                let cond = format!("{} == aver_rt::AverInt::from_i64({})", subject_name, n);
+                plans.push((
+                    ArmPlan::Guard {
+                        cond,
+                        prelude: String::new(),
+                    },
+                    body,
+                ));
+            }
+            ResolvedPattern::Tuple(pats) => {
+                if pats.len() != tuple_temps.len() {
+                    return None;
+                }
+                let mut conds: Vec<String> = Vec::new();
+                let mut prelude = String::new();
+                for (pat, temp) in pats.iter().zip(tuple_temps.iter()) {
+                    // Each top-level temp `__litN` is a reference to the
+                    // tuple element (`&Elem`), so its value place is `*temp`.
+                    // Recurse into the element, destructuring nested tuples
+                    // to arbitrary depth via field-index access expressions.
+                    let place = format!("(*{})", temp);
+                    if !lower_int_literal_subpatterns(pat, &place, &mut conds, &mut prelude) {
+                        // A non-Int literal, ctor, or other shape nested
+                        // anywhere in the tuple is out of scope here.
+                        return None;
+                    }
+                }
+                if conds.is_empty() {
+                    // No literal constraints: this tuple arm is a catch-all
+                    // (pure bindings / wildcards) — it closes the chain.
+                    plans.push((ArmPlan::Default { prelude }, body));
+                } else {
+                    let cond = conds.join(" && ");
+                    plans.push((ArmPlan::Guard { cond, prelude }, body));
+                }
+            }
+            // Any other top-level shape is out of scope for this lowering.
+            _ => return None,
+        }
+    }
+
+    // Build the if/else-if chain from the back. The chain MUST end in a
+    // default arm (the Aver typechecker rejects a non-exhaustive Int match,
+    // so a `_`/binding arm is always present); if none was found, emit an
+    // `unreachable!` tail so the generated `match` is still total.
+    let mut chain =
+        String::from("unreachable!(\"Aver Rust codegen: non-exhaustive Int-literal match\")");
+    for (plan, body) in plans.into_iter().rev() {
+        match plan {
+            ArmPlan::Default { prelude } => {
+                chain = format!("{{ {}{} }}", prelude, body);
+            }
+            ArmPlan::Guard { cond, prelude } => {
+                chain = format!("if {} {{ {}{} }} else {}", cond, prelude, body, chain);
+            }
+        }
+    }
+
+    // Tuple subjects need the element temps bound (by reference, so the
+    // guards compare `&AverInt == &AverInt`). A non-tuple subject is used
+    // directly.
+    let setup = if tuple_temps.is_empty() {
+        format!("let {} = {};", subject_name, subj)
+    } else {
+        // Destructure `&(AverInt, …)`: match ergonomics bind each element as
+        // `&AverInt`, so the guards compare `&AverInt == &AverInt` and a
+        // binding element clones the `&AverInt` to an owned value. A
+        // single-element tuple needs the trailing comma (`(x,)`).
+        let elems = if tuple_temps.len() == 1 {
+            format!("{},", tuple_temps[0])
+        } else {
+            tuple_temps.join(", ")
+        };
+        format!(
+            "let {} = {}; let ({}) = &{};",
+            subject_name, subj, elems, subject_name
+        )
+    };
+
+    // `codegen` is threaded only to keep the signature uniform with the
+    // other emitters; the guard lowering needs no ctx lookups.
+    let _ = codegen;
+    Some(format!("{{ {} {} }}", setup, chain))
+}
+
+/// Recursively lower one tuple-subpattern of an Int-literal match against a
+/// `place` expression (a Rust expression denoting the *value place* of the
+/// element, e.g. `(*__lit0)` or `(*__lit1).0`). Appends an equality guard for
+/// every Int-literal LEAF (at any depth), binds identifier leaves into
+/// `prelude`, and ignores wildcards. Nested tuples destructure via field-index
+/// access (`{place}.{i}`) — no fresh `match` bindings, so hygiene is automatic.
+///
+/// Returns `false` if any leaf is an unsupported shape (a non-Int literal, a
+/// ctor, …); the caller then bails to the hard codegen diagnostic. This is the
+/// arbitrarily-nested generalization of the one-level element loop above.
+fn lower_int_literal_subpatterns(
+    pat: &ResolvedPattern,
+    place: &str,
+    conds: &mut Vec<String>,
+    prelude: &mut String,
+) -> bool {
+    match pat {
+        ResolvedPattern::Literal(crate::ast::Literal::Int(n)) => {
+            // `place` is a value place; `&{place}` is `&AverInt`, comparable to
+            // the literal reference.
+            conds.push(format!("&{} == &aver_rt::AverInt::from_i64({})", place, n));
+            true
+        }
+        ResolvedPattern::Wildcard => true,
+        ResolvedPattern::Ident(name) if name == "_" => true,
+        ResolvedPattern::Ident(name) => {
+            let rust = aver_name_to_rust(name);
+            // Clone the value place into an owned binding.
+            prelude.push_str(&format!("let {} = {}.clone(); ", rust, place));
+            true
+        }
+        ResolvedPattern::Tuple(pats) => {
+            for (i, sub) in pats.iter().enumerate() {
+                // Field `i` of the tuple at `place` is itself a value place.
+                let sub_place = format!("{}.{}", place, i);
+                if !lower_int_literal_subpatterns(sub, &sub_place, conds, prelude) {
+                    return false;
+                }
+            }
+            true
+        }
+        // A non-Int literal, ctor, or any other shape is out of scope.
+        _ => false,
+    }
 }
 
 /// Is the match subject a read of a borrowed-param local? Mirror of
@@ -2011,6 +2310,14 @@ pub(super) fn emit_mir_fn_body_routed(
 /// MIR walker's `+` dispatch.
 fn ty_is_numeric(ty: Option<&Type>) -> bool {
     matches!(ty, Some(Type::Int | Type::Float))
+}
+
+/// Is the type stamp exactly `Int`? Drives the `AverInt`-method lowering
+/// of arithmetic (`+ - * /`, unary `-`) — `Int` operands take the
+/// non-wrapping method calls, everything else (notably `Float`) keeps the
+/// raw Rust operator.
+fn ty_is_int(ty: Option<&Type>) -> bool {
+    matches!(ty, Some(Type::Int))
 }
 
 // ── TCO loop / trampoline synthesis from MIR ────────────────────────────
@@ -2985,7 +3292,7 @@ fn try_emit_mir_fusion(
                 ctx,
             );
             Some(format!(
-                "{{ let __vec = {}; let __idx = {} as usize; if __idx < __vec.len() {{ __vec.set_unchecked(__idx, {}) }} else {{ __vec }} }}",
+                "{{ let __vec = {}; match ({}).to_usize() {{ Some(__idx) if __idx < __vec.len() => __vec.set_unchecked(__idx, {}), _ => __vec }} }}",
                 vector, index, value
             ))
         }
@@ -3016,30 +3323,31 @@ fn try_emit_mir_fusion(
             let default = emit_literal(&default_lit.node);
             match op {
                 // Euclidean division (partner of Euclidean `Int.mod`).
-                // `checked_div_euclid` yields the default on BOTH a zero
-                // divisor and the `i64::MIN / -1` overflow (a bare `/`
-                // panics/wraps on the latter). LLVM folds it to a plain
-                // division for ordinary constant divisors.
+                // `AverInt::div_euclid` is `None` ONLY on a zero divisor
+                // (the `i64::MIN / -1` edge promotes to `Big` over ℤ), so
+                // `.unwrap_or(default)` yields the default exactly when the
+                // divisor is zero — matching the VM.
                 "div" => {
                     let b_str = emit_mir_expr(b, ctx)?;
                     Some(format!(
-                        "({}).checked_div_euclid({}).unwrap_or({})",
+                        "({}).div_euclid(&({})).unwrap_or({})",
                         a_str, b_str, default
                     ))
                 }
-                // `rem_euclid` never overflows, so a non-zero literal divisor
-                // can skip the runtime zero check entirely.
+                // `rem_euclid` is total except on a zero divisor, so a
+                // non-zero literal divisor can skip the runtime zero check —
+                // the `.unwrap()` is total there (divisor proven non-zero).
                 _ => {
                     if let MirExpr::Literal(b_lit) = &b.node
                         && let crate::ast::Literal::Int(n) = &b_lit.node
                         && *n != 0
                     {
                         let b_str = emit_literal(&crate::ast::Literal::Int(*n));
-                        Some(format!("({}).rem_euclid({})", a_str, b_str))
+                        Some(format!("({}).rem_euclid(&({})).unwrap()", a_str, b_str))
                     } else {
                         let b_str = emit_mir_expr(b, ctx)?;
                         Some(format!(
-                            "{{ let __b = {}; if __b == 0i64 {{ {} }} else {{ ({}).rem_euclid(__b) }} }}",
+                            "{{ let __b = {}; if __b.is_zero() {{ {} }} else {{ ({}).rem_euclid(&__b).unwrap() }} }}",
                             b_str, default, a_str
                         ))
                     }
@@ -3057,9 +3365,11 @@ fn try_emit_mir_fusion(
             }
             let list = emit_mir_expr(&inner_args[0], ctx)?;
             let index = emit_mir_expr(&args[1], ctx)?;
+            // Index lookup: out-of-`usize` index → `None` (matches the
+            // unfused `Vector.get`).
             Some(format!(
-                "{}.to_vec().get({} as usize).cloned()",
-                list, index
+                "({}).to_usize().and_then(|__i| {}.to_vec().get(__i).cloned())",
+                index, list
             ))
         }
         _ => None,
@@ -3112,8 +3422,12 @@ fn emit_mir_builtin_call(
         "Option.toResult" => format!("{}.ok_or({})", clone!(0), clone!(1)),
 
         // ---- Int ----
+        // `AverInt::abs` promotes `|i64::MIN|` to `Big` (no wrap/panic).
         "Int.abs" => format!("{}.abs()", arg!(0)),
-        "Int.fromFloat" => format!("({} as i64)", arg!(0)),
+        // Float→Int truncation MUST funnel through `from_f64_trunc` (NOT
+        // `from_i64(f as i64)`, which saturates a huge finite float to
+        // `i64::MAX`). Mirrors the VM's `float_to_aver_int`.
+        "Int.fromFloat" => format!("aver_rt::AverInt::from_f64_trunc({})", arg!(0)),
         "Int.fromString" => {
             // Match the VM's Err message BYTE-FOR-BYTE: `Int.fromString`
             // in `src/types/int.rs` returns `Cannot parse '{input}' as
@@ -3123,41 +3437,50 @@ fn emit_mir_builtin_call(
             // bytes on rust and the VM. Bind a *reference* to the input
             // (parse + the message both borrow), so a non-trivial arg
             // expr is evaluated once and the original owned value stays
-            // available to surrounding code (the HIR emit borrowed too).
+            // available to surrounding code. `AverInt::from_str` parses
+            // arbitrary-length integers (the no-wrap guarantee).
             let s = arg!(0);
             format!(
-                "{{ let __s = &({s}); __s.parse::<i64>().map_err(|_| format!(\"Cannot parse '{{}}' as Int\", __s)) }}"
+                "{{ let __s = &({s}); __s.parse::<aver_rt::AverInt>().map_err(|_| format!(\"Cannot parse '{{}}' as Int\", __s)) }}"
             )
         }
-        "Int.min" => format!("{}.min({})", arg!(0), arg!(1)),
-        "Int.max" => format!("{}.max({})", arg!(0), arg!(1)),
+        // `AverInt` has no by-value `Ord::min`/`max`; use the borrowing
+        // `min_ref`/`max_ref` (which keep the small-int clone cheap).
+        "Int.min" => format!("{}.min_ref(&{})", arg!(0), arg!(1)),
+        "Int.max" => format!("{}.max_ref(&{})", arg!(0), arg!(1)),
         "Int.mod" => {
             let a = arg!(0);
             let b = arg!(1);
-            // Error string verbatim from the VM (`src/types/int.rs`) so the
-            // boxed `Result.Err` is byte-identical across backends.
+            // Euclidean remainder over ℤ. `rem_euclid` returns `None` only
+            // on a zero divisor; the error string is verbatim from the VM
+            // (`src/types/int.rs`) so the boxed `Result.Err` is
+            // byte-identical across backends.
             format!(
-                "if ({b}) == 0i64 {{ Err(\"division by zero\".to_string()) }} else {{ Ok(({a}).rem_euclid({b})) }}"
+                "match ({a}).rem_euclid(&({b})) {{ Some(__r) => Ok(__r), None => Err(\"division by zero\".to_string()) }}"
             )
         }
         "Int.div" => {
             let a = arg!(0);
             let b = arg!(1);
-            // Euclidean division (partner of Euclidean `Int.mod`). Split the
-            // two failure modes so the `Result.Err` strings match the VM /
-            // wasm-gc verbatim: `"division by zero"` for a zero divisor,
-            // `"division overflow"` for the `i64::MIN / -1` edge (the only
-            // input on which `checked_div_euclid` is `None` for `b != 0`).
+            // Euclidean division over ℤ (partner of Euclidean `Int.mod`).
+            // `div_euclid` is `None` ONLY for a zero divisor — the
+            // `i64::MIN / -1` "overflow" edge promotes to `Big` (it is just
+            // `i64::MAX + 1`), so the VM's old "division overflow" branch is
+            // DEAD here (VM agrees: both are ℤ now). Keep the
+            // "division by zero" string byte-identical to the VM.
             format!(
-                "if ({b}) == 0i64 {{ Err(\"division by zero\".to_string()) }} else {{ match ({a}).checked_div_euclid({b}) {{ Some(__q) => Ok(__q), None => Err(\"division overflow\".to_string()) }} }}"
+                "match ({a}).div_euclid(&({b})) {{ Some(__q) => Ok(__q), None => Err(\"division by zero\".to_string()) }}"
             )
         }
 
         // ---- Float ----
         "Float.abs" => format!("{}.abs()", arg!(0)),
-        "Float.round" => format!("{}.round() as i64", arg!(0)),
-        "Float.floor" => format!("{}.floor() as i64", arg!(0)),
-        "Float.ceil" => format!("{}.ceil() as i64", arg!(0)),
+        // The VM applies `float_to_aver_int(f.round())` etc. — round/floor/
+        // ceil the f64, then truncate into ℤ via `from_f64_trunc` (NOT
+        // `as i64`, which saturates huge finite floats to `i64::MAX`).
+        "Float.round" => format!("aver_rt::AverInt::from_f64_trunc({}.round())", arg!(0)),
+        "Float.floor" => format!("aver_rt::AverInt::from_f64_trunc({}.floor())", arg!(0)),
+        "Float.ceil" => format!("aver_rt::AverInt::from_f64_trunc({}.ceil())", arg!(0)),
         "Float.fromString" => {
             // Match the VM's Err message BYTE-FOR-BYTE: `Float.fromString`
             // in `src/types/float.rs` returns `Cannot parse '{input}' as
@@ -3175,23 +3498,46 @@ fn emit_mir_builtin_call(
         "Float.cos" => format!("{}.cos()", arg!(0)),
         "Float.atan2" => format!("{}.atan2({})", arg!(0), arg!(1)),
         "Float.pi" => "std::f64::consts::PI".to_string(),
-        "Float.fromInt" => format!("{} as f64", arg!(0)),
+        // The arg is now `AverInt`; `to_f64` saturates huge magnitudes to
+        // `±∞` (never `NaN`), mirroring the VM's `AverInt::to_f64`.
+        "Float.fromInt" => format!("{}.to_f64()", arg!(0)),
 
         // ---- String ----
+        // `AverInt: Display` renders Small and Big byte-identically to the
+        // VM's `Value::Int` formatting.
         "String.fromInt" => format!("{}.to_string()", arg!(0)),
         "String.fromFloat" => format!("{}.to_string()", arg!(0)),
         "String.fromBool" => format!("{}.to_string()", arg!(0)),
         "String.charAt" => {
             let s = arg!(0);
             let idx = arg!(1);
-            format!("{}.chars().nth({} as usize).map(|c| c.to_string())", s, idx)
+            // Index lookup: an out-of-`usize` index is out of range → `None`
+            // (charAt already returns `Option<String>`), never a wrapped
+            // index. `to_usize()` is the checked conversion.
+            format!(
+                "({}).to_usize().and_then(|__i| {}.chars().nth(__i).map(|c| c.to_string()))",
+                idx, s
+            )
         }
-        "String.len" => format!("({}.chars().count() as i64)", arg!(0)),
+        // Producer: wrap the `usize` length in `AverInt`.
+        "String.len" => format!(
+            "aver_rt::AverInt::from_i64({}.chars().count() as i64)",
+            arg!(0)
+        ),
         "String.slice" => {
             let s = arg!(0);
             let from = arg!(1);
             let to = arg!(2);
-            format!("aver_rt::string_slice(&{}, {}, {})", s, from, to)
+            // `string_slice` clamps internally (`from.max(0)`, end past the
+            // length saturates) and takes `i64` bounds. A Big bound is out of
+            // any string's range, so saturate it sign-aware to `i64::MIN`/
+            // `i64::MAX` (`aver_int_clamp_i64`): a huge positive clamps to the
+            // string end, a huge negative clamps to 0 — behaviorally identical
+            // to the VM.
+            format!(
+                "aver_rt::string_slice(&{}, crate::aver_int_clamp_i64(&{}), crate::aver_int_clamp_i64(&{}))",
+                s, from, to
+            )
         }
         "String.contains" => {
             let s = arg!(0);
@@ -3237,38 +3583,51 @@ fn emit_mir_builtin_call(
         "String.repeat" => {
             let s = arg!(0);
             let n = arg!(1);
-            format!("{}.repeat({} as usize)", s, n)
+            // A negative or out-of-`usize` count yields the empty string
+            // (matching a 0-repeat); `to_usize()` is `None` for both.
+            format!("{}.repeat(({}).to_usize().unwrap_or(0))", s, n)
         }
         "String.indexOf" => {
             let s = arg!(0);
             let sub = arg!(1);
-            format!("{}.find(&*{}).map(|i| i as i64).unwrap_or(-1i64)", s, sub)
+            // Producer: the found byte index wraps in `AverInt`; not-found
+            // is `-1`.
+            format!(
+                "{}.find(&*{}).map(|i| aver_rt::AverInt::from_i64(i as i64)).unwrap_or(aver_rt::AverInt::from_i64(-1))",
+                s, sub
+            )
         }
-        "String.byteLength" => format!("({}.len() as i64)", arg!(0)),
+        "String.byteLength" => {
+            format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0))
+        }
 
         // ---- List ----
         "List.len" => {
             if let MirExpr::List(items) = &args[0].node
                 && items.is_empty()
             {
-                "0i64".to_string()
+                "aver_rt::AverInt::from_i64(0)".to_string()
             } else {
-                format!("({}.len() as i64)", arg!(0))
+                // Producer: wrap the `usize` length in `AverInt`.
+                format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0))
             }
         }
         "List.prepend" => format!("aver_rt::AverList::prepend({}, &{})", clone!(0), clone!(1)),
         "List.take" => {
             let list = arg!(0);
             let count = arg!(1);
+            // A negative count → 0; a huge (Big) count → take all
+            // (`to_usize()` is `None`, so `usize::MAX`). Semantics preserved
+            // from the old `usize::try_from`-based clamp.
             format!(
-                "{{ let __n = if ({count}) <= 0 {{ 0usize }} else {{ usize::try_from({count}).unwrap_or(usize::MAX) }}; aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
+                "{{ let __n = ({count}).to_usize().unwrap_or(usize::MAX); aver_rt::AverList::from_vec(({list}).iter().take(__n).cloned().collect::<Vec<_>>()) }}"
             )
         }
         "List.drop" => {
             let list = arg!(0);
             let count = arg!(1);
             format!(
-                "{{ let __n = if ({count}) <= 0 {{ 0usize }} else {{ usize::try_from({count}).unwrap_or(usize::MAX) }}; aver_rt::AverList::from_vec(({list}).iter().skip(__n).cloned().collect::<Vec<_>>()) }}"
+                "{{ let __n = ({count}).to_usize().unwrap_or(usize::MAX); aver_rt::AverList::from_vec(({list}).iter().skip(__n).cloned().collect::<Vec<_>>()) }}"
             )
         }
         "List.concat" => format!("aver_rt::AverList::concat(&{}, &{})", clone!(0), clone!(1)),
@@ -3321,7 +3680,7 @@ fn emit_mir_builtin_call(
             "aver_rt::AverList::from_vec({}.values().cloned().collect::<Vec<_>>())",
             arg!(0)
         ),
-        "Map.len" => format!("({}.len() as i64)", arg!(0)),
+        "Map.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),
 
         // ---- Bool ----
         "Bool.or" => format!("({} || {})", arg!(0), arg!(1)),
@@ -3329,19 +3688,26 @@ fn emit_mir_builtin_call(
         "Bool.not" => format!("(!{})", arg!(0)),
 
         // ---- Char ----
+        // Producer: the code point wraps in `AverInt`.
         "Char.toCode" => format!(
-            "({}.chars().next().map(|c| c as i64).unwrap_or(0i64))",
+            "aver_rt::AverInt::from_i64({}.chars().next().map(|c| c as i64).unwrap_or(0))",
             arg!(0)
         ),
-        "Char.fromCode" => format!("char::from_u32({} as u32).map(|c| c.to_string())", arg!(0)),
+        // Index-like lookup: an out-of-`u32` (or invalid) code → `None`.
+        "Char.fromCode" => format!(
+            "({}).to_u32().and_then(char::from_u32).map(|c| c.to_string())",
+            arg!(0)
+        ),
 
         // ---- Byte ----
+        // Range check over ℤ (no `as u8` truncation): compare the `AverInt`
+        // against the 0–255 bounds, then convert the in-range value.
         "Byte.toHex" => format!(
-            "{{ let __n = {}; if (0i64..=255i64).contains(&__n) {{ Ok(format!(\"{{:02x}}\", __n as u8)) }} else {{ Err(format!(\"Byte.toHex: {{}} is out of range 0–255\", __n)) }} }}",
+            "{{ let __n = {}; match __n.to_u16() {{ Some(__b @ 0..=255) => Ok(format!(\"{{:02x}}\", __b as u8)), _ => Err(format!(\"Byte.toHex: {{}} is out of range 0–255\", __n)) }} }}",
             arg!(0)
         ),
         "Byte.fromHex" => format!(
-            "{{ let __s = {}; if __s.len() != 2 {{ Err(format!(\"Byte.fromHex: expected exactly 2 hex chars, got '{{}}'\", __s)) }} else {{ u8::from_str_radix(&__s, 16).map(|n| n as i64).map_err(|_| format!(\"Byte.fromHex: invalid hex '{{}}'\", __s)) }} }}",
+            "{{ let __s = {}; if __s.len() != 2 {{ Err(format!(\"Byte.fromHex: expected exactly 2 hex chars, got '{{}}'\", __s)) }} else {{ u8::from_str_radix(&__s, 16).map(|n| aver_rt::AverInt::from_i64(n as i64)).map_err(|_| format!(\"Byte.fromHex: invalid hex '{{}}'\", __s)) }} }}",
             arg!(0)
         ),
 
@@ -3349,20 +3715,38 @@ fn emit_mir_builtin_call(
         "Vector.new" => {
             let size = arg!(0);
             let default = clone!(1);
-            format!("aver_rt::AverVector::new({} as usize, {})", size, default)
+            // Capacity site: the VM ERRORS on a negative / non-machine-sized
+            // size. Generated Rust has no Result channel here (Vector.new
+            // returns a Vector), so a bad size ABORTS via `.expect` with the
+            // VM's exact message — NEVER a silent `unwrap_or(0)` empty vector.
+            format!(
+                "aver_rt::AverVector::new(({}).to_usize().expect(\"Vector.new: size must be a non-negative, machine-sized Int\"), {})",
+                size, default
+            )
         }
         "Vector.get" => {
             let vec = arg!(0);
             let idx = arg!(1);
-            format!("{}.get({} as usize).cloned()", vec, idx)
+            // Index lookup: an out-of-`usize` index → `None` (Vector.get
+            // already returns `Option`).
+            format!(
+                "({}).to_usize().and_then(|__i| {}.get(__i).cloned())",
+                idx, vec
+            )
         }
         "Vector.set" => {
             let vec = clone!(0);
             let idx = arg!(1);
             let val = clone!(2);
-            format!("{}.set_owned({} as usize, {})", vec, idx, val)
+            // `set_owned` returns `Option<Vector>` (None on out-of-range),
+            // mirroring the VM. An out-of-`usize` index is likewise `None`,
+            // via the checked conversion — never a wrapped index.
+            format!(
+                "({}).to_usize().and_then(|__i| {}.set_owned(__i, {}))",
+                idx, vec, val
+            )
         }
-        "Vector.len" => format!("({}.len() as i64)", arg!(0)),
+        "Vector.len" => format!("aver_rt::AverInt::from_i64({}.len() as i64)", arg!(0)),
         "Vector.fromList" => format!("aver_rt::AverVector::from_vec({}.to_vec())", arg!(0)),
 
         // ---- BranchPath ----
@@ -3380,7 +3764,13 @@ fn emit_mir_builtin_call(
         "BranchPath.child" => {
             let path = mir_borrow_arg(emit_mir_expr(&args[0], ctx)?, &args[0].node, ctx);
             let idx = arg!(1);
-            format!("aver_rt::BranchPath::child({}, {})", path, idx)
+            // `child` takes a host `i64` index; convert the `AverInt` at the
+            // boundary, ERRORING on an out-of-range index like the VM (never
+            // a silent truncation).
+            format!(
+                "aver_rt::BranchPath::child({}, crate::to_host_i64(&({}), \"BranchPath.child: `idx` must be a non-negative, machine-sized Int\"))",
+                path, idx
+            )
         }
         // `parse(raw: &str)`: `mir_str_arg_or_deref` yields a bare
         // string literal or the `&*` deref form, both `&str`.
@@ -3507,8 +3897,13 @@ fn emit_mir_intrinsic_call(
     match intrinsic {
         BuiltinIntrinsic::BufNew => {
             let cap = emit_mir_expr(&args[0], ctx)?;
+            // The capacity is a pure allocation HINT (no semantic effect): a
+            // Big / out-of-`usize` value just falls back to 0 (the Vec grows
+            // on demand). This is the one site where `unwrap_or(0)` is sound
+            // because the value never reaches output — not a silent wrong
+            // value, a sizing hint.
             Some(format!(
-                "aver_rt::Buffer::with_capacity(({}) as usize)",
+                "aver_rt::Buffer::with_capacity(({}).to_usize().unwrap_or(0))",
                 cap
             ))
         }
@@ -3540,20 +3935,19 @@ fn emit_mir_intrinsic_call(
             ))
         }
         // Const-divisor Euclidean div/mod (0.24 "Divide"). The MIR
-        // const-fold pass only emits these for a literal divisor that
-        // rules out the partial / overflow cases, so `div_euclid` /
-        // `rem_euclid` are always defined — emit the bare i64 op, no
-        // `Result`. Same routines `Int.div` / `Int.mod` use in
-        // `src/types/int.rs`.
+        // const-fold pass only emits these for a literal NON-ZERO divisor,
+        // so `AverInt::div_euclid` / `rem_euclid` (which are `None` only on a
+        // zero divisor) are always `Some` here — the `.unwrap()` is total.
+        // Same routines `Int.div` / `Int.mod` use in `src/types/int.rs`.
         BuiltinIntrinsic::IntDivEuclid => {
             let a = emit_mir_expr(&args[0], ctx)?;
             let b = emit_mir_expr(&args[1], ctx)?;
-            Some(format!("({}).div_euclid({})", a, b))
+            Some(format!("({}).div_euclid(&({})).unwrap()", a, b))
         }
         BuiltinIntrinsic::IntModEuclid => {
             let a = emit_mir_expr(&args[0], ctx)?;
             let b = emit_mir_expr(&args[1], ctx)?;
-            Some(format!("({}).rem_euclid({})", a, b))
+            Some(format!("({}).rem_euclid(&({})).unwrap()", a, b))
         }
     }
 }
@@ -3600,7 +3994,10 @@ mod tests {
     #[test]
     fn emits_int_literal_as_i64_suffix() {
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(42))));
-        assert_eq!(emit_mir_expr(&lit, &empty_ctx()).as_deref(), Some("42i64"));
+        assert_eq!(
+            emit_mir_expr(&lit, &empty_ctx()).as_deref(),
+            Some("aver_rt::AverInt::from_i64(42)")
+        );
     }
 
     #[test]
@@ -3667,7 +4064,10 @@ mod tests {
             mir_builtins: BUILTINS.get_or_init(Vec::new),
         };
         let lit = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
-        assert_eq!(emit_mir_expr(&lit, &ctx).as_deref(), Some("7i64"));
+        assert_eq!(
+            emit_mir_expr(&lit, &ctx).as_deref(),
+            Some("aver_rt::AverInt::from_i64(7)")
+        );
     }
 
     #[test]
@@ -3700,7 +4100,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_int_binop_add_as_plus() {
+    fn emits_int_binop_add_as_averint_method() {
         let x = MirLocal {
             slot: LocalId(0),
             last_use: false,
@@ -3713,12 +4113,8 @@ mod tests {
         };
         let expr = span(MirExpr::BinOp(span(bop)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("binop should emit");
-        // Numeric path — both operands stamped Int → no `&` on
-        // the right side.
-        assert!(
-            emit.contains(" + ") && !emit.contains(" + &"),
-            "Int+Int should emit plain `+`, got: {emit}"
-        );
+        // Int arithmetic lowers to the non-wrapping `AverInt::add(&rhs)`.
+        assert_eq!(emit, "x.add(&x)");
     }
 
     #[test]
@@ -3746,10 +4142,11 @@ mod tests {
 
     #[test]
     fn emits_neg_as_paren_minus_inner() {
+        // An Int operand negates via `AverInt::neg()` (no std `-`).
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let expr = span(MirExpr::Neg(Box::new(inner)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("neg should emit");
-        assert_eq!(emit, "(-7i64)");
+        assert_eq!(emit, "aver_rt::AverInt::from_i64(7).neg()");
     }
 
     #[test]
@@ -3801,7 +4198,7 @@ mod tests {
         let emit = emit_mir_expr(&expr, &ctx_with_builtin("Int.mod")).expect("Int.mod emits");
         assert_eq!(
             emit,
-            "(if (3i64) == 0i64 { Err(\"division by zero\".to_string()) } else { Ok((7i64).rem_euclid(3i64)) }).into_aver()"
+            "(match (aver_rt::AverInt::from_i64(7)).rem_euclid(&(aver_rt::AverInt::from_i64(3))) { Some(__r) => Ok(__r), None => Err(\"division by zero\".to_string()) }).into_aver()"
         );
     }
 
@@ -3869,7 +4266,7 @@ mod tests {
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let expr = span(MirExpr::Return(Box::new(inner)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("return should emit");
-        assert_eq!(emit, "return 7i64");
+        assert_eq!(emit, "return aver_rt::AverInt::from_i64(7)");
     }
 
     fn symbols_with_one_type(name: &str, scoped: bool) -> SymbolTable {
@@ -3917,7 +4314,10 @@ mod tests {
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("record create should emit");
-        assert_eq!(emit, "Point { x: 1i64, y: 2i64 }");
+        assert_eq!(
+            emit,
+            "Point { x: aver_rt::AverInt::from_i64(1), y: aver_rt::AverInt::from_i64(2) }"
+        );
     }
 
     #[test]
@@ -3964,7 +4364,10 @@ mod tests {
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("terminal size record should emit");
-        assert_eq!(emit, "Terminal_Size { width: 80i64, height: 24i64 }");
+        assert_eq!(
+            emit,
+            "Terminal_Size { width: aver_rt::AverInt::from_i64(80), height: aver_rt::AverInt::from_i64(24) }"
+        );
     }
 
     #[test]
@@ -3999,7 +4402,7 @@ mod tests {
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("dep-module record should emit");
-        assert_eq!(emit, "Expr { tag: 1i64 }");
+        assert_eq!(emit, "Expr { tag: aver_rt::AverInt::from_i64(1) }");
     }
 
     #[test]
@@ -4038,7 +4441,7 @@ mod tests {
         let emit = emit_mir_expr(&expr, &ctx).expect("qualified dep-module record should emit");
         assert_eq!(
             emit,
-            "crate::aver_generated::apps::notepad::store::Note { id: 1i64 }"
+            "crate::aver_generated::apps::notepad::store::Note { id: aver_rt::AverInt::from_i64(1) }"
         );
     }
 
@@ -4072,7 +4475,10 @@ mod tests {
         // `Resolved { last_use: false }` non-Copy local. (A
         // `MirLocal` is always a local read — the resolver's
         // global-Ident passthrough doesn't apply.)
-        assert_eq!(emit, "Point { x: 9i64, ..base.clone() }");
+        assert_eq!(
+            emit,
+            "Point { x: aver_rt::AverInt::from_i64(9), ..base.clone() }"
+        );
     }
 
     fn symbols_with_one_fn(name: &str) -> SymbolTable {
@@ -4102,7 +4508,7 @@ mod tests {
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&tc, &ctx).expect("tail call should emit");
-        assert_eq!(emit, "loop_step(7i64)");
+        assert_eq!(emit, "loop_step(aver_rt::AverInt::from_i64(7))");
     }
 
     #[test]
@@ -4137,7 +4543,7 @@ mod tests {
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("map should emit");
         assert_eq!(
             emit,
-            "vec![(1i64, 10i64), (2i64, 20i64)].into_iter().collect::<HashMap<_, _>>()"
+            "vec![(aver_rt::AverInt::from_i64(1), aver_rt::AverInt::from_i64(10)), (aver_rt::AverInt::from_i64(2), aver_rt::AverInt::from_i64(20))].into_iter().collect::<HashMap<_, _>>()"
         );
     }
 
@@ -4147,7 +4553,7 @@ mod tests {
         let inner = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let expr = span(MirExpr::Try(Box::new(inner)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("try should emit");
-        assert_eq!(emit, "7i64?");
+        assert_eq!(emit, "aver_rt::AverInt::from_i64(7)?");
     }
 
     #[test]
@@ -4157,7 +4563,10 @@ mod tests {
         let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(9))));
         let expr = span(MirExpr::Tuple(vec![a, b]));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("tuple should emit");
-        assert_eq!(emit, "(7i64, 9i64)");
+        assert_eq!(
+            emit,
+            "(aver_rt::AverInt::from_i64(7), aver_rt::AverInt::from_i64(9))"
+        );
     }
 
     #[test]
@@ -4177,8 +4586,8 @@ mod tests {
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("bare product should emit");
         assert_eq!(
             emit,
-            "std::thread::scope(|_s| { let _h0 = _s.spawn(move || 7i64); \
-             let _h1 = _s.spawn(move || 9i64); let _r0 = _h0.join().unwrap(); \
+            "std::thread::scope(|_s| { let _h0 = _s.spawn(move || aver_rt::AverInt::from_i64(7)); \
+             let _h1 = _s.spawn(move || aver_rt::AverInt::from_i64(9)); let _r0 = _h0.join().unwrap(); \
              let _r1 = _h1.join().unwrap(); (_r0, _r1) }) "
         );
     }
@@ -4235,7 +4644,10 @@ mod tests {
         let b = span(MirExpr::Literal(span(crate::ast::Literal::Int(2))));
         let expr = span(MirExpr::List(vec![a, b]));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("list should emit");
-        assert_eq!(emit, "aver_rt::AverList::from_vec(vec![1i64, 2i64])");
+        assert_eq!(
+            emit,
+            "aver_rt::AverList::from_vec(vec![aver_rt::AverInt::from_i64(1), aver_rt::AverInt::from_i64(2)])"
+        );
     }
 
     #[test]
@@ -4269,7 +4681,7 @@ mod tests {
         };
         let expr = span(MirExpr::Construct(span(con)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("construct should emit");
-        assert_eq!(emit, "Ok(42i64)");
+        assert_eq!(emit, "Ok(aver_rt::AverInt::from_i64(42))");
     }
 
     #[test]
@@ -4287,7 +4699,7 @@ mod tests {
 
     #[test]
     fn emits_let_as_block_expr() {
-        // `let x = 7; x` → `{ let x = 7i64; x }`.
+        // `let x = 7; x` → `{ let x = aver_rt::AverInt::from_i64(7); x }`.
         let value = span(MirExpr::Literal(span(crate::ast::Literal::Int(7))));
         let body_local = MirLocal {
             slot: LocalId(0),
@@ -4303,7 +4715,7 @@ mod tests {
         };
         let expr = span(MirExpr::Let(span(let_node)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("let should emit");
-        assert_eq!(emit, "{ let x = 7i64; x }");
+        assert_eq!(emit, "{ let x = aver_rt::AverInt::from_i64(7); x }");
     }
 
     #[test]
@@ -4324,7 +4736,7 @@ mod tests {
         let expr = span(MirExpr::Let(span(let_node)));
         assert_eq!(
             emit_mir_expr(&expr, &empty_ctx()).as_deref(),
-            Some("{ 7i64; 0i64 }")
+            Some("{ aver_rt::AverInt::from_i64(7); aver_rt::AverInt::from_i64(0) }")
         );
     }
 
@@ -4372,7 +4784,7 @@ mod tests {
         let prefixes = HashSet::new();
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("user ctor should emit");
-        assert_eq!(emit, "Shape::Circle(7i64)");
+        assert_eq!(emit, "Shape::Circle(aver_rt::AverInt::from_i64(7))");
     }
 
     #[test]
@@ -4391,7 +4803,10 @@ mod tests {
         prefixes.insert("ast".to_string());
         let ctx = MirEmitCtx::for_test(&st, &prefixes);
         let emit = emit_mir_expr(&expr, &ctx).expect("scoped user ctor should emit");
-        assert_eq!(emit, "crate::aver_generated::ast::Expr::App(1i64)");
+        assert_eq!(
+            emit,
+            "crate::aver_generated::ast::Expr::App(aver_rt::AverInt::from_i64(1))"
+        );
     }
 
     #[test]
@@ -4513,7 +4928,7 @@ mod tests {
         let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("let chain emits");
         assert_eq!(
             emit,
-            "    crate::cancel_checkpoint();\n    let a = 1i64;\n    let b = 2i64;\n    a"
+            "    crate::cancel_checkpoint();\n    let a = aver_rt::AverInt::from_i64(1);\n    let b = aver_rt::AverInt::from_i64(2);\n    a"
         );
     }
 
@@ -4540,7 +4955,7 @@ mod tests {
         let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("discarded stmt emits");
         assert_eq!(
             emit,
-            "    crate::cancel_checkpoint();\n    let g = 1i64;\n    2i64;\n    g"
+            "    crate::cancel_checkpoint();\n    let g = aver_rt::AverInt::from_i64(1);\n    aver_rt::AverInt::from_i64(2);\n    g"
         );
     }
 
@@ -4564,7 +4979,7 @@ mod tests {
         let emit = emit_mir_fn_body(&body, &empty_ctx()).expect("leading discard emits");
         assert_eq!(
             emit,
-            "    crate::cancel_checkpoint();\n    1i64;\n    let g = 2i64;\n    g"
+            "    crate::cancel_checkpoint();\n    aver_rt::AverInt::from_i64(1);\n    let g = aver_rt::AverInt::from_i64(2);\n    g"
         );
     }
 
@@ -4587,7 +5002,7 @@ mod tests {
         };
         let expr = span(MirExpr::Let(span(let_node)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("inline discard emits");
-        assert_eq!(emit, "{ 7i64; x }");
+        assert_eq!(emit, "{ aver_rt::AverInt::from_i64(7); x }");
     }
 
     #[test]
@@ -4608,17 +5023,17 @@ mod tests {
         };
         let expr = span(MirExpr::Let(span(let_node)));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("inline let emits");
-        assert_eq!(emit, "{ let x = 7i64; x }");
+        assert_eq!(emit, "{ let x = aver_rt::AverInt::from_i64(7); x }");
     }
 
     #[test]
-    fn neg_folded_int_literal_re_wraps_like_hir_neg() {
-        // `const_fold` collapses `Neg(Int(5))` → `Literal(-5)`; the
-        // walker re-wraps it as `(-5i64)` to match HIR's `Neg` arm
-        // (which never folds).
+    fn neg_folded_int_literal_emits_signed_from_i64() {
+        // `const_fold` collapses `Neg(Int(5))` → `Literal(-5)`; the walker
+        // emits the already-signed `AverInt::from_i64(-5)` directly — no
+        // `(-…)` re-wrap, since `AverInt` has no std `Neg`.
         let expr = span(MirExpr::Literal(span(crate::ast::Literal::Int(-5))));
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("neg int literal emits");
-        assert_eq!(emit, "(-5i64)");
+        assert_eq!(emit, "aver_rt::AverInt::from_i64(-5)");
     }
 
     #[test]
@@ -4634,7 +5049,10 @@ mod tests {
     fn positive_literals_unchanged_by_neg_rewrap() {
         // Positive literals are never wrapped.
         let i = span(MirExpr::Literal(span(crate::ast::Literal::Int(5))));
-        assert_eq!(emit_mir_expr(&i, &empty_ctx()).as_deref(), Some("5i64"));
+        assert_eq!(
+            emit_mir_expr(&i, &empty_ctx()).as_deref(),
+            Some("aver_rt::AverInt::from_i64(5)")
+        );
         let f = span(MirExpr::Literal(span(crate::ast::Literal::Float(1.5))));
         assert_eq!(emit_mir_expr(&f, &empty_ctx()).as_deref(), Some("1.5f64"));
     }
@@ -4664,7 +5082,10 @@ mod tests {
         // `<` is canonical (invert=false): keep operator, branches in
         // source order.
         let emit = emit_mir_expr(&if_compare(BinOp::Lt), &empty_ctx()).expect("if emits");
-        assert_eq!(emit, "if (code < 48i64) { 1i64 } else { 0i64 }");
+        assert_eq!(
+            emit,
+            "if (code < aver_rt::AverInt::from_i64(48)) { aver_rt::AverInt::from_i64(1) } else { aver_rt::AverInt::from_i64(0) }"
+        );
     }
 
     #[test]
@@ -4672,19 +5093,28 @@ mod tests {
         // `>=` → HIR canonicalizes to `<` + invert (swap branches):
         // `if (code < 48) { else_branch } else { then_branch }`.
         let emit = emit_mir_expr(&if_compare(BinOp::Gte), &empty_ctx()).expect("if emits");
-        assert_eq!(emit, "if (code < 48i64) { 0i64 } else { 1i64 }");
+        assert_eq!(
+            emit,
+            "if (code < aver_rt::AverInt::from_i64(48)) { aver_rt::AverInt::from_i64(0) } else { aver_rt::AverInt::from_i64(1) }"
+        );
     }
 
     #[test]
     fn if_then_else_inverts_lte_to_gt_and_swaps_branches() {
         let emit = emit_mir_expr(&if_compare(BinOp::Lte), &empty_ctx()).expect("if emits");
-        assert_eq!(emit, "if (code > 48i64) { 0i64 } else { 1i64 }");
+        assert_eq!(
+            emit,
+            "if (code > aver_rt::AverInt::from_i64(48)) { aver_rt::AverInt::from_i64(0) } else { aver_rt::AverInt::from_i64(1) }"
+        );
     }
 
     #[test]
     fn if_then_else_inverts_neq_to_eq_and_swaps_branches() {
         let emit = emit_mir_expr(&if_compare(BinOp::Neq), &empty_ctx()).expect("if emits");
-        assert_eq!(emit, "if (code == 48i64) { 0i64 } else { 1i64 }");
+        assert_eq!(
+            emit,
+            "if (code == aver_rt::AverInt::from_i64(48)) { aver_rt::AverInt::from_i64(0) } else { aver_rt::AverInt::from_i64(1) }"
+        );
     }
 
     #[test]
@@ -4714,7 +5144,7 @@ mod tests {
         let emit = emit_mir_expr(&expr, &empty_ctx()).expect("if emits");
         assert_eq!(
             emit,
-            "if (name == AverStr::from(\"_\")) { 1i64 } else { 0i64 }"
+            "if (name == AverStr::from(\"_\")) { aver_rt::AverInt::from_i64(1) } else { aver_rt::AverInt::from_i64(0) }"
         );
     }
 }

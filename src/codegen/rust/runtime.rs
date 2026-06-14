@@ -76,12 +76,6 @@ impl IntoAverStr for Result<aver_rt::HttpResponse, String> {
         self.map_err(AverStr::from)
     }
 }
-impl IntoAverStr for Result<aver_rt::TcpConnection, String> {
-    type Output = Result<aver_rt::TcpConnection, AverStr>;
-    fn into_aver(self) -> Result<aver_rt::TcpConnection, AverStr> {
-        self.map_err(AverStr::from)
-    }
-}
 impl IntoAverStr for Result<i64, String> {
     type Output = Result<i64, AverStr>;
     fn into_aver(self) -> Result<i64, AverStr> {
@@ -93,6 +87,36 @@ impl IntoAverStr for Result<f64, String> {
     fn into_aver(self) -> Result<f64, AverStr> {
         self.map_err(AverStr::from)
     }
+}
+impl IntoAverStr for Result<aver_rt::AverInt, String> {
+    type Output = Result<aver_rt::AverInt, AverStr>;
+    fn into_aver(self) -> Result<aver_rt::AverInt, AverStr> {
+        self.map_err(AverStr::from)
+    }
+}
+
+/// Saturate an `AverInt` to `i64` for an index/slice boundary that clamps
+/// (never errors): a Big-positive value clamps to `i64::MAX`, a Big-negative
+/// to `i64::MIN`. The downstream `string_slice` then clamps the i64 into the
+/// string's actual range, matching the VM exactly.
+pub fn aver_int_clamp_i64(n: &aver_rt::AverInt) -> i64 {
+    n.to_i64().unwrap_or_else(|| {
+        if *n < aver_rt::AverInt::zero() {
+            i64::MIN
+        } else {
+            i64::MAX
+        }
+    })
+}
+
+/// Convert an `AverInt` to `i64` at an effectful HOST boundary that the VM
+/// ERRORS on for out-of-range values (e.g. `Random.int` bounds, host ports,
+/// `Time.sleep` ms, `Terminal.moveTo` coords). There is no `Result` channel
+/// at these call sites, so an out-of-`i64` value ABORTS with the VM's exact
+/// message — never a silent `unwrap_or(0)` (which would substitute a wrong
+/// value and diverge from the VM's hard error).
+pub fn to_host_i64(n: &aver_rt::AverInt, vm_message: &str) -> i64 {
+    n.to_i64().expect(vm_message)
 }
 
 fn independence_mode_is_cancel() -> bool {
@@ -216,10 +240,49 @@ where
     )
 }
 
-/// Bring the shared Tcp connection type into the generated program under the
-/// legacy codegen name used for dotted `Tcp.Connection`.
+/// Emit the surface `Tcp.Connection` record for the generated program.
+///
+/// The Aver typechecker types `Tcp.Connection.port` as `Int`, which now
+/// lowers to `aver_rt::AverInt` — but the shared host struct
+/// `aver_rt::TcpConnection` has an `i64` `port`. So we emit a SURFACE record
+/// (`port: AverInt`) and convert from the host struct at the effect boundary
+/// (`Tcp.connect`, see `convert_tcp_connection`). Keeping the surface type
+/// distinct is what lets `conn.port.add(&…)` typecheck.
 pub fn generate_tcp_types() -> String {
-    "pub use aver_rt::TcpConnection as Tcp_Connection;".to_string()
+    r#"#[derive(Clone, Debug, PartialEq)]
+pub struct Tcp_Connection {
+    pub id: aver_rt::AverStr,
+    pub host: aver_rt::AverStr,
+    pub port: aver_rt::AverInt,
+}
+impl aver_rt::AverDisplay for Tcp_Connection {
+    fn aver_display(&self) -> String {
+        format!(
+            "Tcp.Connection {{ id: {}, host: {}, port: {} }}",
+            self.id, self.host, self.port
+        )
+    }
+}
+/// Convert the host `aver_rt::TcpConnection` (`i64` port) into the surface
+/// record (`AverInt` port) at the effect boundary.
+fn convert_tcp_connection(c: aver_rt::TcpConnection) -> Tcp_Connection {
+    Tcp_Connection {
+        id: c.id,
+        host: c.host,
+        port: aver_rt::AverInt::from_i64(c.port),
+    }
+}
+/// `Tcp.connect` (and friends) return the host struct as `Result<_, String>`;
+/// the `.into_aver()` post-step lands the surface `Tcp_Connection` + AverStr
+/// error. Lives here (gated on Tcp usage) so the base runtime never names the
+/// surface type when Tcp is unused.
+impl IntoAverStr for Result<aver_rt::TcpConnection, String> {
+    type Output = Result<Tcp_Connection, AverStr>;
+    fn into_aver(self) -> Result<Tcp_Connection, AverStr> {
+        self.map(convert_tcp_connection).map_err(AverStr::from)
+    }
+}"#
+    .to_string()
 }
 
 /// Bring the shared `BranchPath` type into the generated program. Oracle-proof
@@ -240,8 +303,23 @@ pub fn generate_http_server_types() -> String {
     "pub use aver_rt::HttpRequest;".to_string()
 }
 
-/// Bring the shared terminal size type into the generated program under the
-/// legacy codegen name used for dotted `Terminal.Size`.
+/// Emit the surface `Terminal.Size` record for the generated program.
+///
+/// Like `Tcp.Connection`, the Aver typechecker types `width`/`height` as
+/// `Int` (→ `aver_rt::AverInt`), while the host `aver_rt::TerminalSize` has
+/// `i64` fields. We emit a SURFACE record with `AverInt` fields and convert
+/// from the host struct at the `Terminal.size` effect boundary, so
+/// `size.width.add(&…)` typechecks.
 pub fn generate_terminal_types() -> String {
-    "pub use aver_rt::TerminalSize as Terminal_Size;".to_string()
+    r#"#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Terminal_Size {
+    pub width: aver_rt::AverInt,
+    pub height: aver_rt::AverInt,
+}
+impl aver_rt::AverDisplay for Terminal_Size {
+    fn aver_display(&self) -> String {
+        format!("Terminal.Size {{ width: {}, height: {} }}", self.width, self.height)
+    }
+}"#
+    .to_string()
 }

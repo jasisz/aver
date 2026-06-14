@@ -467,6 +467,47 @@ fn main() -> Unit
     );
 }
 
+/// Nested-tuple Int-literal match on the RUST backend. After the
+/// `Int -> AverInt` migration an `AverInt` can't be a Rust `match` pattern,
+/// so Int-literal arms lower to an if/else-if equality-guard chain. That
+/// lowering originally handled only one level of tuple nesting and bailed on
+/// a NESTED tuple, emitting `compile_error!("MIR walker could not render …")`
+/// — which builds fine on the VM but fails `cargo build`. This drives a match
+/// with a deeply-nested tuple pattern (literal leaves at depth, plus a binding
+/// and a wildcard) end-to-end: compile to Rust, `cargo build`, RUN, and assert
+/// stdout equals the VM. `aver compile` exits 0 even when it emits the
+/// `compile_error!` stub, so only the real build+run catches the regression.
+#[test]
+fn rust_nested_tuple_int_literal_match_builds_and_matches_vm() {
+    let src = r#"module NestedTupleIntMatch
+    intent = "Nested-tuple Int-literal match must lower to recursive equality guards"
+    depends []
+    effects [Console.print]
+
+fn pick(t: Tuple<Int, Tuple<Int, Tuple<Int, Int>>, Int>) -> Int
+    ? "match Int literals nested two tuples deep, plus a binding arm"
+    match t
+        (1, (2, (3, 4)), 5) -> 99
+        (1, (x, _), _) -> x
+        _ -> 0
+
+fn main() -> Unit
+    ! [Console.print]
+    Console.print(String.fromInt(pick((1, (2, (3, 4)), 5))))
+    Console.print(String.fromInt(pick((1, (42, (7, 8)), 9))))
+    Console.print(String.fromInt(pick((5, (2, (3, 4)), 5))))
+"#;
+    // First arm matches (→ 99); second arm binds the nested `x` (→ 42);
+    // neither literal arm matches the third call (→ 0).
+    let vm = run_vm_inline("nestedtupleint", src).expect("vm run");
+    let rust = build_run_rust_inline("nestedtupleint", src).expect("rust build+run");
+    assert_eq!(vm, "99\n42\n0", "VM nested-tuple Int match values");
+    assert_eq!(
+        rust, vm,
+        "Rust nested-tuple Int-literal match diverged from VM (or emitted a compile_error! stub)"
+    );
+}
+
 // ─── Mode (b): deny-policy ──────────────────────────────────────────────
 
 /// A Disk-write program. `__PATH__` is substituted with the real
@@ -1409,7 +1450,8 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
         compile_rust(&src, &project, name, None, &[])?;
 
         // Structural tripwire: the emitted Rust must carry the fn-pointer
-        // param (`f: fn(i64) -> i64`), the FnValue passed by bare name
+        // param (`f: fn(aver_rt::AverInt) -> aver_rt::AverInt` — `Int` lowers
+        // to `AverInt` now), the FnValue passed by bare name
         // (`applyIt(dbl, v)`), and the call-through-slot (`f(v)`). A
         // dropped FnValue or a mis-emitted slot call would erase these.
         let emitted = fs::read_to_string(
@@ -1420,9 +1462,10 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
                 .join("mod.rs"),
         )
         .map_err(|e| format!("read emitted module: {e}"))?;
-        if !emitted.contains("f: fn(i64) -> i64") {
+        if !emitted.contains("f: fn(aver_rt::AverInt) -> aver_rt::AverInt") {
             return Err(format!(
-                "emitted Rust is missing the fn-pointer param `f: fn(i64) -> i64` — \
+                "emitted Rust is missing the fn-pointer param \
+                 `f: fn(aver_rt::AverInt) -> aver_rt::AverInt` — \
                  the LocalSlot param lowering was dropped:\n{emitted}"
             ));
         }
