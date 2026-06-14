@@ -180,6 +180,7 @@ module Billing
 
 Rules:
 - `module` must be the first top-level item in file-based programs
+- `aver run` will execute a single file with no `module` as a convenience for quick throwaway scripts, but `aver check` requires the declaration (`error[missing-module]`) — declare `module <Name>` for anything you intend to keep, import, or check
 - `intent` may be inline or multiline; formatter prefers multiline for multiline text
 - `depends [...]` and `exposes [...]` are explicit
 - opaque types: `exposes opaque [Discount]` — visible in signatures but cannot be constructed or destructured from outside
