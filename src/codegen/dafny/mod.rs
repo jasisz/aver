@@ -763,6 +763,7 @@ mod tests {
                 run_analyze: true,
                 run_escape: false,
                 run_refinement_lower: true,
+                run_interval_analyze: false,
                 run_contract_lower: true,
                 run_law_lower: true,
                 // BuildSymbols is needed for fn_contracts lookup

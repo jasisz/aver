@@ -9,6 +9,7 @@ pub mod escape;
 pub mod hir;
 pub mod identity;
 mod interp_lower;
+pub mod interval;
 pub mod last_use;
 mod leaf;
 mod matches;
@@ -24,6 +25,10 @@ pub mod vars;
 
 pub use analyze::{AnalysisResult, BodyShape, FnAnalysis, NeutralAllocPolicy, analyze};
 pub use identity::{BuiltinId, CtorId, FnId, FnKey, LawKey, ModuleId, TypeId, TypeKey};
+pub use interval::{
+    Bound, Interval, IntervalAnalysisResult, OpClass, RefinedTypeInterval,
+    analyze as interval_analyze,
+};
 pub use pipeline::{
     FnCountChange, NonTailEntry, PassDiagnostic, PassReport, PipelineConfig, PipelineResult,
     PipelineStage, TypecheckMode,

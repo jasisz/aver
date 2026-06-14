@@ -41,6 +41,7 @@ fn build_ctx(src: &str) -> CodegenContext {
             run_analyze: true,
             run_escape: false,
             run_refinement_lower: true,
+            run_interval_analyze: false,
             run_contract_lower: true,
             run_law_lower: true,
             // Build the symbol table alongside proof IR so downstream

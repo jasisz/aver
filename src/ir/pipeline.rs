@@ -47,6 +47,14 @@ pub enum PipelineStage {
     /// proof exporters (Lean → subtype, Dafny → subset type) enable
     /// it, runtime backends leave it off.
     RefinementLower,
+    /// Per-module interval analysis over refinement-type carriers —
+    /// read-only diagnostic. Derives a constant interval for each
+    /// refined type's invariant and classifies its arithmetic ops as
+    /// overflow-free / needs-wider-scratch / unbounded. Opt-in via
+    /// `run_interval_analyze`; runs right after `RefinementLower`
+    /// (consumes `ProofIR.refined_types`). No codegen / runtime /
+    /// proof-output consumer yet — only `--explain-passes` reads it.
+    IntervalAnalyze,
     /// Recursion-shape contract derivation — fn-level proof-export
     /// stage. Walks recursion plans, populates `ProofIR.fn_contracts`
     /// with Fuel / Native decisions and proof obligations. Opt-in via
@@ -95,6 +103,7 @@ impl PipelineStage {
             Self::Analyze => "analyze",
             Self::Escape => "escape",
             Self::RefinementLower => "refinement_lower",
+            Self::IntervalAnalyze => "interval_analyze",
             Self::ContractLower => "contract_lower",
             Self::LawLower => "law_lower",
             Self::BuildSymbols => "build_symbols",
@@ -160,6 +169,14 @@ pub struct PipelineConfig<'a> {
     /// always enable both. Both stages share the same
     /// `PipelineResult.proof_ir` output sink.
     pub run_refinement_lower: bool,
+    /// Whether to run the per-module interval analysis (read-only
+    /// diagnostic) after `RefinementLower`. Derives a constant
+    /// interval for each refined type's invariant and classifies its
+    /// arithmetic ops. Requires `run_refinement_lower` to have
+    /// populated `ProofIR.refined_types`; a no-op (empty result) when
+    /// there are no refined types. Default off — only `--explain-passes`
+    /// turns it on.
+    pub run_interval_analyze: bool,
     /// Whether to run the recursion-contract derivation pass. Walks
     /// recursion plans (Fuel / Native shapes) and populates
     /// `ProofIR.fn_contracts`. Independent of `run_refinement_lower`.
@@ -213,6 +230,7 @@ impl<'a> Default for PipelineConfig<'a> {
             run_analyze: true,
             run_escape: true,
             run_refinement_lower: false,
+            run_interval_analyze: false,
             run_contract_lower: false,
             run_law_lower: false,
             run_build_symbols: false,
@@ -289,6 +307,21 @@ pub enum PassReport {
         /// User types lifted into refinement subtypes (records with
         /// a single carrier field + matching smart constructor).
         refined_types: usize,
+    },
+    IntervalAnalyze {
+        /// Refined types the interval analysis saw.
+        types_analyzed: usize,
+        /// Of those, how many yielded a two-sided constant interval
+        /// (both bounds finite) — the carrier-lowering candidates.
+        two_sided_bounded: usize,
+        /// Arithmetic ops whose intermediate provably fits `i64`
+        /// (guard still required — see `OpClass::OverflowFree`).
+        ops_overflow_free: usize,
+        /// Ops whose intermediate exceeds `i64` but is finite.
+        ops_needs_wider: usize,
+        /// Ops with no derivable finite bound (one-sided / plain-`Int`
+        /// operands).
+        ops_unbounded: usize,
     },
     ContractLower {
         /// Pure fns with a non-trivial `RecursionContract`. Currently
@@ -408,6 +441,12 @@ pub struct PipelineResult {
     /// populated by the stages that ran (an opt-in to only
     /// RefinementLower leaves `fn_contracts` empty, vice versa).
     pub proof_ir: Option<crate::ir::ProofIR>,
+    /// Per-module interval analysis facts (read-only diagnostic) when
+    /// `run_interval_analyze` was on alongside `run_refinement_lower`.
+    /// `None` when the stage was disabled. The queryable fact for
+    /// future opt-in consumers (the carrier-lowering recognizer);
+    /// nothing in codegen / runtime / proof emission reads it yet.
+    pub interval_analysis: Option<crate::ir::IntervalAnalysisResult>,
     /// Resolved-identity table — opaque `FnId` / `TypeId` /
     /// `CtorId` / `ModuleId` for every named declaration in the
     /// program (#138 phase E). Always populated: the pipeline
@@ -628,7 +667,11 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
         fire(&mut cfg, PipelineStage::NameResolve, items);
     }
 
-    if cfg.run_refinement_lower || cfg.run_contract_lower || cfg.run_law_lower {
+    if cfg.run_refinement_lower
+        || cfg.run_interval_analyze
+        || cfg.run_contract_lower
+        || cfg.run_law_lower
+    {
         // Round-5: union entry's analyze with each dep module's
         // `analysis.recursive_fns`. Without this, multi-module proof
         // export's `populate_fn_contracts` only sees entry-recursive
@@ -700,6 +743,18 @@ pub fn run(items: &mut Vec<TopLevel>, mut cfg: PipelineConfig<'_>) -> PipelineRe
             crate::codegen::proof_lower::populate_refined_types(&inputs, &mut ir);
             result.pass_diagnostics.push(diag_for_refinement_lower(&ir));
             fire(&mut cfg, PipelineStage::RefinementLower, items);
+        }
+        if cfg.run_interval_analyze {
+            // Read-only: consumes the just-built `ir.refined_types`
+            // plus the same `ProofLowerInputs` to look up each type's
+            // module-scoped ops. Stores the result on the pipeline
+            // output and pushes a diagnostic; no IR mutation.
+            let analysis = crate::ir::interval::analyze(&ir.refined_types, &inputs);
+            result
+                .pass_diagnostics
+                .push(diag_for_interval_analyze(&analysis));
+            result.interval_analysis = Some(analysis);
+            fire(&mut cfg, PipelineStage::IntervalAnalyze, items);
         }
         if cfg.run_contract_lower {
             crate::codegen::proof_lower::populate_fn_contracts(&inputs, &mut ir);
@@ -884,6 +939,19 @@ fn diag_for_refinement_lower(ir: &crate::ir::ProofIR) -> PassDiagnostic {
         stage: PipelineStage::RefinementLower,
         report: PassReport::RefinementLower {
             refined_types: ir.refined_types.len(),
+        },
+    }
+}
+
+fn diag_for_interval_analyze(analysis: &crate::ir::IntervalAnalysisResult) -> PassDiagnostic {
+    PassDiagnostic {
+        stage: PipelineStage::IntervalAnalyze,
+        report: PassReport::IntervalAnalyze {
+            types_analyzed: analysis.types_analyzed(),
+            two_sided_bounded: analysis.two_sided_bounded(),
+            ops_overflow_free: analysis.ops_overflow_free(),
+            ops_needs_wider: analysis.ops_needs_wider(),
+            ops_unbounded: analysis.ops_unbounded(),
         },
     }
 }

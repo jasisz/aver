@@ -100,6 +100,9 @@ fn main() -> Int
             // of re-resolving `Expr` themselves.
             "name_resolve",
             "refinement_lower",
+            // Per-module interval analysis (read-only diagnostic) runs
+            // right after refinement_lower, consuming its refined types.
+            "interval_analyze",
             "contract_lower",
             "law_lower",
         ]
@@ -211,4 +214,63 @@ fn main() -> Int
         );
     }
     assert!(data["total_fns"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn interval_analyze_pass_exposes_count_fields() {
+    // Drive a real two-sided refinement (`IntRange`, [0,100]) through
+    // the diagnostic and pin the interval_analyze report's COUNT
+    // fields (not free text). `IntRange.add` is the keystone
+    // overflow-free op.
+    let json = run_explain_passes(
+        r#"
+module IntRange
+    exposes [fromInt, toInt, add]
+    exposes opaque [IntRange]
+    intent = "Range-bounded refinement [0,100]."
+    effects []
+
+record IntRange
+    value: Int
+
+fn fromInt(n: Int) -> Result<IntRange, String>
+    ? "Smart constructor — admits 0..=100."
+    match Bool.and(n >= 0, n <= 100)
+        true  -> Result.Ok(IntRange(value = n))
+        false -> Result.Err("IntRange must be in 0..=100")
+
+fn toInt(n: IntRange) -> Int
+    ? "Unwrap."
+    n.value
+
+fn add(a: IntRange, b: IntRange) -> Result<IntRange, String>
+    ? "Sum, re-validated."
+    fromInt(a.value + b.value)
+"#,
+    );
+    let pass = json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "interval_analyze")
+        .expect("interval_analyze pass present");
+    let data = &pass["data"];
+    for field in [
+        "types_analyzed",
+        "two_sided_bounded",
+        "ops_overflow_free",
+        "ops_needs_wider",
+        "ops_unbounded",
+    ] {
+        assert!(
+            data[field].is_u64(),
+            "interval_analyze.data.{field} missing or wrong type: {data:?}"
+        );
+    }
+    // IntRange: 1 type, two-sided, `add` overflow-free, nothing else.
+    assert_eq!(data["types_analyzed"], 1);
+    assert_eq!(data["two_sided_bounded"], 1);
+    assert_eq!(data["ops_overflow_free"], 1);
+    assert_eq!(data["ops_needs_wider"], 0);
+    assert_eq!(data["ops_unbounded"], 0);
 }
