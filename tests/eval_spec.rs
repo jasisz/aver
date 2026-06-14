@@ -2,6 +2,7 @@
 ///
 /// Tests evaluate expressions and function calls via the bytecode VM,
 /// bypassing the CLI and type checker so they focus solely on runtime semantics.
+use std::str::FromStr;
 use std::sync::Arc as Rc;
 
 use aver::ast::{FnBody, FnDef, Stmt, TopLevel};
@@ -162,29 +163,29 @@ fn call_fn_with_effects(src: &str, fn_name: &str, args: Vec<Value>) -> Result<Va
 
 #[test]
 fn int_add() {
-    assert_eq!(eval("2 + 3"), Value::Int(5));
+    assert_eq!(eval("2 + 3"), Value::int(5));
 }
 
 #[test]
 fn int_sub() {
-    assert_eq!(eval("10 - 4"), Value::Int(6));
+    assert_eq!(eval("10 - 4"), Value::int(6));
 }
 
 #[test]
 fn int_mul() {
-    assert_eq!(eval("3 * 4"), Value::Int(12));
+    assert_eq!(eval("3 * 4"), Value::int(12));
 }
 
 #[test]
 fn int_div() {
-    assert_eq!(eval("10 / 2"), Value::Int(5));
+    assert_eq!(eval("10 / 2"), Value::int(5));
 }
 
 #[test]
 fn int_chained_arithmetic() {
     // 2 + 3 * 4 = 2 + 12 = 14  (left-to-right, no precedence difference expected)
     // Actually Aver respects precedence: mul before add
-    assert_eq!(eval("2 + 3 * 4"), Value::Int(14));
+    assert_eq!(eval("2 + 3 * 4"), Value::int(14));
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +284,7 @@ fn runtime_gate_blocks_top_level_print() {
 fn runtime_gate_allows_effectful_entrypoint_with_grant() {
     let src = "fn log(n: Int) -> Unit\n    ! [Console.print]\n    Console.print(n)\n";
     // With effect grant via run_named_function (which sets effects from fn metadata), should succeed
-    let result = call_fn_with_effects(src, "log", vec![Value::Int(2)]);
+    let result = call_fn_with_effects(src, "log", vec![Value::int(2)]);
     assert!(result.is_ok(), "expected granted call to pass");
 }
 
@@ -300,7 +301,7 @@ fn int_to_string() {
 fn int_from_string() {
     assert_eq!(
         eval("Int.fromString(\"42\")"),
-        Value::Ok(Box::new(Value::Int(42)))
+        Value::Ok(Box::new(Value::int(42)))
     );
 }
 
@@ -316,32 +317,32 @@ fn int_from_string_err() {
 
 #[test]
 fn int_from_float() {
-    assert_eq!(eval("Int.fromFloat(3.9)"), Value::Int(3));
+    assert_eq!(eval("Int.fromFloat(3.9)"), Value::int(3));
 }
 
 #[test]
 fn int_abs() {
-    assert_eq!(eval("Int.abs(5)"), Value::Int(5));
+    assert_eq!(eval("Int.abs(5)"), Value::int(5));
 }
 
 #[test]
 fn int_abs_negative() {
-    assert_eq!(eval("Int.abs(0 - 5)"), Value::Int(5));
+    assert_eq!(eval("Int.abs(0 - 5)"), Value::int(5));
 }
 
 #[test]
 fn int_min() {
-    assert_eq!(eval("Int.min(3, 7)"), Value::Int(3));
+    assert_eq!(eval("Int.min(3, 7)"), Value::int(3));
 }
 
 #[test]
 fn int_max() {
-    assert_eq!(eval("Int.max(3, 7)"), Value::Int(7));
+    assert_eq!(eval("Int.max(3, 7)"), Value::int(7));
 }
 
 #[test]
 fn int_mod() {
-    assert_eq!(eval("Int.mod(10, 3)"), Value::Ok(Box::new(Value::Int(1))));
+    assert_eq!(eval("Int.mod(10, 3)"), Value::Ok(Box::new(Value::int(1))));
 }
 
 #[test]
@@ -356,24 +357,24 @@ fn int_mod_zero() {
 fn int_mod_negative_dividend_positive_divisor() {
     // Euclidean modulo always lands in [0, |b|). Diverges from Rust
     // `%` (truncated remainder) which would return -1 here.
-    assert_eq!(eval("Int.mod(-7, 3)"), Value::Ok(Box::new(Value::Int(2))));
+    assert_eq!(eval("Int.mod(-7, 3)"), Value::Ok(Box::new(Value::int(2))));
 }
 
 #[test]
 fn int_mod_negative_divisor() {
     // Result is in [0, |b|) regardless of b's sign. 7 = (-3) * (-2) + 1.
-    assert_eq!(eval("Int.mod(7, -3)"), Value::Ok(Box::new(Value::Int(1))));
+    assert_eq!(eval("Int.mod(7, -3)"), Value::Ok(Box::new(Value::int(1))));
 }
 
 #[test]
 fn int_mod_both_negative() {
     // -7 = (-3) * 3 + 2.
-    assert_eq!(eval("Int.mod(-7, -3)"), Value::Ok(Box::new(Value::Int(2))));
+    assert_eq!(eval("Int.mod(-7, -3)"), Value::Ok(Box::new(Value::int(2))));
 }
 
 #[test]
 fn int_div_builtin() {
-    assert_eq!(eval("Int.div(7, 2)"), Value::Ok(Box::new(Value::Int(3))));
+    assert_eq!(eval("Int.div(7, 2)"), Value::Ok(Box::new(Value::int(3))));
 }
 
 #[test]
@@ -389,38 +390,117 @@ fn int_div_is_euclidean_floor() {
     // Euclidean (flooring) division — the exact partner of Euclidean
     // `Int.mod`, so `Int.div(a,b)*b + Int.mod(a,b) == a` for every sign.
     // `-7 / 2 == -4` (floors toward -inf), NOT -3 (truncate toward zero).
-    assert_eq!(eval("Int.div(-7, 2)"), Value::Ok(Box::new(Value::Int(-4))));
-    assert_eq!(eval("Int.div(7, -2)"), Value::Ok(Box::new(Value::Int(-3))));
-    assert_eq!(eval("Int.div(-7, -2)"), Value::Ok(Box::new(Value::Int(4))));
+    assert_eq!(eval("Int.div(-7, 2)"), Value::Ok(Box::new(Value::int(-4))));
+    assert_eq!(eval("Int.div(7, -2)"), Value::Ok(Box::new(Value::int(-3))));
+    assert_eq!(eval("Int.div(-7, -2)"), Value::Ok(Box::new(Value::int(4))));
     // The division identity holds: -7 == (-4)*2 + 1, with Int.mod(-7,2) == 1.
-    assert_eq!(eval("Int.mod(-7, 2)"), Value::Ok(Box::new(Value::Int(1))));
+    assert_eq!(eval("Int.mod(-7, 2)"), Value::Ok(Box::new(Value::int(1))));
 }
 
 #[test]
 fn int_div_fused_withdefault() {
     // Leaf-op fusion `Result.withDefault(Int.div(a, b), default)`.
-    assert_eq!(eval("Result.withDefault(Int.div(7, 2), -1)"), Value::Int(3));
+    assert_eq!(eval("Result.withDefault(Int.div(7, 2), -1)"), Value::int(3));
     assert_eq!(
         eval("Result.withDefault(Int.div(7, 0), -1)"),
-        Value::Int(-1)
+        Value::int(-1)
     );
 }
 
 #[test]
-fn int_div_min_by_neg_one_is_err_not_panic() {
-    // `i64::MIN / -1` overflows i64; a bare `/` would panic the host. The
-    // builtin must report it as a `Result.Err`, mirroring divide-by-zero.
+fn int_div_min_by_neg_one_is_exact_over_z() {
+    // `Int` is mathematical ℤ, so `i64::MIN / -1` is NOT an overflow — it is
+    // exactly `i64::MAX + 1` (`9223372036854775808`), returned as `Result.Ok`
+    // of an arbitrary-precision Big. The old i64-wrap overflow `Err` is gone.
     // `i64::MIN` is built by arithmetic (the literal `-9223372036854775808`
     // doesn't parse — it's negate-of-`i64::MAX + 1`).
+    let expected = aver_rt::AverInt::from_str("9223372036854775808").unwrap();
     assert_eq!(
         eval("Int.div((0 - 9223372036854775807) - 1, -1)"),
-        Value::Err(Box::new(Value::Str("division overflow".to_string())))
+        Value::Ok(Box::new(Value::Int(expected.clone())))
     );
-    // The fused form falls back to the default on the same overflow edge.
+    // The fused form returns the same exact value (no fallback — no error).
     assert_eq!(
         eval("Result.withDefault(Int.div((0 - 9223372036854775807) - 1, -1), 99)"),
-        Value::Int(99)
+        Value::Int(expected)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Int = ℤ — the VM no longer wraps; runtime matches the Lean/Dafny model.
+// ---------------------------------------------------------------------------
+
+/// Assert that an eval result is a strictly-positive Big integer equal to the
+/// given decimal string. Guards the exact C0 law: the VM stopped wrapping.
+fn assert_positive_big(src: &str, decimal: &str) {
+    let expected = aver_rt::AverInt::from_str(decimal).unwrap();
+    assert!(
+        matches!(&expected, aver_rt::AverInt::Big(_)),
+        "test value should be a Big"
+    );
+    assert!(expected > aver_rt::AverInt::zero());
+    assert_eq!(eval(src), Value::Int(expected));
+}
+
+#[test]
+fn square_is_non_negative_at_i64_max() {
+    // The exact C0 law: `a*a >= 0` for `a = i64::MAX`. On wrapping i64 this is
+    // false (the product wraps negative); over ℤ it is a positive Big.
+    // i64::MAX = 9223372036854775807; its square is 85070591730234615847396907784232501249.
+    assert_positive_big(
+        "9223372036854775807 * 9223372036854775807",
+        "85070591730234615847396907784232501249",
+    );
+}
+
+#[test]
+fn square_is_non_negative_near_three_billion() {
+    // `a ~ 4e9`: `a*a` overflows i64 (wraps negative) but is a positive Big.
+    // 4000000000^2 = 16000000000000000000 (> i64::MAX = ~9.22e18, a genuine
+    // i64 overflow that would wrap to a negative two's-complement value).
+    assert_positive_big("4000000000 * 4000000000", "16000000000000000000");
+}
+
+#[test]
+fn parse_beyond_i64_multiply_and_stringify_roundtrip() {
+    // Parse a value past i64::MAX, multiply, and stringify back to an exact
+    // decimal — the full bignum round trip through the running program.
+    assert_eq!(
+        eval(r#"String.fromInt(Result.withDefault(Int.fromString("100000000000000000000"), 0))"#),
+        Value::Str("100000000000000000000".to_string())
+    );
+    // 10^20 * 10^20 = 10^40.
+    let src = r#"String.fromInt(Result.withDefault(Int.fromString("100000000000000000000"), 0) * Result.withDefault(Int.fromString("100000000000000000000"), 0))"#;
+    assert_eq!(
+        eval(src),
+        Value::Str("10000000000000000000000000000000000000000".to_string())
+    );
+}
+
+#[test]
+fn equal_bigs_built_differently_key_the_same_map_entry() {
+    // Two structurally-equal Big keys built different ways must collapse to a
+    // single Map entry (guards the map_key_hash arena-index bug). One is built
+    // by arithmetic, the other parsed; both equal 10^20.
+    // 10^20 two ways: parsed, and `10^10 * 10^10`.
+    let src = r#"Map.len(Map.set(Map.set({}, Result.withDefault(Int.fromString("100000000000000000000"), 0), 1), 10000000000 * 10000000000, 2))"#;
+    assert_eq!(eval(src), Value::int(1));
+}
+
+#[test]
+fn vector_get_with_big_index_is_none() {
+    // A ℤ-overflow index can never be in range — returns `Option.None`, never
+    // a panic or a truncated wrap.
+    let src = r#"Vector.get(Vector.new(3, 0), Result.withDefault(Int.fromString("100000000000000000000"), 0))"#;
+    assert_eq!(eval(src), Value::None);
+}
+
+#[test]
+fn vector_new_oversized_errors_cleanly() {
+    // A size past `usize` cannot be allocated — a clean error, never a panic.
+    let src = r#"Vector.new(Result.withDefault(Int.fromString("100000000000000000000"), 0), 0)"#;
+    let err = try_eval(src);
+    assert!(err.is_err(), "expected a clean error, got {:?}", err);
 }
 
 #[test]
@@ -460,17 +540,17 @@ fn float_from_string() {
 
 #[test]
 fn float_floor() {
-    assert_eq!(eval("Float.floor(3.7)"), Value::Int(3));
+    assert_eq!(eval("Float.floor(3.7)"), Value::int(3));
 }
 
 #[test]
 fn float_ceil() {
-    assert_eq!(eval("Float.ceil(3.2)"), Value::Int(4));
+    assert_eq!(eval("Float.ceil(3.2)"), Value::int(4));
 }
 
 #[test]
 fn float_round() {
-    assert_eq!(eval("Float.round(3.5)"), Value::Int(4));
+    assert_eq!(eval("Float.round(3.5)"), Value::int(4));
 }
 
 #[test]
@@ -510,17 +590,17 @@ fn string_from_float() {
 
 #[test]
 fn string_len() {
-    assert_eq!(eval("String.len(\"hello\")"), Value::Int(5));
+    assert_eq!(eval("String.len(\"hello\")"), Value::int(5));
 }
 
 #[test]
 fn string_len_empty() {
-    assert_eq!(eval("String.len(\"\")"), Value::Int(0));
+    assert_eq!(eval("String.len(\"\")"), Value::int(0));
 }
 
 #[test]
 fn string_byte_length() {
-    assert_eq!(eval("String.byteLength(\"hello\")"), Value::Int(5));
+    assert_eq!(eval("String.byteLength(\"hello\")"), Value::int(5));
 }
 
 #[test]
@@ -657,12 +737,12 @@ fn string_char_at_first() {
 
 #[test]
 fn list_len() {
-    assert_eq!(eval("List.len([1, 2, 3])"), Value::Int(3));
+    assert_eq!(eval("List.len([1, 2, 3])"), Value::int(3));
 }
 
 #[test]
 fn list_len_empty() {
-    assert_eq!(eval("List.len([])"), Value::Int(0));
+    assert_eq!(eval("List.len([])"), Value::int(0));
 }
 
 // ---------------------------------------------------------------------------
@@ -678,7 +758,7 @@ fn list_empty() {
 fn list_int_literal() {
     assert_eq!(
         eval("[1, 2, 3]"),
-        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        list_from_vec(vec![Value::int(1), Value::int(2), Value::int(3)])
     );
 }
 
@@ -697,7 +777,7 @@ fn list_string_literal() {
 fn prepend_adds_element_to_front() {
     assert_eq!(
         eval("List.prepend(1, [2, 3])"),
-        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        list_from_vec(vec![Value::int(1), Value::int(2), Value::int(3)])
     );
 }
 
@@ -706,10 +786,10 @@ fn concat_concatenates_lists() {
     assert_eq!(
         eval("List.concat([1, 2], [3, 4])"),
         list_from_vec(vec![
-            Value::Int(1),
-            Value::Int(2),
-            Value::Int(3),
-            Value::Int(4)
+            Value::int(1),
+            Value::int(2),
+            Value::int(3),
+            Value::int(4)
         ])
     );
 }
@@ -718,7 +798,7 @@ fn concat_concatenates_lists() {
 fn take_returns_prefix() {
     assert_eq!(
         eval("List.take([1, 2, 3, 4], 2)"),
-        list_from_vec(vec![Value::Int(1), Value::Int(2)])
+        list_from_vec(vec![Value::int(1), Value::int(2)])
     );
 }
 
@@ -731,7 +811,7 @@ fn take_with_negative_count_returns_empty_list() {
 fn drop_skips_prefix() {
     assert_eq!(
         eval("List.drop([1, 2, 3, 4], 2)"),
-        list_from_vec(vec![Value::Int(3), Value::Int(4)])
+        list_from_vec(vec![Value::int(3), Value::int(4)])
     );
 }
 
@@ -739,7 +819,7 @@ fn drop_skips_prefix() {
 fn drop_with_negative_count_returns_original_list() {
     assert_eq!(
         eval("List.drop([1, 2, 3], -1)"),
-        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        list_from_vec(vec![Value::int(1), Value::int(2), Value::int(3)])
     );
 }
 
@@ -747,7 +827,7 @@ fn drop_with_negative_count_returns_original_list() {
 fn reverse_returns_reversed_copy() {
     assert_eq!(
         eval("List.reverse([1, 2, 3])"),
-        list_from_vec(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
+        list_from_vec(vec![Value::int(3), Value::int(2), Value::int(1)])
     );
 }
 
@@ -767,14 +847,14 @@ fn list_contains_returns_false() {
 
 #[test]
 fn result_with_default_ok() {
-    assert_eq!(eval("Result.withDefault(Result.Ok(42), 0)"), Value::Int(42));
+    assert_eq!(eval("Result.withDefault(Result.Ok(42), 0)"), Value::int(42));
 }
 
 #[test]
 fn result_with_default_err() {
     assert_eq!(
         eval("Result.withDefault(Result.Err(\"oops\"), 0)"),
-        Value::Int(0)
+        Value::int(0)
     );
 }
 
@@ -782,20 +862,20 @@ fn result_with_default_err() {
 fn option_with_default_some() {
     assert_eq!(
         eval("Option.withDefault(Option.Some(42), 0)"),
-        Value::Int(42)
+        Value::int(42)
     );
 }
 
 #[test]
 fn option_with_default_none() {
-    assert_eq!(eval("Option.withDefault(Option.None, 0)"), Value::Int(0));
+    assert_eq!(eval("Option.withDefault(Option.None, 0)"), Value::int(0));
 }
 
 #[test]
 fn option_to_result_some() {
     assert_eq!(
         eval("Option.toResult(Option.Some(42), \"missing\")"),
-        Value::Ok(Box::new(Value::Int(42)))
+        Value::Ok(Box::new(Value::int(42)))
     );
 }
 
@@ -815,7 +895,7 @@ fn option_to_result_none() {
 fn tuple_literal_runtime() {
     assert_eq!(
         eval("(1, \"x\")"),
-        Value::Tuple(vec![Value::Int(1), Value::Str("x".to_string())])
+        Value::Tuple(vec![Value::int(1), Value::Str("x".to_string())])
     );
 }
 
@@ -826,7 +906,7 @@ fn tuple_equality_runtime() {
 
 #[test]
 fn map_len_empty() {
-    assert_eq!(eval("Map.len({})"), Value::Int(0));
+    assert_eq!(eval("Map.len({})"), Value::int(0));
 }
 
 #[test]
@@ -837,7 +917,7 @@ fn map_set_get_has() {
     );
     assert_eq!(
         eval("Map.get(Map.set({}, \"a\", 1), \"a\")"),
-        Value::Some(Box::new(Value::Int(1)))
+        Value::Some(Box::new(Value::int(1)))
     );
 }
 
@@ -845,8 +925,8 @@ fn map_set_get_has() {
 #[allow(clippy::mutable_key_type)]
 fn map_literal_runtime() {
     let mut expected = std::collections::HashMap::new();
-    expected.insert(Value::Str("a".to_string()), Value::Int(1));
-    expected.insert(Value::Str("b".to_string()), Value::Int(2));
+    expected.insert(Value::Str("a".to_string()), Value::int(1));
+    expected.insert(Value::Str("b".to_string()), Value::int(2));
     assert_eq!(eval("{\"a\" => 1, \"b\" => 2}"), Value::Map(expected));
 }
 
@@ -875,8 +955,8 @@ fn map_from_list_and_entries_roundtrip() {
     assert_eq!(
         eval("Map.entries(Map.fromList([(\"a\", 1), (\"b\", 2)]))"),
         list_from_vec(vec![
-            Value::Tuple(vec![Value::Str("a".to_string()), Value::Int(1)]),
-            Value::Tuple(vec![Value::Str("b".to_string()), Value::Int(2)]),
+            Value::Tuple(vec![Value::Str("a".to_string()), Value::int(1)]),
+            Value::Tuple(vec![Value::Str("b".to_string()), Value::int(2)]),
         ])
     );
 }
@@ -887,7 +967,7 @@ fn map_accepts_list_key_with_structural_hash() {
     // (and any other heap structure) participates as a key.
     assert_eq!(
         eval("Map.get(Map.set({}, [1, 2], 42), [1, 2])"),
-        Value::Some(Box::new(Value::Int(42)))
+        Value::Some(Box::new(Value::int(42)))
     );
 }
 
@@ -895,7 +975,7 @@ fn map_accepts_list_key_with_structural_hash() {
 fn map_literal_accepts_list_key() {
     assert_eq!(
         eval("Map.get({[1] => 42}, [1])"),
-        Value::Some(Box::new(Value::Int(42)))
+        Value::Some(Box::new(Value::int(42)))
     );
 }
 
@@ -905,7 +985,7 @@ fn map_literal_accepts_list_key() {
 
 #[test]
 fn ok_wraps_value() {
-    assert_eq!(eval("Result.Ok(42)"), Value::Ok(Box::new(Value::Int(42))));
+    assert_eq!(eval("Result.Ok(42)"), Value::Ok(Box::new(Value::int(42))));
 }
 
 #[test]
@@ -923,7 +1003,7 @@ fn err_wraps_value() {
 
 #[test]
 fn some_wraps_value() {
-    assert_eq!(eval("Option.Some(1)"), Value::Some(Box::new(Value::Int(1))));
+    assert_eq!(eval("Option.Some(1)"), Value::Some(Box::new(Value::int(1))));
 }
 
 #[test]
@@ -939,7 +1019,7 @@ fn none_is_none() {
 fn match_literal_zero() {
     let src = "fn classify(n: Int) -> String\n    match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     assert_eq!(
-        call_fn(src, "classify", vec![Value::Int(0)]),
+        call_fn(src, "classify", vec![Value::int(0)]),
         Value::Str("zero".to_string())
     );
 }
@@ -948,7 +1028,7 @@ fn match_literal_zero() {
 fn match_literal_wildcard() {
     let src = "fn classify(n: Int) -> String\n    match n\n        0 -> \"zero\"\n        _ -> \"other\"\n";
     assert_eq!(
-        call_fn(src, "classify", vec![Value::Int(99)]),
+        call_fn(src, "classify", vec![Value::int(99)]),
         Value::Str("other".to_string())
     );
 }
@@ -957,8 +1037,8 @@ fn match_literal_wildcard() {
 fn match_ok_constructor() {
     let src = "fn unwrap(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n";
     assert_eq!(
-        call_fn(src, "unwrap", vec![Value::Ok(Box::new(Value::Int(42)))]),
-        Value::Int(42)
+        call_fn(src, "unwrap", vec![Value::Ok(Box::new(Value::int(42)))]),
+        Value::int(42)
     );
 }
 
@@ -971,7 +1051,7 @@ fn match_err_constructor() {
             "unwrap",
             vec![Value::Err(Box::new(Value::Str("fail".to_string())))]
         ),
-        Value::Int(0)
+        Value::int(0)
     );
 }
 
@@ -979,10 +1059,10 @@ fn match_err_constructor() {
 fn match_some_none() {
     let src = "fn extract(o: Option<Int>) -> Int\n    match o\n        Option.Some(v) -> v\n        Option.None -> 0\n";
     assert_eq!(
-        call_fn(src, "extract", vec![Value::Some(Box::new(Value::Int(7)))]),
-        Value::Int(7)
+        call_fn(src, "extract", vec![Value::Some(Box::new(Value::int(7)))]),
+        Value::int(7)
     );
-    assert_eq!(call_fn(src, "extract", vec![Value::None]), Value::Int(0));
+    assert_eq!(call_fn(src, "extract", vec![Value::None]), Value::int(0));
 }
 
 #[test]
@@ -1009,7 +1089,7 @@ fn match_empty_list_pattern() {
         call_fn(
             src,
             "is_empty",
-            vec![list_from_vec(vec![Value::Int(1), Value::Int(2)])]
+            vec![list_from_vec(vec![Value::int(1), Value::int(2)])]
         ),
         Value::Bool(false)
     );
@@ -1023,20 +1103,20 @@ fn match_list_cons_binds_head_and_tail() {
             src,
             "score",
             vec![list_from_vec(vec![
-                Value::Int(5),
-                Value::Int(9),
-                Value::Int(11)
+                Value::int(5),
+                Value::int(9),
+                Value::int(11)
             ])]
         ),
-        Value::Int(7)
+        Value::int(7)
     );
     assert_eq!(
-        call_fn(src, "score", vec![list_from_vec(vec![Value::Int(5)])]),
-        Value::Int(5)
+        call_fn(src, "score", vec![list_from_vec(vec![Value::int(5)])]),
+        Value::int(5)
     );
     assert_eq!(
         call_fn(src, "score", vec![list_from_vec(vec![])]),
-        Value::Int(0)
+        Value::int(0)
     );
 }
 
@@ -1047,9 +1127,9 @@ fn match_tuple_pattern_binds_values() {
         call_fn(
             src,
             "sum_pair",
-            vec![Value::Tuple(vec![Value::Int(2), Value::Int(5)])]
+            vec![Value::Tuple(vec![Value::int(2), Value::int(5)])]
         ),
-        Value::Int(7)
+        Value::int(7)
     );
 }
 
@@ -1061,9 +1141,9 @@ fn match_tuple_pattern_with_wildcard() {
         call_fn(
             src,
             "first",
-            vec![Value::Tuple(vec![Value::Int(9), Value::Int(123)])]
+            vec![Value::Tuple(vec![Value::int(9), Value::int(123)])]
         ),
-        Value::Int(9)
+        Value::int(9)
     );
 }
 
@@ -1075,11 +1155,11 @@ fn match_nested_tuple_pattern() {
             src,
             "flatten",
             vec![Value::Tuple(vec![
-                Value::Tuple(vec![Value::Int(1), Value::Int(2)]),
-                Value::Int(3)
+                Value::Tuple(vec![Value::int(1), Value::int(2)]),
+                Value::int(3)
             ])]
         ),
-        Value::Int(6)
+        Value::int(6)
     );
 }
 
@@ -1090,9 +1170,9 @@ fn tuple_pattern_arity_mismatch_falls_through() {
         call_fn(
             src,
             "test",
-            vec![Value::Tuple(vec![Value::Int(1), Value::Int(2)])]
+            vec![Value::Tuple(vec![Value::int(1), Value::int(2)])]
         ),
-        Value::Int(42)
+        Value::int(42)
     );
 }
 
@@ -1113,7 +1193,7 @@ fn interp_simple() {
 fn interp_expression() {
     let src = "fn show(x: Int) -> String\n    \"value: {x + 1}\"\n";
     assert_eq!(
-        call_fn(src, "show", vec![Value::Int(4)]),
+        call_fn(src, "show", vec![Value::int(4)]),
         Value::Str("value: 5".to_string())
     );
 }
@@ -1125,7 +1205,7 @@ fn interp_expression() {
 #[test]
 fn binding_used_in_body() {
     let src = "fn compute() -> Int\n    x = 10\n    y = 20\n    x + y\n";
-    assert_eq!(call_fn(src, "compute", vec![]), Value::Int(30));
+    assert_eq!(call_fn(src, "compute", vec![]), Value::int(30));
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,7 +1216,7 @@ fn binding_used_in_body() {
 fn prepend_builtin_adds_front() {
     assert_eq!(
         eval("List.prepend(1, [2, 3])"),
-        list_from_vec(vec![Value::Int(1), Value::Int(2), Value::Int(3)])
+        list_from_vec(vec![Value::int(1), Value::int(2), Value::int(3)])
     );
 }
 
@@ -1145,10 +1225,10 @@ fn concat_builtin_concatenates_lists() {
     assert_eq!(
         eval("List.concat([1, 2], [3, 4])"),
         list_from_vec(vec![
-            Value::Int(1),
-            Value::Int(2),
-            Value::Int(3),
-            Value::Int(4)
+            Value::int(1),
+            Value::int(2),
+            Value::int(3),
+            Value::int(4)
         ])
     );
 }
@@ -1157,14 +1237,14 @@ fn concat_builtin_concatenates_lists() {
 fn reverse_builtin_flips_order() {
     assert_eq!(
         eval("List.reverse([1, 2, 3])"),
-        list_from_vec(vec![Value::Int(3), Value::Int(2), Value::Int(1)])
+        list_from_vec(vec![Value::int(3), Value::int(2), Value::int(1)])
     );
 }
 
 #[test]
 fn higher_order_apply_twice_with_function_typed_param() {
     let src = "fn applyTwice(f: Fn(Int) -> Int, x: Int) -> Int\n    f(f(x))\nfn inc(n: Int) -> Int\n    n + 1\nfn test() -> Int\n    applyTwice(inc, 10)\n";
-    assert_eq!(call_fn(src, "test", vec![]), Value::Int(12));
+    assert_eq!(call_fn(src, "test", vec![]), Value::int(12));
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,8 +1255,8 @@ fn higher_order_apply_twice_with_function_typed_param() {
 fn error_prop_unwraps_ok() {
     let src = "fn get_ok(r: Result<Int, String>) -> Int\n    r?\n";
     assert_eq!(
-        call_fn(src, "get_ok", vec![Value::Ok(Box::new(Value::Int(99)))]),
-        Value::Int(99)
+        call_fn(src, "get_ok", vec![Value::Ok(Box::new(Value::int(99)))]),
+        Value::int(99)
     );
 }
 
@@ -1197,8 +1277,8 @@ fn error_prop_early_return_in_block() {
     // ? in a block body causes early return, skipping subsequent statements.
     let src = "fn double_ok(r: Result<Int, String>) -> Result<Int, String>\n    x = r?\n    Result.Ok(x + x)\n";
     assert_eq!(
-        call_fn(src, "double_ok", vec![Value::Ok(Box::new(Value::Int(5)))]),
-        Value::Ok(Box::new(Value::Int(10)))
+        call_fn(src, "double_ok", vec![Value::Ok(Box::new(Value::int(5)))]),
+        Value::Ok(Box::new(Value::int(10)))
     );
     assert_eq!(
         call_fn(
@@ -1215,7 +1295,7 @@ fn error_prop_chain_short_circuits() {
     // When the first ? encounters Err, the second ? and the Ok() never run.
     let src = "fn chain(a: Result<Int, String>, b: Result<Int, String>) -> Result<Int, String>\n    x = a?\n    y = b?\n    Result.Ok(x + y)\n";
     let err = Value::Err(Box::new(Value::Str("first".to_string())));
-    let ok_ten = Value::Ok(Box::new(Value::Int(10)));
+    let ok_ten = Value::Ok(Box::new(Value::int(10)));
     assert_eq!(call_fn(src, "chain", vec![err.clone(), ok_ten]), err);
 }
 
@@ -1229,7 +1309,7 @@ fn closure_captures_outer_val() {
     // This test verifies the closure capture mechanism via lambda-style usage.
     // We use map with a pre-defined function instead.
     let src = "fn double(x: Int) -> Int\n    x + x\n";
-    assert_eq!(call_fn(src, "double", vec![Value::Int(6)]), Value::Int(12));
+    assert_eq!(call_fn(src, "double", vec![Value::int(6)]), Value::int(12));
 }
 
 // ---------------------------------------------------------------------------
@@ -1336,7 +1416,7 @@ fn record_creation_stores_fields() {
             type_name: "User".to_string(),
             fields: vec![
                 ("name".to_string(), Value::Str("Alice".to_string())),
-                ("age".to_string(), Value::Int(30)),
+                ("age".to_string(), Value::int(30)),
             ]
             .into(),
         }
@@ -1353,7 +1433,7 @@ fn record_creation_canonicalizes_field_order() {
             type_name: "User".to_string(),
             fields: vec![
                 ("name".to_string(), Value::Str("Alice".to_string())),
-                ("age".to_string(), Value::Int(30)),
+                ("age".to_string(), Value::int(30)),
             ]
             .into(),
         }
@@ -1382,7 +1462,7 @@ fn record_match_binding_preserves_field_access() {
         type_name: "User".to_string(),
         fields: vec![
             ("name".to_string(), Value::Str("Bob".to_string())),
-            ("age".to_string(), Value::Int(25)),
+            ("age".to_string(), Value::int(25)),
         ]
         .into(),
     };
@@ -1472,7 +1552,7 @@ mod http_tests {
                 } => {
                     assert_eq!(type_name, "HttpResponse");
                     let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
-                    assert_eq!(status, Some(&Value::Int(200)));
+                    assert_eq!(status, Some(&Value::int(200)));
                     let body = fields.iter().find(|(k, _)| k == "body").map(|(_, v)| v);
                     assert_eq!(body, Some(&Value::Str("hello".to_string())));
                 }
@@ -1497,7 +1577,7 @@ mod http_tests {
             Value::Ok(inner) => match *inner {
                 Value::Record { ref fields, .. } => {
                     let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
-                    assert_eq!(status, Some(&Value::Int(404)));
+                    assert_eq!(status, Some(&Value::int(404)));
                 }
                 other => panic!("expected Record, got {:?}", other),
             },
@@ -1532,7 +1612,7 @@ mod http_tests {
             Value::Ok(inner) => match *inner {
                 Value::Record { ref fields, .. } => {
                     let status = fields.iter().find(|(k, _)| k == "status").map(|(_, v)| v);
-                    assert_eq!(status, Some(&Value::Int(201)));
+                    assert_eq!(status, Some(&Value::int(201)));
                 }
                 other => panic!("expected Record, got {:?}", other),
             },
@@ -1871,7 +1951,11 @@ mod time_tests {
         );
         let val = run_time_fn(src, "nowMs");
         match val {
-            Value::Int(ms) => assert!(ms > 0, "expected positive unix ms, got {}", ms),
+            Value::Int(ms) => assert!(
+                ms > aver_rt::AverInt::zero(),
+                "expected positive unix ms, got {}",
+                ms
+            ),
             other => panic!("expected Int, got {:?}", other),
         }
     }
@@ -2178,7 +2262,7 @@ mod tcp_tests {
                     assert!(
                         fields
                             .iter()
-                            .any(|(k, v)| k == "port" && *v == Value::Int(port as i64))
+                            .any(|(k, v)| k == "port" && *v == Value::int(port as i64))
                     );
                 }
                 other => panic!("expected Tcp.Connection record, got {:?}", other),
@@ -2229,7 +2313,7 @@ fn verify_error_prop_ok_unwraps() {
     // We use call_fn to evaluate the test helper
     assert_eq!(
         call_fn(src, "ok", vec![]),
-        Value::Ok(Box::new(Value::Int(42)))
+        Value::Ok(Box::new(Value::int(42)))
     );
 }
 
@@ -2247,7 +2331,7 @@ fn verify_error_prop_err_propagates() {
 fn verify_match_does_not_require_all_arms_covered() {
     let src = "fn classify(n: Int) -> String\n    match n\n        0 -> \"zero\"\n        1 -> \"one\"\n        _ -> \"many\"\n";
     assert_eq!(
-        call_fn(src, "classify", vec![Value::Int(0)]),
+        call_fn(src, "classify", vec![Value::int(0)]),
         Value::Str("zero".to_string())
     );
 }
@@ -2256,15 +2340,15 @@ fn verify_match_does_not_require_all_arms_covered() {
 fn verify_match_passes_when_all_arms_covered() {
     let src = "fn classify(n: Int) -> String\n    match n\n        0 -> \"zero\"\n        1 -> \"one\"\n        _ -> \"many\"\n";
     assert_eq!(
-        call_fn(src, "classify", vec![Value::Int(0)]),
+        call_fn(src, "classify", vec![Value::int(0)]),
         Value::Str("zero".to_string())
     );
     assert_eq!(
-        call_fn(src, "classify", vec![Value::Int(1)]),
+        call_fn(src, "classify", vec![Value::int(1)]),
         Value::Str("one".to_string())
     );
     assert_eq!(
-        call_fn(src, "classify", vec![Value::Int(2)]),
+        call_fn(src, "classify", vec![Value::int(2)]),
         Value::Str("many".to_string())
     );
 }
@@ -2273,8 +2357,8 @@ fn verify_match_passes_when_all_arms_covered() {
 fn verify_output_shape_does_not_require_unreachable_shapes() {
     let src = "fn onlyOk(n: Int) -> Result<Int, String>\n    Result.Ok(n)\n";
     assert_eq!(
-        call_fn(src, "onlyOk", vec![Value::Int(7)]),
-        Value::Ok(Box::new(Value::Int(7)))
+        call_fn(src, "onlyOk", vec![Value::int(7)]),
+        Value::Ok(Box::new(Value::int(7)))
     );
 }
 
@@ -2282,8 +2366,8 @@ fn verify_output_shape_does_not_require_unreachable_shapes() {
 fn verify_does_not_require_option_none_shape_coverage() {
     let src = "fn maybe(n: Int) -> Option<Int>\n    match n\n        0 -> Option.None\n        _ -> Option.Some(n)\n";
     assert_eq!(
-        call_fn(src, "maybe", vec![Value::Int(1)]),
-        Value::Some(Box::new(Value::Int(1)))
+        call_fn(src, "maybe", vec![Value::int(1)]),
+        Value::Some(Box::new(Value::int(1)))
     );
 }
 
@@ -2291,22 +2375,22 @@ fn verify_does_not_require_option_none_shape_coverage() {
 fn verify_does_not_require_result_err_shape_coverage() {
     let src = "fn mayFail(n: Int) -> Result<Int, String>\n    match n\n        0 -> Result.Err(\"zero\")\n        _ -> Result.Ok(n)\n";
     assert_eq!(
-        call_fn(src, "mayFail", vec![Value::Int(1)]),
-        Value::Ok(Box::new(Value::Int(1)))
+        call_fn(src, "mayFail", vec![Value::int(1)]),
+        Value::Ok(Box::new(Value::int(1)))
     );
 }
 
 #[test]
 fn verify_does_not_require_bool_shape_coverage() {
     let src = "fn sign(n: Int) -> Bool\n    match n\n        0 -> true\n        _ -> false\n";
-    assert_eq!(call_fn(src, "sign", vec![Value::Int(0)]), Value::Bool(true));
+    assert_eq!(call_fn(src, "sign", vec![Value::int(0)]), Value::Bool(true));
 }
 
 #[test]
 fn verify_does_not_require_named_sum_shape_coverage() {
     let src = "type Mode\n    Fast\n    Safe\nfn chooseMode(n: Int) -> Mode\n    match n\n        0 -> Mode.Fast\n        _ -> Mode.Safe\n";
     assert_eq!(
-        call_fn(src, "chooseMode", vec![Value::Int(0)]),
+        call_fn(src, "chooseMode", vec![Value::int(0)]),
         Value::Variant {
             type_name: "Mode".to_string(),
             variant: "Fast".to_string(),
@@ -2407,7 +2491,7 @@ fn main() -> Int
             .run_named_function("main", &[])
             .expect("main call failed")
             .to_value(&machine.arena);
-        assert_eq!(out, Value::Int(8));
+        assert_eq!(out, Value::int(8));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2447,7 +2531,7 @@ fn probe() -> Int
             .run_named_function("probe", &[])
             .expect("probe call failed")
             .to_value(&machine.arena);
-        assert_eq!(out, Value::Int(110));
+        assert_eq!(out, Value::int(110));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2578,7 +2662,7 @@ fn main() -> Int
             .run_named_function("main", &[])
             .expect("main call failed")
             .to_value(&machine.arena);
-        assert_eq!(out, Value::Int(7));
+        assert_eq!(out, Value::int(7));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2638,7 +2722,7 @@ fn main() -> Int
             .run_named_function("main", &[])
             .expect("main call failed")
             .to_value(&machine.arena);
-        assert_eq!(out, Value::Int(7));
+        assert_eq!(out, Value::int(7));
 
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -2663,12 +2747,12 @@ fn inspect(expr: Expr, fallback: Int) -> Int
                 Value::Variant {
                     type_name: "Expr".to_string(),
                     variant: "Int".to_string(),
-                    fields: vec![Value::Int(7)].into(),
+                    fields: vec![Value::int(7)].into(),
                 },
-                Value::Int(5),
+                Value::int(5),
             ],
         );
-        assert_eq!(out, Value::Int(12));
+        assert_eq!(out, Value::int(12));
     }
 }
 
@@ -2686,8 +2770,8 @@ fn fib(n: Int) -> Int
         _ -> fib(n - 1) + fib(n - 2)
 "#;
     assert_eq!(
-        call_fn(src, "fib", vec![Value::Int(30)]),
-        Value::Int(832040)
+        call_fn(src, "fib", vec![Value::int(30)]),
+        Value::int(832040)
     );
 }
 
@@ -2700,15 +2784,15 @@ fn fib(n: Int) -> Int
         1 -> 1
         _ -> fib(n - 1) + fib(n - 2)
 "#;
-    assert_eq!(call_fn(src, "fib", vec![Value::Int(0)]), Value::Int(0));
-    assert_eq!(call_fn(src, "fib", vec![Value::Int(1)]), Value::Int(1));
-    assert_eq!(call_fn(src, "fib", vec![Value::Int(10)]), Value::Int(55));
+    assert_eq!(call_fn(src, "fib", vec![Value::int(0)]), Value::int(0));
+    assert_eq!(call_fn(src, "fib", vec![Value::int(1)]), Value::int(1));
+    assert_eq!(call_fn(src, "fib", vec![Value::int(10)]), Value::int(55));
 }
 
 #[test]
 fn non_recursive_fn_still_works() {
     let src = "fn double(x: Int) -> Int\n    x + x\n";
-    assert_eq!(call_fn(src, "double", vec![Value::Int(5)]), Value::Int(10));
+    assert_eq!(call_fn(src, "double", vec![Value::int(5)]), Value::int(10));
 }
 
 #[test]
@@ -2722,16 +2806,16 @@ fn pick(p: Tuple<Int, Int>) -> Int
     let out_a = call_fn(
         src,
         "pick",
-        vec![Value::Tuple(vec![Value::Int(1), Value::Int(2)])],
+        vec![Value::Tuple(vec![Value::int(1), Value::int(2)])],
     );
-    assert_eq!(out_a, Value::Int(12));
+    assert_eq!(out_a, Value::int(12));
 
     let out_b = call_fn(
         src,
         "pick",
-        vec![Value::Tuple(vec![Value::Int(9), Value::Int(9)])],
+        vec![Value::Tuple(vec![Value::int(9), Value::int(9)])],
     );
-    assert_eq!(out_b, Value::Int(99));
+    assert_eq!(out_b, Value::int(99));
 }
 
 // ---------------------------------------------------------------------------
@@ -2755,20 +2839,20 @@ fn factorial(n: Int, acc: Int) -> Int
 "#;
     // Small values: correctness
     assert_eq!(
-        call_fn_with_tco(src, "factorial", vec![Value::Int(0), Value::Int(1)]),
-        Value::Int(1)
+        call_fn_with_tco(src, "factorial", vec![Value::int(0), Value::int(1)]),
+        Value::int(1)
     );
     assert_eq!(
-        call_fn_with_tco(src, "factorial", vec![Value::Int(5), Value::Int(1)]),
-        Value::Int(120)
+        call_fn_with_tco(src, "factorial", vec![Value::int(5), Value::int(1)]),
+        Value::int(120)
     );
     assert_eq!(
-        call_fn_with_tco(src, "factorial", vec![Value::Int(10), Value::Int(1)]),
-        Value::Int(3628800)
+        call_fn_with_tco(src, "factorial", vec![Value::int(10), Value::int(1)]),
+        Value::int(3628800)
     );
     assert_eq!(
-        call_fn_with_tco(src, "factorial", vec![Value::Int(20), Value::Int(1)]),
-        Value::Int(2432902008176640000)
+        call_fn_with_tco(src, "factorial", vec![Value::int(20), Value::int(1)]),
+        Value::int(2432902008176640000)
     );
 }
 
@@ -2782,13 +2866,13 @@ fn sum(n: Int, acc: Int) -> Int
         _ -> sum(n - 1, acc + n)
 "#;
     assert_eq!(
-        call_fn_with_tco(src, "sum", vec![Value::Int(100), Value::Int(0)]),
-        Value::Int(5050)
+        call_fn_with_tco(src, "sum", vec![Value::int(100), Value::int(0)]),
+        Value::int(5050)
     );
     // Large n: no stack overflow with TCO
     assert_eq!(
-        call_fn_with_tco(src, "sum", vec![Value::Int(100_000), Value::Int(0)]),
-        Value::Int(5000050000i64)
+        call_fn_with_tco(src, "sum", vec![Value::int(100_000), Value::int(0)]),
+        Value::int(5000050000i64)
     );
 }
 
@@ -2808,28 +2892,28 @@ fn isOdd(n: Int) -> Bool
 "#;
     // Small values
     assert_eq!(
-        call_fn_with_tco(src, "isEven", vec![Value::Int(0)]),
+        call_fn_with_tco(src, "isEven", vec![Value::int(0)]),
         Value::Bool(true)
     );
     assert_eq!(
-        call_fn_with_tco(src, "isEven", vec![Value::Int(1)]),
+        call_fn_with_tco(src, "isEven", vec![Value::int(1)]),
         Value::Bool(false)
     );
     assert_eq!(
-        call_fn_with_tco(src, "isOdd", vec![Value::Int(1)]),
+        call_fn_with_tco(src, "isOdd", vec![Value::int(1)]),
         Value::Bool(true)
     );
     assert_eq!(
-        call_fn_with_tco(src, "isOdd", vec![Value::Int(4)]),
+        call_fn_with_tco(src, "isOdd", vec![Value::int(4)]),
         Value::Bool(false)
     );
     // Large n: would overflow without mutual TCO
     assert_eq!(
-        call_fn_with_tco(src, "isEven", vec![Value::Int(100_000)]),
+        call_fn_with_tco(src, "isEven", vec![Value::int(100_000)]),
         Value::Bool(true)
     );
     assert_eq!(
-        call_fn_with_tco(src, "isOdd", vec![Value::Int(100_001)]),
+        call_fn_with_tco(src, "isOdd", vec![Value::int(100_001)]),
         Value::Bool(true)
     );
 }
@@ -2845,16 +2929,16 @@ fn fib(n: Int) -> Int
         _ -> fib(n - 1) + fib(n - 2)
 "#;
     assert_eq!(
-        call_fn_with_tco(src, "fib", vec![Value::Int(0)]),
-        Value::Int(0)
+        call_fn_with_tco(src, "fib", vec![Value::int(0)]),
+        Value::int(0)
     );
     assert_eq!(
-        call_fn_with_tco(src, "fib", vec![Value::Int(1)]),
-        Value::Int(1)
+        call_fn_with_tco(src, "fib", vec![Value::int(1)]),
+        Value::int(1)
     );
     assert_eq!(
-        call_fn_with_tco(src, "fib", vec![Value::Int(10)]),
-        Value::Int(55)
+        call_fn_with_tco(src, "fib", vec![Value::int(10)]),
+        Value::int(55)
     );
 }
 
@@ -2868,8 +2952,8 @@ fn mySum(n: Int) -> Int
         _ -> n + mySum(n - 1)
 "#;
     assert_eq!(
-        call_fn_with_tco(src, "mySum", vec![Value::Int(10)]),
-        Value::Int(55)
+        call_fn_with_tco(src, "mySum", vec![Value::int(10)]),
+        Value::int(55)
     );
 }
 
@@ -2882,8 +2966,8 @@ fn mySum(n: Int) -> Int
         _ -> n + mySum(n - 1)
 "#;
     assert_eq!(
-        call_fn_with_tco(src, "mySum", vec![Value::Int(100_000)]),
-        Value::Int(5000050000i64)
+        call_fn_with_tco(src, "mySum", vec![Value::int(100_000)]),
+        Value::int(5000050000i64)
     );
 }
 
@@ -3006,7 +3090,7 @@ fn check() -> Bool
         let value = Value::Record {
             type_name: "Envelope".to_string(),
             fields: vec![
-                ("id".to_string(), Value::Int(7)),
+                ("id".to_string(), Value::int(7)),
                 (
                     "payload".to_string(),
                     Value::Variant {
@@ -3016,13 +3100,13 @@ fn check() -> Bool
                             Value::Record {
                                 type_name: "User".to_string(),
                                 fields: vec![
-                                    ("age".to_string(), Value::Int(35)),
+                                    ("age".to_string(), Value::int(35)),
                                     ("name".to_string(), Value::Str("Ada".to_string())),
                                 ]
                                 .into(),
                             },
                             list_from_vec(vec![
-                                Value::Some(Box::new(Value::Int(1))),
+                                Value::Some(Box::new(Value::int(1))),
                                 Value::None,
                                 Value::Ok(Box::new(Value::Str("ok".to_string()))),
                                 Value::Err(Box::new(Value::Str("boom".to_string()))),
@@ -3057,8 +3141,8 @@ fn check() -> Bool
                 fields: vec![Value::Record {
                     type_name: "Point".to_string(),
                     fields: vec![
-                        ("x".to_string(), Value::Int(1)),
-                        ("y".to_string(), Value::Int(2)),
+                        ("x".to_string(), Value::int(1)),
+                        ("y".to_string(), Value::int(2)),
                     ]
                     .into(),
                 }]
@@ -3089,7 +3173,7 @@ fn typed_binding_runtime_works() {
         "result = f()\n",
     );
     let val = run_program_lookup(src, "result");
-    assert_eq!(val, Value::Int(42));
+    assert_eq!(val, Value::int(42));
 }
 
 // ---------------------------------------------------------------------------
@@ -3098,18 +3182,18 @@ fn typed_binding_runtime_works() {
 
 #[test]
 fn char_to_code_ascii() {
-    assert_eq!(eval("Char.toCode(\"A\")"), Value::Int(65));
+    assert_eq!(eval("Char.toCode(\"A\")"), Value::int(65));
 }
 
 #[test]
 fn char_to_code_unicode() {
-    assert_eq!(eval("Char.toCode(\"π\")"), Value::Int(960));
+    assert_eq!(eval("Char.toCode(\"π\")"), Value::int(960));
 }
 
 #[test]
 fn char_to_code_emoji() {
     // 🎉 = U+1F389
-    assert_eq!(eval("Char.toCode(\"🎉\")"), Value::Int(0x1F389));
+    assert_eq!(eval("Char.toCode(\"🎉\")"), Value::int(0x1F389));
 }
 
 #[test]
@@ -3195,7 +3279,7 @@ fn byte_to_hex_negative() {
 fn byte_from_hex_valid() {
     assert_eq!(
         eval("Byte.fromHex(\"0a\")"),
-        Value::Ok(Box::new(Value::Int(10)))
+        Value::Ok(Box::new(Value::int(10)))
     );
 }
 
@@ -3203,7 +3287,7 @@ fn byte_from_hex_valid() {
 fn byte_from_hex_uppercase() {
     assert_eq!(
         eval("Byte.fromHex(\"FF\")"),
-        Value::Ok(Box::new(Value::Int(255)))
+        Value::Ok(Box::new(Value::int(255)))
     );
 }
 
@@ -3241,7 +3325,7 @@ updated = User.update(u, age = 31)
                 fields.as_ref(),
                 &[
                     ("name".to_string(), Value::Str("Alice".to_string())),
-                    ("age".to_string(), Value::Int(31)),
+                    ("age".to_string(), Value::int(31)),
                 ]
             );
         }
@@ -3267,7 +3351,7 @@ updated = User.update(u, name = "Bob", age = 31)
                 fields.as_ref(),
                 &[
                     ("name".to_string(), Value::Str("Bob".to_string())),
-                    ("age".to_string(), Value::Int(31)),
+                    ("age".to_string(), Value::int(31)),
                 ]
             );
         }
@@ -3294,7 +3378,7 @@ updated = User.update(u, age = 99)
                 ("name".to_string(), Value::Str("Alice".to_string()))
             );
             // age should be updated
-            assert_eq!(fields[1], ("age".to_string(), Value::Int(99)));
+            assert_eq!(fields[1], ("age".to_string(), Value::int(99)));
         }
         other => panic!("expected Record, got {:?}", other),
     }
@@ -3343,7 +3427,7 @@ fn vm_records_classified_effect_emissions_when_trace_collecting() {
 
     // Stub returns min = 1; Aver Random.int(1, 6) under stubConst → 1.
     let result = result_nv.to_value(&machine.arena);
-    assert_eq!(result, Value::Int(1));
+    assert_eq!(result, Value::int(1));
 
     // Two classified effects emitted: Random.int then Console.print.
     assert_eq!(events.len(), 2, "expected 2 events, got {:?}", events);
@@ -3462,7 +3546,12 @@ fn terminal_size_returns_record_with_width_and_height() {
             // Both fields should be non-negative integers
             for (name, val) in fields.iter() {
                 match val {
-                    Value::Int(n) => assert!(*n >= 0, "field '{}' should be >= 0, got {}", name, n),
+                    Value::Int(n) => assert!(
+                        *n >= aver_rt::AverInt::zero(),
+                        "field '{}' should be >= 0, got {}",
+                        name,
+                        n
+                    ),
                     other => panic!("field '{}' should be Int, got {:?}", name, other),
                 }
             }

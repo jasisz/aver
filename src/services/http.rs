@@ -195,7 +195,7 @@ fn http_response_to_value(resp: HttpResponse) -> Value {
     Value::Record {
         type_name: "HttpResponse".to_string(),
         fields: vec![
-            ("status".to_string(), Value::Int(resp.status)),
+            ("status".to_string(), Value::int(resp.status)),
             ("body".to_string(), Value::Str(resp.body.to_string())),
             ("headers".to_string(), Value::Map(headers)),
         ]

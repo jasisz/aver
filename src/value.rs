@@ -4,7 +4,7 @@
 /// implementations (`services::*`) can import it without circular
 /// dependencies.
 #[cfg(feature = "runtime")]
-use aver_rt::{AverList, AverVector};
+use aver_rt::{AverInt, AverList, AverVector};
 #[cfg(not(feature = "runtime"))]
 type AverList<T> = Vec<T>;
 #[cfg(not(feature = "runtime"))]
@@ -119,7 +119,10 @@ pub struct FunctionValue {
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    Int(i64),
+    /// Mathematical ℤ (arbitrary precision). Small-int optimized: most values
+    /// are `AverInt::Small(i64)` with no allocation. Use `Value::int(n)` to
+    /// build one from an `i64`.
+    Int(AverInt),
     Float(f64),
     Str(String),
     Bool(bool),
@@ -150,6 +153,15 @@ pub enum Value {
         name: String,
         members: HashMap<String, Value>,
     },
+}
+
+impl Value {
+    /// Build an `Int` value from a machine `i64` (the common case). Equivalent
+    /// to `Value::Int(AverInt::from_i64(n))`.
+    #[inline]
+    pub fn int(n: i64) -> Self {
+        Value::Int(AverInt::from_i64(n))
+    }
 }
 
 impl PartialEq for Value {

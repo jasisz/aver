@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -58,7 +58,7 @@ fn to_code(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
     match s.chars().next() {
-        Some(c) => Ok(Value::Int(c as i64)),
+        Some(c) => Ok(Value::int(c as i64)),
         None => Err(RuntimeError::Error(
             "Char.toCode: string is empty".to_string(),
         )),
@@ -77,11 +77,8 @@ fn from_code(args: &[Value]) -> Result<Value, RuntimeError> {
             "Char.fromCode: argument must be an Int".to_string(),
         ));
     };
-    let n = *n;
-    if n < 0 {
-        return Ok(Value::None);
-    }
-    let Ok(code) = u32::try_from(n) else {
+    let Some(code) = n.to_u32() else {
+        // Negative or beyond a 32-bit code point: not a character.
         return Ok(Value::None);
     };
     match char::from_u32(code) {
@@ -151,11 +148,7 @@ fn from_code_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtim
             "Char.fromCode: argument must be an Int".to_string(),
         ));
     }
-    let n = args[0].as_int(arena);
-    if n < 0 {
-        return Ok(NanValue::NONE);
-    }
-    let Ok(code) = u32::try_from(n) else {
+    let Some(code) = args[0].as_aver_int(arena).to_u32() else {
         return Ok(NanValue::NONE);
     };
     match char::from_u32(code) {

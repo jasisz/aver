@@ -1,5 +1,5 @@
 use super::VM;
-use crate::nan_value::NanValue;
+use crate::nan_value::{NanIntExt, NanValue};
 use crate::vm::symbol::VmSymbolKind;
 use crate::vm::types::VmError;
 
@@ -8,7 +8,8 @@ impl VM {
         if !val.is_int() {
             return None;
         }
-        let symbol_id = val.as_int(&self.arena);
+        // Symbol ids are small by construction; a ℤ-overflow int is never one.
+        let symbol_id = val.as_aver_int(&self.arena).to_i64()?;
         (symbol_id >= 0).then_some(symbol_id as u32).filter(|&id| {
             self.code
                 .symbols
@@ -120,22 +121,20 @@ impl VM {
 
     pub(super) fn arith_add(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
         if a.is_int() && b.is_int() {
-            // Wrapping rather than panicking on overflow — debug/release
-            // parity, and avoids crashing the VM under boundary inputs
-            // like `i64::MAX + 1` (e.g. `--hostile` expansion).
-            Ok(NanValue::new_int(
-                a.as_int(&self.arena).wrapping_add(b.as_int(&self.arena)),
-                &mut self.arena,
-            ))
+            // `Int` is mathematical ℤ: never wraps. The i64 fast path inside
+            // `AverInt::add` keeps the common case allocation-free, promoting
+            // to a bignum only on genuine overflow.
+            let r = a.as_aver_int(&self.arena).add(&b.as_aver_int(&self.arena));
+            Ok(NanValue::from_aver_int(r, &mut self.arena))
         } else if a.is_float() && b.is_float() {
             Ok(NanValue::new_float(a.as_float() + b.as_float()))
         } else if a.is_int() && b.is_float() {
             Ok(NanValue::new_float(
-                a.as_int(&self.arena) as f64 + b.as_float(),
+                a.as_aver_int(&self.arena).to_f64() + b.as_float(),
             ))
         } else if a.is_float() && b.is_int() {
             Ok(NanValue::new_float(
-                a.as_float() + b.as_int(&self.arena) as f64,
+                a.as_float() + b.as_aver_int(&self.arena).to_f64(),
             ))
         } else if a.is_string() && b.is_string() {
             let s = format!(
@@ -155,19 +154,17 @@ impl VM {
 
     pub(super) fn arith_sub(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
         if a.is_int() && b.is_int() {
-            Ok(NanValue::new_int(
-                a.as_int(&self.arena).wrapping_sub(b.as_int(&self.arena)),
-                &mut self.arena,
-            ))
+            let r = a.as_aver_int(&self.arena).sub(&b.as_aver_int(&self.arena));
+            Ok(NanValue::from_aver_int(r, &mut self.arena))
         } else if a.is_float() && b.is_float() {
             Ok(NanValue::new_float(a.as_float() - b.as_float()))
         } else if a.is_int() && b.is_float() {
             Ok(NanValue::new_float(
-                a.as_int(&self.arena) as f64 - b.as_float(),
+                a.as_aver_int(&self.arena).to_f64() - b.as_float(),
             ))
         } else if a.is_float() && b.is_int() {
             Ok(NanValue::new_float(
-                a.as_float() - b.as_int(&self.arena) as f64,
+                a.as_float() - b.as_aver_int(&self.arena).to_f64(),
             ))
         } else {
             Err(VmError::type_err(format!(
@@ -180,19 +177,17 @@ impl VM {
 
     pub(super) fn arith_mul(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
         if a.is_int() && b.is_int() {
-            Ok(NanValue::new_int(
-                a.as_int(&self.arena).wrapping_mul(b.as_int(&self.arena)),
-                &mut self.arena,
-            ))
+            let r = a.as_aver_int(&self.arena).mul(&b.as_aver_int(&self.arena));
+            Ok(NanValue::from_aver_int(r, &mut self.arena))
         } else if a.is_float() && b.is_float() {
             Ok(NanValue::new_float(a.as_float() * b.as_float()))
         } else if a.is_int() && b.is_float() {
             Ok(NanValue::new_float(
-                a.as_int(&self.arena) as f64 * b.as_float(),
+                a.as_aver_int(&self.arena).to_f64() * b.as_float(),
             ))
         } else if a.is_float() && b.is_int() {
             Ok(NanValue::new_float(
-                a.as_float() * b.as_int(&self.arena) as f64,
+                a.as_float() * b.as_aver_int(&self.arena).to_f64(),
             ))
         } else {
             Err(VmError::type_err(format!(
@@ -205,25 +200,25 @@ impl VM {
 
     pub(super) fn arith_div(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
         if a.is_int() && b.is_int() {
-            let bv = b.as_int(&self.arena);
-            if bv == 0 {
-                return Err(VmError::runtime("division by zero"));
+            // Truncating division over ℤ (the raw `/` operator). Divisor-zero
+            // is a runtime error; the old `i64::MIN / -1` overflow is gone —
+            // over ℤ it is just `i64::MAX + 1`.
+            match a
+                .as_aver_int(&self.arena)
+                .div_trunc(&b.as_aver_int(&self.arena))
+            {
+                Some(q) => Ok(NanValue::from_aver_int(q, &mut self.arena)),
+                None => Err(VmError::runtime("division by zero")),
             }
-            // `i64::MIN / -1` overflows; wrap to MIN to avoid the panic
-            // that hostile boundary expansion would otherwise hit.
-            Ok(NanValue::new_int(
-                a.as_int(&self.arena).wrapping_div(bv),
-                &mut self.arena,
-            ))
         } else if a.is_float() && b.is_float() {
             Ok(NanValue::new_float(a.as_float() / b.as_float()))
         } else if a.is_int() && b.is_float() {
             Ok(NanValue::new_float(
-                a.as_int(&self.arena) as f64 / b.as_float(),
+                a.as_aver_int(&self.arena).to_f64() / b.as_float(),
             ))
         } else if a.is_float() && b.is_int() {
             Ok(NanValue::new_float(
-                a.as_float() / b.as_int(&self.arena) as f64,
+                a.as_float() / b.as_aver_int(&self.arena).to_f64(),
             ))
         } else {
             Err(VmError::type_err(format!(
@@ -236,14 +231,14 @@ impl VM {
 
     pub(super) fn arith_mod(&mut self, a: NanValue, b: NanValue) -> Result<NanValue, VmError> {
         if a.is_int() && b.is_int() {
-            let bv = b.as_int(&self.arena);
-            if bv == 0 {
-                return Err(VmError::runtime("modulo by zero"));
+            // Truncating remainder over ℤ (the raw `%` operator).
+            match a
+                .as_aver_int(&self.arena)
+                .rem_trunc(&b.as_aver_int(&self.arena))
+            {
+                Some(r) => Ok(NanValue::from_aver_int(r, &mut self.arena)),
+                None => Err(VmError::runtime("modulo by zero")),
             }
-            Ok(NanValue::new_int(
-                a.as_int(&self.arena) % bv,
-                &mut self.arena,
-            ))
         } else {
             Err(VmError::type_err(format!(
                 "cannot modulo {} and {}",
@@ -253,17 +248,38 @@ impl VM {
         }
     }
 
+    /// Convert an `Int` value used as a container index into a `usize`,
+    /// returning `None` when it is negative or out of `usize` range (e.g. a
+    /// ℤ-overflow index). Index sites map this `None` to the language's
+    /// `Option.None` — never a panic or a truncated wrap.
+    pub(super) fn int_to_index(&self, idx: NanValue) -> Option<usize> {
+        idx.as_aver_int(&self.arena).to_usize()
+    }
+
+    /// Convert an `Int` value used as an allocation capacity / host argument
+    /// into a `usize`, erroring cleanly when it does not fit (it cannot be
+    /// allocated). Never panics, never truncates. `site` names the operation
+    /// for the error message.
+    pub(super) fn int_to_capacity(&self, n: NanValue, site: &str) -> Result<usize, VmError> {
+        n.as_aver_int(&self.arena).to_usize().ok_or_else(|| {
+            VmError::runtime(format!(
+                "{}: size does not fit a machine-sized integer",
+                site
+            ))
+        })
+    }
+
     pub(super) fn compare_lt(&self, a: NanValue, b: NanValue) -> Result<bool, VmError> {
         if a.is_int() && b.is_int() {
-            Ok(a.as_int(&self.arena) < b.as_int(&self.arena))
+            Ok(a.as_aver_int(&self.arena) < b.as_aver_int(&self.arena))
         } else if a.is_float() && b.is_float() {
             Ok(a.as_float() < b.as_float())
         } else if a.is_string() && b.is_string() {
             Ok(self.arena.get_string_value(a) < self.arena.get_string_value(b))
         } else if a.is_int() && b.is_float() {
-            Ok((a.as_int(&self.arena) as f64) < b.as_float())
+            Ok(a.as_aver_int(&self.arena).to_f64() < b.as_float())
         } else if a.is_float() && b.is_int() {
-            Ok(a.as_float() < (b.as_int(&self.arena) as f64))
+            Ok(a.as_float() < b.as_aver_int(&self.arena).to_f64())
         } else {
             Err(VmError::type_err(format!(
                 "cannot compare {} and {}",

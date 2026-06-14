@@ -16,7 +16,7 @@ impl NanValueConvert for NanValue {
     /// Convert old Value to NanValue, storing heap data in arena.
     fn from_value(val: &Value, arena: &mut Arena) -> NanValue {
         match val {
-            Value::Int(i) => NanValue::new_int(*i, arena),
+            Value::Int(i) => NanValue::from_aver_int(i.clone(), arena),
             Value::Float(f) => NanValue::new_float(*f),
             Value::Bool(b) => NanValue::new_bool(*b),
             Value::Unit => NanValue::UNIT,
@@ -69,7 +69,11 @@ impl NanValueConvert for NanValue {
                 for (k, v) in map {
                     let nk = NanValue::from_value(k, arena);
                     let nv = NanValue::from_value(v, arena);
-                    nv_map = nv_map.insert(nk.map_key_hash(arena), (nk, nv));
+                    // Use the structural (deep) key hash so it matches the
+                    // hashing scheme every `Map.*` builtin queries with
+                    // (`map.rs::nv_key_bits`). The shallow hash would return
+                    // the arena index for ℤ-overflow int keys (mis-keying).
+                    nv_map = nv_map.insert(nk.map_key_hash_deep(arena), (nk, nv));
                 }
                 let idx = arena.push(ArenaEntry::Map(nv_map));
                 NanValue::new_map(idx)
@@ -165,7 +169,7 @@ impl NanValueConvert for NanValue {
             };
         }
         match self.tag() {
-            TAG_INT => Value::Int(self.as_int(arena)),
+            TAG_INT => Value::Int(self.as_aver_int(arena)),
             TAG_IMMEDIATE => match self.payload() {
                 IMM_FALSE => Value::Bool(false),
                 IMM_TRUE => Value::Bool(true),

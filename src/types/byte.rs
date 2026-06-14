@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -57,14 +57,14 @@ fn to_hex(args: &[Value]) -> Result<Value, RuntimeError> {
             "Byte.toHex: argument must be an Int".to_string(),
         ));
     };
-    let n = *n;
-    if !(0..=255).contains(&n) {
-        return Ok(Value::Err(Box::new(Value::Str(format!(
+    let byte = n.to_i64().filter(|v| (0..=255).contains(v));
+    match byte {
+        Some(b) => Ok(Value::Ok(Box::new(Value::Str(format!("{:02x}", b))))),
+        None => Ok(Value::Err(Box::new(Value::Str(format!(
             "Byte.toHex: {} is out of range 0–255",
             n
-        )))));
+        ))))),
     }
-    Ok(Value::Ok(Box::new(Value::Str(format!("{:02x}", n)))))
 }
 
 fn from_hex(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -86,7 +86,7 @@ fn from_hex(args: &[Value]) -> Result<Value, RuntimeError> {
         )))));
     }
     match u8::from_str_radix(s, 16) {
-        Ok(n) => Ok(Value::Ok(Box::new(Value::Int(n as i64)))),
+        Ok(n) => Ok(Value::Ok(Box::new(Value::int(n as i64)))),
         Err(_) => Ok(Value::Err(Box::new(Value::Str(format!(
             "Byte.fromHex: invalid hex '{}'",
             s
@@ -144,14 +144,14 @@ fn to_hex_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
             "Byte.toHex: argument must be an Int".to_string(),
         ));
     }
-    let n = args[0].as_int(arena);
-    if !(0..=255).contains(&n) {
-        return Ok(nv_err_str(
+    let n = args[0].as_aver_int(arena);
+    match n.to_i64().filter(|v| (0..=255).contains(v)) {
+        Some(b) => Ok(nv_ok_str(&format!("{:02x}", b), arena)),
+        None => Ok(nv_err_str(
             &format!("Byte.toHex: {} is out of range 0-255", n),
             arena,
-        ));
+        )),
     }
-    Ok(nv_ok_str(&format!("{:02x}", n), arena))
 }
 
 fn from_hex_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {

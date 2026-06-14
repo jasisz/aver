@@ -66,6 +66,7 @@ impl<T: ArenaTypes> Arena<T> {
         let entry = source.get(heap_idx).clone();
         match entry {
             ArenaEntry::Int(i) => NanValue::new_int(i, self),
+            ArenaEntry::BigInt(b) => NanValue::new_big_int(*b, self),
             ArenaEntry::String(s) => {
                 let idx = self.push(ArenaEntry::String(s));
                 NanValue::new_string(idx)
@@ -382,6 +383,18 @@ impl<T: ArenaTypes> Arena<T> {
     pub fn push_i64(&mut self, val: i64) -> u32 {
         self.push(ArenaEntry::Int(val))
     }
+    /// Store an arbitrary-precision integer, upholding the canonical-form
+    /// invariant: a payload that fits `i64` is stored as `ArenaEntry::Int`
+    /// (so `int_ref_at` reports it as `Small`), never as a `BigInt` slot.
+    /// Only a genuinely out-of-`i64`-range value allocates a `BigInt`. The
+    /// `i64`-fitting case should normally be demoted to the inline NaN-box one
+    /// layer up (`NanValue::new_big_int`); this is the backstop.
+    pub fn push_bigint(&mut self, val: num_bigint::BigInt) -> u32 {
+        match i64::try_from(&val) {
+            Ok(n) => self.push(ArenaEntry::Int(n)),
+            Err(_) => self.push(ArenaEntry::BigInt(Box::new(val))),
+        }
+    }
     pub fn push_string(&mut self, s: &str) -> u32 {
         self.push(ArenaEntry::String(Rc::from(s)))
     }
@@ -429,6 +442,26 @@ impl<T: ArenaTypes> Arena<T> {
         match self.get(index) {
             ArenaEntry::Int(i) => *i,
             _ => panic!("Arena: expected Int at {}", index),
+        }
+    }
+    /// Borrow the out-of-range integer at `index`.
+    pub fn get_bigint(&self, index: u32) -> &num_bigint::BigInt {
+        match self.get(index) {
+            ArenaEntry::BigInt(b) => b,
+            _ => panic!("Arena: expected BigInt at {}", index),
+        }
+    }
+    /// Discriminate an arena-stored integer (i64-overflow vs ℤ-overflow)
+    /// without materializing it. The runtime side reconstructs the canonical
+    /// `AverInt` from this.
+    pub fn int_ref_at(&self, index: u32) -> ArenaIntRef<'_> {
+        match self.get(index) {
+            ArenaEntry::Int(i) => ArenaIntRef::Small(*i),
+            ArenaEntry::BigInt(b) => ArenaIntRef::Big(b),
+            other => panic!(
+                "Arena: expected an integer at {} but found {:?}",
+                index, other
+            ),
         }
     }
     pub fn get_string(&self, index: u32) -> &str {

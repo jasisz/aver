@@ -53,6 +53,57 @@ fn int_big_roundtrip() {
 }
 
 #[test]
+fn new_big_int_demotes_in_range_payload() {
+    use aver_rt::AverInt;
+    use num_bigint::BigInt;
+    let mut arena = Arena::new();
+
+    // A BigInt that fits i64 must NOT allocate a BigInt slot — it canonicalizes
+    // to the same representation as `new_int`, so it reads back as `Small` and
+    // is value-equal to the directly-built int. Otherwise a Map/Set key built
+    // from a Big path would never match the same number built inline.
+    let from_big = NanValue::new_big_int(BigInt::from(5), &mut arena);
+    let inline = NanValue::new_int(5, &mut arena);
+    assert_eq!(arena.len(), 0, "in-range value should not allocate");
+    assert_eq!(from_big.as_aver_int(&arena), AverInt::from_i64(5));
+    assert_eq!(from_big.as_aver_int(&arena), inline.as_aver_int(&arena));
+    assert!(matches!(from_big.as_aver_int(&arena), AverInt::Small(5)));
+
+    // i64 boundary values still demote (no BigInt slot).
+    let max = NanValue::new_big_int(BigInt::from(i64::MAX), &mut arena);
+    assert_eq!(max.as_aver_int(&arena), AverInt::from_i64(i64::MAX));
+    assert!(matches!(max.as_aver_int(&arena), AverInt::Small(_)));
+
+    // A genuinely out-of-range payload stays Big.
+    let past = NanValue::new_big_int(BigInt::from(i64::MAX) + 1, &mut arena);
+    assert!(matches!(past.as_aver_int(&arena), AverInt::Big(_)));
+}
+
+#[test]
+fn int_arithmetic_promotes_into_big_range() {
+    use aver_rt::AverInt;
+    let mut arena = Arena::new();
+    // i64::MAX + 1 cannot be an i64; it must round-trip as a Big value.
+    let max = NanValue::new_int(i64::MAX, &mut arena);
+    let one = NanValue::new_int(1, &mut arena);
+    let sum = NanValue::from_aver_int(
+        max.as_aver_int(&arena).add(&one.as_aver_int(&arena)),
+        &mut arena,
+    );
+    assert!(sum.is_int());
+    assert_eq!(
+        sum.as_aver_int(&arena),
+        AverInt::from_i64(i64::MAX).add(&AverInt::from_i64(1))
+    );
+    // And the squared value stays exact and positive (the C0 law).
+    let sq = NanValue::from_aver_int(
+        max.as_aver_int(&arena).mul(&max.as_aver_int(&arena)),
+        &mut arena,
+    );
+    assert!(sq.as_aver_int(&arena) > AverInt::zero());
+}
+
+#[test]
 fn immediates() {
     assert!(NanValue::TRUE.is_bool());
     assert!(NanValue::FALSE.is_bool());
@@ -429,16 +480,16 @@ fn value_roundtrip_primitives() {
     let mut arena = Arena::new();
 
     let cases: Vec<Value> = vec![
-        Value::Int(42),
-        Value::Int(-1),
-        Value::Int(i64::MAX),
+        Value::int(42),
+        Value::int(-1),
+        Value::int(i64::MAX),
         Value::Float(3.14),
         Value::Bool(true),
         Value::Bool(false),
         Value::Unit,
         Value::None,
         Value::Str("hello".to_string()),
-        Value::Ok(Box::new(Value::Int(1))),
+        Value::Ok(Box::new(Value::int(1))),
         Value::Err(Box::new(Value::Str("bad".to_string()))),
         Value::Some(Box::new(Value::Bool(true))),
     ];

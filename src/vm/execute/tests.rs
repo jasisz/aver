@@ -78,6 +78,7 @@ fn assert_no_young_refs(value: NanValue, arena: &Arena, context: &str) {
             }
             ArenaEntry::Boxed(inner) => assert_no_young_refs(*inner, arena, context),
             ArenaEntry::Int(_)
+            | ArenaEntry::BigInt(_)
             | ArenaEntry::String(_)
             | ArenaEntry::Fn(_)
             | ArenaEntry::Builtin(_) => {}
@@ -335,7 +336,7 @@ fn call_par_keeps_string_constants_valid_in_child_vm() {
         result.to_value(&vm.arena),
         crate::value::Value::Tuple(vec![
             crate::value::Value::Str("[.==>..]  ~1200ms".to_string()),
-            crate::value::Value::Int(7),
+            crate::value::Value::int(7),
         ])
     );
 }

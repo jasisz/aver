@@ -148,6 +148,8 @@ dependencies = [
  "colored",
  "criterion",
  "insta",
+ "num-bigint",
+ "num-traits",
  "proptest",
  "serde",
  "serde_json",
@@ -182,6 +184,7 @@ name = "aver-memory"
 version = "0.2.9"
 dependencies = [
  "aver-rt",
+ "num-bigint",
 ]
 
 [[package]]
@@ -191,6 +194,9 @@ dependencies = [
  "crossterm",
  "getrandom 0.3.4",
  "js-sys",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
  "rand 0.9.2",
  "ureq",
 ]
@@ -1507,6 +1513,25 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-integer"
+version = "0.1.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]

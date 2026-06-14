@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -105,7 +105,9 @@ fn from_int(args: &[Value]) -> Result<Value, RuntimeError> {
             "Float.fromInt: argument must be an Int".to_string(),
         ));
     };
-    Ok(Value::Float(*n as f64))
+    // Lossy by nature; huge magnitudes saturate to ±∞ (matching the Lean
+    // prelude's `Float.ofInt`), never `NaN`.
+    Ok(Value::Float(n.to_f64()))
 }
 
 fn abs(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -125,7 +127,7 @@ fn floor(args: &[Value]) -> Result<Value, RuntimeError> {
             "Float.floor: argument must be a Float".to_string(),
         ));
     };
-    Ok(Value::Int(f.floor() as i64))
+    Ok(Value::Int(crate::types::int::float_to_aver_int(f.floor())))
 }
 
 fn ceil(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -135,7 +137,7 @@ fn ceil(args: &[Value]) -> Result<Value, RuntimeError> {
             "Float.ceil: argument must be a Float".to_string(),
         ));
     };
-    Ok(Value::Int(f.ceil() as i64))
+    Ok(Value::Int(crate::types::int::float_to_aver_int(f.ceil())))
 }
 
 fn round(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -145,7 +147,7 @@ fn round(args: &[Value]) -> Result<Value, RuntimeError> {
             "Float.round: argument must be a Float".to_string(),
         ));
     };
-    Ok(Value::Int(f.round() as i64))
+    Ok(Value::Int(crate::types::int::float_to_aver_int(f.round())))
 }
 
 fn min(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -357,7 +359,7 @@ fn from_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
             "Float.fromInt: argument must be an Int".to_string(),
         ));
     }
-    Ok(NanValue::new_float(v.as_int(arena) as f64))
+    Ok(NanValue::new_float(v.as_aver_int(arena).to_f64()))
 }
 
 fn abs_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -377,7 +379,8 @@ fn floor_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             "Float.floor: argument must be a Float".to_string(),
         ));
     }
-    Ok(NanValue::new_int(v.as_float().floor() as i64, arena))
+    let r = crate::types::int::float_to_aver_int(v.as_float().floor());
+    Ok(NanValue::from_aver_int(r, arena))
 }
 
 fn ceil_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -387,7 +390,8 @@ fn ceil_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
             "Float.ceil: argument must be a Float".to_string(),
         ));
     }
-    Ok(NanValue::new_int(v.as_float().ceil() as i64, arena))
+    let r = crate::types::int::float_to_aver_int(v.as_float().ceil());
+    Ok(NanValue::from_aver_int(r, arena))
 }
 
 fn round_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -397,7 +401,8 @@ fn round_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             "Float.round: argument must be a Float".to_string(),
         ));
     }
-    Ok(NanValue::new_int(v.as_float().round() as i64, arena))
+    let r = crate::types::int::float_to_aver_int(v.as_float().round());
+    Ok(NanValue::from_aver_int(r, arena))
 }
 
 fn min_nv(args: &[NanValue], _arena: &mut Arena) -> Result<NanValue, RuntimeError> {

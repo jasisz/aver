@@ -171,7 +171,7 @@ fn tcp_connection_to_value(conn: TcpConnection) -> Value {
         fields: vec![
             ("id".to_string(), Value::Str(conn.id.to_string())),
             ("host".to_string(), Value::Str(conn.host.to_string())),
-            ("port".to_string(), Value::Int(conn.port)),
+            ("port".to_string(), Value::int(conn.port)),
         ]
         .into(),
     }
@@ -187,7 +187,7 @@ fn tcp_connection_arg(val: &Value, method: &str) -> Result<TcpConnection, Runtim
                 match (name.as_str(), value) {
                     ("id", Value::Str(s)) => id = Some(s.clone()),
                     ("host", Value::Str(s)) => host = Some(s.clone()),
-                    ("port", Value::Int(n)) => port = Some(*n),
+                    ("port", Value::Int(n)) => port = n.to_i64(),
                     _ => {}
                 }
             }
@@ -232,7 +232,9 @@ fn int_arg(val: &Value, msg: &str) -> Result<i64, RuntimeError> {
     // `Result.Err("Tcp: port N is out of range")` instead of the
     // VM-only `RuntimeError` trap.
     match val {
-        Value::Int(n) => Ok(*n),
+        Value::Int(n) => n
+            .to_i64()
+            .ok_or_else(|| RuntimeError::Error(msg.to_string())),
         _ => Err(RuntimeError::Error(msg.to_string())),
     }
 }

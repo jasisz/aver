@@ -4,6 +4,7 @@ mod display;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod http_server;
+pub mod int;
 #[cfg(feature = "random")]
 pub mod random;
 mod runtime;
@@ -13,6 +14,7 @@ pub mod tcp;
 pub mod terminal;
 
 pub use display::{AverDisplay, aver_display};
+pub use int::AverInt;
 pub use runtime::{
     append_text, cli_args, console_error, console_print, console_warn, delete_dir, delete_file,
     env_get, env_set, list_dir, make_dir, path_exists, read_line, read_text, string_slice,

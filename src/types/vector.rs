@@ -14,7 +14,7 @@ use std::sync::Arc as Rc;
 
 use aver_rt::AverVector;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -62,15 +62,14 @@ fn vec_new(args: &[Value]) -> Result<Value, RuntimeError> {
             "Vector.new: size must be an Int".to_string(),
         ));
     };
-    if *size < 0 {
+    let Some(size) = size.to_usize() else {
+        // Negative, or larger than a machine-sized integer can address: a
+        // vector of that size cannot be allocated.
         return Err(RuntimeError::Error(
-            "Vector.new: size must not be negative".to_string(),
+            "Vector.new: size must be a non-negative, machine-sized Int".to_string(),
         ));
-    }
-    Ok(Value::Vector(AverVector::new(
-        *size as usize,
-        args[1].clone(),
-    )))
+    };
+    Ok(Value::Vector(AverVector::new(size, args[1].clone())))
 }
 
 fn vec_get(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -90,10 +89,10 @@ fn vec_get(args: &[Value]) -> Result<Value, RuntimeError> {
             "Vector.get: index must be an Int".to_string(),
         ));
     };
-    if *idx < 0 {
+    let Some(idx) = idx.to_usize() else {
         return Ok(Value::None);
-    }
-    Ok(match vec.get(*idx as usize) {
+    };
+    Ok(match vec.get(idx) {
         Some(v) => Value::Some(Box::new(v.clone())),
         None => Value::None,
     })
@@ -116,10 +115,10 @@ fn vec_set(args: &[Value]) -> Result<Value, RuntimeError> {
             "Vector.set: index must be an Int".to_string(),
         ));
     };
-    if *idx < 0 {
+    let Some(idx) = idx.to_usize() else {
         return Ok(Value::None);
-    }
-    Ok(match vec.set(*idx as usize, args[2].clone()) {
+    };
+    Ok(match vec.set(idx, args[2].clone()) {
         Some(new_vec) => Value::Some(Box::new(Value::Vector(new_vec))),
         None => Value::None,
     })
@@ -137,7 +136,7 @@ fn vec_len(args: &[Value]) -> Result<Value, RuntimeError> {
             "Vector.len: argument must be a Vector".to_string(),
         ));
     };
-    Ok(Value::Int(vec.len() as i64))
+    Ok(Value::int(vec.len() as i64))
 }
 
 fn vec_from_list(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -212,13 +211,13 @@ fn vec_new_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "Vector.new: size must be an Int".to_string(),
         ));
     }
-    let size = args[0].as_int(arena);
-    if size < 0 {
+    let Some(size) = args[0].as_aver_int(arena).to_usize() else {
+        // Negative, or larger than `usize` can address: cannot allocate.
         return Err(RuntimeError::Error(
-            "Vector.new: size must not be negative".to_string(),
+            "Vector.new: size must be a non-negative, machine-sized Int".to_string(),
         ));
-    }
-    let items = vec![args[1]; size as usize];
+    };
+    let items = vec![args[1]; size];
     if items.is_empty() {
         Ok(NanValue::EMPTY_VECTOR)
     } else {
@@ -243,12 +242,11 @@ fn vec_get_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "Vector.get: index must be an Int".to_string(),
         ));
     }
-    let idx = args[1].as_int(arena);
-    if idx < 0 {
+    let Some(idx) = args[1].as_aver_int(arena).to_usize() else {
         return Ok(NanValue::NONE);
-    }
+    };
     let items = arena.vector_ref_value(args[0]);
-    match items.get(idx as usize) {
+    match items.get(idx) {
         Some(&v) => Ok(NanValue::new_some_value(v, arena)),
         None => Ok(NanValue::NONE),
     }
@@ -272,13 +270,11 @@ pub fn vec_set_nv_owned(args: &[NanValue], arena: &mut Arena) -> Result<NanValue
             "Vector.set: index must be an Int".to_string(),
         ));
     }
-    let idx = args[1].as_int(arena);
-    if idx < 0 {
+    let Some(uidx) = args[1].as_aver_int(arena).to_usize() else {
         return Ok(NanValue::NONE);
-    }
+    };
     let source = args[0];
     let mut items = arena.take_vector_value(source);
-    let uidx = idx as usize;
     if uidx >= items.len() {
         return Ok(NanValue::NONE);
     }
@@ -308,12 +304,10 @@ fn vec_set_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "Vector.set: index must be an Int".to_string(),
         ));
     }
-    let idx = args[1].as_int(arena);
-    if idx < 0 {
+    let Some(uidx) = args[1].as_aver_int(arena).to_usize() else {
         return Ok(NanValue::NONE);
-    }
+    };
     let mut items = arena.clone_vector_value(args[0]);
-    let uidx = idx as usize;
     if uidx >= items.len() {
         return Ok(NanValue::NONE);
     }

@@ -1,5 +1,5 @@
 use super::{ReturnControl, VM};
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::vm::opcode::*;
 use crate::vm::types::{CallFrame, VmError};
 
@@ -231,20 +231,22 @@ impl VM {
                 ADD_INT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let r = a.as_int(&self.arena).wrapping_add(b.as_int(&self.arena));
-                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                    // `Int` is ℤ: non-wrapping, with an i64 fast path inside
+                    // `AverInt::add` (promotes to bignum only on overflow).
+                    let r = a.as_aver_int(&self.arena).add(&b.as_aver_int(&self.arena));
+                    self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
                 SUB_INT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let r = a.as_int(&self.arena).wrapping_sub(b.as_int(&self.arena));
-                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                    let r = a.as_aver_int(&self.arena).sub(&b.as_aver_int(&self.arena));
+                    self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
                 MUL_INT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let r = a.as_int(&self.arena).wrapping_mul(b.as_int(&self.arena));
-                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                    let r = a.as_aver_int(&self.arena).mul(&b.as_aver_int(&self.arena));
+                    self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
                 ADD_FLOAT => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -297,8 +299,9 @@ impl VM {
                 NEG => {
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     if a.is_int() {
-                        self.stack
-                            .push(NanValue::new_int(-a.as_int(&self.arena), &mut self.arena));
+                        // ℤ negation never overflows (`-i64::MIN` promotes).
+                        let r = a.as_aver_int(&self.arena).neg();
+                        self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                     } else if a.is_float() {
                         self.stack.push(NanValue::new_float(-a.as_float()));
                     } else {
@@ -307,8 +310,8 @@ impl VM {
                 }
                 NEG_INT => {
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let r = a.as_int(&self.arena).wrapping_neg();
-                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                    let r = a.as_aver_int(&self.arena).neg();
+                    self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
                 NEG_FLOAT => {
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
@@ -336,11 +339,14 @@ impl VM {
                     let imm = read_i64!(code, ip);
                     let offset = read_i16!(code, ip);
                     let subject = *self.stack.last().ok_or(VmError::StackUnderflow)?;
-                    let value = match subject.inline_int_value() {
-                        Some(v) => v,
-                        None => subject.as_int(&self.arena),
+                    // A literal pattern is an `i64`; a ℤ-overflow subject can
+                    // never equal it, so match only when the subject's value
+                    // fits and equals `imm`.
+                    let matches = match subject.inline_int_value() {
+                        Some(v) => v == imm,
+                        None => subject.as_aver_int(&self.arena).to_i64() == Some(imm),
                     };
-                    if value != imm {
+                    if !matches {
                         ip = (ip as isize + offset as isize) as usize;
                     }
                 }
@@ -365,7 +371,9 @@ impl VM {
                     } else {
                         match (a.inline_int_value(), b.inline_int_value()) {
                             (Some(x), Some(y)) => x == y,
-                            _ => a.as_int(&self.arena) == b.as_int(&self.arena),
+                            // Boxed (ℤ-overflow or i64-overflow) on either
+                            // side: compare by canonical value.
+                            _ => a.as_aver_int(&self.arena) == b.as_aver_int(&self.arena),
                         }
                     };
                     self.stack.push(NanValue::new_bool(eq));
@@ -379,7 +387,7 @@ impl VM {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(
-                        a.as_int(&self.arena) < b.as_int(&self.arena),
+                        a.as_aver_int(&self.arena) < b.as_aver_int(&self.arena),
                     ));
                 }
                 LT_FLOAT => {
@@ -397,7 +405,7 @@ impl VM {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     self.stack.push(NanValue::new_bool(
-                        a.as_int(&self.arena) > b.as_int(&self.arena),
+                        a.as_aver_int(&self.arena) > b.as_aver_int(&self.arena),
                     ));
                 }
                 GT_FLOAT => {
@@ -1609,15 +1617,15 @@ impl VM {
                     if vec.is_empty_vector_immediate() {
                         self.stack.push(NanValue::NONE);
                     } else {
-                        let items = self.arena.vector_ref_value(vec);
-                        let idx = index.as_int(&self.arena);
-                        if idx >= 0 && (idx as usize) < items.len() {
-                            self.stack.push(NanValue::new_some_value(
-                                items[idx as usize],
-                                &mut self.arena,
-                            ));
-                        } else {
-                            self.stack.push(NanValue::NONE);
+                        let value = self
+                            .int_to_index(index)
+                            .and_then(|i| self.arena.vector_ref_value(vec).get(i).copied());
+                        match value {
+                            Some(v) => {
+                                self.stack
+                                    .push(NanValue::new_some_value(v, &mut self.arena));
+                            }
+                            None => self.stack.push(NanValue::NONE),
                         }
                     }
                 }
@@ -1630,13 +1638,10 @@ impl VM {
                     if vec.is_empty_vector_immediate() {
                         self.stack.push(default);
                     } else {
-                        let items = self.arena.vector_ref_value(vec);
-                        let idx = index.as_int(&self.arena);
-                        if idx >= 0 && (idx as usize) < items.len() {
-                            self.stack.push(items[idx as usize]);
-                        } else {
-                            self.stack.push(default);
-                        }
+                        let value = self
+                            .int_to_index(index)
+                            .and_then(|i| self.arena.vector_ref_value(vec).get(i).copied());
+                        self.stack.push(value.unwrap_or(default));
                     }
                 }
 
@@ -1644,12 +1649,11 @@ impl VM {
                     let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let idx = index.as_int(&self.arena);
-                    if vec.is_empty_vector_immediate() || idx < 0 {
-                        self.stack.push(NanValue::NONE);
-                    } else {
+                    let idx = self
+                        .int_to_index(index)
+                        .filter(|_| !vec.is_empty_vector_immediate());
+                    if let Some(i) = idx {
                         let mut items = self.arena.clone_vector_value(vec);
-                        let i = idx as usize;
                         if i < items.len() {
                             items[i] = value;
                             let new_idx = self.arena.push_vector(items);
@@ -1659,6 +1663,8 @@ impl VM {
                         } else {
                             self.stack.push(NanValue::NONE);
                         }
+                    } else {
+                        self.stack.push(NanValue::NONE);
                     }
                 }
 
@@ -1667,14 +1673,17 @@ impl VM {
                     let value = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let index = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let vec = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let idx = index.as_int(&self.arena);
-                    if vec.is_empty_vector_immediate() || idx < 0 {
+                    let idx = self
+                        .int_to_index(index)
+                        .filter(|_| !vec.is_empty_vector_immediate());
+                    let Some(i) = idx else {
                         self.stack.push(vec);
-                    } else if vec_owned && !vec.is_empty_vector_immediate() {
+                        continue;
+                    };
+                    if vec_owned && !vec.is_empty_vector_immediate() {
                         // Owned path: modify vector in-place at the same arena slot.
                         // No new allocation, no promotion needed.
                         let items = self.arena.get_vector_mut(vec.arena_index());
-                        let i = idx as usize;
                         if i < items.len() {
                             items[i] = value;
                         }
@@ -1682,7 +1691,6 @@ impl VM {
                         self.stack.push(vec);
                     } else {
                         let items = self.arena.vector_ref_value(vec);
-                        let i = idx as usize;
                         if i < items.len() {
                             let mut updated = items.to_vec();
                             updated[i] = value;
@@ -1699,7 +1707,13 @@ impl VM {
                     // Reuse a freed slot if available to keep the pool from
                     // unbounded growth across many buffer cycles.
                     let cap_hint = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let cap = cap_hint.as_int(&self.arena).max(0) as usize;
+                    // A negative hint means "no hint" (clamp to 0); a hint that
+                    // cannot fit `usize` cannot be a real capacity → error.
+                    let cap = if cap_hint.as_aver_int(&self.arena) < aver_rt::AverInt::zero() {
+                        0
+                    } else {
+                        self.int_to_capacity(cap_hint, "Buffer.new")?
+                    };
                     let idx = if let Some(slot) = self.buffer_pool.iter().position(Option::is_none)
                     {
                         self.buffer_pool[slot] = Some(String::with_capacity(cap));
@@ -1715,7 +1729,10 @@ impl VM {
                 BUFFER_APPEND_STR => {
                     let s = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let buf = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let idx = buf.as_int(&self.arena) as usize;
+                    let idx = buf
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .unwrap_or(usize::MAX);
                     // Materialise the source bytes into an owned String first
                     // so the arena borrow is dropped before we re-borrow
                     // `self.buffer_pool`. The clone is a single small alloc
@@ -1735,7 +1752,10 @@ impl VM {
                 BUFFER_APPEND_SEP_UNLESS_FIRST => {
                     let sep = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let buf = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let idx = buf.as_int(&self.arena) as usize;
+                    let idx = buf
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .unwrap_or(usize::MAX);
                     let sep_bytes: String = self.arena.get_string_value(sep).to_string();
                     let slot = self
                         .buffer_pool
@@ -1754,7 +1774,10 @@ impl VM {
 
                 BUFFER_FINALIZE => {
                     let buf = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let idx = buf.as_int(&self.arena) as usize;
+                    let idx = buf
+                        .as_aver_int(&self.arena)
+                        .to_usize()
+                        .unwrap_or(usize::MAX);
                     let s = self
                         .buffer_pool
                         .get_mut(idx)
@@ -1775,14 +1798,22 @@ impl VM {
                 INT_DIV_EUCLID => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let r = a.as_int(&self.arena).div_euclid(b.as_int(&self.arena));
-                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                    // The const-fold emitter guarantees a non-zero divisor, so
+                    // `div_euclid` is defined; over ℤ it also never overflows.
+                    let r = a
+                        .as_aver_int(&self.arena)
+                        .div_euclid(&b.as_aver_int(&self.arena))
+                        .ok_or_else(|| VmError::runtime("division by zero"))?;
+                    self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
                 INT_MOD_EUCLID => {
                     let b = self.stack.pop().ok_or(VmError::StackUnderflow)?;
                     let a = self.stack.pop().ok_or(VmError::StackUnderflow)?;
-                    let r = a.as_int(&self.arena).rem_euclid(b.as_int(&self.arena));
-                    self.stack.push(NanValue::new_int(r, &mut self.arena));
+                    let r = a
+                        .as_aver_int(&self.arena)
+                        .rem_euclid(&b.as_aver_int(&self.arena))
+                        .ok_or_else(|| VmError::runtime("modulo by zero"))?;
+                    self.stack.push(NanValue::from_aver_int(r, &mut self.arena));
                 }
 
                 UNWRAP_RESULT_OR => {

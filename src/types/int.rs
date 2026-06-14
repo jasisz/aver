@@ -20,9 +20,12 @@
 ///
 /// No effects required.
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use aver_rt::AverInt;
+
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -69,7 +72,8 @@ fn from_string(args: &[Value]) -> Result<Value, RuntimeError> {
             "Int.fromString: argument must be a String".to_string(),
         ));
     };
-    match s.parse::<i64>() {
+    // `Int` is mathematical ℤ, so parsing is unbounded (no `i64::MAX` cliff).
+    match AverInt::from_str(s) {
         Ok(n) => Ok(Value::Ok(Box::new(Value::Int(n)))),
         Err(_) => Ok(Value::Err(Box::new(Value::Str(format!(
             "Cannot parse '{}' as Int",
@@ -85,7 +89,7 @@ fn from_float(args: &[Value]) -> Result<Value, RuntimeError> {
             "Int.fromFloat: argument must be a Float".to_string(),
         ));
     };
-    Ok(Value::Int(*f as i64))
+    Ok(Value::Int(float_to_aver_int(*f)))
 }
 
 fn abs(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -95,6 +99,7 @@ fn abs(args: &[Value]) -> Result<Value, RuntimeError> {
             "Int.abs: argument must be an Int".to_string(),
         ));
     };
+    // Over ℤ there is no `i64::MIN.abs()` overflow: it promotes cleanly.
     Ok(Value::Int(n.abs()))
 }
 
@@ -105,7 +110,7 @@ fn min(args: &[Value]) -> Result<Value, RuntimeError> {
             "Int.min: both arguments must be Int".to_string(),
         ));
     };
-    Ok(Value::Int(std::cmp::min(*x, *y)))
+    Ok(Value::Int(x.min_ref(y)))
 }
 
 fn max(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -115,7 +120,7 @@ fn max(args: &[Value]) -> Result<Value, RuntimeError> {
             "Int.max: both arguments must be Int".to_string(),
         ));
     };
-    Ok(Value::Int(std::cmp::max(*x, *y)))
+    Ok(Value::Int(x.max_ref(y)))
 }
 
 fn modulo(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -125,12 +130,11 @@ fn modulo(args: &[Value]) -> Result<Value, RuntimeError> {
             "Int.mod: both arguments must be Int".to_string(),
         ));
     };
-    if *y == 0 {
-        Ok(Value::Err(Box::new(Value::Str(
+    match x.rem_euclid(y) {
+        Some(r) => Ok(Value::Ok(Box::new(Value::Int(r)))),
+        None => Ok(Value::Err(Box::new(Value::Str(
             "division by zero".to_string(),
-        ))))
-    } else {
-        Ok(Value::Ok(Box::new(Value::Int(x.rem_euclid(*y)))))
+        )))),
     }
 }
 
@@ -143,18 +147,35 @@ fn divide(args: &[Value]) -> Result<Value, RuntimeError> {
     };
     // Euclidean (flooring) division, so `Int.div` is the exact partner of
     // `Int.mod` (Euclidean): `div(a,b)*b + mod(a,b) == a` for all signs.
-    // `checked_div_euclid` is None on BOTH divisor-zero and the `i64::MIN
-    // / -1` overflow — both the partiality `Int.div` makes explicit, so
-    // both become a `Result.Err` (still `String`, matching `Int.mod`).
-    match x.checked_div_euclid(*y) {
+    // Over ℤ the only partiality left is divisor-zero — the `i64::MIN / -1`
+    // overflow that used to error is just `i64::MAX + 1`, a valid `Result.Ok`.
+    match x.div_euclid(y) {
         Some(q) => Ok(Value::Ok(Box::new(Value::Int(q)))),
-        None => {
-            let msg = if *y == 0 {
-                "division by zero"
-            } else {
-                "division overflow"
-            };
-            Ok(Value::Err(Box::new(Value::Str(msg.to_string()))))
+        None => Ok(Value::Err(Box::new(Value::Str(
+            "division by zero".to_string(),
+        )))),
+    }
+}
+
+/// Truncate a finite `f64` toward zero into ℤ. Matches the runtime cast
+/// semantics (`f as i64`) for in-range values, but does not clamp huge
+/// finite magnitudes to `i64::MAX`/`MIN` — ℤ represents them exactly. NaN and
+/// ±∞ map to 0 (there is no integer for them; the cast already returns 0).
+pub(crate) fn float_to_aver_int(f: f64) -> AverInt {
+    use num_bigint::BigInt;
+    use num_traits::FromPrimitive;
+    use num_traits::cast::ToPrimitive;
+    if !f.is_finite() {
+        return AverInt::zero();
+    }
+    let truncated = f.trunc();
+    if let Some(n) = truncated.to_i64() {
+        AverInt::from_i64(n)
+    } else {
+        // Out of i64 range but finite: represent exactly via BigInt.
+        match BigInt::from_f64(truncated) {
+            Some(b) => AverInt::from_str(&b.to_string()).unwrap_or_else(|_| AverInt::zero()),
+            None => AverInt::zero(),
         }
     }
 }
@@ -245,14 +266,15 @@ fn from_string_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runt
             "Int.fromString: argument must be a String".to_string(),
         ));
     }
-    let s = arena.get_string_value(v);
-    match s.parse::<i64>() {
+    // `Int` is mathematical ℤ, so parsing is unbounded.
+    let parsed = AverInt::from_str(&arena.get_string_value(v));
+    match parsed {
         Ok(n) => {
-            let inner = NanValue::new_int(n, arena);
+            let inner = NanValue::from_aver_int(n, arena);
             Ok(NanValue::new_ok_value(inner, arena))
         }
         Err(_) => {
-            let msg = format!("Cannot parse '{}' as Int", s);
+            let msg = format!("Cannot parse '{}' as Int", arena.get_string_value(v));
             let inner = NanValue::new_string_value(&msg, arena);
             Ok(NanValue::new_err_value(inner, arena))
         }
@@ -266,7 +288,10 @@ fn from_float_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runti
             "Int.fromFloat: argument must be a Float".to_string(),
         ));
     }
-    Ok(NanValue::new_int(v.as_float() as i64, arena))
+    Ok(NanValue::from_aver_int(
+        float_to_aver_int(v.as_float()),
+        arena,
+    ))
 }
 
 fn abs_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -276,7 +301,8 @@ fn abs_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
             "Int.abs: argument must be an Int".to_string(),
         ));
     }
-    Ok(NanValue::new_int(v.as_int(arena).abs(), arena))
+    let r = v.as_aver_int(arena).abs();
+    Ok(NanValue::from_aver_int(r, arena))
 }
 
 fn min_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -286,10 +312,8 @@ fn min_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
             "Int.min: both arguments must be Int".to_string(),
         ));
     }
-    Ok(NanValue::new_int(
-        std::cmp::min(a.as_int(arena), b.as_int(arena)),
-        arena,
-    ))
+    let r = a.as_aver_int(arena).min_ref(&b.as_aver_int(arena));
+    Ok(NanValue::from_aver_int(r, arena))
 }
 
 fn max_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -299,10 +323,8 @@ fn max_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError
             "Int.max: both arguments must be Int".to_string(),
         ));
     }
-    Ok(NanValue::new_int(
-        std::cmp::max(a.as_int(arena), b.as_int(arena)),
-        arena,
-    ))
+    let r = a.as_aver_int(arena).max_ref(&b.as_aver_int(arena));
+    Ok(NanValue::from_aver_int(r, arena))
 }
 
 fn modulo_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeError> {
@@ -312,14 +334,17 @@ fn modulo_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
             "Int.mod: both arguments must be Int".to_string(),
         ));
     }
-    let x = a.as_int(arena);
-    let y = b.as_int(arena);
-    if y == 0 {
-        let inner = NanValue::new_string_value("division by zero", arena);
-        Ok(NanValue::new_err_value(inner, arena))
-    } else {
-        let inner = NanValue::new_int(x.rem_euclid(y), arena);
-        Ok(NanValue::new_ok_value(inner, arena))
+    let x = a.as_aver_int(arena);
+    let y = b.as_aver_int(arena);
+    match x.rem_euclid(&y) {
+        Some(r) => {
+            let inner = NanValue::from_aver_int(r, arena);
+            Ok(NanValue::new_ok_value(inner, arena))
+        }
+        None => {
+            let inner = NanValue::new_string_value("division by zero", arena);
+            Ok(NanValue::new_err_value(inner, arena))
+        }
     }
 }
 
@@ -330,23 +355,19 @@ fn divide_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeEr
             "Int.div: both arguments must be Int".to_string(),
         ));
     }
-    let x = a.as_int(arena);
-    let y = b.as_int(arena);
-    // Euclidean division (partner of Euclidean `Int.mod`). `checked_div_euclid`
-    // covers divisor-zero AND the `i64::MIN / -1` overflow — both `Result.Err`.
-    match x.checked_div_euclid(y) {
-        None => {
-            let msg = if y == 0 {
-                "division by zero"
-            } else {
-                "division overflow"
-            };
-            let inner = NanValue::new_string_value(msg, arena);
-            Ok(NanValue::new_err_value(inner, arena))
-        }
+    let x = a.as_aver_int(arena);
+    let y = b.as_aver_int(arena);
+    // Euclidean division (partner of Euclidean `Int.mod`). Over ℤ the only
+    // remaining partiality is divisor-zero; the old `i64::MIN / -1` overflow
+    // is now just a valid (large) `Result.Ok`.
+    match x.div_euclid(&y) {
         Some(q) => {
-            let inner = NanValue::new_int(q, arena);
+            let inner = NanValue::from_aver_int(q, arena);
             Ok(NanValue::new_ok_value(inner, arena))
+        }
+        None => {
+            let inner = NanValue::new_string_value("division by zero", arena);
+            Ok(NanValue::new_err_value(inner, arena))
         }
     }
 }

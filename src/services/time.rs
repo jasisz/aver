@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -69,7 +69,7 @@ fn unix_ms(args: &[Value]) -> Result<Value, RuntimeError> {
             args.len()
         )));
     }
-    Ok(Value::Int(aver_rt::time_unix_ms()))
+    Ok(Value::int(aver_rt::time_unix_ms()))
 }
 
 fn sleep(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -84,12 +84,17 @@ fn sleep(args: &[Value]) -> Result<Value, RuntimeError> {
             "Time.sleep: ms must be an Int".to_string(),
         ));
     };
-    if *ms < 0 {
+    let Some(ms) = ms.to_i64() else {
+        return Err(RuntimeError::Error(
+            "Time.sleep: ms must fit a 64-bit integer".to_string(),
+        ));
+    };
+    if ms < 0 {
         return Err(RuntimeError::Error(
             "Time.sleep: ms must be non-negative".to_string(),
         ));
     }
-    aver_rt::time_sleep(*ms);
+    aver_rt::time_sleep(ms);
     Ok(Value::Unit)
 }
 
@@ -155,7 +160,11 @@ fn sleep_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             "Time.sleep: ms must be an Int".to_string(),
         ));
     }
-    let ms = args[0].as_int(arena);
+    let Some(ms) = args[0].as_aver_int(arena).to_i64() else {
+        return Err(RuntimeError::Error(
+            "Time.sleep: ms must fit a 64-bit integer".to_string(),
+        ));
+    };
     if ms < 0 {
         return Err(RuntimeError::Error(
             "Time.sleep: ms must be non-negative".to_string(),

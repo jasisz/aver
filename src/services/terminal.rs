@@ -111,8 +111,8 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, RuntimeError>> {
             aver_rt::terminal_size().map(|(w, h)| Value::Record {
                 type_name: "Terminal.Size".to_string(),
                 fields: vec![
-                    ("width".to_string(), Value::Int(w)),
-                    ("height".to_string(), Value::Int(h)),
+                    ("width".to_string(), Value::int(w)),
+                    ("height".to_string(), Value::int(h)),
                 ]
                 .into(),
             })
@@ -161,7 +161,12 @@ fn move_to(args: &[Value]) -> Result<Value, RuntimeError> {
             "Terminal.moveTo: y must be an Int".to_string(),
         ));
     };
-    aver_rt::terminal_move_to(*x, *y).map_err(RuntimeError::Error)?;
+    let (Some(x), Some(y)) = (x.to_i64(), y.to_i64()) else {
+        return Err(RuntimeError::Error(
+            "Terminal.moveTo: coordinates must fit a 64-bit integer".to_string(),
+        ));
+    };
+    aver_rt::terminal_move_to(x, y).map_err(RuntimeError::Error)?;
     Ok(Value::Unit)
 }
 

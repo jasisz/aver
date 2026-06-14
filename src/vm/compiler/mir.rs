@@ -1277,11 +1277,25 @@ fn try_emit_match_dispatch_const(
 /// `true` when a literal's runtime bits are dispatch-comparable
 /// (Int / Bool / Unit / Float). Strings need a different
 /// dispatch kind (interning) so they abort the fast-path.
+///
+/// An `Int` only qualifies when it fits the 45-bit inline NaN-box: the table
+/// compares raw `NanValue` bits, but an out-of-range int's bits hold an *arena
+/// index*, not its value (and a compile-time index would be meaningless at
+/// run time anyway). Such ints abort the fast-path and route through the
+/// value-aware `MATCH_INT_LITERAL` linear path instead.
 fn pattern_is_dispatchable_bits(lit: &Literal) -> bool {
-    matches!(
-        lit,
-        Literal::Int(_) | Literal::Bool(_) | Literal::Unit | Literal::Float(_)
-    )
+    match lit {
+        Literal::Int(i) => is_inline_int(*i),
+        Literal::Bool(_) | Literal::Unit | Literal::Float(_) => true,
+        Literal::Str(_) => false,
+    }
+}
+
+/// `true` when `i` fits the inline NaN-box int range, so its `NanValue::bits()`
+/// carry the value itself rather than an arena index.
+#[inline]
+fn is_inline_int(i: i64) -> bool {
+    (crate::nan_value::INT_INLINE_MIN..=crate::nan_value::INT_INLINE_MAX).contains(&i)
 }
 
 fn body_is_dispatchable_bits(lit: &Literal) -> bool {

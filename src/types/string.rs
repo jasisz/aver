@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanString, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanString, NanValue};
 use crate::value::{RuntimeError, Value, list_from_vec, list_view};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -98,7 +98,7 @@ fn length(args: &[Value]) -> Result<Value, RuntimeError> {
             "String.len: argument must be a String".to_string(),
         ));
     };
-    Ok(Value::Int(s.chars().count() as i64))
+    Ok(Value::int(s.chars().count() as i64))
 }
 
 fn byte_length(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -108,7 +108,7 @@ fn byte_length(args: &[Value]) -> Result<Value, RuntimeError> {
             "String.byteLength: argument must be a String".to_string(),
         ));
     };
-    Ok(Value::Int(s.len() as i64))
+    Ok(Value::int(s.len() as i64))
 }
 
 fn starts_with(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -163,7 +163,24 @@ fn slice(args: &[Value]) -> Result<Value, RuntimeError> {
             "String.slice: third argument must be an Int".to_string(),
         ));
     };
-    Ok(Value::Str(aver_rt::string_slice(s, *from, *to)))
+    // `string_slice` clamps to `[0, len]`, so a ℤ index outside `i64` simply
+    // saturates to the same edge it would reach as a machine int.
+    Ok(Value::Str(aver_rt::string_slice(
+        s,
+        saturate_index(from),
+        saturate_index(to),
+    )))
+}
+
+/// Saturate an `Int` index to `i64` for an API that clamps to a length:
+/// a magnitude past `i64` lands on the same boundary (`MIN`/`MAX`) the clamp
+/// would reach anyway. No truncation, no panic.
+fn saturate_index(n: &aver_rt::AverInt) -> i64 {
+    match n.to_i64() {
+        Some(v) => v,
+        None if *n > aver_rt::AverInt::zero() => i64::MAX,
+        None => i64::MIN,
+    }
 }
 
 fn trim(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -239,7 +256,9 @@ fn char_at(args: &[Value]) -> Result<Value, RuntimeError> {
             "String.charAt: second argument must be an Int".to_string(),
         ));
     };
-    let idx = *idx as usize;
+    let Some(idx) = idx.to_usize() else {
+        return Ok(Value::None);
+    };
     match s.chars().nth(idx) {
         Some(c) => Ok(Value::Some(Box::new(Value::Str(c.to_string())))),
         None => Ok(Value::None),
@@ -502,8 +521,8 @@ fn slice_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
         ));
     }
     let s = arena.get_string_value(args[0]).to_string();
-    let from = args[1].as_int(arena);
-    let to = args[2].as_int(arena);
+    let from = saturate_index(&args[1].as_aver_int(arena));
+    let to = saturate_index(&args[2].as_aver_int(arena));
     let result = aver_rt::string_slice(&s, from, to);
     Ok(NanValue::new_string_value(&result, arena))
 }
@@ -611,8 +630,10 @@ fn char_at_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeE
             "String.charAt: second argument must be an Int".to_string(),
         ));
     }
+    let Some(idx_val) = args[1].as_aver_int(arena).to_usize() else {
+        return Ok(NanValue::NONE);
+    };
     let s = arena.get_string_value(args[0]);
-    let idx_val = args[1].as_int(arena) as usize;
     match s.chars().nth(idx_val) {
         Some(c) => {
             let cs = c.to_string();
@@ -656,7 +677,8 @@ fn from_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runtime
             "String.fromInt: argument must be an Int".to_string(),
         ));
     }
-    let s = format!("{}", args[0].as_int(arena));
+    // Exact decimal of the full ℤ value (bignum-aware via `AverInt: Display`).
+    let s = format!("{}", args[0].as_aver_int(arena));
     Ok(NanValue::new_string_value(&s, arena))
 }
 
