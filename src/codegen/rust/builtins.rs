@@ -112,19 +112,19 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
             args[0], args[1], args[2], args[3]
         )),
         "HttpServer.listen" => Some(format!(
-            "{{ if let Err(e) = crate::http_server_listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ if let Err(e) = crate::http_server_listen(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}) {{ panic!(\"{{}}\", e); }} }}",
             args[0], args[1]
         )),
         "HttpServer.listenWith" => Some(format!(
-            "{{ if let Err(e) = crate::http_server_listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ if let Err(e) = crate::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
             args[0], args[1], args[2]
         )),
         "SelfHostRuntime.httpServerListen" => Some(format!(
-            "crate::self_host_support::http_server_listen({}, {})",
+            "crate::self_host_support::http_server_listen(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {})",
             args[0], args[1]
         )),
         "SelfHostRuntime.httpServerListenWith" => Some(format!(
-            "crate::self_host_support::http_server_listen_with({}, {}.clone(), {})",
+            "crate::self_host_support::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {})",
             args[0], args[1], args[2]
         )),
         "Disk.readText" => Some(format!("aver_rt::read_text(&{})", args[0])),
@@ -142,19 +142,29 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
         )),
         "Args.get" => Some("aver_replay::current_cli_args()".to_string()),
         "Time.now" => Some("aver_rt::time_now()".to_string()),
-        "Time.unixMs" => Some("aver_rt::time_unix_ms()".to_string()),
-        "Time.sleep" => Some(format!("aver_rt::time_sleep({})", args[0])),
+        // Producer: wrap the host `i64` epoch-ms in `AverInt`.
+        "Time.unixMs" => Some("aver_rt::AverInt::from_i64(aver_rt::time_unix_ms())".to_string()),
+        "Time.sleep" => Some(format!(
+            "aver_rt::time_sleep(crate::to_host_i64(&{}, \"Time.sleep: ms must fit a 64-bit integer\"))",
+            args[0]
+        )),
         "Random.int" => Some(format!(
-            "aver_rt::random::random_int({}, {}).unwrap()",
+            "aver_rt::AverInt::from_i64(aver_rt::random::random_int(crate::to_host_i64(&{}, \"Random.int: bounds must fit a 64-bit integer\"), crate::to_host_i64(&{}, \"Random.int: bounds must fit a 64-bit integer\")).unwrap())",
             args[0], args[1]
         )),
         "Random.float" => Some("aver_rt::random::random_float()".to_string()),
         "Tcp.send" => Some(format!(
-            "aver_rt::tcp::send(&{}, {}, &{})",
+            "aver_rt::tcp::send(&{}, crate::to_host_i64(&{}, \"Tcp.send: port must be an Int\"), &{})",
             args[0], args[1], args[2]
         )),
-        "Tcp.ping" => Some(format!("aver_rt::tcp::ping(&{}, {})", args[0], args[1])),
-        "Tcp.connect" => Some(format!("aver_rt::tcp::connect(&{}, {})", args[0], args[1])),
+        "Tcp.ping" => Some(format!(
+            "aver_rt::tcp::ping(&{}, crate::to_host_i64(&{}, \"Tcp.ping: port must be an Int\"))",
+            args[0], args[1]
+        )),
+        "Tcp.connect" => Some(format!(
+            "aver_rt::tcp::connect(&{}, crate::to_host_i64(&{}, \"Tcp.connect: port must be an Int\"))",
+            args[0], args[1]
+        )),
         "Tcp.writeLine" => Some(format!("aver_rt::tcp::write_line(&{}, &{})", args[0], args[1])),
         "Tcp.readLine" => Some(format!("aver_rt::tcp::read_line(&{})", args[0])),
         "Tcp.close" => Some(format!("aver_rt::tcp::close(&{})", args[0])),
@@ -164,7 +174,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
         }
         "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
         "Terminal.moveTo" => Some(format!(
-            "aver_rt::terminal_move_to({}, {}).unwrap()",
+            "aver_rt::terminal_move_to(crate::to_host_i64(&{}, \"Terminal.moveTo: coordinates must fit a 64-bit integer\"), crate::to_host_i64(&{}, \"Terminal.moveTo: coordinates must fit a 64-bit integer\")).unwrap()",
             args[0], args[1]
         )),
         "Terminal.print" => Some(format!(
@@ -177,7 +187,7 @@ fn emit_effectful_builtin_call_with_temps(name: &str, args: &[String]) -> Option
         "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
         "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
         "Terminal.size" => Some(
-            "{ let (w, h) = aver_rt::terminal_size().unwrap(); aver_rt::TerminalSize { width: w, height: h } }".to_string(),
+            "{ let (w, h) = aver_rt::terminal_size().unwrap(); crate::Terminal_Size { width: aver_rt::AverInt::from_i64(w), height: aver_rt::AverInt::from_i64(h) } }".to_string(),
         ),
         "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
         "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),
@@ -341,17 +351,25 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
         "Console.readLine" => Some("aver_rt::read_line()".to_string()),
 
         // ---- Tcp ----
-        "Tcp.connect" => Some(format!("aver_rt::tcp::connect(&{}, {})", a(0), a(1))),
+        "Tcp.connect" => Some(format!(
+            "aver_rt::tcp::connect(&{}, crate::to_host_i64(&{}, \"Tcp.connect: port must be an Int\"))",
+            a(0),
+            a(1)
+        )),
         "Tcp.writeLine" => Some(format!("aver_rt::tcp::write_line(&{}, &{})", a(0), a(1))),
         "Tcp.readLine" => Some(format!("aver_rt::tcp::read_line(&{})", a(0))),
         "Tcp.close" => Some(format!("aver_rt::tcp::close(&{})", a(0))),
         "Tcp.send" => Some(format!(
-            "aver_rt::tcp::send(&{}, {}, &{})",
+            "aver_rt::tcp::send(&{}, crate::to_host_i64(&{}, \"Tcp.send: port must be an Int\"), &{})",
             a(0),
             a(1),
             a(2)
         )),
-        "Tcp.ping" => Some(format!("aver_rt::tcp::ping(&{}, {})", a(0), a(1))),
+        "Tcp.ping" => Some(format!(
+            "aver_rt::tcp::ping(&{}, crate::to_host_i64(&{}, \"Tcp.ping: port must be an Int\"))",
+            a(0),
+            a(1)
+        )),
 
         // ---- Http ----
         "Http.get" => Some(format!("aver_rt::http::get(&{})", a(0))),
@@ -381,23 +399,23 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
 
         // ---- HttpServer ----
         "HttpServer.listen" => Some(format!(
-            "{{ if let Err(e) = crate::http_server_listen({}, {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ if let Err(e) = crate::http_server_listen(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}) {{ panic!(\"{{}}\", e); }} }}",
             a(0),
             a(1)
         )),
         "HttpServer.listenWith" => Some(format!(
-            "{{ if let Err(e) = crate::http_server_listen_with({}, {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
+            "{{ if let Err(e) = crate::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {}) {{ panic!(\"{{}}\", e); }} }}",
             a(0),
             a(1),
             a(2)
         )),
         "SelfHostRuntime.httpServerListen" => Some(format!(
-            "crate::self_host_support::http_server_listen({}, {})",
+            "crate::self_host_support::http_server_listen(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {})",
             a(0),
             a(1)
         )),
         "SelfHostRuntime.httpServerListenWith" => Some(format!(
-            "crate::self_host_support::http_server_listen_with({}, {}.clone(), {})",
+            "crate::self_host_support::http_server_listen_with(crate::to_host_i64(&{}, \"HttpServer.listen: port must fit a 64-bit integer\"), {}.clone(), {})",
             a(0),
             a(1),
             a(2)
@@ -424,12 +442,16 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
 
         // ---- Time ----
         "Time.now" => Some("aver_rt::time_now()".to_string()),
-        "Time.unixMs" => Some("aver_rt::time_unix_ms()".to_string()),
-        "Time.sleep" => Some(format!("aver_rt::time_sleep({})", a(0))),
+        // Producer: wrap the host `i64` epoch-ms in `AverInt`.
+        "Time.unixMs" => Some("aver_rt::AverInt::from_i64(aver_rt::time_unix_ms())".to_string()),
+        "Time.sleep" => Some(format!(
+            "aver_rt::time_sleep(crate::to_host_i64(&{}, \"Time.sleep: ms must fit a 64-bit integer\"))",
+            a(0)
+        )),
 
         // ---- Random ----
         "Random.int" => Some(format!(
-            "aver_rt::random::random_int({}, {}).unwrap()",
+            "aver_rt::AverInt::from_i64(aver_rt::random::random_int(crate::to_host_i64(&{}, \"Random.int: bounds must fit a 64-bit integer\"), crate::to_host_i64(&{}, \"Random.int: bounds must fit a 64-bit integer\")).unwrap())",
             a(0),
             a(1)
         )),
@@ -444,7 +466,7 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
         }
         "Terminal.clear" => Some("aver_rt::terminal_clear().unwrap()".to_string()),
         "Terminal.moveTo" => Some(format!(
-            "aver_rt::terminal_move_to({}, {}).unwrap()",
+            "aver_rt::terminal_move_to(crate::to_host_i64(&{}, \"Terminal.moveTo: coordinates must fit a 64-bit integer\"), crate::to_host_i64(&{}, \"Terminal.moveTo: coordinates must fit a 64-bit integer\")).unwrap()",
             a(0),
             a(1)
         )),
@@ -456,7 +478,7 @@ pub(super) fn compose_effectful_builtin_raw(name: &str, args: &[String]) -> Opti
         "Terminal.resetColor" => Some("aver_rt::terminal_reset_color().unwrap()".to_string()),
         "Terminal.readKey" => Some("aver_rt::terminal_read_key()".to_string()),
         "Terminal.size" => Some(
-            "{ let (w, h) = aver_rt::terminal_size().unwrap(); aver_rt::TerminalSize { width: w, height: h } }".to_string(),
+            "{ let (w, h) = aver_rt::terminal_size().unwrap(); crate::Terminal_Size { width: aver_rt::AverInt::from_i64(w), height: aver_rt::AverInt::from_i64(h) } }".to_string(),
         ),
         "Terminal.hideCursor" => Some("aver_rt::terminal_hide_cursor().unwrap()".to_string()),
         "Terminal.showCursor" => Some("aver_rt::terminal_show_cursor().unwrap()".to_string()),

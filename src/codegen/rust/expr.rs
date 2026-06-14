@@ -119,7 +119,11 @@ pub(super) fn emit_parallel_result_tuple_unwrap(
 
 pub(super) fn emit_literal(lit: &Literal) -> String {
     match lit {
-        Literal::Int(i) => format!("{}i64", i),
+        // `from_i64` is a `const fn`, so the result is usable in const
+        // position. The value is already signed, so a negative literal
+        // emits `from_i64(-N)` directly (no `(-…)` wrapper — `AverInt`
+        // has no std `Neg`).
+        Literal::Int(i) => format!("aver_rt::AverInt::from_i64({})", i),
         Literal::Float(f) => {
             let s = f.to_string();
             if s.contains('.') || s.contains('e') || s.contains('E') {
@@ -451,7 +455,12 @@ where
 fn emit_dispatch_condition(subject_name: &str, pattern: &SemanticDispatchPattern) -> String {
     match pattern {
         SemanticDispatchPattern::Literal(lit) => match lit {
-            DispatchLiteral::Int(i) => format!("{subject_name} == {i}i64"),
+            // `AverInt: PartialEq`, so an equality guard works directly;
+            // `AverInt` cannot be a `match` pattern literal, hence the
+            // dispatch path lowers Int-literal arms to guards.
+            DispatchLiteral::Int(i) => {
+                format!("{subject_name} == aver_rt::AverInt::from_i64({i})")
+            }
             DispatchLiteral::Float(f) => format!("{subject_name} == {f}f64"),
             DispatchLiteral::Bool(b) => format!("{subject_name} == {b}"),
             DispatchLiteral::Str(s) => format!("&*{subject_name} == {:?}", s),

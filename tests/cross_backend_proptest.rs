@@ -101,6 +101,69 @@ fn run_wasm_gc(prefix: &str, source: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// Compile `source` to a Rust project via `aver compile --target rust`,
+/// `cargo build` it (a REAL build — the AverInt arithmetic + clone cascade
+/// must type-check + borrow-check), then run the binary and return trimmed
+/// stdout. Both VM and the Rust backend now compute `Int = ℤ`, so this
+/// closes the convergent arm: the two must agree on every input, INCLUDING
+/// i64-overflow ones (the no-wrap proof). Builds against a shared target dir
+/// so the (slow) dependency compile amortises across cases.
+fn run_rust(prefix: &str, source: &str) -> Result<String, String> {
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let aver_bin = env!("CARGO_BIN_EXE_aver");
+    let file = temp_module(prefix, source);
+    let project = file
+        .parent()
+        .expect("temp module has parent")
+        .join("project");
+    let name = "cross_bp_rust";
+
+    let compile = Command::new(aver_bin)
+        .current_dir(&repo_root)
+        .arg("compile")
+        .arg(&file)
+        .arg("--target")
+        .arg("rust")
+        .arg("--name")
+        .arg(name)
+        .arg("-o")
+        .arg(&project)
+        .output()
+        .expect("expected `aver compile --target rust` to execute");
+    if !compile.status.success() {
+        cleanup(&file);
+        return Err(format!("rust compile failed:\n{}", format_output(&compile)));
+    }
+
+    let target = repo_root.join("target").join("cross-backend-rust-shared");
+    let _ = fs::create_dir_all(&target);
+    let build = Command::new("cargo")
+        .arg("build")
+        .arg("-q")
+        .arg("--manifest-path")
+        .arg(project.join("Cargo.toml"))
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .expect("expected `cargo build` to execute");
+    if !build.status.success() {
+        cleanup(&file);
+        return Err(format!(
+            "rust cargo build failed:\n{}",
+            format_output(&build)
+        ));
+    }
+
+    let bin = target.join("debug").join(name);
+    let run = Command::new(&bin)
+        .output()
+        .expect("expected compiled rust binary to execute");
+    cleanup(&file);
+    if !run.status.success() {
+        return Err(format!("rust binary failed:\n{}", format_output(&run)));
+    }
+    Ok(String::from_utf8_lossy(&run.stdout).trim().to_string())
+}
+
 // ─── Generators ────────────────────────────────────────────────────────────
 //
 // The generator produces a *string-typed* Aver expression. The wrapper
@@ -433,5 +496,52 @@ fn assert_backends_agree_float(
             "wasm-gc accepted but VM rejected on source:\n{}\nVM error:\n{}\nwasm-gc stdout:\n{}",
             source, e, w
         ),
+    }
+}
+
+// ─── Convergent VM-vs-Rust arm (separate, low-budget block) ─────────────────
+//
+// Split into its own `proptest!` block so it can carry a much smaller case
+// count: every case does a real `cargo build` of the emitted Rust project
+// (seconds), unlike the fast subprocess-run arms above. Override the count
+// locally with `PROPTEST_CASES=N`.
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 8,
+        max_shrink_iters: 64,
+        .. ProptestConfig::default()
+    })]
+
+    /// CONVERGENT arm: VM vs the Rust codegen on the SAME overflowing
+    /// `int_expr` generator. After the Int = ℤ migration both backends use
+    /// arbitrary-precision integers (no wrapping), so they MUST agree on
+    /// every input — including the i64-overflow cases this generator produces
+    /// (the no-wrap proof at the property level). The VM-vs-wasm-gc arm above
+    /// stays `#[ignore]`'d because wasm-gc still wraps; this arm is un-gated
+    /// because the VM↔Rust pair has converged on Int = ℤ.
+    #[test]
+    fn cross_int_arithmetic_vm_vs_rust(expr in int_expr(3)) {
+        let source = wrap_program(&format!("String.fromInt({})", expr));
+        let vm = run_vm("cross-bp-int-vm", &source);
+        let rs = run_rust("cross-bp-int-rs", &source);
+        match (&vm, &rs) {
+            (Ok(v), Ok(r)) => prop_assert_eq!(
+                v, r,
+                "VM vs Rust diverged on source:\n{}\nVM:\n{}\nRust:\n{}",
+                source, v, r
+            ),
+            (Err(_), Err(_)) => {}
+            (Ok(v), Err(e)) => prop_assert!(
+                false,
+                "VM accepted but Rust rejected on source:\n{}\nVM stdout:\n{}\nRust error:\n{}",
+                source, v, e
+            ),
+            (Err(e), Ok(r)) => prop_assert!(
+                false,
+                "Rust accepted but VM rejected on source:\n{}\nVM error:\n{}\nRust stdout:\n{}",
+                source, e, r
+            ),
+        }
     }
 }

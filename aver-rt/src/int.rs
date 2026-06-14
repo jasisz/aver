@@ -25,7 +25,7 @@ use core::str::FromStr;
 
 use num_bigint::BigInt;
 use num_integer::Integer;
-use num_traits::{ToPrimitive, Zero};
+use num_traits::{FromPrimitive, ToPrimitive, Zero};
 
 /// Arbitrary-precision integer (mathematical ℤ) with a small-int fast path.
 ///
@@ -283,6 +283,30 @@ impl AverInt {
             // `BigInt::to_f64` returns `Some(±inf)` for out-of-range
             // magnitudes and is never `None`, so the unwrap is total.
             AverInt::Big(b) => b.to_f64().unwrap_or(f64::INFINITY),
+        }
+    }
+
+    /// Truncate a finite `f64` toward zero into ℤ. The exact mirror of the
+    /// VM's `float_to_aver_int` (`src/types/int.rs`): non-finite (`NaN`/`±∞`)
+    /// maps to `0`; an in-`i64`-range truncated value stays `Small`; an
+    /// out-of-range *finite* magnitude is represented EXACTLY as a `Big` via
+    /// `BigInt::from_f64`.
+    ///
+    /// This is the constructor `Int.fromFloat` and `Float.floor/ceil/round`
+    /// must funnel through — a bare `f as i64` cast SATURATES huge finite
+    /// floats to `i64::MAX`/`MIN` (a silent wrong value), which this avoids.
+    pub fn from_f64_trunc(f: f64) -> AverInt {
+        if !f.is_finite() {
+            return AverInt::zero();
+        }
+        let truncated = f.trunc();
+        match truncated.to_i64() {
+            Some(n) => AverInt::Small(n),
+            // Out of i64 range but finite: represent exactly via BigInt.
+            None => match BigInt::from_f64(truncated) {
+                Some(b) => AverInt::from_bigint(b),
+                None => AverInt::zero(),
+            },
         }
     }
 }
@@ -613,5 +637,33 @@ mod tests {
         assert!(AverInt::from_str("").is_err());
         assert!(AverInt::from_str("12x").is_err());
         assert!(AverInt::from_str("1.5").is_err());
+    }
+
+    #[test]
+    fn from_f64_trunc_preserves_huge_finite_magnitudes() {
+        // The fix #1 case: a float far past i64::MAX must NOT saturate to
+        // i64::MAX (`as i64`), but produce the EXACT BigInt — mirroring the
+        // VM's `float_to_aver_int`.
+        let v = AverInt::from_f64_trunc(1e20);
+        assert!(matches!(v, AverInt::Big(_)));
+        assert_eq!(v.to_string(), "100000000000000000000");
+        // Negative huge magnitude is exact too.
+        let n = AverInt::from_f64_trunc(-1e20);
+        assert_eq!(n.to_string(), "-100000000000000000000");
+    }
+
+    #[test]
+    fn from_f64_trunc_truncates_toward_zero_in_range() {
+        assert_eq!(AverInt::from_f64_trunc(3.9), AverInt::from_i64(3));
+        assert_eq!(AverInt::from_f64_trunc(-3.9), AverInt::from_i64(-3));
+        assert_eq!(AverInt::from_f64_trunc(0.0), AverInt::zero());
+    }
+
+    #[test]
+    fn from_f64_trunc_non_finite_is_zero() {
+        // NaN / ±∞ have no integer; map to 0 (matching the VM's cast).
+        assert_eq!(AverInt::from_f64_trunc(f64::NAN), AverInt::zero());
+        assert_eq!(AverInt::from_f64_trunc(f64::INFINITY), AverInt::zero());
+        assert_eq!(AverInt::from_f64_trunc(f64::NEG_INFINITY), AverInt::zero());
     }
 }

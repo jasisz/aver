@@ -18,6 +18,14 @@ impl AverDisplay for i64 {
     }
 }
 
+impl AverDisplay for crate::AverInt {
+    fn aver_display(&self) -> String {
+        // `AverInt`'s `Display` renders the bare decimal (Small or Big),
+        // byte-identical to the VM's `Value::Int` display.
+        self.to_string()
+    }
+}
+
 impl AverDisplay for f64 {
     fn aver_display(&self) -> String {
         self.to_string()

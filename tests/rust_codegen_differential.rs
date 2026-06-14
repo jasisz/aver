@@ -1409,7 +1409,8 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
         compile_rust(&src, &project, name, None, &[])?;
 
         // Structural tripwire: the emitted Rust must carry the fn-pointer
-        // param (`f: fn(i64) -> i64`), the FnValue passed by bare name
+        // param (`f: fn(aver_rt::AverInt) -> aver_rt::AverInt` — `Int` lowers
+        // to `AverInt` now), the FnValue passed by bare name
         // (`applyIt(dbl, v)`), and the call-through-slot (`f(v)`). A
         // dropped FnValue or a mis-emitted slot call would erase these.
         let emitted = fs::read_to_string(
@@ -1420,9 +1421,10 @@ fn mir_first_class_fn_value_builds_and_matches_vm() {
                 .join("mod.rs"),
         )
         .map_err(|e| format!("read emitted module: {e}"))?;
-        if !emitted.contains("f: fn(i64) -> i64") {
+        if !emitted.contains("f: fn(aver_rt::AverInt) -> aver_rt::AverInt") {
             return Err(format!(
-                "emitted Rust is missing the fn-pointer param `f: fn(i64) -> i64` — \
+                "emitted Rust is missing the fn-pointer param \
+                 `f: fn(aver_rt::AverInt) -> aver_rt::AverInt` — \
                  the LocalSlot param lowering was dropped:\n{emitted}"
             ));
         }

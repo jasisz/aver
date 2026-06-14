@@ -977,7 +977,7 @@ fn walk(n: Int) -> Int
             "Worker module must emit its OWN helper:\n{worker}"
         );
         assert!(
-            worker.contains("n + 100"),
+            worker.contains("n.add(&aver_rt::AverInt::from_i64(100))"),
             "Worker.helper body must keep its OWN literal (100):\n{worker}"
         );
         // Critical anti-shadow check: Worker.walk calls Worker.helper
@@ -996,7 +996,7 @@ fn walk(n: Int) -> Int
             "Entry module must emit its OWN helper:\n{entry}"
         );
         assert!(
-            entry.contains("n + 1i64") || entry.contains("(n + 1i64)"),
+            entry.contains("n.add(&aver_rt::AverInt::from_i64(1))"),
             "Entry.helper body must keep its OWN literal (1):\n{entry}"
         );
         // Entry's `Worker.walk(20)` must qualify through the crate
@@ -1256,7 +1256,9 @@ fn cellAt(grid: Vector<Int>, idx: Int) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("grid.get(idx as usize).cloned().unwrap_or(0i64)"));
+        assert!(entry.contains(
+            "(idx).to_usize().and_then(|__i| grid.get(__i).cloned()).unwrap_or(aver_rt::AverInt::from_i64(0))"
+        ));
     }
 
     #[test]
@@ -1420,7 +1422,7 @@ fn bucket(n: Int) -> Int
         let out = transpile(&mut ctx);
         let entry = generated_rust_entry_file(&out);
 
-        assert!(entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
+        assert!(entry.contains("if (n < aver_rt::AverInt::from_i64(10)) { aver_rt::AverInt::from_i64(3) } else { aver_rt::AverInt::from_i64(7) }"));
     }
 
     #[test]
@@ -1441,7 +1443,7 @@ fn bucket(n: Int) -> Int
         let entry = generated_rust_entry_file(&out);
 
         // Both modes now use the normalized if-else form
-        assert!(entry.contains("if (n < 10i64) { 3i64 } else { 7i64 }"));
+        assert!(entry.contains("if (n < aver_rt::AverInt::from_i64(10)) { aver_rt::AverInt::from_i64(3) } else { aver_rt::AverInt::from_i64(7) }"));
     }
 
     #[test]

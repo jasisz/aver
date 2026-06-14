@@ -155,9 +155,14 @@ pub fn expr_skip_clone(expr: &ResolvedExpr, ectx: &EmitCtx) -> bool {
 
 // ── Rust-specific policy ──────────────────────────────────────────────
 
-/// Is a Type Copy in Rust? (Int, Float, Bool, Unit)
+/// Is a Type Copy in Rust? (Float, Bool, Unit)
+///
+/// `Int` is NOT Copy: it now lowers to `aver_rt::AverInt`, which is
+/// `Clone`-only (the `Big` variant boxes a `BigInt`). Dropping `Int` from
+/// this set is what flips every owning-position non-last-use Int read to a
+/// `.clone()` — cheap for the common `Small` case (an `i64` copy + tag).
 pub fn is_copy_type(ty: &Type) -> bool {
-    matches!(ty, Type::Int | Type::Float | Type::Bool | Type::Unit)
+    matches!(ty, Type::Float | Type::Bool | Type::Unit)
 }
 
 /// Should this param be borrowed (`&T`) instead of owned?
@@ -180,7 +185,8 @@ mod tests {
 
     #[test]
     fn test_is_copy_type() {
-        assert!(is_copy_type(&Type::Int));
+        // Int lowers to the non-Copy `aver_rt::AverInt`.
+        assert!(!is_copy_type(&Type::Int));
         assert!(is_copy_type(&Type::Float));
         assert!(is_copy_type(&Type::Bool));
         assert!(is_copy_type(&Type::Unit));
