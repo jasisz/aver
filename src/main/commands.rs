@@ -3943,11 +3943,13 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                 ops_overflow_free,
                 ops_needs_wider,
                 ops_unbounded,
+                raw_i64_eligible,
             } => {
                 out.push_str(&format!(
                     "{label} {types_analyzed} refined type(s) analyzed: \
                      {two_sided_bounded} two-sided bounded; ops {ops_overflow_free} overflow-free, \
-                     {ops_needs_wider} needs-wider-scratch, {ops_unbounded} unbounded\n"
+                     {ops_needs_wider} needs-wider-scratch, {ops_unbounded} unbounded; \
+                     raw_i64_eligible: {raw_i64_eligible}\n"
                 ));
             }
             PassReport::ContractLower { fn_contracts } => {
@@ -4163,16 +4165,18 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
                 ops_overflow_free,
                 ops_needs_wider,
                 ops_unbounded,
+                raw_i64_eligible,
             } => {
                 out.push_str(&format!(
                     "{{\"types_analyzed\":{},\"two_sided_bounded\":{},\
                      \"ops_overflow_free\":{},\"ops_needs_wider\":{},\
-                     \"ops_unbounded\":{}}}",
+                     \"ops_unbounded\":{},\"raw_i64_eligible\":{}}}",
                     types_analyzed,
                     two_sided_bounded,
                     ops_overflow_free,
                     ops_needs_wider,
-                    ops_unbounded
+                    ops_unbounded,
+                    raw_i64_eligible
                 ));
             }
             PassReport::ContractLower { fn_contracts } => {

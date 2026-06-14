@@ -211,6 +211,62 @@ fn int_range_aggregate_counters() {
     assert_eq!(r.ops_unbounded(), 0);
 }
 
+// ── raw-i64-carrier recognizer ─────────────────────────────────────
+//
+// The per-refined-type "raw i64 eligible" determination derived from
+// the analysis facts (`RefinedTypeInterval::raw_i64_eligible` and the
+// `IntervalAnalysisResult::raw_i64_eligible` aggregate). Pure diagnostic
+// — nothing consumes it — but it is the gate a later carrier-lowering
+// slice will trust, so a wrong `true` is a latent unsoundness.
+
+#[test]
+fn int_range_is_raw_i64_eligible() {
+    // [0,100] with an overflow-free `add` → eligible.
+    let src = include_str!("../examples/refinement/int_range/int_range.av");
+    let r = analyze_src(src);
+    let t = only_type(&r, "IntRange");
+    assert!(
+        t.raw_i64_eligible(),
+        "IntRange [0,100], `add` OverflowFree → raw-i64-eligible"
+    );
+    assert_eq!(r.raw_i64_eligible(), 1, "exactly one eligible type");
+}
+
+#[test]
+fn natural_is_not_raw_i64_eligible() {
+    // One-sided [0,+inf] → open upper bound never fits i64 → NOT eligible.
+    let src = include_str!("../examples/refinement/natural/natural.av");
+    let r = analyze_src(src);
+    let t = only_type(&r, "Natural");
+    assert!(
+        !t.raw_i64_eligible(),
+        "Natural's open upper bound → NOT raw-i64-eligible"
+    );
+    assert_eq!(r.raw_i64_eligible(), 0);
+}
+
+#[test]
+fn positive_is_not_raw_i64_eligible() {
+    // [1,+inf] → open upper bound → NOT eligible.
+    let src = include_str!("../examples/refinement/positive/positive.av");
+    let r = analyze_src(src);
+    let t = only_type(&r, "Positive");
+    assert!(!t.raw_i64_eligible());
+    assert_eq!(r.raw_i64_eligible(), 0);
+}
+
+#[test]
+fn aggregate_eligible_matches_explain_passes_count() {
+    // The aggregate the `--explain-passes` `raw_i64_eligible: N` field
+    // reports is the count of per-type eligible determinations. For the
+    // shipped IntRange program that is exactly 1.
+    let src = include_str!("../examples/refinement/int_range/int_range.av");
+    let r = analyze_src(src);
+    let by_hand = r.types.values().filter(|t| t.raw_i64_eligible()).count();
+    assert_eq!(r.raw_i64_eligible(), by_hand);
+    assert_eq!(r.raw_i64_eligible(), 1);
+}
+
 // ── soundness regressions: no spurious OverflowFree ────────────────
 //
 // Three independent under-approximations once let the analysis certify

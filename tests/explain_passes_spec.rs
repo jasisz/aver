@@ -261,16 +261,71 @@ fn add(a: IntRange, b: IntRange) -> Result<IntRange, String>
         "ops_overflow_free",
         "ops_needs_wider",
         "ops_unbounded",
+        "raw_i64_eligible",
     ] {
         assert!(
             data[field].is_u64(),
             "interval_analyze.data.{field} missing or wrong type: {data:?}"
         );
     }
-    // IntRange: 1 type, two-sided, `add` overflow-free, nothing else.
+    // IntRange: 1 type, two-sided, `add` overflow-free, nothing else —
+    // and the recognizer certifies it raw-i64-eligible.
     assert_eq!(data["types_analyzed"], 1);
     assert_eq!(data["two_sided_bounded"], 1);
     assert_eq!(data["ops_overflow_free"], 1);
     assert_eq!(data["ops_needs_wider"], 0);
     assert_eq!(data["ops_unbounded"], 0);
+    assert_eq!(
+        data["raw_i64_eligible"], 1,
+        "IntRange [0,100] with an overflow-free `add` is raw-i64-eligible"
+    );
+}
+
+#[test]
+fn interval_analyze_pass_reports_natural_not_eligible() {
+    // A one-sided refinement (`Natural`, n >= 0 → [0, +inf]) is NOT
+    // raw-i64-eligible: the open upper bound never fits a machine word.
+    // The recognizer must report 0 even though the type IS analyzed.
+    let json = run_explain_passes(
+        r#"
+module Natural
+    exposes [fromInt, toInt, add]
+    exposes opaque [Natural]
+    intent = "Non-negative refinement (one-sided)."
+    effects []
+
+record Natural
+    value: Int
+
+fn fromInt(n: Int) -> Result<Natural, String>
+    ? "Smart constructor — admits non-negative ints."
+    match n >= 0
+        true  -> Result.Ok(Natural(value = n))
+        false -> Result.Err("Nat must be non-negative")
+
+fn toInt(n: Natural) -> Int
+    ? "Unwrap."
+    n.value
+
+fn add(a: Natural, b: Natural) -> Result<Natural, String>
+    ? "Sum, re-validated."
+    fromInt(a.value + b.value)
+"#,
+    );
+    let pass = json["passes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["stage"] == "interval_analyze")
+        .expect("interval_analyze pass present");
+    let data = &pass["data"];
+    // The type is seen (one-sided interval recognized), its `add` op is
+    // Unbounded ([0,+inf] + [0,+inf]), so it is NOT eligible.
+    assert_eq!(data["types_analyzed"], 1);
+    assert_eq!(data["two_sided_bounded"], 0);
+    assert_eq!(data["ops_unbounded"], 1);
+    assert_eq!(
+        data["raw_i64_eligible"], 0,
+        "Natural's open upper bound makes it NOT raw-i64-eligible"
+    );
 }

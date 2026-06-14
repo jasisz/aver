@@ -314,6 +314,14 @@ fn int_range_persists_two_sided_interval_and_overflow_free_add() {
         OpClass::OverflowFree,
         "IntRange.add intermediate [0,200] fits i64 → persisted OverflowFree"
     );
+
+    // The persisted-fact recognizer (the gate a later carrier-lowering
+    // slice trusts, read off the decl WITHOUT the diagnostic flag):
+    // two-sided i64-fitting interval + every op OverflowFree → eligible.
+    assert!(
+        decl.raw_i64_eligible(),
+        "IntRange [0,100], `add` OverflowFree → persisted decl is raw-i64-eligible"
+    );
 }
 
 #[test]
@@ -336,6 +344,13 @@ fn natural_persists_one_sided_interval_and_unbounded_ops() {
     // finite bound, so every op persists `Unbounded` (must stay bignum).
     assert_eq!(persisted_op_class(decl, "add"), OpClass::Unbounded);
     assert_eq!(persisted_op_class(decl, "mul"), OpClass::Unbounded);
+
+    // One-sided interval (open upper bound) → the persisted decl is NOT
+    // raw-i64-eligible: the carrier could not fit a machine word.
+    assert!(
+        !decl.raw_i64_eligible(),
+        "Natural's open upper bound → persisted decl NOT raw-i64-eligible"
+    );
 }
 
 #[test]
