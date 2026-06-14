@@ -3524,6 +3524,7 @@ pub(super) fn cmd_explain_passes(file: &str, module_root_override: Option<&str>,
             }),
             alloc_policy: Some(&neutral_policy),
             run_refinement_lower: true,
+            run_interval_analyze: true,
             run_contract_lower: true,
             run_law_lower: true,
             dep_modules: &dep_modules,
@@ -3936,6 +3937,19 @@ fn render_pass_diagnostics(diags: &[aver::ir::pipeline::PassDiagnostic]) -> Stri
                     "{label} {refined_types} refined type(s) lifted to subtype/subset\n"
                 ));
             }
+            PassReport::IntervalAnalyze {
+                types_analyzed,
+                two_sided_bounded,
+                ops_overflow_free,
+                ops_needs_wider,
+                ops_unbounded,
+            } => {
+                out.push_str(&format!(
+                    "{label} {types_analyzed} refined type(s) analyzed: \
+                     {two_sided_bounded} two-sided bounded; ops {ops_overflow_free} overflow-free, \
+                     {ops_needs_wider} needs-wider-scratch, {ops_unbounded} unbounded\n"
+                ));
+            }
             PassReport::ContractLower { fn_contracts } => {
                 out.push_str(&format!("{label} {fn_contracts} fn contract(s) decided\n"));
             }
@@ -4142,6 +4156,24 @@ fn render_pass_diagnostics_json(diags: &[aver::ir::pipeline::PassDiagnostic]) ->
             }
             PassReport::RefinementLower { refined_types } => {
                 out.push_str(&format!("{{\"refined_types\":{}}}", refined_types));
+            }
+            PassReport::IntervalAnalyze {
+                types_analyzed,
+                two_sided_bounded,
+                ops_overflow_free,
+                ops_needs_wider,
+                ops_unbounded,
+            } => {
+                out.push_str(&format!(
+                    "{{\"types_analyzed\":{},\"two_sided_bounded\":{},\
+                     \"ops_overflow_free\":{},\"ops_needs_wider\":{},\
+                     \"ops_unbounded\":{}}}",
+                    types_analyzed,
+                    two_sided_bounded,
+                    ops_overflow_free,
+                    ops_needs_wider,
+                    ops_unbounded
+                ));
             }
             PassReport::ContractLower { fn_contracts } => {
                 out.push_str(&format!("{{\"fn_contracts\":{}}}", fn_contracts));

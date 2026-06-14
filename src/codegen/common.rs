@@ -34,6 +34,11 @@ pub struct RefinementInfo<'a> {
     /// `fromInt(n: Int) → Result<X, _>`). Used when substituting
     /// the law's quantified variable into the predicate.
     pub param_name: &'a str,
+    /// Source-level name of the smart constructor itself (`"fromInt"`).
+    /// The interval analysis gates its transparent-wrapper peel on this
+    /// name so only the real smart constructor — never an arbitrary
+    /// one-arg helper — is treated as identity over its argument.
+    pub constructor_fn: &'a str,
     /// AST node for the bool predicate the smart constructor
     /// branches on — the body's `Match { subject = <here>, ... }`.
     pub predicate: &'a Spanned<Expr>,
@@ -192,6 +197,7 @@ fn refinement_info_from_shape<'a>(
         carrier_type,
         carrier_field,
         param_name,
+        constructor_fn: constructor_fd.name.as_str(),
         predicate: subject,
     })
 }
@@ -292,6 +298,7 @@ fn refinement_info_for_walk_legacy<'a>(
             carrier_type,
             carrier_field,
             param_name,
+            constructor_fn: fd.name.as_str(),
             predicate: subject,
         });
     }
