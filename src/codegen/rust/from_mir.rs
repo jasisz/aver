@@ -2051,19 +2051,15 @@ fn try_emit_int_literal_match(
                 let mut conds: Vec<String> = Vec::new();
                 let mut prelude = String::new();
                 for (pat, temp) in pats.iter().zip(tuple_temps.iter()) {
-                    match pat {
-                        ResolvedPattern::Literal(crate::ast::Literal::Int(n)) => {
-                            conds.push(format!("{} == &aver_rt::AverInt::from_i64({})", temp, n));
-                        }
-                        ResolvedPattern::Wildcard => {}
-                        ResolvedPattern::Ident(name) if name == "_" => {}
-                        ResolvedPattern::Ident(name) => {
-                            let rust = aver_name_to_rust(name);
-                            prelude.push_str(&format!("let {} = {}.clone(); ", rust, temp));
-                        }
-                        // Any other element shape (nested tuple, ctor, a
-                        // non-Int literal) is out of scope here.
-                        _ => return None,
+                    // Each top-level temp `__litN` is a reference to the
+                    // tuple element (`&Elem`), so its value place is `*temp`.
+                    // Recurse into the element, destructuring nested tuples
+                    // to arbitrary depth via field-index access expressions.
+                    let place = format!("(*{})", temp);
+                    if !lower_int_literal_subpatterns(pat, &place, &mut conds, &mut prelude) {
+                        // A non-Int literal, ctor, or other shape nested
+                        // anywhere in the tuple is out of scope here.
+                        return None;
                     }
                 }
                 if conds.is_empty() {
@@ -2122,6 +2118,52 @@ fn try_emit_int_literal_match(
     // other emitters; the guard lowering needs no ctx lookups.
     let _ = codegen;
     Some(format!("{{ {} {} }}", setup, chain))
+}
+
+/// Recursively lower one tuple-subpattern of an Int-literal match against a
+/// `place` expression (a Rust expression denoting the *value place* of the
+/// element, e.g. `(*__lit0)` or `(*__lit1).0`). Appends an equality guard for
+/// every Int-literal LEAF (at any depth), binds identifier leaves into
+/// `prelude`, and ignores wildcards. Nested tuples destructure via field-index
+/// access (`{place}.{i}`) — no fresh `match` bindings, so hygiene is automatic.
+///
+/// Returns `false` if any leaf is an unsupported shape (a non-Int literal, a
+/// ctor, …); the caller then bails to the hard codegen diagnostic. This is the
+/// arbitrarily-nested generalization of the one-level element loop above.
+fn lower_int_literal_subpatterns(
+    pat: &ResolvedPattern,
+    place: &str,
+    conds: &mut Vec<String>,
+    prelude: &mut String,
+) -> bool {
+    match pat {
+        ResolvedPattern::Literal(crate::ast::Literal::Int(n)) => {
+            // `place` is a value place; `&{place}` is `&AverInt`, comparable to
+            // the literal reference.
+            conds.push(format!("&{} == &aver_rt::AverInt::from_i64({})", place, n));
+            true
+        }
+        ResolvedPattern::Wildcard => true,
+        ResolvedPattern::Ident(name) if name == "_" => true,
+        ResolvedPattern::Ident(name) => {
+            let rust = aver_name_to_rust(name);
+            // Clone the value place into an owned binding.
+            prelude.push_str(&format!("let {} = {}.clone(); ", rust, place));
+            true
+        }
+        ResolvedPattern::Tuple(pats) => {
+            for (i, sub) in pats.iter().enumerate() {
+                // Field `i` of the tuple at `place` is itself a value place.
+                let sub_place = format!("{}.{}", place, i);
+                if !lower_int_literal_subpatterns(sub, &sub_place, conds, prelude) {
+                    return false;
+                }
+            }
+            true
+        }
+        // A non-Int literal, ctor, or any other shape is out of scope.
+        _ => false,
+    }
 }
 
 /// Is the match subject a read of a borrowed-param local? Mirror of
