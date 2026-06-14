@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::{
     RuntimeError, Value, list_concat, list_len, list_prepend, list_reverse, list_view,
 };
@@ -75,7 +75,7 @@ fn len(args: &[Value]) -> Result<Value, RuntimeError> {
         )));
     }
     list_len(&args[0])
-        .map(|n| Value::Int(n as i64))
+        .map(|n| Value::int(n as i64))
         .ok_or_else(|| RuntimeError::Error("List.len() argument must be a List".to_string()))
 }
 
@@ -101,9 +101,8 @@ fn take(args: &[Value]) -> Result<Value, RuntimeError> {
     let list = list_view(&args[0]).ok_or_else(|| {
         RuntimeError::Error("List.take() first argument must be a List".to_string())
     })?;
-    let count = match args[1] {
-        Value::Int(n) if n <= 0 => 0usize,
-        Value::Int(n) => usize::try_from(n).unwrap_or(usize::MAX),
+    let count = match &args[1] {
+        Value::Int(n) => clamp_count(n),
         _ => {
             return Err(RuntimeError::Error(
                 "List.take() second argument must be an Int".to_string(),
@@ -113,6 +112,17 @@ fn take(args: &[Value]) -> Result<Value, RuntimeError> {
     Ok(crate::value::list_from_vec(
         list.iter().take(count).cloned().collect(),
     ))
+}
+
+/// Clamp an `Int` count to a `usize` for `take`/`drop`: negatives become 0,
+/// values past `usize` become `usize::MAX` (take/drop all). Total by design —
+/// `take`/`drop` are defined for every ℤ count.
+fn clamp_count(n: &aver_rt::AverInt) -> usize {
+    if *n <= aver_rt::AverInt::zero() {
+        0
+    } else {
+        n.to_usize().unwrap_or(usize::MAX)
+    }
 }
 
 fn drop(args: &[Value]) -> Result<Value, RuntimeError> {
@@ -125,9 +135,8 @@ fn drop(args: &[Value]) -> Result<Value, RuntimeError> {
     let list = list_view(&args[0]).ok_or_else(|| {
         RuntimeError::Error("List.drop() first argument must be a List".to_string())
     })?;
-    let count = match args[1] {
-        Value::Int(n) if n <= 0 => 0usize,
-        Value::Int(n) => usize::try_from(n).unwrap_or(usize::MAX),
+    let count = match &args[1] {
+        Value::Int(n) => clamp_count(n),
         _ => {
             return Err(RuntimeError::Error(
                 "List.drop() second argument must be an Int".to_string(),
@@ -292,12 +301,7 @@ fn take_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
         ));
     }
     let count = if args[1].is_int() {
-        let n = args[1].as_int(arena);
-        if n <= 0 {
-            0usize
-        } else {
-            usize::try_from(n).unwrap_or(usize::MAX)
-        }
+        clamp_count(&args[1].as_aver_int(arena))
     } else {
         return Err(RuntimeError::Error(
             "List.take() second argument must be an Int".to_string(),
@@ -328,12 +332,7 @@ fn drop_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErro
         ));
     }
     let count = if args[1].is_int() {
-        let n = args[1].as_int(arena);
-        if n <= 0 {
-            0usize
-        } else {
-            usize::try_from(n).unwrap_or(usize::MAX)
-        }
+        clamp_count(&args[1].as_aver_int(arena))
     } else {
         return Err(RuntimeError::Error(
             "List.drop() second argument must be an Int".to_string(),

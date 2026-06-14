@@ -324,6 +324,23 @@ impl NanValue {
         }
     }
 
+    /// Store an arbitrary-precision integer and return its NaN-box. This is a
+    /// canonical-form boundary: a payload that fits `i64` is demoted to the
+    /// inline / `i64`-overflow representation rather than boxed, so a
+    /// numerically-`Small` value can never enter the value space wearing a
+    /// `BigInt` slot (which would break `Eq`/`Ord`/`Hash` and Map/Set keying).
+    /// Only a genuinely out-of-`i64`-range value allocates a `BigInt` slot.
+    #[inline]
+    pub fn new_big_int<T: ArenaTypes>(value: num_bigint::BigInt, arena: &mut Arena<T>) -> Self {
+        match i64::try_from(&value) {
+            Ok(n) => Self::new_int(n, arena),
+            Err(_) => Self::new_int_arena(arena.push_bigint(value)),
+        }
+    }
+
+    /// Materialize the stored value as `i64`. Valid only for inline ints and
+    /// the `i64`-overflow arena slot; panics on a ℤ-overflow (`BigInt`) slot,
+    /// which cannot be represented. Use `int_ref` when the value may be Big.
     #[inline]
     pub fn as_int<T: ArenaTypes>(self, arena: &Arena<T>) -> i64 {
         let p = self.payload();
@@ -332,6 +349,19 @@ impl NanValue {
             arena.get_i64(idx)
         } else {
             Self::decode_inline_int_payload(p)
+        }
+    }
+
+    /// Borrow the stored integer, discriminating inline / `i64`-overflow /
+    /// ℤ-overflow without losing precision. The runtime crate maps this to a
+    /// canonical `AverInt`.
+    #[inline]
+    pub fn int_ref<T: ArenaTypes>(self, arena: &Arena<T>) -> ArenaIntRef<'_> {
+        let p = self.payload();
+        if p & INT_BIG_BIT != 0 {
+            arena.int_ref_at((p & !INT_BIG_BIT) as u32)
+        } else {
+            ArenaIntRef::Small(Self::decode_inline_int_payload(p))
         }
     }
 
@@ -1022,6 +1052,12 @@ impl NanValue {
             3u8.hash(&mut hasher);
             arena.get_string_value(self).hash(&mut hasher);
             hasher.finish()
+        } else if self.is_int() && self.heap_index().is_some() {
+            // An arena-backed int (i64-overflow or ℤ-overflow) carries the
+            // arena INDEX in its bits, not the value — two equal ints at
+            // different slots would mis-key. Hash the value structurally.
+            // Inline ints encode the value directly, so they skip this.
+            self.map_key_hash_deep(arena)
         } else {
             self.bits()
         }
@@ -1190,7 +1226,13 @@ pub struct Arena<T: ArenaTypes> {
 
 #[derive(Debug, Clone)]
 pub enum ArenaEntry<T: ArenaTypes> {
+    /// An `i64`-fitting integer that overflowed the 45-bit inline NaN-box.
+    /// Also the cheap zero-filler used by the GC during compaction.
     Int(i64),
+    /// An integer outside the `i64` range (mathematical ℤ overflow slot).
+    /// Always holds a value not representable as `i64`, so the runtime's
+    /// canonical-form invariant holds across inline / arena-i64 / arena-big.
+    BigInt(Box<num_bigint::BigInt>),
     String(Rc<str>),
     List(ArenaList),
     Tuple(Vec<NanValue>),
@@ -1212,6 +1254,15 @@ pub enum ArenaEntry<T: ArenaTypes> {
         members: Vec<(Rc<str>, NanValue)>,
     },
     Boxed(NanValue),
+}
+
+/// A borrowed view of an arena-stored integer, discriminating the
+/// `i64`-overflow slot from the ℤ-overflow slot without materializing.
+/// The runtime crate reconstructs a canonical `AverInt` from this.
+#[derive(Debug, Clone, Copy)]
+pub enum ArenaIntRef<'a> {
+    Small(i64),
+    Big(&'a num_bigint::BigInt),
 }
 
 #[derive(Debug, Clone)]

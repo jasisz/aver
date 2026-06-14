@@ -69,7 +69,7 @@ fn expr_to_value(expr: &Expr) -> Result<Value, String> {
         // Anything other than a literal operand is rejected — entry-arg
         // expressions must be round-trippable through the JSON schema.
         Expr::Neg(inner) => match &inner.node {
-            Expr::Literal(Literal::Int(n)) => Ok(Value::Int(-*n)),
+            Expr::Literal(Literal::Int(n)) => Ok(Value::int(-*n)),
             Expr::Literal(Literal::Float(f)) => Ok(Value::Float(-*f)),
             _ => Err("unary '-' must be applied to a numeric literal in entry args".to_string()),
         },
@@ -114,7 +114,7 @@ fn expr_to_value(expr: &Expr) -> Result<Value, String> {
 
 fn literal_to_value(lit: &Literal) -> Value {
     match lit {
-        Literal::Int(i) => Value::Int(*i),
+        Literal::Int(i) => Value::int(*i),
         Literal::Float(f) => Value::Float(*f),
         Literal::Str(s) => Value::Str(s.clone()),
         Literal::Bool(b) => Value::Bool(*b),
@@ -281,7 +281,7 @@ mod tests {
         assert_eq!(name, "greet");
         assert_eq!(args.len(), 4);
         assert!(matches!(args[0], Value::Str(ref s) if s == "Alice"));
-        assert!(matches!(args[1], Value::Int(42)));
+        assert_eq!(args[1], Value::int(42));
         let expected = 314.0 / 100.0;
         assert!(matches!(args[2], Value::Float(f) if (f - expected).abs() < 1e-9));
         assert!(matches!(args[3], Value::Bool(true)));
@@ -291,7 +291,7 @@ mod tests {
     fn negative_numeric_literals() {
         let (_, args) = parse("loadTempBounds(-300.0, -40)");
         assert!(matches!(args[0], Value::Float(f) if (f + 300.0).abs() < 1e-9));
-        assert!(matches!(args[1], Value::Int(-40)));
+        assert_eq!(args[1], Value::int(-40));
     }
 
     #[test]
@@ -326,7 +326,7 @@ mod tests {
     #[test]
     fn builtin_wrapper_constructors() {
         let (_, args) = parse(r#"handle(Result.Ok(5))"#);
-        assert!(matches!(&args[0], Value::Ok(inner) if matches!(**inner, Value::Int(5))));
+        assert!(matches!(&args[0], Value::Ok(inner) if **inner == Value::int(5)));
 
         let (_, args) = parse(r#"handle(Result.Err("bad"))"#);
         assert!(
@@ -334,7 +334,7 @@ mod tests {
         );
 
         let (_, args) = parse("handle(Option.Some(1))");
-        assert!(matches!(&args[0], Value::Some(inner) if matches!(**inner, Value::Int(1))));
+        assert!(matches!(&args[0], Value::Some(inner) if **inner == Value::int(1)));
 
         let (_, args) = parse("handle(Option.None)");
         assert!(matches!(&args[0], Value::None));
@@ -418,10 +418,10 @@ mod tests {
             other => panic!("expected Null for empty, got {:?}", other),
         }
 
-        let single = encode_entry_args(&[Value::Int(5)]).unwrap();
+        let single = encode_entry_args(&[Value::int(5)]).unwrap();
         assert!(matches!(single, JsonValue::Int(5)), "got: {:?}", single);
 
-        let multi = encode_entry_args(&[Value::Int(1), Value::Str("x".into())]).unwrap();
+        let multi = encode_entry_args(&[Value::int(1), Value::Str("x".into())]).unwrap();
         assert!(
             matches!(&multi, JsonValue::Array(v) if v.len() == 2),
             "got: {:?}",
@@ -435,7 +435,7 @@ mod tests {
             recording_stem("loadPort", &[Value::Str("PL".into())]),
             "loadPort-PL"
         );
-        assert_eq!(recording_stem("fib", &[Value::Int(10)]), "fib-10");
+        assert_eq!(recording_stem("fib", &[Value::int(10)]), "fib-10");
         assert_eq!(recording_stem("flag", &[Value::Bool(false)]), "flag-false");
     }
 

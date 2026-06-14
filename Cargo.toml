@@ -62,6 +62,8 @@ aver-memory = { path = "aver-memory", version = "=0.2.9" }
 aver-rt = { path = "aver-rt", version = "=0.4.8", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 colored = { version = "2", optional = true }
+num-bigint = "0.4"
+num-traits = "0.2"
 thiserror = "1"
 toml = { version = "0.8", optional = true }
 url = "2"

@@ -272,9 +272,16 @@ proptest! {
     /// Int-arithmetic expressions, printed via `String.fromInt`,
     /// must produce the same stdout on every backend. A divergence
     /// here means VM and wasm-gc disagree on integer semantics
-    /// (associativity, sign of overflow wrap, ordering of side
-    /// effects inside a chain of BinOps, …).
+    /// (associativity, ordering of side effects inside a chain of
+    /// BinOps, …).
+    ///
+    /// IGNORED while the Int = ℤ migration is VM-only: the VM now uses
+    /// arbitrary-precision integers (no wrapping), while wasm-gc (and the
+    /// Rust codegen) still wrap on i64 overflow. On the overflow inputs this
+    /// generator produces, the backends therefore diverge by design. Re-enable
+    /// once wasm-gc carries the same bignum `Int` semantics.
     #[test]
+    #[ignore = "Int=Z migration is VM-only; wasm-gc still wraps on overflow (intentional WIP divergence)"]
     fn cross_int_arithmetic_vm_vs_wasm_gc(expr in int_expr(3)) {
         let source = wrap_program(&format!("String.fromInt({})", expr));
         let vm = run_vm("cross-bp-int-vm", &source);

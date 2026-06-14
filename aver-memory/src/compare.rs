@@ -65,7 +65,7 @@ impl NanValue {
             return false;
         }
         match self.tag() {
-            TAG_INT => self.as_int(arena) == other.as_int(arena),
+            TAG_INT => int_ref_eq(self.int_ref(arena), other.int_ref(arena)),
             TAG_IMMEDIATE | TAG_NONE => false,
             TAG_STRING => arena.get_string_value(self) == arena.get_string_value(other),
             TAG_LIST => {
@@ -158,7 +158,7 @@ impl NanValue {
         let tag = self.tag();
         (tag as u8).hash(state);
         match tag {
-            TAG_INT => self.as_int(arena).hash(state),
+            TAG_INT => int_ref_hash(self.int_ref(arena), state),
             TAG_IMMEDIATE => self.payload().hash(state),
             TAG_NONE => 0u8.hash(state),
             TAG_STRING => arena.get_string_value(self).hash(state),
@@ -227,7 +227,10 @@ impl NanValue {
             return arena.get_string_value(self).to_string();
         }
         match self.tag() {
-            TAG_INT => format!("{}", self.as_int(arena)),
+            TAG_INT => match self.int_ref(arena) {
+                ArenaIntRef::Small(n) => format!("{}", n),
+                ArenaIntRef::Big(b) => format!("{}", b),
+            },
             TAG_IMMEDIATE => match self.payload() {
                 IMM_FALSE => String::from("false"),
                 IMM_TRUE => String::from("true"),
@@ -306,5 +309,28 @@ impl NanValue {
         } else {
             Some(self.repr(arena))
         }
+    }
+}
+
+/// Equality over the three integer representations. Canonical form guarantees
+/// a `Small` and a `Big` are never numerically equal, so cross-variant pairs
+/// are always `false`. Two `Big`s built differently but equal in value compare
+/// equal here (the structural-key invariant Map/Set keying relies on).
+fn int_ref_eq(a: ArenaIntRef<'_>, b: ArenaIntRef<'_>) -> bool {
+    match (a, b) {
+        (ArenaIntRef::Small(x), ArenaIntRef::Small(y)) => x == y,
+        (ArenaIntRef::Big(x), ArenaIntRef::Big(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Hash over the integer representations, consistent with `int_ref_eq`: a
+/// `Small` and a value-equal `Big` cannot coexist (canonical form), and two
+/// equal `Big`s hash identically regardless of arena placement.
+fn int_ref_hash<H: core::hash::Hasher>(v: ArenaIntRef<'_>, state: &mut H) {
+    use core::hash::Hash;
+    match v {
+        ArenaIntRef::Small(n) => n.hash(state),
+        ArenaIntRef::Big(b) => b.hash(state),
     }
 }

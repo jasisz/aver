@@ -660,7 +660,7 @@ fn vm_tuple_literal() {
     assert_eq!(
         value,
         aver::value::Value::Tuple(vec![
-            aver::value::Value::Int(1),
+            aver::value::Value::int(1),
             aver::value::Value::Str("x".to_string())
         ])
     );
@@ -951,7 +951,7 @@ fn vm_parent_thin_allows_cheap_builtin_lookup_helpers() {
     let (result, arena) = vm_run_with_arena(src);
     assert_eq!(
         result.to_value(&arena),
-        aver::value::Value::Some(Box::new(aver::value::Value::Int(9)))
+        aver::value::Value::Some(Box::new(aver::value::Value::int(9)))
     );
 }
 
@@ -1127,7 +1127,7 @@ fn vm_wrapper_constructor_value() {
     let (result, arena) = vm_run_with_arena(src);
     assert_eq!(
         result.to_value(&arena),
-        aver::value::Value::Ok(Box::new(aver::value::Value::Int(7)))
+        aver::value::Value::Ok(Box::new(aver::value::Value::int(7)))
     );
 }
 
@@ -1149,7 +1149,7 @@ fn main() -> Tuple<List<String>, Int>
                 aver::value::Value::Str("left".to_string()),
                 aver::value::Value::Str("right".to_string()),
             ]),
-            aver::value::Value::Int(4),
+            aver::value::Value::int(4),
         ])
     );
 }
@@ -1165,7 +1165,7 @@ fn main() -> Tuple<Result<Int, String>, Result<Int, String>>
     assert_eq!(
         result.to_value(&arena),
         aver::value::Value::Tuple(vec![
-            aver::value::Value::Ok(Box::new(aver::value::Value::Int(1))),
+            aver::value::Value::Ok(Box::new(aver::value::Value::int(1))),
             aver::value::Value::Err(Box::new(aver::value::Value::Str("x".to_string()))),
         ])
     );
@@ -1193,7 +1193,7 @@ fn main() -> Tuple<Int, Int>
     let (result, arena) = vm_run_with_arena(src);
     assert_eq!(
         result.to_value(&arena),
-        aver::value::Value::Tuple(vec![aver::value::Value::Int(4), aver::value::Value::Int(2),])
+        aver::value::Value::Tuple(vec![aver::value::Value::int(4), aver::value::Value::int(2),])
     );
 }
 
@@ -1228,7 +1228,7 @@ fn main() -> Tuple<Int, Int>
     let (result, arena) = vm_run_with_module_root_and_arena(src, &root);
     assert_eq!(
         result.to_value(&arena),
-        aver::value::Value::Tuple(vec![aver::value::Value::Int(2), aver::value::Value::Int(3),])
+        aver::value::Value::Tuple(vec![aver::value::Value::int(2), aver::value::Value::int(3),])
     );
 }
 

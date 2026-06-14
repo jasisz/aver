@@ -66,10 +66,11 @@ pub const NEG: u8 = 0x15;
 /// Pop a, push !a (boolean not).
 pub const NOT: u8 = 0x16;
 
-/// Typed `+` for two `Int` operands. `as_int` decode + `wrapping_add`,
-/// boxing back through `NanValue::new_int`. Skips the tag-dispatch
-/// chain in `arith_add`. Emitted when both operand types resolve to
-/// `Type::Int`.
+/// Typed `+` for two `Int` operands. Materializes both as `AverInt` and
+/// adds over ℤ (non-wrapping; i64 fast path inside `AverInt::add`, promoting
+/// to a bignum only on overflow), boxing back through `from_aver_int`. Skips
+/// the tag-dispatch chain in `arith_add`. Emitted when both operand types
+/// resolve to `Type::Int`.
 pub const ADD_INT: u8 = 0x17;
 /// Typed `-` for two `Int` operands; same shape as `ADD_INT`.
 pub const SUB_INT: u8 = 0x18;
@@ -90,11 +91,10 @@ pub const MUL_FLOAT: u8 = 0x1C;
 /// the spec, no runtime check.
 pub const DIV_FLOAT: u8 = 0x1D;
 
-/// Typed unary `-` on an `Int` operand. Pops one value, decodes
-/// via `as_int` (inline), negates with `wrapping_neg`, re-boxes
-/// through `NanValue::new_int`. Skips the `is_int / is_float`
-/// branch in `NEG`. Emitted when `inner.ty()` resolves to
-/// `Type::Int`.
+/// Typed unary `-` on an `Int` operand. Pops one value and negates over ℤ
+/// via `AverInt::neg` (non-wrapping; `-i64::MIN` promotes to a bignum), then
+/// re-boxes through `from_aver_int`. Skips the `is_int / is_float` branch in
+/// `NEG`. Emitted when `inner.ty()` resolves to `Type::Int`.
 pub const NEG_INT: u8 = 0x1E;
 /// Typed unary `-` on a `Float` operand. Same shape as `NEG_INT`
 /// but on the float side: raw `f64::from_bits`, IEEE 754 negation

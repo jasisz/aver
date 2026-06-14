@@ -117,7 +117,7 @@ fn normalize_record_field_order(value: Value) -> Value {
 /// property case stays bounded.
 fn arb_replay_safe_value() -> impl Strategy<Value = Value> {
     let leaf = prop_oneof![
-        any::<i64>().prop_map(Value::Int),
+        any::<i64>().prop_map(Value::int),
         // Stay in the finite range — `value_to_json` rejects NaN/inf.
         prop::num::f64::POSITIVE
             .prop_filter("finite only", |f| f.is_finite())

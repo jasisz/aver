@@ -188,7 +188,9 @@ fn compile_oracle_vm(inputs: &ProofLowerInputs) -> Option<crate::vm::VM> {
 /// unbounded proof model.
 fn value_within_int_guard(v: &Value) -> bool {
     match v {
-        Value::Int(i) => i.unsigned_abs() < VM_INT_MAGNITUDE_GUARD,
+        Value::Int(i) => i
+            .to_i64()
+            .is_some_and(|n| n.unsigned_abs() < VM_INT_MAGNITUDE_GUARD),
         Value::Ok(b) | Value::Err(b) | Value::Some(b) => value_within_int_guard(b),
         Value::Tuple(xs) => xs.iter().all(value_within_int_guard),
         Value::Record { fields, .. } => fields.iter().all(|(_, x)| value_within_int_guard(x)),
@@ -208,7 +210,7 @@ fn value_within_int_guard(v: &Value) -> bool {
 /// or by exhausting variants that reference the type).
 fn sample_values(ty: &Type, inputs: &ProofLowerInputs, depth: usize) -> Vec<Value> {
     match ty {
-        Type::Int => vec![Value::Int(0), Value::Int(1), Value::Int(2)],
+        Type::Int => vec![Value::int(0), Value::int(1), Value::int(2)],
         Type::Float => vec![Value::Float(0.0), Value::Float(1.0)],
         Type::Str => vec![
             Value::Str(String::new()),

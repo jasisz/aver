@@ -456,7 +456,16 @@ impl VM {
             let vm = unsafe { &mut *vm_ptr };
 
             let handler_fn_id = match &handler {
-                Value::Int(id) if *id >= 0 => vm.code.symbols.resolve_function(*id as u32),
+                // A handler is a function symbol id; it must fit `u32`. A
+                // ℤ-overflow value can never be a valid handle → error.
+                Value::Int(id) => match id.to_u32() {
+                    Some(sym) => vm.code.symbols.resolve_function(sym),
+                    None => {
+                        return Err(crate::value::RuntimeError::Error(
+                            "HttpServer: handler is not a valid VM function".into(),
+                        ));
+                    }
+                },
                 _ => {
                     return Err(crate::value::RuntimeError::Error(
                         "HttpServer: handler is not a valid VM function".into(),

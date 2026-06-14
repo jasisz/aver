@@ -20,6 +20,7 @@ pub use aver_memory::{
     // Bit-layout constants needed by convert.rs and downstream code
     ARENA_REF_BIT,
     AllocSpace,
+    ArenaIntRef,
     ArenaList,
     ArenaTypes,
     ArenaUsage,
@@ -95,6 +96,12 @@ pub use convert::NanValueConvert;
 
 #[cfg(feature = "runtime")]
 mod convert;
+
+#[cfg(feature = "runtime")]
+pub use int_ext::NanIntExt;
+
+#[cfg(feature = "runtime")]
+mod int_ext;
 
 #[cfg(test)]
 #[allow(clippy::approx_constant)]

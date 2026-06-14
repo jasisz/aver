@@ -163,6 +163,7 @@ impl<T: ArenaTypes> Arena<T> {
     {
         match entry {
             ArenaEntry::Int(i) => ArenaEntry::Int(i),
+            ArenaEntry::BigInt(b) => ArenaEntry::BigInt(b),
             ArenaEntry::String(s) => ArenaEntry::String(s),
             ArenaEntry::Builtin(name) => ArenaEntry::Builtin(name),
             ArenaEntry::Fn(f) => ArenaEntry::Fn(f),

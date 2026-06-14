@@ -431,7 +431,7 @@ impl Seed {
 /// `depth` (and via the empty-list base for self-referential list fields).
 fn seeded_value(ty: &Type, inputs: &ProofLowerInputs, seed: Seed, depth: usize) -> Vec<Value> {
     match ty {
-        Type::Int => vec![Value::Int(seed.count())],
+        Type::Int => vec![Value::int(seed.count())],
         Type::Float => vec![Value::Float(seed.count() as f64)],
         Type::Str => vec![Value::Str(seed.letter().to_string())],
         Type::Bool => vec![Value::Bool(matches!(seed, Seed::A))],
@@ -545,7 +545,7 @@ fn seeded_named(
 /// extra coverage that never re-introduces symmetry.
 fn edge_values(ty: &Type, inputs: &ProofLowerInputs, depth: usize) -> Vec<Value> {
     match ty {
-        Type::Int => vec![Value::Int(0)],
+        Type::Int => vec![Value::int(0)],
         Type::Str => vec![Value::Str(String::new())],
         Type::List(_) => vec![crate::value::list_from_vec(Vec::new())],
         Type::Option(_) => vec![Value::None],
@@ -590,7 +590,7 @@ fn edge_named(td: &crate::ast::TypeDef, inputs: &ProofLowerInputs, depth: usize)
 /// The degenerate/zero witness of a type (for the edge record's fields).
 fn zero_value(ty: &Type, inputs: &ProofLowerInputs, depth: usize) -> Option<Value> {
     match ty {
-        Type::Int => Some(Value::Int(0)),
+        Type::Int => Some(Value::int(0)),
         Type::Float => Some(Value::Float(0.0)),
         Type::Str => Some(Value::Str(String::new())),
         Type::Bool => Some(Value::Bool(false)),

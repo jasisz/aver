@@ -1069,7 +1069,7 @@ fn apply_trace_projection(
                 .map(|(ev, _)| ev)
                 .collect();
             match method.as_str() {
-                "length" => Ok(VmVerifyEval::Value(Value::Int(filtered.len() as i64))),
+                "length" => Ok(VmVerifyEval::Value(Value::int(filtered.len() as i64))),
                 "event" => {
                     if args.len() != 1 {
                         return Err(format!("Trace.event(k) expects 1 arg, got {}", args.len()));
@@ -1158,7 +1158,7 @@ fn apply_trace_projection(
                             .filter(|ev| effect_event_method_args_eq(ev, &expected))
                             .count()
                     };
-                    Ok(VmVerifyEval::Value(Value::Int(n as i64)))
+                    Ok(VmVerifyEval::Value(Value::int(n as i64)))
                 }
                 _ => Ok(helper_result),
             }
@@ -1338,7 +1338,7 @@ fn expr_to_effect_event(expr: &Spanned<Expr>) -> Option<Value> {
 
 fn literal_expr_to_value(expr: &Spanned<Expr>) -> Option<Value> {
     match &expr.node {
-        Expr::Literal(crate::ast::Literal::Int(i)) => Some(Value::Int(*i)),
+        Expr::Literal(crate::ast::Literal::Int(i)) => Some(Value::int(*i)),
         Expr::Literal(crate::ast::Literal::Float(f)) => Some(Value::Float(*f)),
         Expr::Literal(crate::ast::Literal::Str(s)) => Some(Value::Str(s.clone())),
         Expr::Literal(crate::ast::Literal::Bool(b)) => Some(Value::Bool(*b)),

@@ -165,7 +165,7 @@ fn len(args: &[Value]) -> Result<Value, RuntimeError> {
             "Map.len() argument must be a Map".to_string(),
         ));
     };
-    Ok(Value::Int(map.len() as i64))
+    Ok(Value::int(map.len() as i64))
 }
 
 fn from_list(args: &[Value]) -> Result<Value, RuntimeError> {

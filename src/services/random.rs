@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, NanValue};
+use crate::nan_value::{Arena, NanIntExt, NanValue};
 use crate::value::{RuntimeError, Value};
 
 pub fn register(global: &mut HashMap<String, Value>) {
@@ -64,8 +64,13 @@ fn random_int(args: &[Value]) -> Result<Value, RuntimeError> {
         ));
     };
 
-    match aver_rt::random::random_int(*min, *max) {
-        Ok(value) => Ok(Value::Int(value)),
+    let (Some(min), Some(max)) = (min.to_i64(), max.to_i64()) else {
+        return Err(RuntimeError::Error(
+            "Random.int: bounds must fit a 64-bit integer".to_string(),
+        ));
+    };
+    match aver_rt::random::random_int(min, max) {
+        Ok(value) => Ok(Value::int(value)),
         Err(msg) => Err(RuntimeError::Error(msg)),
     }
 }
@@ -125,8 +130,14 @@ fn random_int_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, Runti
             "Random.int: second argument must be an Int".to_string(),
         ));
     }
-    let min = args[0].as_int(arena);
-    let max = args[1].as_int(arena);
+    let (Some(min), Some(max)) = (
+        args[0].as_aver_int(arena).to_i64(),
+        args[1].as_aver_int(arena).to_i64(),
+    ) else {
+        return Err(RuntimeError::Error(
+            "Random.int: bounds must fit a 64-bit integer".to_string(),
+        ));
+    };
     match aver_rt::random::random_int(min, max) {
         Ok(value) => Ok(NanValue::new_int(value, arena)),
         Err(msg) => Err(RuntimeError::Error(msg)),

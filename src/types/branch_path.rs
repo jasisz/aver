@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::sync::Arc as Rc;
 
-use crate::nan_value::{Arena, ArenaEntry, NanValue};
+use crate::nan_value::{Arena, ArenaEntry, NanIntExt, NanValue};
 use crate::value::RuntimeError;
 
 pub const TYPE_NAME: &str = "BranchPath";
@@ -109,13 +109,13 @@ fn child_nv(args: &[NanValue], arena: &mut Arena) -> Result<NanValue, RuntimeErr
             "BranchPath.child: `idx` must be an Int".to_string(),
         ));
     }
-    let idx = args[1].as_int(arena);
-    if idx < 0 {
+    let idx = args[1].as_aver_int(arena);
+    let Some(idx) = idx.to_usize() else {
         return Err(RuntimeError::Error(format!(
-            "BranchPath.child: `idx` must be non-negative, got {}",
+            "BranchPath.child: `idx` must be a non-negative, machine-sized Int, got {}",
             idx
         )));
-    }
+    };
     let dewey = if parent.is_empty() {
         idx.to_string()
     } else {

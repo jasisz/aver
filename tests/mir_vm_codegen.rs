@@ -132,7 +132,7 @@ fn assert_emits(src: &str, fn_name: &str, op: u8, label: &str) {
 fn double_runtime() {
     assert_eq!(
         run_mir("fn double(x: Int) -> Int\n    x + x\n", "double", &[7]),
-        Value::Int(14)
+        Value::int(14)
     );
 }
 
@@ -142,7 +142,7 @@ fn arithmetic_chain_runtime() {
     let src = "fn double(x: Int) -> Int\n    x + x\n\nfn quad(y: Int) -> Int\n    double(y + y)\n";
     assert_eq!(
         run_mir(src, "quad", &[3]),
-        Value::Int(12),
+        Value::int(12),
         "quad(3) = double(6) = 12"
     );
 }
@@ -151,7 +151,7 @@ fn arithmetic_chain_runtime() {
 fn neg_runtime() {
     assert_eq!(
         run_mir("fn flip(x: Int) -> Int\n    -x\n", "flip", &[5]),
-        Value::Int(-5)
+        Value::int(-5)
     );
 }
 
@@ -161,7 +161,7 @@ fn recursive_non_tail_call_runtime() {
     // the MIR walker no longer emits CALL_KNOWN_OWNED for user-fn calls;
     // see tests/mir_call_known_owned_regression.rs).
     let src = "fn fib(n: Int) -> Int\n    match n < 2\n        true -> n\n        false -> fib(n - 1) + fib(n - 2)\n";
-    assert_eq!(run_mir(src, "fib", &[10]), Value::Int(55), "fib(10) = 55");
+    assert_eq!(run_mir(src, "fib", &[10]), Value::int(55), "fib(10) = 55");
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn vector_compound_leaf_op_runtime() {
     let src = "fn build(n: Int) -> Int\n    v = Vector.new(3, 0)\n    w = Option.withDefault(Vector.set(v, 0, n), v)\n    Option.withDefault(Vector.get(w, 0), 0)\n";
     assert_eq!(
         run_mir(src, "build", &[7]),
-        Value::Int(7),
+        Value::int(7),
         "set slot 0 to 7, read it back"
     );
 }
@@ -182,7 +182,7 @@ fn user_ctor_construction_runtime() {
     // `MirExpr::Construct(MirCtor::User(_))` → VARIANT_NEW, then a match
     // extracts the field.
     let src = "type Shape\n  Circle(Int)\n  Square(Int)\n\nfn makeCircle(r: Int) -> Shape\n    Shape.Circle(r)\n\nfn area(s: Shape) -> Int\n    match s\n        Shape.Circle(r) -> r\n        Shape.Square(side) -> side\n\nfn make_and_extract(r: Int) -> Int\n    area(makeCircle(r))\n";
-    assert_eq!(run_mir(src, "make_and_extract", &[7]), Value::Int(7));
+    assert_eq!(run_mir(src, "make_and_extract", &[7]), Value::int(7));
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn try_propagation_runtime() {
 fn tail_call_runtime() {
     let src =
         "fn countdown(n: Int) -> Int\n    match n\n        0 -> 0\n        _ -> countdown(n - 1)\n";
-    assert_eq!(run_mir(src, "countdown", &[10]), Value::Int(0));
+    assert_eq!(run_mir(src, "countdown", &[10]), Value::int(0));
 }
 
 #[test]
@@ -206,9 +206,28 @@ fn match_int_literal_runtime() {
     for (input, expected) in &[(0, 100), (1, 200), (2, 999), (-1, 999)] {
         assert_eq!(
             run_mir(src, "classify", &[*input]),
-            Value::Int(*expected as i64)
+            Value::int(*expected as i64)
         );
     }
+}
+
+#[test]
+fn match_large_int_literal_const_body_runtime() {
+    // Regression: a match whose arms have const literal bodies takes the
+    // `MATCH_DISPATCH_CONST` table fast-path, which compares raw NanValue
+    // bits. For an Int outside the 45-bit inline range the bits hold an
+    // *arena index*, not the value, so the literal arm must NOT be sent
+    // down that bit-compare path — it has to use the value-aware
+    // `MATCH_INT_LITERAL` path instead. Before the fix this returned the
+    // default arm (0) for a value that equals the literal.
+    let big = 9_223_372_036_854_775_807i64; // i64::MAX, far past inline range
+    let near = big - 1;
+    let src = format!(
+        "fn classify(n: Int) -> Int\n    match n\n        {big} -> 1\n        {near} -> 2\n        _ -> 0\n"
+    );
+    assert_eq!(run_mir(&src, "classify", &[big]), Value::int(1));
+    assert_eq!(run_mir(&src, "classify", &[near]), Value::int(2));
+    assert_eq!(run_mir(&src, "classify", &[42]), Value::int(0));
 }
 
 #[test]
@@ -217,28 +236,28 @@ fn match_cons_emptylist_runtime() {
     // lower natively via MIR (no HIR fallback). Driven through
     // Int-returning fns that build the list inline.
     let src = "fn head_or_zero(xs: List<Int>) -> Int\n    match xs\n        [] -> 0\n        [h, ..t] -> h\n\nfn check_empty(_dummy: Int) -> Int\n    head_or_zero([])\n\nfn check_cons(_dummy: Int) -> Int\n    head_or_zero([42, 7, 3])\n";
-    assert_eq!(run_mir(src, "check_empty", &[0]), Value::Int(0));
-    assert_eq!(run_mir(src, "check_cons", &[0]), Value::Int(42));
+    assert_eq!(run_mir(src, "check_empty", &[0]), Value::int(0));
+    assert_eq!(run_mir(src, "check_cons", &[0]), Value::int(42));
 }
 
 #[test]
 fn match_user_ctor_pattern_runtime() {
     let src = "type Shape\n  Circle(Int)\n  Square(Int)\n\nfn extract(s: Shape) -> Int\n    match s\n        Shape.Circle(r) -> r\n        Shape.Square(side) -> side\n\nfn circle_eight(_d: Int) -> Int\n    extract(Shape.Circle(8))\n\nfn square_three(_d: Int) -> Int\n    extract(Shape.Square(3))\n";
-    assert_eq!(run_mir(src, "circle_eight", &[0]), Value::Int(8));
-    assert_eq!(run_mir(src, "square_three", &[0]), Value::Int(3));
+    assert_eq!(run_mir(src, "circle_eight", &[0]), Value::int(8));
+    assert_eq!(run_mir(src, "square_three", &[0]), Value::int(3));
 }
 
 #[test]
 fn match_result_builtin_ctor_pattern_runtime() {
     let src = "fn unwrap(r: Result<Int, String>) -> Int\n    match r\n        Result.Ok(v) -> v\n        Result.Err(_) -> 0\n\nfn run_ok(_d: Int) -> Int\n    unwrap(Result.Ok(42))\n\nfn run_err(_d: Int) -> Int\n    unwrap(Result.Err(\"nope\"))\n";
-    assert_eq!(run_mir(src, "run_ok", &[0]), Value::Int(42));
-    assert_eq!(run_mir(src, "run_err", &[0]), Value::Int(0));
+    assert_eq!(run_mir(src, "run_ok", &[0]), Value::int(42));
+    assert_eq!(run_mir(src, "run_err", &[0]), Value::int(0));
 }
 
 #[test]
 fn match_option_builtin_ctor_pattern_runtime() {
     let src = "fn unwrap_or_999(o: Option<Int>) -> Int\n    match o\n        Option.Some(v) -> v\n        Option.None -> 999\n\nfn run_some(_d: Int) -> Int\n    unwrap_or_999(Option.Some(7))\n\nfn run_none(o: Option<Int>) -> Int\n    unwrap_or_999(o)\n";
-    assert_eq!(run_mir(src, "run_some", &[0]), Value::Int(7));
+    assert_eq!(run_mir(src, "run_some", &[0]), Value::int(7));
     // None-valued arg would need a None NanValue from the test; just
     // confirm the fn compiles via the MIR path.
     assert!(compile_mir(src).find("unwrap_or_999").is_some());
@@ -247,14 +266,14 @@ fn match_option_builtin_ctor_pattern_runtime() {
 #[test]
 fn match_tuple_pattern_runtime() {
     let src = "fn pair_sum(p: Tuple<Int, Int>) -> Int\n    match p\n        (a, b) -> a + b\n\nfn check(_d: Int) -> Int\n    pair_sum((3, 4))\n";
-    assert_eq!(run_mir(src, "check", &[0]), Value::Int(7));
+    assert_eq!(run_mir(src, "check", &[0]), Value::int(7));
 }
 
 #[test]
 fn match_tuple_with_wildcard_subpattern_runtime() {
     // `(_, b) -> b` — wildcard subpattern collapses to POP.
     let src = "fn second(p: Tuple<Int, Int>) -> Int\n    match p\n        (_, b) -> b\n\nfn check(_d: Int) -> Int\n    second((11, 22))\n";
-    assert_eq!(run_mir(src, "check", &[0]), Value::Int(22));
+    assert_eq!(run_mir(src, "check", &[0]), Value::int(22));
 }
 
 #[test]
@@ -278,14 +297,14 @@ fn match_nested_tuple_subpattern_runtime() {
         ("run_cons_zero", 300),
         ("run_cons_other", 400),
     ] {
-        assert_eq!(run_mir(src, fn_name, &[0]), Value::Int(*expected));
+        assert_eq!(run_mir(src, fn_name, &[0]), Value::int(*expected));
     }
 }
 
 #[test]
 fn match_top_level_ident_bind_runtime() {
     let src = "fn shift(n: Int) -> Int\n    match n\n        x -> x + 1\n";
-    assert_eq!(run_mir(src, "shift", &[7]), Value::Int(8));
+    assert_eq!(run_mir(src, "shift", &[7]), Value::int(8));
 }
 
 #[test]
@@ -293,8 +312,8 @@ fn match_non_int_literal_pattern_runtime() {
     // Non-Int literal pattern (Bool): generic DUP + LOAD_CONST + EQ +
     // JUMP_IF_FALSE path.
     let src = "fn say(b: Bool) -> Int\n    match b\n        true -> 1\n        false -> 0\n\nfn t(_d: Int) -> Int\n    say(true)\n\nfn f(_d: Int) -> Int\n    say(false)\n";
-    assert_eq!(run_mir(src, "t", &[0]), Value::Int(1));
-    assert_eq!(run_mir(src, "f", &[0]), Value::Int(0));
+    assert_eq!(run_mir(src, "t", &[0]), Value::int(1));
+    assert_eq!(run_mir(src, "f", &[0]), Value::int(0));
 }
 
 #[test]
@@ -303,7 +322,7 @@ fn match_dispatch_const_runtime() {
     for (input, expected) in &[(0, 100), (1, 200), (2, 999), (-1, 999)] {
         assert_eq!(
             run_mir(src, "classify", &[*input]),
-            Value::Int(*expected as i64)
+            Value::int(*expected as i64)
         );
     }
 }
@@ -316,7 +335,7 @@ fn match_non_dispatchable_arm_runtime() {
     for (input, expected) in &[(0, 0), (3, 6), (7, 14)] {
         assert_eq!(
             run_mir(src, "double_or_zero", &[*input]),
-            Value::Int(*expected as i64)
+            Value::int(*expected as i64)
         );
     }
 }
@@ -325,7 +344,7 @@ fn match_non_dispatchable_arm_runtime() {
 fn last_use_runtime() {
     assert_eq!(
         run_mir("fn double(x: Int) -> Int\n    x + x\n", "double", &[7]),
-        Value::Int(14)
+        Value::int(14)
     );
 }
 

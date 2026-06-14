@@ -87,7 +87,10 @@ pub fn value_to_json(value: &Value) -> Result<JsonValue, String> {
     }
 
     match value {
-        Value::Int(i) => Ok(JsonValue::Int(*i)),
+        Value::Int(i) => i
+            .to_i64()
+            .map(JsonValue::Int)
+            .ok_or_else(|| "cannot serialize an integer outside the 64-bit JSON range".to_string()),
         Value::Float(f) => {
             if !f.is_finite() {
                 return Err("cannot serialize non-finite float (NaN/inf)".to_string());
@@ -170,7 +173,7 @@ pub fn json_to_value(json: &JsonValue) -> Result<Value, String> {
     match json {
         JsonValue::Null => Ok(Value::Unit),
         JsonValue::Bool(b) => Ok(Value::Bool(*b)),
-        JsonValue::Int(i) => Ok(Value::Int(*i)),
+        JsonValue::Int(i) => Ok(Value::int(*i)),
         JsonValue::Float(f) => Ok(Value::Float(*f)),
         JsonValue::String(s) => Ok(Value::Str(s.clone())),
         JsonValue::Array(items) => {

@@ -105,13 +105,15 @@ where
     }
 
     let port = match &args[0] {
-        Value::Int(n) if (0..=65535).contains(n) => *n,
-        Value::Int(n) => {
-            return Err(RuntimeError::Error(format!(
-                "HttpServer.listen: port {} is out of range (0-65535)",
-                n
-            )));
-        }
+        Value::Int(n) => match n.to_i64() {
+            Some(p) if (0..=65535).contains(&p) => p,
+            _ => {
+                return Err(RuntimeError::Error(format!(
+                    "HttpServer.listen: port {} is out of range (0-65535)",
+                    n
+                )));
+            }
+        },
         _ => {
             return Err(RuntimeError::Error(
                 "HttpServer.listen: port must be an Int".to_string(),
@@ -217,7 +219,11 @@ fn http_response_from_value(val: Value) -> Result<HttpResponse, RuntimeError> {
         match name.as_str() {
             "status" => {
                 if let Value::Int(n) = value {
-                    status = Some(*n);
+                    status = Some(n.to_i64().ok_or_else(|| {
+                        RuntimeError::Error(
+                            "HttpResponse.status is out of range for an HTTP status".to_string(),
+                        )
+                    })?);
                 } else {
                     return Err(RuntimeError::Error(
                         "HttpResponse.status must be Int".to_string(),
