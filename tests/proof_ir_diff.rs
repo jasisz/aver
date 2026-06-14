@@ -245,6 +245,169 @@ fn int_range_refinement_decision_matches_legacy() {
     assert_equiv(src, &["IntRange"]);
 }
 
+// ── persisted interval / op-class facts on RefinedTypeDecl ──────────
+//
+// `populate_refined_types` back-fills each `RefinedTypeDecl` with the
+// interval analysis's derived bound + per-op classification, reusing
+// `interval::analyze`. The fact is queryable on the standard
+// refinement-lower path — `build_ctx` runs with
+// `run_interval_analyze: false`, so these tests prove the persisted
+// fields are populated WITHOUT the `--explain-passes` diagnostic flag.
+// This is the home a future carrier-lowering codegen recognizer reads
+// via `ctx.proof_ir.refined_types` (TypeId-keyed).
+
+/// Look up the persisted decl for a refined type by source name.
+fn refined_decl<'a>(
+    ctx: &'a CodegenContext,
+    type_name: &str,
+) -> &'a aver::ir::proof_ir::RefinedTypeDecl {
+    let matches: Vec<_> = ctx
+        .proof_ir
+        .refined_types
+        .values()
+        .filter(|d| d.name == type_name)
+        .collect();
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one `{type_name}` refined type, got {}",
+        matches.len()
+    );
+    matches[0]
+}
+
+/// Persisted op-class for a named op on a decl.
+fn persisted_op_class(
+    decl: &aver::ir::proof_ir::RefinedTypeDecl,
+    op: &str,
+) -> aver::ir::interval::OpClass {
+    decl.op_classes
+        .iter()
+        .find(|(name, _)| name == op)
+        .map(|(_, c)| *c)
+        .unwrap_or_else(|| panic!("op `{op}` not classified; ops = {:?}", decl.op_classes))
+}
+
+#[test]
+fn int_range_persists_two_sided_interval_and_overflow_free_add() {
+    use aver::ir::Interval;
+    use aver::ir::interval::OpClass;
+
+    let src = include_str!("../examples/refinement/int_range/int_range.av");
+    let ctx = build_ctx(src);
+    let decl = refined_decl(&ctx, "IntRange");
+
+    // The `Bool.and(n >= 0, n <= 100)` guard yields the two-sided
+    // `[0, 100]` enclosure, persisted as `Some`.
+    assert_eq!(
+        decl.interval,
+        Some(Interval::between(0, 100)),
+        "IntRange's [0,100] guard is recognized and persisted on the decl"
+    );
+
+    // `add` of two `[0,100]` values has intermediate `[0,200]`, which
+    // fits i64 — the native-i64 candidate. (The `fromInt` guard still
+    // re-validates the [0,100] bound; OverflowFree is about the
+    // intermediate, not the result.)
+    assert_eq!(
+        persisted_op_class(decl, "add"),
+        OpClass::OverflowFree,
+        "IntRange.add intermediate [0,200] fits i64 → persisted OverflowFree"
+    );
+}
+
+#[test]
+fn natural_persists_one_sided_interval_and_unbounded_ops() {
+    use aver::ir::interval::{Bound, OpClass};
+
+    let src = include_str!("../examples/refinement/natural/natural.av");
+    let ctx = build_ctx(src);
+    let decl = refined_decl(&ctx, "Natural");
+
+    // `n >= 0` is a recognized one-sided shape → `[0, +inf]`, persisted
+    // as `Some` (recognized, even though it is not two-sided).
+    let interval = decl
+        .interval
+        .expect("Natural's n>=0 guard is recognized and persisted");
+    assert_eq!(interval.lo, Bound::Finite(0));
+    assert_eq!(interval.hi, Bound::PosInf, "Natural is [0,+inf]");
+
+    // `[0,+inf]` operands give `[0,+inf]` intermediates — no derivable
+    // finite bound, so every op persists `Unbounded` (must stay bignum).
+    assert_eq!(persisted_op_class(decl, "add"), OpClass::Unbounded);
+    assert_eq!(persisted_op_class(decl, "mul"), OpClass::Unbounded);
+}
+
+#[test]
+fn persisted_classification_equals_explain_passes_interval_analysis() {
+    // The persisted decl fields must be IDENTICAL to what the
+    // `--explain-passes` diagnostic path (`run_interval_analyze: true`,
+    // `PipelineResult.interval_analysis`) reports for the same program.
+    // Both paths call the one `interval::analyze`; this test pins that
+    // there is no divergence between the persisted home and the
+    // diagnostic flag.
+    let src = include_str!("../examples/refinement/int_range/int_range.av");
+
+    // Persisted path: standard refinement-lower (interval_analyze OFF).
+    let ctx = build_ctx(src);
+
+    // Diagnostic path: same pipeline shape but interval_analyze ON,
+    // reading the standalone `IntervalAnalysisResult`.
+    let mut items = parse_source(src).expect("parse");
+    let diag = aver::ir::pipeline::run(
+        &mut items,
+        aver::ir::PipelineConfig {
+            run_tco: true,
+            typecheck: Some(aver::ir::TypecheckMode::Full { base_dir: None }),
+            run_interp_lower: false,
+            run_buffer_build: false,
+            run_resolve: false,
+            run_last_use: false,
+            run_analyze: true,
+            run_escape: false,
+            run_refinement_lower: true,
+            run_interval_analyze: true,
+            run_contract_lower: false,
+            run_law_lower: false,
+            run_build_symbols: true,
+            dep_modules: &[],
+            alloc_policy: None,
+            call_ctx: None,
+            on_after_pass: None,
+        },
+    );
+    let diag_analysis = diag
+        .interval_analysis
+        .expect("interval analysis present when run_interval_analyze=true");
+
+    // For every persisted decl, the diagnostic result keyed by the same
+    // TypeId must agree on both the interval and the per-op classes.
+    assert!(
+        !ctx.proof_ir.refined_types.is_empty(),
+        "IntRange must be lifted into refined_types"
+    );
+    for (type_id, decl) in &ctx.proof_ir.refined_types {
+        let per_type = diag_analysis
+            .types
+            .get(type_id)
+            .expect("every persisted decl has a diagnostic counterpart by TypeId");
+
+        // Persisted `interval` is `Some(..)` exactly when the diagnostic
+        // recognized the shape (`interval_known`), and the value matches.
+        let expected_interval = per_type.interval_known.then_some(per_type.interval);
+        assert_eq!(
+            decl.interval, expected_interval,
+            "persisted interval for `{}` diverges from --explain-passes",
+            decl.name
+        );
+        assert_eq!(
+            decl.op_classes, per_type.ops,
+            "persisted op classes for `{}` diverge from --explain-passes",
+            decl.name
+        );
+    }
+}
+
 #[test]
 fn non_refinement_records_dont_appear_in_proof_ir() {
     // A non-refinement record (multiple fields, no smart constructor)

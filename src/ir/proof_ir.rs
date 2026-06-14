@@ -186,6 +186,35 @@ pub struct RefinedTypeDecl {
     /// witness must either reject the type or fall back to a target-
     /// default (Dafny picks `0` and crosses fingers).
     pub witness: Option<String>,
+    /// Constant integer interval over-approximating `invariant`, as
+    /// derived by [`crate::ir::interval::interval_of_invariant`] from
+    /// the same predicate. `Some([lo, hi])` when the invariant shape
+    /// was recognized (a comparison / `Bool.and` against integer
+    /// literals); `None` when the analysis declined (unrecognized
+    /// shape — `Bool.or`, non-literal bound, structural carrier).
+    ///
+    /// Persisted here so a carrier-lowering codegen recognizer (the
+    /// next slice of the Int-semantics effort) can read the bound
+    /// directly off the `TypeId`-keyed decl — the same identity key
+    /// the interval analysis uses — without re-running the analysis
+    /// behind the `--explain-passes` diagnostic flag. The value is
+    /// identical to what `aver compile --explain-passes` reports for
+    /// the same type; both paths call the one `interval` analysis.
+    pub interval: Option<crate::ir::interval::Interval>,
+    /// Per-arithmetic-op overflow classification, in module-walk
+    /// order. Each entry pairs the operation's source name with its
+    /// [`crate::ir::interval::OpClass`] — `OverflowFree` when every
+    /// `i64` intermediate across the op body provably fits `i64`
+    /// (the carrier-lowering candidate), `NeedsWiderScratch` /
+    /// `Unbounded` otherwise. Empty when the type exposes no
+    /// carrier arithmetic or when `interval` is `None`.
+    ///
+    /// Populated by [`crate::ir::interval::analyze`] over the same
+    /// `ProofLowerInputs` `populate_refined_types` consumed, so the
+    /// classification is byte-identical to the `--explain-passes`
+    /// report. The codegen recognizer reads this to flag a carrier
+    /// "raw-i64-eligible" per op.
+    pub op_classes: Vec<(String, crate::ir::interval::OpClass)>,
 }
 
 /// Per-pure-fn proof contract — what recursion shape (if any) the

@@ -466,8 +466,45 @@ pub fn populate_refined_types(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
                 predicate_param: info.param_name.to_string(),
                 invariant,
                 witness: Some(witness),
+                // Filled in immediately below by `populate_refined_type_intervals`,
+                // which runs the interval analysis once over the just-built
+                // `refined_types` map. Left empty here so the two passes share
+                // a single source of truth (`interval::analyze`) instead of
+                // each construction site re-deriving the bound.
+                interval: None,
+                op_classes: Vec::new(),
             },
         );
+    }
+
+    // Back-fill each decl's derived interval + per-op classification by
+    // running the existing per-module interval analysis over the map we
+    // just built. Reuses `interval::analyze` verbatim (no forked logic),
+    // so the persisted fact on every `RefinedTypeDecl` is byte-identical
+    // to what `aver compile --explain-passes` reports for the same type.
+    // This makes the bound a queryable fact on the standard refinement-
+    // lower path — the home a future carrier-lowering codegen recognizer
+    // reads via `ctx.proof_ir.refined_types` (TypeId-keyed) without
+    // re-running the analysis behind the diagnostic flag.
+    populate_refined_type_intervals(inputs, ir);
+}
+
+/// Attach the interval analysis result to each `RefinedTypeDecl` in
+/// `ir.refined_types`. Called once at the tail of
+/// [`populate_refined_types`]; the analysis is keyed by the same opaque
+/// `TypeId` the decl map uses, so the join is a direct id lookup.
+fn populate_refined_type_intervals(inputs: &ProofLowerInputs, ir: &mut ProofIR) {
+    let analysis = crate::ir::interval::analyze(&ir.refined_types, inputs);
+    for (type_id, decl) in ir.refined_types.iter_mut() {
+        let Some(per_type) = analysis.types.get(type_id) else {
+            continue;
+        };
+        // `interval_known` distinguishes a recognized bound from the
+        // conservative `Interval::unbounded()` decline; persist `None`
+        // for the decline so consumers don't mistake `[-inf, +inf]` for
+        // a real enclosure.
+        decl.interval = per_type.interval_known.then_some(per_type.interval);
+        decl.op_classes = per_type.ops.clone();
     }
 }
 
