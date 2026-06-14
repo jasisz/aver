@@ -227,7 +227,14 @@ fn value_to_literal_expr(
 ) -> Result<crate::ast::Spanned<crate::ast::Expr>, String> {
     use crate::ast::{Expr, Literal, Spanned};
     let lit = match v {
-        crate::value::Value::Int(n) => Literal::Int(*n),
+        crate::value::Value::Int(n) => match n.to_i64() {
+            Some(i) => Literal::Int(i),
+            None => {
+                return Err(format!(
+                    "synthetic `__entry__` only supports Int args within 64-bit range; got {n}"
+                ));
+            }
+        },
         crate::value::Value::Float(f) => Literal::Float(*f),
         crate::value::Value::Str(s) => Literal::Str(s.clone()),
         crate::value::Value::Bool(b) => Literal::Bool(*b),

@@ -122,7 +122,16 @@ pub(super) fn encode_entry_args_for_wasm_gc(
     let mut out = Vec::with_capacity(args.len());
     for (idx, value) in args.iter().enumerate() {
         let val = match value {
-            Value::Int(n) => Val::I64(*n),
+            Value::Int(n) => match n.to_i64() {
+                Some(i) => Val::I64(i),
+                None => {
+                    return Err(format!(
+                        "wasm-gc entry arg #{}: Int value out of 64-bit range \
+                         (the wasm-gc backend uses 64-bit integers)",
+                        idx + 1
+                    ));
+                }
+            },
             Value::Float(f) => Val::F64(f.to_bits()),
             Value::Bool(b) => Val::I32(if *b { 1 } else { 0 }),
             Value::Unit => continue, // Unit-typed param: no slot.
