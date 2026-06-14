@@ -217,6 +217,63 @@ pub struct RefinedTypeDecl {
     pub op_classes: Vec<(String, crate::ir::interval::OpClass)>,
 }
 
+impl RefinedTypeDecl {
+    /// Whether this refined type may have a **raw `i64` carrier** — the
+    /// gate a later codegen slice will trust to lower the bignum `Int`
+    /// carrier to a machine word. Derived ONLY from the persisted
+    /// [`Self::interval`] and [`Self::op_classes`] facts; it never
+    /// re-runs the interval analysis or inspects the invariant syntax.
+    ///
+    /// Returns `true` IFF, conservatively, the type is provably safe to
+    /// store and operate on as a raw `i64`:
+    ///
+    /// - [`Self::interval`] is `Some` — the analysis recognized the
+    ///   invariant shape (a `None` is the analysis's conservative
+    ///   *decline*, never eligible); AND
+    /// - that interval **fits `i64`** ([`crate::ir::interval::Interval::fits_i64`]),
+    ///   which holds IFF **both bounds are finite and within
+    ///   `[i64::MIN, i64::MAX]`**. This single test subsumes
+    ///   "two-sided" (an open / one-sided bound is `±inf`, which never
+    ///   fits) and the `i64`-range check — a `Natural` (`[0, +inf]`) or
+    ///   any interval wider than `i64` is rejected here; AND
+    /// - **every** entry in [`Self::op_classes`] is
+    ///   [`crate::ir::interval::OpClass::OverflowFree`] — a single
+    ///   `NeedsWiderScratch` or `Unbounded` op means some carrier
+    ///   arithmetic can wrap a raw `i64` before the smart constructor's
+    ///   guard re-validates, so the whole carrier stays bignum.
+    ///
+    /// Anything else → `false`. This is conservative in exactly the
+    /// soundness-critical direction: a wrongly-`true` answer would let
+    /// slice 4 lower a carrier whose ops can wrap, silently reintroducing
+    /// the model-vs-runtime gap the whole mechanism exists to close. The
+    /// predicate declines whenever the facts do not *prove* safety.
+    ///
+    /// ## Empty `op_classes`
+    ///
+    /// A type with a finite-`i64` interval but **no** carrier-reading
+    /// arithmetic ops (e.g. only `fromInt` / `toInt`, which
+    /// [`crate::ir::interval::classify_ops_in_scope`] skips) is reported
+    /// **eligible**. The decision is defensible because both soundness
+    /// obligations are met vacuously: storage of any inhabitant fits
+    /// `i64` (it is within the proven interval), and there is no op that
+    /// could overflow a raw `i64` (the `all(...)` over an empty op set is
+    /// `true`). The only thing the raw carrier adds over bignum — an op
+    /// that must not wrap before the guard — has nothing to apply to.
+    /// This is "eligible for storage", which is exactly what the gate
+    /// asks. If a future op is added to the type, it is re-classified and
+    /// can demote the type then; the determination is recomputed from the
+    /// persisted facts every time, never cached.
+    pub fn raw_i64_eligible(&self) -> bool {
+        // Delegates to the single shared recognizer so this persisted-
+        // fact gate and the `--explain-passes` diagnostic can never
+        // diverge about which types are eligible.
+        crate::ir::interval::raw_i64_eligible(
+            self.interval,
+            self.op_classes.iter().map(|(_, class)| class),
+        )
+    }
+}
+
 /// Per-pure-fn proof contract — what recursion shape (if any) the
 /// lowerer pinned for emit.
 #[derive(Debug, Clone)]
@@ -1160,4 +1217,106 @@ pub struct Predicate {
     /// caller-derived predicates have had caller-arg names
     /// substituted to callee-param names).
     pub expr: Spanned<crate::ir::hir::ResolvedExpr>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::hir::ResolvedExpr;
+    use crate::ir::interval::{Interval, OpClass};
+
+    /// A throwaway invariant predicate — `raw_i64_eligible` never reads
+    /// it (it derives only from the persisted `interval` / `op_classes`),
+    /// so a trivial `n` stub is enough to build a `RefinedTypeDecl`.
+    fn stub_predicate() -> Predicate {
+        Predicate {
+            free_vars: vec![("n".to_string(), QuantifierType::Plain("Int".to_string()))],
+            expr: Spanned::new(ResolvedExpr::Ident("n".to_string()), 0),
+        }
+    }
+
+    /// Build a `RefinedTypeDecl` directly from the two persisted facts
+    /// the recognizer reads, bypassing the pipeline entirely.
+    fn decl(interval: Option<Interval>, ops: Vec<(&str, OpClass)>) -> RefinedTypeDecl {
+        RefinedTypeDecl {
+            name: "T".to_string(),
+            carrier_type: "Int".to_string(),
+            carrier_field: "value".to_string(),
+            predicate_param: "n".to_string(),
+            invariant: stub_predicate(),
+            witness: Some("0".to_string()),
+            interval,
+            op_classes: ops.into_iter().map(|(n, c)| (n.to_string(), c)).collect(),
+        }
+    }
+
+    #[test]
+    fn two_sided_fits_i64_all_overflow_free_is_eligible() {
+        // The IntRange shape: [0,100], single `add` op OverflowFree.
+        let d = decl(
+            Some(Interval::between(0, 100)),
+            vec![("add", OpClass::OverflowFree)],
+        );
+        assert!(d.raw_i64_eligible());
+    }
+
+    #[test]
+    fn one_overflow_free_one_unbounded_is_not_eligible() {
+        // ALL ops must be OverflowFree — a single Unbounded op demotes.
+        let d = decl(
+            Some(Interval::between(0, 100)),
+            vec![
+                ("add", OpClass::OverflowFree),
+                ("scaledAdd", OpClass::Unbounded),
+            ],
+        );
+        assert!(!d.raw_i64_eligible());
+    }
+
+    #[test]
+    fn one_needs_wider_scratch_is_not_eligible() {
+        let d = decl(
+            Some(Interval::between(0, 100)),
+            vec![("widePath", OpClass::NeedsWiderScratch)],
+        );
+        assert!(!d.raw_i64_eligible());
+    }
+
+    #[test]
+    fn two_sided_interval_not_fitting_i64_is_not_eligible() {
+        // [0, i64::MAX + 1] is two-sided and finite but exceeds i64, so
+        // the carrier could not be stored in a machine word.
+        let d = decl(
+            Some(Interval::between(0, i64::MAX as i128 + 1)),
+            vec![("add", OpClass::OverflowFree)],
+        );
+        assert!(!d.raw_i64_eligible());
+    }
+
+    #[test]
+    fn declined_interval_none_is_not_eligible() {
+        // `interval: None` is the analysis's conservative decline (an
+        // unrecognized invariant shape) — never eligible.
+        let d = decl(None, vec![("add", OpClass::OverflowFree)]);
+        assert!(!d.raw_i64_eligible());
+    }
+
+    #[test]
+    fn one_sided_interval_is_not_eligible() {
+        // A `Natural`-shaped [0, +inf]: `fits_i64` is false because the
+        // upper bound is open, so the type is rejected even with no ops.
+        let d = decl(Some(Interval::ge(0)), vec![]);
+        assert!(!d.raw_i64_eligible());
+    }
+
+    #[test]
+    fn two_sided_fits_i64_empty_ops_is_eligible() {
+        // Empty op_classes: a finite-i64 interval with no carrier-reading
+        // arithmetic. Decision: ELIGIBLE — storage fits i64 and the
+        // all-OverflowFree check over an empty op set is vacuously true,
+        // so there is no op that could wrap a raw i64. See the doc-comment
+        // on `raw_i64_eligible` for the full reasoning.
+        let d = decl(Some(Interval::between(0, 100)), vec![]);
+        assert!(d.raw_i64_eligible());
+    }
 }

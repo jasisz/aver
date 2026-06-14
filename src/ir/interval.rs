@@ -335,6 +335,59 @@ impl OpClass {
     }
 }
 
+/// The raw-`i64`-carrier recognizer, factored to a single place so the
+/// `--explain-passes` diagnostic ([`RefinedTypeInterval::raw_i64_eligible`])
+/// and the persisted-fact gate
+/// ([`crate::ir::proof_ir::RefinedTypeDecl::raw_i64_eligible`]) can never
+/// disagree about which types are eligible.
+///
+/// Returns `true` IFF a refined type may have a raw `i64` carrier:
+///
+/// - `interval` is `Some` — a recognized enclosure (`None` is the
+///   analysis's conservative decline); AND
+/// - that interval [`Interval::fits_i64`] — both bounds finite AND within
+///   `[i64::MIN, i64::MAX]`, which is exactly "two-sided and machine-word
+///   sized" (a one-sided / open bound is `±inf`, which never fits); AND
+/// - every op in `ops` is [`OpClass::OverflowFree`] — a single
+///   `NeedsWiderScratch` / `Unbounded` op means some carrier arithmetic
+///   can wrap a raw `i64` before the guard re-validates.
+///
+/// Conservative in the soundness-critical direction: a wrongly-`true`
+/// answer would license a later codegen to lower a carrier whose ops can
+/// wrap. An **empty** `ops` slice with a finite-`i64` interval is
+/// eligible — storage fits `i64` and the `all(...)` is vacuously true, so
+/// nothing can overflow. See the `RefinedTypeDecl` method doc for the
+/// full empty-op reasoning.
+///
+/// WHITELIST SEMANTICS — load-bearing for any consumer that lowers a
+/// carrier to `i64`. `ops` is the set of carrier-*arithmetic* ops the
+/// analysis examined (a fn taking the refined type whose own body computes
+/// an arithmetic intermediate over the carrier). It is NOT every op the
+/// type exposes: an op whose overflow risk lives inside a *called helper*
+/// — e.g. `fromInt(widen(r.value))` with no arithmetic operator in its own
+/// body — is intentionally not enumerated. So `true` does NOT assert
+/// "every operation on the type is overflow-free". It asserts only: the
+/// carrier may be *stored* as `i64`, and the enumerated `OverflowFree` ops
+/// may compute on it with direct `i64` arithmetic. Any consumer that
+/// lowers the carrier to `i64` MUST therefore convert every OTHER read of
+/// the carrier (helper calls, projections, unenumerated ops) to a bignum
+/// `Int` — never raw-`i64` arithmetic outside the enumerated ops. That is
+/// the carrier-lowering contract the bignum runtime must honour; it is
+/// what keeps an unenumerated helper-call op sound (its `r.value` is read
+/// as a bignum `Int`, so the helper's arithmetic cannot wrap).
+pub fn raw_i64_eligible<'a>(
+    interval: Option<Interval>,
+    ops: impl IntoIterator<Item = &'a OpClass>,
+) -> bool {
+    let Some(interval) = interval else {
+        return false;
+    };
+    if !interval.fits_i64() {
+        return false;
+    }
+    ops.into_iter().all(|c| *c == OpClass::OverflowFree)
+}
+
 /// Per-refined-type interval analysis result.
 #[derive(Debug, Clone)]
 pub struct RefinedTypeInterval {
@@ -354,6 +407,19 @@ pub struct RefinedTypeInterval {
     /// Per-op classification, in module-walk order. Each entry pairs
     /// the operation's source name with its [`OpClass`].
     pub ops: Vec<(String, OpClass)>,
+}
+
+impl RefinedTypeInterval {
+    /// Whether this type may have a raw `i64` carrier — the diagnostic
+    /// mirror of the persisted-fact gate on `RefinedTypeDecl`. Delegates
+    /// to the shared [`raw_i64_eligible`] so the two paths agree by
+    /// construction. The persisted decl stores `interval: None` for a
+    /// declined invariant, so this passes `Some(self.interval)` only when
+    /// `interval_known` to match that exact representation.
+    pub fn raw_i64_eligible(&self) -> bool {
+        let interval = self.interval_known.then_some(self.interval);
+        raw_i64_eligible(interval, self.ops.iter().map(|(_, c)| c))
+    }
 }
 
 /// Whole-analysis result, keyed for cheap programmatic lookup.
@@ -392,6 +458,15 @@ impl IntervalAnalysisResult {
     /// Total ops across all types classified `Unbounded`.
     pub fn ops_unbounded(&self) -> usize {
         self.count_ops(OpClass::Unbounded)
+    }
+
+    /// Refined types whose carrier may lower to a raw `i64`
+    /// ([`RefinedTypeInterval::raw_i64_eligible`]) — the
+    /// recognizer's headline count, surfaced by `--explain-passes`. This
+    /// is the "proof the recognizer fires on the right types" metric;
+    /// nothing in codegen / runtime / proof consumes it.
+    pub fn raw_i64_eligible(&self) -> usize {
+        self.types.values().filter(|t| t.raw_i64_eligible()).count()
     }
 
     fn count_ops(&self, class: OpClass) -> usize {

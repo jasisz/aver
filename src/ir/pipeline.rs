@@ -322,6 +322,11 @@ pub enum PassReport {
         /// Ops with no derivable finite bound (one-sided / plain-`Int`
         /// operands).
         ops_unbounded: usize,
+        /// Refined types eligible for a raw `i64` carrier — two-sided,
+        /// `i64`-fitting interval with every op `OverflowFree`. The
+        /// recognizer slice's headline count; a pure diagnostic with no
+        /// downstream consumer yet.
+        raw_i64_eligible: usize,
     },
     ContractLower {
         /// Pure fns with a non-trivial `RecursionContract`. Currently
@@ -952,6 +957,7 @@ fn diag_for_interval_analyze(analysis: &crate::ir::IntervalAnalysisResult) -> Pa
             ops_overflow_free: analysis.ops_overflow_free(),
             ops_needs_wider: analysis.ops_needs_wider(),
             ops_unbounded: analysis.ops_unbounded(),
+            raw_i64_eligible: analysis.raw_i64_eligible(),
         },
     }
 }
