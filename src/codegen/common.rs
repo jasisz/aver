@@ -2838,6 +2838,8 @@ mod tests {
                 )),
             },
             witness: Some(witness.to_string()),
+            interval: None,
+            op_classes: Vec::new(),
         };
         let symbols = crate::ir::SymbolTable::build(&[], &modules);
         let a_id = symbols
@@ -2920,6 +2922,8 @@ mod tests {
                 )),
             },
             witness: Some(witness.to_string()),
+            interval: None,
+            op_classes: Vec::new(),
         };
 
         let items = vec![TopLevel::TypeDef(entry_natural)];
