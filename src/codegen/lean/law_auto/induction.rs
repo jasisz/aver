@@ -1394,8 +1394,19 @@ fn emit_list_induction(
             format!(
                 "| nil => first | (simp [{arm_simp}]; done) | (simp [{arm_simp}]; omega){nil_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega){tail}"
             ),
+            // Trailing `cases tail` branch: a fn whose body matches TWO levels
+            // deep on the list (`last`/`butlast`: `match x | [] | y::z => match z
+            // | [] | …`) generates equational lemmas keyed on the two-deep
+            // pattern, so `simp [fn]` can't unfold `fn (head :: tail)` while
+            // `tail` is a variable — and the earlier `split` branch then finds no
+            // `match` to peel. Decomposing `tail` one level exposes the inner
+            // constructor (`[head]` vs `head :: h2 :: …`), the equation fires, and
+            // the cons IH lands on the recursive call. Runs only after the three
+            // simp/split branches fail; `<;> omega` throws on any leftover so a
+            // non-closing arm still degrades to the honest `sorry`. Sound, so it
+            // can only ADD closures.
             format!(
-                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega){tail}"
+                "| cons head tail ih => first | (simp_all [{arm_simp}]; done) | (simp_all [{arm_simp}]; omega){cons_bridge} | (simp only [{arm_split}]; split <;> simp_all [{arm_simp}]{split_bridge} <;> omega) | (cases tail <;> simp_all [{arm_simp}] <;> omega){tail}"
             ),
         )
     };
