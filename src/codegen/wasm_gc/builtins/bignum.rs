@@ -260,6 +260,115 @@ fn aint_and_string_decls(registry: &TypeRegistry) -> Result<String, WasmGcError>
     ))
 }
 
+/// Type declarations for the bignum `Int.fromString` parser, which
+/// references `$string`, `$mag`, `$aint` AND the `Result<Int,String>`
+/// carrier struct (ok field is the `$aint` ref under bignum, err field
+/// `$string`). The registry allocates `string_idx < mag_idx < struct_idx`
+/// (struct = mag+1), and the result slot lands above all three (after any
+/// intervening vector/list types). Pads each gap in turn so every named
+/// type lands at the user module's exact idx.
+fn aint_string_result_decls(registry: &TypeRegistry) -> Result<String, WasmGcError> {
+    let string_idx = registry
+        .string_array_type_idx
+        .ok_or(WasmGcError::Validation(
+            "bignum Int.fromString needs the String slot, but it wasn't allocated".into(),
+        ))?;
+    let mag_idx = registry.aint_mag_array_idx.ok_or(WasmGcError::Validation(
+        "bignum Int.fromString needs the $mag slot, but it wasn't allocated".into(),
+    ))?;
+    let struct_idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+        "bignum Int.fromString needs the $aint slot, but it wasn't allocated".into(),
+    ))?;
+    let result_idx =
+        registry
+            .result_type_idx("Result<Int,String>")
+            .ok_or(WasmGcError::Validation(
+                "bignum Int.fromString needs the Result<Int,String> slot, but it wasn't allocated"
+                    .into(),
+            ))?;
+    if !(string_idx < mag_idx && mag_idx + 1 == struct_idx && struct_idx < result_idx) {
+        return Err(WasmGcError::Validation(format!(
+            "bignum Int.fromString expects string({string_idx}) < mag({mag_idx}), \
+             struct({struct_idx}) == mag+1, and result({result_idx}) > struct; \
+             layout invariant broken"
+        )));
+    }
+    let pad_to_string = wat_helper::padding_types(string_idx);
+    // After `$string` at string_idx we are at string_idx+1; pad to mag_idx,
+    // declare `$mag` + `$aint`, then pad to result_idx and declare `$result`.
+    let gap_to_mag = wat_helper::padding_types(mag_idx - (string_idx + 1));
+    let gap_to_result = wat_helper::padding_types(result_idx - (struct_idx + 1));
+    Ok(format!(
+        "{pad_to_string}\
+         (type $string (array (mut i8)))\n\
+         {gap_to_mag}\
+         (type $mag (array (mut i64)))\n\
+         (type $aint (struct (field $small (mut i64)) \
+                             (field $magf (mut (ref null $mag))) \
+                             (field $sign (mut i32))))\n\
+         {gap_to_result}\
+         (type $result (struct (field (mut i32)) (field (mut (ref null $aint))) \
+                               (field (mut (ref null $string)))))\n"
+    ))
+}
+
+/// Inlined WAT that builds the VM-identical `Cannot parse '<s>' as Int`
+/// error message into a fresh `$string` and leaves an `Err`
+/// `(ref null $result)` on the stack. Mirrors `AverInt::from_str`'s
+/// rejection wrapped by `Int::from_string` (`src/types/int.rs`). Reuses
+/// the helper's `$len`/`$i`/`$err` locals; the prefix is `Cannot parse '`
+/// (14 bytes) and the suffix `' as Int` (8 bytes).
+fn from_string_err_build() -> String {
+    // ASCII for "Cannot parse '" then the original string then "' as Int".
+    let prefix: [u8; 14] = *b"Cannot parse '";
+    let suffix: [u8; 8] = *b"' as Int";
+    let mut set_prefix = String::new();
+    for (i, b) in prefix.iter().enumerate() {
+        set_prefix.push_str(&format!(
+            "(array.set $string (local.get $err) (i32.const {i}) (i32.const {b}))\n"
+        ));
+    }
+    let mut set_suffix = String::new();
+    for (k, b) in suffix.iter().enumerate() {
+        // suffix byte k lands at index 14 + len + k.
+        set_suffix.push_str(&format!(
+            "(array.set $string (local.get $err) (i32.add (i32.const {pos}) (local.get $len)) (i32.const {b}))\n",
+            pos = 14 + k
+        ));
+    }
+    format!(
+        r#"
+            (local.set $err (array.new_default $string (i32.add (local.get $len) (i32.const 22))))
+            {set_prefix}
+            ;; copy the original string into err[14..14+len]
+            (array.copy $string $string (local.get $err) (i32.const 14)
+              (local.get $s) (i32.const 0) (local.get $len))
+            {set_suffix}
+            (struct.new $result (i32.const 0) (ref.null $aint) (local.get $err))
+        "#
+    )
+}
+
+/// `Int.fromString(s) -> Result<Int, String>` under bignum. Accumulates
+/// decimal digits into a 32-bit-limb magnitude (`mag = mag*10 + digit`)
+/// then normalizes to a canonical `$AverInt`, so a 38-digit string parses
+/// to the EXACT value (not the wrapped-i64 the scalar helper produces).
+/// Acceptance matches the VM (`AverInt::from_str`): one optional leading
+/// `+`/`-`, then `≥1` ASCII digit, no whitespace/garbage; on any
+/// rejection returns `Err("Cannot parse '<s>' as Int")` byte-identically.
+pub(super) fn emit_aint_from_string(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_string_result_decls(registry)?;
+    let err_build = from_string_err_build();
+    let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+    let wat = format!(
+        include_str!("wat/from_string.wat"),
+        decls = decls,
+        err_build = err_build,
+        norm = norm,
+    );
+    wat_helper::compile_wat_helper(&wat)
+}
+
 /// `String.fromInt` under bignum — formats an `$AverInt` to a decimal
 /// `(ref null $string)`. Small reads `$small` and runs the same i64
 /// digit loop the scalar helper uses; Big repeatedly divides the 32-bit
@@ -276,6 +385,45 @@ pub(super) fn emit_string_from_aint(registry: &TypeRegistry) -> Result<Function,
 pub(super) fn emit_aint_from_i64(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
     let decls = aint_type_decls(registry)?;
     let wat = format!(include_str!("wat/from_i64.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_to_f64(a) -> f64` — `Float.fromInt` under bignum. Small is an
+/// exact `i64→f64` round; Big is CORRECTLY ROUNDED (round-to-nearest-even,
+/// bit-identical to `num_bigint::BigInt::to_f64`) via the sticky-jam
+/// technique: reduce the magnitude to its top 64 significant bits `M` with
+/// shift `s = sigbits - 64`, OR every dropped lower bit into a sticky bit,
+/// jam sticky into `M`'s LSB, `f64.convert_i64_u(M)`, then multiply by the
+/// EXACT power of two `2^s` (saturating to `±inf` for magnitudes past f64
+/// range). A naive high→low Horner accumulation (`acc = acc*2^32 + limb`)
+/// double-rounds and drifts 1 ULP on ~10% of >=3-limb magnitudes — the
+/// sticky-jam single-rounds, matching `AverInt::to_f64` (`aver-rt/src/int.rs`).
+pub(super) fn emit_aint_to_f64(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/to_f64.wat"), decls = decls);
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_from_f64(f) -> $AverInt` — `Int.fromFloat` under bignum.
+/// Non-finite → `0`; an in-`i64`-range truncated value stays Small; an
+/// out-of-range finite magnitude is built EXACTLY from the IEEE-754
+/// mantissa/exponent (a pure left shift, since `|t| >= 2^63` forces a
+/// non-negative exponent), matching `AverInt::from_f64_trunc`.
+pub(super) fn emit_aint_from_f64(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+    let wat = format!(include_str!("wat/from_f64.wat"), decls = decls, norm = norm);
+    wat_helper::compile_wat_helper(&wat)
+}
+
+/// `__aint_to_index(a) -> i32` — extract a wasm array index from an
+/// `$AverInt`. A Small in `[0, 2^31)` passes through; a negative /
+/// `>= 2^31` Small or ANY Big returns the OOB sentinel `-1`, so a Big
+/// index bounds-checks as out-of-range (the VM's `Option.None`) instead
+/// of being `I32WrapI64`-truncated into a wrong in-range slot.
+pub(super) fn emit_aint_to_index(registry: &TypeRegistry) -> Result<Function, WasmGcError> {
+    let decls = aint_type_decls(registry)?;
+    let wat = format!(include_str!("wat/to_index.wat"), decls = decls);
     wat_helper::compile_wat_helper(&wat)
 }
 
@@ -647,6 +795,13 @@ mod tests {
         registry.string_array_type_idx = Some(0);
         registry.aint_mag_array_idx = Some(1);
         registry.aint_struct_idx = Some(2);
+        // `Int.fromString` (slice 3) carries a `Result<Int,String>` whose
+        // ok field is the `$aint` ref. Register it just above the struct
+        // slot so `aint_string_result_decls` finds a valid layout.
+        registry
+            .result_types
+            .insert("Result<Int,String>".to_string(), 3);
+        registry.result_order.push("Result<Int,String>".to_string());
         registry
     }
 
@@ -674,6 +829,10 @@ mod tests {
             ("emit_aint_mul", emit_aint_mul),
             ("emit_aint_divmod", emit_aint_divmod),
             ("emit_string_from_aint", emit_string_from_aint),
+            ("emit_aint_from_string", emit_aint_from_string),
+            ("emit_aint_to_f64", emit_aint_to_f64),
+            ("emit_aint_from_f64", emit_aint_from_f64),
+            ("emit_aint_to_index", emit_aint_to_index),
         ];
 
         for (name, emit) in cases {
@@ -721,6 +880,20 @@ mod validation_guard {
                 "__aint_neg",
                 render_simple(&registry, include_str!("wat/neg.wat")),
             ),
+            // slice 3 — decimal parse / Float bridges / index extraction.
+            // Their control flow (limb-accumulate loops, the error-message
+            // builder, the ±inf saturating Float path) is exactly the class
+            // the parse-only guard cannot catch, so validate the full module.
+            ("__aint_from_string", render_from_string(&registry)),
+            (
+                "__aint_to_f64",
+                render_simple(&registry, include_str!("wat/to_f64.wat")),
+            ),
+            ("__aint_from_f64", render_from_f64(&registry)),
+            (
+                "__aint_to_index",
+                render_simple(&registry, include_str!("wat/to_index.wat")),
+            ),
         ];
 
         for (name, wat) in modules {
@@ -737,6 +910,24 @@ mod validation_guard {
     fn render_simple(registry: &TypeRegistry, template: &str) -> String {
         let decls = aint_type_decls(registry).unwrap();
         template.replace("{decls}", &decls)
+    }
+
+    fn render_from_string(registry: &TypeRegistry) -> String {
+        let decls = aint_string_result_decls(registry).unwrap();
+        let err_build = from_string_err_build();
+        let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+        format!(
+            include_str!("wat/from_string.wat"),
+            decls = decls,
+            err_build = err_build,
+            norm = norm,
+        )
+    }
+
+    fn render_from_f64(registry: &TypeRegistry) -> String {
+        let decls = aint_type_decls(registry).unwrap();
+        let norm = normalize("rm", "rs", "rlen", "i", "lo", "hi", "tmpm");
+        format!(include_str!("wat/from_f64.wat"), decls = decls, norm = norm)
     }
 
     fn render_divmod(registry: &TypeRegistry) -> String {

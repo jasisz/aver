@@ -560,6 +560,9 @@ impl ListHelperRegistry {
         string_eq_fn_idx: Option<u32>,
         eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
         hash_helper_fn_idx: &std::collections::HashMap<String, u32>,
+        // bignum slice 3 — `__aint_eq` fn idx, `Some` under the flag, so the
+        // Int-element eq sites in contains/eq route through it.
+        aint_eq_fn_idx: Option<u32>,
     ) -> Result<(), WasmGcError> {
         for canonical in &self.list_order {
             // Order MUST match `assign_slots` and
@@ -581,6 +584,7 @@ impl ListHelperRegistry {
                     kind.clone(),
                     string_eq_fn_idx,
                     eq_helper_fn_idx,
+                    aint_eq_fn_idx,
                 )?);
                 if let (Some(eq_fn), Some(_hash_fn)) = (ops.eq, ops.hash) {
                     codes.function(&emit_list_eq(
@@ -590,6 +594,7 @@ impl ListHelperRegistry {
                         string_eq_fn_idx,
                         eq_fn,
                         eq_helper_fn_idx,
+                        aint_eq_fn_idx,
                     )?);
                     codes.function(&emit_list_hash(
                         canonical,
@@ -615,6 +620,7 @@ impl ListHelperRegistry {
                     kind.clone(),
                     string_eq_fn_idx,
                     eq_helper_fn_idx,
+                    aint_eq_fn_idx,
                 )?);
                 codes.function(&emit_vec_hash(
                     canonical,
@@ -690,6 +696,52 @@ enum ListEqKind {
     /// the canonical (whitespace-free) so the body emitter can look
     /// it up in the helper idx map at emit time.
     CarrierEq(String),
+}
+
+/// bignum slice 3 — emit Int-element EQUALITY for a List / Vector
+/// helper. Flag-off keeps the byte-identical `i64.eq`; flag-on (the
+/// `$AverInt` representation) routes through `__aint_eq` so two `$aint`
+/// refs compare by value across the Small/Big boundary instead of an
+/// `i64.eq` on a struct ref (which fails wasm validation outright — a
+/// latent slice-1/2 gap for every `Vector<Int>` / `List<Int>` program).
+/// `aint_eq_fn_idx` is `Some` exactly when `registry.bignum`.
+fn emit_int_elem_eq(
+    f: &mut Function,
+    registry: &TypeRegistry,
+    aint_eq_fn_idx: Option<u32>,
+) -> Result<(), WasmGcError> {
+    if registry.bignum {
+        let eq = aint_eq_fn_idx.ok_or(WasmGcError::Validation(
+            "bignum active but __aint_eq fn idx wasn't threaded into the list/vec eq helper".into(),
+        ))?;
+        f.instruction(&Instruction::Call(eq));
+    } else {
+        f.instruction(&Instruction::I64Eq);
+    }
+    Ok(())
+}
+
+/// bignum slice 3 — mix an Int element into a List / Vector HASH. The
+/// element must already be on the stack (an i64 flag-off, a `(ref null
+/// $aint)` flag-on). Flag-off keeps the byte-identical `i32.wrap_i64`;
+/// flag-on reads the `$small` field and wraps it. The hash is only ever
+/// used to bucket within the same wasm module (never compared
+/// cross-backend), so any deterministic projection is sound — `eq`
+/// disambiguates collisions, and a Big's `$small` is a stable constant.
+fn emit_int_elem_hash(f: &mut Function, registry: &TypeRegistry) -> Result<(), WasmGcError> {
+    if registry.bignum {
+        let aint_idx = registry.aint_struct_idx.ok_or(WasmGcError::Validation(
+            "bignum active but no $AverInt struct slot for the list/vec hash element".into(),
+        ))?;
+        f.instruction(&Instruction::StructGet {
+            struct_type_index: aint_idx,
+            field_index: 0,
+        });
+        f.instruction(&Instruction::I32WrapI64);
+    } else {
+        f.instruction(&Instruction::I32WrapI64);
+    }
+    Ok(())
 }
 
 fn list_eq_kind(elem: &str, registry: &TypeRegistry) -> Option<ListEqKind> {
@@ -1673,6 +1725,7 @@ fn emit_list_contains(
     kind: ListEqKind,
     string_eq_fn_idx: Option<u32>,
     eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
+    aint_eq_fn_idx: Option<u32>,
 ) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     let list_ref = ValType::Ref(RefType {
@@ -1778,14 +1831,18 @@ fn emit_list_contains(
             });
             f.instruction(&Instruction::LocalGet(1));
             match &kind {
-                ListEqKind::I64 => f.instruction(&Instruction::I64Eq),
-                ListEqKind::F64 => f.instruction(&Instruction::F64Eq),
-                ListEqKind::I32 => f.instruction(&Instruction::I32Eq),
+                ListEqKind::I64 => emit_int_elem_eq(&mut f, registry, aint_eq_fn_idx)?,
+                ListEqKind::F64 => {
+                    f.instruction(&Instruction::F64Eq);
+                }
+                ListEqKind::I32 => {
+                    f.instruction(&Instruction::I32Eq);
+                }
                 ListEqKind::StringEq => {
                     let eq_fn = string_eq_fn_idx.ok_or(WasmGcError::Validation(
                         "List.contains over String/Char needs __wasmgc_string_eq registered".into(),
                     ))?;
-                    f.instruction(&Instruction::Call(eq_fn))
+                    f.instruction(&Instruction::Call(eq_fn));
                 }
                 ListEqKind::RecordEq(_) | ListEqKind::SumEq(_) | ListEqKind::CarrierEq(_) => {
                     unreachable!(
@@ -2214,6 +2271,7 @@ fn emit_list_eq(
     string_eq_fn_idx: Option<u32>,
     self_fn_idx: u32,
     eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
+    aint_eq_fn_idx: Option<u32>,
 ) -> Result<Function, WasmGcError> {
     let list_idx = list_idx_of(canonical, registry)?;
     // params: 0 = la, 1 = lb. No locals — short body.
@@ -2246,7 +2304,7 @@ fn emit_list_eq(
     });
     match &kind {
         ListEqKind::I64 => {
-            f.instruction(&Instruction::I64Eq);
+            emit_int_elem_eq(&mut f, registry, aint_eq_fn_idx)?;
         }
         ListEqKind::F64 => {
             f.instruction(&Instruction::F64Eq);
@@ -2385,7 +2443,7 @@ fn emit_list_hash(
     let _ = elem;
     match &kind {
         ListEqKind::I64 => {
-            f.instruction(&Instruction::I32WrapI64);
+            emit_int_elem_hash(&mut f, registry)?;
         }
         ListEqKind::I32 => {} // bool — already i32
         ListEqKind::F64 => {
@@ -2658,6 +2716,7 @@ fn emit_vec_eq(
     kind: ListEqKind,
     string_eq_fn_idx: Option<u32>,
     eq_helper_fn_idx: &std::collections::HashMap<String, u32>,
+    aint_eq_fn_idx: Option<u32>,
 ) -> Result<Function, WasmGcError> {
     let (vec_idx, _) = vec_idx_of_pair(canonical, registry)?;
     // params: 0=va, 1=vb. locals: 2=len, 3=i.
@@ -2690,7 +2749,7 @@ fn emit_vec_eq(
     f.instruction(&Instruction::ArrayGet(vec_idx));
     match &kind {
         ListEqKind::I64 => {
-            f.instruction(&Instruction::I64Eq);
+            emit_int_elem_eq(&mut f, registry, aint_eq_fn_idx)?;
         }
         ListEqKind::F64 => {
             f.instruction(&Instruction::F64Eq);
@@ -2803,7 +2862,7 @@ fn emit_vec_hash(
     let _ = elem;
     match &kind {
         ListEqKind::I64 => {
-            f.instruction(&Instruction::I32WrapI64);
+            emit_int_elem_hash(&mut f, registry)?;
         }
         ListEqKind::I32 => {} // bool — already i32
         ListEqKind::F64 => {

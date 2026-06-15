@@ -1451,6 +1451,50 @@ fn fn_body_calls_int_div(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
 /// Int param is enough): the cost of a false positive is two unused
 /// type slots that `wasm-opt -Oz` would strip anyway; a false negative
 /// would be a miscompile, so we err toward inclusion.
+/// Builtins whose signature mentions `Int` (produce OR consume one), so a
+/// call to any of them must flip the bignum gate even in a module with no
+/// Int literal / arithmetic of its own. Kept in sync with the surface
+/// builtins that the wasm-gc backend lowers with an `Int` ValType on either
+/// side. Deliberately generous — a stray match is two stripped type slots,
+/// a miss is a wrapping-i64 miscompile of a `ℤ` value.
+fn builtin_touches_int(name: &str) -> bool {
+    matches!(
+        name,
+        // Int producers / consumers.
+        "Int.fromString"
+            | "Int.fromFloat"
+            | "Int.abs"
+            | "Int.min"
+            | "Int.max"
+            | "Int.div"
+            | "Int.mod"
+            | "Int.toFloat"
+            // Float/Int bridges.
+            | "Float.fromInt"
+            | "Float.floor"
+            | "Float.ceil"
+            | "Float.round"
+            // String <-> Int.
+            | "String.fromInt"
+            | "String.len"
+            | "String.length"
+            | "String.byteLength"
+            | "String.charAt"
+            // Char codepoints are Int.
+            | "Char.toCode"
+            | "Char.fromCode"
+            // Indexed collection ops carry an `Int` index / length.
+            | "Vector.len"
+            | "Vector.get"
+            | "Vector.set"
+            | "Vector.new"
+            | "List.len"
+            // Effect builtins returning Int.
+            | "Random.int"
+            | "Time.unixMs"
+    )
+}
+
 fn fn_uses_int_arithmetic(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
     use crate::ir::hir::{ResolvedExpr, ResolvedFnBody, ResolvedStmt};
     if fd
@@ -1479,9 +1523,23 @@ fn fn_uses_int_arithmetic(fd: &crate::ir::hir::ResolvedFnDef) -> bool {
                     || walk(&l.node)
                     || walk(&r.node)
             }
-            ResolvedExpr::Call(_, args) | ResolvedExpr::Ctor(_, args) => {
-                args.iter().any(|a| walk(&a.node))
+            ResolvedExpr::Call(callee, args) => {
+                // A builtin that PRODUCES or CONSUMES an `Int` flips the gate
+                // even when the program has no Int literal / arithmetic of its
+                // own — e.g. a module whose only Int touch is
+                // `Int.fromString(s)` (returns `Result<Int,String>`) or
+                // `Int.fromFloat(f)`. Without this the `$AverInt` slots stay
+                // unallocated and the Int-producing helper silently lowers
+                // through the wrapping-i64 scalar path (a 38-digit string would
+                // parse to a wrapped value). Mirrors the "err toward inclusion"
+                // policy: a false positive is two stripped slots, a miss is a
+                // miscompile.
+                use crate::ir::hir::ResolvedCallee;
+                let int_builtin = matches!(callee,
+                    ResolvedCallee::Builtin(name) if builtin_touches_int(name));
+                int_builtin || args.iter().any(|a| walk(&a.node))
             }
+            ResolvedExpr::Ctor(_, args) => args.iter().any(|a| walk(&a.node)),
             ResolvedExpr::Match { subject, arms } => {
                 walk(&subject.node) || arms.iter().any(|a| walk(&a.body.node))
             }
