@@ -5,6 +5,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Nightly deep sweep against main with the heavy proptest budget: the
+  # WASM job's cross-backend differential runs 2000 cases nightly but a
+  # 64-case smoke per-PR (see its `PROPTEST_CASES` below). Mirrors the
+  # fuzz / proof / rust-codegen nightlies (cron 03:00 UTC). Manual runs
+  # via workflow_dispatch also get the full 2000-case sweep.
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -91,9 +99,23 @@ jobs:
         # `#![cfg(feature = "wasip2")]` test file at 0 tests, so the
         # wasip2 codegen / component-model surface went unchecked by the
         # gate. Enable both (they share `wasm-compile`) so the wasip2_*
-        # suites run. Same proptest budget as the Check & Test job.
+        # suites run.
+        #
+        # Proptest budget — split per-PR vs nightly. The wasm-feature
+        # proptests include the cross-backend DIFFERENTIAL sweeps
+        # (`tests/cross_backend_proptest.rs`), which spawn `aver run` twice
+        # per case (VM + wasm-gc) and JIT each module in wasmtime —
+        # ~0.5-1.5s/case, vs microseconds for the in-process proptests in
+        # the Check & Test job. At 2000 cases that is ~30 min, too slow for
+        # every PR. So: a 64-case SMOKE per-PR, and the full 2000-case
+        # sweep NIGHTLY (and on workflow_dispatch). The deterministic
+        # differentials (sign matrices, the Euclidean law, canonical-eq,
+        # interpolation render) run at ANY case count, so they stay the
+        # real per-PR net; the 2000-case sweep is the broad randomized
+        # net, alongside the fuzz nightly's `fuzz_parity_vm_vs_wasm_gc`
+        # in-process differential.
         env:
-          PROPTEST_CASES: '2000'
+          PROPTEST_CASES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '2000' || '64' }}
         run: cargo test -p aver-lang --features wasm,wasip2
 
   wasm_release_build:
