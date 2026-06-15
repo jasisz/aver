@@ -6456,7 +6456,15 @@ fn emit_factory_tcp_connection_make(
     let mut f = Function::new([]);
     f.instruction(&Instruction::LocalGet(0));
     f.instruction(&Instruction::LocalGet(1));
+    // `Int = ℤ`: the host passes `port` as i64 (machine-range), but the
+    // `Tcp.Connection.port` field is the `$AverInt` carrier — lift it.
     f.instruction(&Instruction::LocalGet(2));
+    if registry.bignum {
+        let from_i64 = registry.aint_from_i64_fn_idx.ok_or(WasmGcError::Validation(
+            "bignum Tcp.Connection factory needs the __aint_from_i64 fn idx".into(),
+        ))?;
+        f.instruction(&Instruction::Call(from_i64));
+    }
     f.instruction(&Instruction::StructNew(rec_idx));
     f.instruction(&Instruction::End);
     Ok(f)
