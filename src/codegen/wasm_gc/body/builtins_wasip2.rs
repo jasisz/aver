@@ -35,11 +35,14 @@ fn emit_aint_arg_as_i64_wasip2(
 ) -> Result<(), WasmGcError> {
     emit_mir_expr(func, arg, slots, ctx)?;
     if ctx.registry.bignum {
-        let to_sat = ctx.fn_map.builtins.get("__aint_to_i64_sat").copied().ok_or(
-            WasmGcError::Validation(
+        let to_sat = ctx
+            .fn_map
+            .builtins
+            .get("__aint_to_i64_sat")
+            .copied()
+            .ok_or(WasmGcError::Validation(
                 "bignum active but __aint_to_i64_sat helper not registered".into(),
-            ),
-        )?;
+            ))?;
         func.instruction(&Instruction::Call(to_sat));
     }
     Ok(())
@@ -53,11 +56,14 @@ fn lift_i64_result_to_aint_wasip2(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), WasmGcError> {
     if ctx.registry.bignum {
-        let from_i64 = ctx.fn_map.builtins.get("__aint_from_i64").copied().ok_or(
-            WasmGcError::Validation(
-                "bignum active but __aint_from_i64 helper not registered".into(),
-            ),
-        )?;
+        let from_i64 =
+            ctx.fn_map
+                .builtins
+                .get("__aint_from_i64")
+                .copied()
+                .ok_or(WasmGcError::Validation(
+                    "bignum active but __aint_from_i64 helper not registered".into(),
+                ))?;
         func.instruction(&Instruction::Call(from_i64));
     }
     Ok(())

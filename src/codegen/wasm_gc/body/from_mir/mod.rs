@@ -588,13 +588,15 @@ pub(crate) fn emit_mir_expr(
                                 return Ok(None);
                             }
                             if ctx.registry.bignum && int_args.contains(&i) {
-                                let to_sat =
-                                    ctx.fn_map.builtins.get("__aint_to_i64_sat").copied().ok_or(
-                                        WasmGcError::Validation(
-                                            "bignum active but __aint_to_i64_sat helper not registered"
-                                                .into(),
-                                        ),
-                                    )?;
+                                let to_sat = ctx
+                                    .fn_map
+                                    .builtins
+                                    .get("__aint_to_i64_sat")
+                                    .copied()
+                                    .ok_or(WasmGcError::Validation(
+                                        "bignum active but __aint_to_i64_sat helper not registered"
+                                            .into(),
+                                    ))?;
                                 func.instruction(&Instruction::Call(to_sat));
                             }
                         }
@@ -1059,11 +1061,14 @@ pub(crate) fn emit_mir_args_then_call_lowering_int(
             return Ok(None);
         }
         if ctx.registry.bignum && int_arg_positions.contains(&i) {
-            let to_sat = ctx.fn_map.builtins.get("__aint_to_i64_sat").copied().ok_or(
-                WasmGcError::Validation(
+            let to_sat = ctx
+                .fn_map
+                .builtins
+                .get("__aint_to_i64_sat")
+                .copied()
+                .ok_or(WasmGcError::Validation(
                     "bignum active but __aint_to_i64_sat helper not registered".into(),
-                ),
-            )?;
+                ))?;
             func.instruction(&Instruction::Call(to_sat));
         }
     }

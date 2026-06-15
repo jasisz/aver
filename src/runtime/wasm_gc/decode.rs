@@ -168,7 +168,7 @@ pub(super) fn encode_entry_args_for_wasm_gc(
                             .map_err(|e| {
                                 format!("wasm-gc entry arg #{}: __rt_aint_from_i64: {e:#}", idx + 1)
                             })?;
-                        out_aint[0].clone()
+                        out_aint[0]
                     }
                     None => Val::I64(i),
                 }

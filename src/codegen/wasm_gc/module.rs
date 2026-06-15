@@ -6279,9 +6279,11 @@ fn emit_factory_terminal_size_make(
     // `Terminal.Size` fields are the `$AverInt` carrier — lift each.
     let lift = |f: &mut Function| -> Result<(), WasmGcError> {
         if registry.bignum {
-            let from_i64 = registry.aint_from_i64_fn_idx.ok_or(WasmGcError::Validation(
-                "bignum Terminal.Size factory needs the __aint_from_i64 fn idx".into(),
-            ))?;
+            let from_i64 = registry
+                .aint_from_i64_fn_idx
+                .ok_or(WasmGcError::Validation(
+                    "bignum Terminal.Size factory needs the __aint_from_i64 fn idx".into(),
+                ))?;
             f.instruction(&Instruction::Call(from_i64));
         }
         Ok(())
@@ -6464,9 +6466,11 @@ fn emit_factory_tcp_connection_make(
     // `Tcp.Connection.port` field is the `$AverInt` carrier — lift it.
     f.instruction(&Instruction::LocalGet(2));
     if registry.bignum {
-        let from_i64 = registry.aint_from_i64_fn_idx.ok_or(WasmGcError::Validation(
-            "bignum Tcp.Connection factory needs the __aint_from_i64 fn idx".into(),
-        ))?;
+        let from_i64 = registry
+            .aint_from_i64_fn_idx
+            .ok_or(WasmGcError::Validation(
+                "bignum Tcp.Connection factory needs the __aint_from_i64 fn idx".into(),
+            ))?;
         f.instruction(&Instruction::Call(from_i64));
     }
     f.instruction(&Instruction::StructNew(rec_idx));
@@ -6547,9 +6551,11 @@ fn emit_factory_http_response_make(
     // under bignum — lift it to a Small before `struct.new`.
     f.instruction(&Instruction::LocalGet(0));
     if registry.bignum {
-        let from_i64 = registry.aint_from_i64_fn_idx.ok_or(WasmGcError::Validation(
-            "bignum HttpResponse factory needs the __aint_from_i64 fn idx".into(),
-        ))?;
+        let from_i64 = registry
+            .aint_from_i64_fn_idx
+            .ok_or(WasmGcError::Validation(
+                "bignum HttpResponse factory needs the __aint_from_i64 fn idx".into(),
+            ))?;
         f.instruction(&Instruction::Call(from_i64));
     }
     f.instruction(&Instruction::LocalGet(1));
