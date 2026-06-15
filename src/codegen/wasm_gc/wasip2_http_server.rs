@@ -105,11 +105,14 @@ pub(super) struct ServerHandlerIndices {
     /// `Map.get` when probing for an existing entry during the
     /// request-headers build.
     pub option_list_string_type_idx: u32,
-    /// `Int = ℤ`: wasm fn idx of `__aint_to_i64_sat`, `Some` iff bignum.
-    /// The user `HttpResponse.status` field is the `$AverInt` carrier, so
-    /// reading it for `set-status-code` first saturate-lowers to i64 (then
-    /// `i32.wrap`) instead of an `i32.wrap` on the ref.
-    pub aint_to_i64_sat_fn_idx: Option<u32>,
+    /// `Int = ℤ`: wasm fn idx of `__aint_to_i64_checked` (TRAPS on an
+    /// out-of-i64 Big), `Some` iff bignum. The user `HttpResponse.status`
+    /// field is the `$AverInt` carrier and flows OUT to the host; reading it
+    /// for `set-status-code` CHECKED-lowers to i64 (then `i32.wrap`) so an
+    /// out-of-range status REJECTS, mirroring the VM (`HttpResponse.status
+    /// is out of range`), instead of an `i32.wrap` saturating a Big into a
+    /// wrong in-range code.
+    pub aint_to_i64_checked_fn_idx: Option<u32>,
 }
 
 /// Bundle of wasm fn indices the body references via `Call(idx)`.
@@ -1059,10 +1062,12 @@ pub(super) fn emit_aver_http_handle(
         struct_type_index: resp_idx,
         field_index: 0, // status: i64 (scalar) or $AverInt ref (bignum)
     });
-    // `Int = ℤ`: the status field is the `$AverInt` carrier — saturate-
-    // lower to i64 before the `i32.wrap` (a status fits well within i32).
-    if let Some(to_sat) = indices.aint_to_i64_sat_fn_idx {
-        f.instruction(&Instruction::Call(to_sat));
+    // `Int = ℤ`: the status field is the `$AverInt` carrier flowing OUT to
+    // the host — CHECKED-lower to i64 before the `i32.wrap` so an out-of-
+    // i64 status TRAPS (the VM rejects it: `HttpResponse.status is out of
+    // range`) instead of saturating a Big into a wrong in-range code.
+    if let Some(to_checked) = indices.aint_to_i64_checked_fn_idx {
+        f.instruction(&Instruction::Call(to_checked));
     }
     f.instruction(&Instruction::I32WrapI64);
     f.instruction(&Instruction::LocalSet(l_ob_off)); // reuse i32 scratch for status

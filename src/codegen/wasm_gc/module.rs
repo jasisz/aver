@@ -223,6 +223,12 @@ pub(super) fn emit_module_with(
             // i64-typed builtin slot (`List.take`/`drop` counts,
             // `String.charAt`/`slice` indices, `Char.fromCode`).
             BuiltinName::AintToI64Sat,
+            // CHECKED Int→i64 lowering for an Int argument crossing the
+            // host EFFECT boundary (`Random` bounds, `Time.sleep` ms, a
+            // network port, a `Terminal` coordinate). A Big TRAPS instead
+            // of saturating, so an out-of-range effect arg rejects on
+            // wasm-gc exactly as the VM's checked `to_i64()` errors.
+            BuiltinName::AintToI64Checked,
         ] {
             builtin_registry.register(b);
         }
@@ -878,8 +884,8 @@ pub(super) fn emit_module_with(
         registry.aint_hash_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintHash);
         registry.aint_from_i64_fn_idx =
             builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintFromI64);
-        registry.aint_to_i64_sat_fn_idx =
-            builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToI64Sat);
+        registry.aint_to_i64_checked_fn_idx =
+            builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToI64Checked);
     }
 
     // 6) Map helper fn types (per-K hash + eq, per-(K,V) empty/set/get/len).
@@ -2643,7 +2649,7 @@ pub(super) fn emit_module_with(
             headers_map_type_idx: map_slots.map,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
-            aint_to_i64_sat_fn_idx: registry.aint_to_i64_sat_fn_idx,
+            aint_to_i64_checked_fn_idx: registry.aint_to_i64_checked_fn_idx,
         };
         let helpers = super::wasip2_http_server::ServerHandlerHelperFns {
             cabi_realloc_fn: cabi,

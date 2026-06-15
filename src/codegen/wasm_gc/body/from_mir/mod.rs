@@ -133,9 +133,12 @@ fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
 
 /// `Int = ℤ`: the HOST-ABI effect-boundary stays i64 (no bignum crosses
 /// the wire). Zero-based positions an AverBridge effect IMPORT takes as an
-/// `Int` (a machine-range index / bound / ms / status). Under ℤ those args
-/// arrive as `$AverInt` refs and must be saturate-lowered to i64 before
-/// the host call. Empty for effects with no Int arg.
+/// `Int` (a machine-range bound / ms / port / coordinate). Under ℤ those
+/// args arrive as `$AverInt` refs and must be CHECKED-lowered to i64
+/// (`__aint_to_i64_checked`, which TRAPS on an out-of-i64 Big) before the
+/// host call — mirroring the VM host services' checked `to_i64()`, which
+/// ERRORS rather than saturating an out-of-range effect arg. Empty for
+/// effects with no Int arg.
 fn effect_int_arg_positions(dotted: &str) -> &'static [usize] {
     match dotted {
         "Random.int" => &[0, 1],
@@ -588,16 +591,24 @@ pub(crate) fn emit_mir_expr(
                                 return Ok(None);
                             }
                             if ctx.registry.bignum && int_args.contains(&i) {
-                                let to_sat = ctx
+                                // CHECKED (not saturating): an out-of-i64 Int
+                                // crossing the host effect boundary must
+                                // REJECT — the VM's host services do a checked
+                                // `to_i64()` and ERROR, so wasm-gc TRAPS rather
+                                // than silently saturating to i64::MAX/MIN (a
+                                // `Time.sleep(2^63)` saturated to a
+                                // ~292-million-year hang) and proceeding.
+                                let to_checked = ctx
                                     .fn_map
                                     .builtins
-                                    .get("__aint_to_i64_sat")
+                                    .get("__aint_to_i64_checked")
                                     .copied()
                                     .ok_or(WasmGcError::Validation(
-                                        "bignum active but __aint_to_i64_sat helper not registered"
+                                        "bignum active but __aint_to_i64_checked helper not \
+                                         registered"
                                             .into(),
                                     ))?;
-                                func.instruction(&Instruction::Call(to_sat));
+                                func.instruction(&Instruction::Call(to_checked));
                             }
                         }
                         emit_caller_fn_idx(func, ctx)?;

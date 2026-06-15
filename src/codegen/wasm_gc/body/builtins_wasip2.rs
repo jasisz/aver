@@ -23,10 +23,13 @@ use super::super::WasmGcError;
 use super::from_mir::emit_mir_expr;
 use super::{EmitCtx, SlotTable};
 
-/// `Int = ℤ`: emit an `Int` effect ARGUMENT and saturate-lower it from the
+/// `Int = ℤ`: emit an `Int` effect ARGUMENT and CHECKED-lower it from the
 /// `$AverInt` carrier to a raw i64 — the wasip2 effect lowerings (random
-/// bounds, sleep ms) compute on i64. A no-op passthrough when no Int is
-/// reachable (the arg is already i64).
+/// bounds, sleep ms, port) compute on i64. An out-of-i64 Big TRAPS
+/// (`__aint_to_i64_checked`) rather than saturating, so an out-of-range
+/// effect arg REJECTS on wasm-gc exactly as the VM's host services' checked
+/// `to_i64()` errors. A no-op passthrough when no Int is reachable (the arg
+/// is already i64).
 fn emit_aint_arg_as_i64_wasip2(
     func: &mut wasm_encoder::Function,
     arg: &Spanned<MirExpr>,
@@ -35,15 +38,15 @@ fn emit_aint_arg_as_i64_wasip2(
 ) -> Result<(), WasmGcError> {
     emit_mir_expr(func, arg, slots, ctx)?;
     if ctx.registry.bignum {
-        let to_sat = ctx
+        let to_checked = ctx
             .fn_map
             .builtins
-            .get("__aint_to_i64_sat")
+            .get("__aint_to_i64_checked")
             .copied()
             .ok_or(WasmGcError::Validation(
-                "bignum active but __aint_to_i64_sat helper not registered".into(),
+                "bignum active but __aint_to_i64_checked helper not registered".into(),
             ))?;
-        func.instruction(&Instruction::Call(to_sat));
+        func.instruction(&Instruction::Call(to_checked));
     }
     Ok(())
 }

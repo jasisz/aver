@@ -189,6 +189,14 @@ pub(super) enum BuiltinName {
     /// which the receiving helper already treats as clamp-to-all/none or
     /// an out-of-range char index. slice 4 (flip).
     AintToI64Sat,
+    /// `__aint_to_i64_checked(a) -> i64` — CHECKED Int→i64 lowering for an
+    /// Int argument crossing the HOST EFFECT boundary (`Random` bounds,
+    /// `Time.sleep` ms, a network port, a `Terminal` coordinate). A Small
+    /// passes through; a Big TRAPS (`unreachable`), since a canonical Big
+    /// is outside i64 range — mirroring the VM host services' checked
+    /// `AverInt::to_i64()`, which ERRORS rather than saturating an out-of-
+    /// range effect arg. slice 4 (flip).
+    AintToI64Checked,
 }
 
 impl BuiltinName {
@@ -261,6 +269,7 @@ impl BuiltinName {
             Self::AintFromF64 => "__aint_from_f64",
             Self::AintToIndex => "__aint_to_index",
             Self::AintToI64Sat => "__aint_to_i64_sat",
+            Self::AintToI64Checked => "__aint_to_i64_checked",
         }
     }
 
@@ -310,7 +319,7 @@ impl BuiltinName {
                 aint_ref_ty(registry)?,
                 ValType::I32,
             ]),
-            Self::AintToF64 | Self::AintToIndex | Self::AintToI64Sat => {
+            Self::AintToF64 | Self::AintToIndex | Self::AintToI64Sat | Self::AintToI64Checked => {
                 Ok(vec![aint_ref_ty(registry)?])
             }
             Self::AintFromF64 => Ok(vec![ValType::F64]),
@@ -355,7 +364,7 @@ impl BuiltinName {
                 Ok(vec![ValType::I32])
             }
             Self::AintToF64 => Ok(vec![ValType::F64]),
-            Self::AintToI64Sat => Ok(vec![ValType::I64]),
+            Self::AintToI64Sat | Self::AintToI64Checked => Ok(vec![ValType::I64]),
         }
     }
 
@@ -406,6 +415,7 @@ impl BuiltinName {
             Self::AintFromF64 => bignum::emit_aint_from_f64(registry),
             Self::AintToIndex => bignum::emit_aint_to_index(registry),
             Self::AintToI64Sat => bignum::emit_aint_to_i64_sat(registry),
+            Self::AintToI64Checked => bignum::emit_aint_to_i64_checked(registry),
         }
     }
 }
