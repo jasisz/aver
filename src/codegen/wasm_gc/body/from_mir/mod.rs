@@ -111,6 +111,48 @@ fn registered_builtin_returns_raw_int(dotted: &str) -> bool {
     matches!(dotted, "String.len" | "String.byteLength" | "Char.toCode")
 }
 
+/// `Int = ℤ`: zero-based argument positions a registered `fn_map.builtins`
+/// helper takes as a raw i64 but which the surface signature types as
+/// `Int` (a char code or a string index/length). Under ℤ those args arrive
+/// as `$AverInt` refs and must be saturate-lowered to i64 before the call.
+/// `Char.fromCode`'s out-of-u32 / negative → `Option.None`, and a string
+/// index past the length → empty/None, so a saturated i64::MAX/MIN
+/// reproduces the VM's clamping. Empty for every other registered builtin.
+fn registered_builtin_int_arg_positions(dotted: &str) -> &'static [usize] {
+    match dotted {
+        "Char.fromCode" => &[0],
+        "String.charAt" => &[1],
+        "String.slice" => &[1, 2],
+        _ => &[],
+    }
+}
+
+/// `Int = ℤ`: the HOST-ABI effect-boundary stays i64 (no bignum crosses
+/// the wire). Zero-based positions an AverBridge effect IMPORT takes as an
+/// `Int` (a machine-range index / bound / ms / status). Under ℤ those args
+/// arrive as `$AverInt` refs and must be saturate-lowered to i64 before
+/// the host call. Empty for effects with no Int arg.
+fn effect_int_arg_positions(dotted: &str) -> &'static [usize] {
+    match dotted {
+        "Random.int" => &[0, 1],
+        "Time.sleep" => &[0],
+        "Response.text" => &[0],
+        // Network port / server bind port / terminal coordinates.
+        "Tcp.send" | "Tcp.ping" | "Tcp.connect" => &[1],
+        "HttpServer.listen" | "HttpServer.listenWith" => &[0],
+        "Terminal.moveTo" => &[0, 1],
+        _ => &[],
+    }
+}
+
+/// `Int = ℤ`: AverBridge effect imports whose RESULT is an `Int` returned
+/// as i64 from the host (`Random.int`, `Time.unixMs`). The incoming i64 is
+/// lifted to a Small `$AverInt` so the value matches the ref shape Aver
+/// uses for Int everywhere off the wire.
+fn effect_returns_int(dotted: &str) -> bool {
+    matches!(dotted, "Random.int" | "Time.unixMs")
+}
+
 /// Lower `mir_fn.body` into `func`, mirroring [`super::emit_fn_body`]
 /// byte-for-byte. Returns `Ok(Some(extra_locals))` on full coverage,
 /// `Ok(None)` when any node falls outside the supported subset — the
@@ -532,13 +574,31 @@ pub(crate) fn emit_mir_expr(
                     // lowerings are handled by `emit_mir_wasip2_effect`
                     // above; this branch serves only the AverBridge target.)
                     if let Some(&effect_idx) = ctx.fn_map.effects.get(dotted) {
-                        for arg in &call.args {
+                        // `Int = ℤ`: the host ABI stays i64 — lower any
+                        // `Int` arg (`$AverInt` ref) to i64 before the call,
+                        // and lift an `Int` result (i64 from the host) back
+                        // into the carrier after. No bignum crosses the wire.
+                        let int_args = effect_int_arg_positions(dotted);
+                        for (i, arg) in call.args.iter().enumerate() {
                             if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
                                 return Ok(None);
+                            }
+                            if ctx.registry.bignum && int_args.contains(&i) {
+                                let to_sat =
+                                    ctx.fn_map.builtins.get("__aint_to_i64_sat").copied().ok_or(
+                                        WasmGcError::Validation(
+                                            "bignum active but __aint_to_i64_sat helper not registered"
+                                                .into(),
+                                        ),
+                                    )?;
+                                func.instruction(&Instruction::Call(to_sat));
                             }
                         }
                         emit_caller_fn_idx(func, ctx)?;
                         func.instruction(&Instruction::Call(effect_idx));
+                        if effect_returns_int(dotted) {
+                            lift_i64_result_to_aint(func, ctx)?;
+                        }
                         return Ok(Some(aver_type_str_of(expr).trim() != "Unit"));
                     }
                     // Native scalar builtins (Float / Int / Bool) lower to
@@ -602,8 +662,15 @@ pub(crate) fn emit_mir_expr(
                     }
                     match ctx.fn_map.builtins.get(dotted) {
                         Some(&wasm_idx) => {
-                            if emit_mir_args_then_call(func, &call.args, slots, ctx, wasm_idx)?
-                                .is_none()
+                            // `Int = ℤ`: a registered helper that takes an
+                            // `Int` ARGUMENT in an i64-typed slot (a char
+                            // code / string index) needs that arg
+                            // saturate-lowered from `$AverInt` to i64.
+                            let int_args = registered_builtin_int_arg_positions(dotted);
+                            if emit_mir_args_then_call_lowering_int(
+                                func, &call.args, slots, ctx, wasm_idx, int_args,
+                            )?
+                            .is_none()
                             {
                                 return Ok(None);
                             }
@@ -621,6 +688,40 @@ pub(crate) fn emit_mir_expr(
                     }
                 }
                 MirCallee::Intrinsic(intr) => {
+                    // `Int = ℤ`: the const-fold pass rewrites a
+                    // `Result.withDefault(Int.div/mod(a, k), _)` over a
+                    // constant nonzero `k` into a bare `IntDivEuclid` /
+                    // `IntModEuclid` intrinsic (no Result, no `b == 0`
+                    // guard — `k ∉ {0,-1}` for div, `k != 0` for mod is
+                    // already proven). Under bignum `a`/`k` are `$AverInt`
+                    // refs, so route to the Euclidean `__aint_divmod`
+                    // helper (a `want_mod` flag selects div vs mod) instead
+                    // of the i64 `__int_{div,mod}_euclid` — which would
+                    // mix an i64 helper with ref operands (invalid wasm)
+                    // and silently truncate a Big.
+                    use crate::ir::hir::BuiltinIntrinsic;
+                    if ctx.registry.bignum
+                        && matches!(
+                            intr,
+                            BuiltinIntrinsic::IntDivEuclid | BuiltinIntrinsic::IntModEuclid
+                        )
+                        && call.args.len() == 2
+                    {
+                        let is_mod = matches!(intr, BuiltinIntrinsic::IntModEuclid);
+                        let divmod = ctx.fn_map.builtins.get("__aint_divmod").copied().ok_or(
+                            WasmGcError::Validation(
+                                "bignum active but __aint_divmod helper not registered".into(),
+                            ),
+                        )?;
+                        if emit_mir_expr(func, &call.args[0], slots, ctx)?.is_none()
+                            || emit_mir_expr(func, &call.args[1], slots, ctx)?.is_none()
+                        {
+                            return Ok(None);
+                        }
+                        func.instruction(&Instruction::I32Const(if is_mod { 1 } else { 0 }));
+                        func.instruction(&Instruction::Call(divmod));
+                        return Ok(Some(true));
+                    }
                     // Mirror of `emit_expr`'s `Intrinsic` arm: route the
                     // bare intrinsic name through the registered-builtin
                     // fast path. (Buffer intrinsics aren't produced on the
@@ -932,9 +1033,34 @@ pub(crate) fn emit_mir_args_then_call(
     ctx: &EmitCtx<'_>,
     wasm_idx: u32,
 ) -> Result<Option<()>, WasmGcError> {
-    for arg in args {
+    emit_mir_args_then_call_lowering_int(func, args, slots, ctx, wasm_idx, &[])
+}
+
+/// As [`emit_mir_args_then_call`], but `int_arg_positions` lists the
+/// zero-based args the helper takes as a raw i64 in an `Int`-typed slot
+/// (`Char.fromCode` code, `String.charAt`/`slice` indices). Under `Int =
+/// ℤ` those args arrive as `$AverInt` refs, so they are saturate-lowered
+/// to i64 (`__aint_to_i64_sat`) right after emission. A no-op for the
+/// common empty-positions case (every other builtin).
+pub(crate) fn emit_mir_args_then_call_lowering_int(
+    func: &mut Function,
+    args: &[Spanned<MirExpr>],
+    slots: &SlotTable,
+    ctx: &EmitCtx<'_>,
+    wasm_idx: u32,
+    int_arg_positions: &[usize],
+) -> Result<Option<()>, WasmGcError> {
+    for (i, arg) in args.iter().enumerate() {
         if emit_mir_expr(func, arg, slots, ctx)?.is_none() {
             return Ok(None);
+        }
+        if ctx.registry.bignum && int_arg_positions.contains(&i) {
+            let to_sat = ctx.fn_map.builtins.get("__aint_to_i64_sat").copied().ok_or(
+                WasmGcError::Validation(
+                    "bignum active but __aint_to_i64_sat helper not registered".into(),
+                ),
+            )?;
+            func.instruction(&Instruction::Call(to_sat));
         }
     }
     func.instruction(&Instruction::Call(wasm_idx));
