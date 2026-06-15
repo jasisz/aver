@@ -878,6 +878,8 @@ pub(super) fn emit_module_with(
         registry.aint_hash_fn_idx = builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintHash);
         registry.aint_from_i64_fn_idx =
             builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintFromI64);
+        registry.aint_to_i64_sat_fn_idx =
+            builtin_registry.lookup_wasm_fn_idx(BuiltinName::AintToI64Sat);
     }
 
     // 6) Map helper fn types (per-K hash + eq, per-(K,V) empty/set/get/len).
@@ -2641,6 +2643,7 @@ pub(super) fn emit_module_with(
             headers_map_type_idx: map_slots.map,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
+            aint_to_i64_sat_fn_idx: registry.aint_to_i64_sat_fn_idx,
         };
         let helpers = super::wasip2_http_server::ServerHandlerHelperFns {
             cabi_realloc_fn: cabi,

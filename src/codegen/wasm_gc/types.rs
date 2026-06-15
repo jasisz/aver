@@ -180,6 +180,11 @@ pub(super) struct TypeRegistry {
     /// `Int` field (HTTP status, terminal rows/cols) as i64 from the host
     /// and must lift it to the `$AverInt` carrier before `struct.new`.
     pub(super) aint_from_i64_fn_idx: Option<u32>,
+    /// wasm fn idx of `__aint_to_i64_sat`, recorded alongside
+    /// `aint_from_i64_fn_idx`. `Some` iff `bignum`. Used by the
+    /// `--handler` proxy synthesis to saturate-lower the user's
+    /// `HttpResponse.status` `$AverInt` field to i64 before `set-status-code`.
+    pub(super) aint_to_i64_sat_fn_idx: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -986,6 +991,7 @@ impl TypeRegistry {
             aint_eq_fn_idx: None,
             aint_hash_fn_idx: None,
             aint_from_i64_fn_idx: None,
+            aint_to_i64_sat_fn_idx: None,
         }
     }
 
