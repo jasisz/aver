@@ -80,6 +80,11 @@ pub(super) struct HttpGetIndices {
     /// `Map.get` over the headers map; consumed via `struct.get`
     /// to extract tag (offset 0) + payload (offset 1).
     pub option_list_string_type_idx: u32,
+    /// `Int = ℤ`: wasm fn idx of `__aint_from_i64`, `Some` iff bignum.
+    /// The `HttpResponse.status` field is the `$AverInt` carrier, so the
+    /// inline u16→i64-widened status is lifted through this before the
+    /// `struct.new HttpResponse`.
+    pub aint_from_i64_fn_idx: Option<u32>,
 }
 
 /// Bundle of wasm fn indices the body references via `Call(idx)`.
@@ -1935,6 +1940,11 @@ pub(super) fn emit_http_get(indices: &HttpGetIndices, h: &HttpGetHelperFns) -> F
     // status: i64 — wasi returned u16 zero-extended in i32; widen.
     f.instruction(&Instruction::LocalGet(l_in_buf));
     f.instruction(&Instruction::I64ExtendI32U);
+    // `Int = ℤ`: the `HttpResponse.status` field is the `$AverInt`
+    // carrier — lift the widened i64 before `struct.new`.
+    if let Some(from_i64) = indices.aint_from_i64_fn_idx {
+        f.instruction(&Instruction::Call(from_i64));
+    }
 
     // body: ref string (l_arr, populated above).
     f.instruction(&Instruction::LocalGet(l_arr));

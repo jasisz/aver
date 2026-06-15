@@ -1637,6 +1637,7 @@ pub(super) fn emit_module_with(
             headers_map_type_idx: map_slots.map,
             list_string_type_idx: list_string_idx,
             option_list_string_type_idx: opt_list_string_idx,
+            aint_from_i64_fn_idx: registry.aint_from_i64_fn_idx,
         })
     } else {
         None
