@@ -1,0 +1,31 @@
+module Prop26
+    intent =
+        "TIP prod prop_26: half (x + y) = half (y + x)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn half(x: Nat) -> Nat
+    match x
+        Nat.Z -> Nat.Z
+        Nat.S(y) -> match y
+            Nat.Z -> Nat.Z
+            Nat.S(z) -> Nat.S(half(z))
+
+fn plus(x: Nat, y: Nat) -> Nat
+    match x
+        Nat.Z -> y
+        Nat.S(z) -> Nat.S(plus(z, y))
+
+
+verify plus law plusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    plus(x, y) => plus(y, x)
+
+verify half law halfPlusComm
+    given x: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given y: Nat = [Nat.S(Nat.Z), Nat.Z, Nat.S(Nat.S(Nat.Z))]
+    half(plus(x, y)) => half(plus(y, x))

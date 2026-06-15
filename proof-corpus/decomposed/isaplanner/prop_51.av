@@ -1,0 +1,23 @@
+module Prop51
+    intent =
+        "TIP isaplanner prop_51: butlast (xs ++ [x]) = xs."
+    effects []
+
+fn butlast(xs: List<Int>) -> List<Int>
+    match xs
+        [] -> []
+        [y, ..z] -> match z
+            [] -> []
+            [x2, ..x3] -> List.concat([y], butlast(z))
+
+
+verify butlast law butlastConsSnoc
+    given y: Int = [1, 7]
+    given ys: List<Int> = [[], [2], [2, 3]]
+    given z: Int = [0, 5]
+    butlast(List.prepend(y, List.concat(ys, [z]))) => List.prepend(y, butlast(List.concat(ys, [z])))
+
+verify butlast law butlastAppendSingleton
+    given xs: List<Int> = [[], [1], [1, 2, 3]]
+    given x: Int = [0, 5, 9]
+    butlast(List.concat(xs, [x])) => xs
