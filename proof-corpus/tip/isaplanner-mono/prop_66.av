@@ -1,0 +1,39 @@
+module Prop66Mono
+    intent =
+        "TIP isaplanner prop_66, monomorphized (Aver is first-order, no closures):"
+        "len (filter p xs) <= len xs, with p FIXED to the concrete non-degenerate"
+        "is-zero predicate. Strictly weaker than the higher-order original (loses"
+        "the forall-over-p); the induction is identical, casing on p(head)."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn isZ(n: Nat) -> Bool
+    match n
+        Nat.Z -> true
+        Nat.S(z) -> false
+
+fn filterZ(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> match isZ(y)
+            true -> List.concat([y], filterZ(ys))
+            false -> filterZ(ys)
+
+fn len(xs: List<Nat>) -> Nat
+    match xs
+        [] -> Nat.Z
+        [y, ..ys] -> Nat.S(len(ys))
+
+fn le(x: Nat, y: Nat) -> Bool
+    match x
+        Nat.Z -> true
+        Nat.S(z) -> match y
+            Nat.Z -> false
+            Nat.S(x2) -> le(z, x2)
+
+verify filterZ law filterLenLe
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z)), Nat.Z]]
+    le(len(filterZ(xs)), len(xs)) => true

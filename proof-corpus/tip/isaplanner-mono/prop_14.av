@@ -1,0 +1,34 @@
+module Prop14Mono
+    intent =
+        "TIP isaplanner prop_14, monomorphized (Aver is first-order, no closures):"
+        "filter p (xs ++ ys) = filter p xs ++ filter p ys, with p FIXED to the"
+        "concrete non-degenerate is-zero predicate (filterZ keeps only Z). Strictly"
+        "weaker than the higher-order original (loses the forall-over-p); the"
+        "induction is identical, the proof cases on p(head) exactly as the HO one."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn isZ(n: Nat) -> Bool
+    match n
+        Nat.Z -> true
+        Nat.S(z) -> false
+
+fn filterZ(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> match isZ(y)
+            true -> List.concat([y], filterZ(ys))
+            false -> filterZ(ys)
+
+fn append(x: List<Nat>, y: List<Nat>) -> List<Nat>
+    match x
+        [] -> y
+        [z, ..xs] -> List.concat([z], append(xs, y))
+
+verify filterZ law filterAppendDistribute
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.Z]]
+    given ys: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z)], [Nat.Z, Nat.Z]]
+    filterZ(append(xs, ys)) => append(filterZ(xs), filterZ(ys))

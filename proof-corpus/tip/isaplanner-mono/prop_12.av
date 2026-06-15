@@ -1,0 +1,29 @@
+module Prop12Mono
+    intent =
+        "TIP isaplanner prop_12, monomorphized (Aver is first-order, no closures):"
+        "drop n (map f xs) = map f (drop n xs), with f FIXED to the concrete"
+        "non-degenerate successor (mapS applies Nat.S). Strictly weaker than the"
+        "higher-order original (loses the forall-over-f), but the induction is"
+        "identical: f is parametric and never participates in the recursion."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn mapS(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> List.concat([Nat.S(y)], mapS(ys))
+
+fn drop(n: Nat, xs: List<Nat>) -> List<Nat>
+    match n
+        Nat.Z -> xs
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> drop(z, x3)
+
+verify drop law dropMapCommute
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z)), Nat.Z]]
+    drop(n, mapS(xs)) => mapS(drop(n, xs))

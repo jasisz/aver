@@ -1,0 +1,25 @@
+module Prop35Mono
+    intent =
+        "TIP isaplanner prop_35, monomorphized (Aver is first-order, no closures):"
+        "dropWhile (\\x -> False) xs = xs. The original predicate IS the constant"
+        "False, so the concrete constFalse is a FAITHFUL rendering (no arbitrary"
+        "instance choice). dropWhileF never drops, so it returns the list unchanged."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn constFalse(n: Nat) -> Bool
+    false
+
+fn dropWhileF(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> match constFalse(y)
+            true -> dropWhileF(ys)
+            false -> xs
+
+verify dropWhileF law dropWhileFalseId
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]]
+    dropWhileF(xs) => xs

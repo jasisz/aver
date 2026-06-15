@@ -1,0 +1,29 @@
+module Prop41Mono
+    intent =
+        "TIP isaplanner prop_41, monomorphized (Aver is first-order, no closures):"
+        "take n (map f xs) = map f (take n xs), with f FIXED to the concrete"
+        "non-degenerate successor (mapS applies Nat.S). Strictly weaker than the"
+        "higher-order original (loses the forall-over-f); the induction is"
+        "identical, f is parametric and never participates in the recursion."
+    effects []
+
+type Nat
+    Z
+    S(Nat)
+
+fn mapS(xs: List<Nat>) -> List<Nat>
+    match xs
+        [] -> []
+        [y, ..ys] -> List.concat([Nat.S(y)], mapS(ys))
+
+fn take(n: Nat, xs: List<Nat>) -> List<Nat>
+    match n
+        Nat.Z -> []
+        Nat.S(z) -> match xs
+            [] -> []
+            [x2, ..x3] -> List.concat([x2], take(z, x3))
+
+verify take law takeMapCommute
+    given n: Nat = [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z))]
+    given xs: List<Nat> = [[], [Nat.Z], [Nat.S(Nat.Z), Nat.Z], [Nat.Z, Nat.S(Nat.Z), Nat.S(Nat.S(Nat.Z)), Nat.Z]]
+    take(n, mapS(xs)) => mapS(take(n, xs))

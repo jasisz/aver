@@ -83,10 +83,13 @@ union=0
 total=0
 when_universal=0
 # `decomposed/` holds LLM helper-law-augmented copies of OPEN tip/ tasks (a
-# SEPARATE "loop reach" metric, see decomposed/README.md). Excluded here so the
-# baseline `coverage (union)` stays "what the engine proves UNAIDED on bare
-# tip/" — counting the augmented copies would double-count + inflate it.
-for f in $(find "$ROOT" -name '*.av' -not -path '*/decomposed/*' | sort); do
+# SEPARATE "loop reach" metric, see decomposed/README.md). `isaplanner-mono/`
+# holds monomorphized renderings of the 8 higher-order isaplanner problems Aver
+# cannot express natively (a SEPARATE asterisked metric, see
+# isaplanner-mono/README.md). Both are excluded here so the baseline
+# `coverage (union)` stays "what the engine proves UNAIDED on bare, natively
+# expressible tip/" — folding either in would inflate the headline.
+for f in $(find "$ROOT" -name '*.av' -not -path '*/decomposed/*' -not -path '*/isaplanner-mono/*' | sort); do
   [ -e "$f" ] || continue
   total=$((total + 1))
   lres=$(proves "$f" lean)
