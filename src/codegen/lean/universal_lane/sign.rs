@@ -395,14 +395,14 @@ have hts : {ser_text} = String.fromInt {n} := by
     | rfl
     | simp [{ser_simp}]
 rw [hts]
-have hfin : {finish} (String.fromInt {n}) 0 ((String.fromInt {n}).data.length : Int) false
+have hfin : {finish} (String.fromInt {n}) 0 ((String.fromInt {n}).toList.length : Int) false
     = {rhs} := by
-  have h1 : ¬ (((String.fromInt {n}).data.length : Int) < 0) := by omega
-  have hslice : String.slice (String.fromInt {n}) 0 ((String.fromInt {n}).data.length : Int) = String.fromInt {n} := by
-    simp [String.slice, String.toList, h1]
-  have hlen0 : (String.fromInt {n}).data.length = (String.fromInt {n}).length := rfl
-  have h2 : {finish} (String.fromInt {n}) 0 ((String.fromInt {n}).data.length : Int) false
-      = {fint} (String.slice (String.fromInt {n}) 0 ((String.fromInt {n}).data.length : Int)) ((String.fromInt {n}).data.length : Int) := by
+  have h1 : ¬ (((String.fromInt {n}).toList.length : Int) < 0) := by omega
+  have hslice : String.sliceAv (String.fromInt {n}) 0 ((String.fromInt {n}).toList.length : Int) = String.fromInt {n} := by
+    simp [String.sliceAv, h1]
+  have hlen0 : (String.fromInt {n}).toList.length = (String.fromInt {n}).length := rfl
+  have h2 : {finish} (String.fromInt {n}) 0 ((String.fromInt {n}).toList.length : Int) false
+      = {fint} (String.sliceAv (String.fromInt {n}) 0 ((String.fromInt {n}).toList.length : Int)) ((String.fromInt {n}).toList.length : Int) := by
     simp [{finish}]
   rw [h2, hslice]
   simp [{fint}, Int.fromString_fromInt {n}, hlen0]
@@ -429,7 +429,7 @@ rcases {n} with m | m"#
     // whole pipeline computes on the closed string "0".
     let zero_case = r#"subst hm
 have h0 : String.fromInt (Int.ofNat 0) = "0" := by
-  show String.mk (AverDigits.natDigitsChars 0) = "0"
+  show String.ofList (AverDigits.natDigitsChars 0) = "0"
   unfold AverDigits.natDigitsChars
   rw [AverDigits.natDigits.eq_1]
   decide
@@ -438,38 +438,39 @@ rfl"#
         .to_string();
 
     // ofNat-nonzero head facts (digit-list exposure).
-    let pos_head = r#"have hsl : (String.fromInt (Int.ofNat m)).data = (AverDigits.natDigits m).map AverDigits.digitChar := rfl
+    let pos_head = r#"have hsl : (String.fromInt (Int.ofNat m)).toList = (AverDigits.natDigits m).map AverDigits.digitChar := by
+  show (String.ofList (AverDigits.natDigitsChars m)).toList = _
+  rw [String.toList_ofList, AverDigits.natDigitsChars]
 rcases hnd : AverDigits.natDigits m with _ | ⟨d, ds⟩
 · exact absurd hnd (AverDigits.natDigits_nonempty m)
-· have hd10 : d < 10 := AverDigits.natDigits_digits_lt_ten m d (by rw [hnd]; exact List.mem_cons_self _ _)
+· have hd10 : d < 10 := AverDigits.natDigits_digits_lt_ten m d (by rw [hnd]; exact List.mem_cons_self)
   have hdne0 : d ≠ 0 := AverDigits.natDigits_head_ne_zero m hm d ds hnd
-  have hlen : (String.fromInt (Int.ofNat m)).data.length = ds.length + 1 := by
+  have hlen : (String.fromInt (Int.ofNat m)).toList.length = ds.length + 1 := by
     rw [hsl, hnd]; simp"#
         .to_string();
 
-    let pos_hmk = r#"have hmk : String.fromInt (Int.ofNat m) = String.mk ((d :: ds).map AverDigits.digitChar) := by
-  rw [← hnd]
-  rfl"#
+    let pos_hmk = r#"have hmk : String.fromInt (Int.ofNat m) = String.ofList ((d :: ds).map AverDigits.digitChar) := by
+  show String.ofList (AverDigits.natDigitsChars m) = _
+  rw [AverDigits.natDigitsChars, hnd]"#
         .to_string();
 
-    let pos_hch = r#"have hch : String.charAt (String.fromInt (Int.ofNat m)) 0
+    let pos_hch = r#"have hch : String.charAtAv (String.fromInt (Int.ofNat m)) 0
     = some (Char.toString (AverDigits.digitChar d)) := by
   rw [hmk]
-  rfl"#
+  simp [String.charAtAv, String.toList_ofList]"#
         .to_string();
 
-    let pos_headslice = r#"have hheadslice : String.slice (String.fromInt (Int.ofNat m)) 0 1
+    let pos_headslice = r#"have hheadslice : String.sliceAv (String.fromInt (Int.ofNat m)) 0 1
     = Char.toString (AverDigits.digitChar d) := by
   rw [hmk]
-  first
-    | rfl
-    | simp [String.slice, String.toList, Char.toString]"#
+  apply String.toList_injective
+  simp [String.sliceAv, String.toList_ofList, Char.toString_eq_singleton]"#
         .to_string();
 
     let pos_digits_fuel = format!(
         r#"have hds10 : ∀ x ∈ ds, x < 10 := fun x hx =>
   AverDigits.natDigits_digits_lt_ten m x (by rw [hnd]; exact List.mem_cons_of_mem _ hx)
-have hdigits : ∀ ch ∈ (String.fromInt (Int.ofNat m)).data.drop ((1 : Int)).toNat,
+have hdigits : ∀ ch ∈ (String.fromInt (Int.ofNat m)).toList.drop ((1 : Int)).toNat,
     {pred} (Char.toString ch) = true := by
   intro ch hc
   rw [hsl, hnd] at hc
@@ -477,7 +478,7 @@ have hdigits : ∀ ch ∈ (String.fromInt (Int.ofNat m)).data.drop ((1 : Int)).t
   rcases hc with ⟨x, hx, rfl⟩
   exact {pred_lemma} x (hds10 x hx)
 have hfuel : averStringPosFuel (String.fromInt (Int.ofNat m)) 1 1
-    = ((String.fromInt (Int.ofNat m)).data.length - ((1 : Int)).toNat) + 1 := by
+    = ((String.fromInt (Int.ofNat m)).toList.length - ((1 : Int)).toNat) + 1 := by
   simp [averStringPosFuel]"#
     );
 
@@ -490,19 +491,21 @@ exact hfin"#
     );
 
     // negSucc head facts.
-    let neg_head = r#"have hsl : (String.fromInt (Int.negSucc m)).data = '-' :: (AverDigits.natDigits (m + 1)).map AverDigits.digitChar := rfl
+    let neg_head = r#"have hsl : (String.fromInt (Int.negSucc m)).toList = '-' :: (AverDigits.natDigits (m + 1)).map AverDigits.digitChar := by
+  show (String.ofList ('-' :: AverDigits.natDigitsChars (m + 1))).toList = _
+  rw [String.toList_ofList, AverDigits.natDigitsChars]
 rcases hnd : AverDigits.natDigits (m + 1) with _ | ⟨d, ds⟩
 · exact absurd hnd (AverDigits.natDigits_nonempty (m + 1))
-· have hd10 : d < 10 := AverDigits.natDigits_digits_lt_ten (m + 1) d (by rw [hnd]; exact List.mem_cons_self _ _)
+· have hd10 : d < 10 := AverDigits.natDigits_digits_lt_ten (m + 1) d (by rw [hnd]; exact List.mem_cons_self)
   have hdne0 : d ≠ 0 := AverDigits.natDigits_head_ne_zero (m + 1) (by omega) d ds hnd
-  have hlen : (String.fromInt (Int.negSucc m)).data.length = ds.length + 2 := by
+  have hlen : (String.fromInt (Int.negSucc m)).toList.length = ds.length + 2 := by
     rw [hsl, hnd]; simp"#
         .to_string();
 
     let neg_digits_fuel = format!(
         r#"have hds10 : ∀ x ∈ ds, x < 10 := fun x hx =>
   AverDigits.natDigits_digits_lt_ten (m + 1) x (by rw [hnd]; exact List.mem_cons_of_mem _ hx)
-have hdigits : ∀ ch ∈ (String.fromInt (Int.negSucc m)).data.drop ((2 : Int)).toNat,
+have hdigits : ∀ ch ∈ (String.fromInt (Int.negSucc m)).toList.drop ((2 : Int)).toNat,
     {pred} (Char.toString ch) = true := by
   intro ch hc
   rw [hsl, hnd] at hc
@@ -510,7 +513,7 @@ have hdigits : ∀ ch ∈ (String.fromInt (Int.negSucc m)).data.drop ((2 : Int))
   rcases hc with ⟨x, hx, rfl⟩
   exact {pred_lemma} x (hds10 x hx)
 have hfuel : averStringPosFuel (String.fromInt (Int.negSucc m)) 2 1
-    = ((String.fromInt (Int.negSucc m)).data.length - ((2 : Int)).toNat) + 1 := by
+    = ((String.fromInt (Int.negSucc m)).toList.length - ((2 : Int)).toNat) + 1 := by
   simp [averStringPosFuel]"#
     );
 
@@ -532,7 +535,9 @@ exact hfin"#
 rw [hheadslice]
 have harm : {posf} (String.fromInt (Int.ofNat m)) 0 (Char.toString (AverDigits.digitChar d))
     = {scan} (String.fromInt (Int.ofNat m)) 1 0 false := by
-  simp [{posf}, {pred_lemma} d hd10]
+  have hdig := {pred_lemma} d hd10
+  simp only [{posf}]
+  split <;> rename_i heq <;> simp_all [Char.toString_eq_singleton, reduceCtorEq]
 rw [harm]
 {pos_scan_close}"#
             );
@@ -552,20 +557,21 @@ rw [harm]
 rw [hheadslice]
 have harm0 : {fn_lean} (String.fromInt (Int.ofNat m)) 0 (Char.toString (AverDigits.digitChar d))
     = {parse} (String.fromInt (Int.ofNat m)) 0 := by
-  simp [{fn_lean}, {pred_lemma} d hd10]
+  have hdig := {pred_lemma} d hd10
+  simp only [{fn_lean}]
+  split <;> rename_i heq <;> simp_all [Char.toString_eq_singleton, reduceCtorEq]
 rw [harm0]
-simp only [{parse}, hch]
-split
-· rename_i heq
-  exact absurd heq (AverDigits.digitChar_toString_ne_minus d hd10)
-· rename_i heq
-  exact absurd heq (AverDigits.digitChar_toString_ne_zero d hd10 hdne0)
-· have harm : {posf} (String.fromInt (Int.ofNat m)) 0 (Char.toString (AverDigits.digitChar d))
-      = {scan} (String.fromInt (Int.ofNat m)) 1 0 false := by
-    simp [{posf}, {pred_lemma} d hd10]
-  rw [harm]
-  {close}"#,
-                close = indent_block(&pos_scan_close, 2),
+have hdig : {pred} (Char.toString (AverDigits.digitChar d)) = true := {pred_lemma} d hd10
+have hdm : (AverDigits.digitChar d).toString ≠ "-" := AverDigits.digitChar_toString_ne_minus d hd10
+have hd0 : (AverDigits.digitChar d).toString ≠ "0" := AverDigits.digitChar_toString_ne_zero d hd10 hdne0
+have hred : {parse} (String.fromInt (Int.ofNat m)) 0
+    = {scan} (String.fromInt (Int.ofNat m)) 1 0 false := by
+  simp only [{parse}, hch, {posf}]
+  split <;> rename_i heq <;>
+    simp_all [Char.toString_eq_singleton, reduceCtorEq]
+rw [hred]
+{close}"#,
+                close = indent_block(&pos_scan_close, 0),
             );
             let branch = format!(
                 "· by_cases hm : m = 0\n  · {zero}\n  · {head}\n{tail}",
@@ -597,21 +603,21 @@ rw [hb]
         }
         LanePlan::NegSegmentNeg => {
             let tail = format!(
-                r#"have hch1 : String.charAt (String.fromInt (Int.negSucc m)) 1
+                r#"have hch1 : String.charAtAv (String.fromInt (Int.negSucc m)) 1
     = some (Char.toString (AverDigits.digitChar d)) := by
-  have h := String.charAt_eq_of_lt (String.fromInt (Int.negSucc m)) 1 (by omega) (by omega)
+  have h := String.charAt_eq_of_lt (String.fromInt (Int.negSucc m)) 1 (by omega) (by rw [hsl, hnd]; simp)
   simpa [hsl, hnd] using h
 {neg_digits_fuel}
-simp only [{neg}, hch1]
-split
-· rename_i heq
-  exact absurd heq (AverDigits.digitChar_toString_ne_zero d hd10 hdne0)
-· have harm : {sign} (String.fromInt (Int.negSucc m)) 1 0 (Char.toString (AverDigits.digitChar d))
-      = {scan} (String.fromInt (Int.negSucc m)) 2 0 false := by
-    simp [{sign}, {pred_lemma} d hd10]
-  rw [harm]
-  {close}"#,
-                close = indent_block(&neg_scan_close, 2),
+have hdig : {pred} (Char.toString (AverDigits.digitChar d)) = true := {pred_lemma} d hd10
+have hd0 : (AverDigits.digitChar d).toString ≠ "0" := AverDigits.digitChar_toString_ne_zero d hd10 hdne0
+have hred : {neg} (String.fromInt (Int.negSucc m)) 1 0
+    = {scan} (String.fromInt (Int.negSucc m)) 2 0 false := by
+  simp only [{neg}, hch1, {sign}]
+  split <;> rename_i heq <;>
+    simp_all [Char.toString_eq_singleton, reduceCtorEq]
+rw [hred]
+{close}"#,
+                close = indent_block(&neg_scan_close, 0),
             );
             let branch = format!(
                 "· {head}\n{tail}",
@@ -622,20 +628,21 @@ split
         }
         LanePlan::SignSegmentNeg => {
             let tail = format!(
-                r#"have hmk : String.fromInt (Int.negSucc m) = String.mk ('-' :: (d :: ds).map AverDigits.digitChar) := by
-  rw [← hnd]
-  rfl
-have hheadslice : String.slice (String.fromInt (Int.negSucc m)) 1 2
+                r#"have hmk : String.fromInt (Int.negSucc m) = String.ofList ('-' :: (d :: ds).map AverDigits.digitChar) := by
+  show String.ofList ('-' :: AverDigits.natDigitsChars (m + 1)) = _
+  rw [AverDigits.natDigitsChars, hnd]
+have hheadslice : String.sliceAv (String.fromInt (Int.negSucc m)) 1 2
     = Char.toString (AverDigits.digitChar d) := by
   rw [hmk]
-  first
-    | rfl
-    | simp [String.slice, String.toList, Char.toString]
+  apply String.toList_injective
+  simp [String.sliceAv, String.toList_ofList, Char.toString_eq_singleton]
 {neg_digits_fuel}
 rw [hheadslice]
 have harm : {sign} (String.fromInt (Int.negSucc m)) 1 0 (Char.toString (AverDigits.digitChar d))
     = {scan} (String.fromInt (Int.negSucc m)) 2 0 false := by
-  simp [{sign}, {pred_lemma} d hd10]
+  have hdig := {pred_lemma} d hd10
+  simp only [{sign}]
+  split <;> rename_i heq <;> simp_all [Char.toString_eq_singleton, reduceCtorEq]
 rw [harm]
 {neg_scan_close}"#
             );

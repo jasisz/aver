@@ -95,9 +95,9 @@ pub fn emit_builtin_call(
 
         // ---- String ----
         StringLen => format!("{}.length", p(&a[0])),
-        StringCharAt => format!("String.charAt {} {}", p(&a[0]), p(&a[1])),
-        StringChars => format!("String.chars {}", p(&a[0])),
-        StringSlice => format!("String.slice {} {} {}", p(&a[0]), p(&a[1]), p(&a[2])),
+        StringCharAt => format!("String.charAtAv {} {}", p(&a[0]), p(&a[1])),
+        StringChars => format!("String.charsAv {}", p(&a[0])),
+        StringSlice => format!("String.sliceAv {} {} {}", p(&a[0]), p(&a[1]), p(&a[2])),
         StringContains => format!("{}.containsSubstr {}", p(&a[0]), p(&a[1])),
         StringStartsWith => format!("{}.startsWith {}", p(&a[0]), p(&a[1])),
         StringEndsWith => format!("{}.endsWith {}", p(&a[0]), p(&a[1])),

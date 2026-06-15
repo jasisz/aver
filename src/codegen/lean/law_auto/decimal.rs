@@ -13,11 +13,11 @@
 //!    `simp` fallback;
 //! 2. `hfin` — the finish leaf: full-range slice identity (inlined
 //!    verbatim — the prelude's `String.slice_full` is `s.length`-keyed
-//!    while this goal is `s.data.length`-keyed) + the prelude's
+//!    while this goal is `s.toList.length`-keyed) + the prelude's
 //!    `Int.fromString_fromInt` roundtrip;
 //! 3. `rcases n with Int.ofNat m | Int.negSucc m` sign split; zero
 //!    sub-case computes by `rfl` on the closed string `"0"`;
-//! 4. head-char dispatch via `String.mk`-form `rfl` (NOT simp under
+//! 4. head-char dispatch via `String.ofList`-form rewrites (NOT simp under
 //!    `getElem` — simp cannot discharge the getElem validity
 //!    side-goal) and `split` + `digitChar` `Char.toString`
 //!    disequalities for the dead `"-"` / `"0"` arms;
@@ -114,7 +114,7 @@ pub(super) fn emit_int_decimal_roundtrip_law(
     let scan_tail = |case_int: &str, scan_pos: &str| -> String {
         format!(
             r#"have hfuel : averStringPosFuel (String.fromInt {case_int}) {scan_pos} 1
-    = ((String.fromInt {case_int}).data.length - (({scan_pos} : Int)).toNat) + 1 := by
+    = ((String.fromInt {case_int}).toList.length - (({scan_pos} : Int)).toNat) + 1 := by
   simp [averStringPosFuel]"#
         )
     };
@@ -123,29 +123,31 @@ pub(super) fn emit_int_decimal_roundtrip_law(
         r#"· by_cases hm : m = 0
   · subst hm
     have h0 : String.fromInt (Int.ofNat 0) = "0" := by
-      show String.mk (AverDigits.natDigitsChars 0) = "0"
+      show String.ofList (AverDigits.natDigitsChars 0) = "0"
       unfold AverDigits.natDigitsChars
       rw [AverDigits.natDigits.eq_1]
       decide
     rw [h0]
     rfl
-  · have hsl : (String.fromInt (Int.ofNat m)).data = (AverDigits.natDigits m).map AverDigits.digitChar := rfl
+  · have hsl : (String.fromInt (Int.ofNat m)).toList = (AverDigits.natDigits m).map AverDigits.digitChar := by
+      show (String.ofList (AverDigits.natDigitsChars m)).toList = _
+      rw [String.toList_ofList, AverDigits.natDigitsChars]
     rcases hnd : AverDigits.natDigits m with _ | ⟨d, ds⟩
     · exact absurd hnd (AverDigits.natDigits_nonempty m)
-    · have hd10 : d < 10 := AverDigits.natDigits_digits_lt_ten m d (by rw [hnd]; exact List.mem_cons_self _ _)
+    · have hd10 : d < 10 := AverDigits.natDigits_digits_lt_ten m d (by rw [hnd]; exact List.mem_cons_self)
       have hdne0 : d ≠ 0 := AverDigits.natDigits_head_ne_zero m hm d ds hnd
-      have hlen : (String.fromInt (Int.ofNat m)).data.length = ds.length + 1 := by
+      have hlen : (String.fromInt (Int.ofNat m)).toList.length = ds.length + 1 := by
         rw [hsl, hnd]; simp
-      have hmk : String.fromInt (Int.ofNat m) = String.mk ((d :: ds).map AverDigits.digitChar) := by
-        rw [← hnd]
-        rfl
-      have hch : String.charAt (String.fromInt (Int.ofNat m)) 0
+      have hmk : String.fromInt (Int.ofNat m) = String.ofList ((d :: ds).map AverDigits.digitChar) := by
+        show String.ofList (AverDigits.natDigitsChars m) = _
+        rw [AverDigits.natDigitsChars, hnd]
+      have hch : String.charAtAv (String.fromInt (Int.ofNat m)) 0
           = some (Char.toString (AverDigits.digitChar d)) := by
         rw [hmk]
-        rfl
+        simp [String.charAtAv, String.toList_ofList]
       have hds10 : ∀ x ∈ ds, x < 10 := fun x hx =>
         AverDigits.natDigits_digits_lt_ten m x (by rw [hnd]; exact List.mem_cons_of_mem _ hx)
-      have hdigits : ∀ ch ∈ (String.fromInt (Int.ofNat m)).data.drop ((1 : Int)).toNat,
+      have hdigits : ∀ ch ∈ (String.fromInt (Int.ofNat m)).toList.drop ((1 : Int)).toNat,
           {pred} (Char.toString ch) = true := by
         intro ch hc
         rw [hsl, hnd] at hc
@@ -153,42 +155,43 @@ pub(super) fn emit_int_decimal_roundtrip_law(
         rcases hc with ⟨x, hx, rfl⟩
         exact {pred_lemma} x (hds10 x hx)
       {hfuel_pos}
-      simp only [{parse}, hch]
-      split
-      · rename_i heq
-        exact absurd heq (AverDigits.digitChar_toString_ne_minus d hd10)
-      · rename_i heq
-        exact absurd heq (AverDigits.digitChar_toString_ne_zero d hd10 hdne0)
-      · have harm : {posf} (String.fromInt (Int.ofNat m)) 0 (Char.toString (AverDigits.digitChar d))
-            = {scan} (String.fromInt (Int.ofNat m)) 1 0 false := by
-          simp [{posf}, {pred_lemma} d hd10]
-        rw [harm]
-        simp only [{scan}]
-        rw [{scan_lemma} (averStringPosFuel (String.fromInt (Int.ofNat m)) 1 1)
-              (String.fromInt (Int.ofNat m)) 1 0 (by omega) (by omega)
-              (by rw [hfuel]; omega) hdigits]
-        exact hfin"#,
+      have hdig : {pred} (Char.toString (AverDigits.digitChar d)) = true := {pred_lemma} d hd10
+      have hdm : (AverDigits.digitChar d).toString ≠ "-" := AverDigits.digitChar_toString_ne_minus d hd10
+      have hd0 : (AverDigits.digitChar d).toString ≠ "0" := AverDigits.digitChar_toString_ne_zero d hd10 hdne0
+      have hred : {parse} (String.fromInt (Int.ofNat m)) 0
+          = {scan} (String.fromInt (Int.ofNat m)) 1 0 false := by
+        simp only [{parse}, hch, {posf}]
+        split <;> rename_i heq <;>
+          simp_all [Char.toString_eq_singleton, reduceCtorEq]
+      rw [hred]
+      simp only [{scan}]
+      rw [{scan_lemma} (averStringPosFuel (String.fromInt (Int.ofNat m)) 1 1)
+            (String.fromInt (Int.ofNat m)) 1 0 (by omega) (by omega)
+            (by rw [hfuel]; omega) hdigits]
+      exact hfin"#,
         hfuel_pos = indent_block(&scan_tail("(Int.ofNat m)", "1"), 6),
     );
 
     let negative = format!(
-        r#"· have hsl : (String.fromInt (Int.negSucc m)).data = '-' :: (AverDigits.natDigits (m + 1)).map AverDigits.digitChar := rfl
+        r#"· have hsl : (String.fromInt (Int.negSucc m)).toList = '-' :: (AverDigits.natDigits (m + 1)).map AverDigits.digitChar := by
+    show (String.ofList ('-' :: AverDigits.natDigitsChars (m + 1))).toList = _
+    rw [String.toList_ofList, AverDigits.natDigitsChars]
   rcases hnd : AverDigits.natDigits (m + 1) with _ | ⟨d, ds⟩
   · exact absurd hnd (AverDigits.natDigits_nonempty (m + 1))
-  · have hd10 : d < 10 := AverDigits.natDigits_digits_lt_ten (m + 1) d (by rw [hnd]; exact List.mem_cons_self _ _)
+  · have hd10 : d < 10 := AverDigits.natDigits_digits_lt_ten (m + 1) d (by rw [hnd]; exact List.mem_cons_self)
     have hdne0 : d ≠ 0 := AverDigits.natDigits_head_ne_zero (m + 1) (by omega) d ds hnd
-    have hlen : (String.fromInt (Int.negSucc m)).data.length = ds.length + 2 := by
+    have hlen : (String.fromInt (Int.negSucc m)).toList.length = ds.length + 2 := by
       rw [hsl, hnd]; simp
-    have hch0 : String.charAt (String.fromInt (Int.negSucc m)) 0 = some "-" := by
-      have h := String.charAt_eq_of_lt (String.fromInt (Int.negSucc m)) 0 (by omega) (by omega)
+    have hch0 : String.charAtAv (String.fromInt (Int.negSucc m)) 0 = some "-" := by
+      have h := String.charAt_eq_of_lt (String.fromInt (Int.negSucc m)) 0 (by omega) (by rw [hsl, hnd]; simp)
       simpa [hsl, show Char.toString '-' = "-" from rfl] using h
-    have hch1 : String.charAt (String.fromInt (Int.negSucc m)) 1
+    have hch1 : String.charAtAv (String.fromInt (Int.negSucc m)) 1
         = some (Char.toString (AverDigits.digitChar d)) := by
-      have h := String.charAt_eq_of_lt (String.fromInt (Int.negSucc m)) 1 (by omega) (by omega)
+      have h := String.charAt_eq_of_lt (String.fromInt (Int.negSucc m)) 1 (by omega) (by rw [hsl, hnd]; simp)
       simpa [hsl, hnd] using h
     have hds10 : ∀ x ∈ ds, x < 10 := fun x hx =>
       AverDigits.natDigits_digits_lt_ten (m + 1) x (by rw [hnd]; exact List.mem_cons_of_mem _ hx)
-    have hdigits : ∀ ch ∈ (String.fromInt (Int.negSucc m)).data.drop ((2 : Int)).toNat,
+    have hdigits : ∀ ch ∈ (String.fromInt (Int.negSucc m)).toList.drop ((2 : Int)).toNat,
         {pred} (Char.toString ch) = true := by
       intro ch hc
       rw [hsl, hnd] at hc
@@ -201,20 +204,20 @@ pub(super) fn emit_int_decimal_roundtrip_law(
       simp only [{parse}]
       rw [hch0]
       rfl
+    have hdig : {pred} (Char.toString (AverDigits.digitChar d)) = true := {pred_lemma} d hd10
+    have hd0 : (AverDigits.digitChar d).toString ≠ "0" := AverDigits.digitChar_toString_ne_zero d hd10 hdne0
     rw [hdisp1]
-    simp only [{neg}, hch1]
-    split
-    · rename_i heq
-      exact absurd heq (AverDigits.digitChar_toString_ne_zero d hd10 hdne0)
-    · have harm : {sign} (String.fromInt (Int.negSucc m)) 1 0 (Char.toString (AverDigits.digitChar d))
-          = {scan} (String.fromInt (Int.negSucc m)) 2 0 false := by
-        simp [{sign}, {pred_lemma} d hd10]
-      rw [harm]
-      simp only [{scan}]
-      rw [{scan_lemma} (averStringPosFuel (String.fromInt (Int.negSucc m)) 2 1)
-            (String.fromInt (Int.negSucc m)) 2 0 (by omega) (by omega)
-            (by rw [hfuel]; omega) hdigits]
-      exact hfin"#,
+    have hred : {neg} (String.fromInt (Int.negSucc m)) 1 0
+        = {scan} (String.fromInt (Int.negSucc m)) 2 0 false := by
+      simp only [{neg}, hch1, {sign}]
+      split <;> rename_i heq <;>
+        simp_all [Char.toString_eq_singleton, reduceCtorEq]
+    rw [hred]
+    simp only [{scan}]
+    rw [{scan_lemma} (averStringPosFuel (String.fromInt (Int.negSucc m)) 2 1)
+          (String.fromInt (Int.negSucc m)) 2 0 (by omega) (by omega)
+          (by rw [hfuel]; omega) hdigits]
+    exact hfin"#,
         hfuel_neg = indent_block(&scan_tail("(Int.negSucc m)", "2"), 4),
     );
 
@@ -224,14 +227,14 @@ pub(super) fn emit_int_decimal_roundtrip_law(
     | rfl
     | simp [{ser_simp}]
 rw [hts]
-have hfin : {finish} (String.fromInt {n}) 0 ((String.fromInt {n}).data.length : Int) false
+have hfin : {finish} (String.fromInt {n}) 0 ((String.fromInt {n}).toList.length : Int) false
     = {rhs} := by
-  have h1 : ¬ (((String.fromInt {n}).data.length : Int) < 0) := by omega
-  have hslice : String.slice (String.fromInt {n}) 0 ((String.fromInt {n}).data.length : Int) = String.fromInt {n} := by
-    simp [String.slice, String.toList, h1]
-  have hlen0 : (String.fromInt {n}).data.length = (String.fromInt {n}).length := rfl
-  have h2 : {finish} (String.fromInt {n}) 0 ((String.fromInt {n}).data.length : Int) false
-      = {fint} (String.slice (String.fromInt {n}) 0 ((String.fromInt {n}).data.length : Int)) ((String.fromInt {n}).data.length : Int) := by
+  have h1 : ¬ (((String.fromInt {n}).toList.length : Int) < 0) := by omega
+  have hslice : String.sliceAv (String.fromInt {n}) 0 ((String.fromInt {n}).toList.length : Int) = String.fromInt {n} := by
+    simp [String.sliceAv, h1]
+  have hlen0 : (String.fromInt {n}).toList.length = (String.fromInt {n}).length := rfl
+  have h2 : {finish} (String.fromInt {n}) 0 ((String.fromInt {n}).toList.length : Int) false
+      = {fint} (String.sliceAv (String.fromInt {n}) 0 ((String.fromInt {n}).toList.length : Int)) ((String.fromInt {n}).toList.length : Int) := by
     simp [{finish}]
   rw [h2, hslice]
   simp [{fint}, Int.fromString_fromInt {n}, hlen0]

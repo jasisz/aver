@@ -738,17 +738,31 @@ fn emit_ring_identity_law(
     else {
         return None;
     };
-    let simp_set: Vec<String> = unfold_fns
+    // Cone unfold fns, mapped to their Lean names. `grind` does NOT
+    // unfold user `def`s on its own, so the same cone the simp set
+    // leads with is handed to `grind [<cone>]` as its unfold bracket;
+    // without it `grind` stalls on the opaque `sameValue …` goal.
+    let grind_cone: Vec<String> = unfold_fns.iter().map(|f| aver_name_to_lean(f)).collect();
+    let simp_set: Vec<String> = grind_cone
         .iter()
-        .map(|f| aver_name_to_lean(f))
+        .cloned()
         .chain(RING_NORMALIZATION_LEMMAS.iter().map(|s| s.to_string()))
         .collect();
     Some(AutoProof {
         support_lines: Vec::new(),
+        // Rung order, cheapest genuine closer first: `grind [<cone>]`
+        // (Lean 4.31 core, no Mathlib) carries the multi-variable
+        // nonlinear ring identities the hand-rolled AC-ring simp
+        // package stopped normalizing at 4.31 (`minus.equalsPlusNegate`);
+        // the simp package stays as the fallback rung, then the honest
+        // caught `sorry`. Every alternation arm ends in `done`, so a
+        // tactic that leaves a residual goal falls through rather than
+        // raising an "unsolved goals" build error.
         proof_lines: intro_then(
             proof_intro_names,
             vec![format!(
-                "first | (simp [{}]; done) | sorry",
+                "first | (grind [{}]; done) | (simp [{}]; done) | sorry",
+                grind_cone.join(", "),
                 simp_set.join(", ")
             )],
         ),

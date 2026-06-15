@@ -450,7 +450,7 @@ pub(super) fn transpile_unified(
             format!("\n{}\n", opens.join("\n"))
         };
         let content = format!(
-            "{}\n\nset_option linter.unusedVariables false\n{}\nnamespace {}\n\n{}\nend {}\n",
+            "{}\n\nset_option linter.unusedVariables false\nset_option maxRecDepth 1000000\n{}\nnamespace {}\n\n{}\nend {}\n",
             imports.join("\n"),
             opens_str,
             module.prefix,
@@ -512,6 +512,12 @@ pub(super) fn transpile_unified(
     // because `set_option` is local; AverCommon already has the same
     // option for its prelude defs.
     entry_parts.push("set_option linter.unusedVariables false".to_string());
+    // Lean 4.31's `simp` recurses deeper through large rewrite sets (the
+    // discovered-law floors cite 40+ lemmas in one `simp [...]`); the
+    // default `maxRecDepth` overflows on those. This is a pure
+    // elaboration-depth limit (no runtime / soundness effect), raised
+    // per-file so the big auto-generated simp blocks elaborate.
+    entry_parts.push("set_option maxRecDepth 1000000".to_string());
     let declared = crate::codegen::common::collect_declared_effects(ctx);
     let has_ip = union_body.contains("BranchPath");
     let has_classified =
