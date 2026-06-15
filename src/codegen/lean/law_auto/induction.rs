@@ -195,6 +195,124 @@ fn lean_nat_lift_support(
     (support, simp_extra, bridged_fns)
 }
 
+/// Recognize a canonical structural-EQUALITY fn: `f(a: T, b: T) -> Bool` over a
+/// user sum type `T`, defined as the nested diagonal match
+/// `match a { C0 -> match b { C0 -> true ; _ -> false } ; Ci(a') -> match b {
+/// Ci(b') -> f(a', b') ; _ -> false } ; … }` (the `eqNat` shape). For such a fn
+/// `∀ a, f a a = true` is provable by `induction a <;> simp_all [f]`, so it is
+/// safe to emit and CITE the reflexivity lemma. Conservative by construction: a
+/// fn that is NOT this exact shape is rejected, so the emitted `_refl` lemma is
+/// only ever the genuinely-provable one (no `sorry`-floored lemma reaches a
+/// closer's simp set, where it would taint a closing proof with `sorryAx`).
+///
+/// Returns `true` on match.
+///
+/// SOUNDNESS — the DIAGONAL is checked, not merely the shape. A near-miss like a
+/// not-equal fn (`neq Z Z = false`) has the same nested-match SHAPE, but
+/// `neq a a = true` is FALSE; emitting and citing its (necessarily `sorry`-
+/// floored) `_refl` would taint a closing proof. So each outer constructor arm
+/// `Ci` must, on its SAME-constructor inner arm, return `true` (a leaf
+/// constructor) or the recursive self-call (a recursive constructor) — never
+/// `false`. That makes `∀ a, f a a = true` genuinely provable by `induction a
+/// <;> simp_all [f]`, so the emitted lemma is kernel-clean.
+fn recognize_refl_eq_fn(fd: &crate::ast::FnDef, ctx: &CodegenContext) -> bool {
+    use crate::ast::{Expr, Literal, Pattern};
+    if fd.return_type.trim() != "Bool" || fd.params.len() != 2 {
+        return false;
+    }
+    let (p0, t0) = (&fd.params[0].0, fd.params[0].1.trim());
+    let (p1, t1) = (&fd.params[1].0, fd.params[1].1.trim());
+    if t0 != t1 || find_sum_type(ctx, t0).is_none() {
+        return false;
+    }
+    // Body must be a single `match p0 { … }`.
+    let Some(body) = fd.body.tail_expr() else {
+        return false;
+    };
+    let Expr::Match { subject, arms } = &body.node else {
+        return false;
+    };
+    if !matches!(&subject.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == p0) {
+        return false;
+    }
+    // Outer-arm constructor name (handles `Nat.Z` / `Nat.S(z)` and `Z`/`S(z)`).
+    let ctor_of = |p: &Pattern| -> Option<String> {
+        match p {
+            Pattern::Constructor(name, _) => Some(name.clone()),
+            _ => None,
+        }
+    };
+    let is_recursive_self = |e: &Expr| -> bool {
+        match e {
+            Expr::FnCall(callee, args) => {
+                super::shared::expr_dotted_name(callee).as_deref() == Some(fd.name.as_str())
+                    && args.len() == 2
+            }
+            // The diagonal recursive call sits in tail position, so the TCO pass
+            // may have rewritten it to `TailCall` before this runs.
+            Expr::TailCall(tc) => tc.target == fd.name && tc.args.len() == 2,
+            _ => false,
+        }
+    };
+    arms.iter().all(|outer| {
+        let Some(octor) = ctor_of(&outer.pattern) else {
+            return false;
+        };
+        let Expr::Match {
+            subject: inner_subj,
+            arms: inner_arms,
+        } = &outer.body.node
+        else {
+            return false;
+        };
+        if !matches!(&inner_subj.node, Expr::Ident(n) | Expr::Resolved { name: n, .. } if n == p1) {
+            return false;
+        }
+        // Off-diagonal arms may be anything Bool-shaped; the DIAGONAL arm (same
+        // constructor as the outer) MUST return `true` or recurse.
+        inner_arms.iter().all(|inner| {
+            let diagonal = ctor_of(&inner.pattern).as_deref() == Some(octor.as_str());
+            match &inner.body.node {
+                Expr::Literal(Literal::Bool(b)) => !diagonal || *b,
+                e if is_recursive_self(e) => true,
+                // A non-recursive, non-Bool inner body is fine ONLY off-diagonal.
+                _ => !diagonal,
+            }
+        })
+    })
+}
+
+/// Proven reflexivity support lemmas (`∀ a, f a a = true`) for every recognized
+/// structural-equality fn in the law's simp cone, plus their names for the rung
+/// closer's simp set. Each lemma is proved by `induction a <;> simp_all [f]`
+/// under a `first | … | sorry` floor (the floor only fires if recognition were
+/// wrong — it cannot, by `recognize_refl_eq_fn`'s construction — so the lemma is
+/// kernel-clean in practice and the cited name never taints a closing proof).
+fn lean_refl_support(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    law_uid: &str,
+) -> (Vec<String>, Vec<String>) {
+    let mut support = Vec::new();
+    let mut names = Vec::new();
+    for src_name in super::shared::law_simp_source_names(ctx, vb, law) {
+        let Some(fd) = ctx.fn_def_by_name(&src_name, ctx.active_module_scope().as_deref()) else {
+            continue;
+        };
+        if !recognize_refl_eq_fn(fd, ctx) {
+            continue;
+        }
+        let f = aver_name_to_lean(&src_name);
+        let name = format!("{law_uid}_{f}_refl");
+        support.push(format!(
+            "theorem {name} : ∀ a, {f} a a = true := by\n  intro a\n  first | (induction a <;> simp_all [{f}]; done) | (induction a <;> simp_all [{f}]) | sorry"
+        ));
+        names.push(name);
+    }
+    (support, names)
+}
+
 /// Source names of the program fns mentioned by the given pinned discovered
 /// lemmas (`ProofStrategy::SimpOverLemmas` names → `ctx.discovered_lemmas`
 /// texts → token scan against every pure program fn's Lean name). Drives the
@@ -1220,6 +1338,237 @@ fn emit_map_fold_homomorphism(
     }
 }
 
+/// A recognized `fun_induction` target: the Lean fn name whose auto-derived
+/// `<fn>.induct` splits the law's goal, plus the goal-argument names to apply it
+/// at. `fun_induction <fn> <args>` matches `<fn> <args>` in the goal and case-
+/// splits exactly that fn's own (possibly two-deep) case tree with the precise
+/// IH — no arg choice, no `generalizing`, no tail `cases`. It CLOSES only when
+/// the recursion key is a FREE VARIABLE; on a composite scrutinee it abstracts
+/// the term and loses the IH, so we require every argument to be a bare given.
+struct FunInductionTarget {
+    fn_lean: String,
+    /// Goal-argument Lean names (the intro names), in call order.
+    args: Vec<String>,
+}
+
+/// Whether a fn's body case-splits with a `match` — the condition under which
+/// Lean's equation compiler derives a non-trivial `<fn>.induct`, so the fn is a
+/// usable `fun_induction` target (self-recursive or not).
+fn fn_body_has_match(fd: &crate::ast::FnDef) -> bool {
+    fn expr_has_match(expr: &crate::ast::Spanned<crate::ast::Expr>) -> bool {
+        use crate::ast::Expr;
+        match &expr.node {
+            Expr::Match { .. } => true,
+            Expr::FnCall(callee, args) => expr_has_match(callee) || args.iter().any(expr_has_match),
+            Expr::Attr(base, _) | Expr::Neg(base) | Expr::ErrorProp(base) => expr_has_match(base),
+            Expr::BinOp(_, l, r) => expr_has_match(l) || expr_has_match(r),
+            Expr::Constructor(_, Some(inner)) => expr_has_match(inner),
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => {
+                items.iter().any(expr_has_match)
+            }
+            _ => false,
+        }
+    }
+    fd.body.stmts().iter().any(|s| match s {
+        crate::ast::Stmt::Expr(e) | crate::ast::Stmt::Binding(_, _, e) => expr_has_match(e),
+    })
+}
+
+/// Find `fun_induction` targets in the law's goal: every call to a user-
+/// recursive fn whose arguments are ALL bare free-variable givens (so the
+/// recursion key is a free variable, the case `fun_induction` closes). The
+/// law's SUBJECT fn (`vb.fn_name`) is ordered FIRST — it is the fn the law is
+/// about and the likeliest to drive the split — then every other distinct
+/// user-recursive fn called on free-var args, in goal order. A composite-arg
+/// call (`butlast (xs ++ ys)`) is rejected: `fun_induction` there abstracts the
+/// append term and loses the `xs`/`ys` link, so that call is not a target.
+///
+/// Returning ALL candidates (not just one) matters when the right driver is not
+/// the subject fn: prop_29 (`elem x (ins1 x xs) = true`) has a composite-arg
+/// subject call `elem (ins1 …)` (no target) but a free-var `ins1 x xs` call,
+/// and inducting `ins1`'s case tree is exactly what closes it. Emitting one
+/// `first` arm per candidate lets the right one win; the rest fail-through.
+/// (A goal whose driver is NOT recursive — e.g. prop_49's `butlastConcat`, for
+/// which Lean derives no `.induct` because the fn never self-calls — is simply
+/// not a target and stays on the existing ladder.)
+///
+/// PURELY ADDITIVE: the targets only drive `first | (fun_induction …)… |
+/// <existing ladder>` arms. Each `fun_induction` either CLOSES the goal or
+/// FAILS (no theorem / goal mismatch / non-closing closer), falling to the next
+/// arm and ultimately to today's ladder — it can only ADD closures.
+fn find_fun_induction_targets(
+    vb: &VerifyBlock,
+    law: &VerifyLaw,
+    ctx: &CodegenContext,
+    intro_names: &[String],
+) -> Vec<FunInductionTarget> {
+    // Map a given name to the Lean name it is intro'd as (givens and intro
+    // names are positional, so the index lines them up).
+    let given_to_intro = |name: &str| -> Option<String> {
+        law.givens
+            .iter()
+            .position(|g| g.name == name)
+            .and_then(|i| intro_names.get(i).cloned())
+    };
+
+    // A `fun_induction` target fn must have an auto-derived `<fn>.induct`. Lean's
+    // equation compiler generates one ONLY for fns it compiles via structural /
+    // well-founded recursion — i.e. self-recursive fns. A non-recursive matching
+    // fn (`butlastConcat`, which just splits on `ys` then calls helpers) has NO
+    // `.induct`, so a `fun_induction` on it errors ("No functional induction
+    // theorem"); `first` would recover, but emitting a guaranteed-dead arm is
+    // noise, so restrict to the recursive pure fns — exactly the `.induct` set.
+    // (`fn_body_has_match` is a redundant sanity guard: a recursive fn always
+    // case-splits, but a fn lifted to a non-matching builtin would not.)
+    let recursive_names = crate::codegen::lean::recursive_pure_fn_names(ctx);
+    let induct_fns: std::collections::HashSet<String> = ctx
+        .modules
+        .iter()
+        .flat_map(|m| m.fn_defs.iter())
+        .chain(ctx.fn_defs.iter())
+        .filter(|fd| {
+            crate::codegen::common::is_pure_fn(fd)
+                && recursive_names.contains(&fd.name)
+                && fn_body_has_match(fd)
+        })
+        .map(|fd| fd.name.clone())
+        .collect();
+
+    // Collect every in-goal call to such a fn whose args are all bare givens,
+    // recording call order (outermost first via a pre-order walk).
+    let mut candidates: Vec<FunInductionTarget> = Vec::new();
+    fn walk(
+        expr: &crate::ast::Spanned<crate::ast::Expr>,
+        recursive: &std::collections::HashSet<String>,
+        given_to_intro: &dyn Fn(&str) -> Option<String>,
+        out: &mut Vec<FunInductionTarget>,
+    ) {
+        use crate::ast::Expr;
+        if let Expr::FnCall(callee, args) = &expr.node
+            && let Some(name) = super::shared::expr_dotted_name(callee)
+            && recursive.contains(&name)
+        {
+            // Every argument must be a bare free-variable given — the recursion
+            // key is then a free variable and `fun_induction` closes.
+            let mut arg_leans = Vec::with_capacity(args.len());
+            let mut all_free = !args.is_empty();
+            for a in args {
+                let leaf = match &a.node {
+                    Expr::Ident(n) | Expr::Resolved { name: n, .. } => given_to_intro(n),
+                    _ => None,
+                };
+                match leaf {
+                    Some(l) => arg_leans.push(l),
+                    None => {
+                        all_free = false;
+                        break;
+                    }
+                }
+            }
+            if all_free {
+                out.push(FunInductionTarget {
+                    fn_lean: aver_name_to_lean(&name),
+                    args: arg_leans,
+                });
+            }
+        }
+        // Recurse into sub-expressions so a nested target (e.g. the RHS fn of
+        // prop_49) is still found even when the outer call is composite-arg.
+        match &expr.node {
+            Expr::FnCall(callee, args) => {
+                walk(callee, recursive, given_to_intro, out);
+                args.iter()
+                    .for_each(|a| walk(a, recursive, given_to_intro, out));
+            }
+            Expr::Attr(base, _) | Expr::Neg(base) | Expr::ErrorProp(base) => {
+                walk(base, recursive, given_to_intro, out)
+            }
+            Expr::BinOp(_, l, r) => {
+                walk(l, recursive, given_to_intro, out);
+                walk(r, recursive, given_to_intro, out);
+            }
+            Expr::Match { subject, arms } => {
+                walk(subject, recursive, given_to_intro, out);
+                arms.iter()
+                    .for_each(|a| walk(&a.body, recursive, given_to_intro, out));
+            }
+            Expr::Constructor(_, Some(inner)) => walk(inner, recursive, given_to_intro, out),
+            Expr::List(items) | Expr::Tuple(items) | Expr::IndependentProduct(items, _) => items
+                .iter()
+                .for_each(|i| walk(i, recursive, given_to_intro, out)),
+            _ => {}
+        }
+    }
+    walk(&law.lhs, &induct_fns, &given_to_intro, &mut candidates);
+    walk(&law.rhs, &induct_fns, &given_to_intro, &mut candidates);
+
+    // Order subject-first, dedup on (fn, args) keeping goal order otherwise.
+    let subject_lean = aver_name_to_lean(&vb.fn_name);
+    candidates.sort_by_key(|c| c.fn_lean != subject_lean);
+    let mut seen: BTreeSet<(String, Vec<String>)> = BTreeSet::new();
+    candidates.retain(|c| seen.insert((c.fn_lean.clone(), c.args.clone())));
+    candidates
+}
+
+/// The additive `fun_induction` first-rung. Given the existing induction
+/// `body_lines` (everything after `intro`), wrap them as
+/// `first | (fun_induction <fn> <args> <;> closer)… | (<existing body>)`, with
+/// one `fun_induction` arm per recognized `targets` entry (subject-first). The
+/// closer ends in throw-on-leftover tactics (`done` / `omega` / `<;> omega`) so
+/// each `fun_induction` either CLOSES the goal or FAILS, falling to the next arm
+/// and ultimately to the existing body byte-for-byte (modulo a 3-space indent
+/// under the final `first` arm). `simp_defs` is the law's def simp set
+/// (`law_simp_defs`-derived, comma-joined).
+fn wrap_with_fun_induction_rung(
+    intro_line: String,
+    body_lines: Vec<String>,
+    targets: &[FunInductionTarget],
+    simp_defs: &str,
+) -> Vec<String> {
+    let defs = if simp_defs.is_empty() {
+        String::new()
+    } else {
+        format!("[{simp_defs}]")
+    };
+    // The closer: after `fun_induction` splits the case tree it leaves one goal
+    // per arm with the precise IH. `simp_all [defs]` unfolds the law's defs (and
+    // any proven reflexivity support lemmas the def set carries — see
+    // `lean_refl_support`) and applies every IH; the three alternatives discharge
+    // a pure-equational goal (`done`), a linear-arith residual (`omega`), or a
+    // per-subgoal residual (`<;> omega`). Every alternative throws on a leftover
+    // goal, so a non-closing split fails the whole rung and `first` falls to the
+    // next arm — never a silent unsolved-goals build error. CRUCIALLY the closer
+    // contains NO nested `induction`: inducting on a variable `fun_induction`
+    // already consumed/generalized raises an ill-typed-motive error that `first`
+    // does NOT backtrack over (a hard build failure that would taint the whole
+    // file), so a residual needing a fresh induction (e.g. `eqNat x x = true`)
+    // is discharged by a PROVEN `_refl` lemma carried in `simp_defs`, never by an
+    // in-closer induction. All tactics here (`simp_all`/`omega`) terminate and
+    // are sound, so the rung is purely additive and adds no axioms.
+    let closer = format!(
+        "first | (simp_all {defs}; done) | (simp_all {defs}; omega) | (simp_all {defs} <;> omega)"
+    );
+    let mut out = vec![intro_line, "  first".to_string()];
+    for t in targets {
+        out.push(format!(
+            "  | (fun_induction {} {} <;> ({}))",
+            t.fn_lean,
+            t.args.join(" "),
+            closer
+        ));
+    }
+    out.push("  | (".to_string());
+    // Re-indent the existing body under the final `first` arm and close the
+    // parenthesis on the last line. The body is emitted verbatim otherwise.
+    for line in &body_lines {
+        out.push(format!("  {line}"));
+    }
+    if let Some(last) = out.last_mut() {
+        last.push(')');
+    }
+    out
+}
+
 /// Lean structural induction over a builtin `List<T>` given:
 /// `induction xs with | nil => simp [defs] | cons head tail ih => simp_all [defs]`.
 /// `List.length_cons` is a default simp lemma, so a length-relating law over a
@@ -1664,6 +2013,48 @@ fn emit_list_induction(
         support_lines.extend(arith_support);
     }
     support_lines.extend(rev_support);
+
+    // ADDITIVE `fun_induction` first-rung. When the law's goal calls a user-
+    // recursive fn on FREE-VARIABLE args, prepend `fun_induction <fn> <args>`
+    // before the ladder above as `first | (fun_induction …) | (<ladder>)`. The
+    // auto-derived `<fn>.induct` splits exactly that fn's own (possibly two-deep)
+    // case tree with the precise IH — closing laws whose driving fn is an INNER
+    // call the manual nil/cons-on-the-list-given ladder can't pivot on, e.g. the
+    // `elem (x, ins/insert(x, xs)) = true` family (prop_29/30, prod/prop_45),
+    // where inducting the INSERTING fn's case tree is what lines the goal up, and
+    // the `count`/`eqNat` cons/append laws (prop_04/38). The rung's closer throws
+    // on any leftover goal, so `fun_induction` either CLOSES the goal or FAILS
+    // and `first` falls to the ladder above byte-for-byte. PURELY ADDITIVE: it
+    // can only add closures, never remove one, and uses only sound tactics
+    // (`simp_all`/`omega` + kernel-proven `_refl` lemmas), so it adds no axioms.
+    // Skipped under the discovery-feedback path (the ladder there is already a
+    // `first | … |` chain the rung would needlessly nest) — that path keeps its
+    // own emit.
+    if discovered.is_empty() && fast_simp.is_empty() {
+        let targets = find_fun_induction_targets(vb, law, ctx, intro_names);
+        if !targets.is_empty() {
+            // Proven structural-equality reflexivity lemmas (`eqNat a a = true`)
+            // for any such fn in the law's cone — the residual a `fun_induction`
+            // split leaves on a matched-key arm (prop_29's `elem x (ins1 x xs)`
+            // reduces to `eqNat x x = true`). The lemma is kernel-PROVEN (a
+            // misrecognized fn never reaches here — see `recognize_refl_eq_fn`),
+            // so adding its name to the closer's simp set is sound and cheap; it
+            // replaces the unsound in-closer `induction`. The defs join
+            // `simp_list` only for the rung's closer, never the existing ladder.
+            let (refl_support, refl_names) = lean_refl_support(vb, law, ctx, &law_uid);
+            let refl_simp_list = if refl_names.is_empty() {
+                simp_list.clone()
+            } else if simp_list.is_empty() {
+                refl_names.join(", ")
+            } else {
+                format!("{simp_list}, {}", refl_names.join(", "))
+            };
+            support_lines.extend(refl_support);
+            let intro_line = proof_lines.remove(0);
+            proof_lines =
+                wrap_with_fun_induction_rung(intro_line, proof_lines, &targets, &refl_simp_list);
+        }
+    }
 
     Some(AutoProof {
         support_lines,
